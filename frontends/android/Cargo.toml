@@ -1,0 +1,19 @@
+[package]
+name = "aceris-android"
+description = "Android front-end (native library) for the Aceris emulator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aceris-common.workspace = true
+aceris-core.workspace = true
+
+[lints]
+workspace = true

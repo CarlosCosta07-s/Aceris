@@ -1,0 +1,15 @@
+[package]
+name = "aceris-common"
+description = "Shared types and utilities for the Aceris emulator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

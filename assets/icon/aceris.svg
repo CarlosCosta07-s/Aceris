@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Aceris</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4A1D5E"/>
+      <stop offset="1" stop-color="#1A0B2E"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="512" cy="560" r="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF4D6D" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#FF4D6D" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="fruit" cx="430" cy="500" r="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF6B6B"/>
+      <stop offset="0.45" stop-color="#E5173F"/>
+      <stop offset="1" stop-color="#8E0A2B"/>
+    </radialGradient>
+    <linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#2E8B3E"/>
+      <stop offset="1" stop-color="#86D95F"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <circle cx="512" cy="560" r="430" fill="url(#glow)"/>
+  <g transform="translate(512 512) scale(1.12) translate(-520 -562)">
+    <ellipse cx="512" cy="905" rx="215" ry="26" fill="#000" fill-opacity="0.28"/>
+    <g fill="url(#fruit)">
+      <circle cx="445" cy="590" r="215"/>
+      <circle cx="580" cy="590" r="215"/>
+      <circle cx="512" cy="680" r="215"/>
+    </g>
+    <g fill="none" stroke="#7A0A26" stroke-opacity="0.35" stroke-width="10" stroke-linecap="round">
+      <path d="M512 400 C 500 490, 500 570, 512 640"/>
+      <path d="M512 640 C 440 660, 370 700, 312 752"/>
+      <path d="M512 640 C 584 660, 654 700, 712 752"/>
+    </g>
+    <ellipse cx="385" cy="525" rx="68" ry="112" transform="rotate(28 385 525)"
+             fill="#fff" fill-opacity="0.36"/>
+    <circle cx="468" cy="440" r="17" fill="#fff" fill-opacity="0.5"/>
+    <path d="M512 398 C 512 340, 530 292, 575 252" fill="none" stroke="#5E8B2F"
+          stroke-width="22" stroke-linecap="round"/>
+    <path d="M572 262 C 600 190, 700 170, 800 205 C 785 290, 680 330, 572 262 Z"
+          fill="url(#leaf)"/>
+    <path d="M582 258 C 650 240, 720 226, 782 210" fill="none" stroke="#1F5E2B"
+          stroke-opacity="0.55" stroke-width="7" stroke-linecap="round"/>
+    <g fill="#3E8E3A">
+      <ellipse cx="512" cy="400" rx="46" ry="18"/>
+      <ellipse cx="480" cy="410" rx="30" ry="12" transform="rotate(-20 480 410)"/>
+      <ellipse cx="544" cy="410" rx="30" ry="12" transform="rotate(20 544 410)"/>
+    </g>
+  </g>
+</svg>
