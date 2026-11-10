@@ -73,6 +73,7 @@ mestre, os PNGs, o `.ico` do Windows e os ícones adaptativos do Android.
 
 - [Carlos Costa](https://github.com/CarlosCosta07-s): criador e mantenedor
 - ChatGPT (plano gratuito): assistente de IA
+- Claude (Anthropic): assistente de IA
 
 ## Licença
 
