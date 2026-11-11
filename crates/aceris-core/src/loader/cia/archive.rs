@@ -297,13 +297,12 @@ fn build_content_locations(
     selected.sort_unstable_by_key(|content| content.content_index);
 
     let content_section = header.content;
-    let section_end = content_section
-        .end_offset_bytes()
-        .ok_or(CiaArchiveError::ContentRangeOutsideSection {
-            content_index: selected
-                .first()
-                .map_or(0, |content| content.content_index),
-        })?;
+    let section_end =
+        content_section
+            .end_offset_bytes()
+            .ok_or(CiaArchiveError::ContentRangeOutsideSection {
+                content_index: selected.first().map_or(0, |content| content.content_index),
+            })?;
 
     let mut locations = Vec::with_capacity(selected.len());
     let mut next_offset = content_section.offset_bytes;
@@ -329,11 +328,10 @@ fn build_content_locations(
         });
 
         if position + 1 < selected.len() {
-            next_offset = align_content(end_offset).ok_or(
-                CiaArchiveError::ContentRangeOutsideSection {
+            next_offset =
+                align_content(end_offset).ok_or(CiaArchiveError::ContentRangeOutsideSection {
                     content_index: record.content_index,
-                },
-            )?;
+                })?;
         }
     }
 
@@ -379,9 +377,9 @@ impl<R: Read + Seek> Read for CiaContentReader<'_, R> {
         }
 
         let remaining = self.size_bytes - self.position_bytes;
-        let readable = buffer.len().min(
-            usize::try_from(remaining).unwrap_or(usize::MAX),
-        );
+        let readable = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
         let read = self.reader.read(&mut buffer[..readable])?;
         self.position_bytes += read as u64;
         Ok(read)
@@ -392,9 +390,7 @@ impl<R: Read + Seek> Seek for CiaContentReader<'_, R> {
     fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
         let target = match from {
             SeekFrom::Start(offset) => i128::from(offset),
-            SeekFrom::Current(offset) => {
-                i128::from(self.position_bytes) + i128::from(offset)
-            }
+            SeekFrom::Current(offset) => i128::from(self.position_bytes) + i128::from(offset),
             SeekFrom::End(offset) => i128::from(self.size_bytes) + i128::from(offset),
         };
         if !(0..=i128::from(self.size_bytes)).contains(&target) {
@@ -469,10 +465,7 @@ mod tests {
 
     fn make_tmd(contents: &[(u32, u16, u16, &[u8])]) -> Vec<u8> {
         let records_size = contents.len() * TEST_CONTENT_RECORD_SIZE;
-        let mut data = vec![
-            0u8;
-            TEST_SIGNATURE_SIZE + TEST_CONTENT_RECORDS_OFFSET + records_size
-        ];
+        let mut data = vec![0u8; TEST_SIGNATURE_SIZE + TEST_CONTENT_RECORDS_OFFSET + records_size];
         write_be_u32(&mut data, 0, 0x0001_0004);
 
         let header_start = TEST_SIGNATURE_SIZE;
@@ -503,8 +496,8 @@ mod tests {
         }
 
         if !contents.is_empty() {
-            let group_hash = Sha256::digest(&data[records_start..records_start + records_size])
-                .unwrap();
+            let group_hash =
+                Sha256::digest(&data[records_start..records_start + records_size]).unwrap();
             data[info_start + 4..info_start + 0x24].copy_from_slice(&group_hash);
         }
         let info_hash = Sha256::digest(
@@ -515,9 +508,7 @@ mod tests {
         data
     }
 
-    fn make_cia(
-        contents: &[(u32, u16, u16, &[u8])],
-    ) -> (Vec<u8>, Vec<(u16, u64)>) {
+    fn make_cia(contents: &[(u32, u16, u16, &[u8])]) -> (Vec<u8>, Vec<(u16, u64)>) {
         let tmd = make_tmd(contents);
         let tmd_offset = HEADER_SIZE as u64;
         let content_offset = align(tmd_offset + tmd.len() as u64);
@@ -563,10 +554,7 @@ mod tests {
     fn opens_cia_and_reads_selected_contents_from_aligned_ranges() {
         let main = b"main executable bytes";
         let manual = b"optional manual bytes";
-        let (data, _) = make_cia(&[
-            (0x1000, 0, 0, main),
-            (0x2000, 2, 0x4000, manual),
-        ]);
+        let (data, _) = make_cia(&[(0x1000, 0, 0, main), (0x2000, 2, 0x4000, manual)]);
         let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
 
         assert_eq!(archive.title_metadata().title_id, 0x0004_0000_1234_5678);
@@ -608,10 +596,7 @@ mod tests {
 
     #[test]
     fn content_reader_cannot_seek_before_or_after_its_own_range() {
-        let (data, _) = make_cia(&[
-            (0x1000, 0, 1, b"first"),
-            (0x2000, 2, 1, b"second"),
-        ]);
+        let (data, _) = make_cia(&[(0x1000, 0, 1, b"first"), (0x2000, 2, 1, b"second")]);
         let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
         let mut reader = archive.open_content_reader(0).unwrap().unwrap();
 
