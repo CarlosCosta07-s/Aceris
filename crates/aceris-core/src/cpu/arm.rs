@@ -789,6 +789,16 @@ impl Arm11Core {
             self.clear_exclusive_monitor();
             return Ok(StepEvent::Executed);
         }
+        // SETEND modifies only CPSR.E; instruction fetch remains little-endian.
+        if word & 0xFFFF_FDFF == 0xF101_0000 {
+            self.cpsr.set_big_endian(bit(word, 9));
+            return Ok(StepEvent::Executed);
+        }
+        // PLD is an architecturally optional data-prefetch hint and has no
+        // visible effect on this interpreter's functional memory model.
+        if word & 0xFD70_F000 == 0xF550_F000 {
+            return Ok(StepEvent::Executed);
+        }
         if bits(word, 27, 25) != 0b101 {
             return Err(Error::Unimplemented("unconditional-space instruction"));
         }
@@ -1875,6 +1885,45 @@ mod tests {
         let mut m = Machine::new(&[0xFB00_0000]);
         m.step();
         assert_eq!(m.cpu.pc(), 0xA);
+    }
+
+    #[test]
+    fn armv6_setend_changes_only_data_endianness() {
+        // SETEND BE ; SETEND LE.
+        let mut m = Machine::new(&[0xF101_0200, 0xF101_0000]);
+        m.cpu.cpsr.set_flags(true, false, true, false);
+        m.cpu.cpsr.set_q();
+        m.cpu.cpsr.set_ge(0b1010);
+        let preserved = m.cpu.cpsr.0 & !(1 << 9);
+
+        m.step();
+        assert!(m.cpu.cpsr.big_endian());
+        assert_eq!(m.cpu.cpsr.0 & !(1 << 9), preserved);
+
+        m.step();
+        assert!(!m.cpu.cpsr.big_endian());
+        assert_eq!(m.cpu.cpsr.0 & !(1 << 9), preserved);
+    }
+
+    #[test]
+    fn armv6_pld_immediate_register_and_literal_forms_are_functional_hints() {
+        // PLD [r0,#16] ; PLD [r1,-r2] ; PLD [pc,#32].
+        let mut m = Machine::new(&[0xF5D0_F010, 0xF751_F002, 0xF5DF_F020]);
+        m.cpu.regs[0] = 0x1000;
+        m.cpu.regs[1] = 0x2000;
+        m.cpu.regs[2] = 0x40;
+        m.cpu.regs[3] = 0xAABB_CCDD;
+        m.cpu.cpsr.set_flags(true, false, true, false);
+        let before = [m.cpu.regs[0], m.cpu.regs[1], m.cpu.regs[2], m.cpu.regs[3]];
+        let flags = m.flags();
+
+        m.run(3);
+
+        assert_eq!(
+            [m.cpu.regs[0], m.cpu.regs[1], m.cpu.regs[2], m.cpu.regs[3]],
+            before
+        );
+        assert_eq!(m.flags(), flags);
     }
 
     #[test]
