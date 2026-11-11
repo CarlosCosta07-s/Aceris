@@ -909,23 +909,33 @@ impl<R: Read + Seek> NcsdImageReader<R> {
             .map_err(NcsdImageReaderError::ExecutableLoad)
     }
 
-    /// Loads the primary NCSD program into an initialized ARM11 process session.
+    /// Loads an NCSD partition into an initialized ARM11 process session.
     ///
     /// The image reader is borrowed only during loading. The returned session
     /// owns its validated process address space, while this image reader remains
     /// available for metadata inspection or access to other partitions.
     /// The caller supplies AES keys; NoCrypto content does not use them.
+    pub fn load_arm11_session_from_partition(
+        &mut self,
+        index: u8,
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<Arm11ProcessSession, NcsdImageReaderError> {
+        let address_space = self
+            .borrow_partition_ncch(index)?
+            .load_arm11_address_space(menu_info_key, content_key)
+            .map_err(NcsdImageReaderError::ExecutableLoad)?;
+
+        Ok(Arm11ProcessSession::from_address_space(address_space))
+    }
+
+    /// Loads partition zero, conventionally the primary NCSD program, into an ARM11 session.
     pub fn load_primary_arm11_session(
         &mut self,
         menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
         content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
     ) -> std::result::Result<Arm11ProcessSession, NcsdImageReaderError> {
-        let address_space = self
-            .borrow_partition_ncch(0)?
-            .load_arm11_address_space(menu_info_key, content_key)
-            .map_err(NcsdImageReaderError::ExecutableLoad)?;
-
-        Ok(Arm11ProcessSession::from_address_space(address_space))
+        self.load_arm11_session_from_partition(0, menu_info_key, content_key)
     }
 }
 
@@ -1196,6 +1206,24 @@ mod tests {
         (image, text, read_only, data)
     }
 
+    fn move_primary_partition_to_slot(image: &mut [u8], destination: usize) {
+        assert!(destination < PARTITION_COUNT);
+        assert_ne!(destination, 0);
+
+        let source_entry = PARTITION_TABLE_OFFSET;
+        let destination_entry = PARTITION_TABLE_OFFSET + destination * 8;
+        image.copy_within(source_entry..source_entry + 8, destination_entry);
+        image[source_entry..source_entry + 8].fill(0);
+
+        image.swap(FS_TYPES_OFFSET, FS_TYPES_OFFSET + destination);
+        image.swap(CRYPT_TYPES_OFFSET, CRYPT_TYPES_OFFSET + destination);
+
+        let source_id = PARTITION_IDS_OFFSET;
+        let destination_id = PARTITION_IDS_OFFSET + destination * 8;
+        image.copy_within(source_id..source_id + 8, destination_id);
+        image[source_id..source_id + 8].fill(0);
+    }
+
     fn image_with_arm11_execution_program() -> Vec<u8> {
         const PARTITION_OFFSET: usize = 0x4000;
         const EXEFS_OFFSET: usize = 0x2000;
@@ -1429,6 +1457,37 @@ mod tests {
         assert_eq!(session.core().regs[0], 7);
         assert_eq!(session.core().regs[1], 5);
         assert_eq!(reader.header().primary_partition().unwrap().index, 0);
+    }
+
+    #[test]
+    fn loads_and_executes_arm11_session_from_sparse_secondary_partition_index() {
+        let mut image = image_with_arm11_execution_program();
+        const SECONDARY_PARTITION_INDEX: usize = 3;
+        move_primary_partition_to_slot(&mut image, SECONDARY_PARTITION_INDEX);
+
+        let mut reader = NcsdImageReader::open(Cursor::new(image)).unwrap();
+        assert!(reader.header().partition(0).is_none());
+        assert_eq!(
+            reader.header().partition(SECONDARY_PARTITION_INDEX as u8).unwrap().index,
+            SECONDARY_PARTITION_INDEX as u8
+        );
+
+        let mut session = reader
+            .load_arm11_session_from_partition(
+                SECONDARY_PARTITION_INDEX as u8,
+                [0; ncch::crypto::AES_BLOCK_SIZE],
+                [0; ncch::crypto::AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let report = session.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(session.core().regs[0], 7);
+        assert_eq!(session.core().regs[1], 5);
+        assert_eq!(
+            reader.header().partition(SECONDARY_PARTITION_INDEX as u8).unwrap().index,
+            SECONDARY_PARTITION_INDEX as u8
+        );
     }
 
     #[test]
