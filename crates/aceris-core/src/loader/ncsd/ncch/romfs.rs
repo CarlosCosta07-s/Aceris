@@ -1599,8 +1599,9 @@ mod tests {
             .map(|index| (index as u8).wrapping_mul(17).wrapping_add(3))
             .collect::<Vec<_>>();
         write_u32(&mut level3, 0x00, LEVEL3_HEADER_SIZE as u32);
-        for offset in [0x04, 0x0C, 0x14, 0x1C] {
+        for (offset, size_offset) in [(0x04, 0x08), (0x0C, 0x10), (0x14, 0x18), (0x1C, 0x20)] {
             write_u32(&mut level3, offset, LEVEL3_HEADER_SIZE as u32);
+            write_u32(&mut level3, size_offset, 0);
         }
         write_u32(&mut level3, 0x24, LEVEL3_HEADER_SIZE as u32);
 
