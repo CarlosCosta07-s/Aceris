@@ -711,8 +711,8 @@ impl<R: Read + Seek> Seek for PrefixedReader<R> {
             ));
         }
 
-        self.prefix_position = usize::try_from(target.min(prefix_size))
-            .expect("NCCH header size fits in usize");
+        self.prefix_position =
+            usize::try_from(target.min(prefix_size)).expect("NCCH header size fits in usize");
         if target >= prefix_size {
             self.prefix_position = self.prefix.len();
         }
