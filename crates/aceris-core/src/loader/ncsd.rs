@@ -847,7 +847,10 @@ impl fmt::Display for NcsdImageReaderError {
                 )
             }
             Self::ExecutableLoad(error) => {
-                write!(formatter, "could not load ARM11 program from NCSD image: {error}")
+                write!(
+                    formatter,
+                    "could not load ARM11 program from NCSD image: {error}"
+                )
             }
         }
     }
