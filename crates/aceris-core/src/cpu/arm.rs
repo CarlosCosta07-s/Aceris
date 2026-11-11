@@ -1411,7 +1411,7 @@ mod tests {
     #[test]
     fn armv6_parallel_signed_and_unsigned_halfword_operations_set_ge() {
         // SADD16 r0,r1,r2 ; UADD16 r3,r4,r5 ; USUB16 r6,r7,r8
-        let mut m = Machine::new(&[0xE611_0F12, 0xE654_3F15, 0xE657_6F18]);
+        let mut m = Machine::new(&[0xE611_0F12, 0xE654_3F15, 0xE657_6F78]);
         m.cpu.regs[1] = 0x7FFF_8000;
         m.cpu.regs[2] = 0x0001_FFFF;
         m.cpu.regs[4] = 0xFFFF_0000;
