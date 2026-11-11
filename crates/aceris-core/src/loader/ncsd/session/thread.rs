@@ -555,8 +555,12 @@ mod tests {
         core
     }
 
+    fn scheduler_with_priority(priority: i32) -> Arm11ThreadScheduler {
+        Arm11ThreadScheduler::new(main_core(), priority).unwrap()
+    }
+
     fn scheduler() -> Arm11ThreadScheduler {
-        Arm11ThreadScheduler::new(main_core(), 0x30).unwrap()
+        scheduler_with_priority(0x30)
     }
 
     fn create(scheduler: &mut Arm11ThreadScheduler, entrypoint: u32, priority: i32) -> ThreadId {
@@ -670,7 +674,7 @@ mod tests {
 
     #[test]
     fn equal_priority_threads_are_selected_in_fifo_ready_order() {
-        let mut scheduler = scheduler();
+        let mut scheduler = scheduler_with_priority(0x20);
         let first = create(&mut scheduler, 0x0020_0000, 0x20);
         let second = create(&mut scheduler, 0x0030_0000, 0x20);
 
@@ -721,7 +725,7 @@ mod tests {
 
     #[test]
     fn sleeping_threads_wake_only_after_the_virtual_deadline() {
-        let mut scheduler = scheduler();
+        let mut scheduler = scheduler_with_priority(0x10);
         let other = create(&mut scheduler, 0x0020_0000, 0x20);
         scheduler.start_thread(other).unwrap();
 
@@ -760,7 +764,7 @@ mod tests {
 
     #[test]
     fn waiting_threads_resume_only_when_woken() {
-        let mut scheduler = scheduler();
+        let mut scheduler = scheduler_with_priority(0x10);
         let other = create(&mut scheduler, 0x0020_0000, 0x20);
         scheduler.start_thread(other).unwrap();
 
