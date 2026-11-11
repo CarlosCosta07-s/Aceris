@@ -1,12 +1,12 @@
 //! Top-level emulated system.
 
 use crate::cpu::Arm11Core;
-use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
+use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
 use aceris_common::{Error, Result};
 use std::fs::File;
-use std::io::{self, Read, Seek};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// The emulated console. Front-ends create one of these, load a game and then
@@ -99,34 +99,78 @@ impl System {
         self.load_ncsd_with_keys(File::open(path)?, menu_info_key, content_key)
     }
 
-    /// Loads a NoCrypto NCSD cartridge without asking the caller for AES keys.
+    /// Loads a NoCrypto NCSD cartridge from one seekable reader.
     ///
-    /// The primary NCCH header is parsed first and its NoCrypto flag must be
-    /// set. Encrypted cartridges are rejected without changing the current
-    /// system; use [load_ncsd_file_with_keys] for those images.
-    ///
-    /// Files conventionally named `.3ds` and `.cci` are both accepted.
-    pub fn load_ncsd_no_crypto_file(&mut self, path: &Path) -> Result<ImageFormat> {
-        let image = NcsdImageReader::open(File::open(path)?).map_err(|error| {
+    /// NCSD and primary NCCH headers are structurally validated on this same
+    /// reader before the reader is rewound and passed to the ARM11 loader.
+    /// Encrypted cartridges are rejected without changing the current system;
+    /// use [load_ncsd_with_keys] with caller-supplied keys for those images.
+    pub fn load_ncsd_no_crypto_reader<R: Read + Seek>(
+        &mut self,
+        mut reader: R,
+    ) -> Result<ImageFormat> {
+        let file_len = reader.seek(SeekFrom::End(0))?;
+        let start = reader.seek(SeekFrom::Start(0))?;
+        if start != 0 {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reader did not seek to the beginning of the NCSD image",
+            )));
+        }
+
+        let mut ncsd_header_bytes = [0; crate::loader::ncsd::HEADER_SIZE];
+        reader.read_exact(&mut ncsd_header_bytes)?;
+        let ncsd_header = NcsdHeader::parse(&ncsd_header_bytes, file_len)?;
+        let primary_partition = *ncsd_header.primary_partition().ok_or(
+            Error::InvalidNcsdPartition {
+                index: 0,
+                reason: "primary partition is missing",
+            },
+        )?;
+
+        let partition_position = reader.seek(SeekFrom::Start(primary_partition.offset_bytes))?;
+        if partition_position != primary_partition.offset_bytes {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reader did not seek to the primary NCSD partition",
+            )));
+        }
+
+        let mut ncch_header_bytes = [0; ncch::HEADER_SIZE];
+        reader.read_exact(&mut ncch_header_bytes)?;
+        let ncch_header = ncch::NcchHeader::parse(
+            &ncch_header_bytes,
+            primary_partition.size_bytes,
+        )
+        .map_err(|error| {
             Error::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("could not inspect NCSD cartridge: {error}"),
-            ))
-        })?;
-        let primary = image.open_primary_ncch().map_err(|error| {
-            Error::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("could not inspect primary NCCH partition: {error}"),
+                format!("invalid primary NCCH header: {error}"),
             ))
         })?;
 
-        if !primary.header().declares_no_crypto() {
+        if !ncch_header.declares_no_crypto() {
             return Err(Error::Unimplemented(
-                "encrypted NCCH content requires caller-supplied keys; use load_ncsd_file_with_keys",
+                "encrypted NCCH content requires caller-supplied keys; use load_ncsd_with_keys",
             ));
         }
 
-        self.load_ncsd_with_keys(File::open(path)?, [0; AES_BLOCK_SIZE], [0; AES_BLOCK_SIZE])
+        let start = reader.seek(SeekFrom::Start(0))?;
+        if start != 0 {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "reader did not rewind before ARM11 loading",
+            )));
+        }
+
+        self.load_ncsd_with_keys(reader, [0; AES_BLOCK_SIZE], [0; AES_BLOCK_SIZE])
+    }
+
+    /// Opens a NoCrypto `.3ds` or `.cci` cartridge without asking for AES keys.
+    ///
+    /// Validation and process loading use the same open file handle.
+    pub fn load_ncsd_no_crypto_file(&mut self, path: &Path) -> Result<ImageFormat> {
+        self.load_ncsd_no_crypto_reader(File::open(path)?)
     }
 
     pub fn image(&self) -> Option<ImageFormat> {
@@ -325,6 +369,24 @@ mod tests {
             assert_eq!(system.cpu().regs[0], 7);
             assert_eq!(system.cpu().regs[1], 5);
         }
+    }
+
+    #[test]
+    fn loads_no_crypto_ncsd_from_a_seekable_reader() {
+        let image = clear_ncsd_cartridge_fixture();
+        let mut system = System::new();
+
+        assert_eq!(
+            system.load_ncsd_no_crypto_reader(std::io::Cursor::new(image)).unwrap(),
+            ImageFormat::Ncsd
+        );
+        assert_eq!(system.cpu().pc(), 0x0010_0000);
+        assert!(system.ncsd_session().is_some());
+
+        let report = system.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(system.cpu().regs[0], 7);
+        assert_eq!(system.cpu().regs[1], 5);
     }
 
     #[test]
