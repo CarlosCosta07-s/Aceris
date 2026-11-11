@@ -99,6 +99,36 @@ impl System {
         self.load_ncsd_with_keys(File::open(path)?, menu_info_key, content_key)
     }
 
+    /// Loads a NoCrypto NCSD cartridge without asking the caller for AES keys.
+    ///
+    /// The primary NCCH header is parsed first and its NoCrypto flag must be
+    /// set. Encrypted cartridges are rejected without changing the current
+    /// system; use [load_ncsd_file_with_keys] for those images.
+    ///
+    /// Files conventionally named `.3ds` and `.cci` are both accepted.
+    pub fn load_ncsd_no_crypto_file(&mut self, path: &Path) -> Result<ImageFormat> {
+        let image = NcsdImageReader::open(File::open(path)?).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not inspect NCSD cartridge: {error}"),
+            ))
+        })?;
+        let primary = image.open_primary_ncch().map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not inspect primary NCCH partition: {error}"),
+            ))
+        })?;
+
+        if !primary.header().declares_no_crypto() {
+            return Err(Error::Unimplemented(
+                "encrypted NCCH content requires caller-supplied keys; use load_ncsd_file_with_keys",
+            ));
+        }
+
+        self.load_ncsd_with_keys(File::open(path)?, [0; AES_BLOCK_SIZE], [0; AES_BLOCK_SIZE])
+    }
+
     pub fn image(&self) -> Option<ImageFormat> {
         self.image
     }
@@ -271,6 +301,55 @@ mod tests {
             assert_eq!(system.cpu().regs[0], 7);
             assert_eq!(system.cpu().regs[1], 5);
         }
+    }
+
+    #[test]
+    fn loads_no_crypto_ncsd_without_caller_keys_from_both_3ds_and_cci_paths() {
+        for extension in ["3ds", "cci"] {
+            let path = std::env::temp_dir()
+                .join(format!("aceris-no-crypto-{}.{extension}", std::process::id()));
+            std::fs::write(&path, clear_ncsd_cartridge_fixture()).unwrap();
+
+            let mut system = System::new();
+            let result = system.load_ncsd_no_crypto_file(&path);
+            let _ = std::fs::remove_file(&path);
+
+            assert_eq!(result.unwrap(), ImageFormat::Ncsd);
+            assert_eq!(system.cpu().pc(), 0x0010_0000);
+            assert!(system.ncsd_session().is_some());
+
+            let report = system.run_instructions(2).unwrap();
+            assert_eq!(report.instructions_executed, 2);
+            assert_eq!(system.cpu().regs[0], 7);
+            assert_eq!(system.cpu().regs[1], 5);
+        }
+    }
+
+    #[test]
+    fn no_crypto_loader_rejects_encrypted_primary_partition_without_replacing_session() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; 16],
+                [0; 16],
+            )
+            .unwrap();
+        let original_pc = system.cpu().pc();
+
+        let path = std::env::temp_dir()
+            .join(format!("aceris-encrypted-{}.3ds", std::process::id()));
+        let mut encrypted = clear_ncsd_cartridge_fixture();
+        encrypted[0x4000 + 0x18F] &= !0x04;
+        std::fs::write(&path, encrypted).unwrap();
+
+        let error = system.load_ncsd_no_crypto_file(&path).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(matches!(error, Error::Unimplemented(_)));
+        assert_eq!(system.image(), Some(ImageFormat::Ncsd));
+        assert_eq!(system.cpu().pc(), original_pc);
+        assert!(system.ncsd_session().is_some());
     }
 
     #[test]
