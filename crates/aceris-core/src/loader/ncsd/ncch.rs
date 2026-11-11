@@ -474,6 +474,36 @@ impl NcchHeader {
         exefs::ExeFsHeader::parse_reader(reader, region.size_bytes).map(Some)
     }
 
+    /// Verifies the NCCH ExeFS superblock hash and every declared file hash.
+    ///
+    /// The reader must expose cleartext NCCH bytes from offset zero. The
+    /// superblock hash covers the prefix declared by the NCCH ExeFS hash-region
+    /// field. Each populated ExeFS entry is then checked against its own SHA-256
+    /// digest. This does not decrypt NCCH content or verify its RSA signature.
+    ///
+    /// Returns None when the NCCH header has no ExeFS region.
+    pub fn verify_exefs_integrity<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+    ) -> Result<Option<()>, exefs::ExeFsError> {
+        let Some(region) = self.exefs else {
+            return Ok(None);
+        };
+
+        verify_exefs_superblock_hash(reader, region, &self.exefs_superblock_hash)?;
+        let header = self.parse_exefs_header(reader)?.ok_or_else(|| {
+            exefs::ExeFsError::ReaderFailure(
+                "NCCH ExeFS region disappeared from validated header".to_owned(),
+            )
+        })?;
+
+        for file in &header.files {
+            verify_exefs_file_hash(reader, region, file)?;
+        }
+
+        Ok(Some(()))
+    }
+
     /// Returns true when the NCCH NoCrypto flag is set.
     ///
     /// This reports the header flag only; it does not decrypt or validate data.
@@ -571,6 +601,90 @@ fn read_region(
         size_bytes,
         hash_region_size_bytes,
     }))
+}
+
+fn verify_exefs_superblock_hash<R: Read + Seek>(
+    reader: &mut R,
+    region: NcchRegion,
+    expected_hash: &[u8; 32],
+) -> Result<(), exefs::ExeFsError> {
+    if region.hash_region_size_bytes == 0 {
+        return Err(exefs::ExeFsError::InvalidHashRegion);
+    }
+
+    let actual = reader
+        .seek(SeekFrom::Start(region.offset_bytes))
+        .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+    if actual != region.offset_bytes {
+        return Err(exefs::ExeFsError::ReaderFailure(
+            "reader did not seek to the declared ExeFS offset".to_owned(),
+        ));
+    }
+
+    let mut hasher = romfs::sha256::Sha256::new();
+    let mut remaining = region.hash_region_size_bytes;
+    let mut buffer = [0u8; 8 * 1024];
+
+    while remaining != 0 {
+        let amount = remaining.min(buffer.len() as u64) as usize;
+        reader
+            .read_exact(&mut buffer[..amount])
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+        hasher.update(&buffer[..amount]).map_err(|_| {
+            exefs::ExeFsError::ReaderFailure(
+                "ExeFS superblock exceeds the SHA-256 message limit".to_owned(),
+            )
+        })?;
+        remaining -= amount as u64;
+    }
+
+    if &hasher.finalize() != expected_hash {
+        return Err(exefs::ExeFsError::SuperblockHashMismatch);
+    }
+
+    Ok(())
+}
+
+fn verify_exefs_file_hash<R: Read + Seek>(
+    reader: &mut R,
+    region: NcchRegion,
+    file: &exefs::ExeFsFile,
+) -> Result<(), exefs::ExeFsError> {
+    let file_offset = region
+        .offset_bytes
+        .checked_add(file.offset_bytes)
+        .ok_or_else(|| exefs::ExeFsError::ReaderFailure("ExeFS file offset overflows".to_owned()))?;
+    let actual = reader
+        .seek(SeekFrom::Start(file_offset))
+        .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+    if actual != file_offset {
+        return Err(exefs::ExeFsError::ReaderFailure(
+            "reader did not seek to the declared ExeFS file offset".to_owned(),
+        ));
+    }
+
+    let mut hasher = romfs::sha256::Sha256::new();
+    let mut remaining = file.size_bytes;
+    let mut buffer = [0u8; 8 * 1024];
+
+    while remaining != 0 {
+        let amount = remaining.min(buffer.len() as u64) as usize;
+        reader
+            .read_exact(&mut buffer[..amount])
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+        hasher.update(&buffer[..amount]).map_err(|_| {
+            exefs::ExeFsError::ReaderFailure(
+                "ExeFS file exceeds the SHA-256 message limit".to_owned(),
+            )
+        })?;
+        remaining -= amount as u64;
+    }
+
+    if &hasher.finalize() != &file.sha256 {
+        return Err(exefs::ExeFsError::FileHashMismatch(file.name.clone()));
+    }
+
+    Ok(())
 }
 
 fn verify_romfs_superblock_hash<R: Read + Seek>(
@@ -680,6 +794,83 @@ mod tests {
         write_u32(&mut data, ROMFS_REGION_OFFSET + 4, 0x20);
         write_u32(&mut data, ROMFS_HASH_OFFSET, 0x2);
         data
+    }
+
+    fn sha256_digest(data: &[u8]) -> [u8; 32] {
+        let mut hasher = romfs::sha256::Sha256::new();
+        hasher.update(data).unwrap();
+        hasher.finalize()
+    }
+
+    fn valid_exefs_image() -> (Vec<u8>, NcchHeader) {
+        let mut ncch_header = valid_header();
+        write_u32(&mut ncch_header, EXEFS_HASH_OFFSET, 1);
+
+        let exefs_start = 0x2000;
+        let mut exefs_region = vec![0; 0x400];
+        exefs_region[..5].copy_from_slice(b".code");
+        write_u32(&mut exefs_region, 12, 0x100);
+
+        let code: Vec<u8> = (0..0x100).map(|byte| byte as u8).collect();
+        exefs_region[0x200..0x300].copy_from_slice(&code);
+        let code_hash = sha256_digest(&code);
+        exefs_region[0x1E0..0x200].copy_from_slice(&code_hash);
+        let superblock_hash = sha256_digest(&exefs_region[..0x200]);
+
+        let mut image = vec![0; 0x1_0000];
+        image[..HEADER_SIZE].copy_from_slice(&ncch_header);
+        image[ROMFS_SUPERBLOCK_HASH_OFFSET..ROMFS_SUPERBLOCK_HASH_OFFSET + 32].fill(0);
+        image[EXEFS_SUPERBLOCK_HASH_OFFSET..EXEFS_SUPERBLOCK_HASH_OFFSET + 32]
+            .copy_from_slice(&superblock_hash);
+        image[exefs_start..exefs_start + exefs_region.len()].copy_from_slice(&exefs_region);
+
+        let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        (image, parsed)
+    }
+
+    #[test]
+    fn verifies_exefs_superblock_and_every_file_hash() {
+        let (image, parsed) = valid_exefs_image();
+        let mut reader = Cursor::new(image);
+
+        assert_eq!(parsed.verify_exefs_integrity(&mut reader), Ok(Some(())));
+    }
+
+    #[test]
+    fn rejects_exefs_superblock_corruption_before_parsing_its_header() {
+        let (mut image, parsed) = valid_exefs_image();
+        image[0x2000 + 0x10] ^= 0x80;
+        let mut reader = Cursor::new(image);
+
+        assert_eq!(
+            parsed.verify_exefs_integrity(&mut reader),
+            Err(exefs::ExeFsError::SuperblockHashMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_exefs_file_content_with_a_mismatched_digest() {
+        let (mut image, parsed) = valid_exefs_image();
+        image[0x2000 + 0x200 + 0x10] ^= 0x80;
+        let mut reader = Cursor::new(image);
+
+        assert_eq!(
+            parsed.verify_exefs_integrity(&mut reader),
+            Err(exefs::ExeFsError::FileHashMismatch(".code".to_owned()))
+        );
+    }
+
+    #[test]
+    fn reports_an_empty_exefs_hash_region() {
+        let (mut image, _) = valid_exefs_image();
+        write_u32(&mut image, EXEFS_HASH_OFFSET, 0);
+        let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let mut reader = Cursor::new(image);
+
+        assert_eq!(
+            parsed.verify_exefs_integrity(&mut reader),
+            Err(exefs::ExeFsError::InvalidHashRegion)
+        );
     }
 
     #[test]

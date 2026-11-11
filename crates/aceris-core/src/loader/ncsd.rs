@@ -257,6 +257,13 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
         &mut self.reader
     }
 
+    /// Verifies the ExeFS superblock and all populated file hashes.
+    pub fn verify_exefs_integrity(
+        &mut self,
+    ) -> std::result::Result<Option<()>, ncch::exefs::ExeFsError> {
+        self.header.verify_exefs_integrity(&mut self.reader)
+    }
+
     /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
     ///
     /// An empty result means the NCCH header does not declare a RomFS region.
@@ -498,11 +505,12 @@ mod tests {
         let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         let partition = *parsed.primary_partition().unwrap();
 
-        let opened = partition.open_ncch(Cursor::new(image)).unwrap();
+        let mut opened = partition.open_ncch(Cursor::new(image)).unwrap();
 
         assert_eq!(opened.partition(), partition);
         assert_eq!(opened.header().content_size_bytes, partition.size_bytes);
         assert_eq!(opened.header().program_id, 0x0004_0000_1234_5678);
+        assert!(opened.verify_exefs_integrity().unwrap().is_none());
         assert!(
             opened
                 .open_verified_romfs_level3_reader()

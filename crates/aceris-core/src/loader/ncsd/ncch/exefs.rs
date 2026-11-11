@@ -172,6 +172,9 @@ impl<R: Read + Seek> Seek for ExeFsFileReader<R> {
 pub enum ExeFsError {
     HeaderTruncated,
     RegionTooSmall,
+    InvalidHashRegion,
+    SuperblockHashMismatch,
+    FileHashMismatch(String),
     ReaderFailure(String),
     InvalidEntry { index: usize, reason: &'static str },
     DuplicateFileName(String),
@@ -183,6 +186,13 @@ impl fmt::Display for ExeFsError {
         match self {
             Self::HeaderTruncated => write!(formatter, "ExeFS header is truncated"),
             Self::RegionTooSmall => write!(formatter, "ExeFS region is smaller than its header"),
+            Self::InvalidHashRegion => write!(formatter, "ExeFS hash region is empty"),
+            Self::SuperblockHashMismatch => {
+                write!(formatter, "NCCH ExeFS superblock SHA-256 hash does not match")
+            }
+            Self::FileHashMismatch(name) => {
+                write!(formatter, "ExeFS file hash mismatch: {name}")
+            }
             Self::ReaderFailure(reason) => {
                 write!(formatter, "could not read ExeFS header: {reason}")
             }
