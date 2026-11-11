@@ -8,7 +8,7 @@ use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
-use crate::loader::ncsd::ncch::{NcchError, NcchHeader};
+use crate::loader::ncsd::ncch::{HEADER_SIZE as NCCH_HEADER_SIZE, NcchError, NcchHeader};
 
 use super::crypto::{Aes128CbcReader, TitleKey, cia_content_iv};
 use super::ticket::{MAX_TICKET_SIZE_BYTES, TicketError, TicketHeader};
@@ -407,6 +407,50 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
         verify_content_stream_bytes(content_index, expected_size, expected_hash, &mut decrypted)
     }
 
+    /// Verifies and opens an NCCH inside an encrypted CIA content.
+    ///
+    /// The encrypted CIA stream is decrypted and checked against its TMD
+    /// SHA-256 in a first pass. A fresh stream is then opened and its NCCH
+    /// header is parsed; the header bytes are retained in front of the reader
+    /// so callers receive the complete cleartext content from offset zero.
+    ///
+    /// The returned reader is sequential because the outer AES-CBC stream
+    /// does not provide random access. NCCH-internal AES-CTR regions remain
+    /// encrypted and must be opened through the NCCH crypto APIs separately.
+    pub fn open_verified_decrypted_ncch_content_reader(
+        &mut self,
+        content_index: u16,
+        title_key: &TitleKey,
+    ) -> Result<Option<CiaDecryptedContentNcchReader<'_, R>>, CiaArchiveError> {
+        let Some(location) = self.content_location(content_index) else {
+            return Ok(None);
+        };
+
+        self.verify_encrypted_content(content_index, title_key)?;
+        let mut decrypted = self
+            .open_decrypted_content_reader(content_index, title_key)?
+            .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
+
+        let mut header_bytes = [0u8; NCCH_HEADER_SIZE];
+        decrypted.read_exact(&mut header_bytes).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                CiaArchiveError::InvalidNcchHeader(NcchError::InvalidHeader(
+                    "header is truncated",
+                ))
+            } else {
+                CiaArchiveError::Reader(error)
+            }
+        })?;
+        let header = NcchHeader::parse(&header_bytes, location.size_bytes)
+            .map_err(CiaArchiveError::InvalidNcchHeader)?;
+
+        Ok(Some(CiaDecryptedContentNcchReader {
+            location,
+            header,
+            reader: PrefixedReader::new(header_bytes, decrypted),
+        }))
+    }
+
     /// Verifies and opens the NCCH header of a selected, cleartext CIA content.
     ///
     /// This checks the TMD SHA-256 first, then parses the NCCH header from the
@@ -596,6 +640,75 @@ fn align_content(offset: u64) -> Option<u64> {
     offset
         .checked_add(CONTENT_ALIGNMENT - 1)
         .map(|aligned| aligned & !(CONTENT_ALIGNMENT - 1))
+}
+
+/// A streaming reader that replays a parsed prefix before reading its source.
+#[derive(Debug)]
+struct PrefixedReader<R> {
+    prefix: [u8; NCCH_HEADER_SIZE],
+    prefix_position: usize,
+    reader: R,
+}
+
+impl<R> PrefixedReader<R> {
+    fn new(prefix: [u8; NCCH_HEADER_SIZE], reader: R) -> Self {
+        Self {
+            prefix,
+            prefix_position: 0,
+            reader,
+        }
+    }
+}
+
+impl<R: Read> Read for PrefixedReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if self.prefix_position < self.prefix.len() {
+            let remaining = self.prefix.len() - self.prefix_position;
+            let count = buffer.len().min(remaining);
+            let end = self.prefix_position + count;
+            buffer[..count].copy_from_slice(&self.prefix[self.prefix_position..end]);
+            self.prefix_position = end;
+            return Ok(count);
+        }
+        self.reader.read(buffer)
+    }
+}
+
+/// A TMD-verified, decrypted NCCH content from an encrypted CIA archive.
+///
+/// The NCCH header is parsed before construction, and the original header
+/// bytes are replayed to the caller as the first bytes of the stream.
+#[derive(Debug)]
+pub struct CiaDecryptedContentNcchReader<'a, R> {
+    location: CiaContentLocation,
+    header: NcchHeader,
+    reader: PrefixedReader<Aes128CbcReader<CiaContentReader<'a, R>>>,
+}
+
+impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
+    /// Returns the TMD content location.
+    pub const fn location(&self) -> CiaContentLocation {
+        self.location
+    }
+
+    /// Returns the structurally validated NCCH header.
+    pub const fn header(&self) -> &NcchHeader {
+        &self.header
+    }
+
+    /// Returns the complete cleartext NCCH stream, starting at byte zero.
+    pub fn reader_mut(&mut self) -> &mut dyn Read {
+        &mut self.reader
+    }
+}
+
+impl<R: Read + Seek> Read for CiaDecryptedContentNcchReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.reader.read(buffer)
+    }
 }
 
 /// A TMD-verified NCCH content paired with its bounded source reader.
@@ -1018,6 +1131,81 @@ mod tests {
         archive
             .verify_encrypted_content(content_index, &title_key)
             .unwrap();
+    }
+
+    #[test]
+    fn verifies_and_opens_an_encrypted_ncch_without_consuming_its_header() {
+        let key = [0x29; 16];
+        let title_key = TitleKey::new(key);
+        let mut cleartext = vec![0u8; 0x1_0000];
+        cleartext[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut cleartext, 0x104, 0x80);
+
+        let content_index = 0x0123;
+        let (mut data, locations) =
+            make_cia(&[(0x5100, content_index, CONTENT_TYPE_ENCRYPTED, &cleartext)]);
+        let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
+        let offset = usize::try_from(locations[0].1).unwrap();
+        data[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let mut ncch = archive
+            .open_verified_decrypted_ncch_content_reader(content_index, &title_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(ncch.location().content_index, content_index);
+        assert_eq!(ncch.header().content_size_bytes, cleartext.len() as u64);
+
+        let mut reopened_content = Vec::new();
+        ncch.reader_mut()
+            .read_to_end(&mut reopened_content)
+            .unwrap();
+        assert_eq!(reopened_content, cleartext);
+    }
+
+    #[test]
+    fn encrypted_ncch_open_rejects_a_wrong_title_key_before_parsing() {
+        let key = [0x71; 16];
+        let title_key = TitleKey::new(key);
+        let mut cleartext = vec![0u8; 0x1_0000];
+        cleartext[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut cleartext, 0x104, 0x80);
+
+        let content_index = 0x0034;
+        let (mut data, locations) =
+            make_cia(&[(0x5200, content_index, CONTENT_TYPE_ENCRYPTED, &cleartext)]);
+        let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
+        let offset = usize::try_from(locations[0].1).unwrap();
+        data[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let wrong_title_key = TitleKey::new([0x72; 16]);
+
+        assert!(matches!(
+            archive.open_verified_decrypted_ncch_content_reader(content_index, &wrong_title_key),
+            Err(CiaArchiveError::ContentHashMismatch { content_index: 0x0034 })
+        ));
+    }
+
+    #[test]
+    fn encrypted_ncch_open_rejects_a_validly_hashed_non_ncch_payload() {
+        let key = [0x83; 16];
+        let title_key = TitleKey::new(key);
+        let cleartext = vec![0u8; 0x1_0000];
+        let content_index = 0x0035;
+        let (mut data, locations) =
+            make_cia(&[(0x5300, content_index, CONTENT_TYPE_ENCRYPTED, &cleartext)]);
+        let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
+        let offset = usize::try_from(locations[0].1).unwrap();
+        data[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+
+        assert!(matches!(
+            archive.open_verified_decrypted_ncch_content_reader(content_index, &title_key),
+            Err(CiaArchiveError::InvalidNcchHeader(_))
+        ));
     }
 
     #[test]
