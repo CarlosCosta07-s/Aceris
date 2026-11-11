@@ -56,11 +56,11 @@ impl NcsdPartition {
         NcsdPartitionReader::new(inner, self)
     }
 
-    /// Opens this partition as a structurally validated, cleartext NCCH container.
+    /// Opens this partition as a structurally validated NCCH container.
     ///
     /// The returned value keeps the parsed header paired with the bounded
-    /// partition reader. NCCH decryption and signature verification are not
-    /// performed by this operation.
+    /// partition reader. Content decryption and signature verification are
+    /// separate operations on the returned value.
     pub fn open_ncch<R: Read + Seek>(
         self,
         inner: R,
@@ -240,6 +240,10 @@ pub struct NcsdNcchReader<R> {
 pub type VerifiedNcsdExeFsFileReader<R> =
     ncch::exefs::ExeFsFileReader<ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>>;
 
+/// Decrypted ExeFS file reader returned after NCCH and file hashes validate.
+pub type DecryptedVerifiedNcsdExeFsFileReader<R> =
+    ncch::exefs::ExeFsFileReader<ncch::crypto::NcchCtrReader<NcsdPartitionReader<R>>>;
+
 /// RomFS Level 3 reader returned after NCCH superblock and IVFC hashes validate.
 pub type VerifiedNcsdRomFsLevel3Reader<R> = ncch::romfs::RomFsLevel3Reader<
     ncch::romfs::RomFsRangeReader<ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>>,
@@ -277,6 +281,22 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
     ) -> std::result::Result<Option<VerifiedNcsdExeFsFileReader<R>>, ncch::exefs::ExeFsError> {
         self.header
             .open_verified_exefs_file_reader(self.reader, file_name)
+    }
+
+    /// Opens a file from encrypted ExeFS after validating both SHA-256 layers.
+    ///
+    /// The AES-128 content key is supplied by the caller. The returned stream
+    /// is restricted to the selected file and decrypts bytes as they are read.
+    pub fn open_decrypted_verified_exefs_file_reader(
+        self,
+        file_name: &str,
+        key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<
+        Option<DecryptedVerifiedNcsdExeFsFileReader<R>>,
+        ncch::exefs::ExeFsError,
+    > {
+        self.header
+            .open_decrypted_verified_exefs_file_reader(self.reader, file_name, key)
     }
 
     /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
@@ -554,6 +574,61 @@ mod tests {
         image[exefs_start..exefs_start + EXEFS_SIZE].copy_from_slice(&exefs);
 
         image
+    }
+
+    fn image_with_encrypted_verified_exefs_file(
+        key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> Vec<u8> {
+        const PARTITION_OFFSET: usize = 0x4000;
+        const EXEFS_OFFSET: usize = 0x2000;
+        const EXEFS_SIZE: usize = 0x2000;
+
+        let mut image = image_with_verified_exefs_file();
+        let ncch_start = PARTITION_OFFSET;
+        image[ncch_start + 0x112..ncch_start + 0x114]
+            .copy_from_slice(&2u16.to_le_bytes());
+
+        let header = ncch::NcchHeader::parse(
+            &image[ncch_start..ncch_start + ncch::HEADER_SIZE],
+            0x4000,
+        )
+        .unwrap();
+        let counter = header
+            .initial_ctr_for_region(ncch::crypto::NcchCtrRegion::ExeFs)
+            .unwrap();
+
+        let exefs_start = ncch_start + EXEFS_OFFSET;
+        let exefs_end = exefs_start + EXEFS_SIZE;
+        let mut encrypted_exefs = image[exefs_start..exefs_end].to_vec();
+        ncch::crypto::Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut encrypted_exefs)
+            .unwrap();
+        image[exefs_start..exefs_end].copy_from_slice(&encrypted_exefs);
+
+        image
+    }
+
+    #[test]
+    fn opens_decrypted_verified_exefs_file_through_the_full_ncsd_ncch_chain() {
+        let key = [0x42; ncch::crypto::AES_BLOCK_SIZE];
+        let image = image_with_encrypted_verified_exefs_file(key);
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+        let expected: Vec<u8> = (0..0x10).map(|byte| byte as u8).collect();
+
+        let mut reader = partition
+            .open_ncch(Cursor::new(image))
+            .unwrap()
+            .open_decrypted_verified_exefs_file_reader(".code", key)
+            .unwrap()
+            .unwrap();
+
+        let mut actual = Vec::new();
+        reader.read_to_end(&mut actual).unwrap();
+
+        assert_eq!(reader.len(), 0x10);
+        assert_eq!(actual, expected);
+        assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
     }
 
     #[test]
