@@ -55,6 +55,27 @@ fn partition_reader_seeks_relative_to_partition_start() {
 }
 
 #[test]
+fn partition_reader_reports_remaining_bytes_after_reads_and_seeks() {
+    let image = Cursor::new(b"0123456789".to_vec());
+    let mut reader = partition(2, 6).reader(image).unwrap();
+
+    assert_eq!(reader.remaining(), 6);
+
+    let mut prefix = [0u8; 2];
+    reader.read_exact(&mut prefix).unwrap();
+    assert_eq!(prefix, *b"23");
+    assert_eq!(reader.remaining(), 4);
+
+    assert_eq!(reader.seek(SeekFrom::End(-1)).unwrap(), 5);
+    assert_eq!(reader.remaining(), 1);
+
+    let mut last = [0u8; 1];
+    reader.read_exact(&mut last).unwrap();
+    assert_eq!(last, *b"7");
+    assert_eq!(reader.remaining(), 0);
+}
+
+#[test]
 fn partition_reader_rejects_seeks_outside_the_partition() {
     let image = Cursor::new(b"0123456789".to_vec());
     let mut reader = partition(2, 4).reader(image).unwrap();

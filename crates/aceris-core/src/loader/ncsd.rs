@@ -140,6 +140,11 @@ impl<R: Read + Seek> NcsdPartitionReader<R> {
         self.size == 0
     }
 
+    /// Returns the number of bytes remaining before the partition boundary.
+    pub const fn remaining(&self) -> u64 {
+        self.size - self.position
+    }
+
     /// Returns the current position relative to the partition start.
     pub const fn position(&self) -> u64 {
         self.position
