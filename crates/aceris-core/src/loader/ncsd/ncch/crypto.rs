@@ -293,8 +293,7 @@ impl Aes128Ctr {
             .checked_add(blocks)
             .ok_or(NcchCryptoError::CounterOffsetOverflow)?;
         if !data.is_empty() {
-            let final_block =
-                (remainder as u128 + data.len() as u128 - 1) / AES_BLOCK_SIZE as u128;
+            let final_block = (remainder as u128 + data.len() as u128 - 1) / AES_BLOCK_SIZE as u128;
             counter_value
                 .checked_add(final_block)
                 .ok_or(NcchCryptoError::CounterRangeOverflow)?;
