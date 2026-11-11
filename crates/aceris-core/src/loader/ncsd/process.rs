@@ -9,6 +9,8 @@ use std::fmt;
 
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
+use crate::memory::Bus;
+use aceris_common::{Error, Result};
 
 const PAGE_SIZE: u64 = 0x1000;
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
@@ -220,6 +222,144 @@ impl PreparedArm11Image {
     }
 }
 
+/// A bootstrap ARM11 address space containing the prepared code segments.
+///
+/// This bus maps text, read-only data, and initialized writable data only.
+/// BSS, the main-thread stack, shared memory, and hardware registers are not
+/// mapped until their kernel and device-memory rules are implemented.
+#[derive(Debug)]
+pub struct Arm11CodeAddressSpace {
+    layout: Arm11ProcessLayout,
+    text: Vec<u8>,
+    read_only: Vec<u8>,
+    data: Vec<u8>,
+}
+
+impl Arm11CodeAddressSpace {
+    /// Creates a segmented address space from a verified prepared executable.
+    pub fn from_prepared(
+        prepared: PreparedArm11Image,
+    ) -> std::result::Result<Self, Arm11ProcessLayoutError> {
+        let layout = prepared.process_layout()?;
+        Ok(Self {
+            layout,
+            text: prepared.text,
+            read_only: prepared.read_only,
+            data: prepared.data,
+        })
+    }
+
+    /// Returns the validated process metadata associated with this address space.
+    pub const fn layout(&self) -> &Arm11ProcessLayout {
+        &self.layout
+    }
+
+    /// Returns the backing bytes for one mapped code segment.
+    pub fn segment_bytes(&self, kind: Arm11SegmentKind) -> &[u8] {
+        self.bytes_for(kind)
+    }
+
+    fn locate(&self, address: u32) -> Option<(Arm11SegmentKind, usize)> {
+        let segments = [
+            (Arm11SegmentKind::Text, self.layout.text),
+            (Arm11SegmentKind::ReadOnly, self.layout.read_only),
+            (Arm11SegmentKind::Data, self.layout.data),
+        ];
+
+        for (kind, segment) in segments {
+            if segment.is_empty() || address < segment.address {
+                continue;
+            }
+
+            let offset = u64::from(address) - u64::from(segment.address);
+            if offset < u64::from(segment.mapped_size_bytes) {
+                return usize::try_from(offset).ok().map(|offset| (kind, offset));
+            }
+        }
+
+        None
+    }
+
+    fn bytes_for(&self, kind: Arm11SegmentKind) -> &[u8] {
+        match kind {
+            Arm11SegmentKind::Text => &self.text,
+            Arm11SegmentKind::ReadOnly => &self.read_only,
+            Arm11SegmentKind::Data => &self.data,
+        }
+    }
+
+    fn bytes_for_mut(&mut self, kind: Arm11SegmentKind) -> &mut [u8] {
+        match kind {
+            Arm11SegmentKind::Text => &mut self.text,
+            Arm11SegmentKind::ReadOnly => &mut self.read_only,
+            Arm11SegmentKind::Data => &mut self.data,
+        }
+    }
+
+    fn segment_is_writable(&self, kind: Arm11SegmentKind) -> bool {
+        match kind {
+            Arm11SegmentKind::Text => self.layout.text.writable,
+            Arm11SegmentKind::ReadOnly => self.layout.read_only.writable,
+            Arm11SegmentKind::Data => self.layout.data.writable,
+        }
+    }
+
+    fn write_bytes(&mut self, address: u32, bytes: &[u8]) -> Result<()> {
+        let mut locations = Vec::with_capacity(bytes.len());
+
+        for index in 0..bytes.len() {
+            let offset =
+                u32::try_from(index).map_err(|_| Error::InvalidAccess { addr: address })?;
+            let current_address = address
+                .checked_add(offset)
+                .ok_or(Error::InvalidAccess { addr: address })?;
+            let (kind, segment_offset) = self
+                .locate(current_address)
+                .ok_or(Error::InvalidAccess {
+                    addr: current_address,
+                })?;
+
+            if !self.segment_is_writable(kind) {
+                return Err(Error::InvalidAccess {
+                    addr: current_address,
+                });
+            }
+
+            locations.push((kind, segment_offset));
+        }
+
+        for (byte, (kind, segment_offset)) in bytes.iter().zip(locations) {
+            self.bytes_for_mut(kind)[segment_offset] = *byte;
+        }
+
+        Ok(())
+    }
+}
+
+impl Bus for Arm11CodeAddressSpace {
+    fn read8(&mut self, address: u32) -> Result<u8> {
+        let (kind, offset) = self
+            .locate(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        self.bytes_for(kind)
+            .get(offset)
+            .copied()
+            .ok_or(Error::InvalidAccess { addr: address })
+    }
+
+    fn write8(&mut self, address: u32, value: u8) -> Result<()> {
+        self.write_bytes(address, &[value])
+    }
+
+    fn write16(&mut self, address: u32, value: u16) -> Result<()> {
+        self.write_bytes(address, &value.to_le_bytes())
+    }
+
+    fn write32(&mut self, address: u32, value: u32) -> Result<()> {
+        self.write_bytes(address, &value.to_le_bytes())
+    }
+}
+
 fn validate_image_segment(
     segment: Arm11SegmentKind,
     bytes: &[u8],
@@ -340,6 +480,65 @@ mod tests {
             read_only: vec![0x22; 0x1000],
             data: vec![0x33; 0x1000],
         }
+    }
+
+    #[test]
+    fn arm11_core_fetches_and_executes_from_the_prepared_text_mapping() {
+        let mut prepared = prepared_image();
+        prepared.text[..4].copy_from_slice(&0xE3A0_0007u32.to_le_bytes());
+
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared).unwrap();
+        let mut cpu = crate::cpu::Arm11Core::new();
+        cpu.set_pc(address_space.layout().entry_point);
+
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
+        assert_eq!(cpu.regs[0], 7);
+        assert_eq!(cpu.pc(), 0x0010_0004);
+    }
+
+    #[test]
+    fn address_space_enforces_code_permissions_and_allows_data_writes() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let text_address = address_space.layout.text.address;
+        let read_only_address = address_space.layout.read_only.address;
+        let data_address = address_space.layout.data.address;
+
+        assert!(matches!(
+            address_space.write8(text_address, 0),
+            Err(crate::Error::InvalidAccess { .. })
+        ));
+        assert!(matches!(
+            address_space.write8(read_only_address, 0),
+            Err(crate::Error::InvalidAccess { .. })
+        ));
+
+        address_space
+            .write32(data_address, 0xDEAD_BEEF)
+            .unwrap();
+        assert_eq!(address_space.read32(data_address).unwrap(), 0xDEAD_BEEF);
+    }
+
+    #[test]
+    fn wide_writes_are_atomic_when_the_range_crosses_into_read_only_memory() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let data_start = address_space.layout.data.address;
+        let original = address_space.read8(data_start).unwrap();
+
+        assert!(address_space.write32(data_start - 2, 0xAABB_CCDD).is_err());
+        assert_eq!(address_space.read8(data_start).unwrap(), original);
+    }
+
+    #[test]
+    fn address_space_rejects_unmapped_addresses() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        assert!(matches!(
+            address_space.read8(0x000F_FFFF),
+            Err(crate::Error::InvalidAccess { addr: 0x000F_FFFF })
+        ));
     }
 
     #[test]
