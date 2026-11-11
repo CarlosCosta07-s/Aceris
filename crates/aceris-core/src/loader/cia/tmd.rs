@@ -125,8 +125,8 @@ impl TmdHeader {
         let signature_data_size_bytes = aligned_signature_data_size(signature_type)?;
 
         let header_start = signature_data_size_bytes;
-        let content_info_start = checked_add(header_start, HEADER_SIZE)?;
-        let content_records_start = checked_add(content_info_start, CONTENT_INFO_TABLE_SIZE)?;
+        let content_info_start = checked_add(header_start, CONTENT_INFO_TABLE_OFFSET)?;
+        let content_records_start = checked_add(header_start, CONTENT_RECORDS_OFFSET)?;
 
         ensure_range(data, 0, signature_data_size_bytes, "signature data")?;
         ensure_range(data, header_start, HEADER_SIZE, "TMD header")?;
