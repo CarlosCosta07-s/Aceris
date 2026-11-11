@@ -320,12 +320,14 @@ impl<R: Read + Seek> Aes128CbcReader<R> {
         ciphertext_size_bytes: u64,
     ) -> io::Result<Self> {
         let source_start_bytes = reader.stream_position()?;
-        source_start_bytes.checked_add(ciphertext_size_bytes).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "AES-CBC source range overflows the seek address space",
-            )
-        })?;
+        source_start_bytes
+            .checked_add(ciphertext_size_bytes)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "AES-CBC source range overflows the seek address space",
+                )
+            })?;
         let mut result = Self::new(reader, key, iv, ciphertext_size_bytes)?;
         result.source_start_bytes = Some(source_start_bytes);
         Ok(result)
@@ -557,12 +559,10 @@ mod tests {
     fn supports_random_access_across_cbc_block_boundaries() {
         let key = decode_hex::<16>("2b7e151628aed2a6abf7158809cf4f3c");
         let iv = decode_hex::<16>("000102030405060708090a0b0c0d0e0f");
-        let ciphertext = decode_hex::<32>(
-            "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2",
-        );
-        let expected = decode_hex::<32>(
-            "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51",
-        );
+        let ciphertext =
+            decode_hex::<32>("7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2");
+        let expected =
+            decode_hex::<32>("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
         let mut reader = Aes128CbcReader::new_seekable(
             std::io::Cursor::new(ciphertext.to_vec()),
             key,
@@ -596,12 +596,10 @@ mod tests {
     fn seekable_cbc_reader_preserves_a_nonzero_source_origin() {
         let key = decode_hex::<16>("2b7e151628aed2a6abf7158809cf4f3c");
         let iv = decode_hex::<16>("000102030405060708090a0b0c0d0e0f");
-        let ciphertext = decode_hex::<32>(
-            "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2",
-        );
-        let expected = decode_hex::<32>(
-            "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51",
-        );
+        let ciphertext =
+            decode_hex::<32>("7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2");
+        let expected =
+            decode_hex::<32>("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
         let mut bytes = vec![0xCC; 23];
         bytes.extend_from_slice(&ciphertext);
         let mut source = std::io::Cursor::new(bytes);
