@@ -916,6 +916,58 @@ mod tests {
         (image, text, read_only, data)
     }
 
+    fn encrypt_arm11_code_image(
+        mut image: Vec<u8>,
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> Vec<u8> {
+        const PARTITION_OFFSET: usize = 0x4000;
+        const PARTITION_SIZE: usize = 0x8000;
+        const EXEFS_OFFSET: usize = 0x2000;
+
+        let ncch_start = PARTITION_OFFSET;
+        image[ncch_start + 0x18F] = 0;
+        let header = ncch::NcchHeader::parse(
+            &image[ncch_start..ncch_start + ncch::HEADER_SIZE],
+            PARTITION_SIZE as u64,
+        )
+        .unwrap();
+
+        let extended_header_counter = header
+            .initial_ctr_for_region(ncch::crypto::NcchCtrRegion::ExtendedHeader)
+            .unwrap();
+        let extended_header_start = ncch_start + 0x200;
+        ncch::crypto::Aes128Ctr::new(menu_info_key, extended_header_counter)
+            .apply_keystream(
+                &mut image[extended_header_start..extended_header_start + 0x400],
+            )
+            .unwrap();
+
+        let exefs_counter = header
+            .initial_ctr_for_region(ncch::crypto::NcchCtrRegion::ExeFs)
+            .unwrap();
+        let exefs_start = ncch_start + EXEFS_OFFSET;
+        ncch::crypto::Aes128Ctr::new(menu_info_key, exefs_counter)
+            .apply_keystream(&mut image[exefs_start..exefs_start + 0x200])
+            .unwrap();
+
+        let stored_code_size = u32::from_le_bytes(
+            image[exefs_start + 12..exefs_start + 16]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let code_start = exefs_start + 0x200;
+        ncch::crypto::Aes128Ctr::apply_keystream_at_offset(
+            content_key,
+            exefs_counter,
+            0x200,
+            &mut image[code_start..code_start + stored_code_size],
+        )
+        .unwrap();
+
+        image
+    }
+
     fn image_with_verified_exefs_file() -> Vec<u8> {
         const PARTITION_OFFSET: usize = 0x4000;
         const PARTITION_SIZE: usize = 0x4000;
@@ -1026,6 +1078,27 @@ mod tests {
         assert_eq!(prepared.data, expected_data);
         assert_eq!(prepared.extended_header.bss_size_bytes, 0x20);
         assert!(prepared.extended_header.compresses_exefs_code());
+    }
+
+    #[test]
+    fn prepares_encrypted_arm11_code_with_distinct_menu_and_content_keys() {
+        let (image, expected_text, expected_read_only, expected_data) =
+            image_with_arm11_code(false);
+        let menu_info_key = [0x61; ncch::crypto::AES_BLOCK_SIZE];
+        let content_key = [0x62; ncch::crypto::AES_BLOCK_SIZE];
+        let image = encrypt_arm11_code_image(image, menu_info_key, content_key);
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+
+        let prepared = partition
+            .open_ncch(Cursor::new(image))
+            .unwrap()
+            .prepare_arm11_executable_image(menu_info_key, content_key)
+            .unwrap();
+
+        assert_eq!(prepared.text, expected_text);
+        assert_eq!(prepared.read_only, expected_read_only);
+        assert_eq!(prepared.data, expected_data);
     }
 
     #[test]
