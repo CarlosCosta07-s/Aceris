@@ -21,7 +21,9 @@ Ordem sugerida; os marcos podem ser reordenados conforme o que for aprendido.
 ## 2. Memória e carregamento
 
 - [ ] Mapa de memória real e MMU
-- [ ] Parser dos formatos de imagem identificados em `loader`
+- [x] Parser estrutural de NCSD/CCI (.3ds/.cci), com validação das oito entradas e dos limites das partições
+- [ ] Parser NCCH (cabeçalho, ExeFS e RomFS)
+- [ ] Parser CIA e 3DSX
 - [ ] Carregamento de executáveis homebrew como primeiro alvo
 
 ## 3. Sistema operacional emulado
@@ -43,5 +45,5 @@ Ordem sugerida; os marcos podem ser reordenados conforme o que for aprendido.
 
 ## 6. App Android
 
-- [ ] Projeto Gradle/Kotlin com ponte JNI para `aceris-android`
+- [ ] Projeto Gradle/Kotlin com ponte JNI para aceris-android
 - [ ] Gerenciamento de superfície, entrada e ciclo de vida

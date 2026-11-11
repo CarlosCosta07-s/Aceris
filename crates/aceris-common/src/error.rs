@@ -12,6 +12,15 @@ pub enum Error {
     #[error("unrecognised or unsupported game image format")]
     UnsupportedFormat,
 
+    #[error("invalid NCSD header: {0}")]
+    InvalidNcsdHeader(&'static str),
+
+    #[error("invalid NCSD partition {index}: {reason}")]
+    InvalidNcsdPartition { index: usize, reason: &'static str },
+
+    #[error("NCSD partitions {first} and {second} overlap")]
+    OverlappingNcsdPartitions { first: usize, second: usize },
+
     #[error("no game image has been loaded")]
     NoImageLoaded,
 
