@@ -877,6 +877,9 @@ mod tests {
         write_u32(&mut image, ncch_start + 0x104, 0x40);
         write_u32(&mut image, ncch_start + 0x180, 0x400);
         image[ncch_start + 0x18F] = 0x04;
+        write_u32(&mut image, ncch_start + 0x1A0, 0x10);
+        write_u32(&mut image, ncch_start + 0x1A4, 0x20);
+        write_u32(&mut image, ncch_start + 0x1A8, 1);
 
         let mut extended_header = vec![0u8; 0x400];
         extended_header[0..8].copy_from_slice(b"ACERIS!!");
