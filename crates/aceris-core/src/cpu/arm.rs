@@ -1603,7 +1603,7 @@ mod tests {
     #[test]
     fn armv6_parallel_exchanged_saturating_and_halving_variants_swap_operands() {
         // QASX r3,r1,r2 ; UHASX r6,r1,r2.
-        let mut m = Machine::new(&[0xE621_3F32, 0xE671_6F3B]);
+        let mut m = Machine::new(&[0xE621_3F32, 0xE671_6F32]);
         m.cpu.regs[1] = 0x000A_0014;
         m.cpu.regs[2] = 0x0003_0005;
 
