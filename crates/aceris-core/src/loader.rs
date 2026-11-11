@@ -1,21 +1,23 @@
 //! Game image identification.
 //!
 //! This module recognises supported containers and performs structural
-//! validation for NCSD cartridge images before returning them to the system.
+//! validation for NCSD cartridge images and CIA installable archives before
+//! returning them to the system.
 
 use aceris_common::{Error, Result};
 use std::{fs::File, io::Read, path::Path};
 
+pub mod cia;
 pub mod ncsd;
 
-/// Bytes read from the start of a file. This covers the complete NCSD header.
-const PROBE_LEN: usize = ncsd::HEADER_SIZE;
+/// Bytes read from the start of a file. The CIA header is larger than NCSD.
+const PROBE_LEN: usize = cia::HEADER_SIZE;
 
 /// Offset of the NCSD/NCCH magic in cartridge images and content files.
 const CONTAINER_MAGIC_OFFSET: usize = 0x100;
 
 /// Value of the little-endian header-size field at the start of a CIA file.
-const CIA_HEADER_SIZE: u32 = 0x2020;
+const CIA_HEADER_SIZE: u32 = cia::HEADER_SIZE as u32;
 
 /// Container formats Aceris can recognise.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,8 +67,9 @@ pub fn detect_format(data: &[u8]) -> Option<ImageFormat> {
 
 /// Reads the start of the file at the given path and identifies its format.
 ///
-/// NCSD images are additionally checked for a complete header and valid
-/// partition ranges. Signature verification and decryption are not performed.
+/// NCSD and CIA images receive structural validation of their public
+/// container headers and declared byte ranges. Signature verification,
+/// decryption and executable validation are not performed.
 pub fn identify_file(path: &Path) -> Result<ImageFormat> {
     let file = File::open(path)?;
     let file_len = file.metadata()?.len();
@@ -74,8 +77,14 @@ pub fn identify_file(path: &Path) -> Result<ImageFormat> {
     file.take(PROBE_LEN as u64).read_to_end(&mut header)?;
 
     let format = detect_format(&header).ok_or(Error::UnsupportedFormat)?;
-    if format == ImageFormat::Ncsd {
-        ncsd::NcsdHeader::parse(&header, file_len)?;
+    match format {
+        ImageFormat::Ncsd => {
+            ncsd::NcsdHeader::parse(&header, file_len)?;
+        }
+        ImageFormat::Cia => {
+            cia::CiaHeader::parse(&header, file_len)?;
+        }
+        _ => {}
     }
     Ok(format)
 }
