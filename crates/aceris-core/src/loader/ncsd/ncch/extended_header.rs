@@ -4,7 +4,7 @@
 //! Access Control Info bytes for later kernel/process-loader work.
 
 use std::fmt;
-use std::io::{Read, Error as IoError, ErrorKind};
+use std::io::Read;
 
 pub const EXTENDED_HEADER_SIZE: usize = 0x400;
 pub const SYSTEM_CONTROL_INFO_SIZE: usize = 0x200;
