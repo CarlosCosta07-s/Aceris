@@ -587,4 +587,5 @@ mod tests {
                 .kind(),
             std::io::ErrorKind::InvalidInput
         );
-    }}
+    }
+}
