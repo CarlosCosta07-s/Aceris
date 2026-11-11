@@ -518,10 +518,7 @@ impl NcchHeader {
         &self,
         reader: R,
         file_name: &str,
-    ) -> Result<
-        Option<exefs::ExeFsFileReader<romfs::RomFsRangeReader<R>>>,
-        exefs::ExeFsError,
-    > {
+    ) -> Result<Option<exefs::ExeFsFileReader<romfs::RomFsRangeReader<R>>>, exefs::ExeFsError> {
         let Some(region) = self.exefs else {
             return Ok(None);
         };
@@ -898,7 +895,9 @@ mod tests {
         image[0x2000 + 0x10] ^= 0x80;
 
         assert_eq!(
-            parsed.open_verified_exefs_file_reader(Cursor::new(image), ".code").err(),
+            parsed
+                .open_verified_exefs_file_reader(Cursor::new(image), ".code")
+                .err(),
             Some(exefs::ExeFsError::SuperblockHashMismatch)
         );
     }
@@ -909,7 +908,9 @@ mod tests {
         image[0x2000 + 0x200 + 0x10] ^= 0x80;
 
         assert_eq!(
-            parsed.open_verified_exefs_file_reader(Cursor::new(image), ".code").err(),
+            parsed
+                .open_verified_exefs_file_reader(Cursor::new(image), ".code")
+                .err(),
             Some(exefs::ExeFsError::FileHashMismatch(".code".to_owned()))
         );
     }
@@ -919,7 +920,9 @@ mod tests {
         let (image, parsed) = valid_exefs_image();
 
         assert_eq!(
-            parsed.open_verified_exefs_file_reader(Cursor::new(image), "missing").err(),
+            parsed
+                .open_verified_exefs_file_reader(Cursor::new(image), "missing")
+                .err(),
             Some(exefs::ExeFsError::FileNotFound("missing".to_owned()))
         );
     }

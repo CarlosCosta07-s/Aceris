@@ -528,16 +528,20 @@ mod tests {
         assert!(opened.verify_exefs_integrity().unwrap().is_none());
 
         let opened_for_exefs = partition.open_ncch(Cursor::new(image.clone())).unwrap();
-        assert!(opened_for_exefs
-            .open_verified_exefs_file_reader(".code")
-            .unwrap()
-            .is_none());
+        assert!(
+            opened_for_exefs
+                .open_verified_exefs_file_reader(".code")
+                .unwrap()
+                .is_none()
+        );
 
         let opened_for_romfs = partition.open_ncch(Cursor::new(image)).unwrap();
-        assert!(opened_for_romfs
-            .open_verified_romfs_level3_reader()
-            .unwrap()
-            .is_none());
+        assert!(
+            opened_for_romfs
+                .open_verified_romfs_level3_reader()
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
