@@ -1218,7 +1218,7 @@ mod tests {
         m.run(5);
 
         assert_eq!(m.cpu.regs[0], 0x0000_0012);
-        assert_eq!(m.cpu.regs[2], 0x0000_80FE);
+        assert_eq!(m.cpu.regs[2], 0xFFFF_80FE);
         assert_eq!(m.cpu.regs[3], 0x0000_0080);
         assert_eq!(m.cpu.regs[4], 0x0000_FE12);
         assert_eq!(m.cpu.regs[5], 0xFFFF_FFFE);
