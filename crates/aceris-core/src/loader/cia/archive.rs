@@ -800,11 +800,7 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
         menu_info_key: [u8; AES_BLOCK_SIZE],
         content_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<
-        Option<
-            crate::loader::ncsd::ncch::exefs::ExeFsFileReader<
-                NcchCtrReader<Self>,
-            >,
-        >,
+        Option<crate::loader::ncsd::ncch::exefs::ExeFsFileReader<NcchCtrReader<Self>>>,
         crate::loader::ncsd::ncch::exefs::ExeFsError,
     > {
         let header = self.header.clone();
@@ -1418,9 +1414,7 @@ mod tests {
         ncch[0x2000..0x2400].copy_from_slice(&exefs);
 
         let parsed = NcchHeader::parse(&ncch[..NCCH_HEADER_SIZE], ncch.len() as u64).unwrap();
-        let counter = parsed
-            .initial_ctr_for_region(NcchCtrRegion::ExeFs)
-            .unwrap();
+        let counter = parsed.initial_ctr_for_region(NcchCtrRegion::ExeFs).unwrap();
         let mut encrypted_exefs = exefs;
         Aes128Ctr::new(menu_info_key, counter)
             .apply_keystream(&mut encrypted_exefs[..0x200])
@@ -1523,9 +1517,9 @@ mod tests {
                 [0xA6; AES_BLOCK_SIZE],
             )
             .err(),
-            Some(crate::loader::ncsd::ncch::exefs::ExeFsError::FileHashMismatch(
-                ".code".to_owned()
-            ))
+            Some(
+                crate::loader::ncsd::ncch::exefs::ExeFsError::FileHashMismatch(".code".to_owned())
+            )
         );
     }
 
