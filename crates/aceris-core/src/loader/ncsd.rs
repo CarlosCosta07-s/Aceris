@@ -514,6 +514,70 @@ mod tests {
         image
     }
 
+    fn sha256_digest(data: &[u8]) -> [u8; 32] {
+        let mut hasher = ncch::romfs::sha256::Sha256::new();
+        hasher.update(data).unwrap();
+        hasher.finalize()
+    }
+
+    fn image_with_verified_exefs_file() -> Vec<u8> {
+        const PARTITION_OFFSET: usize = 0x4000;
+        const PARTITION_SIZE: usize = 0x4000;
+        const EXEFS_OFFSET: usize = 0x2000;
+        const EXEFS_SIZE: usize = 0x2000;
+
+        let mut image = vec![0; PARTITION_OFFSET + PARTITION_SIZE];
+        image[MAGIC_OFFSET..MAGIC_OFFSET + 4].copy_from_slice(b"NCSD");
+        write_u32(&mut image, MEDIA_SIZE_OFFSET, 0x40);
+        write_partition(&mut image, 0, 0x20, 0x20);
+
+        let ncch_start = PARTITION_OFFSET;
+        image[ncch_start + 0x100..ncch_start + 0x104].copy_from_slice(b"NCCH");
+        write_u32(&mut image, ncch_start + 0x104, 0x20);
+        write_u32(&mut image, ncch_start + 0x1A0, 0x10);
+        write_u32(&mut image, ncch_start + 0x1A4, 0x10);
+        write_u32(&mut image, ncch_start + 0x1A8, 1);
+
+        let mut exefs = vec![0; EXEFS_SIZE];
+        exefs[..5].copy_from_slice(b".code");
+        write_u32(&mut exefs, 12, 0x10);
+
+        let code: Vec<u8> = (0..0x10).map(|byte| byte as u8).collect();
+        exefs[0x200..0x210].copy_from_slice(&code);
+        let code_hash = sha256_digest(&code);
+        exefs[0x1E0..0x200].copy_from_slice(&code_hash);
+
+        let superblock_hash = sha256_digest(&exefs[..0x200]);
+        image[ncch_start + 0x1C0..ncch_start + 0x1E0].copy_from_slice(&superblock_hash);
+
+        let exefs_start = ncch_start + EXEFS_OFFSET;
+        image[exefs_start..exefs_start + EXEFS_SIZE].copy_from_slice(&exefs);
+
+        image
+    }
+
+    #[test]
+    fn opens_verified_exefs_file_through_the_full_ncsd_ncch_chain() {
+        let image = image_with_verified_exefs_file();
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+        let expected: Vec<u8> = (0..0x10).map(|byte| byte as u8).collect();
+
+        let mut reader = partition
+            .open_ncch(Cursor::new(image))
+            .unwrap()
+            .open_verified_exefs_file_reader(".code")
+            .unwrap()
+            .unwrap();
+
+        let mut actual = Vec::new();
+        reader.read_to_end(&mut actual).unwrap();
+
+        assert_eq!(reader.len(), 0x10);
+        assert_eq!(actual, expected);
+        assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+    }
+
     #[test]
     fn opens_primary_partition_as_a_bounded_ncch_container() {
         let image = image_with_primary_ncch();
