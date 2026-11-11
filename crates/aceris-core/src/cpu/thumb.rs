@@ -433,7 +433,10 @@ impl Arm11Core {
 
     fn thumb_conditional_branch(&mut self, half: u32) -> Result<StepEvent> {
         match bits(half, 11, 8) {
-            0xF => Ok(StepEvent::Svc(bits(half, 7, 0))),
+            0xF => {
+                self.enter_svc_exception(self.pc().wrapping_add(2))?;
+                Ok(StepEvent::Svc(bits(half, 7, 0)))
+            },
             0xE => Err(Error::UndefinedInstruction {
                 pc: self.pc(),
                 word: half,
@@ -949,10 +952,30 @@ mod tests {
     }
 
     #[test]
-    fn swi_reports_its_immediate() {
+    fn swi_reports_its_immediate_and_enters_supervisor_arm_state() {
         let mut m = Machine::new(&[0xDF21]);
+        let original_cpsr = m.cpu.cpsr;
+
         assert_eq!(m.step(), StepEvent::Svc(0x21));
-        assert_eq!(m.cpu.pc(), 2);
+        assert_eq!(m.cpu.pc(), 0x08);
+        assert_eq!(m.cpu.regs[14], 0x02);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+        assert!(!m.cpu.cpsr.thumb());
+        assert_ne!(m.cpu.cpsr.0 & (1 << 7), 0);
+        assert_eq!(m.cpu.saved_program_status(), Some(original_cpsr));
+    }
+
+    #[test]
+    fn thumb_swi_returns_to_the_instruction_after_the_call() {
+        // The 32-bit ARM MOVS pc,lr handler is placed at vector 0x08.
+        let mut m = Machine::new(&[0xDF21, 0x46C0, 0x46C0, 0x46C0, 0xF00E, 0xE1B0]);
+        let original_cpsr = m.cpu.cpsr;
+
+        assert_eq!(m.step(), StepEvent::Svc(0x21));
+        assert_eq!(m.cpu.pc(), 0x08);
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.cpu.pc(), 0x02);
+        assert_eq!(m.cpu.cpsr, original_cpsr);
     }
 
     #[test]

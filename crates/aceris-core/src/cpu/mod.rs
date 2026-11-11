@@ -29,8 +29,8 @@ const THUMB_INSTRUCTION_SIZE: u32 = 2;
 pub enum StepEvent {
     /// A normal instruction completed.
     Executed,
-    /// A supervisor call was executed; the payload is its 24-bit comment
-    /// field. `pc` already points to the following instruction.
+    /// A supervisor call was executed and Supervisor exception entry completed.
+    /// The payload is the instruction's 24-bit (A32) or 8-bit (Thumb) comment.
     Svc(u32),
     /// A BKPT instruction was encountered. The immediate is retained for a
     /// debugger or the process exception layer.
@@ -105,6 +105,8 @@ pub struct Arm11Core {
     banked: BankedRegisters,
     saved_status: SavedStatusRegisters,
     active_mode: u32,
+    high_vectors_enabled: bool,
+    exception_big_endian: bool,
 }
 
 impl Default for Arm11Core {
@@ -117,6 +119,8 @@ impl Default for Arm11Core {
             banked: BankedRegisters::default(),
             saved_status: SavedStatusRegisters::default(),
             active_mode: Psr::USER_MODE,
+            high_vectors_enabled: false,
+            exception_big_endian: false,
         }
     }
 }
@@ -189,6 +193,46 @@ impl Arm11Core {
         };
         self.regs[SP] = values[0];
         self.regs[LR] = values[1];
+    }
+
+    /// Configures the CP15-controlled exception vector and endianness state.
+    ///
+    /// This is an integration point for SCTLR.V and SCTLR.EE; both default to
+    /// the low-vector, little-endian reset profile until CP15 is implemented.
+    pub fn configure_exception_entry(
+        &mut self,
+        high_vectors_enabled: bool,
+        exception_big_endian: bool,
+    ) {
+        self.high_vectors_enabled = high_vectors_enabled;
+        self.exception_big_endian = exception_big_endian;
+    }
+
+    /// Enters the ARMv6 Supervisor exception and preserves the previous CPSR.
+    ///
+    /// The current exception entry profile uses the configured vector base,
+    /// switches to ARM state, and masks IRQ. The SVC vector is at offset 0x08.
+    fn enter_svc_exception(&mut self, return_address: u32) -> Result<()> {
+        let previous_cpsr = self.cpsr;
+        self.switch_mode(Psr::SUPERVISOR_MODE)?;
+        self.set_saved_program_status(previous_cpsr)?;
+        self.regs[LR] = return_address;
+
+        let mut entered_cpsr = previous_cpsr.0
+            & !(Psr::MODE_MASK | (1 << 5) | (1 << 7) | (1 << 9));
+        entered_cpsr |= Psr::SUPERVISOR_MODE | (1 << 7);
+        if self.exception_big_endian {
+            entered_cpsr |= 1 << 9;
+        }
+        self.cpsr.0 = entered_cpsr;
+
+        let vector_base = if self.high_vectors_enabled {
+            0xFFFF_0000
+        } else {
+            0
+        };
+        self.branch(vector_base + 0x08);
+        Ok(())
     }
 
     /// Returns the SPSR belonging to the active exception mode, if one exists.
