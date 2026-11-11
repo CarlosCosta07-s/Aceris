@@ -125,6 +125,7 @@ impl Pica200 {
         &mut self,
         words: &[u32],
     ) -> Result<PicaCommandListReport, PicaCommandError> {
+        validate_command_list(words)?;
         let mut report = PicaCommandListReport::default();
         let mut cursor = 0usize;
 
@@ -203,6 +204,46 @@ impl Pica200 {
         self.command_lists_submitted = 0;
         self.register_writes = 0;
     }
+}
+
+fn validate_command_list(words: &[u32]) -> Result<(), PicaCommandError> {
+    let mut cursor = 0usize;
+    while cursor < words.len() {
+        let command_offset = cursor;
+        if words.len() - cursor < 2 {
+            return Err(PicaCommandError::IncompleteCommandHeader {
+                word_offset: command_offset,
+            });
+        }
+
+        let header = words[cursor + 1];
+        let register_id = header & 0xFFFF;
+        let extra_parameters = ((header >> 20) & 0xFF) as usize;
+        let consecutive = header & (1 << 31) != 0;
+        let command_words = 2usize.saturating_add(extra_parameters);
+        let remaining_words = words.len() - cursor;
+        if remaining_words < command_words {
+            return Err(PicaCommandError::TruncatedParameters {
+                word_offset: command_offset,
+                required_words: command_words,
+                remaining_words,
+            });
+        }
+
+        let final_register = if consecutive {
+            register_id.saturating_add(extra_parameters as u32)
+        } else {
+            register_id
+        };
+        if register_id >= REGISTER_COUNT as u32 || final_register >= REGISTER_COUNT as u32 {
+            return Err(PicaCommandError::InvalidRegister {
+                register: final_register,
+                parameter_index: extra_parameters,
+            });
+        }
+        cursor += command_words;
+    }
+    Ok(())
 }
 
 fn apply_byte_mask(target: &mut u32, value: u32, mask: u8) {
@@ -286,6 +327,29 @@ mod tests {
         assert!(matches!(error, PicaCommandError::InvalidRegister { .. }));
         assert_eq!(gpu.register(0x3FF), Some(0));
         assert_eq!(gpu.command_lists_submitted(), 0);
+    }
+
+    #[test]
+    fn invalid_trailing_command_does_not_partially_apply_earlier_register_writes() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(0x100, 0x1122_3344).unwrap();
+
+        let error = gpu
+            .execute_command_list(&[
+                0xAABB_CCDD,
+                command(0x101, 0xF, false, 0),
+                0xDEAD_BEEF,
+                command(0x3FF, 0xF, true, 1),
+                0x1234_5678,
+            ])
+            .unwrap_err();
+
+        assert!(matches!(error, PicaCommandError::InvalidRegister { .. }));
+        assert_eq!(gpu.register(0x100), Some(0x1122_3344));
+        assert_eq!(gpu.register(0x101), Some(0));
+        assert_eq!(gpu.register(0x3FF), Some(0));
+        assert_eq!(gpu.command_lists_submitted(), 0);
+        assert_eq!(gpu.register_writes(), 1);
     }
 
     #[test]

@@ -158,6 +158,16 @@ impl Arm11ProcessSession {
         &self.address_space
     }
 
+    /// Reads a guest word through the process's permission-aware bus.
+    pub fn read_memory_u32(&mut self, address: u32) -> Result<u32> {
+        self.address_space.read32(address)
+    }
+
+    /// Writes a guest word through the process's permission-aware bus.
+    pub fn write_memory_u32(&mut self, address: u32, value: u32) -> Result<()> {
+        self.address_space.write32(address, value)
+    }
+
     /// Returns the currently selected thread identifier.
     pub const fn current_thread_id(&self) -> Option<ThreadId> {
         self.scheduler.current_thread_id()

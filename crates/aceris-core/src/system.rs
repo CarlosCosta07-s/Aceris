@@ -7,6 +7,7 @@ use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
 use crate::video::DualScreenDisplay;
+use crate::memory::Bus;
 use aceris_common::{Error, Result};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -28,6 +29,9 @@ pub const NOMINAL_FRAME_DURATION_NS: u64 = 16_666_667;
 
 /// Deterministic instruction cap used by System::run_frame.
 pub const DEFAULT_FRAME_INSTRUCTION_BUDGET: usize = 100_000;
+
+/// Maximum guest PICA200 command-list size accepted by one submission.
+pub const MAX_PICA_COMMAND_WORDS: usize = 0x1_0000;
 
 /// Result of one completed development frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,6 +250,75 @@ impl System {
         &mut self.display
     }
 
+    /// Reads and submits a PICA200 command list from the active ARM11 address space.
+    ///
+    /// The guest address must be four-byte aligned and the requested size is
+    /// bounded to prevent an untrusted process from forcing an unbounded host
+    /// allocation. All words are read before the GPU parser is invoked, so an
+    /// invalid guest range cannot partially modify PICA200 registers.
+    pub fn submit_pica_command_list_from_memory(
+        &mut self,
+        address: u32,
+        word_count: usize,
+    ) -> Result<crate::gpu::PicaCommandListReport> {
+        if address & 3 != 0 || word_count > MAX_PICA_COMMAND_WORDS {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PICA200 command list has an unaligned address or exceeds the word limit",
+            )));
+        }
+
+        let byte_count = word_count.checked_mul(4).ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PICA200 command-list byte count overflowed",
+            ))
+        })?;
+        let end_address = u64::from(address) + byte_count as u64;
+        if end_address > 0x1_0000_0000 {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PICA200 command list crosses the 32-bit address-space boundary",
+            )));
+        }
+
+        let words = {
+            let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+                "a prepared ARM11 process session is required for guest GPU commands",
+            ))?;
+            let mut words = Vec::new();
+            words.try_reserve_exact(word_count).map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("could not allocate PICA200 command buffer: {error}"),
+                ))
+            })?;
+            for index in 0..word_count {
+                let offset = u32::try_from(index.checked_mul(4).ok_or_else(|| {
+                    Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "PICA200 command offset overflowed",
+                    ))
+                })?)
+                .map_err(|_| {
+                    Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "PICA200 command offset exceeds 32-bit addressing",
+                    ))
+                })?;
+                words.push(session.read_memory_u32(address + offset)?);
+            }
+            words
+        };
+
+        self.gpu.execute_command_list(&words).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid PICA200 command list: {error}"),
+            ))
+        })
+    }
+
     /// Advances one frame using a caller-supplied ARM11 instruction budget.
     ///
     /// The budget is deterministic but not cycle-accurate. The development
@@ -293,6 +366,38 @@ mod tests {
     fn running_without_an_image_fails() {
         let mut system = System::new();
         assert!(matches!(system.run_frame(), Err(Error::NoImageLoaded)));
+    }
+
+    #[test]
+    fn submits_pica_commands_from_guest_memory_into_register_file() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let session = system.ncsd_session_mut().unwrap();
+        session.write_memory_u32(0x0010_2000, 0xDEAD_BEEF).unwrap();
+        session.write_memory_u32(0x0010_2004, 0x000F_0100).unwrap();
+
+        let report = system
+            .submit_pica_command_list_from_memory(0x0010_2000, 2)
+            .unwrap();
+        assert_eq!(report.commands, 1);
+        assert_eq!(report.register_writes, 1);
+        assert_eq!(system.gpu().register(0x100), Some(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn invalid_guest_gpu_command_range_does_not_change_registers() {
+        let mut system = System::new();
+        assert!(matches!(
+            system.submit_pica_command_list_from_memory(0x0010_2000, 2),
+            Err(Error::Unimplemented(_))
+        ));
     }
 
     #[test]
