@@ -172,15 +172,12 @@ impl NcchHeader {
             ));
         }
 
-        let extended_header_size = read_u32_le(data, EXTENDED_HEADER_SIZE_OFFSET)
-            .ok_or(NcchError::InvalidHeader(
-                "extended-header size field is truncated",
-            ))?;
+        let extended_header_size = read_u32_le(data, EXTENDED_HEADER_SIZE_OFFSET).ok_or(
+            NcchError::InvalidHeader("extended-header size field is truncated"),
+        )?;
         let extended_header_end = (HEADER_SIZE as u64)
             .checked_add(u64::from(extended_header_size))
-            .ok_or(NcchError::InvalidHeader(
-                "extended-header range overflows",
-            ))?;
+            .ok_or(NcchError::InvalidHeader("extended-header range overflows"))?;
         if extended_header_end > content_size_bytes {
             return Err(NcchError::InvalidHeader(
                 "extended header exceeds the declared content",
@@ -220,23 +217,16 @@ impl NcchHeader {
             content_size_bytes,
         )?;
 
-        let mut regions = [
-            plain_region,
-            logo_region,
-            exefs,
-            romfs,
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+        let mut regions = [plain_region, logo_region, exefs, romfs]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
 
         for region in &regions {
-            let region_end = region.end_offset_bytes().ok_or(
-                NcchError::InvalidRegion {
-                    kind: region.kind,
-                    reason: "end offset overflows",
-                },
-            )?;
+            let region_end = region.end_offset_bytes().ok_or(NcchError::InvalidRegion {
+                kind: region.kind,
+                reason: "end offset overflows",
+            })?;
             if region.offset_bytes < extended_header_end && region_end > HEADER_SIZE as u64 {
                 return Err(NcchError::InvalidRegion {
                     kind: region.kind,
@@ -249,12 +239,12 @@ impl NcchHeader {
         for pair in regions.windows(2) {
             let previous = pair[0];
             let current = pair[1];
-            let previous_end = previous.end_offset_bytes().ok_or(
-                NcchError::InvalidRegion {
+            let previous_end = previous
+                .end_offset_bytes()
+                .ok_or(NcchError::InvalidRegion {
                     kind: previous.kind,
                     reason: "end offset overflows",
-                },
-            )?;
+                })?;
             if current.offset_bytes < previous_end {
                 return Err(NcchError::OverlappingRegions {
                     first: previous.kind,
@@ -281,10 +271,9 @@ impl NcchHeader {
             media_unit_size,
             logo_region_hash: read_array::<32>(data, LOGO_HASH_OFFSET)
                 .ok_or(NcchError::InvalidHeader("logo hash is truncated"))?,
-            extended_header_hash: read_array::<32>(data, EXTENDED_HEADER_HASH_OFFSET)
-                .ok_or(NcchError::InvalidHeader(
-                    "extended-header hash is truncated",
-                ))?,
+            extended_header_hash: read_array::<32>(data, EXTENDED_HEADER_HASH_OFFSET).ok_or(
+                NcchError::InvalidHeader("extended-header hash is truncated"),
+            )?,
             exefs_superblock_hash: read_array::<32>(data, EXEFS_SUPERBLOCK_HASH_OFFSET)
                 .ok_or(NcchError::InvalidHeader("ExeFS hash is truncated"))?,
             romfs_superblock_hash: read_array::<32>(data, ROMFS_SUPERBLOCK_HASH_OFFSET)
@@ -331,15 +320,14 @@ fn read_region(
     media_unit_size: u64,
     content_size_bytes: u64,
 ) -> Result<Option<NcchRegion>, NcchError> {
-    let offset_units = read_u32_le(data, descriptor_offset).ok_or(
-        NcchError::InvalidHeader("region offset field is truncated"),
-    )?;
-    let size_units = read_u32_le(data, descriptor_offset + 4).ok_or(
-        NcchError::InvalidHeader("region size field is truncated"),
-    )?;
+    let offset_units = read_u32_le(data, descriptor_offset)
+        .ok_or(NcchError::InvalidHeader("region offset field is truncated"))?;
+    let size_units = read_u32_le(data, descriptor_offset + 4)
+        .ok_or(NcchError::InvalidHeader("region size field is truncated"))?;
     let hash_units = match hash_offset {
-        Some(offset) => read_u32_le(data, offset)
-            .ok_or(NcchError::InvalidHeader("hash-region size field is truncated"))?,
+        Some(offset) => read_u32_le(data, offset).ok_or(NcchError::InvalidHeader(
+            "hash-region size field is truncated",
+        ))?,
         None => 0,
     };
 
@@ -360,18 +348,20 @@ fn read_region(
         });
     }
 
-    let offset_bytes = u64::from(offset_units)
-        .checked_mul(media_unit_size)
-        .ok_or(NcchError::InvalidRegion {
-            kind,
-            reason: "offset overflows",
-        })?;
-    let size_bytes = u64::from(size_units)
-        .checked_mul(media_unit_size)
-        .ok_or(NcchError::InvalidRegion {
-            kind,
-            reason: "size overflows",
-        })?;
+    let offset_bytes =
+        u64::from(offset_units)
+            .checked_mul(media_unit_size)
+            .ok_or(NcchError::InvalidRegion {
+                kind,
+                reason: "offset overflows",
+            })?;
+    let size_bytes =
+        u64::from(size_units)
+            .checked_mul(media_unit_size)
+            .ok_or(NcchError::InvalidRegion {
+                kind,
+                reason: "size overflows",
+            })?;
     let end_bytes = offset_bytes
         .checked_add(size_bytes)
         .ok_or(NcchError::InvalidRegion {
@@ -391,12 +381,13 @@ fn read_region(
         });
     }
 
-    let hash_region_size_bytes = u64::from(hash_units)
-        .checked_mul(media_unit_size)
-        .ok_or(NcchError::InvalidRegion {
-            kind,
-            reason: "hash-region size overflows",
-        })?;
+    let hash_region_size_bytes =
+        u64::from(hash_units)
+            .checked_mul(media_unit_size)
+            .ok_or(NcchError::InvalidRegion {
+                kind,
+                reason: "hash-region size overflows",
+            })?;
     if hash_region_size_bytes > size_bytes {
         return Err(NcchError::InvalidRegion {
             kind,
@@ -451,8 +442,7 @@ mod tests {
         write_u16(&mut data, VERSION_OFFSET, 2);
         data[PROGRAM_ID_OFFSET..PROGRAM_ID_OFFSET + 8]
             .copy_from_slice(&0x0004_0000_1234_5678u64.to_le_bytes());
-        data[PRODUCT_CODE_OFFSET..PRODUCT_CODE_OFFSET + 16]
-            .copy_from_slice(b"CTR-P-ACERIS0001");
+        data[PRODUCT_CODE_OFFSET..PRODUCT_CODE_OFFSET + 16].copy_from_slice(b"CTR-P-ACERIS0001");
         write_u32(&mut data, EXTENDED_HEADER_SIZE_OFFSET, 0x400);
         data[FLAGS_OFFSET + 5] = 0b0000_1001;
         data[FLAGS_OFFSET + 7] = NO_CRYPTO_FLAG;
