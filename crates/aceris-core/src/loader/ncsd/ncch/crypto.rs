@@ -381,8 +381,8 @@ impl std::error::Error for NcchCtrReaderError {
 /// A seekable, decrypting view of one NCCH AES-CTR region.
 ///
 /// The reader exposes only the selected region, with byte zero corresponding
-/// to the first byte of that region. The caller supplies the AES-128 content
-/// key and the region's initial counter; no console keys are embedded here.
+/// to the first byte of that region. The caller supplies the AES-128 key for
+/// this view and the region's initial counter; no console keys are embedded.
 /// Random seeks reset the CTR stream to the matching byte position.
 pub struct NcchCtrReader<R> {
     inner: R,
@@ -464,6 +464,25 @@ impl<R: std::io::Read + std::io::Seek> NcchCtrReader<R> {
     /// Returns the current position relative to the region start.
     pub const fn position(&self) -> u64 {
         self.position
+    }
+
+    /// Restarts this region at byte zero with a different AES-128 key.
+    ///
+    /// This supports NCCH ExeFS, whose header and files can belong to
+    /// different crypto groups while sharing the same initial CTR.
+    pub fn reset_with_key(&mut self, key: [u8; AES_BLOCK_SIZE]) -> std::io::Result<()> {
+        let actual = self.inner.seek(std::io::SeekFrom::Start(self.start))?;
+        if actual != self.start {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the start of the NCCH region",
+            ));
+        }
+
+        self.position = 0;
+        self.key = key;
+        self.stream = Some(Aes128Ctr::new(key, self.initial_counter));
+        Ok(())
     }
 }
 

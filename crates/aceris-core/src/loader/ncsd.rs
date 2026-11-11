@@ -285,18 +285,22 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
 
     /// Opens a file from encrypted ExeFS after validating both SHA-256 layers.
     ///
-    /// The AES-128 content key is supplied by the caller. The returned stream
-    /// is restricted to the selected file and decrypts bytes as they are read.
+    /// The menu-info and content AES-128 keys are supplied by the caller.
+    /// The returned stream is restricted to the selected file and decrypts
+    /// bytes as they are read.
     pub fn open_decrypted_verified_exefs_file_reader(
         self,
         file_name: &str,
-        key: [u8; ncch::crypto::AES_BLOCK_SIZE],
-    ) -> std::result::Result<
-        Option<DecryptedVerifiedNcsdExeFsFileReader<R>>,
-        ncch::exefs::ExeFsError,
-    > {
-        self.header
-            .open_decrypted_verified_exefs_file_reader(self.reader, file_name, key)
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<Option<DecryptedVerifiedNcsdExeFsFileReader<R>>, ncch::exefs::ExeFsError>
+    {
+        self.header.open_decrypted_verified_exefs_file_reader(
+            self.reader,
+            file_name,
+            menu_info_key,
+            content_key,
+        )
     }
 
     /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
@@ -577,7 +581,8 @@ mod tests {
     }
 
     fn image_with_encrypted_verified_exefs_file(
-        key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
     ) -> Vec<u8> {
         const PARTITION_OFFSET: usize = 0x4000;
         const EXEFS_OFFSET: usize = 0x2000;
@@ -585,14 +590,11 @@ mod tests {
 
         let mut image = image_with_verified_exefs_file();
         let ncch_start = PARTITION_OFFSET;
-        image[ncch_start + 0x112..ncch_start + 0x114]
-            .copy_from_slice(&2u16.to_le_bytes());
+        image[ncch_start + 0x112..ncch_start + 0x114].copy_from_slice(&2u16.to_le_bytes());
 
-        let header = ncch::NcchHeader::parse(
-            &image[ncch_start..ncch_start + ncch::HEADER_SIZE],
-            0x4000,
-        )
-        .unwrap();
+        let header =
+            ncch::NcchHeader::parse(&image[ncch_start..ncch_start + ncch::HEADER_SIZE], 0x4000)
+                .unwrap();
         let counter = header
             .initial_ctr_for_region(ncch::crypto::NcchCtrRegion::ExeFs)
             .unwrap();
@@ -600,9 +602,16 @@ mod tests {
         let exefs_start = ncch_start + EXEFS_OFFSET;
         let exefs_end = exefs_start + EXEFS_SIZE;
         let mut encrypted_exefs = image[exefs_start..exefs_end].to_vec();
-        ncch::crypto::Aes128Ctr::new(key, counter)
-            .apply_keystream(&mut encrypted_exefs)
+        ncch::crypto::Aes128Ctr::new(menu_info_key, counter)
+            .apply_keystream(&mut encrypted_exefs[..0x200])
             .unwrap();
+        ncch::crypto::Aes128Ctr::apply_keystream_at_offset(
+            content_key,
+            counter,
+            0x200,
+            &mut encrypted_exefs[0x200..0x210],
+        )
+        .unwrap();
         image[exefs_start..exefs_end].copy_from_slice(&encrypted_exefs);
 
         image
@@ -610,8 +619,9 @@ mod tests {
 
     #[test]
     fn opens_decrypted_verified_exefs_file_through_the_full_ncsd_ncch_chain() {
-        let key = [0x42; ncch::crypto::AES_BLOCK_SIZE];
-        let image = image_with_encrypted_verified_exefs_file(key);
+        let menu_info_key = [0x42; ncch::crypto::AES_BLOCK_SIZE];
+        let content_key = [0x43; ncch::crypto::AES_BLOCK_SIZE];
+        let image = image_with_encrypted_verified_exefs_file(menu_info_key, content_key);
         let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         let partition = *parsed.primary_partition().unwrap();
         let expected: Vec<u8> = (0..0x10).map(|byte| byte as u8).collect();
@@ -619,7 +629,7 @@ mod tests {
         let mut reader = partition
             .open_ncch(Cursor::new(image))
             .unwrap()
-            .open_decrypted_verified_exefs_file_reader(".code", key)
+            .open_decrypted_verified_exefs_file_reader(".code", menu_info_key, content_key)
             .unwrap()
             .unwrap();
 

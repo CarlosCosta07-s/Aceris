@@ -419,10 +419,12 @@ impl NcchHeader {
 
     /// Opens one encrypted NCCH region as a bounded, seekable plaintext reader.
     ///
-    /// The caller must supply the AES-128 content key derived from lawful
-    /// system material. No key material is stored or discovered by Aceris.
-    /// For NoCrypto content, do not call this method; use a clear bounded
-    /// region reader instead. Returns None when the selected region is absent.
+    /// The caller supplies the AES-128 key for the selected region. No key
+    /// material is stored or discovered by Aceris. For ExeFS, this low-level
+    /// view applies one key to the whole region; use the verified file reader
+    /// below to handle its separate menu-info and content crypto groups.
+    /// For NoCrypto content, use a clear bounded region reader instead.
+    /// Returns None when the selected region is absent.
     pub fn open_decrypted_region_reader<R: Read + Seek>(
         &self,
         reader: R,
@@ -716,26 +718,33 @@ impl NcchHeader {
 
     /// Opens one decrypted ExeFS file after validating its superblock and file digest.
     ///
-    /// The caller must supply the AES-128 content key for an encrypted NCCH.
-    /// The ExeFS superblock hash is checked before parsing its file table, and
-    /// the requested file's SHA-256 digest is checked before its bounded reader
-    /// is returned. The other ExeFS files are not verified by this operation.
+    /// The caller supplies the AES-128 menu-info and content keys for this NCCH.
+    /// The ExeFS header and menu files use the menu-info key; ".code" and
+    /// ".firm" use the content key. Both groups share the ExeFS initial CTR,
+    /// so the selected file's byte offset is applied when it is read.
     ///
-    /// Returns None when the NCCH header does not declare an ExeFS region.
-    /// Cleartext (NoCrypto) content is rejected; use
-    /// [open_verified_exefs_file_reader] for an already-decrypted NCCH.
+    /// The superblock hash is checked before parsing the file table, and the
+    /// requested file's SHA-256 digest is checked before its bounded reader is
+    /// returned. Other ExeFS files are not verified by this operation.
+    /// Returns None when no ExeFS region is declared. NoCrypto content is
+    /// rejected; use [open_verified_exefs_file_reader] for cleartext NCCH.
     pub fn open_decrypted_verified_exefs_file_reader<R: Read + Seek>(
         &self,
         reader: R,
         file_name: &str,
-        key: [u8; crypto::AES_BLOCK_SIZE],
+        menu_info_key: [u8; crypto::AES_BLOCK_SIZE],
+        content_key: [u8; crypto::AES_BLOCK_SIZE],
     ) -> Result<Option<exefs::ExeFsFileReader<crypto::NcchCtrReader<R>>>, exefs::ExeFsError> {
         let Some(region) = self.exefs else {
             return Ok(None);
         };
 
         let mut decrypted_region = self
-            .open_decrypted_region_reader(reader, crypto::NcchCtrRegion::ExeFs, key)
+            .open_decrypted_region_reader(
+                reader,
+                crypto::NcchCtrRegion::ExeFs,
+                menu_info_key,
+            )
             .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?
             .ok_or_else(|| {
                 exefs::ExeFsError::ReaderFailure(
@@ -764,6 +773,13 @@ impl NcchHeader {
             .cloned()
             .ok_or_else(|| exefs::ExeFsError::FileNotFound(file_name.to_owned()))?;
 
+        let file_key = match file.name.as_str() {
+            ".code" | ".firm" => content_key,
+            _ => menu_info_key,
+        };
+        decrypted_region
+            .reset_with_key(file_key)
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
         verify_decrypted_exefs_file_hash(&mut decrypted_region, &file)?;
 
         file.reader(decrypted_region)
@@ -1425,33 +1441,48 @@ mod tests {
         assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
     }
 
-    fn encrypted_exefs_image() -> (Vec<u8>, NcchHeader, [u8; 16], Vec<u8>) {
+    fn encrypted_exefs_image() -> (Vec<u8>, NcchHeader, [u8; 16], [u8; 16], Vec<u8>) {
         let (mut image, _) = valid_exefs_image();
         image[FLAGS_OFFSET + 7] &= !NO_CRYPTO_FLAG;
         let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         let region = parsed.exefs.unwrap();
-        let key = [0x61; crypto::AES_BLOCK_SIZE];
+        let menu_info_key = [0x61; crypto::AES_BLOCK_SIZE];
+        let content_key = [0x62; crypto::AES_BLOCK_SIZE];
         let start = region.offset_bytes as usize;
         let end = start + region.size_bytes as usize;
-        let mut plaintext = image[start..end].to_vec();
-        let expected_code = plaintext[0x200..0x300].to_vec();
+        let mut encrypted = image[start..end].to_vec();
+        let expected_code = encrypted[0x200..0x300].to_vec();
         let counter = parsed
             .initial_ctr_for_region(crypto::NcchCtrRegion::ExeFs)
             .unwrap();
-        crypto::Aes128Ctr::new(key, counter)
-            .apply_keystream(&mut plaintext)
+
+        crypto::Aes128Ctr::new(menu_info_key, counter)
+            .apply_keystream(&mut encrypted[..0x200])
             .unwrap();
-        image[start..end].copy_from_slice(&plaintext);
-        (image, parsed, key, expected_code)
+        crypto::Aes128Ctr::apply_keystream_at_offset(
+            content_key,
+            counter,
+            0x200,
+            &mut encrypted[0x200..0x300],
+        )
+        .unwrap();
+
+        image[start..end].copy_from_slice(&encrypted);
+        (image, parsed, menu_info_key, content_key, expected_code)
     }
 
     #[test]
     fn opens_a_decrypted_verified_exefs_file_as_a_bounded_reader() {
         use std::io::Read;
 
-        let (image, parsed, key, expected) = encrypted_exefs_image();
+        let (image, parsed, menu_info_key, content_key, expected) = encrypted_exefs_image();
         let mut reader = parsed
-            .open_decrypted_verified_exefs_file_reader(Cursor::new(image), ".code", key)
+            .open_decrypted_verified_exefs_file_reader(
+                Cursor::new(image),
+                ".code",
+                menu_info_key,
+                content_key,
+            )
             .unwrap()
             .unwrap();
 
@@ -1464,13 +1495,18 @@ mod tests {
 
     #[test]
     fn rejects_a_decrypted_exefs_file_when_the_superblock_hash_is_invalid() {
-        let (mut image, parsed, key, _) = encrypted_exefs_image();
+        let (mut image, parsed, menu_info_key, content_key, _) = encrypted_exefs_image();
         let region = parsed.exefs.unwrap();
         image[region.offset_bytes as usize + 0x10] ^= 0x80;
 
         assert_eq!(
             parsed
-                .open_decrypted_verified_exefs_file_reader(Cursor::new(image), ".code", key)
+                .open_decrypted_verified_exefs_file_reader(
+                    Cursor::new(image),
+                    ".code",
+                    menu_info_key,
+                    content_key,
+                )
                 .err(),
             Some(exefs::ExeFsError::SuperblockHashMismatch)
         );
@@ -1478,13 +1514,18 @@ mod tests {
 
     #[test]
     fn rejects_a_decrypted_exefs_file_when_its_digest_is_invalid() {
-        let (mut image, parsed, key, _) = encrypted_exefs_image();
+        let (mut image, parsed, menu_info_key, content_key, _) = encrypted_exefs_image();
         let region = parsed.exefs.unwrap();
         image[region.offset_bytes as usize + 0x200 + 0x10] ^= 0x80;
 
         assert_eq!(
             parsed
-                .open_decrypted_verified_exefs_file_reader(Cursor::new(image), ".code", key)
+                .open_decrypted_verified_exefs_file_reader(
+                    Cursor::new(image),
+                    ".code",
+                    menu_info_key,
+                    content_key,
+                )
                 .err(),
             Some(exefs::ExeFsError::FileHashMismatch(".code".to_owned()))
         );
@@ -1500,6 +1541,7 @@ mod tests {
                     Cursor::new(image),
                     ".code",
                     [0x61; crypto::AES_BLOCK_SIZE],
+                    [0x62; crypto::AES_BLOCK_SIZE],
                 )
                 .err(),
             Some(exefs::ExeFsError::ReaderFailure(reason))
