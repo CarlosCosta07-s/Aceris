@@ -6,8 +6,12 @@
 
 use std::io;
 
+/// Streaming access to CIA content sections.
+pub mod archive;
 /// Structural TMD parser used by CIA archives.
 pub mod tmd;
+
+pub use archive::{CiaArchiveError, CiaArchiveReader, CiaContentLocation, CiaContentReader};
 
 pub const HEADER_SIZE: usize = 0x2020;
 pub const CONTENT_INDEX_OFFSET: usize = 0x20;
@@ -142,10 +146,19 @@ impl CiaHeader {
         })
     }
 
-    /// Returns the raw 0x2000-byte content-index bitmap without interpreting
-    /// its bit ordering or asserting that the referenced content is valid.
+    /// Returns the raw 0x2000-byte content-index bitmap.
     pub const fn content_index_bitmap(&self) -> &[u8; CONTENT_INDEX_SIZE] {
         &self.content_index_bitmap
+    }
+
+    /// Returns whether a content index is selected by the CIA bitmap.
+    ///
+    /// Index zero is the most significant bit of the first bitmap byte.
+    pub const fn content_index_is_present(&self, content_index: u16) -> bool {
+        let index = content_index as usize;
+        let byte = self.content_index_bitmap[index / 8];
+        let mask = 0x80 >> (index % 8);
+        byte & mask != 0
     }
 
     /// Parses the TMD section and checks that every CIA-selected content index

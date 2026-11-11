@@ -18,6 +18,9 @@ const CONTENT_INFO_TABLE_SIZE: usize = CONTENT_INFO_RECORD_SIZE * CONTENT_INFO_R
 const CONTENT_RECORD_SIZE: usize = 0x30;
 const CONTENT_INFO_TABLE_OFFSET: usize = HEADER_SIZE;
 const CONTENT_RECORDS_OFFSET: usize = CONTENT_INFO_TABLE_OFFSET + CONTENT_INFO_TABLE_SIZE;
+/// Maximum TMD table size for the largest supported signature and u16 content count.
+pub const MAX_TMD_SIZE_BYTES: usize =
+    0x240 + CONTENT_RECORDS_OFFSET + (u16::MAX as usize * CONTENT_RECORD_SIZE);
 const SECTION_ALIGNMENT: usize = 0x40;
 const CONTENT_INDEX_BITMAP_SIZE: usize = 0x2000;
 
