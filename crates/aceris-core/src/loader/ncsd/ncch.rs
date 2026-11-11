@@ -431,7 +431,7 @@ fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::NcsdPartition;
+    use super::NcsdPartition;
     use std::io::Cursor;
 
     fn write_u16(data: &mut [u8], offset: usize, value: u16) {
@@ -601,7 +601,7 @@ mod tests {
         assert_eq!(
             NcchHeader::parse(&data, 0x200),
             Err(NcchError::InvalidHeader(
-                "declared content is smaller than the header"
+                "extended header exceeds the declared content"
             ))
         );
 
