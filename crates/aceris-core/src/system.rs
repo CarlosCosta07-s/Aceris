@@ -2,7 +2,7 @@
 
 use crate::cpu::Arm11Core;
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
-use crate::loader::ncsd::session::{Arm11ProcessSession, Arm11RunReport};
+use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
 use aceris_common::{Error, Result};
 use std::fs::File;
@@ -34,6 +34,23 @@ impl System {
         self.ncsd_session = None;
         self.cpu = Arm11Core::new();
         Ok(format)
+    }
+
+    /// Inspects and returns the validated public header of an NCSD cartridge.
+    ///
+    /// This accepts cartridge files commonly named `.3ds` and `.cci`; the
+    /// NCSD magic and partition ranges are validated from file contents, not
+    /// inferred from the extension. Inspection does not verify signatures,
+    /// decrypt partitions, or prepare an executable process.
+    pub fn inspect_ncsd_file(path: &Path) -> Result<NcsdHeader> {
+        let image = NcsdImageReader::open(File::open(path)?).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not inspect NCSD cartridge: {error}"),
+            ))
+        })?;
+
+        Ok(image.header().clone())
     }
 
     /// Opens an NCSD cartridge image and initializes its ARM11 process session.
@@ -209,6 +226,26 @@ mod tests {
         image[exefs_start..exefs_start + EXEFS_SIZE].copy_from_slice(&exefs);
 
         image
+    }
+
+    #[test]
+    fn inspects_ncsd_partition_metadata_from_both_3ds_and_cci_paths() {
+        for extension in ["3ds", "cci"] {
+            let path = std::env::temp_dir()
+                .join(format!("aceris-inspect-{}.{extension}", std::process::id()));
+            let image = clear_ncsd_cartridge_fixture();
+            std::fs::write(&path, &image).unwrap();
+
+            let header = System::inspect_ncsd_file(&path).unwrap();
+            let _ = std::fs::remove_file(&path);
+
+            assert_eq!(header.image_size_bytes, image.len() as u64);
+            assert_eq!(header.partitions.len(), 1);
+            let primary = header.primary_partition().unwrap();
+            assert_eq!(primary.index, 0);
+            assert_eq!(primary.offset_bytes, 0x4000);
+            assert_eq!(primary.size_bytes, 0x8000);
+        }
     }
 
     #[test]
