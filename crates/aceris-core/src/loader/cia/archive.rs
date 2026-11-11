@@ -629,18 +629,20 @@ mod tests {
         assert_eq!(archive.content_location(0).unwrap().offset_bytes % 0x40, 0);
         assert_eq!(archive.content_location(2).unwrap().offset_bytes % 0x40, 0);
 
-        let mut main_reader = archive.open_content_reader(0).unwrap().unwrap();
-        let mut main_bytes = Vec::new();
-        main_reader.read_to_end(&mut main_bytes).unwrap();
-        assert_eq!(main_bytes, main);
-        assert_eq!(main_reader.read(&mut [0u8; 1]).unwrap(), 0);
-        drop(main_reader);
+        {
+            let mut main_reader = archive.open_content_reader(0).unwrap().unwrap();
+            let mut main_bytes = Vec::new();
+            main_reader.read_to_end(&mut main_bytes).unwrap();
+            assert_eq!(main_bytes, main);
+            assert_eq!(main_reader.read(&mut [0u8; 1]).unwrap(), 0);
+        }
 
-        let mut manual_reader = archive.open_content_reader(2).unwrap().unwrap();
-        let mut manual_bytes = Vec::new();
-        manual_reader.read_to_end(&mut manual_bytes).unwrap();
-        assert_eq!(manual_bytes, manual);
-        drop(manual_reader);
+        {
+            let mut manual_reader = archive.open_content_reader(2).unwrap().unwrap();
+            let mut manual_bytes = Vec::new();
+            manual_reader.read_to_end(&mut manual_bytes).unwrap();
+            assert_eq!(manual_bytes, manual);
+        }
 
         archive.verify_content(0).unwrap();
         archive.verify_content(2).unwrap();

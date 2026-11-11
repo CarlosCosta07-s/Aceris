@@ -262,17 +262,17 @@ impl TmdHeader {
             .map(|content| content.content_index)
             .collect::<BTreeSet<_>>();
 
-        for (byte_index, byte) in bitmap.iter().copied().enumerate() {
-            for bit_index in 0..8 {
-                if byte & (1 << bit_index) == 0 {
-                    continue;
-                }
-                let raw_index = byte_index * 8 + bit_index;
-                let content_index =
-                    u16::try_from(raw_index).expect("CIA bitmap has exactly 65536 bits");
-                if !declared_indices.contains(&content_index) {
-                    return Err(TmdError::CiaContentIndexMissingFromTmd(content_index));
-                }
+        for raw_index in 0..(CONTENT_INDEX_BITMAP_SIZE * 8) {
+            let byte = bitmap[raw_index / 8];
+            let mask = 0x80 >> (raw_index % 8);
+            if byte & mask == 0 {
+                continue;
+            }
+
+            let content_index =
+                u16::try_from(raw_index).expect("CIA bitmap has exactly 65536 bits");
+            if !declared_indices.contains(&content_index) {
+                return Err(TmdError::CiaContentIndexMissingFromTmd(content_index));
             }
         }
         Ok(())
@@ -537,11 +537,27 @@ mod tests {
         let data = fixture(&[(1, 2, 1, 1, [0; 32])]);
         let tmd = TmdHeader::parse(&data).unwrap();
         let mut bitmap = [0u8; CONTENT_INDEX_BITMAP_SIZE];
-        bitmap[0] = 1 << 2;
+        bitmap[0] = 0x20; // Index 2 is bit 5: content indices are MSB-first.
 
         assert_eq!(tmd.validate_cia_content_index_bitmap(&bitmap), Ok(()));
 
-        bitmap[0] = 1;
+        bitmap[0] = 0x80; // Index 0 is the most significant bit.
+        assert_eq!(
+            tmd.validate_cia_content_index_bitmap(&bitmap),
+            Err(TmdError::CiaContentIndexMissingFromTmd(0))
+        );
+    }
+
+    #[test]
+    fn validates_most_significant_bit_first_order_for_first_and_last_bits() {
+        let data = fixture(&[(1, 0, 1, 1, [0; 32]), (2, 7, 1, 1, [0; 32])]);
+        let tmd = TmdHeader::parse(&data).unwrap();
+        let mut bitmap = [0u8; CONTENT_INDEX_BITMAP_SIZE];
+
+        bitmap[0] = 0x81;
+        assert_eq!(tmd.validate_cia_content_index_bitmap(&bitmap), Ok(()));
+
+        bitmap[0] = 0x01;
         assert_eq!(
             tmd.validate_cia_content_index_bitmap(&bitmap),
             Err(TmdError::CiaContentIndexMissingFromTmd(0))
