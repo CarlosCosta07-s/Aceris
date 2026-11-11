@@ -1453,10 +1453,7 @@ mod tests {
     #[test]
     fn armv6_pack_halfword_handles_left_and_arithmetic_right_shifts() {
         // PKHBT r0,r1,r2,LSL #8 ; PKHTB r3,r4,r5,ASR #8
-        let mut m = Machine::new(&[
-            0xE681_0412,
-            0xE684_3455,
-        ]);
+        let mut m = Machine::new(&[0xE681_0412, 0xE684_3455]);
         m.cpu.regs[1] = 0x1122_3344;
         m.cpu.regs[2] = 0xAABB_CCDD;
         m.cpu.regs[4] = 0x5566_7788;
