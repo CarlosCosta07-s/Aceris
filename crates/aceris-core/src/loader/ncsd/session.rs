@@ -24,9 +24,9 @@ use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY,
-    SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
-    SVC_CANCEL_TIMER, SVC_CLEAR_TIMER, SVC_CREATE_TIMER, SVC_GET_THREAD_PRIORITY,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
+    SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE,
+    SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
     SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY,
     SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_WAIT_SYNCHRONIZATION1,
 };
@@ -755,10 +755,8 @@ impl Arm11ProcessSession {
             .core(caller)
             .expect("caller context exists")
             .regs;
-        let initial_ns =
-            (u64::from(registers[1]) | (u64::from(registers[3]) << 32)) as i64;
-        let interval_ns =
-            (u64::from(registers[2]) | (u64::from(registers[4]) << 32)) as i64;
+        let initial_ns = (u64::from(registers[1]) | (u64::from(registers[3]) << 32)) as i64;
+        let interval_ns = (u64::from(registers[2]) | (u64::from(registers[4]) << 32)) as i64;
         let now_ns = self.scheduler.virtual_time_ns();
 
         match self

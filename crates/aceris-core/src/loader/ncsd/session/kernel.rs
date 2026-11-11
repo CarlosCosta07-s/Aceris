@@ -356,8 +356,7 @@ impl Arm11KernelObjectTable {
                     .checked_div(timer.interval_ns)
                     .unwrap_or(0)
                     .saturating_add(1);
-                let next = deadline_ns
-                    .saturating_add(timer.interval_ns.saturating_mul(steps));
+                let next = deadline_ns.saturating_add(timer.interval_ns.saturating_mul(steps));
                 timer.deadline_ns = (next > now_ns).then_some(next);
             }
 
