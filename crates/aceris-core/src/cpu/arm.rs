@@ -585,6 +585,11 @@ impl Arm11Core {
     // ----- unconditional space ---------------------------------------------
 
     fn execute_unconditional(&mut self, word: u32) -> Result<StepEvent> {
+        // CLREX is an unconditional A32 ARMv6K instruction.
+        if word == 0xF57F_F01F {
+            self.clear_exclusive_monitor();
+            return Ok(StepEvent::Executed);
+        }
         if bits(word, 27, 25) != 0b101 {
             return Err(Error::Unimplemented("unconditional-space instruction"));
         }
@@ -719,6 +724,10 @@ impl Arm11Core {
     }
 
     fn multiply_or_swap<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
+        // All A32 LDREX/STREX size variants share bits[11:4] = 0xF9.
+        if bits(word, 11, 4) == 0xF9 {
+            return self.execute_exclusive_instruction(bus, word);
+        }
         if bits(word, 27, 22) == 0 {
             self.multiply(word);
         } else if bits(word, 27, 23) == 0b00001 {
@@ -772,6 +781,156 @@ impl Arm11Core {
             let (c, v) = (self.cpsr.c(), self.cpsr.v());
             self.cpsr.set_flags(result >> 63 != 0, result == 0, c, v);
         }
+    }
+
+    /// Executes A32 exclusive loads and stores.
+    ///
+    /// LDREX/STREX word are part of ARMv6. The byte, halfword and doubleword
+    /// forms are ARMv6K extensions; they share the same local-monitor contract.
+    fn execute_exclusive_instruction<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+    ) -> Result<StepEvent> {
+        let operation = bits(word, 27, 20);
+        let (load, size) = match operation {
+            0x19 => (true, 4),  // LDREX
+            0x18 => (false, 4), // STREX
+            0x1D => (true, 1),  // LDREXB
+            0x1C => (false, 1), // STREXB
+            0x1F => (true, 2),  // LDREXH
+            0x1E => (false, 2), // STREXH
+            0x1B => (true, 8),  // LDREXD
+            0x1A => (false, 8), // STREXD
+            _ => {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+        };
+
+        let rn = bits(word, 19, 16) as usize;
+        if rn == PC {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        let address = self.regs[rn];
+        if address as usize % size != 0 {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+
+        if load {
+            let rt = bits(word, 15, 12) as usize;
+            if rt == PC || (size == 8 && (rt % 2 != 0 || rt == LR || rt + 1 >= PC)) {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+
+            // A new exclusive load replaces the previous local reservation.
+            self.exclusive_reservation = None;
+            let (raw_value, version) = bus.exclusive_read(address, size)?;
+            match size {
+                1 => self.regs[rt] = raw_value as u32,
+                2 => {
+                    let value = raw_value as u16;
+                    self.regs[rt] = u32::from(if self.cpsr.big_endian() {
+                        value.swap_bytes()
+                    } else {
+                        value
+                    });
+                }
+                4 => {
+                    let value = raw_value as u32;
+                    self.regs[rt] = if self.cpsr.big_endian() {
+                        value.swap_bytes()
+                    } else {
+                        value
+                    };
+                }
+                8 => {
+                    let first = raw_value as u32;
+                    let second = (raw_value >> 32) as u32;
+                    if self.cpsr.big_endian() {
+                        self.regs[rt] = first.swap_bytes();
+                        self.regs[rt + 1] = second.swap_bytes();
+                    } else {
+                        self.regs[rt] = first;
+                        self.regs[rt + 1] = second;
+                    }
+                }
+                _ => unreachable!(),
+            }
+
+            self.exclusive_reservation = Some(super::ExclusiveReservation {
+                address,
+                size: size as u8,
+                version,
+            });
+        } else {
+            let rd = bits(word, 15, 12) as usize;
+            let rt = bits(word, 3, 0) as usize;
+            let second_rt = rt + 1;
+
+            if rd == PC
+                || rt == PC
+                || rd == rn
+                || rd == rt
+                || (size == 8
+                    && (rt % 2 != 0 || rt == LR || second_rt >= PC || rd == second_rt))
+            {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+
+            let stored_value = match size {
+                1 => u64::from((self.regs[rt] & 0xFF) as u8),
+                2 => {
+                    let value = self.regs[rt] as u16;
+                    u64::from(if self.cpsr.big_endian() {
+                        value.swap_bytes()
+                    } else {
+                        value
+                    })
+                }
+                4 => {
+                    let value = self.regs[rt];
+                    u64::from(if self.cpsr.big_endian() {
+                        value.swap_bytes()
+                    } else {
+                        value
+                    })
+                }
+                8 => {
+                    let first = self.regs[rt];
+                    let second = self.regs[second_rt];
+                    if self.cpsr.big_endian() {
+                        u64::from(first.swap_bytes())
+                            | (u64::from(second.swap_bytes()) << 32)
+                    } else {
+                        u64::from(first) | (u64::from(second) << 32)
+                    }
+                }
+                _ => unreachable!(),
+            };
+
+            // STREX always consumes the local reservation, including on failure.
+            let reservation = self.exclusive_reservation.take().and_then(|saved| {
+                (saved.address == address && usize::from(saved.size) == size)
+                    .then_some(saved.version)
+            });
+            let succeeded = bus.exclusive_write(address, size, stored_value, reservation)?;
+            self.regs[rd] = u32::from(!succeeded);
+        }
+
+        Ok(StepEvent::Executed)
     }
 
     fn swap<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<()> {
@@ -1767,6 +1926,181 @@ mod tests {
 
         assert_eq!(m.cpu.regs[0], 414);
         assert_eq!(m.cpu.regs[4], 424);
+    }
+
+    #[test]
+    fn armv6_ldrex_strex_word_succeeds_once() {
+        // LDREX r0,[r1] ; STREX r2,r3,[r1] ; STREX r2,r3,[r1]
+        let mut m = Machine::new(&[
+            0xE191_0F9F,
+            0xE181_2F93,
+            0xE181_2F93,
+        ]);
+        m.cpu.regs[1] = DATA;
+        m.cpu.regs[3] = 0xAABB_CCDD;
+        m.mem.write32(DATA, 0x1122_3344).unwrap();
+
+        m.step();
+        assert_eq!(m.cpu.regs[0], 0x1122_3344);
+        m.step();
+        assert_eq!(m.cpu.regs[2], 0);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0xAABB_CCDD);
+
+        m.cpu.regs[3] = 0x5566_7788;
+        m.step();
+        assert_eq!(m.cpu.regs[2], 1);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0xAABB_CCDD);
+    }
+
+    #[test]
+    fn intervening_store_in_the_same_monitor_granule_breaks_strex() {
+        // LDREX r0,[r1] ; STR r4,[r1,#4] ; STREX r2,r3,[r1]
+        let mut m = Machine::new(&[
+            0xE191_0F9F,
+            0xE581_4004,
+            0xE181_2F93,
+        ]);
+        m.cpu.regs[1] = DATA;
+        m.cpu.regs[3] = 0xAABB_CCDD;
+        m.cpu.regs[4] = 0x5566_7788;
+        m.mem.write32(DATA, 0x1122_3344).unwrap();
+        m.mem.write32(DATA + 4, 0).unwrap();
+
+        m.run(3);
+
+        assert_eq!(m.cpu.regs[2], 1);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0x1122_3344);
+        assert_eq!(m.mem.read32(DATA + 4).unwrap(), 0x5566_7788);
+    }
+
+    #[test]
+    fn armv6k_byte_halfword_and_doubleword_exclusives_round_trip() {
+        // LDREXB r4,[r5] ; STREXB r6,r7,[r5]
+        let mut byte = Machine::new(&[0xE1D5_4F9F, 0xE1C5_6F97]);
+        byte.cpu.regs[5] = DATA;
+        byte.cpu.regs[7] = 0x1AB;
+        byte.mem.write8(DATA, 0xFE).unwrap();
+        byte.run(2);
+        assert_eq!(byte.cpu.regs[4], 0xFE);
+        assert_eq!(byte.cpu.regs[6], 0);
+        assert_eq!(byte.mem.read8(DATA).unwrap(), 0xAB);
+
+        // LDREXH r8,[r9] ; STREXH r10,r11,[r9]
+        let mut half = Machine::new(&[0xE1F9_8F9F, 0xE1E9_AF9B]);
+        half.cpu.regs[9] = DATA;
+        half.cpu.regs[11] = 0x1234;
+        half.mem.write16(DATA, 0xABCD).unwrap();
+        half.run(2);
+        assert_eq!(half.cpu.regs[8], 0xABCD);
+        assert_eq!(half.cpu.regs[10], 0);
+        assert_eq!(half.mem.read16(DATA).unwrap(), 0x1234);
+
+        // LDREXD r0,r1,[r2] ; STREXD r3,r4,r5,[r2]
+        let mut double = Machine::new(&[0xE1B2_0F9F, 0xE1A2_3F94]);
+        double.cpu.regs[2] = DATA;
+        double.cpu.regs[4] = 0xAABB_CCDD;
+        double.cpu.regs[5] = 0x1122_3344;
+        double.mem.write32(DATA, 0x0102_0304).unwrap();
+        double.mem.write32(DATA + 4, 0x0506_0708).unwrap();
+        double.run(2);
+        assert_eq!(double.cpu.regs[0], 0x0102_0304);
+        assert_eq!(double.cpu.regs[1], 0x0506_0708);
+        assert_eq!(double.cpu.regs[3], 0);
+        assert_eq!(double.mem.read32(DATA).unwrap(), 0xAABB_CCDD);
+        assert_eq!(double.mem.read32(DATA + 4).unwrap(), 0x1122_3344);
+    }
+
+    #[test]
+    fn clrex_clears_the_outstanding_exclusive_reservation() {
+        // LDREX r0,[r1] ; CLREX ; STREX r2,r3,[r1]
+        let mut m = Machine::new(&[
+            0xE191_0F9F,
+            0xF57F_F01F,
+            0xE181_2F93,
+        ]);
+        m.cpu.regs[1] = DATA;
+        m.cpu.regs[3] = 0xAABB_CCDD;
+        m.mem.write32(DATA, 0x1122_3344).unwrap();
+
+        m.run(3);
+
+        assert_eq!(m.cpu.regs[2], 1);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0x1122_3344);
+    }
+
+    #[test]
+    fn strex_to_a_different_address_fails_without_writing() {
+        // LDREX r0,[r1] ; STREX r2,r3,[r4]
+        let mut m = Machine::new(&[0xE191_0F9F, 0xE184_2F93]);
+        m.cpu.regs[1] = DATA;
+        m.cpu.regs[4] = DATA + 8;
+        m.cpu.regs[3] = 0xAABB_CCDD;
+        m.mem.write32(DATA, 0x1122_3344).unwrap();
+        m.mem.write32(DATA + 8, 0x5566_7788).unwrap();
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[2], 1);
+        assert_eq!(m.mem.read32(DATA + 8).unwrap(), 0x5566_7788);
+    }
+
+    #[test]
+    fn exclusive_word_accesses_observe_big_endian_data_order() {
+        // LDREX r0,[r1] ; STREX r2,r3,[r1]
+        let mut m = Machine::new(&[0xE191_0F9F, 0xE181_2F93]);
+        m.cpu.regs[1] = DATA;
+        m.cpu.regs[3] = 0xAABB_CCDD;
+        m.cpu.cpsr.set_big_endian(true);
+        m.mem.write32(DATA, 0x1122_3344).unwrap();
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[0], 0x4433_2211);
+        assert_eq!(m.cpu.regs[2], 0);
+        assert_eq!(
+            [
+                m.mem.read8(DATA).unwrap(),
+                m.mem.read8(DATA + 1).unwrap(),
+                m.mem.read8(DATA + 2).unwrap(),
+                m.mem.read8(DATA + 3).unwrap(),
+            ],
+            [0xAA, 0xBB, 0xCC, 0xDD]
+        );
+    }
+
+    #[test]
+    fn exclusive_instructions_reject_invalid_register_combinations() {
+        for instruction in [
+            0xE1B1_1F9F, // LDREXD with odd Rt
+            0xE1B1_EF9F, // LDREXD with Rt == LR
+            0xE181_1F93, // STREX Rd == Rn
+            0xE181_2F92, // STREX Rd == Rt
+            0xE1A2_5F94, // STREXD Rd == Rt2
+        ] {
+            let mut m = Machine::new(&[instruction]);
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn exclusive_instructions_reject_misaligned_addresses() {
+        for (instruction, address) in [
+            (0xE191_0F9F, DATA + 2), // LDREX needs word alignment
+            (0xE1F9_8F9F, DATA + 1), // LDREXH needs halfword alignment
+            (0xE1B2_0F9F, DATA + 4), // LDREXD needs doubleword alignment
+        ] {
+            let mut m = Machine::new(&[instruction]);
+            m.cpu.regs[1] = address;
+            m.cpu.regs[2] = address;
+            m.cpu.regs[9] = address;
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::InvalidAccess { .. })
+            ));
+        }
     }
 
     // ----- multiply, CLZ, status, SWI ---------------------------------------
