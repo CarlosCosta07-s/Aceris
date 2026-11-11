@@ -106,7 +106,10 @@ impl fmt::Display for CiaArchiveError {
                 write!(formatter, "CIA does not contain content index {index}")
             }
             Self::ContentNotEncrypted(index) => {
-                write!(formatter, "CIA content index {index} is not marked as encrypted")
+                write!(
+                    formatter,
+                    "CIA content index {index} is not marked as encrypted"
+                )
             }
             Self::ContentSizeNotBlockAligned(index) => write!(
                 formatter,
@@ -360,9 +363,7 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
             return Err(CiaArchiveError::ContentNotEncrypted(content_index));
         }
         if location.size_bytes % 16 != 0 {
-            return Err(CiaArchiveError::ContentSizeNotBlockAligned(
-                content_index,
-            ));
+            return Err(CiaArchiveError::ContentSizeNotBlockAligned(content_index));
         }
 
         let source = self
@@ -403,12 +404,7 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
         let mut decrypted = self
             .open_decrypted_content_reader(content_index, title_key)?
             .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
-        verify_content_stream_bytes(
-            content_index,
-            expected_size,
-            expected_hash,
-            &mut decrypted,
-        )
+        verify_content_stream_bytes(content_index, expected_size, expected_hash, &mut decrypted)
     }
 
     /// Verifies and opens the NCCH header of a selected, cleartext CIA content.
@@ -1002,12 +998,8 @@ mod tests {
         let title_key = TitleKey::new(key);
         let cleartext: Vec<u8> = (0..0x100).map(|value| (value * 17) as u8).collect();
         let content_index = 0x1234;
-        let (mut data, locations) = make_cia(&[(
-            0x4000,
-            content_index,
-            CONTENT_TYPE_ENCRYPTED,
-            &cleartext,
-        )]);
+        let (mut data, locations) =
+            make_cia(&[(0x4000, content_index, CONTENT_TYPE_ENCRYPTED, &cleartext)]);
         let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
         let offset = usize::try_from(locations[0].1).unwrap();
         data[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);
@@ -1033,12 +1025,8 @@ mod tests {
         let key = [0x5A; 16];
         let cleartext = vec![0x3C; 0x40];
         let content_index = 7;
-        let (mut encrypted_cia, locations) = make_cia(&[(
-            0x4100,
-            content_index,
-            CONTENT_TYPE_ENCRYPTED,
-            &cleartext,
-        )]);
+        let (mut encrypted_cia, locations) =
+            make_cia(&[(0x4100, content_index, CONTENT_TYPE_ENCRYPTED, &cleartext)]);
         let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
         let offset = usize::try_from(locations[0].1).unwrap();
         encrypted_cia[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);

@@ -331,9 +331,8 @@ impl<R: Read> Read for Aes128CbcReader<R> {
             let available = BLOCK_SIZE - self.plaintext_offset;
             let requested = (output.len() - written).min(available);
             let block_end = self.plaintext_offset + requested;
-            output[written..written + requested].copy_from_slice(
-                &self.plaintext_block[self.plaintext_offset..block_end],
-            );
+            output[written..written + requested]
+                .copy_from_slice(&self.plaintext_block[self.plaintext_offset..block_end]);
             self.plaintext_offset = block_end;
             written += requested;
         }
@@ -347,9 +346,7 @@ impl<R: Read> Read for Aes128CbcReader<R> {
 /// The big-endian 16-bit index occupies the first two bytes; the rest is zero.
 pub const fn cia_content_iv(content_index: u16) -> [u8; BLOCK_SIZE] {
     let index = content_index.to_be_bytes();
-    [
-        index[0], index[1], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ]
+    [index[0], index[1], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
 #[cfg(test)]
@@ -402,12 +399,10 @@ mod tests {
 
         let key = decode_hex::<16>("2b7e151628aed2a6abf7158809cf4f3c");
         let iv = decode_hex::<16>("000102030405060708090a0b0c0d0e0f");
-        let ciphertext = decode_hex::<32>(
-            "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2",
-        );
-        let expected = decode_hex::<32>(
-            "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51",
-        );
+        let ciphertext =
+            decode_hex::<32>("7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2");
+        let expected =
+            decode_hex::<32>("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
         let source = ShortReader {
             bytes: std::io::Cursor::new(ciphertext.to_vec()),
             maximum_read: 3,
