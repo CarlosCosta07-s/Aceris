@@ -1,10 +1,11 @@
-//! Small AES-128-CBC primitive for the single encrypted title-key block in a 3DS ticket.
+//! AES-128-CBC primitives for 3DS ticket title keys and CIA content streams.
 //!
-//! This implementation is limited to one block: ticket title keys are exactly
-//! 16 bytes, and the caller supplies the normal AES key and ticket-derived IV.
-//! It does not load keys, decrypt CIA content, or handle padding.
+//! Ticket title keys are exactly one 16-byte block; CIA content readers process
+//! complete blocks in a bounded stream. Callers supply all AES key material.
+//! This software implementation is not hardened against local side-channel attacks.
 
 use std::fmt;
+use std::io::{self, Read};
 
 const BLOCK_SIZE: usize = 16;
 const EXPANDED_KEY_SIZE: usize = 176;
@@ -225,6 +226,132 @@ fn inverse_mix_columns(state: &mut [u8; BLOCK_SIZE]) {
     }
 }
 
+/// A streaming AES-128-CBC decryptor for a bounded, block-aligned source.
+///
+/// The reader owns its source and retains only one decrypted block. Its caller
+/// is responsible for bounding the source to the encrypted CIA content range.
+pub struct Aes128CbcReader<R> {
+    reader: R,
+    cipher: Aes128Decryptor,
+    previous_ciphertext: [u8; BLOCK_SIZE],
+    plaintext_block: [u8; BLOCK_SIZE],
+    plaintext_offset: usize,
+    ciphertext_remaining: u64,
+    failure: Option<io::ErrorKind>,
+}
+
+impl<R: Read> Aes128CbcReader<R> {
+    /// Creates a CBC reader over exactly `ciphertext_size_bytes` bytes.
+    ///
+    /// CBC input must contain complete blocks. No padding is added or removed.
+    pub fn new(
+        reader: R,
+        key: [u8; BLOCK_SIZE],
+        iv: [u8; BLOCK_SIZE],
+        ciphertext_size_bytes: u64,
+    ) -> io::Result<Self> {
+        if ciphertext_size_bytes % BLOCK_SIZE as u64 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "AES-CBC input size is not a multiple of 16 bytes",
+            ));
+        }
+
+        Ok(Self {
+            reader,
+            cipher: Aes128Decryptor::new(key),
+            previous_ciphertext: iv,
+            plaintext_block: [0; BLOCK_SIZE],
+            plaintext_offset: BLOCK_SIZE,
+            ciphertext_remaining: ciphertext_size_bytes,
+            failure: None,
+        })
+    }
+
+    /// Returns the underlying encrypted source.
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
+
+    fn load_next_block(&mut self) -> io::Result<bool> {
+        if self.ciphertext_remaining == 0 {
+            return Ok(false);
+        }
+
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        if let Err(error) = self.reader.read_exact(&mut ciphertext) {
+            self.failure = Some(error.kind());
+            return Err(error);
+        }
+
+        self.ciphertext_remaining -= BLOCK_SIZE as u64;
+        self.plaintext_block = self.cipher.decrypt_block(ciphertext);
+        for (byte, previous) in self
+            .plaintext_block
+            .iter_mut()
+            .zip(self.previous_ciphertext)
+        {
+            *byte ^= previous;
+        }
+        self.previous_ciphertext = ciphertext;
+        self.plaintext_offset = 0;
+        Ok(true)
+    }
+}
+
+impl<R: Read> Read for Aes128CbcReader<R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+
+        if let Some(kind) = self.failure {
+            return Err(io::Error::new(
+                kind,
+                "AES-CBC source previously failed while reading a block",
+            ));
+        }
+
+        let mut written = 0usize;
+        while written < output.len() {
+            if self.plaintext_offset == BLOCK_SIZE {
+                match self.load_next_block() {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => {
+                        return if written == 0 {
+                            Err(error)
+                        } else {
+                            Ok(written)
+                        };
+                    }
+                }
+            }
+
+            let available = BLOCK_SIZE - self.plaintext_offset;
+            let requested = (output.len() - written).min(available);
+            let block_end = self.plaintext_offset + requested;
+            output[written..written + requested].copy_from_slice(
+                &self.plaintext_block[self.plaintext_offset..block_end],
+            );
+            self.plaintext_offset = block_end;
+            written += requested;
+        }
+
+        Ok(written)
+    }
+}
+
+/// Builds the outer CIA AES-CBC IV for a TMD content index.
+///
+/// The big-endian 16-bit index occupies the first two bytes; the rest is zero.
+pub const fn cia_content_iv(content_index: u16) -> [u8; BLOCK_SIZE] {
+    let index = content_index.to_be_bytes();
+    [
+        index[0], index[1], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +384,73 @@ mod tests {
         let expected = decode_hex::<16>("6bc1bee22e409f96e93d7e117393172a");
 
         assert_eq!(decrypt_aes128_cbc_block(key, iv, ciphertext), expected);
+    }
+
+    #[test]
+    fn streams_multiple_cbc_blocks_from_short_reads() {
+        struct ShortReader {
+            bytes: std::io::Cursor<Vec<u8>>,
+            maximum_read: usize,
+        }
+
+        impl Read for ShortReader {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                let limit = output.len().min(self.maximum_read);
+                self.bytes.read(&mut output[..limit])
+            }
+        }
+
+        let key = decode_hex::<16>("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = decode_hex::<16>("000102030405060708090a0b0c0d0e0f");
+        let ciphertext = decode_hex::<32>(
+            "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2",
+        );
+        let expected = decode_hex::<32>(
+            "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51",
+        );
+        let source = ShortReader {
+            bytes: std::io::Cursor::new(ciphertext.to_vec()),
+            maximum_read: 3,
+        };
+        let mut reader = Aes128CbcReader::new(source, key, iv, ciphertext.len() as u64).unwrap();
+        let mut actual = Vec::new();
+
+        reader.read_to_end(&mut actual).unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rejects_unaligned_and_truncated_cbc_sources() {
+        let key = [0x11; BLOCK_SIZE];
+        let iv = [0x22; BLOCK_SIZE];
+        assert_eq!(
+            Aes128CbcReader::new(std::io::Cursor::new(vec![0; 17]), key, iv, 17)
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let mut reader =
+            Aes128CbcReader::new(std::io::Cursor::new(vec![0; 15]), key, iv, 16).unwrap();
+        let mut block = [0; BLOCK_SIZE];
+        assert_eq!(
+            reader.read(&mut block).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        assert_eq!(
+            reader.read(&mut block).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+    }
+
+    #[test]
+    fn creates_the_content_iv_from_the_big_endian_tmd_index() {
+        assert_eq!(
+            cia_content_iv(0x1234),
+            [0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
 use crate::loader::ncsd::ncch::{NcchError, NcchHeader};
 
+use super::crypto::{Aes128CbcReader, TitleKey, cia_content_iv};
 use super::ticket::{MAX_TICKET_SIZE_BYTES, TicketError, TicketHeader};
 use super::tmd::{CONTENT_TYPE_ENCRYPTED, MAX_TMD_SIZE_BYTES, TmdError, TmdHeader};
 use super::{CiaHeader, HEADER_SIZE};
@@ -49,6 +50,8 @@ pub enum CiaArchiveError {
     },
     AllocationFailed,
     ContentNotIncluded(u16),
+    ContentNotEncrypted(u16),
+    ContentSizeNotBlockAligned(u16),
     ContentRequiresDecryption(u16),
     ContentStreamHasTrailingBytes(u16),
     ContentRangeOutsideSection {
@@ -102,6 +105,13 @@ impl fmt::Display for CiaArchiveError {
             Self::ContentNotIncluded(index) => {
                 write!(formatter, "CIA does not contain content index {index}")
             }
+            Self::ContentNotEncrypted(index) => {
+                write!(formatter, "CIA content index {index} is not marked as encrypted")
+            }
+            Self::ContentSizeNotBlockAligned(index) => write!(
+                formatter,
+                "encrypted CIA content index {index} has a size that is not aligned to 16-byte AES blocks"
+            ),
             Self::ContentRequiresDecryption(index) => write!(
                 formatter,
                 "CIA content index {index} is encrypted; decrypt its AES-CBC layer before checking the TMD hash"
@@ -331,6 +341,74 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
             size_bytes: location.size_bytes,
             position_bytes: 0,
         }))
+    }
+
+    /// Opens an encrypted CIA content as a streaming cleartext reader.
+    ///
+    /// The caller supplies the already-decrypted title key. The TMD content
+    /// index determines the CBC IV; contents not marked encrypted are rejected
+    /// to prevent accidental double-decryption.
+    pub fn open_decrypted_content_reader(
+        &mut self,
+        content_index: u16,
+        title_key: &TitleKey,
+    ) -> Result<Option<Aes128CbcReader<CiaContentReader<'_, R>>>, CiaArchiveError> {
+        let Some(location) = self.content_location(content_index) else {
+            return Ok(None);
+        };
+        if location.content_type & CONTENT_TYPE_ENCRYPTED == 0 {
+            return Err(CiaArchiveError::ContentNotEncrypted(content_index));
+        }
+        if location.size_bytes % 16 != 0 {
+            return Err(CiaArchiveError::ContentSizeNotBlockAligned(
+                content_index,
+            ));
+        }
+
+        let source = self
+            .open_content_reader(content_index)?
+            .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
+        let decrypted = Aes128CbcReader::new(
+            source,
+            *title_key.as_bytes(),
+            cia_content_iv(location.content_index),
+            location.size_bytes,
+        )
+        .map_err(CiaArchiveError::Reader)?;
+
+        Ok(Some(decrypted))
+    }
+
+    /// Decrypts one encrypted CIA content in bounded memory and verifies its TMD SHA-256.
+    ///
+    /// The title key must have been obtained from the ticket using caller-
+    /// supplied common-key material. The method does not verify ticket/TMD
+    /// signatures and does not decrypt NCCH-internal AES-CTR regions.
+    pub fn verify_encrypted_content(
+        &mut self,
+        content_index: u16,
+        title_key: &TitleKey,
+    ) -> Result<(), CiaArchiveError> {
+        let (expected_size, expected_hash) = {
+            let record = self
+                .title_metadata
+                .content_by_index(content_index)
+                .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
+            if record.content_type & CONTENT_TYPE_ENCRYPTED == 0 {
+                return Err(CiaArchiveError::ContentNotEncrypted(content_index));
+            }
+            (record.size_bytes, record.sha256)
+        };
+
+        let mut decrypted = self
+            .open_decrypted_content_reader(content_index, title_key)?
+            .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
+        verify_content_stream_bytes(
+            content_index,
+            expected_size,
+            expected_hash,
+            &mut decrypted,
+        )
     }
 
     /// Verifies and opens the NCCH header of a selected, cleartext CIA content.
@@ -633,6 +711,7 @@ impl<R: Read + Seek> Seek for CiaContentReader<'_, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loader::ncsd::ncch::crypto::Aes128;
     use std::io::Cursor;
 
     const TEST_SIGNATURE_SIZE: usize = 0x140;
@@ -892,6 +971,103 @@ mod tests {
         assert!(matches!(
             archive.verify_content_stream(0, Cursor::new(wrong_cleartext)),
             Err(CiaArchiveError::ContentHashMismatch { content_index: 0 })
+        ));
+    }
+
+    fn encrypt_cia_content(key: [u8; 16], content_index: u16, cleartext: &[u8]) -> Vec<u8> {
+        assert_eq!(cleartext.len() % 16, 0);
+        let cipher = Aes128::new(key);
+        let mut previous = cia_content_iv(content_index);
+        let mut encrypted = Vec::with_capacity(cleartext.len());
+
+        for chunk in cleartext.chunks_exact(16) {
+            let mut block: [u8; 16] = chunk.try_into().unwrap();
+            for (byte, prior) in block.iter_mut().zip(previous) {
+                *byte ^= prior;
+            }
+            let ciphertext = cipher.encrypt_block(block);
+            encrypted.extend_from_slice(&ciphertext);
+            previous = ciphertext;
+        }
+
+        encrypted
+    }
+
+    #[test]
+    fn decrypts_encrypted_cia_content_as_a_stream_and_verifies_its_tmd_hash() {
+        let key = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+            0x0E, 0x0F,
+        ];
+        let title_key = TitleKey::new(key);
+        let cleartext: Vec<u8> = (0..0x100).map(|value| (value * 17) as u8).collect();
+        let content_index = 0x1234;
+        let (mut data, locations) = make_cia(&[(
+            0x4000,
+            content_index,
+            CONTENT_TYPE_ENCRYPTED,
+            &cleartext,
+        )]);
+        let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
+        let offset = usize::try_from(locations[0].1).unwrap();
+        data[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        {
+            let mut decrypted = archive
+                .open_decrypted_content_reader(content_index, &title_key)
+                .unwrap()
+                .unwrap();
+            let mut actual = Vec::new();
+            decrypted.read_to_end(&mut actual).unwrap();
+            assert_eq!(actual, cleartext);
+        }
+
+        archive
+            .verify_encrypted_content(content_index, &title_key)
+            .unwrap();
+    }
+
+    #[test]
+    fn rejects_wrong_title_keys_and_double_decryption() {
+        let key = [0x5A; 16];
+        let cleartext = vec![0x3C; 0x40];
+        let content_index = 7;
+        let (mut encrypted_cia, locations) = make_cia(&[(
+            0x4100,
+            content_index,
+            CONTENT_TYPE_ENCRYPTED,
+            &cleartext,
+        )]);
+        let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
+        let offset = usize::try_from(locations[0].1).unwrap();
+        encrypted_cia[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);
+        let mut archive = CiaArchiveReader::open(Cursor::new(encrypted_cia)).unwrap();
+
+        let wrong_title_key = TitleKey::new([0xA5; 16]);
+        assert!(matches!(
+            archive.verify_encrypted_content(content_index, &wrong_title_key),
+            Err(CiaArchiveError::ContentHashMismatch { content_index: 7 })
+        ));
+
+        let (mut clear_cia, _) = make_cia(&[(0x4200, 0, 0, &cleartext)]);
+        let mut clear_archive = CiaArchiveReader::open(Cursor::new(&mut clear_cia[..])).unwrap();
+        assert!(matches!(
+            clear_archive.open_decrypted_content_reader(0, &wrong_title_key),
+            Err(CiaArchiveError::ContentNotEncrypted(0))
+        ));
+    }
+
+    #[test]
+    fn rejects_encrypted_content_with_a_partial_aes_block() {
+        let bytes = [0x33; 17];
+        let (data, _) = make_cia(&[(0x4300, 0, CONTENT_TYPE_ENCRYPTED, &bytes)]);
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let title_key = TitleKey::new([0x44; 16]);
+
+        assert!(matches!(
+            archive.open_decrypted_content_reader(0, &title_key),
+            Err(CiaArchiveError::ContentSizeNotBlockAligned(0))
         ));
     }
 
