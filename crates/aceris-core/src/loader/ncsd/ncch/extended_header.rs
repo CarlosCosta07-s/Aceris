@@ -50,6 +50,19 @@ impl CodeSetInfo {
     }
 }
 
+/// Page-aligned byte ranges used to split the ExeFS code image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CodeFileLayout {
+    /// Page-aligned text segment length in the ExeFS code file.
+    pub text_size_bytes: usize,
+    /// Page-aligned read-only segment length in the ExeFS code file.
+    pub read_only_size_bytes: usize,
+    /// Page-aligned initialized data segment length in the ExeFS code file.
+    pub data_size_bytes: usize,
+    /// Total expected decompressed ExeFS code-file length.
+    pub total_size_bytes: usize,
+}
+
 /// Parsed System Control Info and raw Access Control Info from an NCCH exheader.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NcchExtendedHeader {
@@ -130,6 +143,27 @@ impl NcchExtendedHeader {
         Self::parse(&data)
     }
 
+    /// Calculates the page-aligned text, read-only, and initialized-data ranges.
+    ///
+    /// Nintendo's process loader rounds each initialized code-set size up to
+    /// a 0x1000-byte page when splitting ExeFS/.code. BSS is not stored in that
+    /// file and remains separately described by bss_size_bytes.
+    pub fn code_file_layout(&self) -> Option<CodeFileLayout> {
+        let text_size_bytes = page_aligned_size(self.text_code_set.size_bytes)?;
+        let read_only_size_bytes = page_aligned_size(self.read_only_code_set.size_bytes)?;
+        let data_size_bytes = page_aligned_size(self.data_code_set.size_bytes)?;
+        let total_size_bytes = text_size_bytes
+            .checked_add(read_only_size_bytes)?
+            .checked_add(data_size_bytes)?;
+
+        Some(CodeFileLayout {
+            text_size_bytes,
+            read_only_size_bytes,
+            data_size_bytes,
+            total_size_bytes,
+        })
+    }
+
     /// Returns true when the extended header requests ExeFS/.code decompression.
     pub const fn compresses_exefs_code(&self) -> bool {
         self.flags & 0x01 != 0
@@ -163,6 +197,11 @@ impl fmt::Display for ExtendedHeaderError {
 }
 
 impl std::error::Error for ExtendedHeaderError {}
+
+fn page_aligned_size(size_bytes: u32) -> Option<usize> {
+    let size = u64::from(size_bytes).checked_add(CODE_PAGE_SIZE - 1)?;
+    usize::try_from(size & !(CODE_PAGE_SIZE - 1)).ok()
+}
 
 fn truncated(data: &[u8]) -> ExtendedHeaderError {
     ExtendedHeaderError::HeaderTruncated {
@@ -263,6 +302,21 @@ mod tests {
         assert_eq!(header.save_data_size_bytes, 0x20000);
         assert_eq!(header.jump_id, 0x0004_0000_8765_4321);
         assert!(header.access_control_info.iter().all(|byte| *byte == 0xA5));
+    }
+
+    #[test]
+    fn rounds_code_file_segments_to_page_boundaries() {
+        let header = NcchExtendedHeader::parse(&valid_extended_header()).unwrap();
+
+        assert_eq!(
+            header.code_file_layout(),
+            Some(CodeFileLayout {
+                text_size_bytes: 0x2000,
+                read_only_size_bytes: 0x1000,
+                data_size_bytes: 0x1000,
+                total_size_bytes: 0x4000,
+            })
+        );
     }
 
     #[test]
