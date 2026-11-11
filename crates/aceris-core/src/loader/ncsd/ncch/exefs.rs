@@ -188,7 +188,10 @@ impl fmt::Display for ExeFsError {
             Self::RegionTooSmall => write!(formatter, "ExeFS region is smaller than its header"),
             Self::InvalidHashRegion => write!(formatter, "ExeFS hash region is empty"),
             Self::SuperblockHashMismatch => {
-                write!(formatter, "NCCH ExeFS superblock SHA-256 hash does not match")
+                write!(
+                    formatter,
+                    "NCCH ExeFS superblock SHA-256 hash does not match"
+                )
             }
             Self::FileHashMismatch(name) => {
                 write!(formatter, "ExeFS file hash mismatch: {name}")

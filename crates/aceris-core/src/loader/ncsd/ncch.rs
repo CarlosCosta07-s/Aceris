@@ -653,7 +653,9 @@ fn verify_exefs_file_hash<R: Read + Seek>(
     let file_offset = region
         .offset_bytes
         .checked_add(file.offset_bytes)
-        .ok_or_else(|| exefs::ExeFsError::ReaderFailure("ExeFS file offset overflows".to_owned()))?;
+        .ok_or_else(|| {
+            exefs::ExeFsError::ReaderFailure("ExeFS file offset overflows".to_owned())
+        })?;
     let actual = reader
         .seek(SeekFrom::Start(file_offset))
         .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
