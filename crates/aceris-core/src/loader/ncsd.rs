@@ -799,6 +799,22 @@ impl<R: Read + Seek> NcsdImageReader<R> {
     pub fn open_primary_ncch(self) -> std::result::Result<NcsdNcchReader<R>, NcsdImageReaderError> {
         self.open_partition_ncch(0)
     }
+
+    /// Loads the primary NCSD program directly into a bootstrap ARM11 address space.
+    ///
+    /// This is the shortest file-backed loading path: open the image reader,
+    /// supply the menu-info and content AES keys, and receive a ready-to-use
+    /// Bus. NCSD, NCCH, ExeFS, hashes, optional BLZ, BSS, and stack are all
+    /// validated or prepared by the underlying Rust loader stages.
+    pub fn load_primary_arm11_address_space(
+        self,
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<process::Arm11CodeAddressSpace, NcsdImageReaderError> {
+        self.open_primary_ncch()?
+            .load_arm11_address_space(menu_info_key, content_key)
+            .map_err(NcsdImageReaderError::ExecutableLoad)
+    }
 }
 
 /// Errors produced while opening an NCSD image and selecting one of its NCCH partitions.
@@ -812,6 +828,8 @@ pub enum NcsdImageReaderError {
     MissingPartition { index: u8 },
     /// The selected partition does not contain a structurally valid NCCH header.
     InvalidNcch(NcsdNcchError),
+    /// The selected NCSD program partition could not be prepared for ARM11.
+    ExecutableLoad(NcsdExecutableLoadError),
 }
 
 impl fmt::Display for NcsdImageReaderError {
@@ -828,6 +846,9 @@ impl fmt::Display for NcsdImageReaderError {
                     "selected NCSD partition is not a valid NCCH: {error}"
                 )
             }
+            Self::ExecutableLoad(error) => {
+                write!(formatter, "could not load ARM11 program from NCSD image: {error}")
+            }
         }
     }
 }
@@ -838,6 +859,7 @@ impl std::error::Error for NcsdImageReaderError {
             Self::Reader(error) => Some(error),
             Self::InvalidHeader(error) => Some(error),
             Self::InvalidNcch(error) => Some(error),
+            Self::ExecutableLoad(error) => Some(error),
             Self::MissingPartition { .. } => None,
         }
     }
@@ -1188,9 +1210,7 @@ mod tests {
             image_with_arm11_code(false);
         let address_space = NcsdImageReader::open(Cursor::new(image))
             .unwrap()
-            .open_primary_ncch()
-            .unwrap()
-            .load_arm11_address_space([0x41; 16], [0x42; 16])
+            .load_primary_arm11_address_space([0x41; 16], [0x42; 16])
             .unwrap();
 
         assert_eq!(
