@@ -1,8 +1,8 @@
 //! ARM11 CPU core.
 //!
-//! Current scope: an interpreter for the ARM (A32) and Thumb instruction sets
-//! in a single user-mode register bank. Banked registers, privileged modes,
-//! coprocessors and VFP are still to come.
+//! Current scope: an interpreter for ARM (A32) and classic Thumb instruction
+//! sets with banked ARMv6 exception-mode registers and per-mode SPSR storage.
+//! Exception entry/return, CP15, MMU and VFP remain separate milestones.
 
 mod arm;
 mod condition;
@@ -14,7 +14,7 @@ pub use condition::Condition;
 pub use psr::Psr;
 
 use crate::memory::Bus;
-use aceris_common::Result;
+use aceris_common::{Error, Result};
 
 /// Register indices with a special role.
 pub const SP: usize = 13;
@@ -45,8 +45,57 @@ struct ExclusiveReservation {
     version: u64,
 }
 
-/// A single ARM11 core.
+
+/// Register banks shared by ARMv6 User/System and exception modes.
 #[derive(Clone, Debug, Default)]
+struct BankedRegisters {
+    user_r8_r12: [u32; 5],
+    user_sp_lr: [u32; 2],
+    fiq_r8_r14: [u32; 7],
+    irq_sp_lr: [u32; 2],
+    svc_sp_lr: [u32; 2],
+    abort_sp_lr: [u32; 2],
+    undefined_sp_lr: [u32; 2],
+}
+
+/// Saved program status registers belonging to exception modes.
+#[derive(Clone, Debug, Default)]
+struct SavedStatusRegisters {
+    fiq: Option<Psr>,
+    irq: Option<Psr>,
+    svc: Option<Psr>,
+    abort: Option<Psr>,
+    undefined: Option<Psr>,
+}
+
+impl SavedStatusRegisters {
+    fn get(&self, mode: u32) -> Option<Psr> {
+        match mode {
+            Psr::FIQ_MODE => self.fiq,
+            Psr::IRQ_MODE => self.irq,
+            Psr::SUPERVISOR_MODE => self.svc,
+            Psr::ABORT_MODE => self.abort,
+            Psr::UNDEFINED_MODE => self.undefined,
+            _ => None,
+        }
+    }
+
+    fn set(&mut self, mode: u32, value: Psr) -> bool {
+        let slot = match mode {
+            Psr::FIQ_MODE => &mut self.fiq,
+            Psr::IRQ_MODE => &mut self.irq,
+            Psr::SUPERVISOR_MODE => &mut self.svc,
+            Psr::ABORT_MODE => &mut self.abort,
+            Psr::UNDEFINED_MODE => &mut self.undefined,
+            _ => return false,
+        };
+        *slot = Some(value);
+        true
+    }
+}
+
+/// One ARM11 processor core with banked exception-mode registers.
+#[derive(Clone, Debug)]
 pub struct Arm11Core {
     /// `r0`-`r15`. While an instruction executes, `r15` holds the address of
     /// that instruction; operand reads of `pc` add the pipeline offset.
@@ -54,11 +103,111 @@ pub struct Arm11Core {
     pub cpsr: Psr,
     branch_taken: bool,
     exclusive_reservation: Option<ExclusiveReservation>,
+    banked: BankedRegisters,
+    saved_status: SavedStatusRegisters,
+    active_mode: u32,
+}
+
+impl Default for Arm11Core {
+    fn default() -> Self {
+        Self {
+            regs: [0; 16],
+            cpsr: Psr::default(),
+            branch_taken: false,
+            exclusive_reservation: None,
+            banked: BankedRegisters::default(),
+            saved_status: SavedStatusRegisters::default(),
+            active_mode: Psr::USER_MODE,
+        }
+    }
 }
 
 impl Arm11Core {
     pub fn new() -> Self {
         Self::default()
+    }
+
+
+    /// Changes the active processor mode while preserving all banked registers.
+    ///
+    /// User and System share r13-r14; FIQ has private r8-r14; IRQ, Supervisor,
+    /// Abort and Undefined each have private r13-r14. Registers r0-r7 are
+    /// common to every mode.
+    pub fn switch_mode(&mut self, mode: u32) -> Result<()> {
+        if !Psr::is_valid_mode(mode) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: mode,
+            });
+        }
+        let old_mode = self.active_mode;
+        if old_mode == mode {
+            self.cpsr.0 = (self.cpsr.0 & !Psr::MODE_MASK) | mode;
+            return Ok(());
+        }
+
+        if old_mode == Psr::FIQ_MODE {
+            self.banked.fiq_r8_r14.copy_from_slice(&self.regs[8..15]);
+        } else {
+            self.banked.user_r8_r12.copy_from_slice(&self.regs[8..13]);
+            self.save_sp_lr(old_mode);
+        }
+
+        if mode == Psr::FIQ_MODE {
+            self.regs[8..15].copy_from_slice(&self.banked.fiq_r8_r14);
+        } else {
+            if old_mode == Psr::FIQ_MODE {
+                self.regs[8..13].copy_from_slice(&self.banked.user_r8_r12);
+            }
+            self.load_sp_lr(mode);
+        }
+
+        self.active_mode = mode;
+        self.cpsr.0 = (self.cpsr.0 & !Psr::MODE_MASK) | mode;
+        Ok(())
+    }
+
+    fn save_sp_lr(&mut self, mode: u32) {
+        let values = [self.regs[SP], self.regs[LR]];
+        let bank = match mode {
+            Psr::USER_MODE | Psr::SYSTEM_MODE => &mut self.banked.user_sp_lr,
+            Psr::IRQ_MODE => &mut self.banked.irq_sp_lr,
+            Psr::SUPERVISOR_MODE => &mut self.banked.svc_sp_lr,
+            Psr::ABORT_MODE => &mut self.banked.abort_sp_lr,
+            Psr::UNDEFINED_MODE => &mut self.banked.undefined_sp_lr,
+            _ => return,
+        };
+        *bank = values;
+    }
+
+    fn load_sp_lr(&mut self, mode: u32) {
+        let values = match mode {
+            Psr::USER_MODE | Psr::SYSTEM_MODE => self.banked.user_sp_lr,
+            Psr::IRQ_MODE => self.banked.irq_sp_lr,
+            Psr::SUPERVISOR_MODE => self.banked.svc_sp_lr,
+            Psr::ABORT_MODE => self.banked.abort_sp_lr,
+            Psr::UNDEFINED_MODE => self.banked.undefined_sp_lr,
+            _ => return,
+        };
+        self.regs[SP] = values[0];
+        self.regs[LR] = values[1];
+    }
+
+    /// Returns the SPSR belonging to the active exception mode, if one exists.
+    pub fn saved_program_status(&self) -> Option<Psr> {
+        self.saved_status.get(self.active_mode)
+    }
+
+    /// Stores the SPSR belonging to the active exception mode.
+    /// User and System modes do not have an SPSR.
+    pub fn set_saved_program_status(&mut self, value: Psr) -> Result<()> {
+        if !self.saved_status.set(self.active_mode, value) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: self.cpsr.mode(),
+            });
+        }
+        Ok(())
     }
 
     pub fn pc(&self) -> u32 {
@@ -104,6 +253,74 @@ mod tests {
         let mut mem = FlatMemory::new(0, 16);
         mem.write32(0, word).unwrap();
         mem
+    }
+
+
+    #[test]
+    fn mode_switches_preserve_user_system_fiq_and_exception_register_banks() {
+        let mut cpu = Arm11Core::new();
+        cpu.regs[8..13].copy_from_slice(&[8, 9, 10, 11, 12]);
+        cpu.regs[SP] = 0x1000;
+        cpu.regs[LR] = 0x1004;
+
+        cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+        assert_eq!(&cpu.regs[8..13], &[0, 0, 0, 0, 0]);
+        cpu.regs[8..15].copy_from_slice(&[0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xF13, 0xF14]);
+
+        cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        assert_eq!(&cpu.regs[8..13], &[8, 9, 10, 11, 12]);
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0, 0));
+        cpu.regs[SP] = 0x2000;
+        cpu.regs[LR] = 0x2004;
+
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0, 0));
+        cpu.regs[SP] = 0x3000;
+        cpu.regs[LR] = 0x3004;
+
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!(&cpu.regs[8..13], &[8, 9, 10, 11, 12]);
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0x1000, 0x1004));
+
+        cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0x2000, 0x2004));
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0x3000, 0x3004));
+
+        cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+        assert_eq!(&cpu.regs[8..15], &[0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xF13, 0xF14]);
+        cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
+        assert_eq!(&cpu.regs[8..13], &[8, 9, 10, 11, 12]);
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0x1000, 0x1004));
+    }
+
+    #[test]
+    fn saved_program_status_registers_are_private_to_exception_modes() {
+        let mut cpu = Arm11Core::new();
+        assert_eq!(cpu.saved_program_status(), None);
+        assert!(cpu.set_saved_program_status(Psr(0xA000_0010)).is_err());
+
+        let fiq_spsr = Psr(0xF000_0011);
+        let irq_spsr = Psr(0xA000_0012);
+        cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+        cpu.set_saved_program_status(fiq_spsr).unwrap();
+        cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        cpu.set_saved_program_status(irq_spsr).unwrap();
+        assert_eq!(cpu.saved_program_status(), Some(irq_spsr));
+
+        cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+        assert_eq!(cpu.saved_program_status(), Some(fiq_spsr));
+        cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
+        assert_eq!(cpu.saved_program_status(), None);
+    }
+
+    #[test]
+    fn invalid_processor_modes_are_rejected_without_changing_the_active_bank() {
+        let mut cpu = Arm11Core::new();
+        cpu.regs[SP] = 0x1234;
+        assert!(cpu.switch_mode(0x15).is_err());
+        assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
+        assert_eq!(cpu.regs[SP], 0x1234);
     }
 
     #[test]

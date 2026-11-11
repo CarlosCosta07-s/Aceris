@@ -31,8 +31,28 @@ impl Psr {
     pub const T: u32 = 1 << 5;
     /// CPSR mode field.
     pub const MODE_MASK: u32 = 0x1F;
-    /// User mode: the mode initially supported by the bootstrap.
+    /// User mode.
     pub const USER_MODE: u32 = 0x10;
+    pub const FIQ_MODE: u32 = 0x11;
+    pub const IRQ_MODE: u32 = 0x12;
+    pub const SUPERVISOR_MODE: u32 = 0x13;
+    pub const ABORT_MODE: u32 = 0x17;
+    pub const UNDEFINED_MODE: u32 = 0x1B;
+    pub const SYSTEM_MODE: u32 = 0x1F;
+
+    /// Returns whether `mode` is one of the ARMv6 defined processor modes.
+    pub const fn is_valid_mode(mode: u32) -> bool {
+        matches!(
+            mode,
+            Self::USER_MODE
+                | Self::FIQ_MODE
+                | Self::IRQ_MODE
+                | Self::SUPERVISOR_MODE
+                | Self::ABORT_MODE
+                | Self::UNDEFINED_MODE
+                | Self::SYSTEM_MODE
+        )
+    }
 
     pub const fn from_flags(n: bool, z: bool, c: bool, v: bool) -> Self {
         let mut bits = Self::USER_MODE;
