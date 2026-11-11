@@ -152,6 +152,18 @@ impl NcchExtendedHeader {
         let text_size_bytes = page_aligned_size(self.text_code_set.size_bytes)?;
         let read_only_size_bytes = page_aligned_size(self.read_only_code_set.size_bytes)?;
         let data_size_bytes = page_aligned_size(self.data_code_set.size_bytes)?;
+
+        if u64::try_from(text_size_bytes).ok()? > self.text_code_set.physical_size_bytes()?
+            || u64::try_from(read_only_size_bytes).ok()?
+                > self.read_only_code_set.physical_size_bytes()?
+            || u64::try_from(data_size_bytes).ok()? > self.data_code_set.physical_size_bytes()?
+            || self.text_code_set.end_address().is_none()
+            || self.read_only_code_set.end_address().is_none()
+            || self.data_code_set.end_address().is_none()
+        {
+            return None;
+        }
+
         let total_size_bytes = text_size_bytes
             .checked_add(read_only_size_bytes)?
             .checked_add(data_size_bytes)?;

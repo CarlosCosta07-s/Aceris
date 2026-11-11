@@ -236,6 +236,93 @@ pub struct NcsdNcchReader<R> {
     reader: NcsdPartitionReader<R>,
 }
 
+/// ARM11 executable bytes prepared from an NCSD/NCCH program partition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedArm11Image {
+    /// Verified and parsed NCCH extended header, including BSS size and addresses.
+    pub extended_header: ncch::extended_header::NcchExtendedHeader,
+    /// Page-aligned ARM11 text bytes from ExeFS .code.
+    pub text: Vec<u8>,
+    /// Page-aligned read-only bytes from ExeFS .code.
+    pub read_only: Vec<u8>,
+    /// Page-aligned initialized-data bytes from ExeFS .code.
+    pub data: Vec<u8>,
+}
+
+/// Failures encountered while preparing an ARM11 executable image.
+#[derive(Debug)]
+pub enum NcsdExecutableLoadError {
+    MissingExtendedHeader,
+    InvalidCodeLayout,
+    CodeImageTooLarge {
+        requested_size: usize,
+        maximum_size: usize,
+    },
+    CodeFileSizeMismatch {
+        expected_size: usize,
+        actual_size: usize,
+    },
+    ExtendedHeaderIntegrity(ncch::NcchIntegrityError),
+    ExtendedHeaderParse(ncch::extended_header::ExtendedHeaderError),
+    ExeFs(ncch::exefs::ExeFsError),
+    Blz(ncch::blz::BlzError),
+    ReaderFailure(String),
+    AllocationFailure(String),
+}
+
+impl fmt::Display for NcsdExecutableLoadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingExtendedHeader => {
+                formatter.write_str("NCCH program does not contain an extended header")
+            }
+            Self::InvalidCodeLayout => {
+                formatter.write_str("NCCH extended header contains an invalid ARM11 code layout")
+            }
+            Self::CodeImageTooLarge {
+                requested_size,
+                maximum_size,
+            } => write!(
+                formatter,
+                "ARM11 code image size {requested_size} exceeds the {maximum_size}-byte safety limit"
+            ),
+            Self::CodeFileSizeMismatch {
+                expected_size,
+                actual_size,
+            } => write!(
+                formatter,
+                "ExeFS .code has {actual_size} bytes, expected {expected_size} from the extended header"
+            ),
+            Self::ExtendedHeaderIntegrity(error) => {
+                write!(formatter, "NCCH extended-header integrity failed: {error}")
+            }
+            Self::ExtendedHeaderParse(error) => {
+                write!(formatter, "could not parse NCCH extended header: {error}")
+            }
+            Self::ExeFs(error) => write!(formatter, "ExeFS loading failed: {error}"),
+            Self::Blz(error) => write!(formatter, "ExeFS .code decompression failed: {error}"),
+            Self::ReaderFailure(reason) => {
+                write!(formatter, "could not read ExeFS .code: {reason}")
+            }
+            Self::AllocationFailure(reason) => {
+                write!(formatter, "could not allocate the ARM11 code image: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for NcsdExecutableLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ExtendedHeaderIntegrity(error) => Some(error),
+            Self::ExtendedHeaderParse(error) => Some(error),
+            Self::ExeFs(error) => Some(error),
+            Self::Blz(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 /// One ExeFS file reader returned after its NCCH superblock and file digest validate.
 pub type VerifiedNcsdExeFsFileReader<R> =
     ncch::exefs::ExeFsFileReader<ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>>;
@@ -320,6 +407,121 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
             menu_info_key,
             content_key,
         )
+    }
+
+    /// Prepares the verified ARM11 code image from this NCSD program partition.
+    ///
+    /// The caller supplies the menu-info and content AES-128 keys. For NCCH
+    /// NoCrypto images they are not used; cleartext integrity readers are used
+    /// instead. The extended header and ExeFS .code hashes are always checked.
+    ///
+    /// If the extended-header compression flag is set, .code is decompressed
+    /// using the bounded backwards-LZ decoder. The resulting bytes are split
+    /// into page-aligned text, read-only, and initialized-data vectors. BSS is
+    /// not part of .code and remains described by extended_header.bss_size_bytes.
+    ///
+    /// This prepares the image only; it does not map memory, configure the
+    /// ARM11 process, or start CPU execution.
+    pub fn prepare_arm11_executable_image(
+        self,
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<PreparedArm11Image, NcsdExecutableLoadError> {
+        let is_cleartext = self.header.declares_no_crypto();
+
+        let extended_header = if is_cleartext {
+            let mut reader = self
+                .header
+                .open_verified_extended_header_reader(&mut self.reader)
+                .map_err(NcsdExecutableLoadError::ExtendedHeaderIntegrity)?
+                .ok_or(NcsdExecutableLoadError::MissingExtendedHeader)?;
+            ncch::extended_header::NcchExtendedHeader::parse_reader(&mut reader)
+                .map_err(NcsdExecutableLoadError::ExtendedHeaderParse)?
+        } else {
+            let mut reader = self
+                .header
+                .open_decrypted_verified_extended_header_reader(
+                    &mut self.reader,
+                    menu_info_key,
+                )
+                .map_err(NcsdExecutableLoadError::ExtendedHeaderIntegrity)?
+                .ok_or(NcsdExecutableLoadError::MissingExtendedHeader)?;
+            ncch::extended_header::NcchExtendedHeader::parse_reader(&mut reader)
+                .map_err(NcsdExecutableLoadError::ExtendedHeaderParse)?
+        };
+
+        let layout = extended_header
+            .code_file_layout()
+            .filter(|layout| layout.total_size_bytes != 0)
+            .ok_or(NcsdExecutableLoadError::InvalidCodeLayout)?;
+        let maximum_size = ncch::blz::MAX_DECOMPRESSED_SIZE;
+        if layout.total_size_bytes > maximum_size {
+            return Err(NcsdExecutableLoadError::CodeImageTooLarge {
+                requested_size: layout.total_size_bytes,
+                maximum_size,
+            });
+        }
+
+        let stored_code = if is_cleartext {
+            let mut reader = self
+                .header
+                .open_verified_exefs_file_reader(&mut self.reader, ".code")
+                .map_err(NcsdExecutableLoadError::ExeFs)?
+                .ok_or_else(|| {
+                    NcsdExecutableLoadError::ExeFs(ncch::exefs::ExeFsError::FileNotFound(
+                        ".code".to_owned(),
+                    ))
+                })?;
+            read_verified_code_file(&mut reader, maximum_size)?
+        } else {
+            let mut reader = self
+                .header
+                .open_decrypted_verified_exefs_file_reader(
+                    &mut self.reader,
+                    ".code",
+                    menu_info_key,
+                    content_key,
+                )
+                .map_err(NcsdExecutableLoadError::ExeFs)?
+                .ok_or_else(|| {
+                    NcsdExecutableLoadError::ExeFs(ncch::exefs::ExeFsError::FileNotFound(
+                        ".code".to_owned(),
+                    ))
+                })?;
+            read_verified_code_file(&mut reader, maximum_size)?
+        };
+
+        let mut code = if extended_header.compresses_exefs_code() {
+            ncch::blz::decompress(&stored_code, layout.total_size_bytes)
+                .map_err(NcsdExecutableLoadError::Blz)?
+        } else {
+            if stored_code.len() != layout.total_size_bytes {
+                return Err(NcsdExecutableLoadError::CodeFileSizeMismatch {
+                    expected_size: layout.total_size_bytes,
+                    actual_size: stored_code.len(),
+                });
+            }
+            stored_code
+        };
+
+        let text_end = layout.text_size_bytes;
+        let read_only_end = text_end
+            .checked_add(layout.read_only_size_bytes)
+            .ok_or(NcsdExecutableLoadError::InvalidCodeLayout)?;
+        if code.len() != layout.total_size_bytes || read_only_end > code.len() {
+            return Err(NcsdExecutableLoadError::InvalidCodeLayout);
+        }
+
+        let data = code.split_off(read_only_end);
+        let read_only = code.split_off(text_end);
+        let text = code;
+
+        Ok(PreparedArm11Image {
+            extended_header,
+            text,
+            read_only,
+            data,
+        })
     }
 
     /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
@@ -511,6 +713,33 @@ fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
     read_array::<8>(data, offset).map(u64::from_le_bytes)
 }
 
+fn read_verified_code_file<R: Read>(
+    reader: &mut ncch::exefs::ExeFsFileReader<R>,
+    maximum_size: usize,
+) -> std::result::Result<Vec<u8>, NcsdExecutableLoadError> {
+    let stored_size = usize::try_from(reader.len()).map_err(|_| {
+        NcsdExecutableLoadError::CodeImageTooLarge {
+            requested_size: usize::MAX,
+            maximum_size,
+        }
+    })?;
+    if stored_size > maximum_size {
+        return Err(NcsdExecutableLoadError::CodeImageTooLarge {
+            requested_size: stored_size,
+            maximum_size,
+        });
+    }
+
+    let mut code = Vec::new();
+    code.try_reserve_exact(stored_size)
+        .map_err(|error| NcsdExecutableLoadError::AllocationFailure(error.to_string()))?;
+    code.resize(stored_size, 0);
+    reader
+        .read_exact(&mut code)
+        .map_err(|error| NcsdExecutableLoadError::ReaderFailure(error.to_string()))?;
+    Ok(code)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +790,129 @@ mod tests {
         let mut hasher = ncch::romfs::sha256::Sha256::new();
         hasher.update(data).unwrap();
         hasher.finalize()
+    }
+
+    fn write_u16(data: &mut [u8], offset: usize, value: u16) {
+        data[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn compressed_test_code(segments: &[(u8, usize)]) -> Vec<u8> {
+        enum Operation {
+            Literal(u8),
+            BackReference(usize),
+        }
+
+        let mut operations = Vec::new();
+        for (byte, segment_size) in segments {
+            assert!(*segment_size >= 3);
+            operations.extend((0..3).map(|_| Operation::Literal(*byte)));
+            let mut remaining = segment_size - 3;
+            while remaining >= 3 {
+                let length = remaining.min(18);
+                operations.push(Operation::BackReference(length));
+                remaining -= length;
+            }
+            operations.extend((0..remaining).map(|_| Operation::Literal(*byte)));
+        }
+
+        let mut decode_order = Vec::new();
+        for group in operations.chunks(8) {
+            let flags = group.iter().enumerate().fold(0u8, |flags, (index, operation)| {
+                if matches!(operation, Operation::BackReference(_)) {
+                    flags | (0x80 >> index)
+                } else {
+                    flags
+                }
+            });
+            decode_order.push(flags);
+            for operation in group {
+                match operation {
+                    Operation::Literal(byte) => decode_order.push(*byte),
+                    Operation::BackReference(length) => {
+                        let encoded = (*length - 3) << 12;
+                        decode_order.push((encoded >> 8) as u8);
+                        decode_order.push(encoded as u8);
+                    }
+                }
+            }
+        }
+
+        decode_order.reverse();
+        let compressed_length = decode_order.len() + 8;
+        let output_size: usize = segments.iter().map(|(_, size)| size).sum();
+        let extra_size = output_size - compressed_length;
+        let info = (8u32 << 24) | u32::try_from(compressed_length).unwrap();
+
+        decode_order.extend_from_slice(&info.to_le_bytes());
+        decode_order.extend_from_slice(&u32::try_from(extra_size).unwrap().to_le_bytes());
+        decode_order
+    }
+
+    fn image_with_arm11_code(compressed: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        const PARTITION_OFFSET: usize = 0x4000;
+        const PARTITION_SIZE: usize = 0x8000;
+        const EXEFS_OFFSET: usize = 0x2000;
+        const EXEFS_SIZE: usize = 0x4000;
+        const CODE_SEGMENT_SIZE: usize = 0x1000;
+
+        let text = vec![0x11; CODE_SEGMENT_SIZE];
+        let read_only = vec![0x22; CODE_SEGMENT_SIZE];
+        let data = vec![0x33; CODE_SEGMENT_SIZE];
+        let code = if compressed {
+            compressed_test_code(&[
+                (0x11, CODE_SEGMENT_SIZE),
+                (0x22, CODE_SEGMENT_SIZE),
+                (0x33, CODE_SEGMENT_SIZE),
+            ])
+        } else {
+            [text.as_slice(), read_only.as_slice(), data.as_slice()].concat()
+        };
+
+        let mut image = vec![0u8; PARTITION_OFFSET + PARTITION_SIZE];
+        image[MAGIC_OFFSET..MAGIC_OFFSET + 4].copy_from_slice(b"NCSD");
+        let media_size_units = u32::try_from(image.len() / 0x200).unwrap();
+        write_u32(&mut image, MEDIA_SIZE_OFFSET, media_size_units);
+        write_partition(&mut image, 0, 0x20, 0x40);
+
+        let ncch_start = PARTITION_OFFSET;
+        image[ncch_start + 0x100..ncch_start + 0x104].copy_from_slice(b"NCCH");
+        write_u32(&mut image, ncch_start + 0x104, 0x40);
+        write_u32(&mut image, ncch_start + 0x180, 0x400);
+        image[ncch_start + 0x18F] = 0x04;
+
+        let mut extended_header = vec![0u8; 0x400];
+        extended_header[0..8].copy_from_slice(b"ACERIS!!");
+        if compressed {
+            extended_header[0x0D] = 0x01;
+        }
+        write_u32(&mut extended_header, 0x10, 0x0010_0000);
+        write_u32(&mut extended_header, 0x14, 1);
+        write_u32(&mut extended_header, 0x18, CODE_SEGMENT_SIZE as u32);
+        write_u32(&mut extended_header, 0x20, 0x0010_1000);
+        write_u32(&mut extended_header, 0x24, 1);
+        write_u32(&mut extended_header, 0x28, CODE_SEGMENT_SIZE as u32);
+        write_u32(&mut extended_header, 0x30, 0x0010_2000);
+        write_u32(&mut extended_header, 0x34, 1);
+        write_u32(&mut extended_header, 0x38, CODE_SEGMENT_SIZE as u32);
+        write_u32(&mut extended_header, 0x3C, 0x20);
+
+        let extended_hash = sha256_digest(&extended_header);
+        image[ncch_start + 0x160..ncch_start + 0x180].copy_from_slice(&extended_hash);
+        image[ncch_start + 0x200..ncch_start + 0x600].copy_from_slice(&extended_header);
+
+        let mut exefs = vec![0u8; EXEFS_SIZE];
+        exefs[..5].copy_from_slice(b".code");
+        write_u32(&mut exefs, 12, u32::try_from(code.len()).unwrap());
+        exefs[0x200..0x200 + code.len()].copy_from_slice(&code);
+        let code_hash = sha256_digest(&code);
+        exefs[0x1E0..0x200].copy_from_slice(&code_hash);
+        let superblock_hash = sha256_digest(&exefs[..0x200]);
+        image[ncch_start + 0x1C0..ncch_start + 0x1E0].copy_from_slice(&superblock_hash);
+
+        let exefs_start = ncch_start + EXEFS_OFFSET;
+        image[exefs_start..exefs_start + EXEFS_SIZE].copy_from_slice(&exefs);
+
+        (image, text, read_only, data)
     }
 
     fn image_with_verified_exefs_file() -> Vec<u8> {
@@ -634,6 +986,46 @@ mod tests {
         image[exefs_start..exefs_end].copy_from_slice(&encrypted_exefs);
 
         image
+    }
+
+    #[test]
+    fn prepares_uncompressed_arm11_code_segments_from_ncsd() {
+        let (image, expected_text, expected_read_only, expected_data) =
+            image_with_arm11_code(false);
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+
+        let prepared = partition
+            .open_ncch(Cursor::new(image))
+            .unwrap()
+            .prepare_arm11_executable_image([0x41; 16], [0x42; 16])
+            .unwrap();
+
+        assert_eq!(prepared.text, expected_text);
+        assert_eq!(prepared.read_only, expected_read_only);
+        assert_eq!(prepared.data, expected_data);
+        assert_eq!(prepared.extended_header.bss_size_bytes, 0x20);
+        assert!(!prepared.extended_header.compresses_exefs_code());
+    }
+
+    #[test]
+    fn prepares_blz_compressed_arm11_code_segments_from_ncsd() {
+        let (image, expected_text, expected_read_only, expected_data) =
+            image_with_arm11_code(true);
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+
+        let prepared = partition
+            .open_ncch(Cursor::new(image))
+            .unwrap()
+            .prepare_arm11_executable_image([0x41; 16], [0x42; 16])
+            .unwrap();
+
+        assert_eq!(prepared.text, expected_text);
+        assert_eq!(prepared.read_only, expected_read_only);
+        assert_eq!(prepared.data, expected_data);
+        assert_eq!(prepared.extended_header.bss_size_bytes, 0x20);
+        assert!(prepared.extended_header.compresses_exefs_code());
     }
 
     #[test]
