@@ -1965,13 +1965,25 @@ mod tests {
         privileged.cpu.regs[SP] = 0x3000;
         privileged.cpu.regs[LR] = 0x3004;
         privileged.cpu.switch_mode(super::Psr::SYSTEM_MODE).unwrap();
-        assert_eq!((privileged.cpu.regs[SP], privileged.cpu.regs[LR]), (0x2000, 0x2004));
-        privileged.cpu.switch_mode(super::Psr::SUPERVISOR_MODE).unwrap();
-        assert_eq!((privileged.cpu.regs[SP], privileged.cpu.regs[LR]), (0x3000, 0x3004));
+        assert_eq!(
+            (privileged.cpu.regs[SP], privileged.cpu.regs[LR]),
+            (0x2000, 0x2004)
+        );
+        privileged
+            .cpu
+            .switch_mode(super::Psr::SUPERVISOR_MODE)
+            .unwrap();
+        assert_eq!(
+            (privileged.cpu.regs[SP], privileged.cpu.regs[LR]),
+            (0x3000, 0x3004)
+        );
 
         // Mode bits are SBZ when CPSID/CPSIE does not request a mode change.
         let mut malformed = Machine::new(&[0xF10C_0093]);
-        malformed.cpu.switch_mode(super::Psr::SUPERVISOR_MODE).unwrap();
+        malformed
+            .cpu
+            .switch_mode(super::Psr::SUPERVISOR_MODE)
+            .unwrap();
         assert!(matches!(
             malformed.cpu.step(&mut malformed.mem),
             Err(Error::UndefinedInstruction { pc: 0, .. })

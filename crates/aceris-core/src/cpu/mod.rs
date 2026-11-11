@@ -45,7 +45,6 @@ struct ExclusiveReservation {
     version: u64,
 }
 
-
 /// Register banks shared by ARMv6 User/System and exception modes.
 #[derive(Clone, Debug, Default)]
 struct BankedRegisters {
@@ -126,7 +125,6 @@ impl Arm11Core {
     pub fn new() -> Self {
         Self::default()
     }
-
 
     /// Changes the active processor mode while preserving all banked registers.
     ///
@@ -255,7 +253,6 @@ mod tests {
         mem
     }
 
-
     #[test]
     fn mode_switches_preserve_user_system_fiq_and_exception_register_banks() {
         let mut cpu = Arm11Core::new();
@@ -288,7 +285,10 @@ mod tests {
         assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0x3000, 0x3004));
 
         cpu.switch_mode(Psr::FIQ_MODE).unwrap();
-        assert_eq!(&cpu.regs[8..15], &[0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xF13, 0xF14]);
+        assert_eq!(
+            &cpu.regs[8..15],
+            &[0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xF13, 0xF14]
+        );
         cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
         assert_eq!(&cpu.regs[8..13], &[8, 9, 10, 11, 12]);
         assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0x1000, 0x1004));
