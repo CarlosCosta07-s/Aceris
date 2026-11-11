@@ -25,8 +25,8 @@ use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY,
     SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
-    SVC_GET_THREAD_PRIORITY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY,
-    SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_WAIT_SYNCHRONIZATION1,
+    SVC_GET_THREAD_PRIORITY, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
+    SVC_SET_THREAD_PRIORITY, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -291,6 +291,7 @@ impl Arm11ProcessSession {
 
         match number {
             SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
+            SVC_QUERY_MEMORY => self.svc_query_memory(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
             SVC_CREATE_MUTEX => self.svc_create_mutex(caller),
             SVC_RELEASE_MUTEX => self.svc_release_mutex(caller),
@@ -389,6 +390,27 @@ impl Arm11ProcessSession {
                 }
             }
         }
+    }
+
+    /// Handles QueryMemory: r2 is the queried address; r0-r5 receive result and region.
+    fn svc_query_memory(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let address = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs[2];
+        let region = self.address_space.query_memory(address);
+        let core = self
+            .scheduler
+            .core_mut(caller)
+            .expect("caller context remains allocated");
+        core.regs[0] = 0;
+        core.regs[1] = region.base_address;
+        core.regs[2] = region.size_bytes;
+        core.regs[3] = region.permissions;
+        core.regs[4] = region.state as u32;
+        core.regs[5] = region.page_flags;
+        SvcRunDisposition::Resume
     }
 
     /// Handles the raw ARM11 ControlMemory SVC register ABI for ordinary
@@ -928,6 +950,48 @@ mod tests {
         assert_eq!(second_report.instructions_executed, 0);
         assert_eq!(second_report.stop_reason, Arm11RunStopReason::ProcessExited);
         assert_eq!(session.core().pc(), 0x0010_0008);
+    }
+
+    #[test]
+    fn query_memory_reports_text_permissions_and_free_gaps() {
+        let mut session = test_session_with_program(&[0xEF00_0002]);
+        session.scheduler.current_core_mut().unwrap().regs[2] = 0x0010_0000;
+
+        session.dispatch_svc(SVC_QUERY_MEMORY);
+        let registers = session.core().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(registers[1], 0x0010_0000);
+        assert_eq!(registers[2], 0x1000);
+        assert_eq!(registers[3], 5);
+        assert_eq!(registers[4], 4);
+        assert_eq!(registers[5], 0);
+
+        session.scheduler.current_core_mut().unwrap().regs[2] = 0x0018_0000;
+        session.dispatch_svc(SVC_QUERY_MEMORY);
+        let registers = session.core().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(registers[1], 0x0010_1000);
+        assert_eq!(registers[2], 0x000F_F000);
+        assert_eq!(registers[3], 0);
+        assert_eq!(registers[4], 0);
+    }
+
+    #[test]
+    fn query_memory_reports_private_heap_permissions_after_control_memory() {
+        let mut session = test_session_with_program(&[0xEF00_0002]);
+        session
+            .address_space
+            .allocate_application_heap_region(0x0800_0000, 0x2000)
+            .unwrap();
+        session.scheduler.current_core_mut().unwrap().regs[2] = 0x0800_1000;
+
+        session.dispatch_svc(SVC_QUERY_MEMORY);
+        let registers = session.core().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(registers[1], 0x0800_0000);
+        assert_eq!(registers[2], 0x2000);
+        assert_eq!(registers[3], 3);
+        assert_eq!(registers[4], 5);
     }
 
     #[test]

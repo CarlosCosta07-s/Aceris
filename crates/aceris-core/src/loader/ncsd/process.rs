@@ -124,6 +124,27 @@ impl fmt::Display for Arm11SegmentKind {
     }
 }
 
+/// Simplified 3DS virtual memory states represented by QueryMemory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Arm11MemoryState {
+    Free = 0,
+    Code = 4,
+    Private = 5,
+}
+
+/// Result for one contiguous region returned by the ARM11 QueryMemory service.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arm11MemoryRegionInfo {
+    pub base_address: u32,
+    pub size_bytes: u32,
+    /// Bit 0 = read, bit 1 = write, bit 2 = execute.
+    pub permissions: u32,
+    pub state: Arm11MemoryState,
+    /// PageInfo flags: bit 0 locked, bit 1 changed. No page tracking yet.
+    pub page_flags: u32,
+}
+
 /// One validated ARM11 virtual-memory segment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Arm11MemorySegment {
@@ -565,6 +586,102 @@ impl Arm11CodeAddressSpace {
         }
 
         true
+    }
+
+    /// Queries the mapped or free virtual region containing an address.
+    ///
+    /// Adjacent mappings with identical permissions and state are coalesced.
+    /// Unmapped addresses return the complete free gap between neighbouring
+    /// mappings. Page lock/dirty tracking is not implemented, so page_flags
+    /// is currently zero for every region.
+    pub fn query_memory(&self, address: u32) -> Arm11MemoryRegionInfo {
+        let mut regions = Vec::with_capacity(5 + self.dynamic_regions.len());
+        let segments = [
+            (self.layout.text, Arm11MemoryState::Code),
+            (self.layout.read_only, Arm11MemoryState::Code),
+            (self.layout.data, Arm11MemoryState::Private),
+            (self.layout.bss, Arm11MemoryState::Private),
+            (self.layout.stack, Arm11MemoryState::Private),
+        ];
+
+        for (segment, state) in segments {
+            if segment.is_empty() {
+                continue;
+            }
+            let mut permissions = 1;
+            if segment.writable {
+                permissions |= 2;
+            }
+            if segment.executable {
+                permissions |= 4;
+            }
+            regions.push(Arm11MemoryRegionInfo {
+                base_address: segment.address,
+                size_bytes: segment.mapped_size_bytes,
+                permissions,
+                state,
+                page_flags: 0,
+            });
+        }
+
+        for region in &self.dynamic_regions {
+            regions.push(Arm11MemoryRegionInfo {
+                base_address: region.address,
+                size_bytes: u32::try_from(region.bytes.len())
+                    .expect("dynamic mappings are limited to u32-sized regions"),
+                permissions: 3,
+                state: Arm11MemoryState::Private,
+                page_flags: 0,
+            });
+        }
+
+        regions.sort_by_key(|region| region.base_address);
+        let mut merged: Vec<Arm11MemoryRegionInfo> = Vec::with_capacity(regions.len());
+        for region in regions {
+            if let Some(previous) = merged.last_mut() {
+                let previous_end =
+                    u64::from(previous.base_address) + u64::from(previous.size_bytes);
+                if previous_end == u64::from(region.base_address)
+                    && previous.permissions == region.permissions
+                    && previous.state == region.state
+                {
+                    previous.size_bytes = previous.size_bytes.saturating_add(region.size_bytes);
+                    continue;
+                }
+            }
+            merged.push(region);
+        }
+
+        if let Some(region) = merged.iter().find(|region| {
+            u64::from(address) >= u64::from(region.base_address)
+                && u64::from(address)
+                    < u64::from(region.base_address) + u64::from(region.size_bytes)
+        }) {
+            return *region;
+        }
+
+        let address64 = u64::from(address);
+        let previous_end = merged
+            .iter()
+            .map(|region| u64::from(region.base_address) + u64::from(region.size_bytes))
+            .filter(|end| *end <= address64)
+            .max()
+            .unwrap_or(0);
+        let next_base = merged
+            .iter()
+            .map(|region| u64::from(region.base_address))
+            .filter(|base| *base > address64)
+            .min()
+            .unwrap_or(ADDRESS_SPACE_END);
+        let free_base = previous_end.min(address64);
+        let free_size = next_base.saturating_sub(free_base);
+        Arm11MemoryRegionInfo {
+            base_address: u32::try_from(free_base).unwrap_or(address),
+            size_bytes: u32::try_from(free_size).unwrap_or(u32::MAX),
+            permissions: 0,
+            state: Arm11MemoryState::Free,
+            page_flags: 0,
+        }
     }
 
     /// Returns the backing bytes for one mapped code segment.

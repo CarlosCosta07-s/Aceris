@@ -6,6 +6,9 @@
 /// Control process memory mappings (allocation and release).
 pub const SVC_CONTROL_MEMORY: u32 = 0x01;
 
+/// Query process virtual-memory mappings.
+pub const SVC_QUERY_MEMORY: u32 = 0x02;
+
 /// Exit the current process.
 pub const SVC_EXIT_PROCESS: u32 = 0x03;
 
