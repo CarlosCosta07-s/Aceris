@@ -2,9 +2,9 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::Pica200;
+use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::video::DualScreenDisplay;
-use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
 use aceris_common::{Error, Result};
