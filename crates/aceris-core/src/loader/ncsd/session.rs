@@ -24,7 +24,7 @@ use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
     SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SLEEP_THREAD,
 };
-use thread::{DEFAULT_PROCESSOR_ID, ThreadSchedulerError};
+use thread::ThreadSchedulerError;
 
 /// Main-thread priority used by the current process bootstrap.
 pub const DEFAULT_MAIN_THREAD_PRIORITY: i32 = 0x30;
@@ -321,15 +321,15 @@ impl Arm11ProcessSession {
                     .regs;
                 let handle = registers[0];
                 let priority = registers[1] as i32;
-                let result = self
-                    .scheduler
-                    .thread_id_for_handle(handle)
-                    .ok_or(ThreadSchedulerError::UnknownThread(ThreadId::from_raw_for_internal(handle)))
-                    .and_then(|id| self.scheduler.set_priority(id, priority).map(|_| ()));
-                let code = result
-                    .err()
-                    .map(thread_scheduler_result_code)
-                    .unwrap_or(0);
+                let code = match self.scheduler.thread_id_for_handle(handle) {
+                    Some(id) => self
+                        .scheduler
+                        .set_priority(id, priority)
+                        .err()
+                        .map(thread_scheduler_result_code)
+                        .unwrap_or(0),
+                    None => RESULT_INVALID_HANDLE,
+                };
                 self.scheduler
                     .core_mut(caller)
                     .expect("caller context remains allocated")
