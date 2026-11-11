@@ -89,11 +89,7 @@ impl GpuPhysicalMemory {
     }
 
     /// Reads a physical byte range. Unallocated backing pages read as zero.
-    pub fn read(
-        &self,
-        address: u32,
-        output: &mut [u8],
-    ) -> Result<(), GpuPhysicalMemoryError> {
+    pub fn read(&self, address: u32, output: &mut [u8]) -> Result<(), GpuPhysicalMemoryError> {
         self.validate_range(address, output.len())?;
         let mut copied = 0usize;
         while copied < output.len() {
@@ -113,11 +109,7 @@ impl GpuPhysicalMemory {
     }
 
     /// Writes a physical byte range, allocating only the touched pages.
-    pub fn write(
-        &mut self,
-        address: u32,
-        input: &[u8],
-    ) -> Result<(), GpuPhysicalMemoryError> {
+    pub fn write(&mut self, address: u32, input: &[u8]) -> Result<(), GpuPhysicalMemoryError> {
         self.validate_range(address, input.len())?;
         let mut copied = 0usize;
         while copied < input.len() {
@@ -129,8 +121,7 @@ impl GpuPhysicalMemory {
                 .pages
                 .entry(page_number)
                 .or_insert_with(|| Box::new([0; PHYSICAL_PAGE_SIZE]));
-            page[page_offset..page_offset + count]
-                .copy_from_slice(&input[copied..copied + count]);
+            page[page_offset..page_offset + count].copy_from_slice(&input[copied..copied + count]);
             copied += count;
         }
         Ok(())
@@ -142,11 +133,7 @@ impl GpuPhysicalMemory {
         Ok(u32::from_le_bytes(bytes))
     }
 
-    pub fn write_u32(
-        &mut self,
-        address: u32,
-        value: u32,
-    ) -> Result<(), GpuPhysicalMemoryError> {
+    pub fn write_u32(&mut self, address: u32, value: u32) -> Result<(), GpuPhysicalMemoryError> {
         self.write(address, &value.to_le_bytes())
     }
 }
