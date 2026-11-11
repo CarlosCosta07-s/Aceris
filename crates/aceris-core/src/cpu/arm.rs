@@ -812,7 +812,10 @@ impl Arm11Core {
             let valid_encoding = if imod == 0 {
                 change_mode && interrupt_mask == 0 && valid_mode
             } else {
-                matches!(imod, 0b10 | 0b11) && interrupt_mask != 0 && (!change_mode || valid_mode)
+                matches!(imod, 0b10 | 0b11)
+                    && interrupt_mask != 0
+                    && (!change_mode || valid_mode)
+                    && (change_mode || mode == 0)
             };
             if !valid_encoding {
                 return Err(Error::UndefinedInstruction {
@@ -1961,6 +1964,14 @@ mod tests {
             ))
         ));
         assert_eq!(privileged.cpu.cpsr.mode(), 0x13);
+
+        // Mode bits are SBZ when CPSID/CPSIE does not request a mode change.
+        let mut malformed = Machine::new(&[0xF10C_0093]);
+        malformed.cpu.cpsr.0 = (malformed.cpu.cpsr.0 & !0x1F) | 0x13;
+        assert!(matches!(
+            malformed.cpu.step(&mut malformed.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
     }
 
     #[test]

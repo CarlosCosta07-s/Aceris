@@ -364,7 +364,12 @@ impl Arm11Core {
         if half & 0xFFE0 == 0xB660 {
             // CPSIE/CPSID update selected A/I/F masks. User mode treats CPS
             // as a NOP; the Thumb encoding does not include a mode change.
-            let interrupt_mask = (half & 0x7) as u8;
+            let encoded_flags = (half & 0x7) as u8;
+            // T16 encodes A:I:F from bit 2 down to bit 0, while the
+            // shared CPSR helper expects A:I:F in bits 0 through 2.
+            let interrupt_mask = ((encoded_flags & 0b100) >> 2)
+                | (encoded_flags & 0b010)
+                | ((encoded_flags & 0b001) << 2);
             if bit(half, 3) || interrupt_mask == 0 {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
@@ -1026,6 +1031,24 @@ mod tests {
         assert_eq!(m.flags(), (true, false, true, false));
         assert!(m.cpu.cpsr.q());
         assert_eq!(m.cpu.cpsr.ge(), 0b1010);
+    }
+
+    #[test]
+    fn thumb_cps_maps_async_abort_and_fiq_fields_individually() {
+        // CPSID a ; CPSIE a ; CPSID f ; CPSIE f.
+        let mut m = Machine::new(&[0xB674, 0xB664, 0xB671, 0xB661]);
+        m.cpu.cpsr.0 = (m.cpu.cpsr.0 & !0x1F) | 0x13;
+
+        m.step();
+        assert_ne!(m.cpu.cpsr.0 & (1 << 8), 0);
+        assert_eq!(m.cpu.cpsr.0 & (1 << 6), 0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & (1 << 8), 0);
+        m.step();
+        assert_ne!(m.cpu.cpsr.0 & (1 << 6), 0);
+        assert_eq!(m.cpu.cpsr.0 & (1 << 8), 0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & (1 << 6), 0);
     }
 
     #[test]
