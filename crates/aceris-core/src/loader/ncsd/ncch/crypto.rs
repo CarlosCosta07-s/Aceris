@@ -55,6 +55,7 @@ pub enum NcchCryptoError {
     RegionNotPresent(NcchCtrRegion),
     RegionOffsetTooLarge(u64),
     CounterOffsetOverflow,
+    CounterRangeOverflow,
 }
 
 impl std::fmt::Display for NcchCryptoError {
@@ -72,6 +73,9 @@ impl std::fmt::Display for NcchCryptoError {
                 "NCCH region offset 0x{offset:x} does not fit in the counter"
             ),
             Self::CounterOffsetOverflow => write!(f, "AES-CTR counter offset overflows"),
+            Self::CounterRangeOverflow => {
+                write!(f, "AES-CTR request exceeds the 128-bit counter range")
+            }
         }
     }
 }
@@ -274,6 +278,9 @@ impl Aes128Ctr {
     }
 
     /// Applies CTR at an arbitrary byte offset without processing prior data.
+    ///
+    /// The requested byte range is rejected if its final block would wrap the
+    /// 128-bit counter and reuse an earlier keystream block.
     pub fn apply_keystream_at_offset(
         key: [u8; AES_BLOCK_SIZE],
         initial_counter: [u8; AES_BLOCK_SIZE],
@@ -285,6 +292,13 @@ impl Aes128Ctr {
         let counter_value = u128::from_be_bytes(initial_counter)
             .checked_add(blocks)
             .ok_or(NcchCryptoError::CounterOffsetOverflow)?;
+        if !data.is_empty() {
+            let final_block =
+                (remainder as u128 + data.len() as u128 - 1) / AES_BLOCK_SIZE as u128;
+            counter_value
+                .checked_add(final_block)
+                .ok_or(NcchCryptoError::CounterRangeOverflow)?;
+        }
         let mut stream = Self::new(key, counter_value.to_be_bytes());
 
         if remainder != 0 {
@@ -386,6 +400,30 @@ mod tests {
         let mut random_access = [0u8; 37];
         Aes128Ctr::apply_keystream_at_offset(key, counter, 21, &mut random_access).unwrap();
         assert_eq!(&random_access[..], &sequential[21..58]);
+    }
+
+    #[test]
+    fn random_access_rejects_counter_wrap_without_mutating_input() {
+        let key = hex("000102030405060708090a0b0c0d0e0f");
+        let counter = [0xff; AES_BLOCK_SIZE];
+
+        let mut final_full_block = [0; AES_BLOCK_SIZE];
+        Aes128Ctr::apply_keystream_at_offset(key, counter, 0, &mut final_full_block).unwrap();
+        assert_eq!(final_full_block, Aes128::new(key).encrypt_block(counter));
+
+        let mut crossing_block_boundary = [0x5a; 17];
+        assert_eq!(
+            Aes128Ctr::apply_keystream_at_offset(key, counter, 0, &mut crossing_block_boundary),
+            Err(NcchCryptoError::CounterRangeOverflow)
+        );
+        assert_eq!(crossing_block_boundary, [0x5a; 17]);
+
+        let mut unaligned_crossing = [0xa5; 2];
+        assert_eq!(
+            Aes128Ctr::apply_keystream_at_offset(key, counter, 15, &mut unaligned_crossing),
+            Err(NcchCryptoError::CounterRangeOverflow)
+        );
+        assert_eq!(unaligned_crossing, [0xa5; 2]);
     }
 
     #[test]
