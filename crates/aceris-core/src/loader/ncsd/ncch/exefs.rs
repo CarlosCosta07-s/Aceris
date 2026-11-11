@@ -68,10 +68,7 @@ impl<R: Read + Seek> ExeFsFileReader<R> {
         }
 
         let end = file.end_offset_bytes().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "ExeFS file range overflows",
-            )
+            io::Error::new(io::ErrorKind::InvalidInput, "ExeFS file range overflows")
         })?;
         let available = inner.seek(SeekFrom::End(0))?;
         if end > available {
@@ -565,7 +562,10 @@ mod tests {
         let mut actual = Vec::new();
         reader.read_to_end(&mut actual).unwrap();
 
-        assert_eq!(actual, (0..0x100).map(|byte| byte as u8).collect::<Vec<_>>());
+        assert_eq!(
+            actual,
+            (0..0x100).map(|byte| byte as u8).collect::<Vec<_>>()
+        );
         assert_eq!(reader.len(), 0x100);
         assert_eq!(reader.position(), 0x100);
         assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
