@@ -1246,9 +1246,10 @@ fn verify_ivfc_hash_table<R: Read + Seek>(
 
     let block_count = data_region.size_bytes / block_size_bytes
         + u64::from(data_region.size_bytes % block_size_bytes != 0);
-    let expected_hash_size = block_count
-        .checked_mul(SHA256_SIZE)
-        .ok_or(RomFsError::InvalidIvfcLevel {
+    let expected_hash_size =
+        block_count
+            .checked_mul(SHA256_SIZE)
+            .ok_or(RomFsError::InvalidIvfcLevel {
             index: level,
             reason: "expected hash table size overflows",
         })?;
@@ -1267,14 +1268,12 @@ fn verify_ivfc_hash_table<R: Read + Seek>(
     for block_index in 0..block_count {
         let hash_offset = hash_region
             .offset_bytes
-            .checked_add(
-                block_index
-                    .checked_mul(SHA256_SIZE)
-                    .ok_or(RomFsError::InvalidIvfcLevel {
-                        index: level,
-                        reason: "hash entry offset overflows",
-                    })?,
-            )
+            .checked_add(block_index.checked_mul(SHA256_SIZE).ok_or(
+                RomFsError::InvalidIvfcLevel {
+                    index: level,
+                    reason: "hash entry offset overflows",
+                },
+            )?)
             .ok_or(RomFsError::InvalidIvfcLevel {
                 index: level,
                 reason: "hash entry offset overflows",
@@ -1289,13 +1288,12 @@ fn verify_ivfc_hash_table<R: Read + Seek>(
             .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
 
         let block_data_size = (data_region.size_bytes - data_offset).min(block_size_bytes);
-        let block_offset = data_region
-            .offset_bytes
-            .checked_add(data_offset)
-            .ok_or(RomFsError::InvalidIvfcLevel {
+        let block_offset = data_region.offset_bytes.checked_add(data_offset).ok_or(
+            RomFsError::InvalidIvfcLevel {
                 index: level,
                 reason: "data block offset overflows",
-            })?;
+            },
+        )?;
         reader
             .seek(SeekFrom::Start(block_offset))
             .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
@@ -1332,12 +1330,13 @@ fn verify_ivfc_hash_table<R: Read + Seek>(
             return Err(RomFsError::IvfcHashMismatch { level, block_index });
         }
 
-        data_offset = data_offset
-            .checked_add(block_data_size)
-            .ok_or(RomFsError::InvalidIvfcLevel {
-                index: level,
-                reason: "processed data offset overflows",
-            })?;
+        data_offset =
+            data_offset
+                .checked_add(block_data_size)
+                .ok_or(RomFsError::InvalidIvfcLevel {
+                    index: level,
+                    reason: "processed data offset overflows",
+                })?;
     }
 
     Ok(())
@@ -1662,7 +1661,7 @@ mod tests {
         let mut bytes = valid_integrity_ivfc_header();
         write_u64(&mut bytes, 0x14, 0x20);
         let header = IvfcHeader::parse(&bytes, 0x2000).unwrap();
-        let mut image = vec![0; 0x2000];
+        let image = vec![0; 0x2000];
 
         assert_eq!(
             header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
@@ -1676,14 +1675,14 @@ mod tests {
     #[test]
     fn rejects_hash_blocks_larger_than_the_romfs_image() {
         let mut bytes = valid_integrity_ivfc_header();
-        write_u32(&mut bytes, 0x3C + 16, 63);
+        write_u32(&mut bytes, 0x24 + 16, 63);
         let header = IvfcHeader::parse(&bytes, 0x2000).unwrap();
         let image = vec![0; 0x2000];
 
         assert_eq!(
             header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
             Err(RomFsError::InvalidIvfcLevel {
-                index: 3,
+                index: 2,
                 reason: "hash block size exceeds the RomFS image size",
             })
         );
