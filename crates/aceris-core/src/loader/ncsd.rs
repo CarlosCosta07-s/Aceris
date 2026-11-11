@@ -504,7 +504,7 @@ mod tests {
 
         assert_eq!(actual, expected);
         assert_eq!(reader.position(), 12);
-        assert_eq!(reader.seek(SeekFrom::Current(0)).unwrap(), 12);
+        assert_eq!(reader.stream_position().unwrap(), 12);
         assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
     }
 
