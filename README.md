@@ -67,9 +67,13 @@ o crate atual gera apenas a biblioteca nativa.
 
 ## Ícone
 
-O ícone é um desenho original, gerado por [`tools/generate_icons.py`](tools/generate_icons.py)
-a partir de um único SVG (precisa de `rsvg-convert` e ImageMagick). Ele cria o SVG
-mestre, os PNGs, o `.ico` do Windows e os ícones adaptativos do Android.
+O ícone é um desenho original, gerado por uma ferramenta própria em Rust,
+[`tools/icongen`](tools/icongen), sem dependências externas. Uma única descrição
+vetorial produz o SVG, os PNGs, o `.ico` do Windows e os ícones adaptativos do Android:
+
+```sh
+cargo run --release -p aceris-icongen
+```
 
 
 ## Licença

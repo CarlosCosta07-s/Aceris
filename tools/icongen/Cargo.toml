@@ -1,0 +1,16 @@
+[package]
+name = "aceris-icongen"
+description = "Generates the Aceris icon (SVG, PNG, ICO and Android launcher resources)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "aceris-icongen"
+path = "src/main.rs"
+
+[lints]
+workspace = true

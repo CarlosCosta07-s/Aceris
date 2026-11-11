@@ -5,6 +5,7 @@ members = [
     "crates/aceris-core",
     "frontends/desktop",
     "frontends/android",
+    "tools/icongen",
 ]
 default-members = [
     "crates/aceris-common",

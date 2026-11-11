@@ -28,3 +28,7 @@ dependencies = [
  "aceris-common",
  "aceris-core",
 ]
+
+[[package]]
+name = "aceris-icongen"
+version = "0.0.1"
