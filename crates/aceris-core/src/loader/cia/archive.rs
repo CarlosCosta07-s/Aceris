@@ -938,12 +938,9 @@ impl<R: Read + Seek> CiaVerifiedRomFsReader<R> {
             return Ok(None);
         };
 
-        self.level3
-            .open_file(&file)
-            .map(Some)
-            .map_err(|error| {
-                crate::loader::ncsd::ncch::romfs::RomFsError::ReaderFailure(error.to_string())
-            })
+        self.level3.open_file(&file).map(Some).map_err(|error| {
+            crate::loader::ncsd::ncch::romfs::RomFsError::ReaderFailure(error.to_string())
+        })
     }
 }
 
