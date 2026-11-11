@@ -2,7 +2,7 @@
 
 use crate::cpu::Arm11Core;
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
-use crate::loader::ncsd::session::{Arm11ProcessSession, Arm11RunReport, Arm11RunStopReason};
+use crate::loader::ncsd::session::{Arm11ProcessSession, Arm11RunReport};
 use crate::loader::{self, ImageFormat};
 use aceris_common::{Error, Result};
 use std::fs::File;
@@ -134,6 +134,7 @@ impl System {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loader::ncsd::session::Arm11RunStopReason;
 
     #[test]
     fn running_without_an_image_fails() {
