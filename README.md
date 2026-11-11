@@ -71,11 +71,6 @@ O ícone é um desenho original, gerado por [`tools/generate_icons.py`](tools/ge
 a partir de um único SVG (precisa de `rsvg-convert` e ImageMagick). Ele cria o SVG
 mestre, os PNGs, o `.ico` do Windows e os ícones adaptativos do Android.
 
-## Contribuidores
-
-- [Carlos Costa](https://github.com/CarlosCosta07-s): criador e mantenedor
-- ChatGPT (plano gratuito): assistente de IA
-- Claude (Anthropic): assistente de IA
 
 ## Licença
 
