@@ -564,6 +564,131 @@ mod tests {
     }
 
     #[test]
+    fn scanout_decodes_rgb8_rgb5a1_and_rgba4_component_order() {
+        let mut memory = GpuPhysicalMemory::new();
+        let rgb8 = FCRAM_BASE + 0x8000;
+        let rgb5a1 = FCRAM_BASE + 0x9000;
+        let rgba4 = FCRAM_BASE + 0xA000;
+        memory.write(rgb8, &[0x33, 0x22, 0x11]).unwrap();
+        memory.write(rgb5a1, &[0x01, 0xF8]).unwrap();
+        memory.write(rgba4, &[0xCD, 0xAB]).unwrap();
+
+        let mut controller = LcdController::new();
+        let mut display = DualScreenDisplay::new().unwrap();
+
+        configure_panel(
+            &mut controller,
+            LcdPanel::Bottom,
+            rgb8,
+            0,
+            LcdPixelFormat::Rgb8,
+            0,
+        );
+        controller.scanout(&memory, &mut display).unwrap();
+        assert_eq!(
+            &display.bottom().pixels()[..4],
+            &[0x11, 0x22, 0x33, 0xFF]
+        );
+
+        configure_panel(
+            &mut controller,
+            LcdPanel::Bottom,
+            rgb5a1,
+            0,
+            LcdPixelFormat::Rgb5A1,
+            0,
+        );
+        controller.scanout(&memory, &mut display).unwrap();
+        assert_eq!(
+            &display.bottom().pixels()[..4],
+            &[0xFF, 0, 0, 0xFF]
+        );
+
+        configure_panel(
+            &mut controller,
+            LcdPanel::Bottom,
+            rgba4,
+            0,
+            LcdPixelFormat::Rgba4,
+            0,
+        );
+        controller.scanout(&memory, &mut display).unwrap();
+        assert_eq!(
+            &display.bottom().pixels()[..4],
+            &[0xAA, 0xBB, 0xCC, 0xDD]
+        );
+    }
+
+    #[test]
+    fn framebuffer_selection_changes_only_at_vblank() {
+        let mut memory = GpuPhysicalMemory::new();
+        let first_left = FCRAM_BASE + 0xB000;
+        let second_left = FCRAM_BASE + 0xC000;
+        let first_right = FCRAM_BASE + 0xD000;
+        let second_right = FCRAM_BASE + 0xE000;
+        memory.write(first_left, &[1, 2, 3, 4]).unwrap();
+        memory.write(second_left, &[5, 6, 7, 8]).unwrap();
+        memory.write(first_right, &[9, 10, 11, 12]).unwrap();
+        memory.write(second_right, &[13, 14, 15, 16]).unwrap();
+
+        let mut controller = LcdController::new();
+        controller
+            .write_register(LcdPanel::Top, PDC_FRAMEBUFFER_A_FIRST, first_left)
+            .unwrap();
+        controller
+            .write_register(LcdPanel::Top, PDC_FRAMEBUFFER_A_SECOND, second_left)
+            .unwrap();
+        controller
+            .write_register(LcdPanel::Top, PDC_FRAMEBUFFER_B_FIRST, first_right)
+            .unwrap();
+        controller
+            .write_register(LcdPanel::Top, PDC_FRAMEBUFFER_B_SECOND, second_right)
+            .unwrap();
+        controller
+            .write_register(
+                LcdPanel::Top,
+                PDC_FRAMEBUFFER_FORMAT,
+                LcdPixelFormat::Rgba8 as u32,
+            )
+            .unwrap();
+        controller
+            .write_register(
+                LcdPanel::Top,
+                PDC_FRAMEBUFFER_STRIDE,
+                (TOP_SCREEN_WIDTH * 4) as u32,
+            )
+            .unwrap();
+        controller
+            .write_register(LcdPanel::Top, PDC_CONTROL, ENABLED)
+            .unwrap();
+        controller
+            .write_register(LcdPanel::Top, PDC_FRAMEBUFFER_SELECT, 1)
+            .unwrap();
+
+        let mut display = DualScreenDisplay::new().unwrap();
+        controller.scanout(&memory, &mut display).unwrap();
+        assert_eq!(&display.top_left().pixels()[..4], &[1, 2, 3, 4]);
+        assert_eq!(&display.top_right().pixels()[..4], &[9, 10, 11, 12]);
+        assert_eq!(
+            controller
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_SELECT)
+                .unwrap(),
+            1
+        );
+
+        controller.advance_vblank();
+        assert_eq!(
+            controller
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_SELECT)
+                .unwrap(),
+            0x11
+        );
+        controller.scanout(&memory, &mut display).unwrap();
+        assert_eq!(&display.top_left().pixels()[..4], &[5, 6, 7, 8]);
+        assert_eq!(&display.top_right().pixels()[..4], &[13, 14, 15, 16]);
+    }
+
+    #[test]
     fn unsupported_interlace_modes_are_rejected() {
         let memory = GpuPhysicalMemory::new();
         let mut controller = LcdController::new();
