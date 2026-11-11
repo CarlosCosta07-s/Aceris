@@ -864,9 +864,7 @@ impl Arm11CodeAddressSpace {
             return;
         }
         let end = u64::from(address) + size as u64;
-        let mut granule = u64::from(
-            address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1),
-        );
+        let mut granule = u64::from(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1));
         while granule < end {
             let key = granule as u32;
             let version = self.exclusive_versions.entry(key).or_insert(0);
@@ -1201,17 +1199,32 @@ mod tests {
         cpu.regs[3] = 0xAABB_CCDD;
         cpu.regs[4] = 0x5566_7788;
 
-        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
         assert_eq!(cpu.regs[0], 0x1122_3344);
-        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
         assert_eq!(cpu.regs[2], 0);
         assert_eq!(address_space.read32(data_address).unwrap(), 0xAABB_CCDD);
 
         cpu.regs[3] = 0xDEAD_BEEF;
-        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
         assert_eq!(cpu.regs[0], 0xAABB_CCDD);
-        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
-        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
 
         assert_eq!(cpu.regs[2], 1);
         assert_eq!(address_space.read32(data_address).unwrap(), 0xAABB_CCDD);

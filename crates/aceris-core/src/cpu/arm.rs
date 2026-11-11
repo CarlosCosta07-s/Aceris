@@ -100,10 +100,7 @@ impl Arm11Core {
 
     /// Executes the ARMv6 scalar media instructions implemented by this core.
     fn execute_media_instruction(&mut self, word: u32) -> Result<StepEvent> {
-        if matches!(
-            word & 0x0FF0_0010,
-            0x0700_0010 | 0x0740_0010 | 0x0750_0010
-        ) {
+        if matches!(word & 0x0FF0_0010, 0x0700_0010 | 0x0740_0010 | 0x0750_0010) {
             return self.execute_signed_dsp_multiply_instruction(word);
         }
         let rd = bits(word, 15, 12) as usize;
@@ -328,8 +325,7 @@ impl Arm11Core {
                 let first = signed_halfword(self.regs[rm], bit(word, 5));
                 let second = signed_halfword(self.regs[rs], bit(word, 6));
                 let product = first * second;
-                let accumulator =
-                    (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
+                let accumulator = (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
                 let result = accumulator.wrapping_add(product as u64);
                 self.regs[rd_lo] = result as u32;
                 self.regs[rd_hi] = (result >> 32) as u32;
@@ -372,10 +368,8 @@ impl Arm11Core {
                 } else {
                     self.regs[rs]
                 };
-                let low_product =
-                    signed_halfword(first, false) * signed_halfword(second, false);
-                let high_product =
-                    signed_halfword(first, true) * signed_halfword(second, true);
+                let low_product = signed_halfword(first, false) * signed_halfword(second, false);
+                let high_product = signed_halfword(first, true) * signed_halfword(second, true);
                 let products = if subtract {
                     low_product - high_product
                 } else {
@@ -418,17 +412,14 @@ impl Arm11Core {
                 } else {
                     self.regs[rs]
                 };
-                let low_product =
-                    signed_halfword(first, false) * signed_halfword(second, false);
-                let high_product =
-                    signed_halfword(first, true) * signed_halfword(second, true);
+                let low_product = signed_halfword(first, false) * signed_halfword(second, false);
+                let high_product = signed_halfword(first, true) * signed_halfword(second, true);
                 let products = if subtract {
                     low_product - high_product
                 } else {
                     low_product + high_product
                 };
-                let accumulator =
-                    (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
+                let accumulator = (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
                 let result = accumulator.wrapping_add(products as u64);
                 self.regs[rd_lo] = result as u32;
                 self.regs[rd_hi] = (result >> 32) as u32;
@@ -1004,10 +995,7 @@ impl Arm11Core {
 
     /// Executes UMAAL, which adds two independent 32-bit accumulators
     /// to an unsigned 32x32-bit product and writes the 64-bit result.
-    fn unsigned_multiply_accumulate_accumulate_long(
-        &mut self,
-        word: u32,
-    ) -> Result<StepEvent> {
+    fn unsigned_multiply_accumulate_accumulate_long(&mut self, word: u32) -> Result<StepEvent> {
         let rd_hi = bits(word, 19, 16) as usize;
         let rd_lo = bits(word, 15, 12) as usize;
         let rs = bits(word, 11, 8) as usize;
@@ -1127,8 +1115,7 @@ impl Arm11Core {
                 || rt == PC
                 || rd == rn
                 || rd == rt
-                || (size == 8
-                    && (rt % 2 != 0 || rt == LR || second_rt >= PC || rd == second_rt))
+                || (size == 8 && (rt % 2 != 0 || rt == LR || second_rt >= PC || rd == second_rt))
             {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
@@ -1158,8 +1145,7 @@ impl Arm11Core {
                     let first = self.regs[rt];
                     let second = self.regs[second_rt];
                     if self.cpsr.big_endian() {
-                        u64::from(first.swap_bytes())
-                            | (u64::from(second.swap_bytes()) << 32)
+                        u64::from(first.swap_bytes()) | (u64::from(second.swap_bytes()) << 32)
                     } else {
                         u64::from(first) | (u64::from(second) << 32)
                     }
@@ -1208,23 +1194,24 @@ impl Arm11Core {
             // QADD/QSUB/QDADD/QDSUB use signed 32-bit saturation. QD* first
             // saturates the doubled Rn operand, then saturates the final sum
             // or difference. The CPSR.Q flag is sticky across instructions.
+            let rd_index = rd as usize;
+            let rm_index = rm as usize;
             let rn = bits(word, 19, 16) as usize;
-            if rd == PC || rn == PC || rm == PC {
+            if rd_index == PC || rn == PC || rm_index == PC {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
                     word,
                 });
             }
 
-            let first = i64::from(self.regs[rm] as i32);
+            let first = i64::from(self.regs[rm_index] as i32);
             let second = i64::from(self.regs[rn] as i32);
             let (result, saturated) = match bits(word, 22, 21) {
                 0b00 => signed_saturate_32(first + second), // QADD
                 0b01 => signed_saturate_32(first - second), // QSUB
                 0b10 => {
                     let (doubled, double_saturated) = signed_saturate_32(second * 2);
-                    let (result, add_saturated) =
-                        signed_saturate_32(first + i64::from(doubled));
+                    let (result, add_saturated) = signed_saturate_32(first + i64::from(doubled));
                     (result, double_saturated || add_saturated)
                 }
                 0b11 => {
@@ -1236,7 +1223,7 @@ impl Arm11Core {
                 _ => unreachable!(),
             };
 
-            self.regs[rd] = result as u32;
+            self.regs[rd_index] = result as u32;
             if saturated {
                 self.cpsr.set_q();
             }
@@ -1983,12 +1970,7 @@ mod tests {
     fn armv6_scalar_saturating_arithmetic_implements_all_four_operations() {
         // QADD r0,r1,r2 ; QSUB r0,r1,r2 ;
         // QDADD r0,r1,r2 ; QDSUB r0,r1,r2.
-        let mut m = Machine::new(&[
-            0xE102_0051,
-            0xE122_0051,
-            0xE142_0051,
-            0xE162_0051,
-        ]);
+        let mut m = Machine::new(&[0xE102_0051, 0xE122_0051, 0xE142_0051, 0xE162_0051]);
 
         m.cpu.regs[1] = i32::MAX as u32;
         m.cpu.regs[2] = 1;
@@ -2524,11 +2506,7 @@ mod tests {
     #[test]
     fn armv6_ldrex_strex_word_succeeds_once() {
         // LDREX r0,[r1] ; STREX r2,r3,[r1] ; STREX r2,r3,[r1]
-        let mut m = Machine::new(&[
-            0xE191_0F9F,
-            0xE181_2F93,
-            0xE181_2F93,
-        ]);
+        let mut m = Machine::new(&[0xE191_0F9F, 0xE181_2F93, 0xE181_2F93]);
         m.cpu.regs[1] = DATA;
         m.cpu.regs[3] = 0xAABB_CCDD;
         m.mem.write32(DATA, 0x1122_3344).unwrap();
@@ -2548,11 +2526,7 @@ mod tests {
     #[test]
     fn intervening_store_in_the_same_monitor_granule_breaks_strex() {
         // LDREX r0,[r1] ; STR r4,[r1,#4] ; STREX r2,r3,[r1]
-        let mut m = Machine::new(&[
-            0xE191_0F9F,
-            0xE581_4004,
-            0xE181_2F93,
-        ]);
+        let mut m = Machine::new(&[0xE191_0F9F, 0xE581_4004, 0xE181_2F93]);
         m.cpu.regs[1] = DATA;
         m.cpu.regs[3] = 0xAABB_CCDD;
         m.cpu.regs[4] = 0x5566_7788;
@@ -2606,11 +2580,7 @@ mod tests {
     #[test]
     fn clrex_clears_the_outstanding_exclusive_reservation() {
         // LDREX r0,[r1] ; CLREX ; STREX r2,r3,[r1]
-        let mut m = Machine::new(&[
-            0xE191_0F9F,
-            0xF57F_F01F,
-            0xE181_2F93,
-        ]);
+        let mut m = Machine::new(&[0xE191_0F9F, 0xF57F_F01F, 0xE181_2F93]);
         m.cpu.regs[1] = DATA;
         m.cpu.regs[3] = 0xAABB_CCDD;
         m.mem.write32(DATA, 0x1122_3344).unwrap();

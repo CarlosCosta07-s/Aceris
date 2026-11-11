@@ -16,7 +16,9 @@ pub trait Bus {
     /// Reads an exclusive value and returns an opaque monitor-generation token.
     fn exclusive_read(&mut self, addr: u32, size: usize) -> Result<(u64, u64)> {
         let _ = (addr, size);
-        Err(Error::Unimplemented("exclusive reads are not supported by this bus"))
+        Err(Error::Unimplemented(
+            "exclusive reads are not supported by this bus",
+        ))
     }
 
     /// Attempts an exclusive write; None means the CPU has no matching reservation.
@@ -28,7 +30,9 @@ pub trait Bus {
         reservation: Option<u64>,
     ) -> Result<bool> {
         let _ = (addr, size, value, reservation);
-        Err(Error::Unimplemented("exclusive writes are not supported by this bus"))
+        Err(Error::Unimplemented(
+            "exclusive writes are not supported by this bus",
+        ))
     }
     fn read16(&mut self, addr: u32) -> Result<u16> {
         let lo = self.read8(addr)?;
@@ -103,8 +107,7 @@ impl FlatMemory {
         self.index(addr)?;
         let base_granule = u64::from(self.base) / u64::from(EXCLUSIVE_RESERVATION_GRANULE);
         let address_granule = u64::from(addr) / u64::from(EXCLUSIVE_RESERVATION_GRANULE);
-        usize::try_from(address_granule - base_granule)
-            .map_err(|_| Error::InvalidAccess { addr })
+        usize::try_from(address_granule - base_granule).map_err(|_| Error::InvalidAccess { addr })
     }
 
     fn bump_exclusive_versions(&mut self, addr: u32, size: usize) -> Result<()> {
@@ -150,7 +153,9 @@ impl Bus for FlatMemory {
     fn exclusive_read(&mut self, addr: u32, size: usize) -> Result<(u64, u64)> {
         Self::validate_exclusive_access(addr, size)?;
         let start = self.index(addr)?;
-        let end = start.checked_add(size).ok_or(Error::InvalidAccess { addr })?;
+        let end = start
+            .checked_add(size)
+            .ok_or(Error::InvalidAccess { addr })?;
         if end > self.data.len() {
             return Err(Error::InvalidAccess { addr });
         }
@@ -175,7 +180,9 @@ impl Bus for FlatMemory {
     ) -> Result<bool> {
         Self::validate_exclusive_access(addr, size)?;
         let start = self.index(addr)?;
-        let end = start.checked_add(size).ok_or(Error::InvalidAccess { addr })?;
+        let end = start
+            .checked_add(size)
+            .ok_or(Error::InvalidAccess { addr })?;
         if end > self.data.len() {
             return Err(Error::InvalidAccess { addr });
         }
@@ -213,12 +220,16 @@ mod tests {
 
         let (loaded, reservation) = memory.exclusive_read(0x1000, 4).unwrap();
         assert_eq!(loaded, 0x1122_3344);
-        assert!(memory
-            .exclusive_write(0x1000, 4, 0xAABB_CCDD, Some(reservation))
-            .unwrap());
-        assert!(!memory
-            .exclusive_write(0x1000, 4, 0x5566_7788, Some(reservation))
-            .unwrap());
+        assert!(
+            memory
+                .exclusive_write(0x1000, 4, 0xAABB_CCDD, Some(reservation))
+                .unwrap()
+        );
+        assert!(
+            !memory
+                .exclusive_write(0x1000, 4, 0x5566_7788, Some(reservation))
+                .unwrap()
+        );
         assert_eq!(memory.read32(0x1000).unwrap(), 0xAABB_CCDD);
     }
 
@@ -227,9 +238,11 @@ mod tests {
         let mut memory = FlatMemory::new(0x1000, 32);
         let (_, reservation) = memory.exclusive_read(0x1000, 4).unwrap();
         memory.write8(0x1007, 0x55).unwrap();
-        assert!(!memory
-            .exclusive_write(0x1000, 4, 0xDEAD_BEEF, Some(reservation))
-            .unwrap());
+        assert!(
+            !memory
+                .exclusive_write(0x1000, 4, 0xDEAD_BEEF, Some(reservation))
+                .unwrap()
+        );
     }
 
     #[test]
