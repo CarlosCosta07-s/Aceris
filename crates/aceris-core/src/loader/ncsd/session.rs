@@ -607,8 +607,8 @@ fn thread_scheduler_result_code(error: ThreadSchedulerError) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::kernel::CURRENT_THREAD_HANDLE;
+    use super::*;
     use crate::loader::ncsd::PreparedArm11Image;
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
 
