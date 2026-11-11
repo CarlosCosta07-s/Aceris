@@ -5,6 +5,7 @@
 //! Privileged CPU modes, hardware timers, synchronization objects, heap
 //! allocation and peripheral mappings are still outside this bootstrap.
 
+pub mod kernel;
 pub mod svc;
 /// ARM11 per-thread contexts and cooperative scheduling primitives.
 pub mod thread;
@@ -16,12 +17,17 @@ use std::io::{Read, Seek};
 
 use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
+use crate::memory::Bus;
+use kernel::{
+    Arm11KernelObjectTable, EventResetType, KernelHandleError, CURRENT_THREAD_HANDLE,
+};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CONTROL_MEMORY, SVC_CREATE_THREAD,
-    SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SLEEP_THREAD,
+    SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CREATE_EVENT, SVC_EXIT_THREAD,
+    SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -90,6 +96,7 @@ pub struct Arm11ProcessSession {
     scheduler: Arm11ThreadScheduler,
     address_space: Arm11CodeAddressSpace,
     svc_dispatcher: Arm11SvcDispatcher,
+    kernel_objects: Arm11KernelObjectTable,
     instruction_count: u64,
 }
 
@@ -105,6 +112,7 @@ impl Arm11ProcessSession {
             scheduler,
             address_space,
             svc_dispatcher: Arm11SvcDispatcher::default(),
+            kernel_objects: Arm11KernelObjectTable::default(),
             instruction_count: 0,
         }
     }
@@ -145,6 +153,12 @@ impl Arm11ProcessSession {
     /// Returns the currently selected thread identifier.
     pub const fn current_thread_id(&self) -> Option<ThreadId> {
         self.scheduler.current_thread_id()
+    }
+
+    /// Resolves a guest-visible thread handle to its internal scheduler identifier.
+    pub fn thread_id_for_handle(&self, handle: u32) -> Option<ThreadId> {
+        let current = self.current_thread_id().unwrap_or(MAIN_THREAD_ID);
+        self.kernel_objects.thread_id(handle, current)
     }
 
     /// Returns a thread's process-local handle information.
@@ -267,6 +281,10 @@ impl Arm11ProcessSession {
         match number {
             SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
+            SVC_CREATE_EVENT => self.svc_create_event(caller),
+            SVC_SIGNAL_EVENT => self.svc_signal_event(caller),
+            SVC_CLEAR_EVENT => self.svc_clear_event(caller),
+            SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
             SVC_EXIT_THREAD => match self.scheduler.exit_current() {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
                 Ok(None) => SvcRunDisposition::NoRunnableThread,
@@ -304,7 +322,6 @@ impl Arm11ProcessSession {
                     .expect("current thread context exists")
                     .regs[1];
                 let result = self
-                    .scheduler
                     .thread_id_for_handle(handle)
                     .and_then(|id| self.scheduler.priority(id).ok());
                 let core = self
@@ -328,7 +345,7 @@ impl Arm11ProcessSession {
                     .regs;
                 let handle = registers[0];
                 let priority = registers[1] as i32;
-                let code = match self.scheduler.thread_id_for_handle(handle) {
+                let code = match self.thread_id_for_handle(handle) {
                     Some(id) => self
                         .scheduler
                         .set_priority(id, priority)
@@ -438,16 +455,113 @@ impl Arm11ProcessSession {
 
         match result {
             Ok(id) => {
+                let handle = match self.kernel_objects.insert_thread(id) {
+                    Ok(handle) => handle,
+                    Err(KernelHandleError::Exhausted) => {
+                        return self.write_create_thread_error(caller, RESULT_OUT_OF_THREAD_RESOURCES);
+                    }
+                    Err(_) => {
+                        return self.write_create_thread_error(caller, RESULT_INVALID_HANDLE);
+                    }
+                };
                 let core = self
                     .scheduler
                     .core_mut(caller)
                     .expect("caller context remains allocated");
                 core.regs[0] = 0;
-                core.regs[1] = id.raw();
+                core.regs[1] = handle;
                 SvcRunDisposition::Resume
             }
             Err(code) => self.write_create_thread_error(caller, code),
         }
+    }
+
+
+    /// Handles CreateEvent: r0 is the writable guest pointer for the handle,
+    /// r1 is ResetType (0 = one-shot, 1 = sticky).
+    fn svc_create_event(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        let output_address = registers[0];
+        let reset_type = match EventResetType::from_raw(registers[1]) {
+            Some(reset_type) => reset_type,
+            None => return self.write_svc_result(caller, RESULT_INVALID_ENUM),
+        };
+
+        if !self.address_space.is_writable_range(output_address, 4) {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        let handle = match self.kernel_objects.insert_event(reset_type) {
+            Ok(handle) => handle,
+            Err(KernelHandleError::Exhausted) => {
+                return self.write_svc_result(caller, RESULT_OUT_OF_THREAD_RESOURCES);
+            }
+            Err(_) => return self.write_svc_result(caller, RESULT_INVALID_HANDLE),
+        };
+
+        if self.address_space.write32(output_address, handle).is_err() {
+            let _ = self.kernel_objects.close_handle(handle);
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        self.write_svc_result(caller, 0)
+    }
+
+    /// Handles SignalEvent using the event handle in r0.
+    fn svc_signal_event(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs[0];
+        let result = self
+            .kernel_objects
+            .signal_event(handle)
+            .map(|()| 0)
+            .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
+    }
+
+    /// Handles ClearEvent using the event handle in r0.
+    fn svc_clear_event(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs[0];
+        let result = self
+            .kernel_objects
+            .clear_event(handle)
+            .map(|()| 0)
+            .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
+    }
+
+    /// Handles CloseHandle using the process-local object handle in r0.
+    fn svc_close_handle(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs[0];
+        let result = self
+            .kernel_objects
+            .close_handle(handle)
+            .map(|()| 0)
+            .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
+    }
+
+    fn write_svc_result(&mut self, caller: ThreadId, result: u32) -> SvcRunDisposition {
+        self.scheduler
+            .core_mut(caller)
+            .expect("caller context remains allocated")
+            .regs[0] = result;
+        SvcRunDisposition::Resume
     }
 
     fn write_create_thread_error(&mut self, caller: ThreadId, result: u32) -> SvcRunDisposition {
@@ -456,6 +570,13 @@ impl Arm11ProcessSession {
             .expect("caller context remains allocated")
             .regs[0] = result;
         SvcRunDisposition::Resume
+    }
+}
+
+fn kernel_handle_result_code(error: KernelHandleError) -> u32 {
+    match error {
+        KernelHandleError::Exhausted => RESULT_OUT_OF_THREAD_RESOURCES,
+        KernelHandleError::InvalidHandle | KernelHandleError::WrongType => RESULT_INVALID_HANDLE,
     }
 }
 
@@ -728,12 +849,9 @@ mod tests {
         let main_context = session.scheduler.core(MAIN_THREAD_ID).unwrap();
         assert_eq!(main_context.regs[0], 0);
         let child_handle = main_context.regs[1];
-        assert_eq!(child_handle, 2);
+        assert_ne!(child_handle, 2);
         assert_eq!(session.scheduler.thread_count(), 2);
-        let child_id = session
-            .scheduler
-            .thread_id_for_handle(child_handle)
-            .unwrap();
+        let child_id = session.thread_id_for_handle(child_handle).unwrap();
         assert_eq!(session.current_thread_id(), Some(child_id));
         assert_eq!(session.core().regs[0], 0xCAFE_BABE);
         assert_eq!(
@@ -786,7 +904,7 @@ mod tests {
         ]);
         {
             let main = session.scheduler.current_core_mut().unwrap();
-            main.regs[1] = MAIN_THREAD_ID.raw();
+            main.regs[1] = CURRENT_THREAD_HANDLE;
         }
 
         session.run_instructions(1).unwrap();
@@ -795,7 +913,7 @@ mod tests {
 
         {
             let main = session.scheduler.current_core_mut().unwrap();
-            main.regs[0] = MAIN_THREAD_ID.raw();
+            main.regs[0] = CURRENT_THREAD_HANDLE;
             main.regs[1] = 0x10;
         }
         session.run_instructions(1).unwrap();
@@ -804,7 +922,7 @@ mod tests {
 
         {
             let main = session.scheduler.current_core_mut().unwrap();
-            main.regs[1] = MAIN_THREAD_ID.raw();
+            main.regs[1] = CURRENT_THREAD_HANDLE;
         }
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
@@ -839,6 +957,112 @@ mod tests {
             session.thread_info(MAIN_THREAD_ID).unwrap().state,
             ThreadState::Running
         );
+    }
+
+
+    #[test]
+    fn create_event_writes_a_process_local_handle_and_preserves_reset_mode() {
+        let mut session = test_session_with_program(&[0xEF00_0017]);
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = 0x0020_0000;
+            main.regs[1] = 1; // RESET_STICKY
+        }
+
+        session.run_instructions(1).unwrap();
+
+        assert_eq!(session.core().regs[0], 0);
+        let handle = session.address_space.read32(0x0020_0000).unwrap();
+        assert_ne!(handle, 0);
+        assert_eq!(
+            session.kernel_objects.event_reset_type(handle),
+            Some(EventResetType::Sticky)
+        );
+        assert_eq!(session.kernel_objects.event_is_signaled(handle), Some(false));
+    }
+
+    #[test]
+    fn event_signal_clear_and_close_svcs_update_the_typed_handle_table() {
+        let mut session = test_session_with_program(&[
+            0xEF00_0018, // SVC SignalEvent
+            0xEF00_0019, // SVC ClearEvent
+            0xEF00_0023, // SVC CloseHandle
+            0xEF00_0019, // SVC ClearEvent after close
+        ]);
+        let handle = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
+        session.scheduler.current_core_mut().unwrap().regs[0] = handle;
+
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.kernel_objects.event_is_signaled(handle), Some(true));
+
+        session.scheduler.current_core_mut().unwrap().regs[0] = handle;
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.kernel_objects.event_is_signaled(handle), Some(false));
+
+        session.scheduler.current_core_mut().unwrap().regs[0] = handle;
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.kernel_objects.event_is_signaled(handle), None);
+
+        session.scheduler.current_core_mut().unwrap().regs[0] = handle;
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], RESULT_INVALID_HANDLE);
+    }
+
+    #[test]
+    fn create_event_rejects_invalid_reset_modes_and_unwritable_output_pointers() {
+        let mut invalid_mode = test_session_with_program(&[0xEF00_0017]);
+        {
+            let main = invalid_mode.scheduler.current_core_mut().unwrap();
+            main.regs[0] = 0x0020_0000;
+            main.regs[1] = 2; // PULSE is timer-only in the current event model.
+        }
+        invalid_mode.run_instructions(1).unwrap();
+        assert_eq!(invalid_mode.core().regs[0], RESULT_INVALID_ENUM);
+        assert_eq!(invalid_mode.kernel_objects.handle_count(), 0);
+
+        let mut invalid_pointer = test_session_with_program(&[0xEF00_0017]);
+        {
+            let main = invalid_pointer.scheduler.current_core_mut().unwrap();
+            main.regs[0] = 0xDEAD;
+            main.regs[1] = 0;
+        }
+        invalid_pointer.run_instructions(1).unwrap();
+        assert_eq!(invalid_pointer.core().regs[0], RESULT_INVALID_ADDRESS);
+        assert_eq!(invalid_pointer.kernel_objects.handle_count(), 0);
+    }
+
+    #[test]
+    fn thread_svc_uses_opaque_thread_handles_and_current_thread_pseudo_handle() {
+        let mut session = test_session_with_program(&[
+            0xEF00_0008, // SVC CreateThread
+            0xEF00_000B, // SVC GetThreadPriority
+        ]);
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = 0x20;
+            main.regs[1] = 0x0010_0020;
+            main.regs[2] = 0xCAFE_BABE;
+            main.regs[3] = 0x0020_2000;
+            main.regs[4] = 0;
+        }
+
+        session.run_instructions(1).unwrap();
+        let child_handle = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[1];
+        assert_ne!(child_handle, 2);
+        let child_id = session.thread_id_for_handle(child_handle).unwrap();
+        assert_eq!(session.thread_info(child_id).unwrap().priority, 0x20);
+
+        session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[1] =
+            CURRENT_THREAD_HANDLE;
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.core().regs[1], DEFAULT_MAIN_THREAD_PRIORITY as u32);
     }
 
     #[test]

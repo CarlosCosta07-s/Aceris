@@ -27,6 +27,18 @@ pub const SVC_SET_THREAD_PRIORITY: u32 = 0x0C;
 /// Return the current application processor ID.
 pub const SVC_GET_PROCESSOR_ID: u32 = 0x11;
 
+/// Create a process-local event synchronization object.
+pub const SVC_CREATE_EVENT: u32 = 0x17;
+
+/// Set an event synchronization object to the signaled state.
+pub const SVC_SIGNAL_EVENT: u32 = 0x18;
+
+/// Clear an event synchronization object's signaled state.
+pub const SVC_CLEAR_EVENT: u32 = 0x19;
+
+/// Close a process-local kernel object handle.
+pub const SVC_CLOSE_HANDLE: u32 = 0x23;
+
 /// Result of dispatching a process-scoped SVC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arm11SvcDisposition {
@@ -116,6 +128,10 @@ mod tests {
             SVC_SLEEP_THREAD,
             SVC_GET_THREAD_PRIORITY,
             SVC_SET_THREAD_PRIORITY,
+            SVC_CREATE_EVENT,
+            SVC_SIGNAL_EVENT,
+            SVC_CLEAR_EVENT,
+            SVC_CLOSE_HANDLE,
         ] {
             assert_eq!(
                 dispatcher.dispatch(number, &mut registers),
