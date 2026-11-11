@@ -2298,7 +2298,9 @@ mod tests {
 
         assert_eq!(parsed.parse_romfs_ivfc_header(&mut reader).unwrap(), None);
         assert_eq!(
-            parsed.verify_romfs_ivfc_integrity(Cursor::new(Vec::new())).unwrap(),
+            parsed
+                .verify_romfs_ivfc_integrity(Cursor::new(Vec::new()))
+                .unwrap(),
             None
         );
         assert_eq!(reader.position(), 0);
