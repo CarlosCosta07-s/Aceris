@@ -75,44 +75,35 @@ impl NcchExtendedHeader {
     /// Parses the first 0x400 bytes of an extended header.
     pub fn parse(data: &[u8]) -> Result<Self, ExtendedHeaderError> {
         if data.len() < EXTENDED_HEADER_SIZE {
-            return Err(ExtendedHeaderError::HeaderTruncated {
-                actual_size: data.len(),
-            });
+            return Err(truncated(data));
         }
 
-        let application_title = read_array::<8>(data, 0)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let flags = *data
-            .get(FLAGS_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let remaster_version = read_u16_le(data, REMASTER_VERSION_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let text_code_set = read_code_set_info(data, TEXT_CODE_SET_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let stack_size_bytes = read_u32_le(data, STACK_SIZE_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let read_only_code_set = read_code_set_info(data, READ_ONLY_CODE_SET_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let data_code_set = read_code_set_info(data, DATA_CODE_SET_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let bss_size_bytes = read_u32_le(data, BSS_SIZE_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
+        let application_title = read_array::<8>(data, 0).ok_or_else(|| truncated(data))?;
+        let flags = *data.get(FLAGS_OFFSET).ok_or_else(|| truncated(data))?;
+        let remaster_version =
+            read_u16_le(data, REMASTER_VERSION_OFFSET).ok_or_else(|| truncated(data))?;
+        let text_code_set =
+            read_code_set_info(data, TEXT_CODE_SET_OFFSET).ok_or_else(|| truncated(data))?;
+        let stack_size_bytes =
+            read_u32_le(data, STACK_SIZE_OFFSET).ok_or_else(|| truncated(data))?;
+        let read_only_code_set =
+            read_code_set_info(data, READ_ONLY_CODE_SET_OFFSET).ok_or_else(|| truncated(data))?;
+        let data_code_set =
+            read_code_set_info(data, DATA_CODE_SET_OFFSET).ok_or_else(|| truncated(data))?;
+        let bss_size_bytes = read_u32_le(data, BSS_SIZE_OFFSET).ok_or_else(|| truncated(data))?;
 
         let mut dependencies = [0u64; DEPENDENCY_COUNT];
         for (index, dependency) in dependencies.iter_mut().enumerate() {
             *dependency = read_u64_le(data, DEPENDENCIES_OFFSET + index * 8)
-                .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
+                .ok_or_else(|| truncated(data))?;
         }
 
-        let save_data_size_bytes = read_u64_le(data, SAVE_DATA_SIZE_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let jump_id = read_u64_le(data, JUMP_ID_OFFSET)
-            .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
-        let access_control_info = read_array::<ACCESS_CONTROL_INFO_SIZE>(
-            data,
-            ACCESS_CONTROL_INFO_OFFSET,
-        )
-        .ok_or(ExtendedHeaderError::HeaderTruncated { actual_size: data.len() })?;
+        let save_data_size_bytes =
+            read_u64_le(data, SAVE_DATA_SIZE_OFFSET).ok_or_else(|| truncated(data))?;
+        let jump_id = read_u64_le(data, JUMP_ID_OFFSET).ok_or_else(|| truncated(data))?;
+        let access_control_info =
+            read_array::<ACCESS_CONTROL_INFO_SIZE>(data, ACCESS_CONTROL_INFO_OFFSET)
+                .ok_or_else(|| truncated(data))?;
 
         Ok(Self {
             application_title,
@@ -133,9 +124,9 @@ impl NcchExtendedHeader {
     /// Reads exactly 0x400 bytes from the current reader position.
     pub fn parse_reader<R: Read>(reader: &mut R) -> Result<Self, ExtendedHeaderError> {
         let mut data = [0u8; EXTENDED_HEADER_SIZE];
-        reader.read_exact(&mut data).map_err(|error| {
-            ExtendedHeaderError::ReaderFailure(error.to_string())
-        })?;
+        reader
+            .read_exact(&mut data)
+            .map_err(|error| ExtendedHeaderError::ReaderFailure(error.to_string()))?;
         Self::parse(&data)
     }
 
@@ -172,6 +163,12 @@ impl fmt::Display for ExtendedHeaderError {
 }
 
 impl std::error::Error for ExtendedHeaderError {}
+
+fn truncated(data: &[u8]) -> ExtendedHeaderError {
+    ExtendedHeaderError::HeaderTruncated {
+        actual_size: data.len(),
+    }
+}
 
 fn read_code_set_info(data: &[u8], offset: usize) -> Option<CodeSetInfo> {
     Some(CodeSetInfo {

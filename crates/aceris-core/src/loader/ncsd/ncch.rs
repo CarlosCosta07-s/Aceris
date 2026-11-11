@@ -429,10 +429,7 @@ impl NcchHeader {
                 )
             })?;
 
-        verify_decrypted_extended_header_hash(
-            &mut decrypted_region,
-            &self.extended_header_hash,
-        )?;
+        verify_decrypted_extended_header_hash(&mut decrypted_region, &self.extended_header_hash)?;
 
         let position = decrypted_region
             .seek(SeekFrom::Start(0))
