@@ -577,7 +577,10 @@ mod tests {
         let child_handle = main_context.regs[1];
         assert_eq!(child_handle, 2);
         assert_eq!(session.scheduler.thread_count(), 2);
-        let child_id = session.scheduler.thread_id_for_handle(child_handle).unwrap();
+        let child_id = session
+            .scheduler
+            .thread_id_for_handle(child_handle)
+            .unwrap();
         assert_eq!(session.current_thread_id(), Some(child_id));
         assert_eq!(session.core().regs[0], 0xCAFE_BABE);
         assert_eq!(

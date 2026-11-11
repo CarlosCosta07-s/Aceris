@@ -578,10 +578,7 @@ mod tests {
         assert_eq!(core.regs[0], 0x1234);
         assert_eq!(core.regs[13], 0x2000_1000);
         assert!(!core.cpsr.thumb());
-        assert_eq!(
-            scheduler.thread_info(id).unwrap().state,
-            ThreadState::Ready
-        );
+        assert_eq!(scheduler.thread_info(id).unwrap().state, ThreadState::Ready);
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
     }
 
@@ -652,6 +649,10 @@ mod tests {
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
 
         assert_eq!(scheduler.current_thread_id(), Some(urgent));
+        assert_eq!(
+            scheduler.thread_info(normal).unwrap().state,
+            ThreadState::Ready
+        );
         assert_eq!(
             scheduler.thread_info(MAIN_THREAD_ID).unwrap().state,
             ThreadState::Ready
