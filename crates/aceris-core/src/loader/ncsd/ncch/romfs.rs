@@ -9,6 +9,8 @@ use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
 pub const IVFC_HEADER_SIZE: usize = 0x5C;
+/// Physical start of the RomFS Level 3 image inside an IVFC container.
+pub const LEVEL3_DATA_OFFSET_BYTES: u64 = 0x1000;
 pub const LEVEL3_HEADER_SIZE: usize = 0x28;
 pub const SHA256_SIZE: u64 = 0x20;
 pub const DIRECTORY_METADATA_FIXED_SIZE: u64 = 0x18;
@@ -187,6 +189,71 @@ impl IvfcHeader {
             .map_err(|_| RomFsError::InvalidIvfcHeader("header is truncated"))?;
         Self::parse(&header, available_size_bytes)
     }
+
+
+    /// Resolves the documented physical Level 3 region within an IVFC image.
+    ///
+    /// RomFS Level 3 starts at 0x1000. The declared Level 3 size is checked
+    /// against the available RomFS region before a reader can be opened.
+    pub fn level3_region(
+        &self,
+        available_size_bytes: u64,
+    ) -> Result<IvfcRegion, RomFsError> {
+        let master_hash_start = align_up(
+            (IVFC_HEADER_SIZE as u64)
+                .checked_add(u64::from(self.optional_info_size_bytes))
+                .ok_or(RomFsError::InvalidIvfcHeader(
+                    "optional-info range overflows",
+                ))?,
+            0x20,
+        )
+        .ok_or(RomFsError::InvalidIvfcHeader(
+            "master-hash alignment overflows",
+        ))?;
+        let master_hash_end = master_hash_start
+            .checked_add(u64::from(self.master_hash_size_bytes))
+            .ok_or(RomFsError::InvalidIvfcHeader(
+                "master-hash range overflows",
+            ))?;
+        if master_hash_end > LEVEL3_DATA_OFFSET_BYTES {
+            return Err(RomFsError::InvalidIvfcHeader(
+                "master-hash area overlaps the Level 3 image",
+            ));
+        }
+
+        let end = LEVEL3_DATA_OFFSET_BYTES
+            .checked_add(self.level3.hash_data_size_bytes)
+            .ok_or(RomFsError::InvalidIvfcLevel {
+                index: 3,
+                reason: "physical Level 3 range overflows",
+            })?;
+        if end > available_size_bytes {
+            return Err(RomFsError::InvalidIvfcLevel {
+                index: 3,
+                reason: "physical Level 3 range exceeds the RomFS region",
+            });
+        }
+
+        Ok(IvfcRegion {
+            offset_bytes: LEVEL3_DATA_OFFSET_BYTES,
+            size_bytes: self.level3.hash_data_size_bytes,
+        })
+    }
+
+    /// Opens the Level 3 image as an isolated, bounded stream.
+    ///
+    /// The input stream must begin at the IVFC header (RomFS region byte zero).
+    /// The returned reader exposes only the Level 3 range.
+    pub fn open_level3_reader<R: Read + Seek>(
+        &self,
+        inner: R,
+        available_size_bytes: u64,
+    ) -> Result<RomFsLevel3Reader<RomFsRangeReader<R>>, RomFsError> {
+        let region = self.level3_region(available_size_bytes)?;
+        let bounded = RomFsRangeReader::new(inner, region.offset_bytes, region.size_bytes)
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+        RomFsLevel3Reader::new(bounded, region.size_bytes)
+    }
 }
 
 impl Level3Header {
@@ -299,6 +366,131 @@ impl Level3Header {
         }
 
         Ok(parsed)
+    }
+}
+
+/// A physical byte region selected from an IVFC image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IvfcRegion {
+    pub offset_bytes: u64,
+    pub size_bytes: u64,
+}
+
+impl IvfcRegion {
+    pub const fn end_offset_bytes(self) -> Option<u64> {
+        self.offset_bytes.checked_add(self.size_bytes)
+    }
+}
+
+/// A seekable reader restricted to a physical range of its underlying stream.
+#[derive(Debug)]
+pub struct RomFsRangeReader<R> {
+    inner: R,
+    start: u64,
+    size: u64,
+    position: u64,
+}
+
+impl<R: Read + Seek> RomFsRangeReader<R> {
+    /// Creates a bounded view after confirming the complete range exists.
+    pub fn new(mut inner: R, start: u64, size: u64) -> io::Result<Self> {
+        if size == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "RomFS range has zero length",
+            ));
+        }
+
+        let end = start.checked_add(size).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "RomFS range overflows")
+        })?;
+        let available = inner.seek(SeekFrom::End(0))?;
+        if end > available {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "RomFS range extends beyond the underlying stream",
+            ));
+        }
+
+        let actual = inner.seek(SeekFrom::Start(start))?;
+        if actual != start {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the RomFS range",
+            ));
+        }
+
+        Ok(Self {
+            inner,
+            start,
+            size,
+            position: 0,
+        })
+    }
+
+    pub const fn len(&self) -> u64 {
+        self.size
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    pub const fn position(&self) -> u64 {
+        self.position
+    }
+}
+
+impl<R: Read + Seek> Read for RomFsRangeReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() || self.position == self.size {
+            return Ok(0);
+        }
+
+        let remaining = self.size - self.position;
+        let readable = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let count = self.inner.read(&mut buffer[..readable])?;
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl<R: Read + Seek> Seek for RomFsRangeReader<R> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let target = match from {
+            SeekFrom::Start(offset) => i128::from(offset),
+            SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(self.size) + i128::from(offset),
+        };
+
+        if !(0..=i128::from(self.size)).contains(&target) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek is outside the RomFS range",
+            ));
+        }
+
+        let relative = u64::try_from(target).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "invalid RomFS range position")
+        })?;
+        let absolute = self.start.checked_add(relative).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "absolute RomFS range position overflows",
+            )
+        })?;
+        let actual = self.inner.seek(SeekFrom::Start(absolute))?;
+        if actual != absolute {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the requested RomFS range position",
+            ));
+        }
+
+        self.position = relative;
+        Ok(relative)
     }
 }
 
@@ -916,6 +1108,15 @@ fn read_metadata_name<R: Read + Seek>(
     String::from_utf16(&code_units).map_err(|_| "metadata name contains invalid UTF-16")
 }
 
+fn align_up(value: u64, alignment: u64) -> Option<u64> {
+    if alignment == 0 || !alignment.is_power_of_two() {
+        return None;
+    }
+    value
+        .checked_add(alignment - 1)
+        .map(|aligned| aligned & !(alignment - 1))
+}
+
 fn parse_level(data: &[u8], offset: usize, index: u8) -> Result<IvfcLevel, RomFsError> {
     let invalid = |reason| RomFsError::InvalidIvfcLevel { index, reason };
     let logical_offset_bytes =
@@ -1018,6 +1219,59 @@ mod tests {
         assert_eq!(parsed.level3.hash_data_size_bytes, 0x100);
         assert_eq!(parsed.level3.block_size_log2, 12);
         assert_eq!(parsed.optional_info_size_bytes, 0);
+    }
+
+    #[test]
+    fn resolves_level3_to_the_documented_physical_offset() {
+        let header = IvfcHeader::parse(&valid_ivfc_header(), 0x4000).unwrap();
+        let region = header.level3_region(0x4000).unwrap();
+
+        assert_eq!(region.offset_bytes, 0x1000);
+        assert_eq!(region.size_bytes, 0x100);
+        assert_eq!(region.end_offset_bytes(), Some(0x1100));
+    }
+
+    #[test]
+    fn opens_only_the_level3_physical_range() {
+        let header = IvfcHeader::parse(&valid_ivfc_header(), 0x4000).unwrap();
+        let mut image = vec![0xAA; 0x4000];
+        let level3 = valid_level3_header();
+        image[0x1000..0x1000 + LEVEL3_HEADER_SIZE].copy_from_slice(&level3);
+
+        let reader = header.open_level3_reader(Cursor::new(image), 0x4000).unwrap();
+        assert_eq!(reader.len(), 0x100);
+        assert_eq!(reader.header().directory_hash_offset_bytes, 0x28);
+    }
+
+    #[test]
+    fn rejects_level3_physical_range_outside_the_romfs_region() {
+        let mut bytes = valid_ivfc_header();
+        write_u64(&mut bytes, 0x44, 0x4000);
+        let header = IvfcHeader::parse(&bytes, 0x5000).unwrap();
+        assert_eq!(
+            header.level3_region(0x5000),
+            Err(RomFsError::InvalidIvfcLevel {
+                index: 3,
+                reason: "physical Level 3 range exceeds the RomFS region",
+            })
+        );
+    }
+
+    #[test]
+    fn range_reader_rejects_outside_reads_and_seeks() {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let image = (0..32).collect::<Vec<u8>>();
+        let mut reader = RomFsRangeReader::new(Cursor::new(image), 8, 4).unwrap();
+        let mut bytes = [0; 8];
+        assert_eq!(reader.read(&mut bytes).unwrap(), 4);
+        assert_eq!(&bytes[..4], &[8, 9, 10, 11]);
+        assert_eq!(reader.read(&mut bytes).unwrap(), 0);
+        assert_eq!(
+            reader.seek(SeekFrom::Start(5)).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(reader.seek(SeekFrom::End(0)).unwrap(), 4);
     }
 
     #[test]
@@ -1497,6 +1751,34 @@ mod tests {
 
         assert_eq!(parsed_ivfc.level3.hash_data_size_bytes, 0x100);
         assert_eq!(reader.position(), 0x4000 + IVFC_HEADER_SIZE as u64);
+    }
+
+    #[test]
+    fn ncch_opens_level3_directly_from_its_romfs_region() {
+        use crate::loader::ncsd::ncch::NcchHeader;
+
+        let mut ncch_header = vec![0; 0x200];
+        ncch_header[0x100..0x104].copy_from_slice(b"NCCH");
+        write_u32(&mut ncch_header, 0x104, 0x80);
+        write_u32(&mut ncch_header, 0x180, 0x400);
+        write_u32(&mut ncch_header, 0x1B0, 0x20);
+        write_u32(&mut ncch_header, 0x1B4, 0x20);
+        write_u32(&mut ncch_header, 0x1B8, 0x02);
+
+        let parsed = NcchHeader::parse(&ncch_header, 0x1_0000).unwrap();
+        let mut image = vec![0; 0x1_0000];
+        let ivfc = valid_ivfc_header();
+        image[0x4000..0x4000 + IVFC_HEADER_SIZE].copy_from_slice(&ivfc);
+        let level3 = valid_level3_header();
+        image[0x5000..0x5000 + LEVEL3_HEADER_SIZE].copy_from_slice(&level3);
+
+        let reader = parsed
+            .open_romfs_level3_reader(Cursor::new(image))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reader.len(), 0x100);
+        assert_eq!(reader.header().directory_hash_offset_bytes, 0x28);
     }
 
     #[test]

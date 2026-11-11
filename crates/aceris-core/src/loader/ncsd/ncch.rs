@@ -309,6 +309,37 @@ impl NcchHeader {
         self.flags[5] >> 2
     }
 
+    /// Opens the RomFS Level 3 filesystem directly from the declared NCCH region.
+    ///
+    /// The NCCH reader must expose cleartext content from offset zero. This
+    /// method bounds the RomFS region, reads IVFC metadata, then returns only
+    /// the documented Level 3 byte range. It does not decrypt or verify hashes.
+    pub fn open_romfs_level3_reader<R: Read + Seek>(
+        &self,
+        reader: R,
+    ) -> Result<
+        Option<
+            romfs::RomFsLevel3Reader<
+                romfs::RomFsRangeReader<romfs::RomFsRangeReader<R>>,
+            >,
+        >,
+        romfs::RomFsError,
+    > {
+        let Some(region) = self.romfs else {
+            return Ok(None);
+        };
+
+        let mut romfs_reader = romfs::RomFsRangeReader::new(
+            reader,
+            region.offset_bytes,
+            region.size_bytes,
+        )
+        .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+        let ivfc = romfs::IvfcHeader::parse_reader(&mut romfs_reader, region.size_bytes)?;
+        ivfc.open_level3_reader(romfs_reader, region.size_bytes)
+            .map(Some)
+    }
+
     /// Parses the RomFS IVFC header from the declared NCCH RomFS region.
     ///
     /// The reader must expose NCCH bytes from offset zero. This reads only the
