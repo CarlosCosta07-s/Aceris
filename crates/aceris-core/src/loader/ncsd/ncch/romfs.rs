@@ -77,6 +77,7 @@ pub enum RomFsError {
     InvalidIvfcHeader(&'static str),
     InvalidIvfcLevel { index: u8, reason: &'static str },
     IvfcHashMismatch { level: u8, block_index: u64 },
+    NcchSuperblockHashMismatch,
     InvalidLevel3Header(&'static str),
     InvalidTree(&'static str),
     InvalidDirectoryEntry(&'static str),
@@ -97,6 +98,9 @@ impl fmt::Display for RomFsError {
                 formatter,
                 "RomFS IVFC Level {level} hash mismatch at block {block_index}"
             ),
+            Self::NcchSuperblockHashMismatch => {
+                formatter.write_str("NCCH RomFS superblock SHA-256 hash mismatch")
+            }
             Self::InvalidLevel3Header(reason) => {
                 write!(formatter, "invalid RomFS Level 3 header: {reason}")
             }
@@ -2251,9 +2255,10 @@ mod tests {
     }
 
     #[test]
-    fn ncch_verifies_ivfc_integrity_at_the_declared_romfs_offset() {
+    fn ncch_verifies_superblock_and_ivfc_hashes_at_the_declared_romfs_offset() {
         use crate::loader::ncsd::ncch::NcchHeader;
 
+        let (romfs_image, _, layout) = valid_integrity_ivfc_image();
         let mut ncch_header = vec![0; 0x200];
         ncch_header[0x100..0x104].copy_from_slice(b"NCCH");
         write_u32(&mut ncch_header, 0x104, 0x30);
@@ -2261,13 +2266,20 @@ mod tests {
         write_u32(&mut ncch_header, 0x1B0, 0x20);
         write_u32(&mut ncch_header, 0x1B4, 0x10);
         write_u32(&mut ncch_header, 0x1B8, 0x02);
+        let superblock_hash = Sha256::digest(&romfs_image[..0x400]).unwrap();
+        ncch_header[0x1E0..0x200].copy_from_slice(&superblock_hash);
 
         let parsed = NcchHeader::parse(&ncch_header, 0x6000).unwrap();
-        let (romfs_image, _, layout) = valid_integrity_ivfc_image();
         let mut container = vec![0; 0x6000];
         container[..0x200].copy_from_slice(&ncch_header);
         container[0x4000..0x4000 + romfs_image.len()].copy_from_slice(&romfs_image);
 
+        assert_eq!(
+            parsed
+                .verify_romfs_integrity(Cursor::new(container.clone()))
+                .unwrap(),
+            Some(())
+        );
         assert_eq!(
             parsed
                 .verify_romfs_ivfc_integrity(Cursor::new(container.clone()))
@@ -2277,11 +2289,17 @@ mod tests {
 
         container[0x4000 + layout.level3.offset_bytes as usize + 5] ^= 0x40;
         assert_eq!(
-            parsed.verify_romfs_ivfc_integrity(Cursor::new(container)),
+            parsed.verify_romfs_integrity(Cursor::new(container.clone())),
             Err(RomFsError::IvfcHashMismatch {
                 level: 3,
                 block_index: 0,
             })
+        );
+
+        container[0x4000 + 0x20] ^= 0x01;
+        assert_eq!(
+            parsed.verify_romfs_integrity(Cursor::new(container)),
+            Err(RomFsError::NcchSuperblockHashMismatch)
         );
     }
 
