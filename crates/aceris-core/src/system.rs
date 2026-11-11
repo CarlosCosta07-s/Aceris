@@ -121,12 +121,13 @@ impl System {
         let mut ncsd_header_bytes = [0; crate::loader::ncsd::HEADER_SIZE];
         reader.read_exact(&mut ncsd_header_bytes)?;
         let ncsd_header = NcsdHeader::parse(&ncsd_header_bytes, file_len)?;
-        let primary_partition = *ncsd_header.primary_partition().ok_or(
-            Error::InvalidNcsdPartition {
-                index: 0,
-                reason: "primary partition is missing",
-            },
-        )?;
+        let primary_partition =
+            *ncsd_header
+                .primary_partition()
+                .ok_or(Error::InvalidNcsdPartition {
+                    index: 0,
+                    reason: "primary partition is missing",
+                })?;
 
         let partition_position = reader.seek(SeekFrom::Start(primary_partition.offset_bytes))?;
         if partition_position != primary_partition.offset_bytes {
