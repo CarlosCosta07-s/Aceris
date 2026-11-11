@@ -18,8 +18,33 @@ pub const REG_COMMAND_BUFFER_SIZE_0: u16 = 0x238;
 pub const REG_COMMAND_BUFFER_ADDRESS_0: u16 = 0x23A;
 /// First command-buffer trigger register.
 pub const REG_COMMAND_BUFFER_JUMP_0: u16 = 0x23C;
+/// Second command-buffer size register.
+pub const REG_COMMAND_BUFFER_SIZE_1: u16 = 0x239;
+/// Second command-buffer address register.
+pub const REG_COMMAND_BUFFER_ADDRESS_1: u16 = 0x23B;
+/// Second command-buffer trigger register.
+pub const REG_COMMAND_BUFFER_JUMP_1: u16 = 0x23D;
 
-/// PICA200 command-list parsing or register-write failure.
+/// A command buffer configured through the PICA200 internal register file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaCommandBufferDescriptor {
+    pub channel: u8,
+    /// Command-buffer base address as encoded by the 3DS register (address >> 3).
+    /// The system bridge currently treats the decoded address as process-visible.
+    pub address: u32,
+    /// Byte length after decoding the size register (size >> 3).
+    pub size_bytes: u32,
+    /// Non-zero trigger value captured when the descriptor was read.
+    pub trigger_value: u32,
+}
+
+impl PicaCommandBufferDescriptor {
+    pub const fn word_count(self) -> usize {
+        (self.size_bytes / 4) as usize
+    }
+}
+
+/// PICA200 command-list parsing, register-write or command-buffer failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PicaCommandError {
     IncompleteCommandHeader {
@@ -33,6 +58,14 @@ pub enum PicaCommandError {
     InvalidRegister {
         register: u32,
         parameter_index: usize,
+    },
+    InvalidCommandBufferChannel {
+        channel: u8,
+    },
+    InvalidCommandBufferConfiguration {
+        channel: u8,
+        size_register: u32,
+        address_register: u32,
     },
 }
 
@@ -59,6 +92,17 @@ impl fmt::Display for PicaCommandError {
             } => write!(
                 formatter,
                 "PICA200 command parameter {parameter_index} targets invalid register {register:#x}"
+            ),
+            Self::InvalidCommandBufferChannel { channel } => {
+                write!(formatter, "PICA200 command buffer channel {channel} is invalid")
+            }
+            Self::InvalidCommandBufferConfiguration {
+                channel,
+                size_register,
+                address_register,
+            } => write!(
+                formatter,
+                "PICA200 command buffer {channel} has invalid size/address registers ({size_register:#x}, {address_register:#x})"
             ),
         }
     }
@@ -189,6 +233,87 @@ impl Pica200 {
         self.command_lists_submitted = self.command_lists_submitted.saturating_add(1);
         self.register_writes = self.register_writes.saturating_add(report.register_writes);
         Ok(report)
+    }
+
+    /// Returns a triggered command-buffer descriptor for channel 0 or 1.
+    ///
+    /// Size and address registers are decoded using their documented >> 3
+    /// units. The hardware requires command-buffer byte sizes to be 16-byte
+    /// aligned; malformed configurations remain pending for diagnostics.
+    pub fn command_buffer_descriptor(
+        &self,
+        channel: u8,
+    ) -> Result<Option<PicaCommandBufferDescriptor>, PicaCommandError> {
+        let (size_register, address_register, jump_register) = match channel {
+            0 => (
+                REG_COMMAND_BUFFER_SIZE_0,
+                REG_COMMAND_BUFFER_ADDRESS_0,
+                REG_COMMAND_BUFFER_JUMP_0,
+            ),
+            1 => (
+                REG_COMMAND_BUFFER_SIZE_1,
+                REG_COMMAND_BUFFER_ADDRESS_1,
+                REG_COMMAND_BUFFER_JUMP_1,
+            ),
+            _ => return Err(PicaCommandError::InvalidCommandBufferChannel { channel }),
+        };
+
+        let size_units = self.registers[usize::from(size_register)];
+        let address_units = self.registers[usize::from(address_register)];
+        let trigger_value = self.registers[usize::from(jump_register)];
+        if trigger_value == 0 {
+            return Ok(None);
+        }
+
+        let size_is_valid = size_units != 0
+            && size_units & !0x001F_FFFF == 0
+            && size_units & 1 == 0;
+        let address_is_valid = address_units & !0x1FFF_FFFF == 0;
+        let size_bytes = size_units.checked_mul(8);
+        let address = address_units.checked_mul(8);
+        let range_is_valid = match (address, size_bytes) {
+            (Some(address), Some(size_bytes)) => {
+                u64::from(address) + u64::from(size_bytes) <= 0x1_0000_0000
+            }
+            _ => false,
+        };
+        if !size_is_valid || !address_is_valid || !range_is_valid {
+            return Err(PicaCommandError::InvalidCommandBufferConfiguration {
+                channel,
+                size_register: size_units,
+                address_register: address_units,
+            });
+        }
+
+        Ok(Some(PicaCommandBufferDescriptor {
+            channel,
+            address: address.expect("validated command-buffer address"),
+            size_bytes: size_bytes.expect("validated command-buffer size"),
+            trigger_value,
+        }))
+    }
+
+    /// Acknowledges one completed command buffer without clearing a newer trigger.
+    ///
+    /// Returns false if the guest changed the trigger register after the
+    /// descriptor was captured, leaving the newer request pending.
+    pub fn acknowledge_command_buffer(
+        &mut self,
+        descriptor: PicaCommandBufferDescriptor,
+    ) -> Result<bool, PicaCommandError> {
+        let jump_register = match descriptor.channel {
+            0 => REG_COMMAND_BUFFER_JUMP_0,
+            1 => REG_COMMAND_BUFFER_JUMP_1,
+            channel => {
+                return Err(PicaCommandError::InvalidCommandBufferChannel { channel });
+            }
+        };
+        let trigger = &mut self.registers[usize::from(jump_register)];
+        if *trigger != descriptor.trigger_value {
+            return Ok(false);
+        }
+        *trigger = 0;
+        Ok(true)
     }
 
     pub const fn command_lists_submitted(&self) -> u64 {
@@ -350,6 +475,70 @@ mod tests {
         assert_eq!(gpu.register(0x3FF), Some(0));
         assert_eq!(gpu.command_lists_submitted(), 0);
         assert_eq!(gpu.register_writes(), 1);
+    }
+
+    #[test]
+    fn command_buffer_channels_decode_size_address_and_trigger() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_COMMAND_BUFFER_SIZE_0, 2).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_SIZE_1, 4).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_1, 0x0020_0000 >> 3).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_JUMP_1, 0x80).unwrap();
+
+        assert_eq!(
+            gpu.command_buffer_descriptor(0).unwrap(),
+            Some(PicaCommandBufferDescriptor {
+                channel: 0,
+                address: 0x0010_2000,
+                size_bytes: 16,
+                trigger_value: 1,
+            })
+        );
+        assert_eq!(
+            gpu.command_buffer_descriptor(1).unwrap(),
+            Some(PicaCommandBufferDescriptor {
+                channel: 1,
+                address: 0x0020_0000,
+                size_bytes: 32,
+                trigger_value: 0x80,
+            })
+        );
+        assert!(matches!(
+            gpu.command_buffer_descriptor(2),
+            Err(PicaCommandError::InvalidCommandBufferChannel { channel: 2 })
+        ));
+    }
+
+    #[test]
+    fn command_buffer_requires_a_nonzero_trigger_and_aligned_nonzero_size() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_COMMAND_BUFFER_SIZE_0, 1).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x1000 >> 3).unwrap();
+        assert_eq!(gpu.command_buffer_descriptor(0).unwrap(), None);
+
+        gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
+        assert!(matches!(
+            gpu.command_buffer_descriptor(0),
+            Err(PicaCommandError::InvalidCommandBufferConfiguration { channel: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn command_buffer_acknowledgement_does_not_clear_a_newer_trigger() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_COMMAND_BUFFER_SIZE_0, 2).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x1000 >> 3).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
+        let descriptor = gpu.command_buffer_descriptor(0).unwrap().unwrap();
+
+        gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 2).unwrap();
+        assert!(!gpu.acknowledge_command_buffer(descriptor).unwrap());
+        assert_eq!(
+            gpu.register(REG_COMMAND_BUFFER_JUMP_0),
+            Some(2)
+        );
     }
 
     #[test]

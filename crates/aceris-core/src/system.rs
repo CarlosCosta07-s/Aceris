@@ -1,7 +1,10 @@
 //! Top-level emulated system.
 
 use crate::cpu::Arm11Core;
-use crate::gpu::Pica200;
+use crate::gpu::{
+    Pica200, PicaCommandBufferDescriptor, REG_COMMAND_BUFFER_ADDRESS_0,
+    REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_SIZE_0,
+};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
@@ -38,6 +41,7 @@ pub struct SystemFrameReport {
     pub frame_number: u64,
     pub instructions_executed: u64,
     pub cpu_stop_reason: Arm11RunStopReason,
+    pub gpu_command_lists_submitted: u64,
     pub elapsed_virtual_time_ns: u64,
 }
 
@@ -317,6 +321,47 @@ impl System {
         })
     }
 
+    /// Processes PICA200 command buffers triggered through internal registers.
+    ///
+    /// This bootstrap maps the decoded command-buffer address directly into
+    /// the process-visible address space. A dedicated ARM11 physical-memory
+    /// translation layer is still required before this becomes hardware-accurate.
+    pub fn process_pending_pica_command_buffers(&mut self) -> Result<u64> {
+        let mut pending = Vec::with_capacity(2);
+        for channel in 0..=1 {
+            let descriptor = self
+                .gpu
+                .command_buffer_descriptor(channel)
+                .map_err(|error| {
+                    Error::Io(io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+                })?;
+            if let Some(descriptor) = descriptor {
+                if descriptor.word_count() > MAX_PICA_COMMAND_WORDS {
+                    return Err(Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "PICA200 command buffer exceeds the configured word limit",
+                    )));
+                }
+                pending.push(descriptor);
+            }
+        }
+
+        let mut submitted = 0u64;
+        for descriptor in pending {
+            self.submit_pica_command_list_from_memory(
+                descriptor.address,
+                descriptor.word_count(),
+            )?;
+            self.gpu
+                .acknowledge_command_buffer(descriptor)
+                .map_err(|error| {
+                    Error::Io(io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+                })?;
+            submitted = submitted.saturating_add(1);
+        }
+        Ok(submitted)
+    }
+
     /// Advances one frame using a caller-supplied ARM11 instruction budget.
     ///
     /// The budget is deterministic but not cycle-accurate. The development
@@ -330,18 +375,23 @@ impl System {
             return Err(Error::NoImageLoaded);
         }
 
-        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
-            "a prepared ARM11 process session is required for frame execution",
-        ))?;
-        let cpu_report = session.run_instructions(instruction_budget)?;
-        session.advance_time(NOMINAL_FRAME_DURATION_NS);
-        self.cpu = session.core().clone();
+        let cpu_report = {
+            let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+                "a prepared ARM11 process session is required for frame execution",
+            ))?;
+            let report = session.run_instructions(instruction_budget)?;
+            session.advance_time(NOMINAL_FRAME_DURATION_NS);
+            self.cpu = session.core().clone();
+            report
+        };
 
+        let gpu_command_lists_submitted = self.process_pending_pica_command_buffers()?;
         let frame_number = self.display.present();
         Ok(SystemFrameReport {
             frame_number,
             instructions_executed: cpu_report.instructions_executed,
             cpu_stop_reason: cpu_report.stop_reason,
+            gpu_command_lists_submitted,
             elapsed_virtual_time_ns: NOMINAL_FRAME_DURATION_NS,
         })
     }
@@ -396,6 +446,66 @@ mod tests {
             system.submit_pica_command_list_from_memory(0x0010_2000, 2),
             Err(Error::Unimplemented(_))
         ));
+    }
+
+    #[test]
+    fn frame_processes_pica_command_buffer_channels_before_display_presentation() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let command_list = [
+            0xDEAD_BEEF,
+            0x000F_0100,
+            0x1234_5678,
+            0x000F_0101,
+        ];
+        for (index, word) in command_list.iter().copied().enumerate() {
+            system
+                .ncsd_session_mut()
+                .unwrap()
+                .write_memory_u32(0x0010_2000 + (index as u32 * 4), word)
+                .unwrap();
+        }
+
+        system.gpu_mut().write_register(REG_COMMAND_BUFFER_SIZE_0, 2).unwrap();
+        system
+            .gpu_mut()
+            .write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3)
+            .unwrap();
+        system.gpu_mut().write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
+
+        let report = system.run_frame_with_budget(0).unwrap();
+
+        assert_eq!(report.gpu_command_lists_submitted, 1);
+        assert_eq!(system.gpu().register(0x100), Some(0xDEAD_BEEF));
+        assert_eq!(system.gpu().register(0x101), Some(0x1234_5678));
+        assert_eq!(system.gpu().register(REG_COMMAND_BUFFER_JUMP_0), Some(0));
+        assert_eq!(system.display().frame_number(), 1);
+    }
+
+    #[test]
+    fn invalid_pica_command_buffer_stays_pending_for_diagnostics() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        system.gpu_mut().write_register(REG_COMMAND_BUFFER_SIZE_0, 1).unwrap();
+        system.gpu_mut().write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3).unwrap();
+        system.gpu_mut().write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
+
+        assert!(system.run_frame_with_budget(0).is_err());
+        assert_eq!(system.gpu().register(REG_COMMAND_BUFFER_JUMP_0), Some(1));
+        assert_eq!(system.display().frame_number(), 0);
     }
 
     #[test]
