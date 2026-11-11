@@ -537,14 +537,10 @@ mod tests {
         exefs_header[..5].copy_from_slice(b".code");
         exefs_header[12..16].copy_from_slice(&0x100u32.to_le_bytes());
         exefs_header[0x1E0..0x200].fill(0x5A);
-        container[exefs_start..exefs_start + exefs::HEADER_SIZE]
-            .copy_from_slice(&exefs_header);
+        container[exefs_start..exefs_start + exefs::HEADER_SIZE].copy_from_slice(&exefs_header);
 
         let mut reader = Cursor::new(container);
-        let exefs = parsed
-            .parse_exefs_header(&mut reader)
-            .unwrap()
-            .unwrap();
+        let exefs = parsed.parse_exefs_header(&mut reader).unwrap().unwrap();
 
         assert_eq!(reader.position(), (exefs_start + exefs::HEADER_SIZE) as u64);
         assert_eq!(exefs.files.len(), 1);
