@@ -387,7 +387,7 @@ impl Arm11ThreadScheduler {
         nanoseconds: i64,
     ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         match nanoseconds {
-            0 | -1 | -2 => self.yield_current(),
+            -2..=0 => self.yield_current(),
             value if value > 0 => {
                 let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
                 let deadline = self.virtual_time_ns.saturating_add(value as u64);
