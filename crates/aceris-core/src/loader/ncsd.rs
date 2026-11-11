@@ -7,6 +7,9 @@
 use aceris_common::{Error, Result};
 use std::io::{self, Read, Seek, SeekFrom};
 
+/// Structural NCCH parser for content stored inside an NCSD partition.
+pub mod ncch;
+
 pub const HEADER_SIZE: usize = 0x200;
 pub const PARTITION_COUNT: usize = 8;
 
