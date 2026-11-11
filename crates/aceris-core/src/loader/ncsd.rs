@@ -86,6 +86,7 @@ impl NcsdPartition {
 #[derive(Debug)]
 pub struct NcsdPartitionReader<R> {
     inner: R,
+    index: u8,
     start: u64,
     size: u64,
     position: u64,
@@ -124,10 +125,31 @@ impl<R: Read + Seek> NcsdPartitionReader<R> {
 
         Ok(Self {
             inner,
+            index: partition.index,
             start: partition.offset_bytes,
             size: partition.size_bytes,
             position: 0,
         })
+    }
+
+    /// Returns the original NCSD partition-table slot.
+    pub const fn partition_index(&self) -> u8 {
+        self.index
+    }
+
+    /// Returns the absolute start offset of this partition in the image.
+    pub const fn start_offset_bytes(&self) -> u64 {
+        self.start
+    }
+
+    /// Returns the absolute exclusive end offset of this partition in the image.
+    pub const fn end_offset_bytes(&self) -> u64 {
+        self.start + self.size
+    }
+
+    /// Returns the current absolute position in the underlying image.
+    pub const fn absolute_position(&self) -> u64 {
+        self.start + self.position
     }
 
     /// Returns the visible length of the partition.

@@ -82,6 +82,25 @@ fn partition(offset_bytes: u64, size_bytes: u64) -> NcsdPartition {
 }
 
 #[test]
+fn partition_reader_exposes_original_partition_coordinates() {
+    let mut selected = partition(2, 4);
+    selected.index = 5;
+    let mut reader = selected.reader(Cursor::new(b"0123456789".to_vec())).unwrap();
+
+    assert_eq!(reader.partition_index(), 5);
+    assert_eq!(reader.start_offset_bytes(), 2);
+    assert_eq!(reader.end_offset_bytes(), 6);
+    assert_eq!(reader.absolute_position(), 2);
+
+    let mut prefix = [0u8; 2];
+    reader.read_exact(&mut prefix).unwrap();
+    assert_eq!(reader.absolute_position(), 4);
+
+    assert_eq!(reader.seek(SeekFrom::End(-1)).unwrap(), 3);
+    assert_eq!(reader.absolute_position(), 5);
+}
+
+#[test]
 fn partition_reader_never_exposes_bytes_outside_its_range() {
     let image = Cursor::new(b"0123456789".to_vec());
     let mut reader = partition(2, 4).reader(image).unwrap();
