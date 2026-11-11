@@ -32,6 +32,9 @@ pub enum StepEvent {
     /// A supervisor call was executed; the payload is its 24-bit comment
     /// field. `pc` already points to the following instruction.
     Svc(u32),
+    /// A BKPT instruction was encountered. The immediate is retained for a
+    /// debugger or the process exception layer.
+    Breakpoint(u16),
 }
 
 /// A single ARM11 core.

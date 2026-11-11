@@ -14,8 +14,12 @@ use aceris_common::{Error, Result};
 const PC_OFFSET: u32 = 4;
 
 /// Word load with the classic unaligned-rotate behaviour.
-fn load_word<B: Bus + ?Sized>(bus: &mut B, addr: u32) -> Result<u32> {
-    Ok(bus.read32(addr & !3)?.rotate_right(8 * (addr & 3)))
+fn load_word<B: Bus + ?Sized>(
+    core: &Arm11Core,
+    bus: &mut B,
+    addr: u32,
+) -> Result<u32> {
+    core.read_data_u32_unaligned(bus, addr)
 }
 
 impl Arm11Core {
@@ -185,7 +189,7 @@ impl Arm11Core {
     fn thumb_pc_relative_load<B: Bus + ?Sized>(&mut self, bus: &mut B, half: u32) -> Result<()> {
         let rd = bits(half, 10, 8) as usize;
         let base = self.pc().wrapping_add(PC_OFFSET) & !3;
-        self.regs[rd] = bus.read32(base.wrapping_add(bits(half, 7, 0) * 4))?;
+        self.regs[rd] = self.read_data_u32(bus, base.wrapping_add(bits(half, 7, 0) * 4))?;
         Ok(())
     }
 
@@ -196,14 +200,14 @@ impl Arm11Core {
         let addr = self.regs[rn].wrapping_add(self.regs[rm]);
 
         match bits(half, 11, 9) {
-            0b000 => bus.write32(addr & !3, self.regs[rt])?,
-            0b001 => bus.write16(addr, self.regs[rt] as u16)?,
+            0b000 => self.write_data_u32(bus, addr & !3, self.regs[rt])?,
+            0b001 => self.write_data_u16(bus, addr, self.regs[rt] as u16)?,
             0b010 => bus.write8(addr, self.regs[rt] as u8)?,
             0b011 => self.regs[rt] = i32::from(bus.read8(addr)? as i8) as u32,
-            0b100 => self.regs[rt] = load_word(bus, addr)?,
-            0b101 => self.regs[rt] = u32::from(bus.read16(addr)?),
+            0b100 => self.regs[rt] = load_word(self, bus, addr)?,
+            0b101 => self.regs[rt] = u32::from(self.read_data_u16(bus, addr)?),
             0b110 => self.regs[rt] = u32::from(bus.read8(addr)?),
-            _ => self.regs[rt] = i32::from(bus.read16(addr)? as i16) as u32,
+            _ => self.regs[rt] = i32::from(self.read_data_u16(bus, addr)? as i16) as u32,
         }
         Ok(())
     }
@@ -220,12 +224,12 @@ impl Arm11Core {
             self.regs[rt] = if byte {
                 u32::from(bus.read8(addr)?)
             } else {
-                load_word(bus, addr)?
+                load_word(self, bus, addr)?
             };
         } else if byte {
             bus.write8(addr, self.regs[rt] as u8)?;
         } else {
-            bus.write32(addr & !3, self.regs[rt])?;
+            self.write_data_u32(bus, addr & !3, self.regs[rt])?;
         }
         Ok(())
     }
@@ -236,9 +240,9 @@ impl Arm11Core {
         let addr = self.regs[rn].wrapping_add(bits(half, 10, 6) * 2);
 
         if bit(half, 11) {
-            self.regs[rt] = u32::from(bus.read16(addr)?);
+            self.regs[rt] = u32::from(self.read_data_u16(bus, addr)?);
         } else {
-            bus.write16(addr, self.regs[rt] as u16)?;
+            self.write_data_u16(bus, addr, self.regs[rt] as u16)?;
         }
         Ok(())
     }
@@ -248,9 +252,9 @@ impl Arm11Core {
         let addr = self.regs[SP].wrapping_add(bits(half, 7, 0) * 4);
 
         if bit(half, 11) {
-            self.regs[rt] = load_word(bus, addr)?;
+            self.regs[rt] = load_word(self, bus, addr)?;
         } else {
-            bus.write32(addr & !3, self.regs[rt])?;
+            self.write_data_u32(bus, addr & !3, self.regs[rt])?;
         }
         Ok(())
     }
@@ -280,7 +284,7 @@ impl Arm11Core {
             let mut values = [0u32; 8];
             for (r, value) in values.iter_mut().enumerate() {
                 if list & (1 << r) != 0 {
-                    *value = bus.read32(addr)?;
+                    *value = self.read_data_u32(bus, addr)?;
                     addr = addr.wrapping_add(4);
                 }
             }
@@ -297,7 +301,7 @@ impl Arm11Core {
             let regs = self.regs;
             for (r, value) in regs.iter().enumerate().take(8) {
                 if list & (1 << r) != 0 {
-                    bus.write32(addr, *value)?;
+                    self.write_data_u32(bus, addr, *value)?;
                     addr = addr.wrapping_add(4);
                 }
             }
@@ -314,7 +318,7 @@ impl Arm11Core {
         let mut addr = new_sp;
         for (r, value) in regs.iter().enumerate() {
             if list & (1 << r) != 0 {
-                bus.write32(addr, *value)?;
+                self.write_data_u32(bus, addr, *value)?;
                 addr = addr.wrapping_add(4);
             }
         }
@@ -329,7 +333,7 @@ impl Arm11Core {
         let mut values = [0u32; 16];
         for (r, value) in values.iter_mut().enumerate() {
             if list & (1 << r) != 0 {
-                *value = bus.read32(addr)?;
+                *value = self.read_data_u32(bus, addr)?;
                 addr = addr.wrapping_add(4);
             }
         }
@@ -350,6 +354,25 @@ impl Arm11Core {
     // ----- miscellaneous ----------------------------------------------------
 
     fn thumb_misc<B: Bus + ?Sized>(&mut self, bus: &mut B, half: u32) -> Result<StepEvent> {
+        if half & 0xFF00 == 0xBE00 {
+            // BKPT #imm8; the process layer reports a debugger stop.
+            return Ok(StepEvent::Breakpoint(bits(half, 7, 0) as u16));
+        }
+
+        if half & 0xFFF7 == 0xB650 {
+            // SETEND changes data byte order only; instruction fetch stays LE.
+            self.cpsr.set_big_endian(bit(half, 3));
+            return Ok(StepEvent::Executed);
+        }
+
+        if half & 0xFFE0 == 0xB660 {
+            // CPS has no effect in user mode. Privileged control is deferred.
+            if self.cpsr.privileged() {
+                return Err(Error::Unimplemented("privileged Thumb CPS"));
+            }
+            return Ok(StepEvent::Executed);
+        }
+
         let rm = bits(half, 5, 3) as usize;
         let rd = bits(half, 2, 0) as usize;
 

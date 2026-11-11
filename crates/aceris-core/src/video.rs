@@ -196,9 +196,18 @@ mod tests {
     #[test]
     fn allocates_both_screens_and_both_top_stereo_views() {
         let display = DualScreenDisplay::new().unwrap();
-        assert_eq!((display.top_left().width(), display.top_left().height()), (400, 240));
-        assert_eq!((display.top_right().width(), display.top_right().height()), (400, 240));
-        assert_eq!((display.bottom().width(), display.bottom().height()), (320, 240));
+        assert_eq!(
+            (display.top_left().width(), display.top_left().height()),
+            (400, 240)
+        );
+        assert_eq!(
+            (display.top_right().width(), display.top_right().height()),
+            (400, 240)
+        );
+        assert_eq!(
+            (display.bottom().width(), display.bottom().height()),
+            (320, 240)
+        );
     }
 
     #[test]
@@ -215,8 +224,12 @@ mod tests {
     #[test]
     fn surfaces_are_independent_and_presentation_is_monotonic() {
         let mut display = DualScreenDisplay::new().unwrap();
-        display.surface_mut(ScreenTarget::TopLeft).clear([1, 2, 3, 4]);
-        display.surface_mut(ScreenTarget::Bottom).clear([5, 6, 7, 8]);
+        display
+            .surface_mut(ScreenTarget::TopLeft)
+            .clear([1, 2, 3, 4]);
+        display
+            .surface_mut(ScreenTarget::Bottom)
+            .clear([5, 6, 7, 8]);
         assert_eq!(&display.top_left().pixels()[..4], &[1, 2, 3, 4]);
         assert_eq!(&display.top_right().pixels()[..4], &[0, 0, 0, 255]);
         assert_eq!(&display.bottom().pixels()[..4], &[5, 6, 7, 8]);

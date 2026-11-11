@@ -63,6 +63,8 @@ pub enum Arm11RunStopReason {
     SupervisorCall { number: u32 },
     /// A process-scoped ExitProcess call was handled.
     ProcessExited,
+    /// A BKPT instruction stopped execution for a debugger or exception layer.
+    Breakpoint(u16),
     /// No thread is currently eligible to execute.
     NoRunnableThread,
     /// A void SVC could not be completed by the current bootstrap.
@@ -229,6 +231,13 @@ impl Arm11ProcessSession {
 
             match self.step()? {
                 StepEvent::Executed => executed = executed.saturating_add(1),
+                StepEvent::Breakpoint(immediate) => {
+                    executed = executed.saturating_add(1);
+                    return Ok(Arm11RunReport {
+                        instructions_executed: executed,
+                        stop_reason: Arm11RunStopReason::Breakpoint(immediate),
+                    });
+                }
                 StepEvent::Svc(number) => {
                     executed = executed.saturating_add(1);
                     match self.dispatch_svc(number) {
@@ -674,6 +683,22 @@ mod tests {
         assert_eq!(session.core().regs[13], 0x1000_0000);
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
         assert_eq!(session.instruction_count(), 0);
+    }
+
+    #[test]
+    fn thumb_breakpoint_stops_the_session_with_its_immediate() {
+        let mut session = test_session_with_program(&[0x0000_BE5A]);
+        session
+            .scheduler
+            .core_mut(MAIN_THREAD_ID)
+            .unwrap()
+            .cpsr
+            .set_thumb(true);
+
+        let report = session.run_instructions(10).unwrap();
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(report.stop_reason, Arm11RunStopReason::Breakpoint(0x5A));
+        assert_eq!(session.instruction_count(), 1);
     }
 
     #[test]

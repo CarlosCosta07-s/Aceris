@@ -75,6 +75,53 @@ impl Arm11Core {
         }
     }
 
+    /// Reads a halfword using the current CPSR data endianness.
+    pub(super) fn read_data_u16<B: Bus + ?Sized>(&self, bus: &mut B, address: u32) -> Result<u16> {
+        let value = bus.read16(address)?;
+        Ok(if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+    }
+
+    /// Reads a word using the current CPSR data endianness.
+    pub(super) fn read_data_u32<B: Bus + ?Sized>(&self, bus: &mut B, address: u32) -> Result<u32> {
+        let value = bus.read32(address)?;
+        Ok(if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+    }
+
+    /// Reads an unaligned word with the classic endian-dependent rotation.
+    pub(super) fn read_data_u32_unaligned<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+    ) -> Result<u32> {
+        let value = self.read_data_u32(bus, address & !3)?;
+        let rotation = (address & 3) * 8;
+        Ok(if self.cpsr.big_endian() {
+            value.rotate_left(rotation)
+        } else {
+            value.rotate_right(rotation)
+        })
+    }
+
+    /// Writes a halfword using the current CPSR data endianness.
+    pub(super) fn write_data_u16<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        value: u16,
+    ) -> Result<()> {
+        bus.write16(address, if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+    }
+
+    /// Writes a word using the current CPSR data endianness.
+    pub(super) fn write_data_u32<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        value: u32,
+    ) -> Result<()> {
+        bus.write32(address, if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+    }
+
     /// Writes register `n`; a write to `pc` is a branch (without interworking).
     fn write_reg(&mut self, n: u32, value: u32) {
         if n as usize == PC {
@@ -316,8 +363,8 @@ impl Arm11Core {
             bus.write8(addr, new_value as u8)?;
             old
         } else {
-            let old = bus.read32(addr & !3)?.rotate_right(8 * (addr & 3));
-            bus.write32(addr & !3, new_value)?;
+            let old = self.read_data_u32_unaligned(bus, addr)?;
+            self.write_data_u32(bus, addr & !3, new_value)?;
             old
         };
         self.write_reg(rd, old);
@@ -329,7 +376,11 @@ impl Arm11Core {
         let rm = bits(word, 3, 0);
         let rd = bits(word, 15, 12);
 
-        if word & 0x0FFF_FFF0 == 0x012F_FF10 {
+        if word & 0x0FF0_00F0 == 0x0120_0070 {
+            // BKPT #imm16; exception-vector entry is not modeled yet.
+            let immediate = ((bits(word, 19, 8) << 4) | bits(word, 3, 0)) as u16;
+            return Ok(StepEvent::Breakpoint(immediate));
+        } else if word & 0x0FFF_FFF0 == 0x012F_FF10 {
             // BX Rm
             let target = self.reg(rm, 8);
             self.branch_exchange(target);
@@ -410,7 +461,7 @@ impl Arm11Core {
                 u32::from(bus.read8(addr)?)
             } else {
                 // Classic behaviour: unaligned word loads rotate the aligned word.
-                bus.read32(addr & !3)?.rotate_right(8 * (addr & 3))
+                self.read_data_u32_unaligned(bus, addr)?
             };
             if writeback {
                 self.set_base(rn, offset_addr);
@@ -426,7 +477,7 @@ impl Arm11Core {
             if byte {
                 bus.write8(addr, value as u8)?;
             } else {
-                bus.write32(addr & !3, value)?;
+                self.write_data_u32(bus, addr & !3, value)?;
             }
             if writeback {
                 self.set_base(rn, offset_addr);
@@ -465,7 +516,7 @@ impl Arm11Core {
 
         match (load, bits(word, 6, 5)) {
             (true, 0b01) => {
-                let value = u32::from(bus.read16(addr)?);
+                let value = u32::from(self.read_data_u16(bus, addr)?);
                 self.finish_load(rn, rd, writeback, offset_addr, value);
             }
             (true, 0b10) => {
@@ -473,12 +524,12 @@ impl Arm11Core {
                 self.finish_load(rn, rd, writeback, offset_addr, value);
             }
             (true, 0b11) => {
-                let value = i32::from(bus.read16(addr)? as i16) as u32;
+                let value = i32::from(self.read_data_u16(bus, addr)? as i16) as u32;
                 self.finish_load(rn, rd, writeback, offset_addr, value);
             }
             (false, 0b01) => {
                 let value = self.reg(rd, 8) as u16;
-                bus.write16(addr, value)?;
+                self.write_data_u16(bus, addr, value)?;
                 if writeback {
                     self.set_base(rn, offset_addr);
                 }
@@ -488,8 +539,8 @@ impl Arm11Core {
                 if rd % 2 != 0 || rd >= 14 {
                     return Err(undefined);
                 }
-                let first = bus.read32(addr)?;
-                let second = bus.read32(addr.wrapping_add(4))?;
+                let first = self.read_data_u32(bus, addr)?;
+                let second = self.read_data_u32(bus, addr.wrapping_add(4))?;
                 if writeback {
                     self.set_base(rn, offset_addr);
                 }
@@ -502,8 +553,8 @@ impl Arm11Core {
                     return Err(undefined);
                 }
                 let (first, second) = (self.reg(rd, 8), self.reg(rd + 1, 8));
-                bus.write32(addr, first)?;
-                bus.write32(addr.wrapping_add(4), second)?;
+                self.write_data_u32(bus, addr, first)?;
+                self.write_data_u32(bus, addr.wrapping_add(4), second)?;
                 if writeback {
                     self.set_base(rn, offset_addr);
                 }
@@ -554,7 +605,7 @@ impl Arm11Core {
             let mut values = [0u32; 16];
             for (r, value) in values.iter_mut().enumerate() {
                 if list & (1 << r) != 0 {
-                    *value = bus.read32(addr)?;
+                    *value = self.read_data_u32(bus, addr)?;
                     addr = addr.wrapping_add(4);
                 }
             }
@@ -572,7 +623,7 @@ impl Arm11Core {
         } else {
             for r in 0..16u32 {
                 if list & (1 << r) != 0 {
-                    bus.write32(addr, self.reg(r, 8))?;
+                    self.write_data_u32(bus, addr, self.reg(r, 8))?;
                     addr = addr.wrapping_add(4);
                 }
             }
