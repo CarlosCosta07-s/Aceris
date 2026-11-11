@@ -6,11 +6,11 @@
 
 use std::io::{Read, Seek};
 
+use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::Arm11CodeAddressSpace;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
-use crate::Result;
 
 /// Reason an instruction-budgeted run stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,8 +116,8 @@ impl Arm11ProcessSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
     use crate::loader::ncsd::PreparedArm11Image;
+    use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
 
     fn test_session() -> Arm11ProcessSession {
         let mut text = vec![0u8; 0x1000];
@@ -179,7 +179,10 @@ mod tests {
         let mut session = test_session();
         let report = session.run_instructions(1).unwrap();
         assert_eq!(report.instructions_executed, 1);
-        assert_eq!(report.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
         assert_eq!(session.core().regs[0], 7);
         assert_eq!(session.core().regs[1], 0);
         assert_eq!(session.core().pc(), 0x0010_0004);
