@@ -1,8 +1,8 @@
-//! Structural parser for the Nintendo 3DS RomFS IVFC and Level 3 headers.
+//! Structural parser for the Nintendo 3DS RomFS IVFC and Level 3 data.
 //!
-//! This module validates container and table metadata only. It does not decrypt
-//! NCCH content, locate physical IVFC levels, verify SHA-256 hashes, walk the
-//! directory tree, or extract files.
+//! This module validates container and table metadata, resolves the documented
+//! physical IVFC level layout, and reads the Level 3 tree. It does not decrypt
+//! NCCH content, verify SHA-256 hashes, or extract files.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -190,11 +190,16 @@ impl IvfcHeader {
         Self::parse(&header, available_size_bytes)
     }
 
-    /// Resolves the documented physical Level 3 region within an IVFC image.
+    /// Resolves the documented physical order of the IVFC hash-tree regions.
     ///
-    /// RomFS Level 3 starts at 0x1000. The declared Level 3 size is checked
-    /// against the available RomFS region before a reader can be opened.
-    pub fn level3_region(&self, available_size_bytes: u64) -> Result<IvfcRegion, RomFsError> {
+    /// RomFS stores Level 3 at 0x1000, followed by Level 1 and then Level 2.
+    /// Each following region starts at the next block boundary of the region
+    /// immediately before it.
+    pub fn physical_layout(&self, available_size_bytes: u64) -> Result<IvfcLayout, RomFsError> {
+        if available_size_bytes < IVFC_HEADER_SIZE as u64 {
+            return Err(RomFsError::InvalidIvfcHeader("header is truncated"));
+        }
+
         let master_hash_start = align_up(
             (IVFC_HEADER_SIZE as u64)
                 .checked_add(u64::from(self.optional_info_size_bytes))
@@ -215,23 +220,84 @@ impl IvfcHeader {
             ));
         }
 
-        let end = LEVEL3_DATA_OFFSET_BYTES
-            .checked_add(self.level3.hash_data_size_bytes)
+        let master_hash = IvfcRegion {
+            offset_bytes: master_hash_start,
+            size_bytes: u64::from(self.master_hash_size_bytes),
+        };
+        let level3 = IvfcRegion {
+            offset_bytes: LEVEL3_DATA_OFFSET_BYTES,
+            size_bytes: self.level3.hash_data_size_bytes,
+        };
+        let level3_end = level3
+            .end_offset_bytes()
             .ok_or(RomFsError::InvalidIvfcLevel {
                 index: 3,
                 reason: "physical Level 3 range overflows",
             })?;
-        if end > available_size_bytes {
+        if level3_end > available_size_bytes {
             return Err(RomFsError::InvalidIvfcLevel {
                 index: 3,
                 reason: "physical Level 3 range exceeds the RomFS region",
             });
         }
 
-        Ok(IvfcRegion {
-            offset_bytes: LEVEL3_DATA_OFFSET_BYTES,
-            size_bytes: self.level3.hash_data_size_bytes,
+        let level1_start = align_up(level3_end, self.level3.block_size_bytes).ok_or(
+            RomFsError::InvalidIvfcLevel {
+                index: 1,
+                reason: "physical Level 1 alignment overflows",
+            },
+        )?;
+        let level1 = IvfcRegion {
+            offset_bytes: level1_start,
+            size_bytes: self.level1.hash_data_size_bytes,
+        };
+        let level1_end = level1
+            .end_offset_bytes()
+            .ok_or(RomFsError::InvalidIvfcLevel {
+                index: 1,
+                reason: "physical Level 1 range overflows",
+            })?;
+        if level1_end > available_size_bytes {
+            return Err(RomFsError::InvalidIvfcLevel {
+                index: 1,
+                reason: "physical Level 1 range exceeds the RomFS region",
+            });
+        }
+
+        let level2_start = align_up(level1_end, self.level1.block_size_bytes).ok_or(
+            RomFsError::InvalidIvfcLevel {
+                index: 2,
+                reason: "physical Level 2 alignment overflows",
+            },
+        )?;
+        let level2 = IvfcRegion {
+            offset_bytes: level2_start,
+            size_bytes: self.level2.hash_data_size_bytes,
+        };
+        let level2_end = level2
+            .end_offset_bytes()
+            .ok_or(RomFsError::InvalidIvfcLevel {
+                index: 2,
+                reason: "physical Level 2 range overflows",
+            })?;
+        if level2_end > available_size_bytes {
+            return Err(RomFsError::InvalidIvfcLevel {
+                index: 2,
+                reason: "physical Level 2 range exceeds the RomFS region",
+            });
+        }
+
+        Ok(IvfcLayout {
+            master_hash,
+            level3,
+            level1,
+            level2,
         })
+    }
+
+    /// Resolves the physical Level 3 region and validates the complete IVFC layout.
+    pub fn level3_region(&self, available_size_bytes: u64) -> Result<IvfcRegion, RomFsError> {
+        Ok(self.physical_layout(available_size_bytes)?.level3)
     }
 
     /// Opens the Level 3 image as an isolated, bounded stream.
@@ -374,6 +440,15 @@ impl IvfcRegion {
     pub const fn end_offset_bytes(self) -> Option<u64> {
         self.offset_bytes.checked_add(self.size_bytes)
     }
+}
+
+/// Physical locations of the master hash and three RomFS IVFC levels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IvfcLayout {
+    pub master_hash: IvfcRegion,
+    pub level3: IvfcRegion,
+    pub level1: IvfcRegion,
+    pub level2: IvfcRegion,
 }
 
 /// A seekable reader restricted to a physical range of its underlying stream.
@@ -1223,6 +1298,84 @@ mod tests {
         assert_eq!(region.offset_bytes, 0x1000);
         assert_eq!(region.size_bytes, 0x100);
         assert_eq!(region.end_offset_bytes(), Some(0x1100));
+    }
+
+    #[test]
+    fn resolves_all_ivfc_regions_in_documented_physical_order() {
+        let header = IvfcHeader::parse(&valid_ivfc_header(), 0x4000).unwrap();
+        let layout = header.physical_layout(0x4000).unwrap();
+
+        assert_eq!(layout.master_hash.offset_bytes, 0x60);
+        assert_eq!(layout.master_hash.size_bytes, 0x20);
+        assert_eq!(layout.level3.offset_bytes, 0x1000);
+        assert_eq!(layout.level3.size_bytes, 0x100);
+        assert_eq!(layout.level1.offset_bytes, 0x2000);
+        assert_eq!(layout.level1.size_bytes, 0x20);
+        assert_eq!(layout.level2.offset_bytes, 0x3000);
+        assert_eq!(layout.level2.size_bytes, 0x20);
+    }
+
+    #[test]
+    fn aligns_each_following_level_to_the_preceding_level_block_size() {
+        let mut bytes = valid_ivfc_header();
+        write_u64(&mut bytes, 0x44, 0x1800);
+        write_u32(&mut bytes, 0x1C, 12);
+        write_u32(&mut bytes, 0x3C + 16, 12);
+        write_u32(&mut bytes, 0x0C + 16, 13);
+
+        let header = IvfcHeader::parse(&bytes, 0x5000).unwrap();
+        let layout = header.physical_layout(0x5000).unwrap();
+
+        assert_eq!(layout.level3.offset_bytes, 0x1000);
+        assert_eq!(layout.level3.end_offset_bytes(), Some(0x2800));
+        assert_eq!(layout.level1.offset_bytes, 0x3000);
+        assert_eq!(layout.level1.end_offset_bytes(), Some(0x3020));
+        assert_eq!(layout.level2.offset_bytes, 0x4000);
+        assert_eq!(layout.level2.end_offset_bytes(), Some(0x4020));
+    }
+
+    #[test]
+    fn rejects_level1_and_level2_regions_outside_the_romfs_image() {
+        let header = IvfcHeader::parse(&valid_ivfc_header(), 0x4000).unwrap();
+        assert_eq!(
+            header.physical_layout(0x201F),
+            Err(RomFsError::InvalidIvfcLevel {
+                index: 1,
+                reason: "physical Level 1 range exceeds the RomFS region",
+            })
+        );
+        assert_eq!(
+            header.physical_layout(0x301F),
+            Err(RomFsError::InvalidIvfcLevel {
+                index: 2,
+                reason: "physical Level 2 range exceeds the RomFS region",
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_ivfc_level_alignment_overflow() {
+        let mut bytes = valid_ivfc_header();
+        write_u32(&mut bytes, 0x3C + 16, 63);
+        let header = IvfcHeader::parse(&bytes, u64::MAX).unwrap();
+        assert_eq!(
+            header.physical_layout(u64::MAX),
+            Err(RomFsError::InvalidIvfcLevel {
+                index: 1,
+                reason: "physical Level 1 alignment overflows",
+            })
+        );
+
+        bytes = valid_ivfc_header();
+        write_u32(&mut bytes, 0x0C + 16, 63);
+        let header = IvfcHeader::parse(&bytes, u64::MAX).unwrap();
+        assert_eq!(
+            header.physical_layout(u64::MAX),
+            Err(RomFsError::InvalidIvfcLevel {
+                index: 2,
+                reason: "physical Level 2 alignment overflows",
+            })
+        );
     }
 
     #[test]
