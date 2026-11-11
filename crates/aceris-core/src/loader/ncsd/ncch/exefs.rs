@@ -259,6 +259,12 @@ mod tests {
         data[hash_offset..hash_offset + HASH_SIZE].fill(hash_fill);
     }
 
+    fn write_name(data: &mut [u8], base: usize, name: &[u8]) {
+        let mut field = [0; 8];
+        field[..name.len()].copy_from_slice(name);
+        data[base..base + 8].copy_from_slice(&field);
+    }
+
     fn valid_header() -> Vec<u8> {
         let mut data = vec![0; HEADER_SIZE];
         write_entry(&mut data, 0, b".code", 0, 0x100, 0xA0);
@@ -373,7 +379,7 @@ mod tests {
 
         data = valid_header();
         let base = FILE_TABLE_OFFSET + 2 * FILE_ENTRY_SIZE;
-        data[base..base + 8].copy_from_slice(b"zero");
+        write_name(&mut data, base, b"zero");
         assert!(matches!(
             ExeFsHeader::parse(&data, 0x600),
             Err(ExeFsError::InvalidEntry {
@@ -387,7 +393,7 @@ mod tests {
     fn rejects_duplicate_names_out_of_bounds_and_overlaps() {
         let mut data = valid_header();
         let base = FILE_TABLE_OFFSET + 2 * FILE_ENTRY_SIZE;
-        data[base..base + 8].copy_from_slice(b"icon");
+        write_name(&mut data, base, b"icon");
         write_u32(&mut data, base + 8, 0x300);
         write_u32(&mut data, base + 12, 0x10);
         assert_eq!(
@@ -397,7 +403,7 @@ mod tests {
 
         data = valid_header();
         let base = FILE_TABLE_OFFSET + 2 * FILE_ENTRY_SIZE;
-        data[base..base + 8].copy_from_slice(b"extra");
+        write_name(&mut data, base, b"extra");
         write_u32(&mut data, base + 8, 0x3F0);
         write_u32(&mut data, base + 12, 0x20);
         assert!(matches!(
