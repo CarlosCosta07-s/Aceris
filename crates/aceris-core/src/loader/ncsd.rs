@@ -713,7 +713,7 @@ fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
     read_array::<8>(data, offset).map(u64::from_le_bytes)
 }
 
-fn read_verified_code_file<R: Read>(
+fn read_verified_code_file<R: Read + Seek>(
     reader: &mut ncch::exefs::ExeFsFileReader<R>,
     maximum_size: usize,
 ) -> std::result::Result<Vec<u8>, NcsdExecutableLoadError> {
@@ -862,9 +862,9 @@ mod tests {
         let data = vec![0x33; CODE_SEGMENT_SIZE];
         let code = if compressed {
             compressed_test_code(&[
-                (0x11, CODE_SEGMENT_SIZE),
-                (0x22, CODE_SEGMENT_SIZE),
                 (0x33, CODE_SEGMENT_SIZE),
+                (0x22, CODE_SEGMENT_SIZE),
+                (0x11, CODE_SEGMENT_SIZE),
             ])
         } else {
             [text.as_slice(), read_only.as_slice(), data.as_slice()].concat()
