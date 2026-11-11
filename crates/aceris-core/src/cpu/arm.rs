@@ -1079,8 +1079,13 @@ impl Arm11Core {
             address = address.wrapping_add(4);
         }
 
-        let target = self.read_data_u32(bus, address)?;
-        let status = super::Psr(self.read_data_u32(bus, address.wrapping_add(4))?);
+        let mut target = bus.read32(address)?;
+        let mut status = bus.read32(address.wrapping_add(4))?;
+        if self.cpsr.big_endian() {
+            target = target.swap_bytes();
+            status = status.swap_bytes();
+        }
+        let status = super::Psr(status);
         if !super::Psr::is_valid_mode(status.mode()) {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
