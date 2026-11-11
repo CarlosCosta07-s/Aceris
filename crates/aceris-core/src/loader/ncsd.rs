@@ -811,6 +811,24 @@ impl<R: Read + Seek> NcsdImageReader<R> {
             .map_err(NcsdImageReaderError::Reader)
     }
 
+    /// Borrows a partition and validates its NCCH header without consuming the image reader.
+    ///
+    /// The returned NCCH reader is bounded to the selected partition. Drop it
+    /// before borrowing another partition from this image.
+    pub fn borrow_partition_ncch(
+        &mut self,
+        index: u8,
+    ) -> std::result::Result<NcsdNcchReader<&mut R>, NcsdImageReaderError> {
+        let partition = self
+            .header
+            .partition(index)
+            .copied()
+            .ok_or(NcsdImageReaderError::MissingPartition { index })?;
+        partition
+            .open_ncch(&mut self.reader)
+            .map_err(NcsdImageReaderError::InvalidNcch)
+    }
+
     /// Opens any populated partition by its original NCSD table index.
     ///
     /// This is a raw, bounded partition stream: it does not assume that the

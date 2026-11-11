@@ -27,6 +27,16 @@ fn write_partition(bytes: &mut [u8], index: usize, offset_units: u32, size_units
     write_u64(bytes, 0x190 + index * 8, id);
 }
 
+fn image_with_sparse_ncch_partition() -> Vec<u8> {
+    let mut image = image_with_sparse_partitions();
+    let partition_start = 0x20 * MEDIA_UNIT;
+
+    image[partition_start + 0x100..partition_start + 0x104].copy_from_slice(b"NCCH");
+    write_u32(&mut image, partition_start + 0x104, 0x08);
+
+    image
+}
+
 fn image_with_sparse_partitions() -> Vec<u8> {
     let mut image = vec![0; IMAGE_SIZE_UNITS * MEDIA_UNIT];
     image[0x100..0x104].copy_from_slice(b"NCSD");
@@ -113,6 +123,30 @@ fn image_reader_keeps_metadata_available_after_a_borrowed_partition_error() {
     let mut marker = [0u8; 12];
     primary.read_exact(&mut marker).unwrap();
     assert_eq!(&marker, b"MAIN-PART-02");
+}
+
+#[test]
+fn image_reader_can_borrow_ncch_then_open_another_raw_partition() {
+    let image = Cursor::new(image_with_sparse_ncch_partition());
+    let mut reader = NcsdImageReader::open(image).unwrap();
+
+    {
+        let opened = reader.borrow_partition_ncch(2).unwrap();
+        assert_eq!(opened.partition().index, 2);
+        assert_eq!(
+            opened.header().content_size_bytes,
+            (0x08 * MEDIA_UNIT) as u64
+        );
+    }
+
+    {
+        let mut auxiliary = reader.borrow_partition_reader(5).unwrap();
+        let mut marker = [0u8; 11];
+        auxiliary.read_exact(&mut marker).unwrap();
+        assert_eq!(&marker, b"AUX-PART-05");
+    }
+
+    assert_eq!(reader.header().partitions.len(), 2);
 }
 
 #[test]
