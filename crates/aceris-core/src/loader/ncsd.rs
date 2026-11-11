@@ -61,7 +61,10 @@ impl NcsdPartition {
     /// The returned value keeps the parsed header paired with the bounded
     /// partition reader. NCCH decryption and signature verification are not
     /// performed by this operation.
-    pub fn open_ncch<R: Read + Seek>(self, inner: R) -> std::result::Result<NcsdNcchReader<R>, NcsdNcchError> {
+    pub fn open_ncch<R: Read + Seek>(
+        self,
+        inner: R,
+    ) -> std::result::Result<NcsdNcchReader<R>, NcsdNcchError> {
         let mut reader = self.reader(inner).map_err(NcsdNcchError::PartitionReader)?;
         let header = ncch::NcchHeader::parse_reader(&mut reader, self.size_bytes)
             .map_err(NcsdNcchError::InvalidNcchHeader)?;
