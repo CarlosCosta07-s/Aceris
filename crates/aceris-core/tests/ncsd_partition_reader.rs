@@ -11,13 +11,19 @@ use aceris_core::loader::ncsd::NcsdPartition;
 struct VirtualImage {
     length: u64,
     position: u64,
+    max_read: usize,
 }
 
 impl VirtualImage {
     fn new(length: u64) -> Self {
+        Self::with_max_read(length, usize::MAX)
+    }
+
+    fn with_max_read(length: u64, max_read: usize) -> Self {
         Self {
             length,
             position: 0,
+            max_read,
         }
     }
 }
@@ -27,7 +33,8 @@ impl Read for VirtualImage {
         let remaining = self.length.saturating_sub(self.position);
         let count = buffer
             .len()
-            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX))
+            .min(self.max_read);
 
         for (index, byte) in buffer[..count].iter_mut().enumerate() {
             *byte = (self.position + index as u64) as u8;
@@ -173,6 +180,19 @@ fn partition_reader_handles_offsets_above_four_gibibytes() {
             (offset_bytes + 3) as u8
         ]
     );
+    assert_eq!(reader.remaining(), 0);
+}
+
+#[test]
+fn partition_reader_handles_short_reads_until_the_partition_is_consumed() {
+    let image = VirtualImage::with_max_read(10, 2);
+    let mut reader = partition(2, 6).reader(image).unwrap();
+
+    let mut actual = Vec::new();
+    reader.read_to_end(&mut actual).unwrap();
+
+    assert_eq!(actual, b"234567");
+    assert_eq!(reader.position(), 6);
     assert_eq!(reader.remaining(), 0);
 }
 
