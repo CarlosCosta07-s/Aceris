@@ -7,6 +7,62 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use aceris_core::loader::ncsd::NcsdPartition;
 
+#[derive(Debug)]
+struct VirtualImage {
+    length: u64,
+    position: u64,
+}
+
+impl VirtualImage {
+    fn new(length: u64) -> Self {
+        Self {
+            length,
+            position: 0,
+        }
+    }
+}
+
+impl Read for VirtualImage {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = self.length.saturating_sub(self.position);
+        let count = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+
+        for (index, byte) in buffer[..count].iter_mut().enumerate() {
+            *byte = (self.position + index as u64) as u8;
+        }
+
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl Seek for VirtualImage {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        let target = match from {
+            SeekFrom::Start(position) => i128::from(position),
+            SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(self.length) + i128::from(offset),
+        };
+
+        if !(0..=i128::from(self.length)).contains(&target) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "virtual image seek is outside its range",
+            ));
+        }
+
+        self.position = u64::try_from(target).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "virtual image position is invalid",
+            )
+        })?;
+        Ok(self.position)
+    }
+}
+
 fn partition(offset_bytes: u64, size_bytes: u64) -> NcsdPartition {
     NcsdPartition {
         index: 0,
@@ -87,6 +143,59 @@ fn partition_reader_rejects_seeks_outside_the_partition() {
     let error = reader.seek(SeekFrom::Current(-1)).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     assert_eq!(reader.position(), 0);
+}
+
+#[test]
+fn partition_reader_handles_offsets_above_four_gibibytes() {
+    let offset_bytes = u64::from(u32::MAX) + 0x200;
+    let size_bytes = 4;
+    let image_len = offset_bytes + size_bytes;
+    let selected = NcsdPartition {
+        index: 0,
+        offset_bytes,
+        size_bytes,
+        fs_type: 0,
+        crypt_type: 0,
+        id: 0,
+    };
+
+    let mut reader = selected.reader(VirtualImage::new(image_len)).unwrap();
+    assert_eq!(reader.len(), size_bytes);
+    assert_eq!(reader.seek(SeekFrom::Start(1)).unwrap(), 1);
+
+    let mut bytes = [0u8; 3];
+    reader.read_exact(&mut bytes).unwrap();
+    assert_eq!(
+        bytes,
+        [
+            (offset_bytes + 1) as u8,
+            (offset_bytes + 2) as u8,
+            (offset_bytes + 3) as u8
+        ]
+    );
+    assert_eq!(reader.remaining(), 0);
+}
+
+#[test]
+fn partition_reader_rejects_extreme_relative_seeks_without_changing_position() {
+    let image = Cursor::new(b"0123456789".to_vec());
+    let mut reader = partition(2, 4).reader(image).unwrap();
+
+    for from in [
+        SeekFrom::Current(i64::MIN),
+        SeekFrom::Current(i64::MAX),
+        SeekFrom::End(i64::MIN),
+        SeekFrom::End(i64::MAX),
+    ] {
+        let error = reader.seek(from).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(reader.position(), 0);
+    }
+
+    let mut first = [0u8; 1];
+    reader.read_exact(&mut first).unwrap();
+    assert_eq!(first, *b"2");
+    assert_eq!(reader.remaining(), 3);
 }
 
 #[test]
