@@ -799,8 +799,7 @@ impl Arm11Core {
         if word & 0xFD70_F000 == 0xF550_F000 {
             return Ok(StepEvent::Executed);
         }
-        // CPSIE/CPSID update selected A/I/F masks without changing flags.
-        // CPS with a mode change is deferred until banked registers exist.
+        // CPS switches the active mode bank and/or updates selected A/I/F masks.
         if word & 0xFFF0_FE20 == 0xF100_0000 {
             let imod = bits(word, 19, 18);
             let change_mode = bit(word, 17);
@@ -808,7 +807,7 @@ impl Arm11Core {
                 | (u8::from(bit(word, 7)) << 1)
                 | (u8::from(bit(word, 6)) << 2);
             let mode = bits(word, 4, 0);
-            let valid_mode = matches!(mode, 0x10 | 0x11 | 0x12 | 0x13 | 0x17 | 0x1B | 0x1F);
+            let valid_mode = super::Psr::is_valid_mode(mode);
             let valid_encoding = if imod == 0 {
                 change_mode && interrupt_mask == 0 && valid_mode
             } else {
@@ -828,11 +827,11 @@ impl Arm11Core {
                 return Ok(StepEvent::Executed);
             }
             if change_mode {
-                return Err(Error::Unimplemented(
-                    "CPS mode changes require banked register support",
-                ));
+                self.switch_mode(mode)?;
             }
-            self.cpsr.set_interrupt_masks(interrupt_mask, imod == 0b11);
+            if imod != 0 {
+                self.cpsr.set_interrupt_masks(interrupt_mask, imod == 0b11);
+            }
             return Ok(StepEvent::Executed);
         }
         if bits(word, 27, 25) != 0b101 {
@@ -1927,7 +1926,7 @@ mod tests {
     fn armv6_cpsid_and_cpsie_update_interrupt_masks_without_touching_flags() {
         // CPSID i ; CPSIE i ; CPSID aif ; CPSIE aif.
         let mut m = Machine::new(&[0xF10C_0080, 0xF108_0080, 0xF10C_01C0, 0xF108_01C0]);
-        m.cpu.cpsr.0 = (m.cpu.cpsr.0 & !0x1F) | 0x13; // Supervisor mode.
+        m.cpu.switch_mode(super::Psr::SUPERVISOR_MODE).unwrap();
         m.cpu.cpsr.set_flags(true, false, true, false);
         m.cpu.cpsr.set_q();
         m.cpu.cpsr.set_ge(0b1010);
@@ -1948,26 +1947,31 @@ mod tests {
     }
 
     #[test]
-    fn armv6_cps_is_a_noop_in_user_mode_and_defers_privileged_mode_changes() {
+    fn armv6_cps_is_a_noop_in_user_mode_and_switches_privileged_banks() {
         // CPSID i is treated as a NOP in User mode.
         let mut user = Machine::new(&[0xF10C_0080]);
         user.step();
         assert_eq!(user.cpu.cpsr.0 & (1 << 7), 0);
 
-        // CPS #SVC needs banked-register switching, so do not partially apply it.
+        // CPS #SVC switches from System to Supervisor and selects its SP/LR bank.
         let mut privileged = Machine::new(&[0xF102_0013]);
-        privileged.cpu.cpsr.0 = (privileged.cpu.cpsr.0 & !0x1F) | 0x13;
-        assert!(matches!(
-            privileged.cpu.step(&mut privileged.mem),
-            Err(Error::Unimplemented(
-                "CPS mode changes require banked register support"
-            ))
-        ));
-        assert_eq!(privileged.cpu.cpsr.mode(), 0x13);
+        privileged.cpu.switch_mode(super::Psr::SYSTEM_MODE).unwrap();
+        privileged.cpu.regs[SP] = 0x2000;
+        privileged.cpu.regs[LR] = 0x2004;
+        privileged.step();
+        assert_eq!(privileged.cpu.cpsr.mode(), super::Psr::SUPERVISOR_MODE);
+        assert_eq!((privileged.cpu.regs[SP], privileged.cpu.regs[LR]), (0, 0));
+
+        privileged.cpu.regs[SP] = 0x3000;
+        privileged.cpu.regs[LR] = 0x3004;
+        privileged.cpu.switch_mode(super::Psr::SYSTEM_MODE).unwrap();
+        assert_eq!((privileged.cpu.regs[SP], privileged.cpu.regs[LR]), (0x2000, 0x2004));
+        privileged.cpu.switch_mode(super::Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!((privileged.cpu.regs[SP], privileged.cpu.regs[LR]), (0x3000, 0x3004));
 
         // Mode bits are SBZ when CPSID/CPSIE does not request a mode change.
         let mut malformed = Machine::new(&[0xF10C_0093]);
-        malformed.cpu.cpsr.0 = (malformed.cpu.cpsr.0 & !0x1F) | 0x13;
+        malformed.cpu.switch_mode(super::Psr::SUPERVISOR_MODE).unwrap();
         assert!(matches!(
             malformed.cpu.step(&mut malformed.mem),
             Err(Error::UndefinedInstruction { pc: 0, .. })
