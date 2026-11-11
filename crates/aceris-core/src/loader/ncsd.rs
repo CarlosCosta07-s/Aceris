@@ -100,10 +100,17 @@ impl<R: Read + Seek> NcsdPartitionReader<R> {
             ));
         }
 
-        if partition.end_offset_bytes().is_none() {
-            return Err(io::Error::new(
+        let partition_end = partition.end_offset_bytes().ok_or_else(|| {
+            io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "NCSD partition range overflows",
+            )
+        })?;
+        let image_len = inner.seek(SeekFrom::End(0))?;
+        if partition_end > image_len {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "NCSD partition extends beyond the underlying image",
             ));
         }
 

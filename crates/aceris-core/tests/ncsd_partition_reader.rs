@@ -78,3 +78,21 @@ fn partition_reader_rejects_empty_and_overflowing_ranges() {
     let overflow_error = partition(u64::MAX - 1, 4).reader(image).unwrap_err();
     assert_eq!(overflow_error.kind(), std::io::ErrorKind::InvalidInput);
 }
+
+#[test]
+fn partition_reader_rejects_ranges_beyond_the_underlying_image() {
+    let image = Cursor::new(b"012345".to_vec());
+
+    let error = partition(2, 5).reader(image).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn partition_reader_accepts_a_range_ending_exactly_at_image_end() {
+    let image = Cursor::new(b"012345".to_vec());
+    let mut reader = partition(2, 4).reader(image).unwrap();
+
+    let mut contents = Vec::new();
+    reader.read_to_end(&mut contents).unwrap();
+    assert_eq!(contents, b"2345");
+}
