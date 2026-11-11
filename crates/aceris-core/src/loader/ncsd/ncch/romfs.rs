@@ -5,7 +5,7 @@
 //! directory tree, or extract files.
 
 use std::fmt;
-use std::io::Read;
+use std::io::{self, Read, Seek, SeekFrom};
 
 pub const IVFC_HEADER_SIZE: usize = 0x5C;
 pub const LEVEL3_HEADER_SIZE: usize = 0x28;
@@ -69,6 +69,8 @@ pub enum RomFsError {
     InvalidIvfcHeader(&'static str),
     InvalidIvfcLevel { index: u8, reason: &'static str },
     InvalidLevel3Header(&'static str),
+    InvalidDirectoryEntry(&'static str),
+    InvalidFileEntry(&'static str),
     ReaderFailure(String),
 }
 
@@ -83,6 +85,12 @@ impl fmt::Display for RomFsError {
             }
             Self::InvalidLevel3Header(reason) => {
                 write!(formatter, "invalid RomFS Level 3 header: {reason}")
+            }
+            Self::InvalidDirectoryEntry(reason) => {
+                write!(formatter, "invalid RomFS directory entry: {reason}")
+            }
+            Self::InvalidFileEntry(reason) => {
+                write!(formatter, "invalid RomFS file entry: {reason}")
             }
             Self::ReaderFailure(reason) => {
                 write!(formatter, "RomFS reader failure: {reason}")
@@ -289,6 +297,470 @@ impl Level3Header {
 
         Ok(parsed)
     }
+}
+
+/// A directory metadata record in the Level 3 image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RomFsDirectoryEntry {
+    /// Byte offset of this record within the directory metadata table.
+    pub metadata_offset_bytes: u32,
+    pub parent_directory_offset_bytes: u32,
+    pub next_sibling_directory_offset_bytes: u32,
+    pub first_child_directory_offset_bytes: u32,
+    pub first_file_offset_bytes: u32,
+    pub next_hash_directory_offset_bytes: u32,
+    /// UTF-16LE directory name.
+    pub name: String,
+}
+
+/// A file metadata record in the Level 3 image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RomFsFileEntry {
+    /// Byte offset of this record within the file metadata table.
+    pub metadata_offset_bytes: u32,
+    pub parent_directory_offset_bytes: u32,
+    pub next_sibling_file_offset_bytes: u32,
+    /// Offset relative to the beginning of the Level 3 file-data area.
+    pub data_offset_bytes: u64,
+    pub data_size_bytes: u64,
+    pub next_hash_file_offset_bytes: u32,
+    /// UTF-16LE filename.
+    pub name: String,
+}
+
+/// Reader for an already-isolated logical RomFS Level 3 image.
+///
+/// The supplied stream must start at Level 3 byte zero. IVFC physical layout,
+/// encryption, and hash verification are deliberately outside this reader.
+#[derive(Debug)]
+pub struct RomFsLevel3Reader<R> {
+    inner: R,
+    header: Level3Header,
+    level3_size_bytes: u64,
+}
+
+impl<R: Read + Seek> RomFsLevel3Reader<R> {
+    /// Reads and validates the Level 3 header at stream offset zero.
+    pub fn new(mut inner: R, level3_size_bytes: u64) -> Result<Self, RomFsError> {
+        let actual = inner
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+        if actual != 0 {
+            return Err(RomFsError::ReaderFailure(
+                "reader did not seek to Level 3 offset zero".to_owned(),
+            ));
+        }
+
+        let mut bytes = [0; LEVEL3_HEADER_SIZE];
+        inner
+            .read_exact(&mut bytes)
+            .map_err(|_| RomFsError::InvalidLevel3Header("header is truncated"))?;
+        let header = Level3Header::parse(&bytes, level3_size_bytes)?;
+
+        Ok(Self {
+            inner,
+            header,
+            level3_size_bytes,
+        })
+    }
+
+    /// Returns the validated Level 3 table layout.
+    pub const fn header(&self) -> &Level3Header {
+        &self.header
+    }
+
+    /// Returns the declared logical size of the Level 3 image.
+    pub const fn len(&self) -> u64 {
+        self.level3_size_bytes
+    }
+
+    /// Returns true when the declared Level 3 image is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.level3_size_bytes == 0
+    }
+
+    /// Reads a directory record by its offset within the directory metadata table.
+    pub fn read_directory_entry(
+        &mut self,
+        metadata_offset_bytes: u32,
+    ) -> Result<RomFsDirectoryEntry, RomFsError> {
+        let table_size = u64::from(self.header.directory_metadata_size_bytes);
+        let offset = u64::from(metadata_offset_bytes);
+        validate_entry_offset(offset, table_size)
+            .map_err(RomFsError::InvalidDirectoryEntry)?;
+
+        let fixed = read_metadata_fixed::<0x18, _>(
+            &mut self.inner,
+            u64::from(self.header.directory_metadata_offset_bytes),
+            offset,
+            table_size,
+        )
+        .map_err(RomFsError::InvalidDirectoryEntry)?;
+
+        let parent = u32::from_le_bytes(fixed[0x00..0x04].try_into().expect("fixed field"));
+        let sibling = u32::from_le_bytes(fixed[0x04..0x08].try_into().expect("fixed field"));
+        let child = u32::from_le_bytes(fixed[0x08..0x0C].try_into().expect("fixed field"));
+        let first_file = u32::from_le_bytes(fixed[0x0C..0x10].try_into().expect("fixed field"));
+        let next_hash = u32::from_le_bytes(fixed[0x10..0x14].try_into().expect("fixed field"));
+        let name_size = u32::from_le_bytes(fixed[0x14..0x18].try_into().expect("fixed field"));
+
+        validate_optional_reference(parent, table_size)
+            .map_err(RomFsError::InvalidDirectoryEntry)?;
+        validate_optional_reference(sibling, table_size)
+            .map_err(RomFsError::InvalidDirectoryEntry)?;
+        validate_optional_reference(child, table_size)
+            .map_err(RomFsError::InvalidDirectoryEntry)?;
+        validate_optional_reference(next_hash, table_size)
+            .map_err(RomFsError::InvalidDirectoryEntry)?;
+        validate_optional_reference(
+            first_file,
+            u64::from(self.header.file_metadata_size_bytes),
+        )
+        .map_err(RomFsError::InvalidDirectoryEntry)?;
+
+        let name = read_metadata_name(
+            &mut self.inner,
+            u64::from(self.header.directory_metadata_offset_bytes),
+            offset,
+            table_size,
+            0x18,
+            name_size,
+        )
+        .map_err(RomFsError::InvalidDirectoryEntry)?;
+
+        Ok(RomFsDirectoryEntry {
+            metadata_offset_bytes,
+            parent_directory_offset_bytes: parent,
+            next_sibling_directory_offset_bytes: sibling,
+            first_child_directory_offset_bytes: child,
+            first_file_offset_bytes: first_file,
+            next_hash_directory_offset_bytes: next_hash,
+            name,
+        })
+    }
+
+    /// Reads a file record and validates its data range against the Level 3 image.
+    pub fn read_file_entry(
+        &mut self,
+        metadata_offset_bytes: u32,
+    ) -> Result<RomFsFileEntry, RomFsError> {
+        let table_size = u64::from(self.header.file_metadata_size_bytes);
+        let offset = u64::from(metadata_offset_bytes);
+        validate_entry_offset(offset, table_size)
+            .map_err(RomFsError::InvalidFileEntry)?;
+
+        let fixed = read_metadata_fixed::<0x20, _>(
+            &mut self.inner,
+            u64::from(self.header.file_metadata_offset_bytes),
+            offset,
+            table_size,
+        )
+        .map_err(RomFsError::InvalidFileEntry)?;
+
+        let parent = u32::from_le_bytes(fixed[0x00..0x04].try_into().expect("fixed field"));
+        let sibling = u32::from_le_bytes(fixed[0x04..0x08].try_into().expect("fixed field"));
+        let data_offset = u64::from_le_bytes(fixed[0x08..0x10].try_into().expect("fixed field"));
+        let data_size = u64::from_le_bytes(fixed[0x10..0x18].try_into().expect("fixed field"));
+        let next_hash = u32::from_le_bytes(fixed[0x18..0x1C].try_into().expect("fixed field"));
+        let name_size = u32::from_le_bytes(fixed[0x1C..0x20].try_into().expect("fixed field"));
+
+        validate_optional_reference(parent, u64::from(self.header.directory_metadata_size_bytes))
+            .map_err(RomFsError::InvalidFileEntry)?;
+        validate_optional_reference(sibling, table_size)
+            .map_err(RomFsError::InvalidFileEntry)?;
+        validate_optional_reference(next_hash, table_size)
+            .map_err(RomFsError::InvalidFileEntry)?;
+
+        let file_data_size = self
+            .level3_size_bytes
+            .checked_sub(u64::from(self.header.file_data_offset_bytes))
+            .ok_or(RomFsError::InvalidFileEntry(
+                "file-data offset exceeds Level 3 image",
+            ))?;
+        let data_end = data_offset
+            .checked_add(data_size)
+            .ok_or(RomFsError::InvalidFileEntry("file-data range overflows"))?;
+        if data_end > file_data_size {
+            return Err(RomFsError::InvalidFileEntry(
+                "file-data range exceeds the Level 3 file-data area",
+            ));
+        }
+
+        let name = read_metadata_name(
+            &mut self.inner,
+            u64::from(self.header.file_metadata_offset_bytes),
+            offset,
+            table_size,
+            0x20,
+            name_size,
+        )
+        .map_err(RomFsError::InvalidFileEntry)?;
+
+        Ok(RomFsFileEntry {
+            metadata_offset_bytes,
+            parent_directory_offset_bytes: parent,
+            next_sibling_file_offset_bytes: sibling,
+            data_offset_bytes: data_offset,
+            data_size_bytes: data_size,
+            next_hash_file_offset_bytes: next_hash,
+            name,
+        })
+    }
+
+    /// Opens a file as a bounded reader over the Level 3 file-data area.
+    ///
+    /// The returned reader borrows this Level 3 reader and cannot read or seek
+    /// outside the file's declared data range.
+    pub fn open_file<'a>(
+        &'a mut self,
+        file: &RomFsFileEntry,
+    ) -> io::Result<RomFsFileReader<'a, R>> {
+        let file_data_size = self
+            .level3_size_bytes
+            .checked_sub(u64::from(self.header.file_data_offset_bytes))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid file-data offset"))?;
+        let data_end = file
+            .data_offset_bytes
+            .checked_add(file.data_size_bytes)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file range overflows"))?;
+        if data_end > file_data_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "file range exceeds the Level 3 file-data area",
+            ));
+        }
+
+        let start = u64::from(self.header.file_data_offset_bytes)
+            .checked_add(file.data_offset_bytes)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "file offset overflows"))?;
+        let actual = self.inner.seek(SeekFrom::Start(start))?;
+        if actual != start {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the file data",
+            ));
+        }
+
+        Ok(RomFsFileReader {
+            inner: &mut self.inner,
+            start,
+            size: file.data_size_bytes,
+            position: 0,
+        })
+    }
+
+    /// Reads one directory hash-bucket head. None represents the 0xFFFFFFFF sentinel.
+    pub fn read_directory_hash_bucket(
+        &mut self,
+        index: u32,
+    ) -> Result<Option<u32>, RomFsError> {
+        let value = self.read_hash_bucket(
+            u64::from(self.header.directory_hash_offset_bytes),
+            u64::from(self.header.directory_hash_size_bytes),
+            index,
+        )?;
+        Ok((value != u32::MAX).then_some(value))
+    }
+
+    /// Reads one file hash-bucket head. None represents the 0xFFFFFFFF sentinel.
+    pub fn read_file_hash_bucket(&mut self, index: u32) -> Result<Option<u32>, RomFsError> {
+        let value = self.read_hash_bucket(
+            u64::from(self.header.file_hash_offset_bytes),
+            u64::from(self.header.file_hash_size_bytes),
+            index,
+        )?;
+        Ok((value != u32::MAX).then_some(value))
+    }
+
+    fn read_hash_bucket(
+        &mut self,
+        table_offset: u64,
+        table_size: u64,
+        index: u32,
+    ) -> Result<u32, RomFsError> {
+        let byte_offset = u64::from(index)
+            .checked_mul(4)
+            .ok_or(RomFsError::InvalidLevel3Header("hash bucket offset overflows"))?;
+        if byte_offset.checked_add(4).is_none_or(|end| end > table_size) {
+            return Err(RomFsError::InvalidLevel3Header(
+                "hash bucket index exceeds its table",
+            ));
+        }
+
+        let absolute = table_offset
+            .checked_add(byte_offset)
+            .ok_or(RomFsError::InvalidLevel3Header(
+                "hash bucket position overflows",
+            ))?;
+        let mut bytes = [0; 4];
+        self.inner
+            .seek(SeekFrom::Start(absolute))
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+        self.inner
+            .read_exact(&mut bytes)
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+        Ok(u32::from_le_bytes(bytes))
+    }
+}
+
+/// A seekable reader restricted to one RomFS file's data range.
+#[derive(Debug)]
+pub struct RomFsFileReader<'a, R> {
+    inner: &'a mut R,
+    start: u64,
+    size: u64,
+    position: u64,
+}
+
+impl<R: Read + Seek> Read for RomFsFileReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() || self.position == self.size {
+            return Ok(0);
+        }
+
+        let remaining = self.size - self.position;
+        let readable = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let bytes_read = self.inner.read(&mut buffer[..readable])?;
+        self.position += bytes_read as u64;
+        Ok(bytes_read)
+    }
+}
+
+impl<R: Read + Seek> Seek for RomFsFileReader<'_, R> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let target = match from {
+            SeekFrom::Start(offset) => i128::from(offset),
+            SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(self.size) + i128::from(offset),
+        };
+
+        if !(0..=i128::from(self.size)).contains(&target) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek is outside the RomFS file",
+            ));
+        }
+
+        let relative = u64::try_from(target).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "invalid RomFS file position")
+        })?;
+        let absolute = self.start.checked_add(relative).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "absolute RomFS file position overflows",
+            )
+        })?;
+        let actual = self.inner.seek(SeekFrom::Start(absolute))?;
+        if actual != absolute {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the requested RomFS file position",
+            ));
+        }
+
+        self.position = relative;
+        Ok(relative)
+    }
+}
+
+fn validate_entry_offset(offset: u64, table_size: u64) -> Result<(), &'static str> {
+    if offset % 4 != 0 {
+        return Err("metadata record offset is not 4-byte aligned");
+    }
+    if offset >= table_size {
+        return Err("metadata record offset exceeds its table");
+    }
+    Ok(())
+}
+
+fn validate_optional_reference(value: u32, table_size: u64) -> Result<(), &'static str> {
+    if value == u32::MAX {
+        return Ok(());
+    }
+    if value % 4 != 0 {
+        return Err("metadata reference is not 4-byte aligned");
+    }
+    if u64::from(value) >= table_size {
+        return Err("metadata reference exceeds its table");
+    }
+    Ok(())
+}
+
+fn read_metadata_fixed<const N: usize, R: Read + Seek>(
+    reader: &mut R,
+    table_start: u64,
+    entry_offset: u64,
+    table_size: u64,
+) -> Result<[u8; N], &'static str> {
+    let end = entry_offset
+        .checked_add(N as u64)
+        .ok_or("metadata record range overflows")?;
+    if end > table_size {
+        return Err("metadata record fixed fields exceed their table");
+    }
+    let absolute = table_start
+        .checked_add(entry_offset)
+        .ok_or("metadata record position overflows")?;
+    reader
+        .seek(SeekFrom::Start(absolute))
+        .map_err(|_| "could not seek to metadata record")?;
+    let mut bytes = [0; N];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "metadata record is truncated")?;
+    Ok(bytes)
+}
+
+fn read_metadata_name<R: Read + Seek>(
+    reader: &mut R,
+    table_start: u64,
+    entry_offset: u64,
+    table_size: u64,
+    fixed_size: u64,
+    name_size_bytes: u32,
+) -> Result<String, &'static str> {
+    if name_size_bytes % 2 != 0 {
+        return Err("UTF-16LE name length is not even");
+    }
+
+    let padded_name_size = u64::from(name_size_bytes)
+        .checked_add(3)
+        .ok_or("padded name length overflows")?
+        & !3;
+    let name_offset = entry_offset
+        .checked_add(fixed_size)
+        .ok_or("name offset overflows")?;
+    let end = name_offset
+        .checked_add(padded_name_size)
+        .ok_or("name range overflows")?;
+    if end > table_size {
+        return Err("name extends beyond its metadata table");
+    }
+
+    let absolute = table_start
+        .checked_add(name_offset)
+        .ok_or("name position overflows")?;
+    reader
+        .seek(SeekFrom::Start(absolute))
+        .map_err(|_| "could not seek to metadata name")?;
+
+    let byte_len = usize::try_from(name_size_bytes).map_err(|_| "name is too large")?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(byte_len)
+        .map_err(|_| "could not allocate metadata name buffer")?;
+    bytes.resize(byte_len, 0);
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "metadata name is truncated")?;
+
+    let code_units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    String::from_utf16(&code_units).map_err(|_| "metadata name contains invalid UTF-16")
 }
 
 fn parse_level(data: &[u8], offset: usize, index: u8) -> Result<IvfcLevel, RomFsError> {
@@ -595,6 +1067,139 @@ mod tests {
                 "table starts inside the fixed header"
             ))
         );
+    }
+
+    fn valid_level3_image() -> Vec<u8> {
+        let mut data = vec![0; 0x80];
+        write_u32(&mut data, 0x00, 0x28);
+        write_u32(&mut data, 0x04, 0x28);
+        write_u32(&mut data, 0x08, 0x04);
+        write_u32(&mut data, 0x0C, 0x2C);
+        write_u32(&mut data, 0x10, 0x18);
+        write_u32(&mut data, 0x14, 0x44);
+        write_u32(&mut data, 0x18, 0x04);
+        write_u32(&mut data, 0x1C, 0x48);
+        write_u32(&mut data, 0x20, 0x24);
+        write_u32(&mut data, 0x24, 0x6C);
+
+        // Directory metadata at 0x2C: root directory, with one file.
+        write_u32(&mut data, 0x2C, 0x00);
+        write_u32(&mut data, 0x30, u32::MAX);
+        write_u32(&mut data, 0x34, u32::MAX);
+        write_u32(&mut data, 0x38, 0x00);
+        write_u32(&mut data, 0x3C, u32::MAX);
+        write_u32(&mut data, 0x40, 0x00);
+
+        // File hash bucket at 0x44 points to the first file record.
+        write_u32(&mut data, 0x44, 0x00);
+
+        // File metadata at 0x48, UTF-16LE name "xy", data at offset 2.
+        write_u32(&mut data, 0x48, 0x00);
+        write_u32(&mut data, 0x4C, u32::MAX);
+        data[0x50..0x58].copy_from_slice(&2u64.to_le_bytes());
+        data[0x58..0x60].copy_from_slice(&5u64.to_le_bytes());
+        write_u32(&mut data, 0x60, u32::MAX);
+        write_u32(&mut data, 0x64, 4);
+        data[0x68..0x6C].copy_from_slice(&[b'x', 0, b'y', 0]);
+
+        data[0x6E..0x73].copy_from_slice(b"HELLO");
+        data
+    }
+
+    #[test]
+    fn reads_root_directory_and_file_metadata() {
+        let image = valid_level3_image();
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x80).unwrap();
+
+        let root = reader.read_directory_entry(0).unwrap();
+        assert_eq!(root.metadata_offset_bytes, 0);
+        assert_eq!(root.parent_directory_offset_bytes, 0);
+        assert_eq!(root.first_file_offset_bytes, 0);
+        assert_eq!(root.name, "");
+
+        let file = reader.read_file_entry(0).unwrap();
+        assert_eq!(file.metadata_offset_bytes, 0);
+        assert_eq!(file.parent_directory_offset_bytes, 0);
+        assert_eq!(file.data_offset_bytes, 2);
+        assert_eq!(file.data_size_bytes, 5);
+        assert_eq!(file.name, "xy");
+        assert_eq!(reader.read_file_hash_bucket(0).unwrap(), Some(0));
+        assert_eq!(reader.read_directory_hash_bucket(0).unwrap(), None);
+    }
+
+    #[test]
+    fn file_reader_is_bounded_to_file_data() {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let image = valid_level3_image();
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x80).unwrap();
+        let file = reader.read_file_entry(0).unwrap();
+        let mut contents = Vec::new();
+
+        {
+            let mut file_reader = reader.open_file(&file).unwrap();
+            file_reader.read_to_end(&mut contents).unwrap();
+            assert_eq!(file_reader.seek(SeekFrom::End(0)).unwrap(), 5);
+            assert_eq!(
+                file_reader.seek(SeekFrom::Start(6)).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+
+        assert_eq!(contents, b"HELLO");
+    }
+
+    #[test]
+    fn rejects_invalid_directory_offsets_references_and_utf16() {
+        let mut image = valid_level3_image();
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image.clone()), 0x80).unwrap();
+
+        assert!(matches!(
+            reader.read_directory_entry(1),
+            Err(RomFsError::InvalidDirectoryEntry(
+                "metadata record offset is not 4-byte aligned"
+            ))
+        ));
+
+        image[0x34..0x38].copy_from_slice(&0x100u32.to_le_bytes());
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x80).unwrap();
+        assert!(matches!(
+            reader.read_directory_entry(0),
+            Err(RomFsError::InvalidDirectoryEntry(
+                "metadata reference exceeds its table"
+            ))
+        ));
+
+        let mut image = valid_level3_image();
+        image[0x68..0x6C].copy_from_slice(&[0x00, 0xD8, 0x00, 0x00]);
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x80).unwrap();
+        assert!(matches!(
+            reader.read_file_entry(0),
+            Err(RomFsError::InvalidFileEntry(
+                "metadata name contains invalid UTF-16"
+            ))
+        ));
+    }
+
+    #[test]
+    fn rejects_file_metadata_and_file_data_outside_their_ranges() {
+        let mut image = valid_level3_image();
+        image[0x50..0x58].copy_from_slice(&u64::MAX.to_le_bytes());
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x80).unwrap();
+        assert!(matches!(
+            reader.read_file_entry(0),
+            Err(RomFsError::InvalidFileEntry("file-data range overflows"))
+        ));
+
+        let mut image = valid_level3_image();
+        image[0x64..0x68].copy_from_slice(&0x100u32.to_le_bytes());
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x80).unwrap();
+        assert!(matches!(
+            reader.read_file_entry(0),
+            Err(RomFsError::InvalidFileEntry(
+                "name extends beyond its metadata table"
+            ))
+        ));
     }
 
     #[test]
