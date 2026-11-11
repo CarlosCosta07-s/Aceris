@@ -729,6 +729,121 @@ impl NcsdHeader {
     }
 }
 
+/// A file-backed NCSD image with a parsed header and lazy partition access.
+///
+/// The image bytes remain in the supplied reader; this type reads only the
+/// 0x200-byte NCSD header initially. Opening a partition creates a bounded
+/// reader over the original source without copying the cartridge into memory.
+#[derive(Debug)]
+pub struct NcsdImageReader<R> {
+    header: NcsdHeader,
+    reader: R,
+}
+
+impl<R: Read + Seek> NcsdImageReader<R> {
+    /// Opens and structurally validates an NCSD image from any seekable reader.
+    pub fn open(mut reader: R) -> std::result::Result<Self, NcsdImageReaderError> {
+        let file_len = reader
+            .seek(SeekFrom::End(0))
+            .map_err(NcsdImageReaderError::Reader)?;
+        if file_len < HEADER_SIZE as u64 {
+            return Err(NcsdImageReaderError::InvalidHeader(
+                Error::InvalidNcsdHeader("header is truncated"),
+            ));
+        }
+
+        let position = reader
+            .seek(SeekFrom::Start(0))
+            .map_err(NcsdImageReaderError::Reader)?;
+        if position != 0 {
+            return Err(NcsdImageReaderError::Reader(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the beginning of the NCSD image",
+            )));
+        }
+
+        let mut header_bytes = [0u8; HEADER_SIZE];
+        reader
+            .read_exact(&mut header_bytes)
+            .map_err(NcsdImageReaderError::Reader)?;
+        let header = NcsdHeader::parse(&header_bytes, file_len)
+            .map_err(NcsdImageReaderError::InvalidHeader)?;
+
+        Ok(Self { header, reader })
+    }
+
+    /// Returns the validated NCSD metadata without moving the underlying reader.
+    pub const fn header(&self) -> &NcsdHeader {
+        &self.header
+    }
+
+    /// Opens the partition with the given original table index as an NCCH container.
+    ///
+    /// The image reader is consumed so the returned partition owns the underlying
+    /// source and remains bounded to the selected partition.
+    pub fn open_partition_ncch(
+        self,
+        index: u8,
+    ) -> std::result::Result<NcsdNcchReader<R>, NcsdImageReaderError> {
+        let partition = self
+            .header
+            .partition(index)
+            .copied()
+            .ok_or(NcsdImageReaderError::MissingPartition { index })?;
+        partition
+            .open_ncch(self.reader)
+            .map_err(NcsdImageReaderError::InvalidNcch)
+    }
+
+    /// Opens partition zero, conventionally the executable game-content partition.
+    pub fn open_primary_ncch(
+        self,
+    ) -> std::result::Result<NcsdNcchReader<R>, NcsdImageReaderError> {
+        self.open_partition_ncch(0)
+    }
+}
+
+/// Errors produced while opening an NCSD image and selecting one of its NCCH partitions.
+#[derive(Debug)]
+pub enum NcsdImageReaderError {
+    /// The underlying image could not be read or positioned.
+    Reader(io::Error),
+    /// The NCSD header or its partition table is invalid.
+    InvalidHeader(Error),
+    /// The requested original table slot is not populated.
+    MissingPartition {
+        index: u8,
+    },
+    /// The selected partition does not contain a structurally valid NCCH header.
+    InvalidNcch(NcsdNcchError),
+}
+
+impl fmt::Display for NcsdImageReaderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Reader(error) => write!(formatter, "could not read NCSD image: {error}"),
+            Self::InvalidHeader(error) => write!(formatter, "invalid NCSD image: {error}"),
+            Self::MissingPartition { index } => {
+                write!(formatter, "NCSD partition table slot {index} is empty")
+            }
+            Self::InvalidNcch(error) => {
+                write!(formatter, "selected NCSD partition is not a valid NCCH: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for NcsdImageReaderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Reader(error) => Some(error),
+            Self::InvalidHeader(error) => Some(error),
+            Self::InvalidNcch(error) => Some(error),
+            Self::MissingPartition { .. } => None,
+        }
+    }
+}
+
 fn read_array<const N: usize>(data: &[u8], offset: usize) -> Option<[u8; N]> {
     data.get(offset..offset.checked_add(N)?)?.try_into().ok()
 }
@@ -1072,11 +1187,9 @@ mod tests {
     fn loads_a_complete_bootstrap_arm11_address_space_from_ncsd() {
         let (image, expected_text, expected_read_only, expected_data) =
             image_with_arm11_code(false);
-        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
-        let partition = *parsed.primary_partition().unwrap();
-
-        let address_space = partition
-            .open_ncch(Cursor::new(image))
+        let address_space = NcsdImageReader::open(Cursor::new(image))
+            .unwrap()
+            .open_primary_ncch()
             .unwrap()
             .load_arm11_address_space([0x41; 16], [0x42; 16])
             .unwrap();
@@ -1214,6 +1327,58 @@ mod tests {
         assert_eq!(reader.len(), 0x10);
         assert_eq!(actual, expected);
         assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+    }
+
+    #[test]
+    fn opens_ncsd_from_a_seekable_reader_and_exposes_partition_metadata() {
+        let (image, _, _, _) = image_with_arm11_code(false);
+        let reader = NcsdImageReader::open(Cursor::new(image)).unwrap();
+
+        assert_eq!(reader.header().partitions.len(), 1);
+        assert_eq!(reader.header().primary_partition().unwrap().index, 0);
+    }
+
+    #[test]
+    fn opens_primary_ncch_directly_from_a_file_backed_ncsd_reader() {
+        let (image, _, _, _) = image_with_arm11_code(false);
+        let expected_partition = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64)
+            .unwrap()
+            .primary_partition()
+            .copied()
+            .unwrap();
+
+        let opened = NcsdImageReader::open(Cursor::new(image))
+            .unwrap()
+            .open_primary_ncch()
+            .unwrap();
+
+        assert_eq!(opened.partition(), expected_partition);
+        assert_eq!(opened.header().content_size_bytes, expected_partition.size_bytes);
+    }
+
+    #[test]
+    fn reports_an_empty_partition_slot_without_panicking() {
+        let (image, _, _, _) = image_with_arm11_code(false);
+        let error = NcsdImageReader::open(Cursor::new(image))
+            .unwrap()
+            .open_partition_ncch(7)
+            .err()
+            .unwrap();
+
+        assert!(matches!(
+            error,
+            NcsdImageReaderError::MissingPartition { index: 7 }
+        ));
+    }
+
+    #[test]
+    fn rejects_a_truncated_ncsd_reader_header() {
+        let error = NcsdImageReader::open(Cursor::new(vec![0u8; HEADER_SIZE - 1])).unwrap_err();
+
+        assert!(matches!(
+            error,
+            NcsdImageReaderError::InvalidHeader(Error::InvalidNcsdHeader("header is truncated"))
+        ));
     }
 
     #[test]
