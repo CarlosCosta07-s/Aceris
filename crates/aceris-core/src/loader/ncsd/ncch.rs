@@ -431,6 +431,7 @@ fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::NcsdPartition;
     use std::io::Cursor;
 
     fn write_u16(data: &mut [u8], offset: usize, value: u16) {
@@ -513,8 +514,16 @@ mod tests {
         container.extend_from_slice(&data);
         container.resize(0x1000 + 0x1_0000, 0xBB);
 
-        let mut partition = Cursor::new(container);
-        partition.set_position(0x1000);
+        let mut partition = NcsdPartition {
+            index: 0,
+            offset_bytes: 0x1000,
+            size_bytes: 0x1_0000,
+            fs_type: 1,
+            crypt_type: 0,
+            id: 0,
+        }
+        .reader(Cursor::new(container))
+        .unwrap();
         let parsed = NcchHeader::parse_reader(&mut partition, 0x1_0000).unwrap();
 
         assert_eq!(parsed.program_id, 0x0004_0000_1234_5678);
@@ -577,13 +586,11 @@ mod tests {
             Err(NcchError::InvalidHeader("media-unit size overflows"))
         );
 
-        data[FLAGS_OFFSET + 6] = 0;
+        data[FLAGS_OFFSET + 6] = 24;
         write_u32(&mut data, CONTENT_SIZE_OFFSET, u32::MAX);
         assert_eq!(
             NcchHeader::parse(&data, u64::MAX),
-            Err(NcchError::InvalidHeader(
-                "declared content is smaller than the header"
-            ))
+            Err(NcchError::InvalidHeader("content size overflows"))
         );
     }
 
@@ -621,7 +628,7 @@ mod tests {
         );
 
         data = valid_header();
-        write_u32(&mut data, PLAIN_REGION_OFFSET, 1);
+        write_u32(&mut data, PLAIN_REGION_OFFSET, 2);
         assert_eq!(
             NcchHeader::parse(&data, 0x1_0000),
             Err(NcchError::InvalidRegion {
