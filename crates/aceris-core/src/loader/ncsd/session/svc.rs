@@ -1,4 +1,4 @@
-//! Initial ARM11 supervisor-call identifiers and process state.
+//! ARM11 supervisor-call identifiers and process state.
 //!
 //! SVC argument registers are dispatched by Arm11ProcessSession, which has
 //! access to the address space and scheduler needed to validate operations.
@@ -27,6 +27,18 @@ pub const SVC_SET_THREAD_PRIORITY: u32 = 0x0C;
 /// Return the current application processor ID.
 pub const SVC_GET_PROCESSOR_ID: u32 = 0x11;
 
+/// Create a process-local mutex synchronization object.
+pub const SVC_CREATE_MUTEX: u32 = 0x13;
+
+/// Release a mutex owned by the calling thread.
+pub const SVC_RELEASE_MUTEX: u32 = 0x14;
+
+/// Create a process-local semaphore synchronization object.
+pub const SVC_CREATE_SEMAPHORE: u32 = 0x15;
+
+/// Release semaphore units and report the number of awakened threads.
+pub const SVC_RELEASE_SEMAPHORE: u32 = 0x16;
+
 /// Create a process-local event synchronization object.
 pub const SVC_CREATE_EVENT: u32 = 0x17;
 
@@ -38,6 +50,9 @@ pub const SVC_CLEAR_EVENT: u32 = 0x19;
 
 /// Close a process-local kernel object handle.
 pub const SVC_CLOSE_HANDLE: u32 = 0x23;
+
+/// Wait for one synchronization object.
+pub const SVC_WAIT_SYNCHRONIZATION1: u32 = 0x24;
 
 /// Result of dispatching a process-scoped SVC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +143,11 @@ mod tests {
             SVC_SLEEP_THREAD,
             SVC_GET_THREAD_PRIORITY,
             SVC_SET_THREAD_PRIORITY,
+            SVC_CREATE_MUTEX,
+            SVC_RELEASE_MUTEX,
+            SVC_CREATE_SEMAPHORE,
+            SVC_RELEASE_SEMAPHORE,
+            SVC_WAIT_SYNCHRONIZATION1,
             SVC_CREATE_EVENT,
             SVC_SIGNAL_EVENT,
             SVC_CLEAR_EVENT,
