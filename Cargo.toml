@@ -23,9 +23,6 @@ authors = ["Aceris contributors"]
 [workspace.dependencies]
 aceris-common = { path = "crates/aceris-common" }
 aceris-core = { path = "crates/aceris-core" }
-thiserror = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

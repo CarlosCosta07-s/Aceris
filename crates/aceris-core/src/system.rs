@@ -4,7 +4,6 @@ use crate::cpu::Arm11Core;
 use crate::loader::{self, ImageFormat};
 use aceris_common::{Error, Result};
 use std::path::Path;
-use tracing::info;
 
 /// The emulated console. Front-ends create one of these, load a game and then
 /// drive it one frame at a time.
@@ -22,7 +21,6 @@ impl System {
     /// Identifies and loads the game image at `path`.
     pub fn load(&mut self, path: &Path) -> Result<ImageFormat> {
         let format = loader::identify_file(path)?;
-        info!(path = %path.display(), format = format.name(), "identified game image");
         self.image = Some(format);
         Ok(format)
     }

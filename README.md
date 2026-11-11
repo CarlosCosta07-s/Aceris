@@ -20,6 +20,7 @@ O nome vem da **acerola**, a pequena fruta vermelha cheia de energia.
   recurso de outros emuladores é usado ou traduzido. Veja as [regras obrigatórias para IAs](docs/REGRAS_PARA_IA.md)
   e a [política de contribuição](CONTRIBUTING.md).
 - **Rust de ponta a ponta**, com um núcleo independente de plataforma.
+- **Sem crates Rust externos no produto:** somente biblioteca padrão e crates internos do workspace.
 - **PC e Android** compartilhando o mesmo núcleo.
 - **Sem conteúdo protegido.** O projeto não inclui nem distribui jogos, firmware ou
   chaves. Você precisa usar arquivos obtidos legalmente dos seus próprios dispositivos.
