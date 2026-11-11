@@ -487,7 +487,7 @@ mod tests {
         table.enqueue_waiter(semaphore, second).unwrap();
 
         assert_eq!(
-            table.release_semaphore(semaphore, 3),
+            table.release_semaphore(semaphore, 5),
             Err(KernelHandleError::CountLimitExceeded)
         );
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));

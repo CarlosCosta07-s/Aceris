@@ -1219,12 +1219,13 @@ mod tests {
 
     #[test]
     fn mutex_svcs_create_release_and_transfer_ownership_to_waiter() {
-        let mut session = test_session_with_program(&[0xEF00_0013, 0xEF00_0014]);
+        let mut session = test_session_with_program(&[
+            0xEF00_0013, // SVC CreateMutex
+            0xEF00_0024, // SVC WaitSynchronization1
+            0xEF00_0014, // SVC ReleaseMutex
+        ]);
         let main = MAIN_THREAD_ID;
-        let child = session
-            .scheduler
-            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x3F, 0)
-            .unwrap();
+
         {
             let core = session.scheduler.core_mut(main).unwrap();
             core.regs[0] = 0x0020_0000;
@@ -1235,18 +1236,36 @@ mod tests {
         let handle = session.address_space.read32(0x0020_0000).unwrap();
         assert_eq!(session.kernel_objects.mutex_owner(handle), Some(main));
 
-        session
-            .kernel_objects
-            .enqueue_waiter(handle, child)
+        // A higher-priority child becomes current and waits on the owned mutex.
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
             .unwrap();
-        session.scheduler.wait_current().unwrap();
         assert_eq!(session.current_thread_id(), Some(child));
-        session.scheduler.core_mut(child).unwrap().regs[0] = handle;
+        {
+            let core = session.scheduler.core_mut(child).unwrap();
+            core.regs[0] = handle;
+            core.regs[2] = u32::MAX;
+            core.regs[3] = u32::MAX;
+        }
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
+        assert_eq!(session.current_thread_id(), Some(main));
+
+        // The owner releases; the mutex is handed directly to the FIFO waiter.
+        session.scheduler.core_mut(main).unwrap().regs[0] = handle;
         session.dispatch_svc(SVC_RELEASE_MUTEX);
 
         assert_eq!(session.kernel_objects.mutex_owner(handle), Some(child));
-        assert_eq!(session.scheduler.core(main).unwrap().regs[0], 0);
-        assert_eq!(session.current_thread_id(), Some(main));
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Running
+        );
     }
 
     #[test]
