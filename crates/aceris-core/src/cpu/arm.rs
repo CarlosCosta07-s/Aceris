@@ -1432,12 +1432,7 @@ mod tests {
     fn armv6_extend_and_add_instructions_apply_rotation_and_wraparound() {
         // SXTAB r0,r1,r2,ror #16 ; SXTAH r3,r4,r2,ror #16
         // UXTAB r5,r6,r2 ; UXTAH r7,r6,r2.
-        let mut m = Machine::new(&[
-            0xE6A1_0872,
-            0xE6B4_3872,
-            0xE6E6_5072,
-            0xE6F6_7072,
-        ]);
+        let mut m = Machine::new(&[0xE6A1_0872, 0xE6B4_3872, 0xE6E6_5072, 0xE6F6_7072]);
         m.cpu.regs[1] = 100;
         m.cpu.regs[2] = 0x80FE_1234;
         m.cpu.regs[4] = 0x0001_0000;
@@ -1455,12 +1450,7 @@ mod tests {
     fn armv6_extend_byte16_instructions_extend_both_selected_lanes() {
         // SXTB16 r0,r1,ror #8 ; UXTB16 r2,r1,ror #8
         // SXTAB16 r3,r4,r1,ror #8 ; UXTAB16 r5,r4,r1,ror #8.
-        let mut m = Machine::new(&[
-            0xE68F_0471,
-            0xE6CF_2471,
-            0xE684_3471,
-            0xE6C4_5471,
-        ]);
+        let mut m = Machine::new(&[0xE68F_0471, 0xE6CF_2471, 0xE684_3471, 0xE6C4_5471]);
         m.cpu.regs[1] = 0x8010_2030;
         m.cpu.regs[4] = 0x0001_0002;
 
