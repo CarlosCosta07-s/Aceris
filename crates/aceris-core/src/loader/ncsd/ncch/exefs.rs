@@ -47,15 +47,9 @@ pub enum ExeFsError {
     HeaderTruncated,
     RegionTooSmall,
     ReaderFailure(String),
-    InvalidEntry {
-        index: usize,
-        reason: &'static str,
-    },
+    InvalidEntry { index: usize, reason: &'static str },
     DuplicateFileName(String),
-    OverlappingFiles {
-        first: String,
-        second: String,
-    },
+    OverlappingFiles { first: String, second: String },
 }
 
 impl fmt::Display for ExeFsError {
@@ -63,7 +57,9 @@ impl fmt::Display for ExeFsError {
         match self {
             Self::HeaderTruncated => write!(formatter, "ExeFS header is truncated"),
             Self::RegionTooSmall => write!(formatter, "ExeFS region is smaller than its header"),
-            Self::ReaderFailure(reason) => write!(formatter, "could not read ExeFS header: {reason}"),
+            Self::ReaderFailure(reason) => {
+                write!(formatter, "could not read ExeFS header: {reason}")
+            }
             Self::InvalidEntry { index, reason } => {
                 write!(formatter, "invalid ExeFS file entry {index}: {reason}")
             }
@@ -105,21 +101,17 @@ impl ExeFsHeader {
 
         for index in 0..FILE_ENTRY_COUNT {
             let entry_offset = FILE_TABLE_OFFSET + index * FILE_ENTRY_SIZE;
-            let raw_name = read_array::<8>(data, entry_offset).ok_or(
-                ExeFsError::HeaderTruncated,
-            )?;
-            let offset = read_u32_le(data, entry_offset + 8)
-                .ok_or(ExeFsError::HeaderTruncated)?;
-            let size = read_u32_le(data, entry_offset + 12)
-                .ok_or(ExeFsError::HeaderTruncated)?;
+            let raw_name =
+                read_array::<8>(data, entry_offset).ok_or(ExeFsError::HeaderTruncated)?;
+            let offset = read_u32_le(data, entry_offset + 8).ok_or(ExeFsError::HeaderTruncated)?;
+            let size = read_u32_le(data, entry_offset + 12).ok_or(ExeFsError::HeaderTruncated)?;
 
             if raw_name.iter().all(|byte| *byte == 0) && offset == 0 && size == 0 {
                 continue;
             }
 
-            let name = parse_file_name(&raw_name).map_err(|reason| {
-                ExeFsError::InvalidEntry { index, reason }
-            })?;
+            let name = parse_file_name(&raw_name)
+                .map_err(|reason| ExeFsError::InvalidEntry { index, reason })?;
             if size == 0 {
                 return Err(ExeFsError::InvalidEntry {
                     index,
@@ -127,12 +119,13 @@ impl ExeFsHeader {
                 });
             }
 
-            let end = u64::from(offset)
-                .checked_add(u64::from(size))
-                .ok_or(ExeFsError::InvalidEntry {
-                    index,
-                    reason: "file range overflows",
-                })?;
+            let end =
+                u64::from(offset)
+                    .checked_add(u64::from(size))
+                    .ok_or(ExeFsError::InvalidEntry {
+                        index,
+                        reason: "file range overflows",
+                    })?;
             if end > data_region_size {
                 return Err(ExeFsError::InvalidEntry {
                     index,
@@ -142,15 +135,15 @@ impl ExeFsHeader {
 
             let hash_slot = HASH_SLOT_COUNT - 1 - index;
             let hash_offset = HASH_TABLE_OFFSET + hash_slot * HASH_SIZE;
-            let sha256 = read_array::<HASH_SIZE>(data, hash_offset)
-                .ok_or(ExeFsError::HeaderTruncated)?;
+            let sha256 =
+                read_array::<HASH_SIZE>(data, hash_offset).ok_or(ExeFsError::HeaderTruncated)?;
 
-            let offset_bytes = (HEADER_SIZE as u64)
-                .checked_add(u64::from(offset))
-                .ok_or(ExeFsError::InvalidEntry {
+            let offset_bytes = (HEADER_SIZE as u64).checked_add(u64::from(offset)).ok_or(
+                ExeFsError::InvalidEntry {
                     index,
                     reason: "absolute file offset overflows",
-                })?;
+                },
+            )?;
 
             if files.iter().any(|file: &ExeFsFile| file.name == name) {
                 return Err(ExeFsError::DuplicateFileName(name));
@@ -170,12 +163,12 @@ impl ExeFsHeader {
         for pair in ranges.windows(2) {
             let previous = pair[0];
             let current = pair[1];
-            let previous_end = previous.end_offset_bytes().ok_or(
-                ExeFsError::InvalidEntry {
+            let previous_end = previous
+                .end_offset_bytes()
+                .ok_or(ExeFsError::InvalidEntry {
                     index: usize::from(previous.entry_index),
                     reason: "file end offset overflows",
-                },
-            )?;
+                })?;
             if current.offset_bytes < previous_end {
                 return Err(ExeFsError::OverlappingFiles {
                     first: previous.name.clone(),
@@ -383,7 +376,10 @@ mod tests {
         data[base..base + 8].copy_from_slice(b"zero");
         assert!(matches!(
             ExeFsHeader::parse(&data, 0x600),
-            Err(ExeFsError::InvalidEntry { index: 2, reason: "file size is zero" })
+            Err(ExeFsError::InvalidEntry {
+                index: 2,
+                reason: "file size is zero"
+            })
         ));
     }
 
@@ -406,7 +402,10 @@ mod tests {
         write_u32(&mut data, base + 12, 0x20);
         assert!(matches!(
             ExeFsHeader::parse(&data, 0x600),
-            Err(ExeFsError::InvalidEntry { index: 2, reason: "file extends beyond the ExeFS region" })
+            Err(ExeFsError::InvalidEntry {
+                index: 2,
+                reason: "file extends beyond the ExeFS region"
+            })
         ));
 
         data = valid_header();
