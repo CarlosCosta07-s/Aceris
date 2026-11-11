@@ -78,13 +78,21 @@ impl Arm11Core {
     /// Reads a halfword using the current CPSR data endianness.
     pub(super) fn read_data_u16<B: Bus + ?Sized>(&self, bus: &mut B, address: u32) -> Result<u16> {
         let value = bus.read16(address)?;
-        Ok(if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+        Ok(if self.cpsr.big_endian() {
+            value.swap_bytes()
+        } else {
+            value
+        })
     }
 
     /// Reads a word using the current CPSR data endianness.
     pub(super) fn read_data_u32<B: Bus + ?Sized>(&self, bus: &mut B, address: u32) -> Result<u32> {
         let value = bus.read32(address)?;
-        Ok(if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+        Ok(if self.cpsr.big_endian() {
+            value.swap_bytes()
+        } else {
+            value
+        })
     }
 
     /// Reads an unaligned word with the classic endian-dependent rotation.
@@ -109,7 +117,14 @@ impl Arm11Core {
         address: u32,
         value: u16,
     ) -> Result<()> {
-        bus.write16(address, if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+        bus.write16(
+            address,
+            if self.cpsr.big_endian() {
+                value.swap_bytes()
+            } else {
+                value
+            },
+        )
     }
 
     /// Writes a word using the current CPSR data endianness.
@@ -119,7 +134,14 @@ impl Arm11Core {
         address: u32,
         value: u32,
     ) -> Result<()> {
-        bus.write32(address, if self.cpsr.big_endian() { value.swap_bytes() } else { value })
+        bus.write32(
+            address,
+            if self.cpsr.big_endian() {
+                value.swap_bytes()
+            } else {
+                value
+            },
+        )
     }
 
     /// Writes register `n`; a write to `pc` is a branch (without interworking).

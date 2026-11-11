@@ -84,16 +84,30 @@ impl Psr {
 
     /// Changes only the CPSR data endianness bit.
     pub fn set_big_endian(&mut self, big_endian: bool) {
-        if big_endian { self.0 |= Self::E; } else { self.0 &= !Self::E; }
+        if big_endian {
+            self.0 |= Self::E;
+        } else {
+            self.0 &= !Self::E;
+        }
     }
 
     /// Updates selected A/I/F interrupt masks (mask bit 0=A, 1=I, 2=F).
     pub fn set_interrupt_masks(&mut self, mask: u8, enabled: bool) {
         let mut bits = 0;
-        if mask & 0b001 != 0 { bits |= Self::A; }
-        if mask & 0b010 != 0 { bits |= Self::I; }
-        if mask & 0b100 != 0 { bits |= Self::F; }
-        if enabled { self.0 |= bits; } else { self.0 &= !bits; }
+        if mask & 0b001 != 0 {
+            bits |= Self::A;
+        }
+        if mask & 0b010 != 0 {
+            bits |= Self::I;
+        }
+        if mask & 0b100 != 0 {
+            bits |= Self::F;
+        }
+        if enabled {
+            self.0 |= bits;
+        } else {
+            self.0 &= !bits;
+        }
     }
 
     pub fn set_thumb(&mut self, thumb: bool) {
@@ -108,10 +122,18 @@ impl Psr {
     pub fn set_flags(&mut self, n: bool, z: bool, c: bool, v: bool) {
         let mask = Self::N | Self::Z | Self::C | Self::V;
         let mut flags = 0;
-        if n { flags |= Self::N; }
-        if z { flags |= Self::Z; }
-        if c { flags |= Self::C; }
-        if v { flags |= Self::V; }
+        if n {
+            flags |= Self::N;
+        }
+        if z {
+            flags |= Self::Z;
+        }
+        if c {
+            flags |= Self::C;
+        }
+        if v {
+            flags |= Self::V;
+        }
         self.0 = (self.0 & !mask) | flags;
     }
 }

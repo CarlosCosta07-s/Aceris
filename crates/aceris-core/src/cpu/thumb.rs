@@ -14,11 +14,7 @@ use aceris_common::{Error, Result};
 const PC_OFFSET: u32 = 4;
 
 /// Word load with the classic unaligned-rotate behaviour.
-fn load_word<B: Bus + ?Sized>(
-    core: &Arm11Core,
-    bus: &mut B,
-    addr: u32,
-) -> Result<u32> {
+fn load_word<B: Bus + ?Sized>(core: &Arm11Core, bus: &mut B, addr: u32) -> Result<u32> {
     core.read_data_u32_unaligned(bus, addr)
 }
 
