@@ -1212,8 +1212,7 @@ mod tests {
         image[exefs_start + 0x1E0..exefs_start + 0x200].copy_from_slice(&code_hash);
 
         let superblock_hash = sha256_digest(&image[exefs_start..exefs_start + 0x200]);
-        image[PARTITION_OFFSET + 0x1C0..PARTITION_OFFSET + 0x1E0]
-            .copy_from_slice(&superblock_hash);
+        image[PARTITION_OFFSET + 0x1C0..PARTITION_OFFSET + 0x1E0].copy_from_slice(&superblock_hash);
 
         image
     }
@@ -1385,7 +1384,10 @@ mod tests {
         let mut reader = NcsdImageReader::open(Cursor::new(image)).unwrap();
 
         let mut session = reader
-            .load_primary_arm11_session([0; ncch::crypto::AES_BLOCK_SIZE], [0; ncch::crypto::AES_BLOCK_SIZE])
+            .load_primary_arm11_session(
+                [0; ncch::crypto::AES_BLOCK_SIZE],
+                [0; ncch::crypto::AES_BLOCK_SIZE],
+            )
             .unwrap();
 
         assert_eq!(session.core().pc(), 0x0010_0000);
