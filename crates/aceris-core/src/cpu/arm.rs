@@ -62,6 +62,12 @@ fn signed_saturate_32(value: i64) -> (i32, bool) {
     (saturated as i32, saturated != value)
 }
 
+/// Returns one signed 16-bit lane from a register as a widened integer.
+fn signed_halfword(value: u32, top: bool) -> i64 {
+    let halfword = if top { value >> 16 } else { value & 0xFFFF };
+    i64::from(halfword as u16 as i16)
+}
+
 impl Arm11Core {
     pub(super) fn execute_arm<B: Bus + ?Sized>(
         &mut self,
@@ -94,6 +100,12 @@ impl Arm11Core {
 
     /// Executes the ARMv6 scalar media instructions implemented by this core.
     fn execute_media_instruction(&mut self, word: u32) -> Result<StepEvent> {
+        if matches!(
+            word & 0x0FF0_0010,
+            0x0700_0010 | 0x0740_0010 | 0x0750_0010
+        ) {
+            return self.execute_signed_dsp_multiply_instruction(word);
+        }
         let rd = bits(word, 15, 12) as usize;
         let rm = bits(word, 3, 0) as usize;
 
@@ -250,6 +262,202 @@ impl Arm11Core {
             self.regs[rd] = sum;
         } else {
             return Err(Error::Unimplemented("ARMv6 media instruction"));
+        }
+
+        Ok(StepEvent::Executed)
+    }
+
+    /// Executes signed halfword and word-by-halfword multiply instructions.
+    fn execute_halfword_multiply_instruction(&mut self, word: u32) -> Result<StepEvent> {
+        let class = word & 0x0FF0_0090;
+        let rd = bits(word, 19, 16) as usize;
+        let rn = bits(word, 15, 12) as usize;
+        let rs = bits(word, 11, 8) as usize;
+        let rm = bits(word, 3, 0) as usize;
+        let pc = self.pc();
+        let undefined = || Error::UndefinedInstruction { pc, word };
+
+        match class {
+            0x0100_0080 => {
+                // SMLAxy: signed halfword product plus a signed 32-bit accumulator.
+                if rd == PC || rn == PC || rs == PC || rm == PC {
+                    return Err(undefined());
+                }
+                let first = signed_halfword(self.regs[rm], bit(word, 5));
+                let second = signed_halfword(self.regs[rs], bit(word, 6));
+                let result = first * second + i64::from(self.regs[rn] as i32);
+                if result < i64::from(i32::MIN) || result > i64::from(i32::MAX) {
+                    self.cpsr.set_q();
+                }
+                self.regs[rd] = result as u32;
+            }
+            0x0120_0080 => {
+                // SMLAWy and SMULWy share the same opcode class. Bit 5
+                // selects the non-accumulating SMULW form.
+                if rd == PC || rs == PC || rm == PC {
+                    return Err(undefined());
+                }
+                let word_operand = i64::from(self.regs[rm] as i32);
+                let halfword_operand = signed_halfword(self.regs[rs], bit(word, 6));
+                let product_high = (word_operand * halfword_operand) >> 16;
+                if bit(word, 5) {
+                    // SMULWy reserves bits[15:12] as zero.
+                    if rn != 0 {
+                        return Err(undefined());
+                    }
+                    self.regs[rd] = product_high as u32;
+                } else {
+                    // SMLAWy accumulates the high product word with Rn.
+                    if rn == PC {
+                        return Err(undefined());
+                    }
+                    let result = product_high + i64::from(self.regs[rn] as i32);
+                    if result < i64::from(i32::MIN) || result > i64::from(i32::MAX) {
+                        self.cpsr.set_q();
+                    }
+                    self.regs[rd] = result as u32;
+                }
+            }
+            0x0140_0080 => {
+                // SMLALxy: sign-extended 16x16 product added to RdHi:RdLo.
+                let rd_hi = rd;
+                let rd_lo = rn;
+                if rd_hi == PC || rd_lo == PC || rs == PC || rm == PC || rd_hi == rd_lo {
+                    return Err(undefined());
+                }
+                let first = signed_halfword(self.regs[rm], bit(word, 5));
+                let second = signed_halfword(self.regs[rs], bit(word, 6));
+                let product = first * second;
+                let accumulator =
+                    (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
+                let result = accumulator.wrapping_add(product as u64);
+                self.regs[rd_lo] = result as u32;
+                self.regs[rd_hi] = (result >> 32) as u32;
+            }
+            0x0160_0080 => {
+                // SMULxy: signed halfword product. Bits[15:12] are SBZ.
+                if rn != 0 || rd == PC || rs == PC || rm == PC {
+                    return Err(undefined());
+                }
+                let first = signed_halfword(self.regs[rm], bit(word, 5));
+                let second = signed_halfword(self.regs[rs], bit(word, 6));
+                self.regs[rd] = (first * second) as u32;
+            }
+            _ => return Err(undefined()),
+        }
+        Ok(StepEvent::Executed)
+    }
+
+    /// Executes ARMv6 dual-halfword and most-significant-word multiply instructions.
+    fn execute_signed_dsp_multiply_instruction(&mut self, word: u32) -> Result<StepEvent> {
+        let class = word & 0x0FF0_0010;
+        let rd = bits(word, 19, 16) as usize;
+        let ra = bits(word, 15, 12) as usize;
+        let rs = bits(word, 11, 8) as usize;
+        let rm = bits(word, 3, 0) as usize;
+        let pc = self.pc();
+        let undefined = || Error::UndefinedInstruction { pc, word };
+
+        match class {
+            0x0700_0010 => {
+                // SMLAD{X}/SMLSD{X}; Ra=PC selects SMUAD{X}/SMUSD{X}.
+                if bit(word, 7) || rd == PC || rm == PC || rs == PC {
+                    return Err(undefined());
+                }
+                let subtract = bit(word, 6);
+                let exchange = bit(word, 5);
+                let first = self.regs[rm];
+                let second = if exchange {
+                    self.regs[rs].rotate_right(16)
+                } else {
+                    self.regs[rs]
+                };
+                let low_product =
+                    signed_halfword(first, false) * signed_halfword(second, false);
+                let high_product =
+                    signed_halfword(first, true) * signed_halfword(second, true);
+                let products = if subtract {
+                    low_product - high_product
+                } else {
+                    low_product + high_product
+                };
+                let accumulator = if ra == PC {
+                    0
+                } else {
+                    i64::from(self.regs[ra] as i32)
+                };
+                let result = accumulator + products;
+
+                // SMUAD and accumulating dual forms set sticky Q on overflow.
+                // SMUSD's unaccumulated product difference always fits in i32.
+                if (ra != PC || !subtract)
+                    && (result < i64::from(i32::MIN) || result > i64::from(i32::MAX))
+                {
+                    self.cpsr.set_q();
+                }
+                self.regs[rd] = result as u32;
+            }
+            0x0740_0010 => {
+                // SMLALD{X}/SMLSLD{X}; 64-bit accumulator in RdHi:RdLo.
+                let rd_hi = rd;
+                let rd_lo = ra;
+                if bit(word, 7)
+                    || rd_hi == PC
+                    || rd_lo == PC
+                    || rd_hi == rd_lo
+                    || rm == PC
+                    || rs == PC
+                {
+                    return Err(undefined());
+                }
+                let exchange = bit(word, 5);
+                let subtract = bit(word, 6);
+                let first = self.regs[rm];
+                let second = if exchange {
+                    self.regs[rs].rotate_right(16)
+                } else {
+                    self.regs[rs]
+                };
+                let low_product =
+                    signed_halfword(first, false) * signed_halfword(second, false);
+                let high_product =
+                    signed_halfword(first, true) * signed_halfword(second, true);
+                let products = if subtract {
+                    low_product - high_product
+                } else {
+                    low_product + high_product
+                };
+                let accumulator =
+                    (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
+                let result = accumulator.wrapping_add(products as u64);
+                self.regs[rd_lo] = result as u32;
+                self.regs[rd_hi] = (result >> 32) as u32;
+            }
+            0x0750_0010 => {
+                // SMMUL{R}/SMMLA{R}/SMMLS{R}; bit 6 selects subtraction,
+                // and bit 5 requests rounding before extracting the high word.
+                if bit(word, 7) != bit(word, 6) || rd == PC || rm == PC || rs == PC {
+                    return Err(undefined());
+                }
+                let subtract = bit(word, 6);
+                let round = if bit(word, 5) { 1i128 << 31 } else { 0 };
+                if subtract && ra == PC {
+                    return Err(undefined());
+                }
+
+                let first = i128::from(self.regs[rm] as i32);
+                let second = i128::from(self.regs[rs] as i32);
+                let product = first * second;
+                let wide_result = if subtract {
+                    (i128::from(self.regs[ra] as i32) << 32) - product + round
+                } else if ra == PC {
+                    product + round
+                } else {
+                    (i128::from(self.regs[ra] as i32) << 32) + product + round
+                };
+                self.regs[rd] = (wide_result >> 32) as u32;
+            }
+            _ => return Err(undefined()),
         }
 
         Ok(StepEvent::Executed)
@@ -625,6 +833,13 @@ impl Arm11Core {
     /// transfers and the miscellaneous instructions all share this space.
     fn execute_data_space<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
         if !bit(word, 25) {
+            // Signed halfword and word-by-halfword multiply forms.
+            if matches!(
+                word & 0x0FF0_0090,
+                0x0100_0080 | 0x0120_0080 | 0x0140_0080 | 0x0160_0080
+            ) {
+                return self.execute_halfword_multiply_instruction(word);
+            }
             if bits(word, 7, 4) == 0b1001 {
                 return self.multiply_or_swap(bus, word);
             }
@@ -728,6 +943,10 @@ impl Arm11Core {
         if bits(word, 11, 4) == 0xF9 {
             return self.execute_exclusive_instruction(bus, word);
         }
+        // UMAAL is the ARMv6 unsigned multiply-accumulate-accumulate long form.
+        if bits(word, 27, 20) == 0x04 {
+            return self.unsigned_multiply_accumulate_accumulate_long(word);
+        }
         if bits(word, 27, 22) == 0 {
             self.multiply(word);
         } else if bits(word, 27, 23) == 0b00001 {
@@ -781,6 +1000,33 @@ impl Arm11Core {
             let (c, v) = (self.cpsr.c(), self.cpsr.v());
             self.cpsr.set_flags(result >> 63 != 0, result == 0, c, v);
         }
+    }
+
+    /// Executes UMAAL, which adds two independent 32-bit accumulators
+    /// to an unsigned 32x32-bit product and writes the 64-bit result.
+    fn unsigned_multiply_accumulate_accumulate_long(
+        &mut self,
+        word: u32,
+    ) -> Result<StepEvent> {
+        let rd_hi = bits(word, 19, 16) as usize;
+        let rd_lo = bits(word, 15, 12) as usize;
+        let rs = bits(word, 11, 8) as usize;
+        let rm = bits(word, 3, 0) as usize;
+        if rd_hi == PC || rd_lo == PC || rs == PC || rm == PC || rd_hi == rd_lo {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        // Read every source before writing either destination; ARMv6 permits
+        // source/destination aliasing apart from RdHi == RdLo.
+        let result = u64::from(self.regs[rm]) * u64::from(self.regs[rs])
+            + u64::from(self.regs[rd_lo])
+            + u64::from(self.regs[rd_hi]);
+        self.regs[rd_lo] = result as u32;
+        self.regs[rd_hi] = (result >> 32) as u32;
+        Ok(StepEvent::Executed)
     }
 
     /// Executes A32 exclusive loads and stores.
@@ -1926,6 +2172,353 @@ mod tests {
 
         assert_eq!(m.cpu.regs[0], 414);
         assert_eq!(m.cpu.regs[4], 424);
+    }
+
+    #[test]
+    fn armv6_halfword_multiply_accumulate_and_plain_multiply_cover_all_lane_pairs() {
+        // SMLABB: low(Rm) * low(Rs) + Rn.
+        let mut m = Machine::new(&[0xE100_3281]);
+        m.cpu.regs[1] = 0x0002_0003;
+        m.cpu.regs[2] = 0x0004_0005;
+        m.cpu.regs[3] = 3;
+        m.step();
+        assert_eq!(m.cpu.regs[0], 18);
+
+        // SMLABT: low(Rm) * high(Rs) + Rn.
+        let mut m = Machine::new(&[0xE104_76C5]);
+        m.cpu.regs[5] = 0x0002_0003;
+        m.cpu.regs[6] = 0x0004_0005;
+        m.cpu.regs[7] = 1;
+        m.step();
+        assert_eq!(m.cpu.regs[4], 13);
+
+        // SMLATB: high(Rm) * low(Rs) + Rn.
+        let mut m = Machine::new(&[0xE108_BAA9]);
+        m.cpu.regs[9] = 0x0002_0003;
+        m.cpu.regs[10] = 0x0004_0005;
+        m.cpu.regs[11] = 2;
+        m.step();
+        assert_eq!(m.cpu.regs[8], 12);
+
+        // SMLATT: high(Rm) * high(Rs) + Rn.
+        let mut m = Machine::new(&[0xE100_32E1]);
+        m.cpu.regs[1] = 0x0002_0003;
+        m.cpu.regs[2] = 0x0004_0005;
+        m.cpu.regs[3] = 3;
+        m.step();
+        assert_eq!(m.cpu.regs[0], 11);
+
+        // SMULBT: low(Rm) * high(Rs), without accumulation.
+        let mut m = Machine::new(&[0xE167_09C8]);
+        m.cpu.regs[8] = 0x0002_0003;
+        m.cpu.regs[9] = 0x0004_0005;
+        m.step();
+        assert_eq!(m.cpu.regs[7], 12);
+    }
+
+    #[test]
+    fn armv6_halfword_multiply_accumulate_sets_sticky_q_on_sum_overflow() {
+        // SMLABB: 3*5 plus i32::MAX overflows and wraps to 0x8000000E.
+        let mut m = Machine::new(&[0xE100_3281]);
+        m.cpu.regs[1] = 3;
+        m.cpu.regs[2] = 5;
+        m.cpu.regs[3] = i32::MAX as u32;
+        m.step();
+        assert_eq!(m.cpu.regs[0], 0x8000_000E);
+        assert!(m.cpu.cpsr.q());
+        assert_eq!(m.flags(), (false, false, false, false));
+    }
+
+    #[test]
+    fn armv6_long_halfword_multiply_accumulates_into_register_pair() {
+        // SMLALBB r8,r9,r10,r11; product 3*5 is added to RdHi:RdLo.
+        let mut m = Machine::new(&[0xE149_8B8A]);
+        m.cpu.regs[8] = 100;
+        m.cpu.regs[9] = 0;
+        m.cpu.regs[10] = 0x0002_0003;
+        m.cpu.regs[11] = 0x0004_0005;
+        m.step();
+        assert_eq!((m.cpu.regs[9], m.cpu.regs[8]), (0, 115));
+
+        // SMLALTT uses the upper halfword of each source register.
+        let mut m = Machine::new(&[0xE145_47E6]);
+        m.cpu.regs[4] = 0;
+        m.cpu.regs[5] = 0;
+        m.cpu.regs[6] = 0x0002_0003;
+        m.cpu.regs[7] = 0x0004_0005;
+        m.step();
+        assert_eq!((m.cpu.regs[5], m.cpu.regs[4]), (0, 8));
+    }
+
+    #[test]
+    fn armv6_word_by_halfword_multiply_variants_select_bottom_and_top() {
+        // SMLAWT r7,r8,r9,r10: high 32 bits of 0x10000*2 plus accumulator 7.
+        let mut m = Machine::new(&[0xE127_A9C8]);
+        m.cpu.regs[8] = 0x0001_0000;
+        m.cpu.regs[9] = 0x0002_0000;
+        m.cpu.regs[10] = 7;
+        m.step();
+        assert_eq!(m.cpu.regs[7], 9);
+
+        // SMULWB r11,r12,r0: high 32 bits of 0x10000*2.
+        let mut m = Machine::new(&[0xE12B_00AC]);
+        m.cpu.regs[12] = 0x0001_0000;
+        m.cpu.regs[0] = 2;
+        m.step();
+        assert_eq!(m.cpu.regs[11], 2);
+
+        // SMULWT r1,r2,r3 uses the upper halfword of Rs.
+        let mut m = Machine::new(&[0xE121_03E2]);
+        m.cpu.regs[2] = 0x0001_0000;
+        m.cpu.regs[3] = 0x0002_0000;
+        m.step();
+        assert_eq!(m.cpu.regs[1], 2);
+    }
+
+    #[test]
+    fn armv6_word_by_halfword_accumulate_sets_q_on_accumulator_overflow() {
+        // SMLAWB: the shifted product is 2; adding i32::MAX overflows.
+        let mut m = Machine::new(&[0xE123_6584]);
+        m.cpu.regs[4] = 0x0001_0000;
+        m.cpu.regs[5] = 2;
+        m.cpu.regs[6] = i32::MAX as u32;
+        m.step();
+        assert_eq!(m.cpu.regs[3], 0x8000_0001);
+        assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
+    fn armv6_umaal_accumulates_two_independent_words_without_touching_flags() {
+        // UMAAL r0,r1,r2,r3 = r2*r3 + r0 + r1 (not a concatenated accumulator).
+        let mut m = Machine::new(&[0xE041_0392]);
+        m.cpu.regs[0] = 0xFFFF_FFFE;
+        m.cpu.regs[1] = 2;
+        m.cpu.regs[2] = 3;
+        m.cpu.regs[3] = 5;
+        m.cpu.cpsr.set_flags(true, false, true, true);
+        m.cpu.cpsr.set_q();
+        m.step();
+        assert_eq!((m.cpu.regs[1], m.cpu.regs[0]), (1, 15));
+        assert_eq!(m.flags(), (true, false, true, true));
+        assert!(m.cpu.cpsr.q());
+
+        // RdHi and RdLo must be different registers.
+        let mut m = Machine::new(&[0xE041_1392]);
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn armv6_dual_halfword_multiply_add_subtract_and_exchange() {
+        // SMLAD r0,r1,r2,r3
+        let mut m = Machine::new(&[0xE700_3211]);
+        m.cpu.regs[1] = 0x0002_0003;
+        m.cpu.regs[2] = 0x0004_0005;
+        m.cpu.regs[3] = 7;
+        m.step();
+        assert_eq!(m.cpu.regs[0], 30);
+
+        // SMLADX r4,r5,r6,r7 exchanges the two halfwords of Rs.
+        let mut m = Machine::new(&[0xE704_7635]);
+        m.cpu.regs[5] = 0x0002_0003;
+        m.cpu.regs[6] = 0x0004_0005;
+        m.cpu.regs[7] = 1;
+        m.step();
+        assert_eq!(m.cpu.regs[4], 23);
+
+        // SMLSD r8,r9,r10,r11 computes low-product minus high-product.
+        let mut m = Machine::new(&[0xE708_BA59]);
+        m.cpu.regs[9] = 0x0002_0003;
+        m.cpu.regs[10] = 0x0004_0005;
+        m.cpu.regs[11] = 11;
+        m.step();
+        assert_eq!(m.cpu.regs[8], 18);
+
+        // SMLSDX r0,r1,r2,r3 uses the exchanged second operand.
+        let mut m = Machine::new(&[0xE700_3271]);
+        m.cpu.regs[1] = 0x0002_0003;
+        m.cpu.regs[2] = 0x0004_0005;
+        m.cpu.regs[3] = 3;
+        m.step();
+        assert_eq!(m.cpu.regs[0], 5);
+    }
+
+    #[test]
+    fn armv6_unaccumulated_dual_multiply_sets_q_only_on_add_overflow() {
+        // SMUAD r4,r5,r6: two (-32768 * -32768) products overflow signed 32-bit.
+        let mut m = Machine::new(&[0xE704_F615]);
+        m.cpu.regs[5] = 0x8000_8000;
+        m.cpu.regs[6] = 0x8000_8000;
+        m.cpu.cpsr.set_flags(true, false, true, true);
+        m.step();
+        assert_eq!(m.cpu.regs[4], 0x8000_0000);
+        assert!(m.cpu.cpsr.q());
+        assert_eq!(m.flags(), (true, false, true, true));
+
+        // SMUADX uses the exchanged halfwords for both products.
+        let mut m = Machine::new(&[0xE707_F938]);
+        m.cpu.regs[8] = 0x0002_0003;
+        m.cpu.regs[9] = 0x0004_0005;
+        m.step();
+        assert_eq!(m.cpu.regs[7], 22);
+
+        // SMUSD r10,r11,r12 has a bounded product difference and no Q update.
+        let mut m = Machine::new(&[0xE70A_FC5B]);
+        m.cpu.regs[11] = 0x0002_0003;
+        m.cpu.regs[12] = 0x0004_0005;
+        m.step();
+        assert_eq!(m.cpu.regs[10], 7);
+        assert!(!m.cpu.cpsr.q());
+
+        // SMUSDX applies the same exchange before subtracting the products.
+        let mut m = Machine::new(&[0xE700_F271]);
+        m.cpu.regs[1] = 0x0002_0003;
+        m.cpu.regs[2] = 0x0004_0005;
+        m.step();
+        assert_eq!(m.cpu.regs[0], 2);
+        assert!(!m.cpu.cpsr.q());
+
+        // SMLSD sets sticky Q if adding its product difference overflows.
+        let mut m = Machine::new(&[0xE708_BA59]);
+        m.cpu.regs[9] = 0x0002_0003;
+        m.cpu.regs[10] = 0x0004_0005;
+        m.cpu.regs[11] = i32::MAX as u32;
+        m.step();
+        assert_eq!(m.cpu.regs[8], 0x8000_0006);
+        assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
+    fn armv6_long_dual_halfword_multiply_accumulates_64_bits() {
+        // SMLALD r0,r1,r2,r3, including carry from RdLo into RdHi.
+        let mut m = Machine::new(&[0xE741_0312]);
+        m.cpu.regs[0] = 0xFFFF_FFF0;
+        m.cpu.regs[1] = 0;
+        m.cpu.regs[2] = 0x0002_0003;
+        m.cpu.regs[3] = 0x0004_0005;
+        m.step();
+        assert_eq!((m.cpu.regs[1], m.cpu.regs[0]), (1, 7));
+
+        // SMLALDX r4,r5,r6,r7 uses exchanged halfwords.
+        let mut m = Machine::new(&[0xE745_4736]);
+        m.cpu.regs[6] = 0x0002_0003;
+        m.cpu.regs[7] = 0x0004_0005;
+        m.step();
+        assert_eq!((m.cpu.regs[5], m.cpu.regs[4]), (0, 22));
+
+        // SMLSLD r8,r9,r10,r11 adds (low product - high product).
+        let mut m = Machine::new(&[0xE749_8B5A]);
+        m.cpu.regs[8] = 10;
+        m.cpu.regs[9] = 0;
+        m.cpu.regs[10] = 0x0002_0003;
+        m.cpu.regs[11] = 0x0004_0005;
+        m.step();
+        assert_eq!((m.cpu.regs[9], m.cpu.regs[8]), (0, 17));
+
+        // SMLSLDX r0,r1,r2,r3 exchanges the second operand before subtraction.
+        let mut m = Machine::new(&[0xE741_0372]);
+        m.cpu.regs[0] = 10;
+        m.cpu.regs[1] = 0;
+        m.cpu.regs[2] = 0x0002_0003;
+        m.cpu.regs[3] = 0x0004_0005;
+        m.step();
+        assert_eq!((m.cpu.regs[1], m.cpu.regs[0]), (0, 12));
+    }
+
+    #[test]
+    fn armv6_most_significant_word_multiply_truncates_accumulates_and_rounds() {
+        // SMMUL r4,r5,r6: high word of signed 1 * -2^31 is -1.
+        let mut m = Machine::new(&[0xE754_F615]);
+        m.cpu.regs[5] = 1;
+        m.cpu.regs[6] = 0x8000_0000;
+        m.step();
+        assert_eq!(m.cpu.regs[4], u32::MAX);
+
+        // SMMULR rounds the same product to zero.
+        let mut m = Machine::new(&[0xE757_F938]);
+        m.cpu.regs[8] = 1;
+        m.cpu.regs[9] = 0x8000_0000;
+        m.step();
+        assert_eq!(m.cpu.regs[7], 0);
+
+        // SMMLA r10,r11,r12,r0 adds the accumulator to the high product word.
+        let mut m = Machine::new(&[0xE75A_0C1B]);
+        m.cpu.regs[11] = 0x4000_0000;
+        m.cpu.regs[12] = 0x4000_0000;
+        m.cpu.regs[0] = 3;
+        m.step();
+        assert_eq!(m.cpu.regs[10], 0x1000_0003);
+
+        // SMMLAR rounds before extraction, preserving the accumulator.
+        let mut m = Machine::new(&[0xE751_4332]);
+        m.cpu.regs[2] = 1;
+        m.cpu.regs[3] = 0x8000_0000;
+        m.cpu.regs[4] = 7;
+        m.step();
+        assert_eq!(m.cpu.regs[1], 7);
+
+        // SMMLS includes the borrow from the discarded low half of the product.
+        let mut m = Machine::new(&[0xE755_87D6]);
+        m.cpu.regs[6] = 1;
+        m.cpu.regs[7] = 1;
+        m.cpu.regs[8] = 0;
+        m.step();
+        assert_eq!(m.cpu.regs[5], u32::MAX);
+
+        // SMMLSR rounds the subtraction before extracting the high word.
+        let mut m = Machine::new(&[0xE759_CBFA]);
+        m.cpu.regs[10] = 1;
+        m.cpu.regs[11] = 0x8000_0000;
+        m.cpu.regs[12] = 0;
+        m.step();
+        assert_eq!(m.cpu.regs[9], 1);
+    }
+
+    #[test]
+    fn armv6_signed_dsp_multiply_rejects_invalid_register_combinations() {
+        // SMLAD cannot target PC.
+        let mut m = Machine::new(&[0xE70F_3211]);
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        // SMLALD cannot use the same register for the high and low result.
+        let mut m = Machine::new(&[0xE741_1312]);
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        // SMMUL cannot read or write PC.
+        let mut m = Machine::new(&[0xE75F_F615]);
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        // SMLABB cannot use PC as its accumulator.
+        let mut m = Machine::new(&[0xE100_F281]);
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        // SMULBB requires the reserved accumulator field to be zero.
+        let mut m = Machine::new(&[0xE164_1685]);
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        // SMULWB also requires its reserved field to be zero.
+        let mut m = Machine::new(&[0xE12B_10AC]);
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
     }
 
     #[test]
