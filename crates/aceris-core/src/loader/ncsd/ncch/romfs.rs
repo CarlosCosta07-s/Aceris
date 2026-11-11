@@ -1250,9 +1250,9 @@ fn verify_ivfc_hash_table<R: Read + Seek>(
         block_count
             .checked_mul(SHA256_SIZE)
             .ok_or(RomFsError::InvalidIvfcLevel {
-            index: level,
-            reason: "expected hash table size overflows",
-        })?;
+                index: level,
+                reason: "expected hash table size overflows",
+            })?;
     if expected_hash_size != hash_region.size_bytes {
         return Err(RomFsError::InvalidIvfcLevel {
             index: level,
