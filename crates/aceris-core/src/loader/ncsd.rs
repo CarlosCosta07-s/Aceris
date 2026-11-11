@@ -787,6 +787,25 @@ impl<R: Read + Seek> NcsdImageReader<R> {
         &self.header
     }
 
+    /// Opens any populated partition by its original NCSD table index.
+    ///
+    /// This is a raw, bounded partition stream: it does not assume that the
+    /// partition contains NCCH. The image reader is consumed and the returned
+    /// reader cannot seek or read outside the selected partition.
+    pub fn open_partition_reader(
+        self,
+        index: u8,
+    ) -> std::result::Result<NcsdPartitionReader<R>, NcsdImageReaderError> {
+        let partition = self
+            .header
+            .partition(index)
+            .copied()
+            .ok_or(NcsdImageReaderError::MissingPartition { index })?;
+        partition
+            .reader(self.reader)
+            .map_err(NcsdImageReaderError::Reader)
+    }
+
     /// Opens the partition with the given original table index as an NCCH container.
     ///
     /// The image reader is consumed so the returned partition owns the underlying
