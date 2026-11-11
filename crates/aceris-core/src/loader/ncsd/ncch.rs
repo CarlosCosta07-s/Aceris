@@ -729,10 +729,7 @@ impl NcchHeader {
         reader: R,
         file_name: &str,
         key: [u8; crypto::AES_BLOCK_SIZE],
-    ) -> Result<
-        Option<exefs::ExeFsFileReader<crypto::NcchCtrReader<R>>>,
-        exefs::ExeFsError,
-    > {
+    ) -> Result<Option<exefs::ExeFsFileReader<crypto::NcchCtrReader<R>>>, exefs::ExeFsError> {
         let Some(region) = self.exefs else {
             return Ok(None);
         };
