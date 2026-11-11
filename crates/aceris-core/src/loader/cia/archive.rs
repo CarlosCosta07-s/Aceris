@@ -784,6 +784,37 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
         let header = self.header.clone();
         header.open_decrypted_verified_extended_header_reader(self, menu_info_key)
     }
+
+    /// Opens one ExeFS file after verifying the outer CIA content and NCCH hashes.
+    ///
+    /// The CIA TMD hash was checked when this NCCH reader was created. The
+    /// NCCH implementation then verifies the ExeFS superblock, decrypts its
+    /// header with menu_info_key, selects the proper key group for the file,
+    /// and verifies that file's SHA-256 before returning its bounded reader.
+    ///
+    /// .code and .firm use content_key; other ExeFS files use menu_info_key.
+    /// Returns None when the NCCH declares no ExeFS region.
+    pub fn open_decrypted_verified_exefs_file_reader(
+        self,
+        file_name: &str,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<
+        Option<
+            crate::loader::ncsd::ncch::exefs::ExeFsFileReader<
+                NcchCtrReader<Self>,
+            >,
+        >,
+        crate::loader::ncsd::ncch::exefs::ExeFsError,
+    > {
+        let header = self.header.clone();
+        header.open_decrypted_verified_exefs_file_reader(
+            self,
+            file_name,
+            menu_info_key,
+            content_key,
+        )
+    }
 }
 
 impl<R: Read + Seek> Read for CiaDecryptedContentNcchReader<'_, R> {
@@ -1340,6 +1371,162 @@ mod tests {
         let mut actual_region = Vec::new();
         decrypted_exefs.read_to_end(&mut actual_region).unwrap();
         assert_eq!(actual_region, expected_region);
+    }
+
+    fn make_encrypted_exefs_cia(
+        corrupt_superblock: bool,
+        corrupt_code: bool,
+    ) -> (Vec<u8>, [u8; 16], [u8; 16], Vec<u8>, Vec<u8>) {
+        let menu_info_key = [0x69; AES_BLOCK_SIZE];
+        let content_key = [0xA6; AES_BLOCK_SIZE];
+        let cia_title_key = [0x37; AES_BLOCK_SIZE];
+        let code: Vec<u8> = (0..0x100).map(|index| (index * 13) as u8).collect();
+        let banner: Vec<u8> = (0..0x80).map(|index| (index * 7 + 3) as u8).collect();
+
+        let mut exefs = vec![0u8; 0x400];
+        exefs[..5].copy_from_slice(b".code");
+        write_le_u32(&mut exefs, 8, 0);
+        write_le_u32(&mut exefs, 12, code.len() as u32);
+        exefs[0x10..0x16].copy_from_slice(b"banner");
+        write_le_u32(&mut exefs, 0x18, 0x100);
+        write_le_u32(&mut exefs, 0x1C, banner.len() as u32);
+        exefs[0x200..0x300].copy_from_slice(&code);
+        exefs[0x300..0x380].copy_from_slice(&banner);
+
+        let code_hash = Sha256::digest(&code).unwrap();
+        let banner_hash = Sha256::digest(&banner).unwrap();
+        exefs[0x1E0..0x200].copy_from_slice(&code_hash);
+        exefs[0x1C0..0x1E0].copy_from_slice(&banner_hash);
+        let superblock_hash = Sha256::digest(&exefs[..0x200]).unwrap();
+
+        if corrupt_superblock {
+            exefs[0] ^= 0x20;
+        }
+        if corrupt_code {
+            exefs[0x210] ^= 0x80;
+        }
+
+        let mut ncch = vec![0u8; 0x1_0000];
+        ncch[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut ncch, 0x104, 0x80);
+        ncch[0x108..0x110].copy_from_slice(b"ACERIS01");
+        ncch[0x112..0x114].copy_from_slice(&2u16.to_le_bytes());
+        ncch[0x1A0..0x1A4].copy_from_slice(&0x10u32.to_le_bytes());
+        ncch[0x1A4..0x1A8].copy_from_slice(&2u32.to_le_bytes());
+        ncch[0x1A8..0x1AC].copy_from_slice(&1u32.to_le_bytes());
+        ncch[0x1C0..0x1E0].copy_from_slice(&superblock_hash);
+        ncch[0x2000..0x2400].copy_from_slice(&exefs);
+
+        let parsed = NcchHeader::parse(&ncch[..NCCH_HEADER_SIZE], ncch.len() as u64).unwrap();
+        let counter = parsed
+            .initial_ctr_for_region(NcchCtrRegion::ExeFs)
+            .unwrap();
+        let mut encrypted_exefs = exefs;
+        Aes128Ctr::new(menu_info_key, counter)
+            .apply_keystream(&mut encrypted_exefs[..0x200])
+            .unwrap();
+        Aes128Ctr::apply_keystream_at_offset(
+            content_key,
+            counter,
+            0x200,
+            &mut encrypted_exefs[0x200..0x300],
+        )
+        .unwrap();
+        Aes128Ctr::apply_keystream_at_offset(
+            menu_info_key,
+            counter,
+            0x300,
+            &mut encrypted_exefs[0x300..0x380],
+        )
+        .unwrap();
+        ncch[0x2000..0x2400].copy_from_slice(&encrypted_exefs);
+
+        let content_index = 0x0310;
+        let (mut cia, locations) =
+            make_cia(&[(0x5600, content_index, CONTENT_TYPE_ENCRYPTED, &ncch)]);
+        let encrypted_content = encrypt_cia_content(cia_title_key, content_index, &ncch);
+        let content_offset = usize::try_from(locations[0].1).unwrap();
+        cia[content_offset..content_offset + encrypted_content.len()]
+            .copy_from_slice(&encrypted_content);
+
+        (cia, cia_title_key, menu_info_key, code, banner)
+    }
+
+    #[test]
+    fn opens_code_and_menu_exefs_files_from_a_verified_encrypted_cia() {
+        let (cia, cia_key, menu_key, expected_code, expected_banner) =
+            make_encrypted_exefs_cia(false, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(cia)).unwrap();
+
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
+            .unwrap()
+            .unwrap();
+        let mut code_reader = ncch
+            .open_decrypted_verified_exefs_file_reader(".code", menu_key, [0xA6; AES_BLOCK_SIZE])
+            .unwrap()
+            .unwrap();
+        assert_eq!(code_reader.len(), expected_code.len() as u64);
+        let mut actual_code = Vec::new();
+        code_reader.read_to_end(&mut actual_code).unwrap();
+        assert_eq!(actual_code, expected_code);
+        drop(code_reader);
+
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
+            .unwrap()
+            .unwrap();
+        let mut banner_reader = ncch
+            .open_decrypted_verified_exefs_file_reader("banner", menu_key, [0xA6; AES_BLOCK_SIZE])
+            .unwrap()
+            .unwrap();
+        assert_eq!(banner_reader.len(), expected_banner.len() as u64);
+        assert_eq!(banner_reader.seek(SeekFrom::Start(7)).unwrap(), 7);
+        let mut actual_banner = Vec::new();
+        banner_reader.read_to_end(&mut actual_banner).unwrap();
+        assert_eq!(&actual_banner, &expected_banner[7..]);
+    }
+
+    #[test]
+    fn rejects_an_exefs_superblock_corrupted_inside_a_tmd_valid_cia() {
+        let (cia, cia_key, menu_key, _, _) = make_encrypted_exefs_cia(true, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(cia)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            ncch.open_decrypted_verified_exefs_file_reader(
+                ".code",
+                menu_key,
+                [0xA6; AES_BLOCK_SIZE],
+            )
+            .err(),
+            Some(crate::loader::ncsd::ncch::exefs::ExeFsError::SuperblockHashMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_an_exefs_file_with_a_bad_digest_inside_a_tmd_valid_cia() {
+        let (cia, cia_key, menu_key, _, _) = make_encrypted_exefs_cia(false, true);
+        let mut archive = CiaArchiveReader::open(Cursor::new(cia)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            ncch.open_decrypted_verified_exefs_file_reader(
+                ".code",
+                menu_key,
+                [0xA6; AES_BLOCK_SIZE],
+            )
+            .err(),
+            Some(crate::loader::ncsd::ncch::exefs::ExeFsError::FileHashMismatch(
+                ".code".to_owned()
+            ))
+        );
     }
 
     fn make_encrypted_ncch_with_extended_header(
