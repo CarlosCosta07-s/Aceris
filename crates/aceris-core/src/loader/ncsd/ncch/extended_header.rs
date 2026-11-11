@@ -59,6 +59,8 @@ pub struct CodeFileLayout {
     pub read_only_size_bytes: usize,
     /// Page-aligned initialized data segment length in the ExeFS code file.
     pub data_size_bytes: usize,
+    /// Page-aligned writable allocation length for initialized data plus BSS.
+    pub data_memory_size_bytes: usize,
     /// Total expected decompressed ExeFS code-file length.
     pub total_size_bytes: usize,
 }
@@ -152,11 +154,17 @@ impl NcchExtendedHeader {
         let text_size_bytes = page_aligned_size(self.text_code_set.size_bytes)?;
         let read_only_size_bytes = page_aligned_size(self.read_only_code_set.size_bytes)?;
         let data_size_bytes = page_aligned_size(self.data_code_set.size_bytes)?;
+        let data_with_bss_size = self
+            .data_code_set
+            .size_bytes
+            .checked_add(self.bss_size_bytes)?;
+        let data_memory_size_bytes = page_aligned_size(data_with_bss_size)?;
 
         if u64::try_from(text_size_bytes).ok()? > self.text_code_set.physical_size_bytes()?
             || u64::try_from(read_only_size_bytes).ok()?
                 > self.read_only_code_set.physical_size_bytes()?
-            || u64::try_from(data_size_bytes).ok()? > self.data_code_set.physical_size_bytes()?
+            || u64::try_from(data_memory_size_bytes).ok()?
+                > self.data_code_set.physical_size_bytes()?
             || self.text_code_set.end_address().is_none()
             || self.read_only_code_set.end_address().is_none()
             || self.data_code_set.end_address().is_none()
@@ -172,6 +180,7 @@ impl NcchExtendedHeader {
             text_size_bytes,
             read_only_size_bytes,
             data_size_bytes,
+            data_memory_size_bytes,
             total_size_bytes,
         })
     }
@@ -326,6 +335,7 @@ mod tests {
                 text_size_bytes: 0x2000,
                 read_only_size_bytes: 0x1000,
                 data_size_bytes: 0x1000,
+                data_memory_size_bytes: 0x3000,
                 total_size_bytes: 0x4000,
             })
         );

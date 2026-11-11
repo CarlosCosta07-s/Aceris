@@ -895,7 +895,7 @@ mod tests {
         write_u32(&mut extended_header, 0x24, 1);
         write_u32(&mut extended_header, 0x28, CODE_SEGMENT_SIZE as u32);
         write_u32(&mut extended_header, 0x30, 0x0010_2000);
-        write_u32(&mut extended_header, 0x34, 1);
+        write_u32(&mut extended_header, 0x34, 2);
         write_u32(&mut extended_header, 0x38, CODE_SEGMENT_SIZE as u32);
         write_u32(&mut extended_header, 0x3C, 0x20);
 

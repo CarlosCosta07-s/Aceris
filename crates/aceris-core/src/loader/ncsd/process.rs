@@ -14,6 +14,7 @@ use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
+const MAX_BSS_MAPPING_SIZE_BYTES: usize = 256 * 1024 * 1024;
 
 /// ARM11 code segment category.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +25,8 @@ pub enum Arm11SegmentKind {
     ReadOnly,
     /// Writable, non-executable initialized data.
     Data,
+    /// Writable, non-executable zero-initialized data.
+    Bss,
 }
 
 impl fmt::Display for Arm11SegmentKind {
@@ -78,7 +81,9 @@ pub struct Arm11ProcessLayout {
     pub read_only: Arm11MemorySegment,
     /// Writable, non-executable initialized-data mapping.
     pub data: Arm11MemorySegment,
-    /// Exact BSS size in bytes. The kernel decides its physical placement.
+    /// Writable, non-executable zero-filled tail of the writable CodeSet.
+    pub bss: Arm11MemorySegment,
+    /// Exact BSS size in bytes from the NCCH System Control Info.
     pub bss_size_bytes: u32,
     /// Exact main-thread stack request in bytes. The kernel chooses its address.
     pub stack_size_bytes: u32,
@@ -109,6 +114,11 @@ pub enum Arm11ProcessLayoutError {
         first: Arm11SegmentKind,
         second: Arm11SegmentKind,
     },
+    BssTooLarge {
+        requested_size_bytes: u32,
+        maximum_size_bytes: usize,
+    },
+    BssAllocationFailure(String),
 }
 
 impl fmt::Display for Arm11ProcessLayoutError {
@@ -142,6 +152,16 @@ impl fmt::Display for Arm11ProcessLayoutError {
             ),
             Self::OverlappingSegments { first, second } => {
                 write!(formatter, "ARM11 {first} and {second} mappings overlap")
+            }
+            Self::BssTooLarge {
+                requested_size_bytes,
+                maximum_size_bytes,
+            } => write!(
+                formatter,
+                "ARM11 BSS mapping {requested_size_bytes} bytes exceeds the {maximum_size_bytes}-byte safety limit"
+            ),
+            Self::BssAllocationFailure(reason) => {
+                write!(formatter, "could not allocate ARM11 BSS memory: {reason}")
             }
         }
     }
@@ -204,11 +224,23 @@ impl PreparedArm11Image {
             true,
             false,
         )?;
+        let bss = make_bss_segment(
+            extended_header.data_code_set,
+            code_file_layout.data_size_bytes,
+            code_file_layout.data_memory_size_bytes,
+        )?;
+        if u64::from(bss.mapped_size_bytes) > MAX_BSS_MAPPING_SIZE_BYTES as u64 {
+            return Err(Arm11ProcessLayoutError::BssTooLarge {
+                requested_size_bytes: bss.mapped_size_bytes,
+                maximum_size_bytes: MAX_BSS_MAPPING_SIZE_BYTES,
+            });
+        }
 
         validate_no_overlap([
             (Arm11SegmentKind::Text, text),
             (Arm11SegmentKind::ReadOnly, read_only),
             (Arm11SegmentKind::Data, data),
+            (Arm11SegmentKind::Bss, bss),
         ])?;
 
         Ok(Arm11ProcessLayout {
@@ -217,6 +249,7 @@ impl PreparedArm11Image {
             text,
             read_only,
             data,
+            bss,
             bss_size_bytes: extended_header.bss_size_bytes,
             stack_size_bytes: extended_header.stack_size_bytes,
             code_file_layout,
@@ -226,15 +259,16 @@ impl PreparedArm11Image {
 
 /// A bootstrap ARM11 address space containing the prepared code segments.
 ///
-/// This bus maps text, read-only data, and initialized writable data only.
-/// BSS, the main-thread stack, shared memory, and hardware registers are not
-/// mapped until their kernel and device-memory rules are implemented.
+/// This bus maps text, read-only data, initialized writable data, and the
+/// zero-filled BSS tail. The main-thread stack, shared memory, and hardware
+/// registers are not mapped until their kernel and device-memory rules exist.
 #[derive(Debug)]
 pub struct Arm11CodeAddressSpace {
     layout: Arm11ProcessLayout,
     text: Vec<u8>,
     read_only: Vec<u8>,
     data: Vec<u8>,
+    bss: Vec<u8>,
 }
 
 impl Arm11CodeAddressSpace {
@@ -243,11 +277,19 @@ impl Arm11CodeAddressSpace {
         prepared: PreparedArm11Image,
     ) -> std::result::Result<Self, Arm11ProcessLayoutError> {
         let layout = prepared.process_layout()?;
+        let bss_size = usize::try_from(layout.bss.mapped_size_bytes)
+            .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
+        let mut bss = Vec::new();
+        bss.try_reserve_exact(bss_size)
+            .map_err(|error| Arm11ProcessLayoutError::BssAllocationFailure(error.to_string()))?;
+        bss.resize(bss_size, 0);
+
         Ok(Self {
             layout,
             text: prepared.text,
             read_only: prepared.read_only,
             data: prepared.data,
+            bss,
         })
     }
 
@@ -266,6 +308,7 @@ impl Arm11CodeAddressSpace {
             (Arm11SegmentKind::Text, self.layout.text),
             (Arm11SegmentKind::ReadOnly, self.layout.read_only),
             (Arm11SegmentKind::Data, self.layout.data),
+            (Arm11SegmentKind::Bss, self.layout.bss),
         ];
 
         for (kind, segment) in segments {
@@ -287,6 +330,7 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::Text => &self.text,
             Arm11SegmentKind::ReadOnly => &self.read_only,
             Arm11SegmentKind::Data => &self.data,
+            Arm11SegmentKind::Bss => &self.bss,
         }
     }
 
@@ -295,6 +339,7 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::Text => &mut self.text,
             Arm11SegmentKind::ReadOnly => &mut self.read_only,
             Arm11SegmentKind::Data => &mut self.data,
+            Arm11SegmentKind::Bss => &mut self.bss,
         }
     }
 
@@ -303,6 +348,7 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::Text => self.layout.text.writable,
             Arm11SegmentKind::ReadOnly => self.layout.read_only.writable,
             Arm11SegmentKind::Data => self.layout.data.writable,
+            Arm11SegmentKind::Bss => self.layout.bss.writable,
         }
     }
 
@@ -359,6 +405,63 @@ impl Bus for Arm11CodeAddressSpace {
     fn write32(&mut self, address: u32, value: u32) -> BusResult<()> {
         self.write_bytes(address, &value.to_le_bytes())
     }
+}
+
+fn make_bss_segment(
+    data_code_set: CodeSetInfo,
+    initialized_data_size: usize,
+    total_data_memory_size: usize,
+) -> std::result::Result<Arm11MemorySegment, Arm11ProcessLayoutError> {
+    let bss_size = total_data_memory_size
+        .checked_sub(initialized_data_size)
+        .ok_or(Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
+    let mapped_size_bytes = u32::try_from(bss_size)
+        .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
+
+    if mapped_size_bytes == 0 {
+        return Ok(Arm11MemorySegment {
+            address: data_code_set.address,
+            initialized_size_bytes: 0,
+            mapped_size_bytes: 0,
+            writable: true,
+            executable: false,
+        });
+    }
+
+    let initialized_data_size = u32::try_from(initialized_data_size)
+        .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
+    let address = data_code_set
+        .address
+        .checked_add(initialized_data_size)
+        .ok_or(Arm11ProcessLayoutError::SegmentRangeOverflow {
+            segment: Arm11SegmentKind::Bss,
+            address: data_code_set.address,
+            mapped_size_bytes,
+        })?;
+
+    if u64::from(address) % PAGE_SIZE != 0 {
+        return Err(Arm11ProcessLayoutError::SegmentAddressUnaligned {
+            segment: Arm11SegmentKind::Bss,
+            address,
+        });
+    }
+
+    let end = u64::from(address) + u64::from(mapped_size_bytes);
+    if end > ADDRESS_SPACE_END {
+        return Err(Arm11ProcessLayoutError::SegmentRangeOverflow {
+            segment: Arm11SegmentKind::Bss,
+            address,
+            mapped_size_bytes,
+        });
+    }
+
+    Ok(Arm11MemorySegment {
+        address,
+        initialized_size_bytes: 0,
+        mapped_size_bytes,
+        writable: true,
+        executable: false,
+    })
 }
 
 fn validate_image_segment(
@@ -422,7 +525,7 @@ fn make_segment(
 }
 
 fn validate_no_overlap(
-    segments: [(Arm11SegmentKind, Arm11MemorySegment); 3],
+    segments: [(Arm11SegmentKind, Arm11MemorySegment); 4],
 ) -> std::result::Result<(), Arm11ProcessLayoutError> {
     let mut non_empty = segments
         .into_iter()
@@ -468,7 +571,7 @@ mod tests {
                 },
                 data_code_set: CodeSetInfo {
                     address: 0x0010_3000,
-                    physical_size_pages: 1,
+                    physical_size_pages: 3,
                     size_bytes: 0x1000,
                 },
                 bss_size_bytes: 0x2000,
@@ -521,6 +624,45 @@ mod tests {
     }
 
     #[test]
+    fn bss_memory_is_zero_initialized_and_writable() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let bss_address = address_space.layout.bss.address;
+        let bss_size = address_space.layout.bss.mapped_size_bytes as usize;
+
+        assert!(address_space
+            .segment_bytes(Arm11SegmentKind::Bss)
+            .iter()
+            .all(|byte| *byte == 0));
+        assert_eq!(bss_size, 0x2000);
+
+        address_space.write32(bss_address, 0x1234_5678).unwrap();
+        assert_eq!(address_space.read32(bss_address).unwrap(), 0x1234_5678);
+    }
+
+    #[test]
+    fn initialized_data_and_bss_form_one_contiguous_writable_region() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let data_end = address_space.layout.data.end_address() as u32;
+
+        assert_eq!(address_space.layout.bss.address, data_end);
+        let write_address = data_end - 2;
+        address_space.write32(write_address, 0xAABB_CCDD).unwrap();
+        assert_eq!(address_space.read32(write_address).unwrap(), 0xAABB_CCDD);
+    }
+
+    #[test]
+    fn rejects_bss_mappings_above_the_bootstrap_memory_limit() {
+        let mut prepared = prepared_image();
+        prepared.extended_header.bss_size_bytes = 0x1010_0000;
+        prepared.extended_header.data_code_set.physical_size_pages = 0x1011;
+
+        assert!(matches!(
+            prepared.process_layout(),
+            Err(Arm11ProcessLayoutError::BssTooLarge { .. })
+        ));
+    }
+
+    #[test]
     fn wide_writes_are_atomic_when_the_range_crosses_into_read_only_memory() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let data_start = address_space.layout.data.address;
@@ -556,8 +698,13 @@ mod tests {
         assert!(!layout.read_only.writable);
         assert!(!layout.read_only.executable);
         assert_eq!(layout.data.address, 0x0010_3000);
+        assert_eq!(layout.data.mapped_size_bytes, 0x1000);
         assert!(layout.data.writable);
         assert!(!layout.data.executable);
+        assert_eq!(layout.bss.address, 0x0010_4000);
+        assert_eq!(layout.bss.mapped_size_bytes, 0x2000);
+        assert!(layout.bss.writable);
+        assert!(!layout.bss.executable);
         assert_eq!(layout.bss_size_bytes, 0x2000);
         assert_eq!(layout.stack_size_bytes, 0x4000);
     }
