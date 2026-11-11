@@ -1859,7 +1859,7 @@ mod tests {
             Err(
                 crate::loader::ncsd::ncch::romfs::RomFsError::IvfcHashMismatch {
                     level: 3,
-                    block_index: 0,
+                    block_index: 1,
                 }
             )
         ));
