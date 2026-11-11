@@ -64,11 +64,21 @@ const PDC_CURRENT_BUFFER: u32 = 1 << 4;
 /// Scanout validation or memory-conversion error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LcdControllerError {
-    InvalidRegister { panel: LcdPanel, offset: u32 },
+    InvalidRegister {
+        panel: LcdPanel,
+        offset: u32,
+    },
     UnsupportedPixelFormat(u8),
     UnsupportedInterlaceMode(u8),
-    InvalidStride { panel: LcdPanel, stride: u32, row_bytes: usize },
-    AddressOverflow { address: u32, offset: u64 },
+    InvalidStride {
+        panel: LcdPanel,
+        stride: u32,
+        row_bytes: usize,
+    },
+    AddressOverflow {
+        address: u32,
+        offset: u64,
+    },
     AllocationFailed,
     PhysicalMemory(GpuPhysicalMemoryError),
     Surface(ScreenSurfaceError),
@@ -78,7 +88,10 @@ impl fmt::Display for LcdControllerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRegister { panel, offset } => {
-                write!(formatter, "invalid {panel:?} PDC register offset {offset:#x}")
+                write!(
+                    formatter,
+                    "invalid {panel:?} PDC register offset {offset:#x}"
+                )
             }
             Self::UnsupportedPixelFormat(format) => {
                 write!(formatter, "unsupported PDC framebuffer format {format}")
@@ -99,7 +112,9 @@ impl fmt::Display for LcdControllerError {
                 "PDC framebuffer address {address:#010x} + {offset:#x} overflows"
             ),
             Self::AllocationFailed => formatter.write_str("could not allocate LCD scanout buffer"),
-            Self::PhysicalMemory(error) => write!(formatter, "LCD physical-memory access failed: {error}"),
+            Self::PhysicalMemory(error) => {
+                write!(formatter, "LCD physical-memory access failed: {error}")
+            }
             Self::Surface(error) => write!(formatter, "LCD output surface update failed: {error}"),
         }
     }
@@ -131,7 +146,12 @@ struct PanelRegisters {
 }
 
 impl PanelRegisters {
-    fn write(&mut self, panel: LcdPanel, offset: u32, value: u32) -> Result<(), LcdControllerError> {
+    fn write(
+        &mut self,
+        panel: LcdPanel,
+        offset: u32,
+        value: u32,
+    ) -> Result<(), LcdControllerError> {
         match offset {
             PDC_FRAMEBUFFER_A_FIRST => self.framebuffer_a[0] = value,
             PDC_FRAMEBUFFER_A_SECOND => self.framebuffer_a[1] = value,
@@ -154,10 +174,8 @@ impl PanelRegisters {
             PDC_FRAMEBUFFER_B_SECOND => Ok(self.framebuffer_b[1]),
             PDC_FRAMEBUFFER_FORMAT => Ok(self.format),
             PDC_CONTROL => Ok(self.control),
-            PDC_FRAMEBUFFER_SELECT => Ok(
-                (u32::from(self.next_buffer) & PDC_NEXT_BUFFER)
-                    | (u32::from(self.current_buffer) << 4),
-            ),
+            PDC_FRAMEBUFFER_SELECT => Ok((u32::from(self.next_buffer) & PDC_NEXT_BUFFER)
+                | (u32::from(self.current_buffer) << 4)),
             PDC_FRAMEBUFFER_STRIDE => Ok(self.stride),
             _ => Err(LcdControllerError::InvalidRegister { panel, offset }),
         }
@@ -220,11 +238,7 @@ impl LcdController {
     }
 
     /// Reads one PDC register offset, including the current/next buffer status.
-    pub fn read_register(
-        &self,
-        panel: LcdPanel,
-        offset: u32,
-    ) -> Result<u32, LcdControllerError> {
+    pub fn read_register(&self, panel: LcdPanel, offset: u32) -> Result<u32, LcdControllerError> {
         self.panel(panel).read(panel, offset)
     }
 
@@ -365,8 +379,8 @@ fn decode_framebuffer(
     for y in 0..height {
         let row_offset = if stride == 0 { 0 } else { y * stride_bytes };
         let row_address = u64::from(base_address) + row_offset as u64;
-        let row_address = u32::try_from(row_address)
-            .map_err(|_| LcdControllerError::AddressOverflow {
+        let row_address =
+            u32::try_from(row_address).map_err(|_| LcdControllerError::AddressOverflow {
                 address: base_address,
                 offset: row_offset as u64,
             })?;
@@ -396,12 +410,7 @@ fn decode_row(
                 input[source + 1],
                 input[source],
             ],
-            LcdPixelFormat::Rgb8 => [
-                input[source + 2],
-                input[source + 1],
-                input[source],
-                0xFF,
-            ],
+            LcdPixelFormat::Rgb8 => [input[source + 2], input[source + 1], input[source], 0xFF],
             LcdPixelFormat::Rgb565 => {
                 let value = u16::from_le_bytes([input[source], input[source + 1]]);
                 [
@@ -518,7 +527,10 @@ mod tests {
 
         assert_eq!(report.screens_updated, 3);
         assert_eq!(&display.top_left().pixels()[..4], &[0x11, 0x22, 0x33, 0x44]);
-        assert_eq!(&display.top_right().pixels()[..4], &[0x55, 0x66, 0x77, 0x88]);
+        assert_eq!(
+            &display.top_right().pixels()[..4],
+            &[0x55, 0x66, 0x77, 0x88]
+        );
         assert_eq!(&display.bottom().pixels()[..4], &[0x99, 0xAA, 0xBB, 0xCC]);
     }
 
@@ -541,7 +553,10 @@ mod tests {
 
         controller.scanout(&memory, &mut display).unwrap();
         assert_eq!(&display.bottom().pixels()[..4], &[0xFF, 0, 0, 0xFF]);
-        assert_eq!(&display.bottom().pixels()[(BOTTOM_SCREEN_WIDTH * 4)..(BOTTOM_SCREEN_WIDTH * 4 + 4)], &[0xFF, 0, 0, 0xFF]);
+        assert_eq!(
+            &display.bottom().pixels()[(BOTTOM_SCREEN_WIDTH * 4)..(BOTTOM_SCREEN_WIDTH * 4 + 4)],
+            &[0xFF, 0, 0, 0xFF]
+        );
     }
 
     #[test]
@@ -578,7 +593,9 @@ mod tests {
             (TOP_SCREEN_WIDTH * 4) as u32,
         );
         let mut display = DualScreenDisplay::new().unwrap();
-        display.surface_mut(ScreenTarget::TopLeft).clear([9, 8, 7, 6]);
+        display
+            .surface_mut(ScreenTarget::TopLeft)
+            .clear([9, 8, 7, 6]);
 
         assert!(controller.scanout(&memory, &mut display).is_err());
         assert_eq!(&display.top_left().pixels()[..4], &[9, 8, 7, 6]);

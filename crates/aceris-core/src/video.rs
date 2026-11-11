@@ -6,8 +6,8 @@
 
 mod lcd;
 pub use lcd::{
-    LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport,
-    PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
+    LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport, PDC_CONTROL,
+    PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
     PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT, PDC_FRAMEBUFFER_SELECT,
     PDC_FRAMEBUFFER_STRIDE,
 };
