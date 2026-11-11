@@ -10,7 +10,7 @@ use std::fmt;
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
 use crate::memory::Bus;
-use aceris_common::{Error, Result};
+use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
@@ -155,7 +155,9 @@ impl PreparedArm11Image {
     /// The prepared segment vectors contain page-aligned bytes. This method
     /// checks their lengths against the extended header, verifies page-aligned
     /// virtual starts, and rejects overlapping or wrapping address ranges.
-    pub fn process_layout(&self) -> Result<Arm11ProcessLayout, Arm11ProcessLayoutError> {
+    pub fn process_layout(
+        &self,
+    ) -> std::result::Result<Arm11ProcessLayout, Arm11ProcessLayoutError> {
         let extended_header = &self.extended_header;
         let code_file_layout = extended_header
             .code_file_layout()
@@ -304,7 +306,7 @@ impl Arm11CodeAddressSpace {
         }
     }
 
-    fn write_bytes(&mut self, address: u32, bytes: &[u8]) -> Result<()> {
+    fn write_bytes(&mut self, address: u32, bytes: &[u8]) -> BusResult<()> {
         let mut locations = Vec::with_capacity(bytes.len());
 
         for index in 0..bytes.len() {
@@ -313,9 +315,8 @@ impl Arm11CodeAddressSpace {
             let current_address = address
                 .checked_add(offset)
                 .ok_or(Error::InvalidAccess { addr: address })?;
-            let (kind, segment_offset) = self
-                .locate(current_address)
-                .ok_or(Error::InvalidAccess {
+            let (kind, segment_offset) =
+                self.locate(current_address).ok_or(Error::InvalidAccess {
                     addr: current_address,
                 })?;
 
@@ -337,7 +338,7 @@ impl Arm11CodeAddressSpace {
 }
 
 impl Bus for Arm11CodeAddressSpace {
-    fn read8(&mut self, address: u32) -> Result<u8> {
+    fn read8(&mut self, address: u32) -> BusResult<u8> {
         let (kind, offset) = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -347,15 +348,15 @@ impl Bus for Arm11CodeAddressSpace {
             .ok_or(Error::InvalidAccess { addr: address })
     }
 
-    fn write8(&mut self, address: u32, value: u8) -> Result<()> {
+    fn write8(&mut self, address: u32, value: u8) -> BusResult<()> {
         self.write_bytes(address, &[value])
     }
 
-    fn write16(&mut self, address: u32, value: u16) -> Result<()> {
+    fn write16(&mut self, address: u32, value: u16) -> BusResult<()> {
         self.write_bytes(address, &value.to_le_bytes())
     }
 
-    fn write32(&mut self, address: u32, value: u32) -> Result<()> {
+    fn write32(&mut self, address: u32, value: u32) -> BusResult<()> {
         self.write_bytes(address, &value.to_le_bytes())
     }
 }
@@ -364,7 +365,7 @@ fn validate_image_segment(
     segment: Arm11SegmentKind,
     bytes: &[u8],
     expected_size: usize,
-) -> Result<(), Arm11ProcessLayoutError> {
+) -> std::result::Result<(), Arm11ProcessLayoutError> {
     if bytes.len() != expected_size {
         return Err(Arm11ProcessLayoutError::SegmentImageSizeMismatch {
             segment,
@@ -381,7 +382,7 @@ fn make_segment(
     mapped_size_bytes: usize,
     writable: bool,
     executable: bool,
-) -> Result<Arm11MemorySegment, Arm11ProcessLayoutError> {
+) -> std::result::Result<Arm11MemorySegment, Arm11ProcessLayoutError> {
     let mapped_size_bytes = u32::try_from(mapped_size_bytes)
         .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
 
@@ -422,7 +423,7 @@ fn make_segment(
 
 fn validate_no_overlap(
     segments: [(Arm11SegmentKind, Arm11MemorySegment); 3],
-) -> Result<(), Arm11ProcessLayoutError> {
+) -> std::result::Result<(), Arm11ProcessLayoutError> {
     let mut non_empty = segments
         .into_iter()
         .filter(|(_, segment)| !segment.is_empty())
@@ -515,9 +516,7 @@ mod tests {
             Err(crate::Error::InvalidAccess { .. })
         ));
 
-        address_space
-            .write32(data_address, 0xDEAD_BEEF)
-            .unwrap();
+        address_space.write32(data_address, 0xDEAD_BEEF).unwrap();
         assert_eq!(address_space.read32(data_address).unwrap(), 0xDEAD_BEEF);
     }
 
