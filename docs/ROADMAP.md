@@ -12,7 +12,7 @@ Ordem sugerida; os marcos podem ser reordenados conforme o que for aprendido.
 
 - [x] Decodificação e execução do conjunto de instruções ARM (modo usuário)
 - [x] Autoteste da CPU compartilhado por PC e Android
-- [ ] Instruções Thumb
+- [x] Instruções Thumb (formas clássicas, BL/BLX, REV/SXT/UXT; faltam BKPT, CPS e SETEND)
 - [ ] Modos privilegiados e registradores com banco
 - [ ] Instruções do ARMv6 (mídia, exclusivas, saturação, multiplicações DSP)
 - [ ] Coprocessador e unidade de ponto flutuante vetorial

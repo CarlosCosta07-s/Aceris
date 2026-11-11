@@ -28,7 +28,7 @@ Ele expõe um System que o frontend carrega com um jogo e avança quadro a quadr
 
 ## Estado atual do núcleo
 
-- **CPU (ARM11, estado ARM):** interpretador com banco único de registradores
+- **CPU (ARM11, estados ARM e Thumb):** interpretador com banco único de registradores
   (modo usuário). step() busca, decodifica e executa uma instrução e devolve um
   StepEvent (Executed ou Svc(n), que será tratado pelo kernel emulado).
   Já implementado:
@@ -37,8 +37,11 @@ Ele expõe um System que o frontend carrega com um jogo e avança quadro a quadr
   - LDRH/STRH/LDRSB/LDRSH/LDRD/STRD, LDM/STM, SWP;
   - MUL/MLA e multiplicações longas (UMULL/SMULL/UMLAL/SMLAL);
   - B/BL/BX/BLX, CLZ, MRS/MSR (apenas flags) e SWI.
-  Ainda faltam: Thumb, modos privilegiados e registradores com banco, instruções
-  de mídia/exclusivas do ARMv6, coprocessadores e VFP.
+  - Thumb (cpu/thumb.rs): as 19 formas clássicas, o par BL/BLX de duas
+    meias-palavras, SWI, PUSH/POP e as adições do ARMv6 REV/REV16/REVSH, SXT* e UXT*;
+    BX, BLX e LDR/POP em pc alternam entre ARM e Thumb pelo bit 0.
+  Ainda faltam: BKPT/CPS/SETEND do Thumb, modos privilegiados e registradores com
+  banco, instruções de mídia/exclusivas do ARMv6, coprocessadores e VFP.
 - **Autoteste (selftest):** programa ARM minúsculo executado pelo interpretador.
   O desktop o expõe em aceris --selftest e o Android em aceris_selftest(),
   provando que as duas plataformas rodam o mesmo núcleo.

@@ -5,12 +5,12 @@ use super::{Arm11Core, Condition, LR, PC, StepEvent};
 use crate::memory::Bus;
 use aceris_common::{Error, Result};
 
-fn bit(word: u32, n: u32) -> bool {
+pub(super) fn bit(word: u32, n: u32) -> bool {
     (word >> n) & 1 != 0
 }
 
 /// Extracts bits `hi..=lo` of `word`.
-fn bits(word: u32, hi: u32, lo: u32) -> u32 {
+pub(super) fn bits(word: u32, hi: u32, lo: u32) -> u32 {
     (word >> lo) & ((1 << (hi - lo + 1)) - 1)
 }
 
@@ -67,7 +67,7 @@ impl Arm11Core {
 
     /// Reads register `n`. Reading `pc` yields the current instruction address
     /// plus `pc_offset` (8 for most operands, 12 for register-controlled shifts).
-    fn reg(&self, n: u32, pc_offset: u32) -> u32 {
+    pub(super) fn reg(&self, n: u32, pc_offset: u32) -> u32 {
         if n as usize == PC {
             self.regs[PC].wrapping_add(pc_offset)
         } else {
@@ -91,13 +91,13 @@ impl Arm11Core {
         }
     }
 
-    fn branch(&mut self, target: u32) {
+    pub(super) fn branch(&mut self, target: u32) {
         self.regs[PC] = target;
         self.branch_taken = true;
     }
 
     /// Branch that selects ARM or Thumb state from bit 0 of `target`.
-    fn branch_exchange(&mut self, target: u32) {
+    pub(super) fn branch_exchange(&mut self, target: u32) {
         if target & 1 != 0 {
             self.cpsr.set_thumb(true);
             self.branch(target & !1);
@@ -948,10 +948,10 @@ mod tests {
         m.step();
         assert_eq!(m.cpu.pc(), 0x40);
         assert!(m.cpu.cpsr.thumb());
-        assert!(matches!(
-            m.cpu.step(&mut m.mem),
-            Err(Error::Unimplemented(_))
-        ));
+        // The next fetch is a 16-bit halfword: the zeroed memory decodes as
+        // `MOVS r0, r0`, so pc advances by 2.
+        m.step();
+        assert_eq!(m.cpu.pc(), 0x42);
     }
 
     #[test]
