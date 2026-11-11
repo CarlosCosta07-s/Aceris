@@ -5,7 +5,7 @@
 //! hashes, or parse the extended header, ExeFS, or RomFS filesystems.
 
 use std::fmt;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
 /// Structural ExeFS header parser for NCCH executable files.
 pub mod exefs;
@@ -307,6 +307,33 @@ impl NcchHeader {
         self.flags[5] >> 2
     }
 
+    /// Parses the ExeFS header from the NCCH container.
+    ///
+    /// The reader must expose the NCCH bytes from offset zero. Its ExeFS region
+    /// must already be readable (cleartext); this method does not decrypt NCCH
+    /// contents or verify the ExeFS superblock hash.
+    ///
+    /// Returns `Ok(None)` when the NCCH header does not declare an ExeFS region.
+    pub fn parse_exefs_header<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+    ) -> Result<Option<exefs::ExeFsHeader>, exefs::ExeFsError> {
+        let Some(region) = self.exefs else {
+            return Ok(None);
+        };
+
+        let actual = reader
+            .seek(SeekFrom::Start(region.offset_bytes))
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+        if actual != region.offset_bytes {
+            return Err(exefs::ExeFsError::ReaderFailure(
+                "reader did not seek to the declared ExeFS offset".to_owned(),
+            ));
+        }
+
+        exefs::ExeFsHeader::parse_reader(reader, region.size_bytes).map(Some)
+    }
+
     /// Returns true when the NCCH NoCrypto flag is set.
     ///
     /// This reports the header flag only; it does not decrypt or validate data.
@@ -497,6 +524,45 @@ mod tests {
         assert_eq!(romfs.offset_bytes, 0x4000);
         assert_eq!(romfs.size_bytes, 0x4000);
         assert_eq!(romfs.hash_region_size_bytes, 0x400);
+    }
+
+    #[test]
+    fn parses_exefs_header_at_the_declared_ncch_offset() {
+        let ncch_data = valid_header();
+        let parsed = NcchHeader::parse(&ncch_data, 0x1_0000).unwrap();
+
+        let mut container = vec![0; 0x1_0000];
+        let exefs_start = 0x2000;
+        let mut exefs_header = vec![0; exefs::HEADER_SIZE];
+        exefs_header[..5].copy_from_slice(b".code");
+        exefs_header[12..16].copy_from_slice(&0x100u32.to_le_bytes());
+        exefs_header[0x1E0..0x200].fill(0x5A);
+        container[exefs_start..exefs_start + exefs::HEADER_SIZE]
+            .copy_from_slice(&exefs_header);
+
+        let mut reader = Cursor::new(container);
+        let exefs = parsed
+            .parse_exefs_header(&mut reader)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reader.position(), (exefs_start + exefs::HEADER_SIZE) as u64);
+        assert_eq!(exefs.files.len(), 1);
+        assert_eq!(exefs.file(".code").unwrap().size_bytes, 0x100);
+        assert_eq!(exefs.file(".code").unwrap().sha256, [0x5A; 32]);
+    }
+
+    #[test]
+    fn returns_none_when_ncch_has_no_exefs_region() {
+        let mut data = valid_header();
+        write_u32(&mut data, EXEFS_REGION_OFFSET, 0);
+        write_u32(&mut data, EXEFS_REGION_OFFSET + 4, 0);
+        write_u32(&mut data, EXEFS_HASH_OFFSET, 0);
+        let parsed = NcchHeader::parse(&data, 0x1_0000).unwrap();
+
+        let mut reader = Cursor::new(Vec::new());
+        assert_eq!(parsed.parse_exefs_header(&mut reader).unwrap(), None);
+        assert_eq!(reader.position(), 0);
     }
 
     #[test]
