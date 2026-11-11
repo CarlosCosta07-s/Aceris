@@ -56,6 +56,12 @@ fn sign_extend_lane(value: u32, width: u32) -> i64 {
     i64::from(((value << shift) as i32) >> shift)
 }
 
+/// Saturates a signed intermediate to the ARM 32-bit signed range.
+fn signed_saturate_32(value: i64) -> (i32, bool) {
+    let saturated = value.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
+    (saturated as i32, saturated != value)
+}
+
 impl Arm11Core {
     pub(super) fn execute_arm<B: Bus + ?Sized>(
         &mut self,
@@ -793,7 +799,43 @@ impl Arm11Core {
         let rm = bits(word, 3, 0);
         let rd = bits(word, 15, 12);
 
-        if word & 0x0FF0_00F0 == 0x0120_0070 {
+        if word & 0x0F90_0FF0 == 0x0100_0050 {
+            // QADD/QSUB/QDADD/QDSUB use signed 32-bit saturation. QD* first
+            // saturates the doubled Rn operand, then saturates the final sum
+            // or difference. The CPSR.Q flag is sticky across instructions.
+            let rn = bits(word, 19, 16) as usize;
+            if rd == PC || rn == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+
+            let first = i64::from(self.regs[rm] as i32);
+            let second = i64::from(self.regs[rn] as i32);
+            let (result, saturated) = match bits(word, 22, 21) {
+                0b00 => signed_saturate_32(first + second), // QADD
+                0b01 => signed_saturate_32(first - second), // QSUB
+                0b10 => {
+                    let (doubled, double_saturated) = signed_saturate_32(second * 2);
+                    let (result, add_saturated) =
+                        signed_saturate_32(first + i64::from(doubled));
+                    (result, double_saturated || add_saturated)
+                }
+                0b11 => {
+                    let (doubled, double_saturated) = signed_saturate_32(second * 2);
+                    let (result, subtract_saturated) =
+                        signed_saturate_32(first - i64::from(doubled));
+                    (result, double_saturated || subtract_saturated)
+                }
+                _ => unreachable!(),
+            };
+
+            self.regs[rd] = result as u32;
+            if saturated {
+                self.cpsr.set_q();
+            }
+        } else if word & 0x0FF0_00F0 == 0x0120_0070 {
             // BKPT #imm16; exception-vector entry is not modeled yet.
             let immediate = ((bits(word, 19, 8) << 4) | bits(word, 3, 0)) as u16;
             return Ok(StepEvent::Breakpoint(immediate));
@@ -1530,6 +1572,78 @@ mod tests {
         assert_eq!(m.cpu.regs[2], 127);
         assert_eq!(m.cpu.regs[4], 100);
         assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
+    fn armv6_scalar_saturating_arithmetic_implements_all_four_operations() {
+        // QADD r0,r1,r2 ; QSUB r0,r1,r2 ;
+        // QDADD r0,r1,r2 ; QDSUB r0,r1,r2.
+        let mut m = Machine::new(&[
+            0xE102_0051,
+            0xE122_0051,
+            0xE142_0051,
+            0xE162_0051,
+        ]);
+
+        m.cpu.regs[1] = i32::MAX as u32;
+        m.cpu.regs[2] = 1;
+        m.step();
+        assert_eq!(m.cpu.regs[0], i32::MAX as u32);
+        assert!(m.cpu.cpsr.q());
+
+        m.cpu.regs[1] = i32::MIN as u32;
+        m.cpu.regs[2] = 1;
+        m.step();
+        assert_eq!(m.cpu.regs[0], i32::MIN as u32);
+        assert!(m.cpu.cpsr.q());
+
+        // QDADD saturates the doubled second operand to INT_MAX; adding
+        // INT_MIN then produces -1 without a second saturation.
+        m.cpu.regs[1] = i32::MIN as u32;
+        m.cpu.regs[2] = i32::MAX as u32;
+        m.step();
+        assert_eq!(m.cpu.regs[0], u32::MAX);
+        assert!(m.cpu.cpsr.q());
+
+        // QDSUB saturates the doubled INT_MIN operand before subtraction.
+        m.cpu.regs[1] = i32::MAX as u32;
+        m.cpu.regs[2] = i32::MIN as u32;
+        m.step();
+        assert_eq!(m.cpu.regs[0], i32::MAX as u32);
+        assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
+    fn armv6_scalar_saturating_arithmetic_preserves_nzcv_and_sticky_q() {
+        // QADD r0,r1,r2 ; QADD r0,r1,r2
+        let mut m = Machine::new(&[0xE102_0051, 0xE102_0051]);
+        m.cpu.regs[1] = 20;
+        m.cpu.regs[2] = 22;
+        m.cpu.cpsr.set_flags(true, false, true, false);
+
+        m.step();
+        assert_eq!(m.cpu.regs[0], 42);
+        assert_eq!(m.flags(), (true, false, true, false));
+        assert!(!m.cpu.cpsr.q());
+
+        m.cpu.cpsr.set_q();
+        m.cpu.regs[1] = 1;
+        m.cpu.regs[2] = 2;
+        m.step();
+        assert_eq!(m.cpu.regs[0], 3);
+        assert!(m.cpu.cpsr.q());
+        assert_eq!(m.flags(), (true, false, true, false));
+    }
+
+    #[test]
+    fn armv6_scalar_saturating_arithmetic_rejects_pc_registers() {
+        for instruction in [0xE102_F051, 0xE10F_0051, 0xE102_005F] {
+            let mut m = Machine::new(&[instruction]);
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, .. })
+            ));
+        }
     }
 
     #[test]
