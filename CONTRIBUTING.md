@@ -1,38 +1,37 @@
 # Contribuindo com o Aceris
 
-## Política de sala limpa
+## Regras obrigatórias
 
-O Aceris é uma implementação **independente**. Para manter isso verdadeiro:
+Antes de qualquer contribuição, leia [REGRAS_PARA_IA.md](docs/REGRAS_PARA_IA.md). As regras de isolamento entre IAs, uso exclusivo de `main`, Rust em todo o produto e autoria integral de código e assets são obrigatórias.
 
-- **Não copie, traduza ou adapte código** de outros emuladores (incluindo Azahar,
-  Citra, Lime3DS e derivados), nem de interfaces, textos, ícones ou recursos
-  visuais deles.
-- **Não cole trechos de código sob licenças incompatíveis** (por exemplo GPL) no projeto.
-- Ser *inspirado* por ideias gerais é aceitável (por exemplo, "emuladores
-  costumam separar núcleo e frontend"). Reproduzir a implementação não é.
-- Documentação pública de hardware e de formatos de arquivo pode ser consultada
-  como referência. Escreva o código com suas próprias palavras e estrutura, e
-  cite a fonte nos comentários quando o comportamento for pouco óbvio.
-- Se você já leu o código-fonte de outro emulador para a mesma peça que vai
-  implementar, avise no PR para decidirmos juntos como proceder.
-- **Nunca** envie jogos, firmware, BIOS, chaves ou qualquer material protegido por
-  direitos autorais. O `.gitignore` bloqueia as extensões mais comuns.
+### Política de sala limpa
+
+- Não abra, leia, pesquise ou consulte o código-fonte interno de outros emuladores, incluindo Azahar, Citra, Lime3DS e derivados.
+- Outros emuladores só podem ser analisados pela superfície observável: interface em execução, menus, configurações, fluxos de usuário e comportamento visível.
+- Não copie, adapte, traduza ou derive código, interface, texto ou assets de terceiros.
+- Documentação pública independente de hardware e formatos pode ser consultada; isso não autoriza consultar código-fonte de emuladores.
+- Todo o produto, inclusive interface e frontends, deve ser implementado em Rust.
+- Não adicione dependências que forneçam implementação ou recursos do produto sem autorização explícita do mantenedor.
+- Não inclua jogos, firmware, BIOS, chaves ou material protegido no repositório.
+
+### Isolamento de agentes
+
+Cada IA deve respeitar os arquivos e tarefas atribuídos às demais. É proibido alterar trabalho de outra IA sem autorização explícita de Carlos Costa. Se houver dúvida sobre autoria ou sobreposição, interrompa a edição e peça orientação.
 
 ## Fluxo de trabalho
 
-1. Crie um branch a partir de `main`.
-2. Antes de abrir o PR, rode:
+1. Trabalhe exclusivamente na branch `main`. É proibido criar branches ou usar pull requests como fluxo de desenvolvimento.
+2. Confira o HEAD e o diff antes de editar ou publicar alterações. Nunca sobrescreva commits ou alterações que chegaram depois da sua leitura.
+3. Execute, quando aplicável:
    ```sh
-   cargo fmt --all
+   cargo fmt --all --check
    cargo clippy --workspace --all-targets -- -D warnings
    cargo test --workspace
    ```
-3. Abra o PR com uma descrição do que mudou e de onde vieram as informações usadas
-   (documentação, testes próprios, etc.).
+4. Informe exatamente quais verificações foram executadas e seus resultados. Não afirme que compilou ou testou o que não foi executado.
 
 ## Estilo
 
 - Código e comentários em inglês; documentação do repositório em português.
-- Prefira testes pequenos que descrevam o comportamento de hardware
-  esperado (veja `cpu/condition.rs`).
-- Evite `unsafe`; quando necessário, comente o invariante com `// SAFETY:`.
+- Prefira testes pequenos e determinísticos.
+- Evite `unsafe`; quando necessário, documente o invariante com `// SAFETY:`.

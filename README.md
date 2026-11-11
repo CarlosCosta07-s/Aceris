@@ -17,8 +17,8 @@ O nome vem da **acerola**, a pequena fruta vermelha cheia de energia.
 ## Princípios
 
 - **Código 100% original.** O Aceris é escrito do zero. Nenhum código, interface ou
-  recurso de outros emuladores é usado ou traduzido. Veja a
-  [política de sala limpa](CONTRIBUTING.md#política-de-sala-limpa).
+  recurso de outros emuladores é usado ou traduzido. Veja as [regras obrigatórias para IAs](docs/REGRAS_PARA_IA.md)
+  e a [política de contribuição](CONTRIBUTING.md).
 - **Rust de ponta a ponta**, com um núcleo independente de plataforma.
 - **PC e Android** compartilhando o mesmo núcleo.
 - **Sem conteúdo protegido.** O projeto não inclui nem distribui jogos, firmware ou
@@ -61,9 +61,8 @@ cargo install cargo-ndk
 cargo ndk -t arm64-v8a build -p aceris-android --release
 ```
 
-É necessário ter o Android NDK instalado (`ANDROID_NDK_HOME`). O app Android
-(Gradle/Kotlin) ainda será criado; por enquanto o crate gera apenas a biblioteca
-nativa.
+É necessário ter o Android NDK instalado (`ANDROID_NDK_HOME`). A aplicação Android e sua interface também deverão ser implementadas em Rust;
+o crate atual gera apenas a biblioteca nativa.
 
 ## Ícone
 

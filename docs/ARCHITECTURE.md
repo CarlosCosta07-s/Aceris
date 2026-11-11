@@ -58,13 +58,15 @@ implementadas:
 - **Janela e entrada no desktop:** winit é o candidato natural.
 - **Renderização:** wgpu cobre Vulkan, Metal, DX12 e GL/GLES no mesmo código,
   o que ajuda a manter PC e Android juntos.
-- **Interface (menus, biblioteca de jogos, configurações):** egui para o desktop;
-  no Android, UI nativa (Kotlin/Compose) conversando com o núcleo via JNI.
+- **Interface (menus, biblioteca de jogos, configurações):** deverá ser implementada
+  em Rust tanto no desktop quanto no Android, compartilhando a maior quantidade
+  possível de lógica e componentes próprios. A tecnologia ainda precisa ser
+  definida sem introduzir uma camada de aplicação em outra linguagem.
 - **Áudio:** cpal é uma opção multiplataforma.
 - **Estratégia de CPU:** começar com um interpretador simples e correto; considerar
   um JIT/recompilador dinâmico só depois que a compatibilidade estiver estável.
-- **Distribuição do app Android:** Gradle + Kotlin com cargo-ndk gerando as .so
-  em jniLibs/.
+- **Distribuição do app Android:** definir um fluxo compatível com a regra de
+  implementação integral em Rust, sem frontend Kotlin/Java.
 
 ## Build para Android
 
