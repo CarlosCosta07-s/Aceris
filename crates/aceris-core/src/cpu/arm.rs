@@ -169,6 +169,50 @@ impl Arm11Core {
             if saturated {
                 self.cpsr.set_q();
             }
+        } else if word & 0x0FF0_0070 == 0x0680_0010
+            || word & 0x0FF0_0070 == 0x0680_0050
+        {
+            // PKHBT / PKHTB: combine halfwords after shifting Rm.
+            let rn = bits(word, 19, 16) as usize;
+            if rd == PC || rn == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            let shift = bits(word, 11, 7);
+            let shifted = if word & 0x40 == 0 {
+                self.regs[rm].wrapping_shl(shift)
+            } else if shift == 0 {
+                (self.regs[rm] as i32 >> 31) as u32
+            } else {
+                ((self.regs[rm] as i32) >> shift) as u32
+            };
+            self.regs[rd] = if word & 0x40 == 0 {
+                (shifted & 0xFFFF_0000) | (self.regs[rn] & 0x0000_FFFF)
+            } else {
+                (self.regs[rn] & 0xFFFF_0000) | (shifted & 0x0000_FFFF)
+            };
+        } else if word & 0x0FF0_0FF0 == 0x0680_0FB0 {
+            // SEL chooses each result byte using the corresponding CPSR.GE flag.
+            let rn = bits(word, 19, 16) as usize;
+            if rd == PC || rn == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            let first = self.regs[rn];
+            let second = self.regs[rm];
+            let ge = self.cpsr.ge();
+            let mut result = 0u32;
+            for lane in 0..4 {
+                let source = if ge & (1 << lane) != 0 { first } else { second };
+                result |= source & (0xFF << (lane * 8));
+            }
+            self.regs[rd] = result;
+        } else if self.execute_parallel_media_instruction(word)? {
+            // The instruction updates packed lanes and, where applicable, GE.
         } else if word & 0x0FF0_00F0 == 0x0780_0010 {
             // USAD8/USADA8: Rd is bits 19:16 and Ra is bits 15:12.
             let rd = bits(word, 19, 16) as usize;
@@ -199,6 +243,108 @@ impl Arm11Core {
         }
 
         Ok(StepEvent::Executed)
+    }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParallelOperation {
+    Add,
+    Subtract,
+    AddSubtractExchange,
+    SubtractAddExchange,
+}
+
+fn sign_extend_lane(value: u32, width: u32) -> i64 {
+    let shift = 32 - width;
+    i64::from(((value << shift) as i32) >> shift)
+}
+
+    /// Executes non-saturating ARMv6 parallel add/subtract media instructions.
+    ///
+    /// Implements signed and unsigned 8-bit and 16-bit lanes, including
+    /// exchanged-halfword add/subtract forms. Signed variants set GE from the
+    /// sign of each widened lane result; unsigned variants set GE from carry
+    /// or no-borrow. Results always retain the low bits of each lane.
+    fn execute_parallel_media_instruction(&mut self, word: u32) -> Result<bool> {
+        let encoding = word & 0x0FF0_00F0;
+        let (width, signed, operation) = match encoding {
+            0x0610_0010 => (16, true, ParallelOperation::Add),
+            0x0610_0030 => (16, true, ParallelOperation::AddSubtractExchange),
+            0x0610_0050 => (16, true, ParallelOperation::SubtractAddExchange),
+            0x0610_0070 => (16, true, ParallelOperation::Subtract),
+            0x0610_0090 => (8, true, ParallelOperation::Add),
+            0x0610_00F0 => (8, true, ParallelOperation::Subtract),
+            0x0650_0010 => (16, false, ParallelOperation::Add),
+            0x0650_0030 => (16, false, ParallelOperation::AddSubtractExchange),
+            0x0650_0050 => (16, false, ParallelOperation::SubtractAddExchange),
+            0x0650_0070 => (16, false, ParallelOperation::Subtract),
+            0x0650_0090 => (8, false, ParallelOperation::Add),
+            0x0650_00F0 => (8, false, ParallelOperation::Subtract),
+            _ => return Ok(false),
+        };
+
+        let rn = bits(word, 19, 16) as usize;
+        let rd = bits(word, 15, 12) as usize;
+        let rm = bits(word, 3, 0) as usize;
+        if rd == PC || rn == PC || rm == PC {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        let lhs = self.regs[rn];
+        let rhs = self.regs[rm];
+        let lane_count = 32 / width;
+        let lane_mask = (1u32 << width) - 1;
+        let mut result = 0u32;
+        let mut ge = 0u8;
+
+        for lane in 0..lane_count {
+            let rhs_lane = match operation {
+                ParallelOperation::AddSubtractExchange
+                | ParallelOperation::SubtractAddExchange => lane_count - lane - 1,
+                _ => lane,
+            };
+            let shift_lhs = lane * width;
+            let shift_rhs = rhs_lane * width;
+            let a = (lhs >> shift_lhs) & lane_mask;
+            let b = (rhs >> shift_rhs) & lane_mask;
+            let is_add = match operation {
+                ParallelOperation::Add => true,
+                ParallelOperation::Subtract => false,
+                ParallelOperation::AddSubtractExchange => lane == lane_count - 1,
+                ParallelOperation::SubtractAddExchange => lane != lane_count - 1,
+            };
+
+            let (lane_result, ge_set) = if signed {
+                let signed_a = sign_extend_lane(a, width);
+                let signed_b = sign_extend_lane(b, width);
+                let arithmetic = if is_add {
+                    signed_a + signed_b
+                } else {
+                    signed_a - signed_b
+                };
+                (arithmetic as u32 & lane_mask, arithmetic >= 0)
+            } else if is_add {
+                let arithmetic = u64::from(a) + u64::from(b);
+                (arithmetic as u32 & lane_mask, arithmetic > u64::from(lane_mask))
+            } else {
+                (a.wrapping_sub(b) & lane_mask, a >= b)
+            };
+
+            result |= lane_result << shift_lhs;
+            if ge_set {
+                if width == 16 {
+                    ge |= 0b11 << (lane * 2);
+                } else {
+                    ge |= 1 << lane;
+                }
+            }
+        }
+
+        self.regs[rd] = result;
+        self.cpsr.set_ge(ge);
+        Ok(true)
     }
 
     // ----- register helpers -------------------------------------------------
@@ -1239,6 +1385,84 @@ mod tests {
         assert_eq!(m.cpu.regs[2], 127);
         assert_eq!(m.cpu.regs[4], 100);
         assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
+    fn armv6_parallel_signed_byte_arithmetic_sets_ge_for_sel() {
+        // SADD8 r0,r1,r2 ; SEL r3,r4,r5
+        let mut m = Machine::new(&[
+            0xE611_0F92, // SADD8 r0,r1,r2
+            0xE684_3FB5, // SEL r3,r4,r5
+        ]);
+        m.cpu.regs[1] = 0xFF01_807F;
+        m.cpu.regs[2] = 0x01FF_FF01;
+        m.cpu.regs[4] = 0x1122_3344;
+        m.cpu.regs[5] = 0xAABB_CCDD;
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[0], 0x0000_7F80);
+        assert_eq!(m.cpu.cpsr.ge(), 0b1101);
+        assert_eq!(m.cpu.regs[3], 0x1122_CC44);
+    }
+
+    #[test]
+    fn armv6_parallel_signed_and_unsigned_halfword_operations_set_ge() {
+        // SADD16 r0,r1,r2 ; UADD16 r3,r4,r5 ; USUB16 r6,r7,r8
+        let mut m = Machine::new(&[
+            0xE611_0F12,
+            0xE651_3F15,
+            0xE657_6F18,
+        ]);
+        m.cpu.regs[1] = 0x7FFF_8000;
+        m.cpu.regs[2] = 0x0001_FFFF;
+        m.cpu.regs[4] = 0xFFFF_0000;
+        m.cpu.regs[5] = 0x0001_0001;
+        m.cpu.regs[7] = 0x0001_0000;
+        m.cpu.regs[8] = 0x0001_0001;
+
+        m.run(3);
+
+        assert_eq!(m.cpu.regs[0], 0x8000_7FFF);
+        assert_eq!(m.cpu.cpsr.ge(), 0b1100);
+        assert_eq!(m.cpu.regs[3], 0x0000_0001);
+        assert_eq!(m.cpu.cpsr.ge(), 0b0011);
+        assert_eq!(m.cpu.regs[6], 0xFFFF_FFFF);
+        assert_eq!(m.cpu.cpsr.ge(), 0b1100);
+    }
+
+    #[test]
+    fn armv6_parallel_exchange_operations_swap_the_second_operand_lanes() {
+        // SADDSUBX r0,r1,r2 ; SSUBADDX r3,r1,r2
+        let mut m = Machine::new(&[
+            0xE611_0F32,
+            0xE611_3F52,
+        ]);
+        m.cpu.regs[1] = 0x000A_0014;
+        m.cpu.regs[2] = 0x0003_0005;
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[0], 0x000D_000F);
+        assert_eq!(m.cpu.regs[3], 0x0007_0017);
+    }
+
+    #[test]
+    fn armv6_pack_halfword_handles_left_and_arithmetic_right_shifts() {
+        // PKHBT r0,r1,r2,LSL #8 ; PKHTB r3,r4,r5,ASR #8
+        let mut m = Machine::new(&[
+            0xE681_0412,
+            0xE684_3455,
+        ]);
+        m.cpu.regs[1] = 0x1122_3344;
+        m.cpu.regs[2] = 0xAABB_CCDD;
+        m.cpu.regs[4] = 0x5566_7788;
+        m.cpu.regs[5] = 0x8000_1234;
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[0], 0xBBCC_3344);
+        assert_eq!(m.cpu.regs[3], 0x5566_0012);
     }
 
     #[test]

@@ -17,6 +17,8 @@ impl Psr {
     pub const V: u32 = 1 << 28;
     /// Sticky saturation flag.
     pub const Q: u32 = 1 << 27;
+    /// Greater-than-or-equal flags used by ARMv6 parallel media instructions.
+    pub const GE_MASK: u32 = 0xF << 16;
     /// Big-endian data access state.
     pub const E: u32 = 1 << 9;
     /// Asynchronous abort mask.
@@ -68,6 +70,16 @@ impl Psr {
     /// Returns the sticky saturation flag.
     pub const fn q(self) -> bool {
         self.0 & Self::Q != 0
+    }
+
+    /// Returns the four ARMv6 GE flags as bits 3..0.
+    pub const fn ge(self) -> u8 {
+        ((self.0 & Self::GE_MASK) >> 16) as u8
+    }
+
+    /// Replaces only the four ARMv6 GE flags.
+    pub fn set_ge(&mut self, ge: u8) {
+        self.0 = (self.0 & !Self::GE_MASK) | (u32::from(ge & 0xF) << 16);
     }
 
     /// Sets the sticky saturation flag. It is never cleared implicitly.
@@ -170,6 +182,21 @@ mod tests {
         assert!(psr.thumb());
         psr.set_thumb(false);
         assert_eq!(psr, Psr::default());
+    }
+
+    #[test]
+    fn ge_flags_update_independently_of_condition_and_saturation_flags() {
+        let mut psr = Psr(0xA800_0010);
+        psr.set_ge(0b1010);
+        assert_eq!(psr.ge(), 0b1010);
+        assert!(psr.q());
+        assert!(psr.n());
+        assert!(psr.z());
+        assert_eq!(psr.mode(), Psr::USER_MODE);
+
+        psr.set_ge(0b0101);
+        assert_eq!(psr.ge(), 0b0101);
+        assert!(psr.q());
     }
 
     #[test]
