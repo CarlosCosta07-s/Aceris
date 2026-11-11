@@ -504,6 +504,51 @@ impl NcchHeader {
         Ok(Some(()))
     }
 
+    /// Opens one ExeFS file after validating its superblock and file digest.
+    ///
+    /// The reader must expose cleartext NCCH bytes from offset zero. The NCCH
+    /// ExeFS superblock hash is checked before its file table is parsed; then
+    /// only the requested file's SHA-256 digest is checked. The returned reader
+    /// is restricted to that file's byte range. Other ExeFS files are not
+    /// verified by this operation.
+    ///
+    /// Returns None when the NCCH header does not declare an ExeFS region.
+    /// This does not decrypt NCCH content or verify its RSA signature.
+    pub fn open_verified_exefs_file_reader<R: Read + Seek>(
+        &self,
+        reader: R,
+        file_name: &str,
+    ) -> Result<
+        Option<exefs::ExeFsFileReader<romfs::RomFsRangeReader<R>>>,
+        exefs::ExeFsError,
+    > {
+        let Some(region) = self.exefs else {
+            return Ok(None);
+        };
+
+        let mut reader = reader;
+        verify_exefs_superblock_hash(&mut reader, region, &self.exefs_superblock_hash)?;
+
+        let header = self.parse_exefs_header(&mut reader)?.ok_or_else(|| {
+            exefs::ExeFsError::ReaderFailure(
+                "NCCH ExeFS region disappeared from validated header".to_owned(),
+            )
+        })?;
+        let file = header
+            .file(file_name)
+            .cloned()
+            .ok_or_else(|| exefs::ExeFsError::FileNotFound(file_name.to_owned()))?;
+
+        verify_exefs_file_hash(&mut reader, region, &file)?;
+
+        let bounded_region =
+            romfs::RomFsRangeReader::new(reader, region.offset_bytes, region.size_bytes)
+                .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+        file.reader(bounded_region)
+            .map(Some)
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))
+    }
+
     /// Returns true when the NCCH NoCrypto flag is set.
     ///
     /// This reports the header flag only; it does not decrypt or validate data.
@@ -828,6 +873,55 @@ mod tests {
 
         let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         (image, parsed)
+    }
+
+    #[test]
+    fn opens_a_verified_exefs_file_as_a_bounded_reader() {
+        let (image, parsed) = valid_exefs_image();
+        let expected: Vec<u8> = (0..0x100).map(|byte| byte as u8).collect();
+
+        let mut reader = parsed
+            .open_verified_exefs_file_reader(Cursor::new(image), ".code")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reader.len(), 0x100);
+        let mut actual = Vec::new();
+        reader.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+    }
+
+    #[test]
+    fn rejects_opening_an_exefs_file_with_a_corrupt_superblock() {
+        let (mut image, parsed) = valid_exefs_image();
+        image[0x2000 + 0x10] ^= 0x80;
+
+        assert_eq!(
+            parsed.open_verified_exefs_file_reader(Cursor::new(image), ".code").err(),
+            Some(exefs::ExeFsError::SuperblockHashMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_opening_an_exefs_file_with_corrupt_contents() {
+        let (mut image, parsed) = valid_exefs_image();
+        image[0x2000 + 0x200 + 0x10] ^= 0x80;
+
+        assert_eq!(
+            parsed.open_verified_exefs_file_reader(Cursor::new(image), ".code").err(),
+            Some(exefs::ExeFsError::FileHashMismatch(".code".to_owned()))
+        );
+    }
+
+    #[test]
+    fn reports_a_missing_exefs_file_by_name() {
+        let (image, parsed) = valid_exefs_image();
+
+        assert_eq!(
+            parsed.open_verified_exefs_file_reader(Cursor::new(image), "missing").err(),
+            Some(exefs::ExeFsError::FileNotFound("missing".to_owned()))
+        );
     }
 
     #[test]

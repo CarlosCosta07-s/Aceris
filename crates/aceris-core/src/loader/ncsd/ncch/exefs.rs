@@ -175,6 +175,7 @@ pub enum ExeFsError {
     InvalidHashRegion,
     SuperblockHashMismatch,
     FileHashMismatch(String),
+    FileNotFound(String),
     ReaderFailure(String),
     InvalidEntry { index: usize, reason: &'static str },
     DuplicateFileName(String),
@@ -196,6 +197,7 @@ impl fmt::Display for ExeFsError {
             Self::FileHashMismatch(name) => {
                 write!(formatter, "ExeFS file hash mismatch: {name}")
             }
+            Self::FileNotFound(name) => write!(formatter, "ExeFS file not found: {name}"),
             Self::ReaderFailure(reason) => {
                 write!(formatter, "could not read ExeFS header: {reason}")
             }

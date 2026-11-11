@@ -236,6 +236,10 @@ pub struct NcsdNcchReader<R> {
     reader: NcsdPartitionReader<R>,
 }
 
+/// One ExeFS file reader returned after its NCCH superblock and file digest validate.
+pub type VerifiedNcsdExeFsFileReader<R> =
+    ncch::exefs::ExeFsFileReader<ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>>;
+
 /// RomFS Level 3 reader returned after NCCH superblock and IVFC hashes validate.
 pub type VerifiedNcsdRomFsLevel3Reader<R> = ncch::romfs::RomFsLevel3Reader<
     ncch::romfs::RomFsRangeReader<ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>>,
@@ -262,6 +266,17 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
         &mut self,
     ) -> std::result::Result<Option<()>, ncch::exefs::ExeFsError> {
         self.header.verify_exefs_integrity(&mut self.reader)
+    }
+
+    /// Opens one ExeFS file only after its superblock and file hash validate.
+    ///
+    /// The returned stream remains bounded to the selected file.
+    pub fn open_verified_exefs_file_reader(
+        self,
+        file_name: &str,
+    ) -> std::result::Result<Option<VerifiedNcsdExeFsFileReader<R>>, ncch::exefs::ExeFsError> {
+        self.header
+            .open_verified_exefs_file_reader(self.reader, file_name)
     }
 
     /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
@@ -511,12 +526,18 @@ mod tests {
         assert_eq!(opened.header().content_size_bytes, partition.size_bytes);
         assert_eq!(opened.header().program_id, 0x0004_0000_1234_5678);
         assert!(opened.verify_exefs_integrity().unwrap().is_none());
-        assert!(
-            opened
-                .open_verified_romfs_level3_reader()
-                .unwrap()
-                .is_none()
-        );
+
+        let opened_for_exefs = partition.open_ncch(Cursor::new(image.clone())).unwrap();
+        assert!(opened_for_exefs
+            .open_verified_exefs_file_reader(".code")
+            .unwrap()
+            .is_none());
+
+        let opened_for_romfs = partition.open_ncch(Cursor::new(image)).unwrap();
+        assert!(opened_for_romfs
+            .open_verified_romfs_level3_reader()
+            .unwrap()
+            .is_none());
     }
 
     #[test]
