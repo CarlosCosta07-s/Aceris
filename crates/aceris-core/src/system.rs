@@ -6,7 +6,7 @@ use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
-use crate::video::DualScreenDisplay;
+use crate::video::{DualScreenDisplay, LcdController};
 use aceris_common::{Error, Result};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -21,6 +21,7 @@ pub struct System {
     ncsd_session: Option<Arm11ProcessSession>,
     gpu: Pica200,
     physical_memory: GpuPhysicalMemory,
+    lcd: LcdController,
     display: DualScreenDisplay,
 }
 
@@ -40,6 +41,7 @@ pub struct SystemFrameReport {
     pub instructions_executed: u64,
     pub cpu_stop_reason: Arm11RunStopReason,
     pub gpu_command_lists_submitted: u64,
+    pub lcd_screens_scanned_out: u8,
     pub elapsed_virtual_time_ns: u64,
 }
 
@@ -251,6 +253,16 @@ impl System {
         &mut self.gpu
     }
 
+    /// Returns read-only access to the physical LCD controller registers.
+    pub const fn lcd_controller(&self) -> &LcdController {
+        &self.lcd
+    }
+
+    /// Returns mutable access to the physical LCD controller registers.
+    pub fn lcd_controller_mut(&mut self) -> &mut LcdController {
+        &mut self.lcd
+    }
+
     /// Returns the current dual-screen output surfaces.
     pub const fn display(&self) -> &DualScreenDisplay {
         &self.display
@@ -414,12 +426,20 @@ impl System {
         };
 
         let gpu_command_lists_submitted = self.process_pending_pica_command_buffers()?;
+        let lcd_report = self
+            .lcd
+            .scanout(&self.physical_memory, &mut self.display)
+            .map_err(|error| {
+                Error::Io(io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+            })?;
         let frame_number = self.display.present();
+        self.lcd.advance_vblank();
         Ok(SystemFrameReport {
             frame_number,
             instructions_executed: cpu_report.instructions_executed,
             cpu_stop_reason: cpu_report.stop_reason,
             gpu_command_lists_submitted,
+            lcd_screens_scanned_out: lcd_report.screens_updated,
             elapsed_virtual_time_ns: NOMINAL_FRAME_DURATION_NS,
         })
     }
@@ -560,6 +580,85 @@ mod tests {
     }
 
     #[test]
+    fn frame_scans_out_physical_top_stereo_and_bottom_framebuffers() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let top_left = FCRAM_BASE + 0x8000;
+        let top_right = FCRAM_BASE + 0x9000;
+        let bottom = FCRAM_BASE + 0xA000;
+        system
+            .physical_memory_mut()
+            .write(top_left, &[0x44, 0x33, 0x22, 0x11])
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write(top_right, &[0x88, 0x77, 0x66, 0x55])
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write(bottom, &[0xCC, 0xBB, 0xAA, 0x99])
+            .unwrap();
+
+        for (panel, address_a, address_b, stride) in [
+            (
+                LcdPanel::Top,
+                top_left,
+                top_right,
+                (TOP_SCREEN_WIDTH * 4) as u32,
+            ),
+            (
+                LcdPanel::Bottom,
+                bottom,
+                0,
+                (BOTTOM_SCREEN_WIDTH * 4) as u32,
+            ),
+        ] {
+            for (offset, value) in [
+                (PDC_FRAMEBUFFER_A_FIRST, address_a),
+                (PDC_FRAMEBUFFER_A_SECOND, address_a),
+                (PDC_FRAMEBUFFER_B_FIRST, address_b),
+                (PDC_FRAMEBUFFER_B_SECOND, address_b),
+                (PDC_FRAMEBUFFER_FORMAT, LcdPixelFormat::Rgba8 as u32),
+                (PDC_FRAMEBUFFER_STRIDE, stride),
+                (PDC_CONTROL, 0x0001_0001),
+            ] {
+                system
+                    .lcd_controller_mut()
+                    .write_register(panel, offset, value)
+                    .unwrap();
+            }
+        }
+
+        let report = system.run_frame_with_budget(0).unwrap();
+        assert_eq!(report.lcd_screens_scanned_out, 3);
+        assert_eq!(
+            &system.display().top_left().pixels()[..4],
+            &[0x11, 0x22, 0x33, 0x44]
+        );
+        assert_eq!(
+            &system.display().top_right().pixels()[..4],
+            &[0x55, 0x66, 0x77, 0x88]
+        );
+        assert_eq!(
+            &system.display().bottom().pixels()[..4],
+            &[0x99, 0xAA, 0xBB, 0xCC]
+        );
+        assert_eq!(
+            system
+                .lcd_controller()
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_SELECT),
+            Ok(0)
+        );
+    }
+
+    #[test]
     fn frame_requires_a_prepared_arm11_process() {
         let mut system = System::new();
         system.image = Some(ImageFormat::Ncsd);
@@ -589,6 +688,7 @@ mod tests {
             Arm11RunStopReason::InstructionBudgetExhausted
         );
         assert_eq!(report.elapsed_virtual_time_ns, NOMINAL_FRAME_DURATION_NS);
+        assert_eq!(report.lcd_screens_scanned_out, 0);
         assert_eq!(system.display().frame_number(), 1);
         assert_eq!(system.display().top_left().pixels().len(), 400 * 240 * 4);
         assert_eq!(system.display().top_right().pixels().len(), 400 * 240 * 4);

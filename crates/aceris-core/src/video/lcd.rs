@@ -175,7 +175,11 @@ impl PanelRegisters {
             PDC_FRAMEBUFFER_FORMAT => Ok(self.format),
             PDC_CONTROL => Ok(self.control),
             PDC_FRAMEBUFFER_SELECT => Ok((u32::from(self.next_buffer) & PDC_NEXT_BUFFER)
-                | (u32::from(self.current_buffer) << 4)),
+                | if self.current_buffer != 0 {
+                    PDC_CURRENT_BUFFER
+                } else {
+                    0
+                }),
             PDC_FRAMEBUFFER_STRIDE => Ok(self.stride),
             _ => Err(LcdControllerError::InvalidRegister { panel, offset }),
         }
