@@ -5,7 +5,7 @@
 //! hashes, or parse the extended header, ExeFS, or RomFS filesystems.
 
 use std::fmt;
-use std::io::{self, Read};
+use std::io::Read;
 
 pub const HEADER_SIZE: usize = 0x200;
 
@@ -421,7 +421,6 @@ fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::NcsdPartition;
     use super::*;
     use std::io::Cursor;
 
@@ -504,7 +503,7 @@ mod tests {
         container.extend_from_slice(&data);
         container.resize(0x1000 + 0x1_0000, 0xBB);
 
-        let mut partition = NcsdPartition {
+        let mut partition = crate::loader::ncsd::NcsdPartition {
             index: 0,
             offset_bytes: 0x1000,
             size_bytes: 0x1_0000,
