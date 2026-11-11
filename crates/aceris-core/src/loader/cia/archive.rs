@@ -10,6 +10,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
 use crate::loader::ncsd::ncch::{NcchError, NcchHeader};
 
+use super::ticket::{MAX_TICKET_SIZE_BYTES, TicketError, TicketHeader};
 use super::tmd::{CONTENT_TYPE_ENCRYPTED, MAX_TMD_SIZE_BYTES, TmdError, TmdHeader};
 use super::{CiaHeader, HEADER_SIZE};
 
@@ -32,7 +33,16 @@ pub enum CiaArchiveError {
     Reader(io::Error),
     InvalidHeader(io::Error),
     InvalidTmd(TmdError),
+    InvalidTicket(TicketError),
     InvalidNcchHeader(NcchError),
+    TicketSectionTooLarge {
+        declared_size: u64,
+        maximum_size: usize,
+    },
+    TicketTitleIdMismatch {
+        ticket_title_id: u64,
+        tmd_title_id: u64,
+    },
     TmdSectionTooLarge {
         declared_size: u64,
         maximum_size: usize,
@@ -61,6 +71,7 @@ impl fmt::Display for CiaArchiveError {
             Self::Reader(error) => write!(formatter, "CIA reader failed: {error}"),
             Self::InvalidHeader(error) => write!(formatter, "invalid CIA header: {error}"),
             Self::InvalidTmd(error) => write!(formatter, "invalid CIA title metadata: {error}"),
+            Self::InvalidTicket(error) => write!(formatter, "invalid CIA ticket: {error}"),
             Self::InvalidNcchHeader(error) => {
                 write!(formatter, "invalid NCCH content in CIA archive: {error}")
             }
@@ -74,6 +85,14 @@ impl fmt::Display for CiaArchiveError {
             Self::AllocationFailed => {
                 formatter.write_str("could not allocate memory for CIA title metadata")
             }
+            Self::TicketSectionTooLarge { declared_size, maximum_size } => write!(
+                formatter,
+                "CIA ticket section size {declared_size} exceeds the structural limit of {maximum_size} bytes"
+            ),
+            Self::TicketTitleIdMismatch { ticket_title_id, tmd_title_id } => write!(
+                formatter,
+                "CIA ticket title ID {ticket_title_id:#018x} does not match TMD title ID {tmd_title_id:#018x}"
+            ),
             Self::ContentNotIncluded(index) => {
                 write!(formatter, "CIA does not contain content index {index}")
             }
@@ -113,6 +132,7 @@ impl std::error::Error for CiaArchiveError {
         match self {
             Self::Reader(error) | Self::InvalidHeader(error) => Some(error),
             Self::InvalidTmd(error) => Some(error),
+            Self::InvalidTicket(error) => Some(error),
             Self::InvalidNcchHeader(error) => Some(error),
             _ => None,
         }
@@ -127,6 +147,7 @@ impl std::error::Error for CiaArchiveError {
 pub struct CiaArchiveReader<R> {
     reader: R,
     header: CiaHeader,
+    ticket: Option<TicketHeader>,
     title_metadata: TmdHeader,
     contents: Vec<CiaContentLocation>,
 }
@@ -154,6 +175,43 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
             .map_err(CiaArchiveError::Reader)?;
         let header =
             CiaHeader::parse(&header_bytes, file_len).map_err(CiaArchiveError::InvalidHeader)?;
+
+        let ticket = if header.ticket.size_bytes == 0 {
+            None
+        } else {
+            if header.ticket.size_bytes > MAX_TICKET_SIZE_BYTES as u64 {
+                return Err(CiaArchiveError::TicketSectionTooLarge {
+                    declared_size: header.ticket.size_bytes,
+                    maximum_size: MAX_TICKET_SIZE_BYTES,
+                });
+            }
+
+            let ticket_size = usize::try_from(header.ticket.size_bytes).map_err(|_| {
+                CiaArchiveError::TicketSectionTooLarge {
+                    declared_size: header.ticket.size_bytes,
+                    maximum_size: MAX_TICKET_SIZE_BYTES,
+                }
+            })?;
+            let mut ticket_bytes = Vec::new();
+            ticket_bytes
+                .try_reserve_exact(ticket_size)
+                .map_err(|_| CiaArchiveError::AllocationFailed)?;
+            ticket_bytes.resize(ticket_size, 0);
+
+            let actual_ticket_position = reader
+                .seek(SeekFrom::Start(header.ticket.offset_bytes))
+                .map_err(CiaArchiveError::Reader)?;
+            if actual_ticket_position != header.ticket.offset_bytes {
+                return Err(CiaArchiveError::Reader(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "source did not seek to the CIA ticket section",
+                )));
+            }
+            reader
+                .read_exact(&mut ticket_bytes)
+                .map_err(CiaArchiveError::Reader)?;
+            Some(TicketHeader::parse(&ticket_bytes).map_err(CiaArchiveError::InvalidTicket)?)
+        };
 
         let tmd_section = header.title_metadata;
         if tmd_section.size_bytes > MAX_TMD_SIZE_BYTES as u64 {
@@ -191,11 +249,20 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
         let title_metadata = header
             .parse_title_metadata(&tmd_bytes)
             .map_err(CiaArchiveError::InvalidTmd)?;
+        if let Some(ticket) = &ticket {
+            if ticket.title_id != title_metadata.title_id {
+                return Err(CiaArchiveError::TicketTitleIdMismatch {
+                    ticket_title_id: ticket.title_id,
+                    tmd_title_id: title_metadata.title_id,
+                });
+            }
+        }
         let contents = build_content_locations(&header, &title_metadata)?;
 
         Ok(Self {
             reader,
             header,
+            ticket,
             title_metadata,
             contents,
         })
@@ -204,6 +271,11 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
     /// Returns the validated fixed CIA header.
     pub const fn header(&self) -> &CiaHeader {
         &self.header
+    }
+
+    /// Returns parsed ticket data, when the CIA has a ticket section.
+    pub const fn ticket(&self) -> Option<&TicketHeader> {
+        self.ticket.as_ref()
     }
 
     /// Returns the parsed TMD and its validated content tables.
@@ -636,8 +708,16 @@ mod tests {
     }
 
     fn make_cia(contents: &[(u32, u16, u16, &[u8])]) -> (Vec<u8>, Vec<(u16, u64)>) {
+        make_cia_with_ticket(contents, &[])
+    }
+
+    fn make_cia_with_ticket(
+        contents: &[(u32, u16, u16, &[u8])],
+        ticket: &[u8],
+    ) -> (Vec<u8>, Vec<(u16, u64)>) {
         let tmd = make_tmd(contents);
-        let tmd_offset = align(HEADER_SIZE as u64);
+        let ticket_offset = align(HEADER_SIZE as u64);
+        let tmd_offset = align(ticket_offset + ticket.len() as u64);
         let content_offset = align(tmd_offset + tmd.len() as u64);
 
         let mut ordered = contents.iter().collect::<Vec<_>>();
@@ -656,6 +736,7 @@ mod tests {
         let mut data = vec![0u8; usize::try_from(cursor).unwrap()];
 
         write_le_u32(&mut data, 0x00, HEADER_SIZE as u32);
+        write_le_u32(&mut data, 0x0C, ticket.len() as u32);
         write_le_u32(&mut data, 0x10, tmd.len() as u32);
         write_le_u64(&mut data, 0x18, content_size);
 
@@ -664,6 +745,9 @@ mod tests {
             let bit_index = usize::from(*content_index) % 8;
             data[0x20 + byte_index] |= 0x80 >> bit_index;
         }
+
+        let ticket_start = usize::try_from(ticket_offset).unwrap();
+        data[ticket_start..ticket_start + ticket.len()].copy_from_slice(ticket);
 
         let tmd_start = usize::try_from(tmd_offset).unwrap();
         data[tmd_start..tmd_start + tmd.len()].copy_from_slice(&tmd);
@@ -707,6 +791,47 @@ mod tests {
 
         archive.verify_content(0).unwrap();
         archive.verify_content(2).unwrap();
+    }
+
+    #[test]
+    fn reads_ticket_metadata_from_cia_and_matches_the_tmd_title_id() {
+        let content = b"test content";
+        let ticket = make_test_ticket(0x0004_0000_1234_5678);
+        let (data, _) = make_cia_with_ticket(&[(0x3000, 0, 0, content)], &ticket);
+        let archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let parsed = archive.ticket().unwrap();
+
+        assert_eq!(parsed.title_id, archive.title_metadata().title_id);
+        assert_eq!(parsed.encrypted_title_key, [0xA5; 16]);
+        assert_eq!(parsed.common_key_index, 2);
+    }
+
+    #[test]
+    fn rejects_ticket_title_id_that_does_not_match_the_tmd() {
+        let content = b"test content";
+        let ticket = make_test_ticket(0x0004_0000_8765_4321);
+        let (data, _) = make_cia_with_ticket(&[(0x3000, 0, 0, content)], &ticket);
+
+        assert!(matches!(
+            CiaArchiveReader::open(Cursor::new(data)),
+            Err(CiaArchiveError::TicketTitleIdMismatch { .. })
+        ));
+    }
+
+    fn make_test_ticket(title_id: u64) -> Vec<u8> {
+        const SIGNATURE_DATA_SIZE: usize = 0x140;
+        let mut ticket = vec![0u8; SIGNATURE_DATA_SIZE + super::super::ticket::TICKET_DATA_SIZE];
+        ticket[..4].copy_from_slice(&0x0001_0004u32.to_be_bytes());
+        let body = &mut ticket[SIGNATURE_DATA_SIZE..];
+        body[0x7C] = 1;
+        body[0x7F..0x8F].fill(0xA5);
+        body[0x90..0x98].copy_from_slice(&0x1122_3344_5566_7788u64.to_be_bytes());
+        body[0x98..0x9C].copy_from_slice(&0x1234_5678u32.to_be_bytes());
+        body[0x9C..0xA4].copy_from_slice(&title_id.to_be_bytes());
+        body[0xA6..0xA8].copy_from_slice(&0x0102u16.to_be_bytes());
+        body[0xB0] = 1;
+        body[0xB1] = 2;
+        ticket
     }
 
     #[test]

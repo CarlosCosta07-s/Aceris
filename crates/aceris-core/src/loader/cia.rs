@@ -8,12 +8,15 @@ use std::io;
 
 /// Streaming access to CIA content sections.
 pub mod archive;
+/// Structural ticket parser used by CIA archives.
+pub mod ticket;
 /// Structural TMD parser used by CIA archives.
 pub mod tmd;
 
 pub use archive::{
     CiaArchiveError, CiaArchiveReader, CiaContentLocation, CiaContentNcchReader, CiaContentReader,
 };
+pub use ticket::{TicketError, TicketHeader, TicketSignatureType};
 
 pub const HEADER_SIZE: usize = 0x2020;
 pub const CONTENT_INDEX_OFFSET: usize = 0x20;
