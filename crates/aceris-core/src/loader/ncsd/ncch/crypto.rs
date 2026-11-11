@@ -382,10 +382,14 @@ mod tests {
              5ae4df3edbd5d35e5b4f09020db03eab\
              1e031dda2fbe03d1792170a0f3009cee",
         );
-        Aes128Ctr::new(key, counter).apply_keystream(&mut data).unwrap();
+        Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut data)
+            .unwrap();
         assert_eq!(data, expected);
 
-        Aes128Ctr::new(key, counter).apply_keystream(&mut data).unwrap();
+        Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut data)
+            .unwrap();
         assert_eq!(
             data,
             hex::<64>(
@@ -406,7 +410,9 @@ mod tests {
              ae2d8a571e03ac9c9eb76fac45",
         );
         let mut expected = plaintext;
-        Aes128Ctr::new(key, counter).apply_keystream(&mut expected).unwrap();
+        Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut expected)
+            .unwrap();
 
         let mut actual = plaintext;
         let mut stream = Aes128Ctr::new(key, counter);
@@ -421,7 +427,9 @@ mod tests {
         let key = hex("000102030405060708090a0b0c0d0e0f");
         let counter = hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
         let mut sequential = [0u8; 73];
-        Aes128Ctr::new(key, counter).apply_keystream(&mut sequential).unwrap();
+        Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut sequential)
+            .unwrap();
         let mut random_access = [0u8; 37];
         Aes128Ctr::apply_keystream_at_offset(key, counter, 21, &mut random_access).unwrap();
         assert_eq!(&random_access[..], &sequential[21..58]);
@@ -570,7 +578,9 @@ mod tests {
         let key = hex("000102030405060708090a0b0c0d0e0f");
         let counter = hex("000000000000000000000000000000ff");
         let mut bytes = [0u8; 32];
-        Aes128Ctr::new(key, counter).apply_keystream(&mut bytes).unwrap();
+        Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut bytes)
+            .unwrap();
         let first = Aes128::new(key).encrypt_block(counter);
         let second = Aes128::new(key).encrypt_block(hex("00000000000000000000000000000100"));
         let mut expected = [0; 32];
