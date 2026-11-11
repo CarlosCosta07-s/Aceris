@@ -76,7 +76,7 @@ impl Arm11Core {
     ) -> Result<StepEvent> {
         let condition = (word >> 28) as u8;
         if condition == 0xF {
-            return self.execute_unconditional(word);
+            return self.execute_unconditional(bus, word);
         }
         if !Condition::from_bits(condition).passes(self.cpsr) {
             return Ok(StepEvent::Executed);
@@ -788,7 +788,11 @@ impl Arm11Core {
 
     // ----- unconditional space ---------------------------------------------
 
-    fn execute_unconditional(&mut self, word: u32) -> Result<StepEvent> {
+    fn execute_unconditional<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+    ) -> Result<StepEvent> {
         // CLREX is an unconditional A32 ARMv6K instruction.
         if word == 0xF57F_F01F {
             self.clear_exclusive_monitor();
@@ -838,6 +842,11 @@ impl Arm11Core {
                 self.cpsr.set_interrupt_masks(interrupt_mask, imod == 0b11);
             }
             return Ok(StepEvent::Executed);
+        }
+        // RFE loads the target PC and CPSR from two consecutive words. It is
+        // an ARMv6 privileged instruction and exists only in A32.
+        if word & 0xFE50_FFFF == 0xF810_0A00 {
+            return self.return_from_exception_memory(bus, word);
         }
         if bits(word, 27, 25) != 0b101 {
             return Err(Error::Unimplemented("unconditional-space instruction"));
@@ -998,6 +1007,16 @@ impl Arm11Core {
         let restored = self
             .saved_program_status()
             .ok_or(Error::Unimplemented("SPSR has not been initialized"))?;
+        self.restore_status_and_branch(word, target, restored)
+    }
+
+    /// Shared architectural state restoration used by MOVS-to-PC and RFE.
+    fn restore_status_and_branch(
+        &mut self,
+        word: u32,
+        target: u32,
+        restored: super::Psr,
+    ) -> Result<()> {
         if !super::Psr::is_valid_mode(restored.mode()) {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
@@ -1005,8 +1024,8 @@ impl Arm11Core {
             });
         }
 
-        // Switch banks before restoring the complete status word. The target
-        // is already captured because switching modes changes the visible LR.
+        // Capture the target before switching banks; the old mode's SP/LR
+        // are saved by switch_mode and the restored mode's registers loaded.
         self.switch_mode(restored.mode())?;
         self.cpsr = restored;
         let aligned_target = if restored.thumb() {
@@ -1016,6 +1035,71 @@ impl Arm11Core {
         };
         self.branch(aligned_target);
         Ok(())
+    }
+
+    /// Executes the A32 Return From Exception instruction.
+    fn return_from_exception_memory<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+    ) -> Result<StepEvent> {
+        if !self.cpsr.privileged() {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        let base_register = bits(word, 19, 16) as usize;
+        if base_register == PC {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        let base = self.regs[base_register];
+        if base & 3 != 0 {
+            return Err(Error::InvalidAccess { addr: base });
+        }
+
+        let pre_index = bit(word, 24);
+        let increment = bit(word, 23);
+        let writeback = bit(word, 21);
+
+        // RFE transfers PC first and CPSR second. The four addressing modes
+        // follow the same before/after and increment/decrement convention as
+        // the ARM multiple-transfer instructions.
+        let mut address = if increment {
+            base
+        } else {
+            base.wrapping_sub(8)
+        };
+        if pre_index == increment {
+            address = address.wrapping_add(4);
+        }
+
+        let target = self.read_data_u32(bus, address)?;
+        let status = super::Psr(self.read_data_u32(bus, address.wrapping_add(4))?);
+        if !super::Psr::is_valid_mode(status.mode()) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        // Write back while the old exception bank is still active. This is
+        // essential when Rn is SP and the return restores User/System mode.
+        if writeback {
+            self.regs[base_register] = if increment {
+                base.wrapping_add(8)
+            } else {
+                base.wrapping_sub(8)
+            };
+        }
+
+        self.restore_status_and_branch(word, target, status)?;
+        Ok(StepEvent::Executed)
     }
 
     fn multiply_or_swap<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
@@ -1683,6 +1767,96 @@ mod tests {
     }
 
     // ----- data processing --------------------------------------------------
+
+    #[test]
+    fn armv6_rfe_supports_all_four_addressing_modes_and_sp_writeback() {
+        let cases = [
+            (0xF8BD_0A00, 0x800, 0x808), // RFEIA sp!
+            (0xF9BD_0A00, 0x804, 0x808), // RFEIB sp!
+            (0xF83D_0A00, 0x7FC, 0x7F8), // RFEDA sp!
+            (0xF93D_0A00, 0x7F8, 0x7F8), // RFEDB sp!
+        ];
+
+        for (instruction, transfer_address, expected_writeback) in cases {
+            let mut m = Machine::new(&[instruction]);
+            m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            m.cpu.regs[SP] = DATA;
+            let restored = Psr(0xA000_0030 | Psr::USER_MODE); // User + Thumb.
+            m.mem.write32(transfer_address, 0x1237).unwrap();
+            m.mem.write32(transfer_address + 4, restored.0).unwrap();
+
+            assert_eq!(m.step(), StepEvent::Executed);
+            assert_eq!(m.cpu.pc(), 0x1236);
+            assert_eq!(m.cpu.cpsr, restored);
+
+            // The writeback belongs to the old SVC bank, not the restored
+            // User bank. Re-enter SVC to inspect its saved SP.
+            m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            assert_eq!(m.cpu.regs[SP], expected_writeback);
+        }
+    }
+
+    #[test]
+    fn armv6_rfe_without_writeback_preserves_the_base_register() {
+        // RFEIA r0, without the writeback suffix.
+        let mut m = Machine::new(&[0xF890_0A00]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.regs[0] = DATA;
+        let restored = Psr(Psr::SYSTEM_MODE);
+        m.mem.write32(DATA, 0x2345).unwrap();
+        m.mem.write32(DATA + 4, restored.0).unwrap();
+
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.cpu.pc(), 0x2344);
+        assert_eq!(m.cpu.cpsr, restored);
+        assert_eq!(m.cpu.regs[0], DATA);
+    }
+
+    #[test]
+    fn armv6_rfe_rejects_user_mode_bad_base_and_invalid_status_atomically() {
+        // RFE from User mode is undefined and does not advance the PC.
+        let mut user = Machine::new(&[0xF8BD_0A00]);
+        user.cpu.regs[SP] = DATA;
+        assert!(matches!(
+            user.cpu.step(&mut user.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+        assert_eq!(user.cpu.pc(), 0);
+        assert_eq!(user.cpu.cpsr.mode(), Psr::USER_MODE);
+
+        // Rn == PC is reserved.
+        let mut pc_base = Machine::new(&[0xF8BF_0A00]);
+        pc_base.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert!(matches!(
+            pc_base.cpu.step(&mut pc_base.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        // Unaligned base is rejected before accessing memory.
+        let mut unaligned = Machine::new(&[0xF8B0_0A00]);
+        unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        unaligned.cpu.regs[0] = DATA + 1;
+        assert!(matches!(
+            unaligned.cpu.step(&mut unaligned.mem),
+            Err(Error::InvalidAccess { addr: 0x801 })
+        ));
+        assert_eq!(unaligned.cpu.pc(), 0);
+        assert_eq!(unaligned.cpu.regs[0], DATA + 1);
+
+        // Invalid restored mode must not partially apply writeback.
+        let mut invalid_status = Machine::new(&[0xF8BD_0A00]);
+        invalid_status.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        invalid_status.cpu.regs[SP] = DATA;
+        invalid_status.mem.write32(DATA, 0x3456).unwrap();
+        invalid_status.mem.write32(DATA + 4, 0x15).unwrap();
+        assert!(matches!(
+            invalid_status.cpu.step(&mut invalid_status.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+        assert_eq!(invalid_status.cpu.regs[SP], DATA);
+        assert_eq!(invalid_status.cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+        assert_eq!(invalid_status.cpu.pc(), 0);
+    }
 
     #[test]
     fn armv6_movs_pc_lr_restores_spsr_and_thumb_state() {
