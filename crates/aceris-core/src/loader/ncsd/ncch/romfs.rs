@@ -1243,9 +1243,9 @@ mod tests {
     fn rejects_level3_physical_range_outside_the_romfs_region() {
         let mut bytes = valid_ivfc_header();
         write_u64(&mut bytes, 0x44, 0x4000);
-        let header = IvfcHeader::parse(&bytes, 0x5000).unwrap();
+        let header = IvfcHeader::parse(&bytes, 0x4FFF).unwrap();
         assert_eq!(
-            header.level3_region(0x5000),
+            header.level3_region(0x4FFF),
             Err(RomFsError::InvalidIvfcLevel {
                 index: 3,
                 reason: "physical Level 3 range exceeds the RomFS region",
