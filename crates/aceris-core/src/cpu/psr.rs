@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn ge_flags_update_independently_of_condition_and_saturation_flags() {
-        let mut psr = Psr(0xA800_0010);
+        let mut psr = Psr(0xE800_0010);
         psr.set_ge(0b1010);
         assert_eq!(psr.ge(), 0b1010);
         assert!(psr.q());
