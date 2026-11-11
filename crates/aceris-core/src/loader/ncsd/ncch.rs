@@ -421,8 +421,8 @@ fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::NcsdPartition;
+    use super::*;
     use std::io::Cursor;
 
     fn write_u16(data: &mut [u8], offset: usize, value: u16) {
