@@ -371,48 +371,53 @@ impl NcchHeader {
         let Some(region) = self.romfs else {
             return Ok(None);
         };
-        if region.hash_region_size_bytes == 0 {
-            return Err(romfs::RomFsError::InvalidIvfcHeader(
-                "NCCH RomFS superblock hash region is empty",
-            ));
-        }
 
         let mut romfs_reader =
             romfs::RomFsRangeReader::new(reader, region.offset_bytes, region.size_bytes)
                 .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
-        let mut hasher = romfs::sha256::Sha256::new();
-        let mut remaining = region.hash_region_size_bytes;
-        let mut buffer = [0u8; 8 * 1024];
-
-        while remaining != 0 {
-            let amount = remaining.min(buffer.len() as u64) as usize;
-            romfs_reader
-                .read_exact(&mut buffer[..amount])
-                .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
-            hasher.update(&buffer[..amount]).map_err(|_| {
-                romfs::RomFsError::InvalidIvfcHeader(
-                    "NCCH RomFS superblock exceeds the SHA-256 message limit",
-                )
-            })?;
-            remaining -= amount as u64;
-        }
-
-        if hasher.finalize() != self.romfs_superblock_hash {
-            return Err(romfs::RomFsError::NcchSuperblockHashMismatch);
-        }
-
-        let position = romfs_reader
-            .seek(SeekFrom::Start(0))
-            .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
-        if position != 0 {
-            return Err(romfs::RomFsError::ReaderFailure(
-                "could not rewind the bounded NCCH RomFS reader".to_owned(),
-            ));
-        }
+        verify_romfs_superblock_hash(
+            &mut romfs_reader,
+            &self.romfs_superblock_hash,
+            region.hash_region_size_bytes,
+        )?;
 
         let ivfc = romfs::IvfcHeader::parse_reader(&mut romfs_reader, region.size_bytes)?;
-        ivfc.verify_integrity(romfs_reader, region.size_bytes)?;
+        ivfc.verify_integrity_reader(&mut romfs_reader, region.size_bytes)?;
         Ok(Some(()))
+    }
+
+    /// Opens the RomFS Level 3 filesystem only after all NCCH and IVFC hashes pass.
+    ///
+    /// The reader must expose cleartext NCCH bytes from offset zero. This checks
+    /// the NCCH RomFS superblock hash first, then the complete internal IVFC
+    /// chain, and only then returns the bounded Level 3 reader. It does not
+    /// decrypt NCCH content or verify the NCCH RSA signature.
+    ///
+    /// Returns None when the NCCH header has no RomFS region.
+    pub fn open_verified_romfs_level3_reader<R: Read + Seek>(
+        &self,
+        reader: R,
+    ) -> Result<
+        Option<romfs::RomFsLevel3Reader<romfs::RomFsRangeReader<romfs::RomFsRangeReader<R>>>>,
+        romfs::RomFsError,
+    > {
+        let Some(region) = self.romfs else {
+            return Ok(None);
+        };
+
+        let mut romfs_reader =
+            romfs::RomFsRangeReader::new(reader, region.offset_bytes, region.size_bytes)
+                .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+        verify_romfs_superblock_hash(
+            &mut romfs_reader,
+            &self.romfs_superblock_hash,
+            region.hash_region_size_bytes,
+        )?;
+
+        let ivfc = romfs::IvfcHeader::parse_reader(&mut romfs_reader, region.size_bytes)?;
+        ivfc.verify_integrity_reader(&mut romfs_reader, region.size_bytes)?;
+        ivfc.open_level3_reader(romfs_reader, region.size_bytes)
+            .map(Some)
     }
 
     /// Parses the RomFS IVFC header from the declared NCCH RomFS region.
@@ -566,6 +571,59 @@ fn read_region(
         size_bytes,
         hash_region_size_bytes,
     }))
+}
+
+fn verify_romfs_superblock_hash<R: Read + Seek>(
+    reader: &mut R,
+    expected_hash: &[u8; 32],
+    hash_region_size_bytes: u64,
+) -> Result<(), romfs::RomFsError> {
+    if hash_region_size_bytes == 0 {
+        return Err(romfs::RomFsError::InvalidIvfcHeader(
+            "NCCH RomFS superblock hash region is empty",
+        ));
+    }
+
+    let start = reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+    if start != 0 {
+        return Err(romfs::RomFsError::ReaderFailure(
+            "could not seek to the start of the bounded NCCH RomFS region".to_owned(),
+        ));
+    }
+
+    let mut hasher = romfs::sha256::Sha256::new();
+    let mut remaining = hash_region_size_bytes;
+    let mut buffer = [0u8; 8 * 1024];
+
+    while remaining != 0 {
+        let amount = remaining.min(buffer.len() as u64) as usize;
+        reader
+            .read_exact(&mut buffer[..amount])
+            .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+        hasher.update(&buffer[..amount]).map_err(|_| {
+            romfs::RomFsError::InvalidIvfcHeader(
+                "NCCH RomFS superblock exceeds the SHA-256 message limit",
+            )
+        })?;
+        remaining -= amount as u64;
+    }
+
+    if &hasher.finalize() != expected_hash {
+        return Err(romfs::RomFsError::NcchSuperblockHashMismatch);
+    }
+
+    let position = reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+    if position != 0 {
+        return Err(romfs::RomFsError::ReaderFailure(
+            "could not rewind the bounded NCCH RomFS reader".to_owned(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn read_array<const N: usize>(data: &[u8], offset: usize) -> Option<[u8; N]> {

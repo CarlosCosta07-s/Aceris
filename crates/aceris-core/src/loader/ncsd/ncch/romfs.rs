@@ -321,11 +321,23 @@ impl IvfcHeader {
     /// with the final partial block padded with zero bytes to its declared size.
     pub fn verify_integrity<R: Read + Seek>(
         &self,
-        inner: R,
+        mut inner: R,
+        available_size_bytes: u64,
+    ) -> Result<(), RomFsError> {
+        self.verify_integrity_reader(&mut inner, available_size_bytes)
+    }
+
+    /// Verifies the IVFC chain while retaining access to the caller's reader.
+    ///
+    /// The stream is borrowed only for this operation and can be reused after
+    /// the method returns. Its cursor may move during verification.
+    pub fn verify_integrity_reader<R: Read + Seek>(
+        &self,
+        inner: &mut R,
         available_size_bytes: u64,
     ) -> Result<(), RomFsError> {
         let layout = self.physical_layout(available_size_bytes)?;
-        let mut image = RomFsRangeReader::new(inner, 0, available_size_bytes)
+        let mut image = RomFsRangeReader::new(&mut *inner, 0, available_size_bytes)
             .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
 
         verify_ivfc_hash_table(
@@ -1583,9 +1595,15 @@ mod tests {
     fn valid_integrity_ivfc_image() -> (Vec<u8>, IvfcHeader, IvfcLayout) {
         let header = IvfcHeader::parse(&valid_integrity_ivfc_header(), 0x2000).unwrap();
         let layout = header.physical_layout(0x2000).unwrap();
-        let level3 = (0..0x64)
+        let mut level3 = (0..0x64)
             .map(|index| (index as u8).wrapping_mul(17).wrapping_add(3))
             .collect::<Vec<_>>();
+        write_u32(&mut level3, 0x00, LEVEL3_HEADER_SIZE as u32);
+        for offset in [0x04, 0x0C, 0x14, 0x1C] {
+            write_u32(&mut level3, offset, LEVEL3_HEADER_SIZE as u32);
+        }
+        write_u32(&mut level3, 0x24, LEVEL3_HEADER_SIZE as u32);
+
         let level2 = build_hash_table(&level3, 0x40);
         let level1 = build_hash_table(&level2, 0x20);
         let master_hash = build_hash_table(&level1, 0x20);
@@ -2287,10 +2305,20 @@ mod tests {
             Some(())
         );
 
+        let verified_reader = parsed
+            .open_verified_romfs_level3_reader(Cursor::new(container.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(verified_reader.len(), layout.level3.size_bytes);
+        assert_eq!(
+            verified_reader.header().header_size_bytes,
+            LEVEL3_HEADER_SIZE as u32
+        );
+
         let mut corrupted_level3 = container.clone();
         corrupted_level3[0x4000 + layout.level3.offset_bytes as usize + 5] ^= 0x40;
         assert_eq!(
-            parsed.verify_romfs_integrity(Cursor::new(corrupted_level3)),
+            parsed.open_verified_romfs_level3_reader(Cursor::new(corrupted_level3)),
             Err(RomFsError::IvfcHashMismatch {
                 level: 3,
                 block_index: 0,
@@ -2300,7 +2328,7 @@ mod tests {
         let mut corrupted_superblock = container;
         corrupted_superblock[0x4000 + 0x20] ^= 0x01;
         assert_eq!(
-            parsed.verify_romfs_integrity(Cursor::new(corrupted_superblock)),
+            parsed.open_verified_romfs_level3_reader(Cursor::new(corrupted_superblock)),
             Err(RomFsError::NcchSuperblockHashMismatch)
         );
     }
@@ -2321,6 +2349,12 @@ mod tests {
         assert_eq!(
             parsed
                 .verify_romfs_ivfc_integrity(Cursor::new(Vec::new()))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            parsed
+                .open_verified_romfs_level3_reader(Cursor::new(Vec::new()))
                 .unwrap(),
             None
         );
