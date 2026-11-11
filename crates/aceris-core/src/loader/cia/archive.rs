@@ -1369,10 +1369,19 @@ mod tests {
         assert_eq!(actual_region, expected_region);
     }
 
+    struct EncryptedExeFsCiaFixture {
+        cia: Vec<u8>,
+        cia_title_key: [u8; 16],
+        menu_info_key: [u8; 16],
+        content_key: [u8; 16],
+        code: Vec<u8>,
+        banner: Vec<u8>,
+    }
+
     fn make_encrypted_exefs_cia(
         corrupt_superblock: bool,
         corrupt_code: bool,
-    ) -> (Vec<u8>, [u8; 16], [u8; 16], Vec<u8>, Vec<u8>) {
+    ) -> EncryptedExeFsCiaFixture {
         let menu_info_key = [0x69; AES_BLOCK_SIZE];
         let content_key = [0xA6; AES_BLOCK_SIZE];
         let cia_title_key = [0x37; AES_BLOCK_SIZE];
@@ -1443,58 +1452,82 @@ mod tests {
         cia[content_offset..content_offset + encrypted_content.len()]
             .copy_from_slice(&encrypted_content);
 
-        (cia, cia_title_key, menu_info_key, code, banner)
+        EncryptedExeFsCiaFixture {
+            cia,
+            cia_title_key,
+            menu_info_key,
+            content_key,
+            code,
+            banner,
+        }
     }
 
     #[test]
     fn opens_code_and_menu_exefs_files_from_a_verified_encrypted_cia() {
-        let (cia, cia_key, menu_key, expected_code, expected_banner) =
-            make_encrypted_exefs_cia(false, false);
-        let mut archive = CiaArchiveReader::open(Cursor::new(cia)).unwrap();
+        let fixture = make_encrypted_exefs_cia(false, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
+
+        {
+            let ncch = archive
+                .open_verified_decrypted_ncch_content_reader(
+                    0x0310,
+                    &TitleKey::new(fixture.cia_title_key),
+                )
+                .unwrap()
+                .unwrap();
+            let mut code_reader = ncch
+                .open_decrypted_verified_exefs_file_reader(
+                    ".code",
+                    fixture.menu_info_key,
+                    fixture.content_key,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(code_reader.len(), fixture.code.len() as u64);
+            let mut actual_code = Vec::new();
+            code_reader.read_to_end(&mut actual_code).unwrap();
+            assert_eq!(actual_code, fixture.code);
+        }
 
         let ncch = archive
-            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
-            .unwrap()
-            .unwrap();
-        let mut code_reader = ncch
-            .open_decrypted_verified_exefs_file_reader(".code", menu_key, [0xA6; AES_BLOCK_SIZE])
-            .unwrap()
-            .unwrap();
-        assert_eq!(code_reader.len(), expected_code.len() as u64);
-        let mut actual_code = Vec::new();
-        code_reader.read_to_end(&mut actual_code).unwrap();
-        assert_eq!(actual_code, expected_code);
-        drop(code_reader);
-
-        let ncch = archive
-            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
+            .open_verified_decrypted_ncch_content_reader(
+                0x0310,
+                &TitleKey::new(fixture.cia_title_key),
+            )
             .unwrap()
             .unwrap();
         let mut banner_reader = ncch
-            .open_decrypted_verified_exefs_file_reader("banner", menu_key, [0xA6; AES_BLOCK_SIZE])
+            .open_decrypted_verified_exefs_file_reader(
+                "banner",
+                fixture.menu_info_key,
+                fixture.content_key,
+            )
             .unwrap()
             .unwrap();
-        assert_eq!(banner_reader.len(), expected_banner.len() as u64);
+        assert_eq!(banner_reader.len(), fixture.banner.len() as u64);
         assert_eq!(banner_reader.seek(SeekFrom::Start(7)).unwrap(), 7);
         let mut actual_banner = Vec::new();
         banner_reader.read_to_end(&mut actual_banner).unwrap();
-        assert_eq!(&actual_banner, &expected_banner[7..]);
+        assert_eq!(&actual_banner, &fixture.banner[7..]);
     }
 
     #[test]
     fn rejects_an_exefs_superblock_corrupted_inside_a_tmd_valid_cia() {
-        let (cia, cia_key, menu_key, _, _) = make_encrypted_exefs_cia(true, false);
-        let mut archive = CiaArchiveReader::open(Cursor::new(cia)).unwrap();
+        let fixture = make_encrypted_exefs_cia(true, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
         let ncch = archive
-            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
+            .open_verified_decrypted_ncch_content_reader(
+                0x0310,
+                &TitleKey::new(fixture.cia_title_key),
+            )
             .unwrap()
             .unwrap();
 
         assert_eq!(
             ncch.open_decrypted_verified_exefs_file_reader(
                 ".code",
-                menu_key,
-                [0xA6; AES_BLOCK_SIZE],
+                fixture.menu_info_key,
+                fixture.content_key,
             )
             .err(),
             Some(crate::loader::ncsd::ncch::exefs::ExeFsError::SuperblockHashMismatch)
@@ -1503,18 +1536,21 @@ mod tests {
 
     #[test]
     fn rejects_an_exefs_file_with_a_bad_digest_inside_a_tmd_valid_cia() {
-        let (cia, cia_key, menu_key, _, _) = make_encrypted_exefs_cia(false, true);
-        let mut archive = CiaArchiveReader::open(Cursor::new(cia)).unwrap();
+        let fixture = make_encrypted_exefs_cia(false, true);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
         let ncch = archive
-            .open_verified_decrypted_ncch_content_reader(0x0310, &TitleKey::new(cia_key))
+            .open_verified_decrypted_ncch_content_reader(
+                0x0310,
+                &TitleKey::new(fixture.cia_title_key),
+            )
             .unwrap()
             .unwrap();
 
         assert_eq!(
             ncch.open_decrypted_verified_exefs_file_reader(
                 ".code",
-                menu_key,
-                [0xA6; AES_BLOCK_SIZE],
+                fixture.menu_info_key,
+                fixture.content_key,
             )
             .err(),
             Some(
