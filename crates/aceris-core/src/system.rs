@@ -377,7 +377,9 @@ mod tests {
         let mut system = System::new();
 
         assert_eq!(
-            system.load_ncsd_no_crypto_reader(std::io::Cursor::new(image)).unwrap(),
+            system
+                .load_ncsd_no_crypto_reader(std::io::Cursor::new(image))
+                .unwrap(),
             ImageFormat::Ncsd
         );
         assert_eq!(system.cpu().pc(), 0x0010_0000);
