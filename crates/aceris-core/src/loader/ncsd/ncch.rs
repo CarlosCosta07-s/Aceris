@@ -7,6 +7,9 @@
 use std::fmt;
 use std::io::Read;
 
+/// Structural ExeFS header parser for NCCH executable files.
+pub mod exefs;
+
 pub const HEADER_SIZE: usize = 0x200;
 
 const MAGIC_OFFSET: usize = 0x100;
