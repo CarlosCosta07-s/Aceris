@@ -1534,6 +1534,7 @@ impl Arm11Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::{Psr, SP};
     use crate::cpu::Psr;
     use crate::memory::FlatMemory;
 
@@ -1926,7 +1927,7 @@ mod tests {
     fn armv6_cpsid_and_cpsie_update_interrupt_masks_without_touching_flags() {
         // CPSID i ; CPSIE i ; CPSID aif ; CPSIE aif.
         let mut m = Machine::new(&[0xF10C_0080, 0xF108_0080, 0xF10C_01C0, 0xF108_01C0]);
-        m.cpu.switch_mode(super::Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
         m.cpu.cpsr.set_flags(true, false, true, false);
         m.cpu.cpsr.set_q();
         m.cpu.cpsr.set_ge(0b1010);
@@ -1955,23 +1956,23 @@ mod tests {
 
         // CPS #SVC switches from System to Supervisor and selects its SP/LR bank.
         let mut privileged = Machine::new(&[0xF102_0013]);
-        privileged.cpu.switch_mode(super::Psr::SYSTEM_MODE).unwrap();
+        privileged.cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
         privileged.cpu.regs[SP] = 0x2000;
         privileged.cpu.regs[LR] = 0x2004;
         privileged.step();
-        assert_eq!(privileged.cpu.cpsr.mode(), super::Psr::SUPERVISOR_MODE);
+        assert_eq!(privileged.cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
         assert_eq!((privileged.cpu.regs[SP], privileged.cpu.regs[LR]), (0, 0));
 
         privileged.cpu.regs[SP] = 0x3000;
         privileged.cpu.regs[LR] = 0x3004;
-        privileged.cpu.switch_mode(super::Psr::SYSTEM_MODE).unwrap();
+        privileged.cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
         assert_eq!(
             (privileged.cpu.regs[SP], privileged.cpu.regs[LR]),
             (0x2000, 0x2004)
         );
         privileged
             .cpu
-            .switch_mode(super::Psr::SUPERVISOR_MODE)
+            .switch_mode(Psr::SUPERVISOR_MODE)
             .unwrap();
         assert_eq!(
             (privileged.cpu.regs[SP], privileged.cpu.regs[LR]),
@@ -1982,7 +1983,7 @@ mod tests {
         let mut malformed = Machine::new(&[0xF10C_0093]);
         malformed
             .cpu
-            .switch_mode(super::Psr::SUPERVISOR_MODE)
+            .switch_mode(Psr::SUPERVISOR_MODE)
             .unwrap();
         assert!(matches!(
             malformed.cpu.step(&mut malformed.mem),
