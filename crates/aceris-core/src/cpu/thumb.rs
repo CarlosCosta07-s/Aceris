@@ -362,9 +362,18 @@ impl Arm11Core {
         }
 
         if half & 0xFFE0 == 0xB660 {
-            // CPS has no effect in user mode. Privileged control is deferred.
+            // CPSIE/CPSID update selected A/I/F masks. User mode treats CPS
+            // as a NOP; the Thumb encoding does not include a mode change.
+            let interrupt_mask = (half & 0x7) as u8;
+            if bit(half, 3) || interrupt_mask == 0 {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word: half,
+                });
+            }
             if self.cpsr.privileged() {
-                return Err(Error::Unimplemented("privileged Thumb CPS"));
+                self.cpsr
+                    .set_interrupt_masks(interrupt_mask, !bit(half, 4));
             }
             return Ok(StepEvent::Executed);
         }
@@ -994,6 +1003,37 @@ mod tests {
         assert_eq!(misc(0xBA08, 0x1122_3344), 0x4433_2211); // REV
         assert_eq!(misc(0xBA48, 0x1122_3344), 0x2211_4433); // REV16
         assert_eq!(misc(0xBAC8, 0x0000_00FF), 0xFFFF_FF00); // REVSH
+    }
+
+    #[test]
+    fn thumb_cpsid_and_cpsie_update_interrupt_masks_without_touching_flags() {
+        // CPSID i ; CPSIE i ; CPSID aif ; CPSIE aif.
+        let mut m = Machine::new(&[0xB672, 0xB662, 0xB677, 0xB667]);
+        m.cpu.cpsr.0 = (m.cpu.cpsr.0 & !0x1F) | 0x13; // Supervisor mode.
+        m.cpu.cpsr.set_flags(true, false, true, false);
+        m.cpu.cpsr.set_q();
+        m.cpu.cpsr.set_ge(0b1010);
+        let stable = m.cpu.cpsr.0 & !((1 << 8) | (1 << 7) | (1 << 6));
+
+        m.step();
+        assert_ne!(m.cpu.cpsr.0 & (1 << 7), 0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & (1 << 7), 0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & ((1 << 8) | (1 << 7) | (1 << 6)), 0x1C0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & ((1 << 8) | (1 << 7) | (1 << 6)), 0);
+        assert_eq!(m.cpu.cpsr.0 & !((1 << 8) | (1 << 7) | (1 << 6)), stable);
+        assert_eq!(m.flags(), (true, false, true, false));
+        assert!(m.cpu.cpsr.q());
+        assert_eq!(m.cpu.cpsr.ge(), 0b1010);
+    }
+
+    #[test]
+    fn thumb_cps_is_a_noop_in_user_mode() {
+        let mut m = Machine::new(&[0xB672]); // CPSID i.
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & (1 << 7), 0);
     }
 
     #[test]

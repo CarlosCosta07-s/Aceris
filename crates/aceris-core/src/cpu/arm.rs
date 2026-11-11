@@ -799,6 +799,42 @@ impl Arm11Core {
         if word & 0xFD70_F000 == 0xF550_F000 {
             return Ok(StepEvent::Executed);
         }
+        // CPSIE/CPSID update selected A/I/F masks without changing flags.
+        // CPS with a mode change is deferred until banked registers exist.
+        if word & 0xFFF0_FE20 == 0xF100_0000 {
+            let imod = bits(word, 19, 18);
+            let change_mode = bit(word, 17);
+            let interrupt_mask = u8::from(bit(word, 8))
+                | (u8::from(bit(word, 7)) << 1)
+                | (u8::from(bit(word, 6)) << 2);
+            let mode = bits(word, 4, 0);
+            let valid_mode = matches!(mode, 0x10 | 0x11 | 0x12 | 0x13 | 0x17 | 0x1B | 0x1F);
+            let valid_encoding = if imod == 0 {
+                change_mode && interrupt_mask == 0 && valid_mode
+            } else {
+                matches!(imod, 0b10 | 0b11)
+                    && interrupt_mask != 0
+                    && (!change_mode || valid_mode)
+            };
+            if !valid_encoding {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            // CPS is architecturally a NOP in User mode.
+            if !self.cpsr.privileged() {
+                return Ok(StepEvent::Executed);
+            }
+            if change_mode {
+                return Err(Error::Unimplemented(
+                    "CPS mode changes require banked register support",
+                ));
+            }
+            self.cpsr
+                .set_interrupt_masks(interrupt_mask, imod == 0b10);
+            return Ok(StepEvent::Executed);
+        }
         if bits(word, 27, 25) != 0b101 {
             return Err(Error::Unimplemented("unconditional-space instruction"));
         }
@@ -1885,6 +1921,52 @@ mod tests {
         let mut m = Machine::new(&[0xFB00_0000]);
         m.step();
         assert_eq!(m.cpu.pc(), 0xA);
+    }
+
+    #[test]
+    fn armv6_cpsid_and_cpsie_update_interrupt_masks_without_touching_flags() {
+        // CPSID i ; CPSIE i ; CPSID aif ; CPSIE aif.
+        let mut m = Machine::new(&[
+            0xF10C_0080,
+            0xF108_0080,
+            0xF10C_01C0,
+            0xF108_01C0,
+        ]);
+        m.cpu.cpsr.0 = (m.cpu.cpsr.0 & !0x1F) | 0x13; // Supervisor mode.
+        m.cpu.cpsr.set_flags(true, false, true, false);
+        m.cpu.cpsr.set_q();
+        m.cpu.cpsr.set_ge(0b1010);
+        let stable = m.cpu.cpsr.0 & !((1 << 8) | (1 << 7) | (1 << 6));
+
+        m.step();
+        assert_ne!(m.cpu.cpsr.0 & (1 << 7), 0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & (1 << 7), 0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & ((1 << 8) | (1 << 7) | (1 << 6)), 0x1C0);
+        m.step();
+        assert_eq!(m.cpu.cpsr.0 & ((1 << 8) | (1 << 7) | (1 << 6)), 0);
+        assert_eq!(m.cpu.cpsr.0 & !((1 << 8) | (1 << 7) | (1 << 6)), stable);
+        assert_eq!(m.flags(), (true, false, true, false));
+        assert!(m.cpu.cpsr.q());
+        assert_eq!(m.cpu.cpsr.ge(), 0b1010);
+    }
+
+    #[test]
+    fn armv6_cps_is_a_noop_in_user_mode_and_defers_privileged_mode_changes() {
+        // CPSID i is treated as a NOP in User mode.
+        let mut user = Machine::new(&[0xF10C_0080]);
+        user.step();
+        assert_eq!(user.cpu.cpsr.0 & (1 << 7), 0);
+
+        // CPS #SVC needs banked-register switching, so do not partially apply it.
+        let mut privileged = Machine::new(&[0xF102_0013]);
+        privileged.cpu.cpsr.0 = (privileged.cpu.cpsr.0 & !0x1F) | 0x13;
+        assert!(matches!(
+            privileged.cpu.step(&mut privileged.mem),
+            Err(Error::Unimplemented("CPS mode changes require banked register support"))
+        ));
+        assert_eq!(privileged.cpu.cpsr.mode(), 0x13);
     }
 
     #[test]
