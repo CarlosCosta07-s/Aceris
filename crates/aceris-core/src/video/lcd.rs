@@ -585,10 +585,7 @@ mod tests {
             0,
         );
         controller.scanout(&memory, &mut display).unwrap();
-        assert_eq!(
-            &display.bottom().pixels()[..4],
-            &[0x11, 0x22, 0x33, 0xFF]
-        );
+        assert_eq!(&display.bottom().pixels()[..4], &[0x11, 0x22, 0x33, 0xFF]);
 
         configure_panel(
             &mut controller,
@@ -599,10 +596,7 @@ mod tests {
             0,
         );
         controller.scanout(&memory, &mut display).unwrap();
-        assert_eq!(
-            &display.bottom().pixels()[..4],
-            &[0xFF, 0, 0, 0xFF]
-        );
+        assert_eq!(&display.bottom().pixels()[..4], &[0xFF, 0, 0, 0xFF]);
 
         configure_panel(
             &mut controller,
@@ -613,10 +607,7 @@ mod tests {
             0,
         );
         controller.scanout(&memory, &mut display).unwrap();
-        assert_eq!(
-            &display.bottom().pixels()[..4],
-            &[0xAA, 0xBB, 0xCC, 0xDD]
-        );
+        assert_eq!(&display.bottom().pixels()[..4], &[0xAA, 0xBB, 0xCC, 0xDD]);
     }
 
     #[test]
