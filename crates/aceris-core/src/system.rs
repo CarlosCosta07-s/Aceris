@@ -1,6 +1,9 @@
 //! Top-level emulated system.
 
 use crate::cpu::Arm11Core;
+use crate::gpu::Pica200;
+use crate::video::DualScreenDisplay;
+use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
@@ -16,6 +19,23 @@ pub struct System {
     cpu: Arm11Core,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
+    gpu: Pica200,
+    display: DualScreenDisplay,
+}
+
+/// Nominal 60 Hz development-frame duration in nanoseconds.
+pub const NOMINAL_FRAME_DURATION_NS: u64 = 16_666_667;
+
+/// Deterministic instruction cap used by System::run_frame.
+pub const DEFAULT_FRAME_INSTRUCTION_BUDGET: usize = 100_000;
+
+/// Result of one completed development frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemFrameReport {
+    pub frame_number: u64,
+    pub instructions_executed: u64,
+    pub cpu_stop_reason: Arm11RunStopReason,
+    pub elapsed_virtual_time_ns: u64,
 }
 
 impl System {
@@ -206,17 +226,61 @@ impl System {
         Ok(report)
     }
 
-    /// Runs the system for one video frame.
+    /// Returns the PICA200 command processor.
+    pub const fn gpu(&self) -> &Pica200 {
+        &self.gpu
+    }
+
+    /// Returns mutable access to the PICA200 command processor.
+    pub fn gpu_mut(&mut self) -> &mut Pica200 {
+        &mut self.gpu
+    }
+
+    /// Returns the current dual-screen output surfaces.
+    pub const fn display(&self) -> &DualScreenDisplay {
+        &self.display
+    }
+
+    /// Returns mutable access to the dual-screen output surfaces.
+    pub fn display_mut(&mut self) -> &mut DualScreenDisplay {
+        &mut self.display
+    }
+
+    /// Advances one frame using a caller-supplied ARM11 instruction budget.
     ///
-    /// The ARM11 process can currently be stepped with run_instructions. A
-    /// frame loop still requires the GPU, display, audio and timing pipeline.
-    pub fn run_frame(&mut self) -> Result<()> {
+    /// The budget is deterministic but not cycle-accurate. The development
+    /// display currently provides RGBA8 output surfaces; rendering commands
+    /// must be connected to those surfaces by later PICA200 pipeline stages.
+    pub fn run_frame_with_budget(
+        &mut self,
+        instruction_budget: usize,
+    ) -> Result<SystemFrameReport> {
         if self.image.is_none() {
             return Err(Error::NoImageLoaded);
         }
-        Err(Error::Unimplemented(
-            "frame scheduling and hardware presentation",
-        ))
+
+        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+            "a prepared ARM11 process session is required for frame execution",
+        ))?;
+        let cpu_report = session.run_instructions(instruction_budget)?;
+        session.advance_time(NOMINAL_FRAME_DURATION_NS);
+        self.cpu = session.core().clone();
+
+        let frame_number = self.display.present();
+        Ok(SystemFrameReport {
+            frame_number,
+            instructions_executed: cpu_report.instructions_executed,
+            cpu_stop_reason: cpu_report.stop_reason,
+            elapsed_virtual_time_ns: NOMINAL_FRAME_DURATION_NS,
+        })
+    }
+
+    /// Runs one development frame using the default instruction budget.
+    ///
+    /// This is not a claim of hardware-cycle-accurate frame timing.
+    pub fn run_frame(&mut self) -> Result<()> {
+        self.run_frame_with_budget(DEFAULT_FRAME_INSTRUCTION_BUDGET)?;
+        Ok(())
     }
 }
 
@@ -229,6 +293,42 @@ mod tests {
     fn running_without_an_image_fails() {
         let mut system = System::new();
         assert!(matches!(system.run_frame(), Err(Error::NoImageLoaded)));
+    }
+
+    #[test]
+    fn frame_requires_a_prepared_arm11_process() {
+        let mut system = System::new();
+        system.image = Some(ImageFormat::Ncsd);
+        assert!(matches!(
+            system.run_frame_with_budget(0),
+            Err(Error::Unimplemented(_))
+        ));
+        assert_eq!(system.display().frame_number(), 0);
+    }
+
+    #[test]
+    fn frame_executes_cpu_advances_virtual_time_and_presents_dual_screens() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let report = system.run_frame_with_budget(2).unwrap();
+        assert_eq!(report.frame_number, 1);
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(
+            report.cpu_stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(report.elapsed_virtual_time_ns, NOMINAL_FRAME_DURATION_NS);
+        assert_eq!(system.display().frame_number(), 1);
+        assert_eq!(system.display().top_left().pixels().len(), 400 * 240 * 4);
+        assert_eq!(system.display().top_right().pixels().len(), 400 * 240 * 4);
+        assert_eq!(system.display().bottom().pixels().len(), 320 * 240 * 4);
     }
 
     fn write_u32(data: &mut [u8], offset: usize, value: u32) {

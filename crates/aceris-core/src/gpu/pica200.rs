@@ -149,19 +149,24 @@ impl Pica200 {
                 });
             }
 
+            let final_register = if consecutive {
+                register_id.saturating_add(extra_parameters as u32)
+            } else {
+                register_id
+            };
+            if register_id >= REGISTER_COUNT as u32 || final_register >= REGISTER_COUNT as u32 {
+                return Err(PicaCommandError::InvalidRegister {
+                    register: final_register,
+                    parameter_index: extra_parameters,
+                });
+            }
+
             for parameter_index in 0..parameter_count {
                 let register = if consecutive {
-                    register_id.saturating_add(parameter_index as u32)
+                    register_id + parameter_index as u32
                 } else {
                     register_id
                 };
-                if register >= REGISTER_COUNT as u32 {
-                    return Err(PicaCommandError::InvalidRegister {
-                        register,
-                        parameter_index,
-                    });
-                }
-
                 let value = if parameter_index == 0 {
                     first_parameter
                 } else {
