@@ -1461,6 +1461,7 @@ mod tests {
         );
 
         let mut image = valid_nested_level3_image();
+        write_u32(&mut image, 0x58, 4);
         image[0x5C..0x60].copy_from_slice(&[b'.', 0, b'.', 0]);
         let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x93).unwrap();
         assert_eq!(
