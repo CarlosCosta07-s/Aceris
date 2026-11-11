@@ -41,7 +41,10 @@ impl fmt::Display for Error {
                 write!(formatter, "invalid memory access at {addr:#010x}")
             }
             Self::UndefinedInstruction { pc, word } => {
-                write!(formatter, "undefined instruction {word:#010x} at {pc:#010x}")
+                write!(
+                    formatter,
+                    "undefined instruction {word:#010x} at {pc:#010x}"
+                )
             }
             Self::Unimplemented(feature) => write!(formatter, "not implemented yet: {feature}"),
             Self::SelfTest(reason) => write!(formatter, "CPU self-test failed: {reason}"),
@@ -109,7 +112,10 @@ mod tests {
                 Error::Unimplemented("emulation loop"),
                 "not implemented yet: emulation loop",
             ),
-            (Error::SelfTest("bad result"), "CPU self-test failed: bad result"),
+            (
+                Error::SelfTest("bad result"),
+                "CPU self-test failed: bad result",
+            ),
         ];
 
         for (error, expected) in cases {
