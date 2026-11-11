@@ -12,6 +12,9 @@ use std::io::{self, Read, Seek, SeekFrom};
 pub mod ncch;
 /// Validated ARM11 process mappings derived from a prepared executable image.
 pub mod process;
+/// CPU and memory session for executing a loaded ARM11 application.
+pub mod session;
+pub use session::{Arm11ProcessSession, Arm11RunReport, Arm11RunStopReason};
 
 pub const HEADER_SIZE: usize = 0x200;
 pub const PARTITION_COUNT: usize = 8;
