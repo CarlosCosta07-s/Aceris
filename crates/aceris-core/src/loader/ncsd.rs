@@ -1468,7 +1468,11 @@ mod tests {
         let mut reader = NcsdImageReader::open(Cursor::new(image)).unwrap();
         assert!(reader.header().partition(0).is_none());
         assert_eq!(
-            reader.header().partition(SECONDARY_PARTITION_INDEX as u8).unwrap().index,
+            reader
+                .header()
+                .partition(SECONDARY_PARTITION_INDEX as u8)
+                .unwrap()
+                .index,
             SECONDARY_PARTITION_INDEX as u8
         );
 
@@ -1485,7 +1489,11 @@ mod tests {
         assert_eq!(session.core().regs[0], 7);
         assert_eq!(session.core().regs[1], 5);
         assert_eq!(
-            reader.header().partition(SECONDARY_PARTITION_INDEX as u8).unwrap().index,
+            reader
+                .header()
+                .partition(SECONDARY_PARTITION_INDEX as u8)
+                .unwrap()
+                .index,
             SECONDARY_PARTITION_INDEX as u8
         );
     }
