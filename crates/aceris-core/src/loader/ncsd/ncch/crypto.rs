@@ -415,15 +415,15 @@ mod tests {
         let id = hex("0001020304050607");
         assert_eq!(
             initial_ctr(id, 0, NcchCtrRegion::ExtendedHeader, 0x200).unwrap(),
-            hex("07060504030201010100000000000000")
+            hex("07060504030201000100000000000000")
         );
         assert_eq!(
             initial_ctr(id, 2, NcchCtrRegion::RomFs, 0x123400).unwrap(),
-            hex("07060504030201010300000000000000")
+            hex("07060504030201000300000000000000")
         );
         assert_eq!(
             initial_ctr(id, 2, NcchCtrRegion::ExeFs, 0).unwrap(),
-            hex("07060504030201010200000000000000")
+            hex("07060504030201000200000000000000")
         );
     }
 
