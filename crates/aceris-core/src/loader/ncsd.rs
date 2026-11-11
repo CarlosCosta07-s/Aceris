@@ -796,9 +796,7 @@ impl<R: Read + Seek> NcsdImageReader<R> {
     }
 
     /// Opens partition zero, conventionally the executable game-content partition.
-    pub fn open_primary_ncch(
-        self,
-    ) -> std::result::Result<NcsdNcchReader<R>, NcsdImageReaderError> {
+    pub fn open_primary_ncch(self) -> std::result::Result<NcsdNcchReader<R>, NcsdImageReaderError> {
         self.open_partition_ncch(0)
     }
 }
@@ -811,9 +809,7 @@ pub enum NcsdImageReaderError {
     /// The NCSD header or its partition table is invalid.
     InvalidHeader(Error),
     /// The requested original table slot is not populated.
-    MissingPartition {
-        index: u8,
-    },
+    MissingPartition { index: u8 },
     /// The selected partition does not contain a structurally valid NCCH header.
     InvalidNcch(NcsdNcchError),
 }
@@ -827,7 +823,10 @@ impl fmt::Display for NcsdImageReaderError {
                 write!(formatter, "NCSD partition table slot {index} is empty")
             }
             Self::InvalidNcch(error) => {
-                write!(formatter, "selected NCSD partition is not a valid NCCH: {error}")
+                write!(
+                    formatter,
+                    "selected NCSD partition is not a valid NCCH: {error}"
+                )
             }
         }
     }
@@ -1353,7 +1352,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(opened.partition(), expected_partition);
-        assert_eq!(opened.header().content_size_bytes, expected_partition.size_bytes);
+        assert_eq!(
+            opened.header().content_size_bytes,
+            expected_partition.size_bytes
+        );
     }
 
     #[test]
