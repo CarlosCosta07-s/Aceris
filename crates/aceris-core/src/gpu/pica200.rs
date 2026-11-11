@@ -22,7 +22,9 @@ pub const REG_COMMAND_BUFFER_JUMP_0: u16 = 0x23C;
 /// PICA200 command-list parsing or register-write failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PicaCommandError {
-    IncompleteCommandHeader { word_offset: usize },
+    IncompleteCommandHeader {
+        word_offset: usize,
+    },
     TruncatedParameters {
         word_offset: usize,
         required_words: usize,
@@ -38,7 +40,10 @@ impl fmt::Display for PicaCommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IncompleteCommandHeader { word_offset } => {
-                write!(formatter, "PICA200 command at word {word_offset} has no header")
+                write!(
+                    formatter,
+                    "PICA200 command at word {word_offset} has no header"
+                )
             }
             Self::TruncatedParameters {
                 word_offset,
@@ -99,13 +104,13 @@ impl Pica200 {
 
     /// Writes one complete internal register.
     pub fn write_register(&mut self, id: u16, value: u32) -> Result<(), PicaCommandError> {
-        let register = self
-            .registers
-            .get_mut(usize::from(id))
-            .ok_or(PicaCommandError::InvalidRegister {
-                register: u32::from(id),
-                parameter_index: 0,
-            })?;
+        let register =
+            self.registers
+                .get_mut(usize::from(id))
+                .ok_or(PicaCommandError::InvalidRegister {
+                    register: u32::from(id),
+                    parameter_index: 0,
+                })?;
         *register = value;
         self.register_writes = self.register_writes.saturating_add(1);
         Ok(())
@@ -246,12 +251,7 @@ mod tests {
     fn command_list_can_write_consecutive_registers() {
         let mut gpu = Pica200::new();
         let report = gpu
-            .execute_command_list(&[
-                0x10,
-                command(0x200, 0xF, true, 2),
-                0x20,
-                0x30,
-            ])
+            .execute_command_list(&[0x10, command(0x200, 0xF, true, 2), 0x20, 0x30])
             .unwrap();
         assert_eq!(report.commands, 1);
         assert_eq!(report.register_writes, 3);
