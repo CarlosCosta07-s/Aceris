@@ -301,7 +301,7 @@ impl Arm11Core {
             let rhs_lane = match operation {
                 ParallelOperation::AddSubtractExchange | ParallelOperation::SubtractAddExchange => {
                     lane_count - lane - 1
-                },
+                }
                 _ => lane,
             };
             let shift_lhs = lane * width;
