@@ -833,7 +833,7 @@ mod tests {
         ]);
         {
             let main = session.scheduler.current_core_mut().unwrap();
-            main.regs[0] = 0x3F;
+            main.regs[0] = 0x20;
             main.regs[1] = 0x0010_0020;
             main.regs[2] = 0xCAFE_BABE;
             main.regs[3] = 0x0020_2000;
@@ -1049,7 +1049,7 @@ mod tests {
         ]);
         {
             let main = session.scheduler.current_core_mut().unwrap();
-            main.regs[0] = 0x20;
+            main.regs[0] = 0x3F;
             main.regs[1] = 0x0010_0020;
             main.regs[2] = 0xCAFE_BABE;
             main.regs[3] = 0x0020_2000;
