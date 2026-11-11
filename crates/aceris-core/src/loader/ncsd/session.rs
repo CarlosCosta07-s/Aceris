@@ -9,8 +9,7 @@ pub mod svc;
 /// ARM11 per-thread contexts and cooperative scheduling primitives.
 pub mod thread;
 pub use thread::{
-    Arm11ThreadScheduler, ThreadId, ThreadInfo, ThreadSchedulerError, ThreadState,
-    MAIN_THREAD_ID,
+    Arm11ThreadScheduler, MAIN_THREAD_ID, ThreadId, ThreadInfo, ThreadSchedulerError, ThreadState,
 };
 
 use std::io::{Read, Seek};
@@ -24,7 +23,6 @@ use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
     SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SLEEP_THREAD,
 };
-use thread::ThreadSchedulerError;
 
 /// Main-thread priority used by the current process bootstrap.
 pub const DEFAULT_MAIN_THREAD_PRIORITY: i32 = 0x30;
@@ -398,11 +396,7 @@ impl Arm11ProcessSession {
         }
     }
 
-    fn write_create_thread_error(
-        &mut self,
-        caller: ThreadId,
-        result: u32,
-    ) -> SvcRunDisposition {
+    fn write_create_thread_error(&mut self, caller: ThreadId, result: u32) -> SvcRunDisposition {
         self.scheduler
             .core_mut(caller)
             .expect("caller context remains allocated")
@@ -577,22 +571,36 @@ mod tests {
         }
 
         let created = session.run_instructions(1).unwrap();
-        assert_eq!(created.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(
+            created.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
         assert_eq!(session.core().regs[0], 0);
         let child_handle = session.core().regs[1];
         assert_eq!(child_handle, 2);
         assert_eq!(session.scheduler.thread_count(), 2);
 
         let started = session.run_instructions(2).unwrap();
-        assert_eq!(started.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(
+            started.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
         assert_eq!(
             session.current_thread_id(),
-            Some(session.scheduler.thread_id_for_handle(child_handle).unwrap())
+            Some(
+                session
+                    .scheduler
+                    .thread_id_for_handle(child_handle)
+                    .unwrap()
+            )
         );
         assert_eq!(session.core().regs[0], 0xCAFE_BABE);
 
         let child_exit = session.run_instructions(2).unwrap();
-        assert_eq!(child_exit.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(
+            child_exit.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
 
         let main_exit = session.run_instructions(1).unwrap();
@@ -612,7 +620,10 @@ mod tests {
             main.regs[4] = 0;
         }
         let report = session.run_instructions(1).unwrap();
-        assert_eq!(report.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
         assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
         assert_eq!(session.scheduler.thread_count(), 1);
     }

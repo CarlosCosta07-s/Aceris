@@ -48,11 +48,7 @@ impl Arm11SvcDispatcher {
     }
 
     /// Dispatches SVCs that do not require thread or memory manager access.
-    pub fn dispatch(
-        &mut self,
-        number: u32,
-        registers: &mut [u32; 16],
-    ) -> Arm11SvcDisposition {
+    pub fn dispatch(&mut self, number: u32, registers: &mut [u32; 16]) -> Arm11SvcDisposition {
         if self.process_exited {
             return Arm11SvcDisposition::ProcessExited;
         }

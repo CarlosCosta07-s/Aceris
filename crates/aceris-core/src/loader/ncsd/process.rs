@@ -388,7 +388,7 @@ impl Arm11CodeAddressSpace {
 
         let mut cursor = u64::from(address);
         while cursor < end {
-            let Some((kind, segment)) = segments.iter().find(|(kind, segment)| {
+            let Some((_, segment)) = segments.iter().find(|(kind, segment)| {
                 self.segment_is_writable(*kind)
                     && !segment.is_empty()
                     && cursor >= u64::from(segment.address)
