@@ -454,7 +454,7 @@ pub struct CiaContentNcchReader<'a, R> {
     reader: CiaContentReader<'a, R>,
 }
 
-impl<R: Read + Seek> CiaContentNcchReader<'_, R> {
+impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
     /// Returns the TMD content location.
     pub const fn location(&self) -> CiaContentLocation {
         self.location
@@ -466,7 +466,7 @@ impl<R: Read + Seek> CiaContentNcchReader<'_, R> {
     }
 
     /// Returns the bounded reader, positioned at the beginning of the NCCH.
-    pub fn reader_mut(&mut self) -> &mut CiaContentReader<'_, R> {
+    pub fn reader_mut<'b>(&'b mut self) -> &'b mut CiaContentReader<'a, R> {
         &mut self.reader
     }
 }
