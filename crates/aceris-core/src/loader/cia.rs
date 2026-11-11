@@ -8,6 +8,8 @@ use std::io;
 
 /// Streaming access to CIA content sections.
 pub mod archive;
+/// AES-128-CBC support for one ticket title-key block.
+pub mod crypto;
 /// Caller-supplied ticket common-key material.
 pub mod key_store;
 /// Structural ticket parser used by CIA archives.
@@ -18,6 +20,7 @@ pub mod tmd;
 pub use archive::{
     CiaArchiveError, CiaArchiveReader, CiaContentLocation, CiaContentNcchReader, CiaContentReader,
 };
+pub use crypto::TitleKey;
 pub use key_store::{COMMON_KEY_COUNT, TicketCommonKeyStore, TicketKeyError};
 pub use ticket::{TicketError, TicketHeader, TicketSignatureType};
 

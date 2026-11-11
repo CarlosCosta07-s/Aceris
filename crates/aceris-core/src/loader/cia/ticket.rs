@@ -1,9 +1,12 @@
 //! Structural parser for Nintendo 3DS ticket (TIK) data.
 //!
 //! The parser extracts ticket metadata and preserves the encrypted title key.
-//! It does not verify RSA/ECDSA signatures or decrypt the title key.
+//! It can decrypt that single block when the caller supplies its normal key.
+//! It does not verify RSA/ECDSA signatures.
 
 use std::fmt;
+
+use super::crypto::{decrypt_aes128_cbc_block, TitleKey};
 
 /// Fixed size of the 3DS ticket-data area after its aligned signature block.
 pub const TICKET_DATA_SIZE: usize = 0x210;
@@ -151,6 +154,18 @@ impl TicketHeader {
             0,
             0,
         ]
+    }
+
+    /// Decrypts the ticket's 16-byte title key with caller-supplied normal AES key material.
+    ///
+    /// This decrypts the title-key field only. The ticket signature is not
+    /// verified, and no key material is acquired or persisted by this method.
+    pub fn decrypt_title_key(&self, normal_key: [u8; 16]) -> TitleKey {
+        TitleKey::new(decrypt_aes128_cbc_block(
+            normal_key,
+            self.title_key_iv(),
+            self.encrypted_title_key,
+        ))
     }
 }
 

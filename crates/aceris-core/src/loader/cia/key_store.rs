@@ -108,6 +108,15 @@ impl TicketCommonKeyStore {
         self.derive_normal_key(ticket.common_key_index)
     }
 
+    /// Decrypts a ticket title key using only caller-provided common-key material.
+    pub fn decrypt_ticket_title_key(
+        &self,
+        ticket: &TicketHeader,
+    ) -> Result<super::crypto::TitleKey, TicketKeyError> {
+        let normal_key = self.derive_ticket_normal_key(ticket)?;
+        Ok(ticket.decrypt_title_key(normal_key))
+    }
+
     fn key_y_slot(index: u8) -> Result<usize, TicketKeyError> {
         let slot = usize::from(index);
         if slot >= COMMON_KEY_COUNT {
@@ -159,6 +168,7 @@ impl std::error::Error for TicketKeyError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loader::ncsd::ncch::crypto::Aes128;
 
     const TEST_KEY_X: [u8; 16] = [
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
@@ -236,6 +246,49 @@ mod tests {
 
         keys.clear_key_x();
         assert!(!keys.has_key_x());
+    }
+
+    #[test]
+    fn decrypts_ticket_title_key_from_the_configured_normal_key() {
+        let normal_key = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        ];
+        let expected_title_key = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+            0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+        ];
+        let mut ticket = TicketHeader {
+            signature_type: super::super::ticket::TicketSignatureType::Rsa2048Sha256,
+            signature_data_size_bytes: 0x140,
+            issuer: [0; 0x40],
+            version: 1,
+            ca_crl_version: 0,
+            signer_crl_version: 0,
+            encrypted_title_key: [0; 16],
+            ticket_id: 0,
+            console_id: 0,
+            title_id: 0x0001_0203_0405_0607,
+            title_version: 0,
+            license_type: 0,
+            common_key_index: 0,
+            parsed_size_bytes: 0x350,
+        };
+
+        let iv = ticket.title_key_iv();
+        let mut input = expected_title_key;
+        for (byte, previous) in input.iter_mut().zip(iv) {
+            *byte ^= previous;
+        }
+        ticket.encrypted_title_key = Aes128::new(normal_key).encrypt_block(input);
+
+        let mut keys = TicketCommonKeyStore::default();
+        keys.set_normal_key(0, normal_key).unwrap();
+
+        let decrypted = keys.decrypt_ticket_title_key(&ticket).unwrap();
+
+        assert_eq!(decrypted.as_bytes(), &expected_title_key);
+        assert_eq!(format!("{decrypted:?}"), "TitleKey([REDACTED])");
     }
 
     #[test]
