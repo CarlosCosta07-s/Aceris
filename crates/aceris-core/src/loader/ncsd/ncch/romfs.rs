@@ -1659,9 +1659,18 @@ mod tests {
     #[test]
     fn rejects_hash_tables_with_an_incorrect_number_of_digests() {
         let mut bytes = valid_integrity_ivfc_header();
+        write_u32(&mut bytes, 0x08, 0x20);
         write_u64(&mut bytes, 0x14, 0x20);
         let header = IvfcHeader::parse(&bytes, 0x2000).unwrap();
-        let image = vec![0; 0x2000];
+        let layout = header.physical_layout(0x2000).unwrap();
+        let level1_data = vec![0xA5; SHA256_SIZE as usize];
+        let master_hash = Sha256::digest(&level1_data).unwrap();
+        let mut image = vec![0; layout.level2.end_offset_bytes().unwrap() as usize];
+
+        let master_start = layout.master_hash.offset_bytes as usize;
+        image[master_start..master_start + master_hash.len()].copy_from_slice(&master_hash);
+        let level1_start = layout.level1.offset_bytes as usize;
+        image[level1_start..level1_start + level1_data.len()].copy_from_slice(&level1_data);
 
         assert_eq!(
             header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
@@ -1674,10 +1683,10 @@ mod tests {
 
     #[test]
     fn rejects_hash_blocks_larger_than_the_romfs_image() {
+        let (image, _, _) = valid_integrity_ivfc_image();
         let mut bytes = valid_integrity_ivfc_header();
         write_u32(&mut bytes, 0x24 + 16, 63);
-        let header = IvfcHeader::parse(&bytes, 0x2000).unwrap();
-        let image = vec![0; 0x2000];
+        let header = IvfcHeader::parse(&bytes, image.len() as u64).unwrap();
 
         assert_eq!(
             header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
