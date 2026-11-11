@@ -12,6 +12,8 @@ use std::io::{Read, Seek, SeekFrom};
 pub mod exefs;
 /// Structural RomFS IVFC and Level 3 header parser.
 pub mod romfs;
+/// Original AES-128, CTR mode, and NCCH cryptographic parameter primitives.
+pub mod crypto;
 
 pub const HEADER_SIZE: usize = 0x200;
 
@@ -383,6 +385,42 @@ impl NcchHeader {
         romfs::RomFsRangeReader::new(reader, EXTENDED_HEADER_OFFSET, EXTENDED_HEADER_HASH_SIZE)
             .map(Some)
             .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))
+    }
+
+    /// Builds the documented initial CTR for an encrypted NCCH region.
+    ///
+    /// Version 1 counters use the selected region's absolute offset within
+    /// the NCCH container; versions 0 and 2 use a region marker instead.
+    pub fn initial_ctr_for_region(
+        &self,
+        region: crypto::NcchCtrRegion,
+    ) -> Result<[u8; 16], crypto::NcchCryptoError> {
+        let offset = match region {
+            crypto::NcchCtrRegion::ExtendedHeader => {
+                if self.extended_header_size == 0 {
+                    return Err(crypto::NcchCryptoError::RegionNotPresent(region));
+                }
+                HEADER_SIZE as u64
+            }
+            crypto::NcchCtrRegion::ExeFs => self
+                .exefs
+                .ok_or(crypto::NcchCryptoError::RegionNotPresent(region))?
+                .offset_bytes,
+            crypto::NcchCtrRegion::RomFs => self
+                .romfs
+                .ok_or(crypto::NcchCryptoError::RegionNotPresent(region))?
+                .offset_bytes,
+        };
+
+        crypto::initial_ctr(self.partition_id, self.version, region, offset)
+    }
+
+    /// Returns the content keyslot selected by NCCH flag byte 3.
+    ///
+    /// This identifies the slot only; it does not provide console-specific
+    /// KeyX material or decrypt the content.
+    pub fn content_keyslot(&self) -> Result<u8, crypto::NcchCryptoError> {
+        crypto::content_keyslot(self.flags[3])
     }
 
     /// Returns the two low-order content-form bits from NCCH flag byte 5.
@@ -966,6 +1004,61 @@ mod tests {
         write_u32(&mut data, ROMFS_REGION_OFFSET + 4, 0x20);
         write_u32(&mut data, ROMFS_HASH_OFFSET, 0x2);
         data
+    }
+
+    #[test]
+    fn parsed_ncch_exposes_content_keyslot_and_region_counters() {
+        let parsed = NcchHeader::parse(&valid_header(), 0x1_0000).unwrap();
+
+        assert_eq!(parsed.content_keyslot(), Ok(0x2c));
+        assert_eq!(
+            parsed.initial_ctr_for_region(crypto::NcchCtrRegion::ExtendedHeader),
+            Ok([
+                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41,
+                0x01, 0, 0, 0, 0, 0, 0, 0,
+            ])
+        );
+        assert_eq!(
+            parsed.initial_ctr_for_region(crypto::NcchCtrRegion::ExeFs),
+            Ok([
+                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41,
+                0x02, 0, 0, 0, 0, 0, 0, 0,
+            ])
+        );
+        assert_eq!(
+            parsed.initial_ctr_for_region(crypto::NcchCtrRegion::RomFs),
+            Ok([
+                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41,
+                0x03, 0, 0, 0, 0, 0, 0, 0,
+            ])
+        );
+    }
+
+    #[test]
+    fn version_one_header_counter_uses_absolute_exefs_offset() {
+        let mut header = valid_header();
+        write_u16(&mut header, VERSION_OFFSET, 1);
+        let parsed = NcchHeader::parse(&header, 0x1_0000).unwrap();
+
+        assert_eq!(
+            parsed.initial_ctr_for_region(crypto::NcchCtrRegion::ExeFs),
+            Ok([
+                b'A', b'C', b'E', b'R', b'I', b'S', b'0', b'1',
+                0, 0, 0, 0, 0, 0x00, 0x20, 0x00,
+            ])
+        );
+    }
+
+    #[test]
+    fn parsed_ncch_rejects_unknown_content_crypto_method() {
+        let mut header = valid_header();
+        header[FLAGS_OFFSET + 3] = 0x02;
+        let parsed = NcchHeader::parse(&header, 0x1_0000).unwrap();
+
+        assert_eq!(
+            parsed.content_keyslot(),
+            Err(crypto::NcchCryptoError::UnsupportedCryptoMethod(0x02))
+        );
     }
 
     fn sha256_digest(data: &[u8]) -> [u8; 32] {
