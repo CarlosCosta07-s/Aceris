@@ -1089,6 +1089,27 @@ mod tests {
     }
 
     #[test]
+    fn thumb_setend_big_and_little_endian_change_only_the_cpsr_e_bit() {
+        // SETEND BE ; SETEND LE. Encodings are verified against ARMv6K.
+        let mut m = Machine::new(&[0xB658, 0xB650]);
+        m.cpu.cpsr.set_flags(true, false, true, false);
+        m.cpu.cpsr.set_q();
+        m.cpu.cpsr.set_ge(0b1010);
+        let stable = m.cpu.cpsr.0 & !(1 << 9);
+
+        m.step();
+        assert!(m.cpu.cpsr.big_endian());
+        assert_eq!(m.cpu.cpsr.0 & !(1 << 9), stable);
+
+        m.step();
+        assert!(!m.cpu.cpsr.big_endian());
+        assert_eq!(m.cpu.cpsr.0 & !(1 << 9), stable);
+        assert_eq!(m.flags(), (true, false, true, false));
+        assert!(m.cpu.cpsr.q());
+        assert_eq!(m.cpu.cpsr.ge(), 0b1010);
+    }
+
+    #[test]
     fn thumb_cps_is_a_noop_in_user_mode() {
         let mut m = Machine::new(&[0xB672]); // CPSID i.
         m.step();
