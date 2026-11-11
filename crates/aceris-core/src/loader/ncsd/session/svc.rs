@@ -37,11 +37,7 @@ impl Arm11SvcDispatcher {
     ///
     /// The current session models a single application core, numbered zero.
     /// GetCurrentProcessorNumber therefore returns zero in r0.
-    pub fn dispatch(
-        &mut self,
-        number: u32,
-        registers: &mut [u32; 16],
-    ) -> Arm11SvcDisposition {
+    pub fn dispatch(&mut self, number: u32, registers: &mut [u32; 16]) -> Arm11SvcDisposition {
         if self.process_exited {
             return Arm11SvcDisposition::ProcessExited;
         }

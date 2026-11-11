@@ -13,7 +13,7 @@ use crate::cpu::{Arm11Core, StepEvent};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::Arm11CodeAddressSpace;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
-use svc::{Arm11SvcDisposition, Arm11SvcDispatcher};
+use svc::{Arm11SvcDispatcher, Arm11SvcDisposition};
 
 /// Reason an instruction-budgeted run stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
