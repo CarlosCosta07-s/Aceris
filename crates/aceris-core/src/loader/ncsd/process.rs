@@ -7,8 +7,8 @@
 
 use std::fmt;
 
-use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo, NcchExtendedHeader};
 use super::PreparedArm11Image;
+use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo, NcchExtendedHeader};
 
 const PAGE_SIZE: u64 = 0x1000;
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
@@ -153,9 +153,7 @@ impl PreparedArm11Image {
     /// The prepared segment vectors contain page-aligned bytes. This method
     /// checks their lengths against the extended header, verifies page-aligned
     /// virtual starts, and rejects overlapping or wrapping address ranges.
-    pub fn process_layout(
-        &self,
-    ) -> Result<Arm11ProcessLayout, Arm11ProcessLayoutError> {
+    pub fn process_layout(&self) -> Result<Arm11ProcessLayout, Arm11ProcessLayoutError> {
         let extended_header = &self.extended_header;
         let code_file_layout = extended_header
             .code_file_layout()
@@ -203,7 +201,11 @@ impl PreparedArm11Image {
             false,
         )?;
 
-        validate_no_overlap([(Arm11SegmentKind::Text, text), (Arm11SegmentKind::ReadOnly, read_only), (Arm11SegmentKind::Data, data)])?;
+        validate_no_overlap([
+            (Arm11SegmentKind::Text, text),
+            (Arm11SegmentKind::ReadOnly, read_only),
+            (Arm11SegmentKind::Data, data),
+        ])?;
 
         Ok(Arm11ProcessLayout {
             application_title: extended_header.application_title,
