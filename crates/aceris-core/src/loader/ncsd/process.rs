@@ -8,7 +8,7 @@
 use std::fmt;
 
 use super::PreparedArm11Image;
-use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo, NcchExtendedHeader};
+use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
 
 const PAGE_SIZE: u64 = 0x1000;
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
