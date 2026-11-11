@@ -1,7 +1,7 @@
 //! Top-level emulated system.
 
 use crate::cpu::Arm11Core;
-use crate::gpu::Pica200;
+use crate::gpu::{GpuPhysicalMemory, Pica200};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
@@ -20,6 +20,7 @@ pub struct System {
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gpu: Pica200,
+    physical_memory: GpuPhysicalMemory,
     display: DualScreenDisplay,
 }
 
@@ -231,6 +232,16 @@ impl System {
     }
 
     /// Returns the PICA200 command processor.
+    /// Returns read-only access to the sparse ARM11 physical-memory backing.
+    pub const fn physical_memory(&self) -> &GpuPhysicalMemory {
+        &self.physical_memory
+    }
+
+    /// Returns mutable access to physical memory for loader, DMA and display setup.
+    pub fn physical_memory_mut(&mut self) -> &mut GpuPhysicalMemory {
+        &mut self.physical_memory
+    }
+
     pub const fn gpu(&self) -> &Pica200 {
         &self.gpu
     }
@@ -282,33 +293,50 @@ impl System {
             )));
         }
 
-        let words = {
-            let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+        if self.ncsd_session.is_none() {
+            return Err(Error::Unimplemented(
                 "a prepared ARM11 process session is required for guest GPU commands",
-            ))?;
-            let mut words = Vec::new();
-            words.try_reserve_exact(word_count).map_err(|error| {
-                Error::Io(io::Error::other(format!(
-                    "could not allocate PICA200 command buffer: {error}"
-                )))
+            ));
+        }
+        self.physical_memory
+            .validate_range(address, byte_count)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    error.to_string(),
+                ))
             })?;
-            for index in 0..word_count {
-                let offset = u32::try_from(index.checked_mul(4).ok_or_else(|| {
-                    Error::Io(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "PICA200 command offset overflowed",
-                    ))
-                })?)
-                .map_err(|_| {
-                    Error::Io(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "PICA200 command offset exceeds 32-bit addressing",
-                    ))
-                })?;
-                words.push(session.read_memory_u32(address + offset)?);
-            }
-            words
-        };
+
+        let mut words = Vec::new();
+        words.try_reserve_exact(word_count).map_err(|error| {
+            Error::Io(io::Error::other(format!(
+                "could not allocate PICA200 command buffer: {error}"
+            )))
+        })?;
+        for index in 0..word_count {
+            let offset = u32::try_from(index.checked_mul(4).ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "PICA200 command offset overflowed",
+                ))
+            })?)
+            .map_err(|_| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "PICA200 command offset exceeds 32-bit addressing",
+                ))
+            })?;
+            words.push(
+                self.physical_memory
+                    .read_u32(address + offset)
+                    .map_err(|error| {
+                        Error::Io(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            error.to_string(),
+                        ))
+                    })?,
+            );
+        }
 
         self.gpu.execute_command_list(&words).map_err(|error| {
             Error::Io(io::Error::new(
@@ -320,9 +348,9 @@ impl System {
 
     /// Processes PICA200 command buffers triggered through internal registers.
     ///
-    /// This bootstrap maps the decoded command-buffer address directly into
-    /// the process-visible address space. A dedicated ARM11 physical-memory
-    /// translation layer is still required before this becomes hardware-accurate.
+    /// The descriptor contains a physical address; command words are fetched
+    /// from the sparse FCRAM/VRAM backing. Process virtual-to-physical mapping
+    /// for linear memory remains a separate responsibility.
     pub fn process_pending_pica_command_buffers(&mut self) -> Result<u64> {
         let mut pending = Vec::with_capacity(2);
         for channel in 0..=1 {
@@ -409,7 +437,8 @@ impl System {
 mod tests {
     use super::*;
     use crate::gpu::{
-        REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_SIZE_0,
+        FCRAM_BASE, REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0,
+        REG_COMMAND_BUFFER_SIZE_0,
     };
     use crate::loader::ncsd::session::Arm11RunStopReason;
 
@@ -430,12 +459,17 @@ mod tests {
             )
             .unwrap();
 
-        let session = system.ncsd_session_mut().unwrap();
-        session.write_memory_u32(0x0010_2000, 0xDEAD_BEEF).unwrap();
-        session.write_memory_u32(0x0010_2004, 0x000F_0100).unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(FCRAM_BASE + 0x2000, 0xDEAD_BEEF)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(FCRAM_BASE + 0x2004, 0x000F_0100)
+            .unwrap();
 
         let report = system
-            .submit_pica_command_list_from_memory(0x0010_2000, 2)
+            .submit_pica_command_list_from_memory(FCRAM_BASE + 0x2000, 2)
             .unwrap();
         assert_eq!(report.commands, 1);
         assert_eq!(report.register_writes, 1);
@@ -465,9 +499,8 @@ mod tests {
         let command_list = [0xDEAD_BEEF, 0x000F_0100, 0x1234_5678, 0x000F_0101];
         for (index, word) in command_list.iter().copied().enumerate() {
             system
-                .ncsd_session_mut()
-                .unwrap()
-                .write_memory_u32(0x0010_2000 + (index as u32 * 4), word)
+                .physical_memory_mut()
+                .write_u32(FCRAM_BASE + 0x2000 + (index as u32 * 4), word)
                 .unwrap();
         }
 
@@ -477,7 +510,7 @@ mod tests {
             .unwrap();
         system
             .gpu_mut()
-            .write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3)
+            .write_register(REG_COMMAND_BUFFER_ADDRESS_0, (FCRAM_BASE + 0x2000) >> 3)
             .unwrap();
         system
             .gpu_mut()
@@ -509,7 +542,7 @@ mod tests {
             .unwrap();
         system
             .gpu_mut()
-            .write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3)
+            .write_register(REG_COMMAND_BUFFER_ADDRESS_0, (FCRAM_BASE + 0x2000) >> 3)
             .unwrap();
         system
             .gpu_mut()
