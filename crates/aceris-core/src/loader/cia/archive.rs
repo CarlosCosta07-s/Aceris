@@ -957,8 +957,7 @@ impl<R: Read + Seek> Seek for CiaDecryptedContentNcchReader<'_, R> {
 }
 
 /// A seekable NCCH AES-CTR region reader backed by a TMD-verified CIA content.
-pub type CiaContentNcchCtrReader<'a, R> =
-    NcchCtrReader<CiaContentReader<'a, R>>;
+pub type CiaContentNcchCtrReader<'a, R> = NcchCtrReader<CiaContentReader<'a, R>>;
 
 /// A bounded RomFS region reader backed by a clear CIA content's NCCH reader.
 pub type CiaContentRomFsRangeReader<'a, R> =
