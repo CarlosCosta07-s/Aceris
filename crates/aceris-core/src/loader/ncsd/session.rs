@@ -484,7 +484,7 @@ fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
     match error {
         Arm11DynamicMemoryError::MisalignedAddress(_) | Arm11DynamicMemoryError::InvalidSize(_) => {
             RESULT_MISALIGNED_ADDRESS
-        },
+        }
         Arm11DynamicMemoryError::AllocationFailure(_) => RESULT_OUT_OF_MEMORY,
         Arm11DynamicMemoryError::OutsideApplicationHeap { .. }
         | Arm11DynamicMemoryError::OverlappingMapping
