@@ -42,10 +42,16 @@ impl fmt::Display for ScreenSurfaceError {
             }
             Self::AllocationFailed => formatter.write_str("could not allocate LCD surface"),
             Self::InvalidPixel { x, y } => {
-                write!(formatter, "LCD pixel coordinate ({x}, {y}) is out of bounds")
+                write!(
+                    formatter,
+                    "LCD pixel coordinate ({x}, {y}) is out of bounds"
+                )
             }
             Self::InvalidBufferLength { expected, actual } => {
-                write!(formatter, "LCD buffer has {actual} bytes, expected {expected}")
+                write!(
+                    formatter,
+                    "LCD buffer has {actual} bytes, expected {expected}"
+                )
             }
         }
     }

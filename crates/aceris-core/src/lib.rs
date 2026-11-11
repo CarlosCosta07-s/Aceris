@@ -4,12 +4,12 @@
 //! UI code, so it can be shared by the desktop and Android front-ends.
 
 pub mod cpu;
+pub mod gpu;
 pub mod loader;
 pub mod memory;
-pub mod gpu;
-pub mod video;
 pub mod selftest;
 pub mod system;
+pub mod video;
 
 pub use aceris_common::{Error, Result};
 pub use system::System;
