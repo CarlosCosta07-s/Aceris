@@ -9,6 +9,8 @@ use std::io::{Read, Seek, SeekFrom};
 
 /// Structural ExeFS header parser for NCCH executable files.
 pub mod exefs;
+/// Structural RomFS IVFC and Level 3 header parser.
+pub mod romfs;
 
 pub const HEADER_SIZE: usize = 0x200;
 
@@ -305,6 +307,33 @@ impl NcchHeader {
     /// Returns the content-type field from NCCH flag byte 5.
     pub const fn content_type(&self) -> u8 {
         self.flags[5] >> 2
+    }
+
+    /// Parses the RomFS IVFC header from the declared NCCH RomFS region.
+    ///
+    /// The reader must expose NCCH bytes from offset zero. This reads only the
+    /// fixed IVFC header; it does not decrypt content, locate physical IVFC
+    /// levels, or verify any hashes.
+    ///
+    /// Returns None when the NCCH header has no RomFS region.
+    pub fn parse_romfs_ivfc_header<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+    ) -> Result<Option<romfs::IvfcHeader>, romfs::RomFsError> {
+        let Some(region) = self.romfs else {
+            return Ok(None);
+        };
+
+        let actual = reader
+            .seek(SeekFrom::Start(region.offset_bytes))
+            .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+        if actual != region.offset_bytes {
+            return Err(romfs::RomFsError::ReaderFailure(
+                "reader did not seek to the declared RomFS offset".to_owned(),
+            ));
+        }
+
+        romfs::IvfcHeader::parse_reader(reader, region.size_bytes).map(Some)
     }
 
     /// Parses the ExeFS header from the NCCH container.
