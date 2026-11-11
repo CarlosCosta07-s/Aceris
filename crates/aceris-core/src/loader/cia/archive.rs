@@ -1163,7 +1163,6 @@ mod tests {
     #[test]
     fn encrypted_ncch_open_rejects_a_wrong_title_key_before_parsing() {
         let key = [0x71; 16];
-        let title_key = TitleKey::new(key);
         let mut cleartext = vec![0u8; 0x1_0000];
         cleartext[0x100..0x104].copy_from_slice(b"NCCH");
         write_le_u32(&mut cleartext, 0x104, 0x80);
