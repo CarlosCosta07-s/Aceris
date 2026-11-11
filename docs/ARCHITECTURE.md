@@ -44,7 +44,8 @@ Ele expõe um System que o frontend carrega com um jogo e avança quadro a quadr
   banco, instruções de mídia/exclusivas do ARMv6, coprocessadores e VFP.
 - **Autoteste (selftest):** programa ARM minúsculo executado pelo interpretador.
   O desktop o expõe em aceris --selftest e o Android em aceris_selftest(),
-  provando que as duas plataformas rodam o mesmo núcleo.
+  provando que as duas plataformas rodam o mesmo núcleo. O programa soma em ARM,
+  chama uma rotina Thumb com BLX e volta ao ARM com BX.
 - **Memória:** trait Bus (little-endian) e FlatMemory para testes e bring-up.
 - **Loader:** identifica ELF, 3DSX, NCCH e CIA pelos bytes mágicos. Para NCSD,
   lê o cabeçalho completo, interpreta as oito entradas da tabela de partições,

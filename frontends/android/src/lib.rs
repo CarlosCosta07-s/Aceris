@@ -13,8 +13,9 @@ pub extern "C" fn aceris_version() -> *const c_char {
 
 /// Runs the shared core's CPU self-test.
 ///
-/// Returns the computed value (55) on success, or `-1` on failure. This is the
-/// same test the desktop front-end runs with `aceris --selftest`.
+/// Returns the computed value (`aceris_core::selftest::EXPECTED`) on success,
+/// or `-1` on failure. This is the same test the desktop front-end runs with
+/// `aceris --selftest`.
 #[unsafe(no_mangle)]
 pub extern "C" fn aceris_selftest() -> i32 {
     aceris_core::selftest::run()
@@ -37,6 +38,7 @@ mod tests {
 
     #[test]
     fn selftest_runs_the_shared_core() {
-        assert_eq!(aceris_selftest(), 55);
+        let expected = i32::try_from(aceris_core::selftest::EXPECTED).unwrap();
+        assert_eq!(aceris_selftest(), expected);
     }
 }
