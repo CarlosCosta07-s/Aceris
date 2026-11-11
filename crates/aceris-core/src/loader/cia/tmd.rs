@@ -557,10 +557,10 @@ mod tests {
         bitmap[0] = 0x81;
         assert_eq!(tmd.validate_cia_content_index_bitmap(&bitmap), Ok(()));
 
-        bitmap[0] = 0x01;
+        bitmap[0] = 0x40; // Index 1 is not declared.
         assert_eq!(
             tmd.validate_cia_content_index_bitmap(&bitmap),
-            Err(TmdError::CiaContentIndexMissingFromTmd(0))
+            Err(TmdError::CiaContentIndexMissingFromTmd(1))
         );
     }
 

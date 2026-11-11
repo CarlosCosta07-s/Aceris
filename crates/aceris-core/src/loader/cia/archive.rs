@@ -576,7 +576,7 @@ mod tests {
 
     fn make_cia(contents: &[(u32, u16, u16, &[u8])]) -> (Vec<u8>, Vec<(u16, u64)>) {
         let tmd = make_tmd(contents);
-        let tmd_offset = HEADER_SIZE as u64;
+        let tmd_offset = align(HEADER_SIZE as u64);
         let content_offset = align(tmd_offset + tmd.len() as u64);
 
         let mut ordered = contents.iter().collect::<Vec<_>>();
