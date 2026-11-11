@@ -740,11 +740,7 @@ impl NcchHeader {
         };
 
         let mut decrypted_region = self
-            .open_decrypted_region_reader(
-                reader,
-                crypto::NcchCtrRegion::ExeFs,
-                menu_info_key,
-            )
+            .open_decrypted_region_reader(reader, crypto::NcchCtrRegion::ExeFs, menu_info_key)
             .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?
             .ok_or_else(|| {
                 exefs::ExeFsError::ReaderFailure(
