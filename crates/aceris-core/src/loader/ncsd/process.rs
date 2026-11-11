@@ -16,6 +16,8 @@ use aceris_common::{Error, Result as BusResult};
 const PAGE_SIZE: u64 = 0x1000;
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
 const MAIN_STACK_TOP: u32 = 0x1000_0000;
+const APPLICATION_HEAP_BASE: u32 = 0x0800_0000;
+const APPLICATION_HEAP_END: u64 = 0x0E00_0000;
 const MAX_BSS_MAPPING_SIZE_BYTES: usize = 256 * 1024 * 1024;
 
 /// ARM11 code segment category.
@@ -31,6 +33,66 @@ pub enum Arm11SegmentKind {
     Bss,
     /// Writable, non-executable main-thread stack.
     Stack,
+}
+
+/// Errors while reserving or releasing a process application-heap mapping.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Arm11DynamicMemoryError {
+    /// Address is not page-aligned.
+    MisalignedAddress(u32),
+    /// Size is zero or not page-aligned.
+    InvalidSize(u32),
+    /// Requested mapping lies outside the supported application heap window.
+    OutsideApplicationHeap { address: u32, size: u32 },
+    /// Requested virtual range overlaps an existing process mapping.
+    OverlappingMapping,
+    /// No dynamic mapping exactly matches the requested address and size.
+    MappingNotFound { address: u32, size: u32 },
+    /// The host could not reserve backing memory for the guest mapping.
+    AllocationFailure(String),
+}
+
+impl fmt::Display for Arm11DynamicMemoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MisalignedAddress(address) => {
+                write!(formatter, "application heap address {address:#010x} is not page-aligned")
+            }
+            Self::InvalidSize(size) => {
+                write!(formatter, "application heap size {size:#010x} is zero or not page-aligned")
+            }
+            Self::OutsideApplicationHeap { address, size } => {
+                write!(formatter, "application heap range {address:#010x}+{size:#x} is outside the supported heap window")
+            }
+            Self::OverlappingMapping => formatter.write_str("application heap mapping overlaps existing memory"),
+            Self::MappingNotFound { address, size } => {
+                write!(formatter, "application heap mapping {address:#010x}+{size:#x} does not exist")
+            }
+            Self::AllocationFailure(reason) => {
+                write!(formatter, "could not allocate application heap backing: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for Arm11DynamicMemoryError {}
+
+#[derive(Debug)]
+struct DynamicMemoryRegion {
+    address: u32,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum MemoryLocation {
+    Static {
+        kind: Arm11SegmentKind,
+        offset: usize,
+    },
+    Dynamic {
+        index: usize,
+        offset: usize,
+    },
 }
 
 impl fmt::Display for Arm11SegmentKind {
@@ -299,6 +361,7 @@ pub struct Arm11CodeAddressSpace {
     data: Vec<u8>,
     bss: Vec<u8>,
     stack: Vec<u8>,
+    dynamic_regions: Vec<DynamicMemoryRegion>,
 }
 
 impl Arm11CodeAddressSpace {
@@ -333,6 +396,7 @@ impl Arm11CodeAddressSpace {
             data: prepared.data,
             bss,
             stack,
+            dynamic_regions: Vec::new(),
         })
     }
 
@@ -350,22 +414,102 @@ impl Arm11CodeAddressSpace {
         core.regs[SP] = self.layout.initial_stack_pointer;
     }
 
+    /// Maps one zero-initialized RW/NX region in the 3DS application heap window.
+    ///
+    /// The supported virtual heap window is 0x08000000..0x0E000000, matching
+    /// libctru's default application-heap range. Backing bytes are allocated
+    /// lazily by the host and are not a model of physical FCRAM allocation.
+    pub fn allocate_application_heap_region(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> std::result::Result<u32, Arm11DynamicMemoryError> {
+        if u64::from(address) % PAGE_SIZE != 0 {
+            return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
+        }
+        if size == 0 || u64::from(size) % PAGE_SIZE != 0 {
+            return Err(Arm11DynamicMemoryError::InvalidSize(size));
+        }
+
+        let end = u64::from(address)
+            .checked_add(u64::from(size))
+            .ok_or(Arm11DynamicMemoryError::OutsideApplicationHeap { address, size })?;
+        if address < APPLICATION_HEAP_BASE || end > APPLICATION_HEAP_END {
+            return Err(Arm11DynamicMemoryError::OutsideApplicationHeap { address, size });
+        }
+
+        let static_segments = [
+            self.layout.text,
+            self.layout.read_only,
+            self.layout.data,
+            self.layout.bss,
+            self.layout.stack,
+        ];
+        if static_segments.iter().any(|segment| {
+            !segment.is_empty()
+                && u64::from(address) < segment.end_address()
+                && end > u64::from(segment.address)
+        }) {
+            return Err(Arm11DynamicMemoryError::OverlappingMapping);
+        }
+
+        if self.dynamic_regions.iter().any(|region| {
+            let region_end = u64::from(region.address) + region.bytes.len() as u64;
+            u64::from(address) < region_end && end > u64::from(region.address)
+        }) {
+            return Err(Arm11DynamicMemoryError::OverlappingMapping);
+        }
+
+        let backing_size = usize::try_from(size)
+            .map_err(|_| Arm11DynamicMemoryError::InvalidSize(size))?;
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(backing_size).map_err(|error| {
+            Arm11DynamicMemoryError::AllocationFailure(error.to_string())
+        })?;
+        bytes.resize(backing_size, 0);
+        self.dynamic_regions.try_reserve(1).map_err(|error| {
+            Arm11DynamicMemoryError::AllocationFailure(error.to_string())
+        })?;
+        self.dynamic_regions.push(DynamicMemoryRegion { address, bytes });
+        self.dynamic_regions.sort_by_key(|region| region.address);
+
+        Ok(address)
+    }
+
+    /// Releases one dynamic application-heap mapping by exact base and size.
+    ///
+    /// Static executable, data, BSS and main-stack mappings cannot be released
+    /// through this function.
+    pub fn free_application_heap_region(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> std::result::Result<(), Arm11DynamicMemoryError> {
+        let Some(index) = self.dynamic_regions.iter().position(|region| {
+            region.address == address && region.bytes.len() == size as usize
+        }) else {
+            return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
+        };
+        self.dynamic_regions.remove(index);
+        Ok(())
+    }
+
     /// Returns true when an address belongs to a mapped executable segment.
     ///
     /// Bit zero is ignored so a Thumb function pointer can be validated using
     /// the same mapping check as its aligned instruction address.
     pub fn is_executable_address(&self, address: u32) -> bool {
         let instruction_address = address & !1;
-        let Some((kind, _)) = self.locate(instruction_address) else {
+        let Some(location) = self.locate(instruction_address) else {
             return false;
         };
-        self.segment_is_executable(kind)
+        self.location_is_executable(location)
     }
 
     /// Returns true when every byte in a range is mapped and writable.
     ///
-    /// The range may span adjacent writable data and BSS segments. Empty,
-    /// wrapping, or partially unmapped ranges are rejected.
+    /// The range may span adjacent writable static segments or dynamic heap
+    /// mappings. Empty, wrapping, or partially unmapped ranges are rejected.
     pub fn is_writable_range(&self, address: u32, size: usize) -> bool {
         if size == 0 {
             return false;
@@ -378,26 +522,22 @@ impl Arm11CodeAddressSpace {
             return false;
         }
 
-        let segments = [
-            (Arm11SegmentKind::Text, self.layout.text),
-            (Arm11SegmentKind::ReadOnly, self.layout.read_only),
-            (Arm11SegmentKind::Data, self.layout.data),
-            (Arm11SegmentKind::Bss, self.layout.bss),
-            (Arm11SegmentKind::Stack, self.layout.stack),
-        ];
-
         let mut cursor = u64::from(address);
         while cursor < end {
-            let Some((_, segment)) = segments.iter().find(|(kind, segment)| {
-                self.segment_is_writable(*kind)
-                    && !segment.is_empty()
-                    && cursor >= u64::from(segment.address)
-                    && cursor < segment.end_address()
-            }) else {
+            let Ok(current_address) = u32::try_from(cursor) else {
                 return false;
             };
+            let Some(location) = self.locate(current_address) else {
+                return false;
+            };
+            if !self.location_is_writable(location) {
+                return false;
+            }
 
-            let next = segment.end_address().min(end);
+            let Some(region_end) = self.location_end(location) else {
+                return false;
+            };
+            let next = region_end.min(end);
             if next <= cursor {
                 return false;
             }
@@ -412,7 +552,7 @@ impl Arm11CodeAddressSpace {
         self.bytes_for(kind)
     }
 
-    fn locate(&self, address: u32) -> Option<(Arm11SegmentKind, usize)> {
+    fn locate(&self, address: u32) -> Option<MemoryLocation> {
         let segments = [
             (Arm11SegmentKind::Text, self.layout.text),
             (Arm11SegmentKind::ReadOnly, self.layout.read_only),
@@ -428,11 +568,25 @@ impl Arm11CodeAddressSpace {
 
             let offset = u64::from(address) - u64::from(segment.address);
             if offset < u64::from(segment.mapped_size_bytes) {
-                return usize::try_from(offset).ok().map(|offset| (kind, offset));
+                let offset = usize::try_from(offset).ok()?;
+                return Some(MemoryLocation::Static { kind, offset });
             }
         }
 
-        None
+        self.dynamic_regions
+            .iter()
+            .enumerate()
+            .find_map(|(index, region)| {
+                if address < region.address {
+                    return None;
+                }
+                let offset = u64::from(address) - u64::from(region.address);
+                (offset < region.bytes.len() as u64).then(|| {
+                    usize::try_from(offset)
+                        .ok()
+                        .map(|offset| MemoryLocation::Dynamic { index, offset })
+                })?
+            })
     }
 
     fn bytes_for(&self, kind: Arm11SegmentKind) -> &[u8] {
@@ -452,6 +606,53 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::Data => &mut self.data,
             Arm11SegmentKind::Bss => &mut self.bss,
             Arm11SegmentKind::Stack => &mut self.stack,
+        }
+    }
+
+    fn bytes_for_location(&self, location: MemoryLocation) -> &[u8] {
+        match location {
+            MemoryLocation::Static { kind, .. } => self.bytes_for(kind),
+            MemoryLocation::Dynamic { index, .. } => &self.dynamic_regions[index].bytes,
+        }
+    }
+
+    fn bytes_for_location_mut(&mut self, location: MemoryLocation) -> &mut [u8] {
+        match location {
+            MemoryLocation::Static { kind, .. } => self.bytes_for_mut(kind),
+            MemoryLocation::Dynamic { index, .. } => &mut self.dynamic_regions[index].bytes,
+        }
+    }
+
+    fn location_is_writable(&self, location: MemoryLocation) -> bool {
+        match location {
+            MemoryLocation::Static { kind, .. } => self.segment_is_writable(kind),
+            MemoryLocation::Dynamic { .. } => true,
+        }
+    }
+
+    fn location_is_executable(&self, location: MemoryLocation) -> bool {
+        match location {
+            MemoryLocation::Static { kind, .. } => self.segment_is_executable(kind),
+            MemoryLocation::Dynamic { .. } => false,
+        }
+    }
+
+    fn location_end(&self, location: MemoryLocation) -> Option<u64> {
+        match location {
+            MemoryLocation::Static { kind, .. } => {
+                let segment = match kind {
+                    Arm11SegmentKind::Text => self.layout.text,
+                    Arm11SegmentKind::ReadOnly => self.layout.read_only,
+                    Arm11SegmentKind::Data => self.layout.data,
+                    Arm11SegmentKind::Bss => self.layout.bss,
+                    Arm11SegmentKind::Stack => self.layout.stack,
+                };
+                Some(segment.end_address())
+            }
+            MemoryLocation::Dynamic { index, .. } => {
+                let region = self.dynamic_regions.get(index)?;
+                Some(u64::from(region.address) + region.bytes.len() as u64)
+            }
         }
     }
 
@@ -484,22 +685,24 @@ impl Arm11CodeAddressSpace {
             let current_address = address
                 .checked_add(offset)
                 .ok_or(Error::InvalidAccess { addr: address })?;
-            let (kind, segment_offset) =
-                self.locate(current_address).ok_or(Error::InvalidAccess {
-                    addr: current_address,
-                })?;
+            let location = self.locate(current_address).ok_or(Error::InvalidAccess {
+                addr: current_address,
+            })?;
 
-            if !self.segment_is_writable(kind) {
+            if !self.location_is_writable(location) {
                 return Err(Error::InvalidAccess {
                     addr: current_address,
                 });
             }
 
-            locations.push((kind, segment_offset));
+            locations.push(location);
         }
 
-        for (byte, (kind, segment_offset)) in bytes.iter().zip(locations) {
-            self.bytes_for_mut(kind)[segment_offset] = *byte;
+        for (byte, location) in bytes.iter().zip(locations) {
+            self.bytes_for_location_mut(location)[match location {
+                MemoryLocation::Static { offset, .. }
+                | MemoryLocation::Dynamic { offset, .. } => offset,
+            }] = *byte;
         }
 
         Ok(())
@@ -508,10 +711,14 @@ impl Arm11CodeAddressSpace {
 
 impl Bus for Arm11CodeAddressSpace {
     fn read8(&mut self, address: u32) -> BusResult<u8> {
-        let (kind, offset) = self
+        let location = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
-        self.bytes_for(kind)
+        let offset = match location {
+            MemoryLocation::Static { offset, .. }
+            | MemoryLocation::Dynamic { offset, .. } => offset,
+        };
+        self.bytes_for_location(location)
             .get(offset)
             .copied()
             .ok_or(Error::InvalidAccess { addr: address })
@@ -852,6 +1059,69 @@ mod tests {
         assert!(address_space.is_writable_range(0x0010_4000, 1));
         assert!(!address_space.is_writable_range(0x0010_6000, 1));
         assert!(!address_space.is_writable_range(0x0010_3000, 0));
+    }
+
+    #[test]
+    fn application_heap_mapping_is_zeroed_writable_and_non_executable() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let base = address_space
+            .allocate_application_heap_region(0x0800_0000, 0x2000)
+            .unwrap();
+
+        assert_eq!(base, 0x0800_0000);
+        assert!(address_space.is_writable_range(base, 0x2000));
+        assert!(address_space.is_writable_range(base + 0x1FFC, 4));
+        assert!(!address_space.is_executable_address(base));
+        assert_eq!(address_space.read8(base).unwrap(), 0);
+
+        address_space.write32(base, 0xAABB_CCDD).unwrap();
+        assert_eq!(address_space.read32(base).unwrap(), 0xAABB_CCDD);
+
+        address_space
+            .free_application_heap_region(base, 0x2000)
+            .unwrap();
+        assert!(!address_space.is_writable_range(base, 1));
+        assert!(address_space.read8(base).is_err());
+    }
+
+    #[test]
+    fn application_heap_mapping_rejects_overlap_and_invalid_ranges() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        address_space
+            .allocate_application_heap_region(0x0800_0000, 0x2000)
+            .unwrap();
+
+        assert_eq!(
+            address_space.allocate_application_heap_region(0x0800_1000, 0x1000),
+            Err(Arm11DynamicMemoryError::OverlappingMapping)
+        );
+        assert_eq!(
+            address_space.allocate_application_heap_region(0x0800_0001, 0x1000),
+            Err(Arm11DynamicMemoryError::MisalignedAddress(0x0800_0001))
+        );
+        assert_eq!(
+            address_space.allocate_application_heap_region(0x0800_3000, 0),
+            Err(Arm11DynamicMemoryError::InvalidSize(0))
+        );
+        assert!(matches!(
+            address_space.allocate_application_heap_region(0x0E00_0000, 0x1000),
+            Err(Arm11DynamicMemoryError::OutsideApplicationHeap { .. })
+        ));
+    }
+
+    #[test]
+    fn application_heap_can_be_allocated_in_multiple_non_overlapping_regions() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        address_space
+            .allocate_application_heap_region(0x0800_0000, 0x2000)
+            .unwrap();
+        address_space
+            .allocate_application_heap_region(0x0800_4000, 0x3000)
+            .unwrap();
+
+        assert!(address_space.is_writable_range(0x0800_0000, 0x2000));
+        assert!(address_space.is_writable_range(0x0800_4000, 0x3000));
+        assert!(!address_space.is_writable_range(0x0800_2000, 1));
     }
 
     #[test]

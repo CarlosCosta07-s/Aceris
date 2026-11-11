@@ -17,10 +17,11 @@ use std::io::{Read, Seek};
 use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
-use crate::loader::ncsd::process::Arm11CodeAddressSpace;
+use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
+use crate::memory::Bus;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CONTROL_MEMORY, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
     SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SLEEP_THREAD,
 };
 
@@ -38,6 +39,14 @@ pub const RESULT_INVALID_HANDLE: u32 = 0xD8E0_07F7;
 
 /// Nintendo 3DS result: invalid user virtual address.
 pub const RESULT_INVALID_ADDRESS: u32 = 0xE0E0_1BF5;
+
+/// Nintendo 3DS result: kernel application-memory allocation failed.
+pub const RESULT_OUT_OF_MEMORY: u32 = 0xD860_07F3;
+
+const MEMOP_FREE: u32 = 1;
+const MEMOP_ALLOC: u32 = 3;
+const MEMPERM_NONE: u32 = 0;
+const MEMPERM_READ_WRITE: u32 = 3;
 
 /// Nintendo 3DS result: no more free kernel synchronization/thread objects.
 pub const RESULT_OUT_OF_THREAD_RESOURCES: u32 = 0xC860_1801;
@@ -257,6 +266,7 @@ impl Arm11ProcessSession {
         };
 
         match number {
+            SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
             SVC_EXIT_THREAD => match self.scheduler.exit_current() {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
@@ -349,6 +359,69 @@ impl Arm11ProcessSession {
         }
     }
 
+    /// Handles the user-mode ControlMemory ABI for ordinary RW application
+    /// heap allocations and exact frees. Shared/linear/mirrored mappings and
+    /// executable permissions are deliberately unsupported.
+    fn svc_control_memory(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        let output_address = registers[0];
+        let address = registers[1];
+        let source_address = registers[2];
+        let size = registers[3];
+        let operation = registers[4];
+        let permissions = registers[5];
+
+        let result = if output_address & 3 != 0 {
+            Err(RESULT_MISALIGNED_ADDRESS)
+        } else if !self.address_space.is_writable_range(output_address, 4) {
+            Err(RESULT_INVALID_ADDRESS)
+        } else {
+            match (operation, source_address, permissions) {
+                (MEMOP_ALLOC, 0, MEMPERM_READ_WRITE) => self
+                    .address_space
+                    .allocate_application_heap_region(address, size)
+                    .map(|mapped_address| (mapped_address, false))
+                    .map_err(dynamic_memory_result_code),
+                (MEMOP_FREE, 0, MEMPERM_NONE) => {
+                    let output_end = u64::from(output_address) + 4;
+                    let mapping_end = u64::from(address) + u64::from(size);
+                    if u64::from(output_address) < mapping_end
+                        && output_end > u64::from(address)
+                    {
+                        Err(RESULT_INVALID_ADDRESS)
+                    } else {
+                        self.address_space
+                            .free_application_heap_region(address, size)
+                            .map(|()| (0, true))
+                            .map_err(dynamic_memory_result_code)
+                    }
+                }
+                _ => Err(RESULT_INVALID_ENUM),
+            }
+        };
+
+        let code = match result {
+            Ok((output_value, _was_freed)) => {
+                if self.address_space.write32(output_address, output_value).is_err() {
+                    RESULT_INVALID_ADDRESS
+                } else {
+                    0
+                }
+            }
+            Err(code) => code,
+        };
+
+        self.scheduler
+            .core_mut(caller)
+            .expect("caller context remains allocated")
+            .regs[0] = code;
+        SvcRunDisposition::Resume
+    }
+
     fn svc_create_thread(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
             .scheduler
@@ -402,6 +475,17 @@ impl Arm11ProcessSession {
             .expect("caller context remains allocated")
             .regs[0] = result;
         SvcRunDisposition::Resume
+    }
+}
+
+fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
+    match error {
+        Arm11DynamicMemoryError::MisalignedAddress(_)
+        | Arm11DynamicMemoryError::InvalidSize(_) => RESULT_MISALIGNED_ADDRESS,
+        Arm11DynamicMemoryError::AllocationFailure(_) => RESULT_OUT_OF_MEMORY,
+        Arm11DynamicMemoryError::OutsideApplicationHeap { .. }
+        | Arm11DynamicMemoryError::OverlappingMapping
+        | Arm11DynamicMemoryError::MappingNotFound { .. } => RESULT_INVALID_ADDRESS,
     }
 }
 
@@ -547,6 +631,100 @@ mod tests {
         assert_eq!(second_report.instructions_executed, 0);
         assert_eq!(second_report.stop_reason, Arm11RunStopReason::ProcessExited);
         assert_eq!(session.core().pc(), 0x0010_0008);
+    }
+
+    #[test]
+    fn control_memory_allocates_and_frees_application_heap_through_the_real_abi() {
+        let mut session = test_session_with_program(&[
+            0xEF00_0001, // SVC ControlMemory
+            0xEF00_0001, // SVC ControlMemory (free)
+        ]);
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x0020_0000; // addr_out pointer
+            core.regs[1] = 0x0800_0000; // addr0
+            core.regs[2] = 0; // addr1
+            core.regs[3] = 0x2000; // 8 KiB
+            core.regs[4] = MEMOP_ALLOC;
+            core.regs[5] = MEMPERM_READ_WRITE;
+        }
+
+        let allocated = session.run_instructions(1).unwrap();
+        assert_eq!(
+            allocated.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(
+            session.address_space.read32(0x0020_0000).unwrap(),
+            0x0800_0000
+        );
+        assert!(session.address_space.is_writable_range(0x0800_0000, 0x2000));
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x0020_0000;
+            core.regs[1] = 0x0800_0000;
+            core.regs[2] = 0;
+            core.regs[3] = 0x2000;
+            core.regs[4] = MEMOP_FREE;
+            core.regs[5] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.address_space.read32(0x0020_0000).unwrap(), 0);
+        assert!(!session.address_space.is_writable_range(0x0800_0000, 1));
+    }
+
+    #[test]
+    fn control_memory_heap_can_supply_a_secondary_thread_stack() {
+        let mut session = test_session_with_program(&[
+            0xEF00_0001, // SVC ControlMemory - allocate heap
+            0xEF00_0008, // SVC CreateThread using the heap as its stack
+        ]);
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x0020_0000;
+            core.regs[1] = 0x0800_0000;
+            core.regs[2] = 0;
+            core.regs[3] = 0x4000;
+            core.regs[4] = MEMOP_ALLOC;
+            core.regs[5] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        let heap_base = session.address_space.read32(0x0020_0000).unwrap();
+        assert_eq!(heap_base, 0x0800_0000);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x20;
+            core.regs[1] = 0x0010_0020;
+            core.regs[2] = 0xCAFE_BABE;
+            core.regs[3] = heap_base + 0x4000;
+            core.regs[4] = 0;
+        }
+        session.run_instructions(1).unwrap();
+
+        assert_eq!(session.scheduler.thread_count(), 2);
+        assert_eq!(session.current_thread_id().unwrap().raw(), 2);
+    }
+
+    #[test]
+    fn control_memory_rejects_executable_permissions_and_unmapped_output_pointers() {
+        let mut session = test_session_with_program(&[0xEF00_0001]);
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x0010_0000; // executable, not writable output
+            core.regs[1] = 0x0800_0000;
+            core.regs[2] = 0;
+            core.regs[3] = 0x1000;
+            core.regs[4] = MEMOP_ALLOC;
+            core.regs[5] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
+        assert!(!session.address_space.is_writable_range(0x0800_0000, 1));
     }
 
     #[test]

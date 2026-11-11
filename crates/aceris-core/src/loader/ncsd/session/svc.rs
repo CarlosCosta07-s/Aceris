@@ -3,6 +3,9 @@
 //! SVC argument registers are dispatched by Arm11ProcessSession, which has
 //! access to the address space and scheduler needed to validate operations.
 
+/// Control process memory mappings (allocation and release).
+pub const SVC_CONTROL_MEMORY: u32 = 0x01;
+
 /// Exit the current process.
 pub const SVC_EXIT_PROCESS: u32 = 0x03;
 
@@ -107,6 +110,7 @@ mod tests {
         let mut registers = [0; 16];
 
         for number in [
+            SVC_CONTROL_MEMORY,
             SVC_CREATE_THREAD,
             SVC_EXIT_THREAD,
             SVC_SLEEP_THREAD,
