@@ -956,6 +956,26 @@ impl<R: Read + Seek> Seek for CiaDecryptedContentNcchReader<'_, R> {
     }
 }
 
+/// A seekable NCCH AES-CTR region reader backed by a TMD-verified CIA content.
+pub type CiaContentNcchCtrReader<'a, R> =
+    NcchCtrReader<CiaContentReader<'a, R>>;
+
+/// A bounded RomFS region reader backed by a clear CIA content's NCCH reader.
+pub type CiaContentRomFsRangeReader<'a, R> =
+    crate::loader::ncsd::ncch::romfs::RomFsRangeReader<CiaContentNcchCtrReader<'a, R>>;
+
+/// A Level 3 RomFS reader backed by a clear CIA content.
+pub type CiaContentRomFsLevel3Reader<'a, R> =
+    crate::loader::ncsd::ncch::romfs::RomFsLevel3Reader<CiaContentRomFsRangeReader<'a, R>>;
+
+/// A verified ExeFS file reader backed by a clear CIA content.
+pub type CiaContentExeFsFileReader<'a, R> =
+    crate::loader::ncsd::ncch::exefs::ExeFsFileReader<CiaContentNcchCtrReader<'a, R>>;
+
+/// A path-indexed, integrity-verified RomFS reader backed by a clear CIA content.
+pub type CiaContentVerifiedRomFsReader<'a, R> =
+    CiaVerifiedRomFsReader<CiaContentNcchCtrReader<'a, R>>;
+
 /// A TMD-verified NCCH content paired with its bounded source reader.
 #[derive(Debug)]
 pub struct CiaContentNcchReader<'a, R> {
@@ -989,7 +1009,7 @@ impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
         self,
         region: NcchCtrRegion,
         key: [u8; AES_BLOCK_SIZE],
-    ) -> Result<Option<NcchCtrReader<CiaContentReader<'a, R>>>, NcchCtrReaderError> {
+    ) -> Result<Option<CiaContentNcchCtrReader<'a, R>>, NcchCtrReaderError> {
         let Self { header, reader, .. } = self;
         header.open_decrypted_region_reader(reader, region, key)
     }
@@ -1001,7 +1021,7 @@ impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
     pub fn open_decrypted_verified_extended_header_reader(
         self,
         menu_info_key: [u8; AES_BLOCK_SIZE],
-    ) -> Result<Option<NcchCtrReader<CiaContentReader<'a, R>>>, NcchIntegrityError> {
+    ) -> Result<Option<CiaContentNcchCtrReader<'a, R>>, NcchIntegrityError> {
         let Self { header, reader, .. } = self;
         header.open_decrypted_verified_extended_header_reader(reader, menu_info_key)
     }
@@ -1017,11 +1037,7 @@ impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
         menu_info_key: [u8; AES_BLOCK_SIZE],
         content_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<
-        Option<
-            crate::loader::ncsd::ncch::exefs::ExeFsFileReader<
-                NcchCtrReader<CiaContentReader<'a, R>>,
-            >,
-        >,
+        Option<CiaContentExeFsFileReader<'a, R>>,
         crate::loader::ncsd::ncch::exefs::ExeFsError,
     > {
         let Self { header, reader, .. } = self;
@@ -1041,13 +1057,7 @@ impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
         self,
         romfs_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<
-        Option<
-            crate::loader::ncsd::ncch::romfs::RomFsLevel3Reader<
-                crate::loader::ncsd::ncch::romfs::RomFsRangeReader<
-                    NcchCtrReader<CiaContentReader<'a, R>>,
-                >,
-            >,
-        >,
+        Option<CiaContentRomFsLevel3Reader<'a, R>>,
         crate::loader::ncsd::ncch::romfs::RomFsError,
     > {
         let Self { header, reader, .. } = self;
@@ -1088,7 +1098,7 @@ impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
         self,
         romfs_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<
-        Option<CiaVerifiedRomFsReader<NcchCtrReader<CiaContentReader<'a, R>>>>,
+        Option<CiaContentVerifiedRomFsReader<'a, R>>,
         crate::loader::ncsd::ncch::romfs::RomFsError,
     > {
         let Some(mut level3) = self.open_decrypted_verified_romfs_level3_reader(romfs_key)? else {
