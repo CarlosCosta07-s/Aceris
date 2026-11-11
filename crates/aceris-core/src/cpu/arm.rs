@@ -1291,10 +1291,26 @@ impl Arm11Core {
             self.write_reg(rd, value);
         } else if word & 0x0FBF_0FFF == 0x010F_0000 {
             // MRS Rd, CPSR|SPSR
-            if bit(word, 22) {
-                return Err(Error::Unimplemented("SPSR access"));
+            if rd as usize == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
             }
-            self.write_reg(rd, self.cpsr.0);
+            let value = if bit(word, 22) {
+                if !super::Psr::mode_has_spsr(self.cpsr.mode()) {
+                    return Err(Error::UndefinedInstruction {
+                        pc: self.pc(),
+                        word,
+                    });
+                }
+                self.saved_program_status()
+                    .ok_or(Error::Unimplemented("SPSR has not been initialized"))?
+                    .0
+            } else {
+                self.cpsr.0
+            };
+            self.write_reg(rd, value);
         } else if word & 0x0FB0_FFF0 == 0x0120_F000 {
             // MSR CPSR|SPSR_<fields>, Rm
             let value = self.reg(rm, 8);
@@ -1309,19 +1325,68 @@ impl Arm11Core {
         Ok(StepEvent::Executed)
     }
 
-    /// Applies an MSR write. In user mode only the condition flags are writable.
+    /// Applies an MSR write to CPSR or the current exception mode's SPSR.
+    /// User mode may only write the top (flags) byte of CPSR.
     fn write_status(&mut self, word: u32, value: u32) -> Result<()> {
+        let fields = bits(word, 19, 16);
+        let mut write_mask = 0;
+        if fields & 0b1000 != 0 {
+            write_mask |= 0xFF00_0000;
+        }
+        if fields & 0b0100 != 0 {
+            write_mask |= 0x00FF_0000;
+        }
+        if fields & 0b0010 != 0 {
+            write_mask |= 0x0000_FF00;
+        }
+        if fields & 0b0001 != 0 {
+            write_mask |= 0x0000_00FF;
+        }
+        if write_mask == 0 {
+            return Ok(());
+        }
+
         if bit(word, 22) {
-            return Err(Error::Unimplemented("SPSR access"));
+            if !super::Psr::mode_has_spsr(self.cpsr.mode()) {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            let previous = match self.saved_program_status() {
+                Some(previous) => previous.0,
+                None if write_mask == u32::MAX => 0,
+                None => {
+                    return Err(Error::Unimplemented(
+                        "partial SPSR write requires an initialized SPSR",
+                    ));
+                }
+            };
+            self.set_saved_program_status(super::Psr(
+                (previous & !write_mask) | (value & write_mask),
+            ))?;
+            return Ok(());
         }
-        if bit(word, 19) {
-            self.cpsr.set_flags(
-                bit(value, 31),
-                bit(value, 30),
-                bit(value, 29),
-                bit(value, 28),
-            );
+
+        if !self.cpsr.privileged() {
+            write_mask &= 0xFF00_0000;
         }
+        if write_mask == 0 {
+            return Ok(());
+        }
+
+        if write_mask & super::Psr::MODE_MASK != 0 {
+            let mode = value & super::Psr::MODE_MASK;
+            if !super::Psr::is_valid_mode(mode) {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            self.switch_mode(mode)?;
+        }
+
+        self.cpsr.0 = (self.cpsr.0 & !write_mask) | (value & write_mask);
         Ok(())
     }
 
@@ -1982,6 +2047,83 @@ mod tests {
             malformed.cpu.step(&mut malformed.mem),
             Err(Error::UndefinedInstruction { pc: 0, .. })
         ));
+    }
+
+    #[test]
+    fn armv6_mrs_and_msr_read_and_write_the_active_spsr() {
+        // MRS r0,SPSR ; MSR SPSR_f,r4 ; MRS r1,SPSR ;
+        // MSR SPSR_c,r3 ; MRS r2,SPSR ; MRS r5,CPSR.
+        let mut m = Machine::new(&[
+            0xE14F_0000,
+            0xE168_F004,
+            0xE14F_1000,
+            0xE161_F003,
+            0xE14F_2000,
+            0xE10F_5000,
+        ]);
+        m.cpu.switch_mode(super::super::Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.set_saved_program_status(super::super::Psr(0x1234_0010)).unwrap();
+        m.cpu.regs[4] = 0xA500_0000;
+        m.cpu.regs[3] = super::super::Psr::SYSTEM_MODE;
+
+        m.step();
+        assert_eq!(m.cpu.regs[0], 0x1234_0010);
+        m.step();
+        m.step();
+        assert_eq!(m.cpu.regs[1], 0xA534_0010);
+        m.step();
+        m.step();
+        assert_eq!(m.cpu.regs[2], 0xA534_001F);
+        m.step();
+        assert_eq!(m.cpu.regs[5] & super::super::Psr::MODE_MASK, super::super::Psr::SUPERVISOR_MODE);
+    }
+
+    #[test]
+    fn armv6_msr_cpsr_control_field_switches_register_banks() {
+        // MSR CPSR_c,r6.
+        let mut m = Machine::new(&[0xE121_F006]);
+        m.cpu.switch_mode(super::super::Psr::SYSTEM_MODE).unwrap();
+        m.cpu.regs[SP] = 0x1000;
+        m.cpu.regs[LR] = 0x1004;
+        m.cpu.regs[6] = super::super::Psr::IRQ_MODE;
+
+        m.step();
+        assert_eq!(m.cpu.cpsr.mode(), super::super::Psr::IRQ_MODE);
+        assert_eq!((m.cpu.regs[SP], m.cpu.regs[LR]), (0, 0));
+
+        m.cpu.switch_mode(super::super::Psr::SYSTEM_MODE).unwrap();
+        assert_eq!((m.cpu.regs[SP], m.cpu.regs[LR]), (0x1000, 0x1004));
+    }
+
+    #[test]
+    fn armv6_spsr_access_is_rejected_without_an_exception_mode_bank() {
+        // MRS r0,SPSR and MSR SPSR_fsxc,r2 are not available in User mode.
+        let mut mrs = Machine::new(&[0xE14F_0000]);
+        assert!(matches!(
+            mrs.cpu.step(&mut mrs.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        let mut msr = Machine::new(&[0xE16F_F002]);
+        msr.cpu.regs[2] = 0x1234_5678;
+        assert!(matches!(
+            msr.cpu.step(&mut msr.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn armv6_msr_cpsr_rejects_invalid_mode_without_mutating_status() {
+        // MSR CPSR_c,r6 with an unallocated mode value.
+        let mut m = Machine::new(&[0xE121_F006]);
+        m.cpu.switch_mode(super::super::Psr::SYSTEM_MODE).unwrap();
+        m.cpu.regs[6] = 0x15;
+        let before = m.cpu.cpsr;
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+        assert_eq!(m.cpu.cpsr, before);
     }
 
     #[test]

@@ -40,6 +40,18 @@ impl Psr {
     pub const UNDEFINED_MODE: u32 = 0x1B;
     pub const SYSTEM_MODE: u32 = 0x1F;
 
+    /// Returns whether `mode` has a banked Saved Program Status Register.
+    pub const fn mode_has_spsr(mode: u32) -> bool {
+        matches!(
+            mode,
+            Self::FIQ_MODE
+                | Self::IRQ_MODE
+                | Self::SUPERVISOR_MODE
+                | Self::ABORT_MODE
+                | Self::UNDEFINED_MODE
+        )
+    }
+
     /// Returns whether `mode` is one of the ARMv6 defined processor modes.
     pub const fn is_valid_mode(mode: u32) -> bool {
         matches!(
