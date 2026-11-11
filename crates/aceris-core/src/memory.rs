@@ -250,7 +250,9 @@ mod tests {
         let mut memory = FlatMemory::new(0x1000, 32);
         assert!(memory.exclusive_read(0x1001, 4).is_err());
         assert!(memory.exclusive_read(0x1000, 3).is_err());
-        assert!(memory.exclusive_write(0x1000, 8, 0, None).is_err());
+        assert!(memory.exclusive_write(0x1000, 3, 0, None).is_err());
+        assert!(memory.exclusive_write(0x1001, 4, 0, None).is_err());
+        assert!(!memory.exclusive_write(0x1000, 8, 0, None).unwrap());
     }
 
     #[test]
