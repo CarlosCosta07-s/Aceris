@@ -18,16 +18,14 @@ use std::io::{Read, Seek};
 use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
 use crate::memory::Bus;
-use kernel::{
-    Arm11KernelObjectTable, EventResetType, KernelHandleError, CURRENT_THREAD_HANDLE,
-};
+use kernel::{Arm11KernelObjectTable, CURRENT_THREAD_HANDLE, EventResetType, KernelHandleError};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CONTROL_MEMORY, SVC_CREATE_THREAD,
-    SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CREATE_EVENT, SVC_EXIT_THREAD,
-    SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY,
+    SVC_CREATE_EVENT, SVC_CREATE_THREAD, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
+    SVC_SET_THREAD_PRIORITY, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -458,7 +456,8 @@ impl Arm11ProcessSession {
                 let handle = match self.kernel_objects.insert_thread(id) {
                     Ok(handle) => handle,
                     Err(KernelHandleError::Exhausted) => {
-                        return self.write_create_thread_error(caller, RESULT_OUT_OF_THREAD_RESOURCES);
+                        return self
+                            .write_create_thread_error(caller, RESULT_OUT_OF_THREAD_RESOURCES);
                     }
                     Err(_) => {
                         return self.write_create_thread_error(caller, RESULT_INVALID_HANDLE);
@@ -959,7 +958,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn create_event_writes_a_process_local_handle_and_preserves_reset_mode() {
         let mut session = test_session_with_program(&[0xEF00_0017]);
@@ -1000,15 +998,15 @@ mod tests {
 
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
-        assert_eq!(
-            session.kernel_objects.event_is_signaled(handle),
-            Some(true)
-        );
+        assert_eq!(session.kernel_objects.event_is_signaled(handle), Some(true));
 
         session.scheduler.current_core_mut().unwrap().regs[0] = handle;
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
-        assert_eq!(session.kernel_objects.event_is_signaled(handle), Some(false));
+        assert_eq!(
+            session.kernel_objects.event_is_signaled(handle),
+            Some(false)
+        );
 
         session.scheduler.current_core_mut().unwrap().regs[0] = handle;
         session.run_instructions(1).unwrap();
