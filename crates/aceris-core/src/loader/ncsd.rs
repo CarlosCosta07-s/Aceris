@@ -117,24 +117,25 @@ impl NcsdHeader {
                 });
             }
 
-            let offset_bytes = u64::from(offset_units)
-                .checked_mul(media_unit_size)
-                .ok_or(Error::InvalidNcsdPartition {
+            let offset_bytes = u64::from(offset_units).checked_mul(media_unit_size).ok_or(
+                Error::InvalidNcsdPartition {
                     index,
                     reason: "offset overflows",
-                })?;
-            let size_bytes = u64::from(size_units)
-                .checked_mul(media_unit_size)
-                .ok_or(Error::InvalidNcsdPartition {
+                },
+            )?;
+            let size_bytes = u64::from(size_units).checked_mul(media_unit_size).ok_or(
+                Error::InvalidNcsdPartition {
                     index,
                     reason: "size overflows",
-                })?;
-            let end_bytes = offset_bytes
-                .checked_add(size_bytes)
-                .ok_or(Error::InvalidNcsdPartition {
-                    index,
-                    reason: "end offset overflows",
-                })?;
+                },
+            )?;
+            let end_bytes =
+                offset_bytes
+                    .checked_add(size_bytes)
+                    .ok_or(Error::InvalidNcsdPartition {
+                        index,
+                        reason: "end offset overflows",
+                    })?;
 
             if offset_bytes < HEADER_SIZE as u64 {
                 return Err(Error::InvalidNcsdPartition {
@@ -196,7 +197,9 @@ impl NcsdHeader {
 
     /// Returns a populated partition by its original table index.
     pub fn partition(&self, index: u8) -> Option<&NcsdPartition> {
-        self.partitions.iter().find(|partition| partition.index == index)
+        self.partitions
+            .iter()
+            .find(|partition| partition.index == index)
     }
 
     /// Returns partition zero, conventionally the executable game content.
