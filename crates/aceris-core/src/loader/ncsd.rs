@@ -938,9 +938,7 @@ mod tests {
             .unwrap();
         let extended_header_start = ncch_start + 0x200;
         ncch::crypto::Aes128Ctr::new(menu_info_key, extended_header_counter)
-            .apply_keystream(
-                &mut image[extended_header_start..extended_header_start + 0x400],
-            )
+            .apply_keystream(&mut image[extended_header_start..extended_header_start + 0x400])
             .unwrap();
 
         let exefs_counter = header
