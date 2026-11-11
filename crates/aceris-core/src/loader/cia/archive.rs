@@ -564,7 +564,7 @@ mod tests {
         let main = b"main executable bytes";
         let manual = b"optional manual bytes";
         let (data, _) = make_cia(&[
-            (0x1000, 0, 1, main),
+            (0x1000, 0, 0, main),
             (0x2000, 2, 0x4000, manual),
         ]);
         let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn rejects_content_whose_bytes_do_not_match_the_tmd_hash() {
-        let (mut data, locations) = make_cia(&[(0x1000, 0, 1, b"original content")]);
+        let (mut data, locations) = make_cia(&[(0x1000, 0, 0, b"original content")]);
         let content_offset = usize::try_from(locations[0].1).unwrap();
         data[content_offset] ^= 0xFF;
 
