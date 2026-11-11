@@ -37,6 +37,14 @@ pub enum StepEvent {
     Breakpoint(u16),
 }
 
+/// One outstanding exclusive-access reservation for this processor context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ExclusiveReservation {
+    address: u32,
+    size: u8,
+    version: u64,
+}
+
 /// A single ARM11 core.
 #[derive(Clone, Debug, Default)]
 pub struct Arm11Core {
@@ -45,6 +53,7 @@ pub struct Arm11Core {
     pub regs: [u32; 16],
     pub cpsr: Psr,
     branch_taken: bool,
+    exclusive_reservation: Option<ExclusiveReservation>,
 }
 
 impl Arm11Core {
@@ -58,6 +67,11 @@ impl Arm11Core {
 
     pub fn set_pc(&mut self, pc: u32) {
         self.regs[PC] = pc;
+    }
+
+    /// Clears the processor's local exclusive-access reservation.
+    pub fn clear_exclusive_monitor(&mut self) {
+        self.exclusive_reservation = None;
     }
 
     /// Fetches and executes one instruction.

@@ -5,6 +5,7 @@
 //! physical memory, configure privileged kernel state, schedule threads, or
 //! start a complete console execution environment.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use super::PreparedArm11Image;
@@ -400,6 +401,8 @@ pub struct Arm11CodeAddressSpace {
     bss: Vec<u8>,
     stack: Vec<u8>,
     dynamic_regions: Vec<DynamicMemoryRegion>,
+    /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
+    exclusive_versions: BTreeMap<u32, u64>,
 }
 
 impl Arm11CodeAddressSpace {
@@ -435,6 +438,7 @@ impl Arm11CodeAddressSpace {
             bss,
             stack,
             dynamic_regions: Vec::new(),
+            exclusive_versions: BTreeMap::new(),
         })
     }
 
@@ -531,6 +535,7 @@ impl Arm11CodeAddressSpace {
         else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
+        self.invalidate_exclusive_range(address, size as usize);
         self.dynamic_regions.remove(index);
         Ok(())
     }
@@ -843,6 +848,37 @@ impl Arm11CodeAddressSpace {
             }] = *byte;
         }
 
+        self.invalidate_exclusive_range(address, bytes.len());
+        Ok(())
+    }
+
+    fn exclusive_version(&self, address: u32) -> u64 {
+        self.exclusive_versions
+            .get(&(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1)))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn invalidate_exclusive_range(&mut self, address: u32, size: usize) {
+        if size == 0 {
+            return;
+        }
+        let end = u64::from(address) + size as u64;
+        let mut granule = u64::from(
+            address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1),
+        );
+        while granule < end {
+            let key = granule as u32;
+            let version = self.exclusive_versions.entry(key).or_insert(0);
+            *version = version.wrapping_add(1);
+            granule += u64::from(crate::memory::EXCLUSIVE_RESERVATION_GRANULE);
+        }
+    }
+
+    fn validate_exclusive_access(address: u32, size: usize) -> BusResult<()> {
+        if !matches!(size, 1 | 2 | 4 | 8) || address as usize % size != 0 {
+            return Err(Error::InvalidAccess { addr: address });
+        }
         Ok(())
     }
 }
@@ -873,6 +909,36 @@ impl Bus for Arm11CodeAddressSpace {
 
     fn write32(&mut self, address: u32, value: u32) -> BusResult<()> {
         self.write_bytes(address, &value.to_le_bytes())
+    }
+
+    fn exclusive_read(&mut self, address: u32, size: usize) -> BusResult<(u64, u64)> {
+        Self::validate_exclusive_access(address, size)?;
+        let mut value = 0u64;
+        for offset in 0..size {
+            let current = address
+                .checked_add(offset as u32)
+                .ok_or(Error::InvalidAccess { addr: address })?;
+            value |= u64::from(self.read8(current)?) << (offset * 8);
+        }
+        Ok((value, self.exclusive_version(address)))
+    }
+
+    fn exclusive_write(
+        &mut self,
+        address: u32,
+        size: usize,
+        value: u64,
+        reservation: Option<u64>,
+    ) -> BusResult<bool> {
+        Self::validate_exclusive_access(address, size)?;
+        if !self.is_writable_range(address, size) {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+        if reservation != Some(self.exclusive_version(address)) {
+            return Ok(false);
+        }
+        self.write_bytes(address, &value.to_le_bytes()[..size])?;
+        Ok(true)
     }
 }
 
