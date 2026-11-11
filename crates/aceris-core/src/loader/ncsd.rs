@@ -908,6 +908,25 @@ impl<R: Read + Seek> NcsdImageReader<R> {
             .load_arm11_address_space(menu_info_key, content_key)
             .map_err(NcsdImageReaderError::ExecutableLoad)
     }
+
+    /// Loads the primary NCSD program into an initialized ARM11 process session.
+    ///
+    /// The image reader is borrowed only during loading. The returned session
+    /// owns its validated process address space, while this image reader remains
+    /// available for metadata inspection or access to other partitions.
+    /// The caller supplies AES keys; NoCrypto content does not use them.
+    pub fn load_primary_arm11_session(
+        &mut self,
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<Arm11ProcessSession, NcsdImageReaderError> {
+        let address_space = self
+            .borrow_partition_ncch(0)?
+            .load_arm11_address_space(menu_info_key, content_key)
+            .map_err(NcsdImageReaderError::ExecutableLoad)?;
+
+        Ok(Arm11ProcessSession::from_address_space(address_space))
+    }
 }
 
 /// Errors produced while opening an NCSD image and selecting one of its NCCH partitions.
@@ -1177,6 +1196,28 @@ mod tests {
         (image, text, read_only, data)
     }
 
+    fn image_with_arm11_execution_program() -> Vec<u8> {
+        const PARTITION_OFFSET: usize = 0x4000;
+        const EXEFS_OFFSET: usize = 0x2000;
+        const CODE_SIZE: usize = 0x3000;
+
+        let (mut image, _, _, _) = image_with_arm11_code(false);
+        let exefs_start = PARTITION_OFFSET + EXEFS_OFFSET;
+        let code_start = exefs_start + 0x200;
+
+        image[code_start..code_start + 4].copy_from_slice(&0xE3A0_0007u32.to_le_bytes());
+        image[code_start + 4..code_start + 8].copy_from_slice(&0xE3A0_1005u32.to_le_bytes());
+
+        let code_hash = sha256_digest(&image[code_start..code_start + CODE_SIZE]);
+        image[exefs_start + 0x1E0..exefs_start + 0x200].copy_from_slice(&code_hash);
+
+        let superblock_hash = sha256_digest(&image[exefs_start..exefs_start + 0x200]);
+        image[PARTITION_OFFSET + 0x1C0..PARTITION_OFFSET + 0x1E0]
+            .copy_from_slice(&superblock_hash);
+
+        image
+    }
+
     fn encrypt_arm11_code_image(
         mut image: Vec<u8>,
         menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
@@ -1336,6 +1377,56 @@ mod tests {
         assert_eq!(address_space.layout().entry_point, 0x0010_0000);
         assert_eq!(address_space.layout().initial_stack_pointer, 0x1000_0000);
         assert_eq!(address_space.layout().stack_size_bytes, 0x4000);
+    }
+
+    #[test]
+    fn loads_and_executes_primary_arm11_session_from_borrowed_ncsd_reader() {
+        let image = image_with_arm11_execution_program();
+        let mut reader = NcsdImageReader::open(Cursor::new(image)).unwrap();
+
+        let mut session = reader
+            .load_primary_arm11_session([0; ncch::crypto::AES_BLOCK_SIZE], [0; ncch::crypto::AES_BLOCK_SIZE])
+            .unwrap();
+
+        assert_eq!(session.core().pc(), 0x0010_0000);
+        assert_eq!(session.core().regs[13], 0x1000_0000);
+        assert_eq!(session.instruction_count(), 0);
+
+        let report = session.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.core().regs[0], 7);
+        assert_eq!(session.core().regs[1], 5);
+        assert_eq!(session.instruction_count(), 2);
+
+        assert_eq!(reader.header().primary_partition().unwrap().index, 0);
+        assert_eq!(reader.borrow_partition_reader(0).unwrap().position(), 0);
+    }
+
+    #[test]
+    fn loads_and_executes_encrypted_primary_arm11_session_with_caller_keys() {
+        let menu_info_key = [0x61; ncch::crypto::AES_BLOCK_SIZE];
+        let content_key = [0x62; ncch::crypto::AES_BLOCK_SIZE];
+        let image = encrypt_arm11_code_image(
+            image_with_arm11_execution_program(),
+            menu_info_key,
+            content_key,
+        );
+        let mut reader = NcsdImageReader::open(Cursor::new(image)).unwrap();
+
+        let mut session = reader
+            .load_primary_arm11_session(menu_info_key, content_key)
+            .unwrap();
+
+        assert_eq!(session.core().pc(), 0x0010_0000);
+        let report = session.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(session.core().regs[0], 7);
+        assert_eq!(session.core().regs[1], 5);
+        assert_eq!(reader.header().primary_partition().unwrap().index, 0);
     }
 
     #[test]
