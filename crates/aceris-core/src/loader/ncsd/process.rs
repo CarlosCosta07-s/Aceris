@@ -1,19 +1,21 @@
 //! ARM11 process-layout validation for prepared Nintendo 3DS executable images.
 //!
 //! This module converts parsed code-set metadata into validated virtual
-//! mappings. It deliberately does not choose a kernel-owned stack address,
-//! allocate physical memory, or start the CPU; those are later process/kernel
-//! responsibilities.
+//! mappings for code, BSS, and the main-thread stack. It does not allocate
+//! physical memory, configure privileged kernel state, schedule threads, or
+//! start a complete console execution environment.
 
 use std::fmt;
 
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
+use crate::cpu::{Arm11Core, SP};
 use crate::memory::Bus;
 use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
+const MAIN_STACK_TOP: u32 = 0x1000_0000;
 const MAX_BSS_MAPPING_SIZE_BYTES: usize = 256 * 1024 * 1024;
 
 /// ARM11 code segment category.
@@ -27,6 +29,8 @@ pub enum Arm11SegmentKind {
     Data,
     /// Writable, non-executable zero-initialized data.
     Bss,
+    /// Writable, non-executable main-thread stack.
+    Stack,
 }
 
 impl fmt::Display for Arm11SegmentKind {
@@ -36,6 +40,7 @@ impl fmt::Display for Arm11SegmentKind {
             Self::ReadOnly => formatter.write_str("read-only"),
             Self::Data => formatter.write_str("data"),
             Self::Bss => formatter.write_str("bss"),
+            Self::Stack => formatter.write_str("stack"),
         }
     }
 }
@@ -86,7 +91,11 @@ pub struct Arm11ProcessLayout {
     pub bss: Arm11MemorySegment,
     /// Exact BSS size in bytes from the NCCH System Control Info.
     pub bss_size_bytes: u32,
-    /// Exact main-thread stack request in bytes. The kernel chooses its address.
+    /// Writable, non-executable main-thread stack mapping.
+    pub stack: Arm11MemorySegment,
+    /// Initial stack pointer at the top of the main-thread stack.
+    pub initial_stack_pointer: u32,
+    /// Exact main-thread stack request in bytes from the NCCH System Control Info.
     pub stack_size_bytes: u32,
     /// Page-aligned lengths used to divide ExeFS code.
     pub code_file_layout: CodeFileLayout,
@@ -120,6 +129,11 @@ pub enum Arm11ProcessLayoutError {
         maximum_size_bytes: usize,
     },
     BssAllocationFailure(String),
+    StackTooLarge {
+        requested_size_bytes: u32,
+        maximum_size_bytes: u32,
+    },
+    StackAllocationFailure(String),
 }
 
 impl fmt::Display for Arm11ProcessLayoutError {
@@ -163,6 +177,16 @@ impl fmt::Display for Arm11ProcessLayoutError {
             ),
             Self::BssAllocationFailure(reason) => {
                 write!(formatter, "could not allocate ARM11 BSS memory: {reason}")
+            }
+            Self::StackTooLarge {
+                requested_size_bytes,
+                maximum_size_bytes,
+            } => write!(
+                formatter,
+                "ARM11 stack size {requested_size_bytes} bytes exceeds the {maximum_size_bytes}-byte virtual stack region"
+            ),
+            Self::StackAllocationFailure(reason) => {
+                write!(formatter, "could not allocate ARM11 stack memory: {reason}")
             }
         }
     }
@@ -236,12 +260,14 @@ impl PreparedArm11Image {
                 maximum_size_bytes: MAX_BSS_MAPPING_SIZE_BYTES,
             });
         }
+        let stack = make_stack_segment(extended_header.stack_size_bytes)?;
 
         validate_no_overlap([
             (Arm11SegmentKind::Text, text),
             (Arm11SegmentKind::ReadOnly, read_only),
             (Arm11SegmentKind::Data, data),
             (Arm11SegmentKind::Bss, bss),
+            (Arm11SegmentKind::Stack, stack),
         ])?;
 
         Ok(Arm11ProcessLayout {
@@ -252,6 +278,8 @@ impl PreparedArm11Image {
             data,
             bss,
             bss_size_bytes: extended_header.bss_size_bytes,
+            stack,
+            initial_stack_pointer: MAIN_STACK_TOP,
             stack_size_bytes: extended_header.stack_size_bytes,
             code_file_layout,
         })
@@ -260,9 +288,9 @@ impl PreparedArm11Image {
 
 /// A bootstrap ARM11 address space containing the prepared code segments.
 ///
-/// This bus maps text, read-only data, initialized writable data, and the
-/// zero-filled BSS tail. The main-thread stack, shared memory, and hardware
-/// registers are not mapped until their kernel and device-memory rules exist.
+/// This bus maps text, read-only data, initialized writable data, the
+/// zero-filled BSS tail, and the main-thread stack. Shared memory, hardware
+/// registers, and privileged kernel regions are not mapped here.
 #[derive(Debug)]
 pub struct Arm11CodeAddressSpace {
     layout: Arm11ProcessLayout,
@@ -270,6 +298,7 @@ pub struct Arm11CodeAddressSpace {
     read_only: Vec<u8>,
     data: Vec<u8>,
     bss: Vec<u8>,
+    stack: Vec<u8>,
 }
 
 impl Arm11CodeAddressSpace {
@@ -285,18 +314,39 @@ impl Arm11CodeAddressSpace {
             .map_err(|error| Arm11ProcessLayoutError::BssAllocationFailure(error.to_string()))?;
         bss.resize(bss_size, 0);
 
+        let stack_size = usize::try_from(layout.stack.mapped_size_bytes)
+            .map_err(|_| Arm11ProcessLayoutError::StackTooLarge {
+                requested_size_bytes: layout.stack.mapped_size_bytes,
+                maximum_size_bytes: MAIN_STACK_TOP,
+            })?;
+        let mut stack = Vec::new();
+        stack
+            .try_reserve_exact(stack_size)
+            .map_err(|error| Arm11ProcessLayoutError::StackAllocationFailure(error.to_string()))?;
+        stack.resize(stack_size, 0);
+
         Ok(Self {
             layout,
             text: prepared.text,
             read_only: prepared.read_only,
             data: prepared.data,
             bss,
+            stack,
         })
     }
 
     /// Returns the validated process metadata associated with this address space.
     pub const fn layout(&self) -> &Arm11ProcessLayout {
         &self.layout
+    }
+
+    /// Initializes the ARM11 core's entry PC and main-thread stack pointer.
+    ///
+    /// This does not configure privileged CPU modes, exception vectors,
+    /// coprocessors, scheduler state, or peripheral registers.
+    pub fn initialize_core(&self, core: &mut Arm11Core) {
+        core.set_pc(self.layout.entry_point);
+        core.regs[SP] = self.layout.initial_stack_pointer;
     }
 
     /// Returns the backing bytes for one mapped code segment.
@@ -310,6 +360,7 @@ impl Arm11CodeAddressSpace {
             (Arm11SegmentKind::ReadOnly, self.layout.read_only),
             (Arm11SegmentKind::Data, self.layout.data),
             (Arm11SegmentKind::Bss, self.layout.bss),
+            (Arm11SegmentKind::Stack, self.layout.stack),
         ];
 
         for (kind, segment) in segments {
@@ -332,6 +383,7 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::ReadOnly => &self.read_only,
             Arm11SegmentKind::Data => &self.data,
             Arm11SegmentKind::Bss => &self.bss,
+            Arm11SegmentKind::Stack => &self.stack,
         }
     }
 
@@ -341,6 +393,7 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::ReadOnly => &mut self.read_only,
             Arm11SegmentKind::Data => &mut self.data,
             Arm11SegmentKind::Bss => &mut self.bss,
+            Arm11SegmentKind::Stack => &mut self.stack,
         }
     }
 
@@ -350,6 +403,7 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::ReadOnly => self.layout.read_only.writable,
             Arm11SegmentKind::Data => self.layout.data.writable,
             Arm11SegmentKind::Bss => self.layout.bss.writable,
+            Arm11SegmentKind::Stack => self.layout.stack.writable,
         }
     }
 
@@ -465,6 +519,40 @@ fn make_bss_segment(
     })
 }
 
+fn make_stack_segment(
+    requested_size_bytes: u32,
+) -> std::result::Result<Arm11MemorySegment, Arm11ProcessLayoutError> {
+    let aligned_size = u64::from(requested_size_bytes)
+        .checked_add(PAGE_SIZE - 1)
+        .ok_or(Arm11ProcessLayoutError::StackTooLarge {
+            requested_size_bytes,
+            maximum_size_bytes: MAIN_STACK_TOP,
+        })?
+        & !(PAGE_SIZE - 1);
+
+    if aligned_size > u64::from(MAIN_STACK_TOP) {
+        return Err(Arm11ProcessLayoutError::StackTooLarge {
+            requested_size_bytes,
+            maximum_size_bytes: MAIN_STACK_TOP,
+        });
+    }
+
+    let mapped_size_bytes = u32::try_from(aligned_size)
+        .map_err(|_| Arm11ProcessLayoutError::StackTooLarge {
+            requested_size_bytes,
+            maximum_size_bytes: MAIN_STACK_TOP,
+        })?;
+    let address = MAIN_STACK_TOP - mapped_size_bytes;
+
+    Ok(Arm11MemorySegment {
+        address,
+        initialized_size_bytes: 0,
+        mapped_size_bytes,
+        writable: true,
+        executable: false,
+    })
+}
+
 fn validate_image_segment(
     segment: Arm11SegmentKind,
     bytes: &[u8],
@@ -526,7 +614,7 @@ fn make_segment(
 }
 
 fn validate_no_overlap(
-    segments: [(Arm11SegmentKind, Arm11MemorySegment); 4],
+    segments: [(Arm11SegmentKind, Arm11MemorySegment); 5],
 ) -> std::result::Result<(), Arm11ProcessLayoutError> {
     let mut non_empty = segments
         .into_iter()
@@ -594,7 +682,8 @@ mod tests {
 
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared).unwrap();
         let mut cpu = crate::cpu::Arm11Core::new();
-        cpu.set_pc(address_space.layout().entry_point);
+        address_space.initialize_core(&mut cpu);
+        assert_eq!(cpu.regs[SP], MAIN_STACK_TOP);
 
         assert_eq!(
             cpu.step(&mut address_space).unwrap(),
@@ -686,6 +775,51 @@ mod tests {
     }
 
     #[test]
+    fn maps_a_zeroed_main_thread_stack_below_the_documented_top() {
+        let address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let stack = address_space.layout.stack;
+
+        assert_eq!(stack.address, 0x0FFF_C000);
+        assert_eq!(stack.mapped_size_bytes, 0x4000);
+        assert_eq!(address_space.layout.initial_stack_pointer, MAIN_STACK_TOP);
+        assert!(stack.writable);
+        assert!(!stack.executable);
+        assert!(
+            address_space
+                .segment_bytes(Arm11SegmentKind::Stack)
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+    }
+
+    #[test]
+    fn main_thread_stack_is_writable_and_rejects_access_above_its_top() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let stack = address_space.layout.stack;
+
+        address_space
+            .write32(MAIN_STACK_TOP - 4, 0xCAFE_BABE)
+            .unwrap();
+        assert_eq!(
+            address_space.read32(MAIN_STACK_TOP - 4).unwrap(),
+            0xCAFE_BABE
+        );
+        assert!(address_space.read8(MAIN_STACK_TOP).is_err());
+        assert!(address_space.write8(stack.address - 1, 0).is_err());
+    }
+
+    #[test]
+    fn rejects_a_stack_larger_than_its_reserved_virtual_region() {
+        let mut prepared = prepared_image();
+        prepared.extended_header.stack_size_bytes = MAIN_STACK_TOP + 1;
+
+        assert!(matches!(
+            prepared.process_layout(),
+            Err(Arm11ProcessLayoutError::StackTooLarge { .. })
+        ));
+    }
+
+    #[test]
     fn builds_arm11_mappings_with_expected_permissions_and_sizes() {
         let prepared = prepared_image();
         let layout = prepared.process_layout().unwrap();
@@ -709,6 +843,9 @@ mod tests {
         assert!(layout.bss.writable);
         assert!(!layout.bss.executable);
         assert_eq!(layout.bss_size_bytes, 0x2000);
+        assert_eq!(layout.stack.address, 0x0FFF_C000);
+        assert_eq!(layout.stack.mapped_size_bytes, 0x4000);
+        assert_eq!(layout.initial_stack_pointer, 0x1000_0000);
         assert_eq!(layout.stack_size_bytes, 0x4000);
     }
 
