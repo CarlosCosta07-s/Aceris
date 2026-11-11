@@ -862,6 +862,89 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
         ivfc.open_level3_reader(decrypted_region, region.size_bytes)
             .map(Some)
     }
+
+    /// Opens a verified RomFS view with indexed, path-based file access.
+    ///
+    /// In addition to the CIA TMD, NCCH superblock, and IVFC checks performed
+    /// by open_decrypted_verified_romfs_level3_reader, this method validates
+    /// the Level 3 directory/file tree before exposing it to callers.
+    /// File paths are relative to the RomFS root and use forward slashes.
+    pub fn open_decrypted_verified_romfs_reader(
+        self,
+        romfs_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<
+        Option<CiaVerifiedRomFsReader<NcchCtrReader<Self>>>,
+        crate::loader::ncsd::ncch::romfs::RomFsError,
+    > {
+        let Some(mut level3) = self.open_decrypted_verified_romfs_level3_reader(romfs_key)? else {
+            return Ok(None);
+        };
+        let tree = level3.read_tree()?;
+        Ok(Some(CiaVerifiedRomFsReader { level3, tree }))
+    }
+}
+
+/// A CIA/NCCH/IVFC-verified RomFS tree with bounded path-based file readers.
+///
+/// The complete directory tree is structurally validated before this type is
+/// created. Individual file data is streamed from the underlying Level 3 view.
+#[derive(Debug)]
+pub struct CiaVerifiedRomFsReader<R> {
+    level3: crate::loader::ncsd::ncch::romfs::RomFsLevel3Reader<
+        crate::loader::ncsd::ncch::romfs::RomFsRangeReader<R>,
+    >,
+    tree: crate::loader::ncsd::ncch::romfs::RomFsTree,
+}
+
+impl<R: Read + Seek> CiaVerifiedRomFsReader<R> {
+    /// Returns the validated directory and file index.
+    pub const fn tree(&self) -> &crate::loader::ncsd::ncch::romfs::RomFsTree {
+        &self.tree
+    }
+
+    /// Returns the logical size of the validated Level 3 image.
+    pub const fn len(&self) -> u64 {
+        self.level3.len()
+    }
+
+    /// Returns true when the Level 3 image has zero length.
+    pub const fn is_empty(&self) -> bool {
+        self.level3.is_empty()
+    }
+
+    /// Opens an exact root-relative file path as a bounded streaming reader.
+    ///
+    /// Paths use forward slashes and omit a leading slash. Returns None when
+    /// the validated tree does not contain the requested file.
+    pub fn open_file<'a>(
+        &'a mut self,
+        path: &str,
+    ) -> Result<
+        Option<
+            crate::loader::ncsd::ncch::romfs::RomFsFileReader<
+                'a,
+                crate::loader::ncsd::ncch::romfs::RomFsRangeReader<R>,
+            >,
+        >,
+        crate::loader::ncsd::ncch::romfs::RomFsError,
+    > {
+        let Some(file) = self
+            .tree
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .map(|file| file.entry.clone())
+        else {
+            return Ok(None);
+        };
+
+        self.level3
+            .open_file(&file)
+            .map(Some)
+            .map_err(|error| {
+                crate::loader::ncsd::ncch::romfs::RomFsError::ReaderFailure(error.to_string())
+            })
+    }
 }
 
 impl<R: Read + Seek> Read for CiaDecryptedContentNcchReader<'_, R> {
@@ -1821,6 +1904,55 @@ mod tests {
         let tree = level3.read_tree().unwrap();
         assert_eq!(tree.files.len(), 1);
         assert_eq!(tree.files[0].path, "xy");
+    }
+
+    #[test]
+    fn opens_a_romfs_file_by_root_relative_path_from_a_verified_cia() {
+        let fixture = make_encrypted_romfs_cia(false, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(
+                0x0311,
+                &TitleKey::new(fixture.cia_title_key),
+            )
+            .unwrap()
+            .unwrap();
+        let mut romfs = ncch
+            .open_decrypted_verified_romfs_reader(fixture.romfs_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(romfs.len(), 0x80);
+        assert_eq!(romfs.tree().files.len(), 1);
+        assert_eq!(romfs.tree().files[0].path, "xy");
+
+        let mut file = romfs.open_file("xy").unwrap().unwrap();
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents, b"HELLO");
+        assert_eq!(file.seek(SeekFrom::Start(2)).unwrap(), 2);
+        let mut suffix = Vec::new();
+        file.read_to_end(&mut suffix).unwrap();
+        assert_eq!(suffix, b"LLO");
+    }
+
+    #[test]
+    fn returns_none_for_a_missing_romfs_file_path() {
+        let fixture = make_encrypted_romfs_cia(false, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(
+                0x0311,
+                &TitleKey::new(fixture.cia_title_key),
+            )
+            .unwrap()
+            .unwrap();
+        let mut romfs = ncch
+            .open_decrypted_verified_romfs_reader(fixture.romfs_key)
+            .unwrap()
+            .unwrap();
+
+        assert!(romfs.open_file("missing.bin").unwrap().is_none());
     }
 
     #[test]
