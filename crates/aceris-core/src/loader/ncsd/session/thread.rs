@@ -275,10 +275,7 @@ impl Arm11ThreadScheduler {
     }
 
     /// Returns a thread's current priority.
-    pub fn priority(
-        &self,
-        id: ThreadId,
-    ) -> std::result::Result<u8, ThreadSchedulerError> {
+    pub fn priority(&self, id: ThreadId) -> std::result::Result<u8, ThreadSchedulerError> {
         self.threads
             .get(&id)
             .map(|thread| thread.info.priority)
@@ -312,9 +309,7 @@ impl Arm11ThreadScheduler {
     ///
     /// Equal-priority threads rotate in FIFO order. If no other thread is
     /// ready, the yielding thread is selected again.
-    pub fn yield_current(
-        &mut self,
-    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+    pub fn yield_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
         let order = self.allocate_ready_order();
         let current = self
@@ -329,9 +324,7 @@ impl Arm11ThreadScheduler {
     }
 
     /// Exits the current thread and selects another Ready thread, if one exists.
-    pub fn exit_current(
-        &mut self,
-    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+    pub fn exit_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
         let current = self
             .threads
@@ -345,9 +338,7 @@ impl Arm11ThreadScheduler {
     }
 
     /// Blocks the current thread until it is explicitly woken.
-    pub fn wait_current(
-        &mut self,
-    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+    pub fn wait_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
         let current = self
             .threads
@@ -434,7 +425,10 @@ impl Arm11ThreadScheduler {
 
         for id in expired {
             let order = self.allocate_ready_order();
-            let thread = self.threads.get_mut(&id).expect("expired thread must exist");
+            let thread = self
+                .threads
+                .get_mut(&id)
+                .expect("expired thread must exist");
             thread.info.state = ThreadState::Ready;
             thread.ready_order = Some(order);
         }
@@ -490,10 +484,7 @@ impl Arm11ThreadScheduler {
             .iter()
             .filter(|(_, thread)| thread.info.state == ThreadState::Ready)
             .min_by_key(|(_, thread)| {
-                (
-                    thread.info.priority,
-                    thread.ready_order.unwrap_or(u64::MAX),
-                )
+                (thread.info.priority, thread.ready_order.unwrap_or(u64::MAX))
             })
             .map(|(id, _)| *id)
     }
@@ -545,11 +536,8 @@ impl Arm11ThreadScheduler {
     }
 }
 
-fn validate_priority(
-    priority: i32,
-) -> std::result::Result<u8, ThreadSchedulerError> {
-    if !(i32::from(HIGHEST_THREAD_PRIORITY)..=i32::from(LOWEST_THREAD_PRIORITY))
-        .contains(&priority)
+fn validate_priority(priority: i32) -> std::result::Result<u8, ThreadSchedulerError> {
+    if !(i32::from(HIGHEST_THREAD_PRIORITY)..=i32::from(LOWEST_THREAD_PRIORITY)).contains(&priority)
     {
         return Err(ThreadSchedulerError::InvalidPriority(priority));
     }
@@ -571,11 +559,7 @@ mod tests {
         Arm11ThreadScheduler::new(main_core(), 0x30).unwrap()
     }
 
-    fn create(
-        scheduler: &mut Arm11ThreadScheduler,
-        entrypoint: u32,
-        priority: i32,
-    ) -> ThreadId {
+    fn create(scheduler: &mut Arm11ThreadScheduler, entrypoint: u32, priority: i32) -> ThreadId {
         scheduler
             .create_thread(entrypoint, 0x1234, 0x2000_1000, priority, 0)
             .unwrap()
@@ -602,7 +586,10 @@ mod tests {
         assert_eq!(core.regs[0], 0x1234);
         assert_eq!(core.regs[13], 0x2000_1000);
         assert!(!core.cpsr.thumb());
-        assert_eq!(scheduler.thread_info(id).unwrap().state, ThreadState::Created);
+        assert_eq!(
+            scheduler.thread_info(id).unwrap().state,
+            ThreadState::Created
+        );
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
     }
 
@@ -657,9 +644,11 @@ mod tests {
             scheduler.create_thread(0x0020_0002, 0, 0x2000_1000, 0x20, 0),
             Err(ThreadSchedulerError::UnalignedArmEntrypoint(0x0020_0002))
         );
-        assert!(scheduler
-            .create_thread(0x0020_0003, 0, 0x2000_1000, 0x20, 0)
-            .is_ok());
+        assert!(
+            scheduler
+                .create_thread(0x0020_0003, 0, 0x2000_1000, 0x20, 0)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -716,7 +705,10 @@ mod tests {
         scheduler.start_thread(other).unwrap();
         scheduler.exit_current().unwrap();
 
-        assert_eq!(scheduler.thread_info(other).unwrap().state, ThreadState::Exited);
+        assert_eq!(
+            scheduler.thread_info(other).unwrap().state,
+            ThreadState::Exited
+        );
         assert_eq!(
             scheduler.start_thread(other),
             Err(ThreadSchedulerError::InvalidState {
