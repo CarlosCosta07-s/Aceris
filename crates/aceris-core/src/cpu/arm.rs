@@ -96,7 +96,7 @@ impl Arm11Core {
             _ if bit(word, 24) => {
                 self.enter_svc_exception(self.pc().wrapping_add(4))?;
                 Ok(StepEvent::Svc(bits(word, 23, 0)))
-            },
+            }
             _ => Err(Error::Unimplemented("coprocessor instructions")),
         }
     }

@@ -218,8 +218,7 @@ impl Arm11Core {
         self.set_saved_program_status(previous_cpsr)?;
         self.regs[LR] = return_address;
 
-        let mut entered_cpsr = previous_cpsr.0
-            & !(Psr::MODE_MASK | (1 << 5) | (1 << 7) | (1 << 9));
+        let mut entered_cpsr = previous_cpsr.0 & !(Psr::MODE_MASK | (1 << 5) | (1 << 7) | (1 << 9));
         entered_cpsr |= Psr::SUPERVISOR_MODE | (1 << 7);
         if self.exception_big_endian {
             entered_cpsr |= 1 << 9;

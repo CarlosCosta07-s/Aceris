@@ -436,7 +436,7 @@ impl Arm11Core {
             0xF => {
                 self.enter_svc_exception(self.pc().wrapping_add(2))?;
                 Ok(StepEvent::Svc(bits(half, 7, 0)))
-            },
+            }
             0xE => Err(Error::UndefinedInstruction {
                 pc: self.pc(),
                 word: half,
