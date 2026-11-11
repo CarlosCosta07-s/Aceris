@@ -222,6 +222,24 @@ fn borrowed_ncch_reader_verifies_exefs_and_reuses_the_same_image() {
 }
 
 #[test]
+fn image_reader_recovers_after_a_borrowed_ncch_validation_error() {
+    let image = Cursor::new(image_with_sparse_partitions());
+    let mut reader = NcsdImageReader::open(image).unwrap();
+
+    let error = reader.borrow_partition_ncch(5).unwrap_err();
+    assert!(matches!(error, NcsdImageReaderError::InvalidNcch(_)));
+
+    {
+        let mut raw_partition = reader.borrow_partition_reader(5).unwrap();
+        let mut marker = [0u8; 11];
+        raw_partition.read_exact(&mut marker).unwrap();
+        assert_eq!(&marker, b"AUX-PART-05");
+    }
+
+    assert_eq!(reader.header().partition(5).unwrap().index, 5);
+}
+
+#[test]
 fn image_reader_reports_the_original_index_for_an_empty_partition() {
     let image = Cursor::new(image_with_sparse_partitions());
     let error = NcsdImageReader::open(image)
