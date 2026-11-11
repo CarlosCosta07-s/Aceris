@@ -1,8 +1,8 @@
 //! Process-local ARM11 kernel handles and synchronization objects.
 //!
-//! This first synchronization slice models event object lifetime and signal
-//! state. Blocking waits, waiter queues, timers and reference-counted kernel
-//! objects are deliberately not represented as implemented.
+//! The process-local table models typed handles, FIFO synchronization waiters,
+//! mutex ownership, semaphore counts, events and virtual-clock timers. Object
+//! reference counting and kernel handle generations remain future work.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -48,6 +48,8 @@ pub enum KernelHandleError {
     InvalidCount,
     /// Releasing the requested amount would exceed the semaphore maximum.
     CountLimitExceeded,
+    /// A timer duration is negative or cannot be represented.
+    InvalidDuration,
     /// A handle with blocked waiters cannot be closed by this bootstrap yet.
     WaitersPending,
 }
@@ -73,11 +75,21 @@ struct KernelSemaphore {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+struct KernelTimer {
+    reset_type: EventResetType,
+    signaled: bool,
+    deadline_ns: Option<u64>,
+    interval_ns: u64,
+    waiters: VecDeque<ThreadId>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum KernelObject {
     Thread(ThreadId),
     Event(KernelEvent),
     Mutex(KernelMutex),
     Semaphore(KernelSemaphore),
+    Timer(KernelTimer),
 }
 
 /// Process-local table mapping guest-visible handles to typed kernel objects.
@@ -111,6 +123,17 @@ impl Arm11KernelObjectTable {
         self.insert(KernelObject::Event(KernelEvent {
             reset_type,
             signaled: false,
+            waiters: VecDeque::new(),
+        }))
+    }
+
+    /// Creates an inactive timer with the selected auto/manual reset behavior.
+    pub fn insert_timer(&mut self, reset_type: EventResetType) -> Result<u32, KernelHandleError> {
+        self.insert(KernelObject::Timer(KernelTimer {
+            reset_type,
+            signaled: false,
+            deadline_ns: None,
+            interval_ns: 0,
             waiters: VecDeque::new(),
         }))
     }
@@ -171,6 +194,51 @@ impl Arm11KernelObjectTable {
         }
     }
 
+    /// Returns the signal state of a timer handle, if it is a valid timer.
+    pub fn timer_is_signaled(&self, handle: u32) -> Option<bool> {
+        match self.objects.get(&handle) {
+            Some(KernelObject::Timer(timer)) => Some(timer.signaled),
+            _ => None,
+        }
+    }
+
+    /// Arms a timer relative to the current virtual clock.
+    ///
+    /// A zero initial duration expires on the next call to advance_time at the
+    /// current time. A zero interval makes this a one-shot timer; positive
+    /// intervals schedule periodic expirations. Negative durations are invalid.
+    pub fn set_timer(
+        &mut self,
+        handle: u32,
+        now_ns: u64,
+        initial_ns: i64,
+        interval_ns: i64,
+    ) -> Result<(), KernelHandleError> {
+        if initial_ns < 0 || interval_ns < 0 {
+            return Err(KernelHandleError::InvalidDuration);
+        }
+        let timer = self.timer_mut(handle)?;
+        timer.signaled = false;
+        timer.deadline_ns = Some(now_ns.saturating_add(initial_ns as u64));
+        timer.interval_ns = interval_ns as u64;
+        Ok(())
+    }
+
+    /// Stops future expirations without changing an already signaled state.
+    pub fn cancel_timer(&mut self, handle: u32) -> Result<(), KernelHandleError> {
+        let timer = self.timer_mut(handle)?;
+        timer.deadline_ns = None;
+        timer.interval_ns = 0;
+        Ok(())
+    }
+
+    /// Clears a timer's signaled state without changing its active deadline.
+    pub fn clear_timer(&mut self, handle: u32) -> Result<(), KernelHandleError> {
+        let timer = self.timer_mut(handle)?;
+        timer.signaled = false;
+        Ok(())
+    }
+
     /// Attempts to acquire a synchronization object without blocking.
     ///
     /// One-shot events reset after a successful wait; sticky events remain
@@ -205,6 +273,15 @@ impl Arm11KernelObjectTable {
                 semaphore.count -= 1;
                 Ok(true)
             }
+            Some(KernelObject::Timer(timer)) => {
+                if !timer.signaled {
+                    return Ok(false);
+                }
+                if timer.reset_type == EventResetType::OneShot {
+                    timer.signaled = false;
+                }
+                Ok(true)
+            }
             Some(KernelObject::Thread(_)) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
         }
@@ -220,6 +297,7 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Event(event)) => &mut event.waiters,
             Some(KernelObject::Mutex(mutex)) => &mut mutex.waiters,
             Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
+            Some(KernelObject::Timer(timer)) => &mut timer.waiters,
             Some(KernelObject::Thread(_)) => return Err(KernelHandleError::WrongType),
             None => return Err(KernelHandleError::InvalidHandle),
         };
@@ -240,6 +318,7 @@ impl Arm11KernelObjectTable {
                 KernelObject::Event(event) => &mut event.waiters,
                 KernelObject::Mutex(mutex) => &mut mutex.waiters,
                 KernelObject::Semaphore(semaphore) => &mut semaphore.waiters,
+                KernelObject::Timer(timer) => &mut timer.waiters,
                 KernelObject::Thread(_) => continue,
             };
             let previous_len = waiters.len();
@@ -247,6 +326,58 @@ impl Arm11KernelObjectTable {
             removed |= waiters.len() != previous_len;
         }
         removed
+    }
+
+    /// Advances timers to the supplied virtual clock value.
+    ///
+    /// Auto-reset timers release at most one FIFO waiter per expiration. Sticky
+    /// timers release every waiter and remain signaled until ClearTimer. When
+    /// several periodic ticks elapse between scheduler updates, expirations are
+    /// coalesced into one signal and the next deadline is advanced beyond now.
+    pub fn advance_time(&mut self, now_ns: u64) -> Vec<ThreadId> {
+        let mut awakened = Vec::new();
+
+        for object in self.objects.values_mut() {
+            let KernelObject::Timer(timer) = object else {
+                continue;
+            };
+            let Some(deadline_ns) = timer.deadline_ns else {
+                continue;
+            };
+            if deadline_ns > now_ns {
+                continue;
+            }
+
+            if timer.interval_ns == 0 {
+                timer.deadline_ns = None;
+            } else {
+                let elapsed = now_ns.saturating_sub(deadline_ns);
+                let steps = elapsed
+                    .checked_div(timer.interval_ns)
+                    .unwrap_or(0)
+                    .saturating_add(1);
+                let next = deadline_ns
+                    .saturating_add(timer.interval_ns.saturating_mul(steps));
+                timer.deadline_ns = (next > now_ns).then_some(next);
+            }
+
+            match timer.reset_type {
+                EventResetType::OneShot => {
+                    if let Some(waiter) = timer.waiters.pop_front() {
+                        timer.signaled = false;
+                        awakened.push(waiter);
+                    } else {
+                        timer.signaled = true;
+                    }
+                }
+                EventResetType::Sticky => {
+                    timer.signaled = true;
+                    awakened.extend(timer.waiters.drain(..));
+                }
+            }
+        }
+
+        awakened
     }
 
     /// Sets an event signaled and returns the threads released by the signal.
@@ -343,6 +474,7 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Event(event)) => !event.waiters.is_empty(),
             Some(KernelObject::Mutex(mutex)) => !mutex.waiters.is_empty(),
             Some(KernelObject::Semaphore(semaphore)) => !semaphore.waiters.is_empty(),
+            Some(KernelObject::Timer(timer)) => !timer.waiters.is_empty(),
             Some(KernelObject::Thread(_)) => false,
             None => return Err(KernelHandleError::InvalidHandle),
         };
@@ -369,6 +501,14 @@ impl Arm11KernelObjectTable {
     fn semaphore_mut(&mut self, handle: u32) -> Result<&mut KernelSemaphore, KernelHandleError> {
         match self.objects.get_mut(&handle) {
             Some(KernelObject::Semaphore(semaphore)) => Ok(semaphore),
+            Some(_) => Err(KernelHandleError::WrongType),
+            None => Err(KernelHandleError::InvalidHandle),
+        }
+    }
+
+    fn timer_mut(&mut self, handle: u32) -> Result<&mut KernelTimer, KernelHandleError> {
+        match self.objects.get_mut(&handle) {
+            Some(KernelObject::Timer(timer)) => Ok(timer),
             Some(_) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
         }
@@ -557,6 +697,73 @@ mod tests {
         assert_eq!(table.event_is_signaled(sticky), Some(true));
         assert_eq!(table.try_wait_synchronization(sticky, first), Ok(true));
         assert_eq!(table.event_is_signaled(sticky), Some(true));
+    }
+
+    #[test]
+    fn one_shot_timer_expiration_releases_one_fifo_waiter_and_consumes_signal() {
+        let first = thread_id(1);
+        let second = thread_id(2);
+        let mut table = Arm11KernelObjectTable::default();
+        let timer = table.insert_timer(EventResetType::OneShot).unwrap();
+
+        table.enqueue_waiter(timer, first).unwrap();
+        table.enqueue_waiter(timer, second).unwrap();
+        table.set_timer(timer, 100, 10, 0).unwrap();
+
+        assert!(table.advance_time(109).is_empty());
+        assert_eq!(table.advance_time(110), vec![first]);
+        assert_eq!(table.timer_is_signaled(timer), Some(false));
+        assert!(table.advance_time(500).is_empty());
+        assert_eq!(
+            table.close_handle(timer),
+            Err(KernelHandleError::WaitersPending)
+        );
+    }
+
+    #[test]
+    fn periodic_sticky_timer_coalesces_missed_ticks_and_can_be_cleared_or_cancelled() {
+        let first = thread_id(1);
+        let second = thread_id(2);
+        let mut table = Arm11KernelObjectTable::default();
+        let timer = table.insert_timer(EventResetType::Sticky).unwrap();
+
+        table.enqueue_waiter(timer, first).unwrap();
+        table.enqueue_waiter(timer, second).unwrap();
+        table.set_timer(timer, 0, 5, 5).unwrap();
+        assert_eq!(table.advance_time(5), vec![first, second]);
+        assert_eq!(table.timer_is_signaled(timer), Some(true));
+        assert!(table.try_wait_synchronization(timer, first).unwrap());
+
+        table.clear_timer(timer).unwrap();
+        assert_eq!(table.timer_is_signaled(timer), Some(false));
+        table.enqueue_waiter(timer, first).unwrap();
+        assert_eq!(table.advance_time(35), vec![first]);
+        assert_eq!(table.timer_is_signaled(timer), Some(true));
+
+        table.cancel_timer(timer).unwrap();
+        table.clear_timer(timer).unwrap();
+        assert!(table.advance_time(100).is_empty());
+        assert_eq!(table.timer_is_signaled(timer), Some(false));
+    }
+
+    #[test]
+    fn timer_rejects_negative_durations_and_wrong_handle_types() {
+        let mut table = Arm11KernelObjectTable::default();
+        let timer = table.insert_timer(EventResetType::OneShot).unwrap();
+        let event = table.insert_event(EventResetType::OneShot).unwrap();
+
+        assert_eq!(
+            table.set_timer(timer, 0, -1, 0),
+            Err(KernelHandleError::InvalidDuration)
+        );
+        assert_eq!(
+            table.set_timer(event, 0, 1, 0),
+            Err(KernelHandleError::WrongType)
+        );
+        assert_eq!(
+            table.cancel_timer(0xDEAD),
+            Err(KernelHandleError::InvalidHandle)
+        );
     }
 
     #[test]

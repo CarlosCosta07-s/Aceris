@@ -42,6 +42,18 @@ pub const SVC_CREATE_SEMAPHORE: u32 = 0x15;
 /// Release semaphore units and report the number of awakened threads.
 pub const SVC_RELEASE_SEMAPHORE: u32 = 0x16;
 
+/// Create a process-local timer synchronization object.
+pub const SVC_CREATE_TIMER: u32 = 0x1A;
+
+/// Arm or re-arm a process-local timer.
+pub const SVC_SET_TIMER: u32 = 0x1B;
+
+/// Stop future timer expirations.
+pub const SVC_CANCEL_TIMER: u32 = 0x1C;
+
+/// Clear a timer's signaled state.
+pub const SVC_CLEAR_TIMER: u32 = 0x1D;
+
 /// Create a process-local event synchronization object.
 pub const SVC_CREATE_EVENT: u32 = 0x17;
 
@@ -152,6 +164,10 @@ mod tests {
             SVC_RELEASE_SEMAPHORE,
             SVC_WAIT_SYNCHRONIZATION1,
             SVC_CREATE_EVENT,
+            SVC_CREATE_TIMER,
+            SVC_SET_TIMER,
+            SVC_CANCEL_TIMER,
+            SVC_CLEAR_TIMER,
             SVC_SIGNAL_EVENT,
             SVC_CLEAR_EVENT,
             SVC_CLOSE_HANDLE,

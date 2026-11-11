@@ -26,8 +26,9 @@ use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY,
     SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
-    SVC_GET_THREAD_PRIORITY, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
-    SVC_SET_THREAD_PRIORITY, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_WAIT_SYNCHRONIZATION1,
+    SVC_CANCEL_TIMER, SVC_CLEAR_TIMER, SVC_CREATE_TIMER, SVC_GET_THREAD_PRIORITY,
+    SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY,
+    SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -215,6 +216,8 @@ impl Arm11ProcessSession {
     pub fn advance_time(&mut self, nanoseconds: u64) -> Option<ThreadId> {
         self.scheduler.advance_time(nanoseconds);
         let now = self.scheduler.virtual_time_ns();
+        let timer_awakened = self.kernel_objects.advance_time(now);
+        self.wake_synchronization_waiters(timer_awakened);
         let expired = self
             .wait_deadlines
             .iter()
@@ -330,6 +333,10 @@ impl Arm11ProcessSession {
             SVC_CREATE_SEMAPHORE => self.svc_create_semaphore(caller),
             SVC_RELEASE_SEMAPHORE => self.svc_release_semaphore(caller),
             SVC_WAIT_SYNCHRONIZATION1 => self.svc_wait_synchronization1(caller),
+            SVC_CREATE_TIMER => self.svc_create_timer(caller),
+            SVC_SET_TIMER => self.svc_set_timer(caller),
+            SVC_CANCEL_TIMER => self.svc_cancel_timer(caller),
+            SVC_CLEAR_TIMER => self.svc_clear_timer(caller),
             SVC_CREATE_EVENT => self.svc_create_event(caller),
             SVC_SIGNAL_EVENT => self.svc_signal_event(caller),
             SVC_CLEAR_EVENT => self.svc_clear_event(caller),
@@ -714,6 +721,85 @@ impl Arm11ProcessSession {
         }
     }
 
+    /// Handles CreateTimer: r0 points to the output handle and r1 is ResetType.
+    fn svc_create_timer(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        let output_address = registers[0];
+        let Some(reset_type) = EventResetType::from_raw(registers[1]) else {
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+        };
+        if !self.address_space.is_writable_range(output_address, 4) {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        let handle = match self.kernel_objects.insert_timer(reset_type) {
+            Ok(handle) => handle,
+            Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
+        };
+        if self.address_space.write32(output_address, handle).is_err() {
+            let _ = self.kernel_objects.close_handle(handle);
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.write_svc_result(caller, 0)
+    }
+
+    /// Handles SetTimer: r0=handle, r1=initial low, r2=interval low,
+    /// r3=initial high and r4=interval high.
+    fn svc_set_timer(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        let initial_ns =
+            (u64::from(registers[1]) | (u64::from(registers[3]) << 32)) as i64;
+        let interval_ns =
+            (u64::from(registers[2]) | (u64::from(registers[4]) << 32)) as i64;
+        let now_ns = self.scheduler.virtual_time_ns();
+
+        match self
+            .kernel_objects
+            .set_timer(registers[0], now_ns, initial_ns, interval_ns)
+        {
+            Ok(()) => {
+                let awakened = self.kernel_objects.advance_time(now_ns);
+                self.wake_synchronization_waiters(awakened);
+                self.write_svc_result(caller, 0)
+            }
+            Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
+        }
+    }
+
+    /// Handles CancelTimer using the handle in r0.
+    fn svc_cancel_timer(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs[0];
+        match self.kernel_objects.cancel_timer(handle) {
+            Ok(()) => self.write_svc_result(caller, 0),
+            Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
+        }
+    }
+
+    /// Handles ClearTimer using the handle in r0.
+    fn svc_clear_timer(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs[0];
+        match self.kernel_objects.clear_timer(handle) {
+            Ok(()) => self.write_svc_result(caller, 0),
+            Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
+        }
+    }
+
     /// Handles CreateEvent: r0 is the writable guest pointer for the handle,
     /// r1 is ResetType (0 = one-shot, 1 = sticky).
     fn svc_create_event(&mut self, caller: ThreadId) -> SvcRunDisposition {
@@ -817,9 +903,9 @@ fn kernel_handle_result_code(error: KernelHandleError) -> u32 {
         | KernelHandleError::WrongType
         | KernelHandleError::NotOwner
         | KernelHandleError::WaitersPending => RESULT_INVALID_HANDLE,
-        KernelHandleError::InvalidCount | KernelHandleError::CountLimitExceeded => {
-            RESULT_INVALID_ENUM
-        }
+        KernelHandleError::InvalidCount
+        | KernelHandleError::InvalidDuration
+        | KernelHandleError::CountLimitExceeded => RESULT_INVALID_ENUM,
     }
 }
 
@@ -1310,6 +1396,100 @@ mod tests {
             session.thread_info(child).unwrap().state,
             ThreadState::Running
         );
+    }
+
+    #[test]
+    fn timer_svcs_create_arm_and_wake_a_waiting_thread_on_virtual_deadline() {
+        let mut session = test_session_with_program(&[
+            0xEF00_001A, // CreateTimer
+            0xEF00_0024, // WaitSynchronization1
+            0xEF00_001B, // SetTimer
+        ]);
+        let main = MAIN_THREAD_ID;
+        {
+            let core = session.scheduler.core_mut(main).unwrap();
+            core.regs[0] = 0x0020_0000;
+            core.regs[1] = 0;
+        }
+        session.dispatch_svc(SVC_CREATE_TIMER);
+        assert_eq!(session.scheduler.core(main).unwrap().regs[0], 0);
+        let timer = session.address_space.read32(0x0020_0000).unwrap();
+
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        assert_eq!(session.current_thread_id(), Some(child));
+        {
+            let core = session.scheduler.core_mut(child).unwrap();
+            core.regs[0] = timer;
+            core.regs[2] = u32::MAX;
+            core.regs[3] = u32::MAX;
+        }
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1);
+        assert_eq!(session.current_thread_id(), Some(main));
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
+
+        {
+            let core = session.scheduler.core_mut(main).unwrap();
+            core.regs[0] = timer;
+            core.regs[1] = 100;
+            core.regs[2] = 0;
+            core.regs[3] = 0;
+            core.regs[4] = 0;
+        }
+        session.dispatch_svc(SVC_SET_TIMER);
+        assert_eq!(session.core().regs[0], 0);
+
+        session.advance_time(99);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
+        session.advance_time(1);
+
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Running
+        );
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
+        assert_eq!(session.kernel_objects.timer_is_signaled(timer), Some(false));
+    }
+
+    #[test]
+    fn timer_svc_cancel_and_clear_are_distinct_operations() {
+        let mut session = test_session_with_program(&[0xEF00_001A, 0xEF00_001B]);
+        let main = MAIN_THREAD_ID;
+        {
+            let core = session.scheduler.core_mut(main).unwrap();
+            core.regs[0] = 0x0020_0000;
+            core.regs[1] = 1;
+        }
+        session.dispatch_svc(SVC_CREATE_TIMER);
+        let timer = session.address_space.read32(0x0020_0000).unwrap();
+
+        {
+            let core = session.scheduler.core_mut(main).unwrap();
+            core.regs[0] = timer;
+            core.regs[1] = 0;
+            core.regs[2] = 10;
+            core.regs[3] = 0;
+            core.regs[4] = 0;
+        }
+        session.dispatch_svc(SVC_SET_TIMER);
+        assert_eq!(session.kernel_objects.timer_is_signaled(timer), Some(true));
+
+        session.scheduler.core_mut(main).unwrap().regs[0] = timer;
+        session.dispatch_svc(SVC_CLEAR_TIMER);
+        assert_eq!(session.kernel_objects.timer_is_signaled(timer), Some(false));
+
+        session.dispatch_svc(SVC_CANCEL_TIMER);
+        session.advance_time(100);
+        assert_eq!(session.kernel_objects.timer_is_signaled(timer), Some(false));
     }
 
     #[test]
