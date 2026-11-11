@@ -413,7 +413,7 @@ fn thread_scheduler_result_code(error: ThreadSchedulerError) -> u32 {
         | ThreadSchedulerError::InvalidSleepDuration(_)
         | ThreadSchedulerError::NoCurrentThread => RESULT_INVALID_ENUM,
         ThreadSchedulerError::UnalignedArmEntrypoint(_) => RESULT_MISALIGNED_ADDRESS,
-        ThreadSchedulerError::InvalidStackPointer(address) if address == 0 => {
+        ThreadSchedulerError::InvalidStackPointer(0) => {
             RESULT_INVALID_ADDRESS
         }
         ThreadSchedulerError::InvalidStackPointer(_) => RESULT_MISALIGNED_ADDRESS,
