@@ -792,6 +792,25 @@ impl<R: Read + Seek> NcsdImageReader<R> {
         &self.header
     }
 
+    /// Borrows a bounded reader for any populated partition by its original table index.
+    ///
+    /// Unlike open_partition_reader, this method keeps the NCSD image reader
+    /// available. Drop the returned reader before borrowing another partition.
+    /// The borrow prevents simultaneous access to the underlying image.
+    pub fn borrow_partition_reader(
+        &mut self,
+        index: u8,
+    ) -> std::result::Result<NcsdPartitionReader<&mut R>, NcsdImageReaderError> {
+        let partition = self
+            .header
+            .partition(index)
+            .copied()
+            .ok_or(NcsdImageReaderError::MissingPartition { index })?;
+        partition
+            .reader(&mut self.reader)
+            .map_err(NcsdImageReaderError::Reader)
+    }
+
     /// Opens any populated partition by its original NCSD table index.
     ///
     /// This is a raw, bounded partition stream: it does not assume that the

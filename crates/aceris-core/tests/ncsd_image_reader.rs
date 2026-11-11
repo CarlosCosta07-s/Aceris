@@ -36,6 +36,9 @@ fn image_with_sparse_partitions() -> Vec<u8> {
     write_partition(&mut image, 2, 0x20, 0x08, 0x2233_4455_6677_8899);
     write_partition(&mut image, 5, 0x40, 0x10, 0x5566_7788_99AA_BBCC);
 
+    let primary_start = 0x20 * MEDIA_UNIT;
+    image[primary_start..primary_start + 12].copy_from_slice(b"MAIN-PART-02");
+
     let auxiliary_start = 0x40 * MEDIA_UNIT;
     image[auxiliary_start..auxiliary_start + 11].copy_from_slice(b"AUX-PART-05");
     image[auxiliary_start + 0x1FFC..auxiliary_start + 0x2000].copy_from_slice(b"END5");
@@ -67,6 +70,49 @@ fn image_reader_opens_a_sparse_partition_by_its_original_table_index() {
     let mut end_marker = [0u8; 4];
     partition.read_exact(&mut end_marker).unwrap();
     assert_eq!(&end_marker, b"END5");
+}
+
+#[test]
+fn image_reader_can_borrow_multiple_partitions_without_reopening_the_image() {
+    let image = Cursor::new(image_with_sparse_partitions());
+    let mut reader = NcsdImageReader::open(image).unwrap();
+
+    {
+        let mut primary = reader.borrow_partition_reader(2).unwrap();
+        let mut marker = [0u8; 12];
+        primary.read_exact(&mut marker).unwrap();
+        assert_eq!(&marker, b"MAIN-PART-02");
+        assert_eq!(primary.remaining(), primary.len() - 12);
+    }
+
+    {
+        let mut auxiliary = reader.borrow_partition_reader(5).unwrap();
+        let mut marker = [0u8; 11];
+        auxiliary.read_exact(&mut marker).unwrap();
+        assert_eq!(&marker, b"AUX-PART-05");
+    }
+
+    assert_eq!(reader.header().partitions.len(), 2);
+    assert_eq!(reader.header().partition(2).unwrap().index, 2);
+    assert_eq!(reader.header().partition(5).unwrap().index, 5);
+}
+
+#[test]
+fn image_reader_keeps_metadata_available_after_a_borrowed_partition_error() {
+    let image = Cursor::new(image_with_sparse_partitions());
+    let mut reader = NcsdImageReader::open(image).unwrap();
+
+    let error = reader.borrow_partition_reader(0).unwrap_err();
+    assert!(matches!(
+        error,
+        NcsdImageReaderError::MissingPartition { index: 0 }
+    ));
+
+    assert_eq!(reader.header().partitions.len(), 2);
+    let mut primary = reader.borrow_partition_reader(2).unwrap();
+    let mut marker = [0u8; 12];
+    primary.read_exact(&mut marker).unwrap();
+    assert_eq!(&marker, b"MAIN-PART-02");
 }
 
 #[test]
