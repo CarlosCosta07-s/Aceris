@@ -8,7 +8,7 @@
 //! extract files, or calculate/verify file hashes.
 
 use std::fmt;
-use std::io::Read;
+use std::io::{self, Read, Seek, SeekFrom};
 
 pub const HEADER_SIZE: usize = 0x200;
 pub const FILE_ENTRY_COUNT: usize = 10;
@@ -38,6 +38,135 @@ impl ExeFsFile {
     /// Returns the exclusive end offset, or None if a caller-built value overflows.
     pub const fn end_offset_bytes(&self) -> Option<u64> {
         self.offset_bytes.checked_add(self.size_bytes)
+    }
+
+    /// Opens a reader restricted to this file's declared byte range.
+    ///
+    /// The supplied reader must expose the ExeFS region starting at offset zero.
+    /// Its visible length is checked before the file reader is created.
+    pub fn reader<R: Read + Seek>(self, inner: R) -> io::Result<ExeFsFileReader<R>> {
+        ExeFsFileReader::new(inner, self)
+    }
+}
+
+/// A seekable reader restricted to one ExeFS file.
+#[derive(Debug)]
+pub struct ExeFsFileReader<R> {
+    inner: R,
+    start: u64,
+    size: u64,
+    position: u64,
+}
+
+impl<R: Read + Seek> ExeFsFileReader<R> {
+    fn new(mut inner: R, file: ExeFsFile) -> io::Result<Self> {
+        if file.size_bytes == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ExeFS file has zero length",
+            ));
+        }
+
+        let end = file.end_offset_bytes().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ExeFS file range overflows",
+            )
+        })?;
+        let available = inner.seek(SeekFrom::End(0))?;
+        if end > available {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "ExeFS file extends beyond the supplied region",
+            ));
+        }
+
+        let actual = inner.seek(SeekFrom::Start(file.offset_bytes))?;
+        if actual != file.offset_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the requested ExeFS file",
+            ));
+        }
+
+        Ok(Self {
+            inner,
+            start: file.offset_bytes,
+            size: file.size_bytes,
+            position: 0,
+        })
+    }
+
+    /// Returns the visible length of the file.
+    pub const fn len(&self) -> u64 {
+        self.size
+    }
+
+    /// Returns true when the file has no bytes.
+    pub const fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    /// Returns the current position relative to the beginning of the file.
+    pub const fn position(&self) -> u64 {
+        self.position
+    }
+}
+
+impl<R: Read + Seek> Read for ExeFsFileReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() || self.position == self.size {
+            return Ok(0);
+        }
+
+        let remaining = self.size - self.position;
+        let readable = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let bytes_read = self.inner.read(&mut buffer[..readable])?;
+        self.position += bytes_read as u64;
+        Ok(bytes_read)
+    }
+}
+
+impl<R: Read + Seek> Seek for ExeFsFileReader<R> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let target = match from {
+            SeekFrom::Start(offset) => i128::from(offset),
+            SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(self.size) + i128::from(offset),
+        };
+
+        if !(0..=i128::from(self.size)).contains(&target) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek is outside the ExeFS file",
+            ));
+        }
+
+        let relative = u64::try_from(target).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "relative ExeFS file position is invalid",
+            )
+        })?;
+        let absolute = self.start.checked_add(relative).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "absolute ExeFS file position overflows",
+            )
+        })?;
+
+        let actual = self.inner.seek(SeekFrom::Start(absolute))?;
+        if actual != absolute {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the requested file position",
+            ));
+        }
+
+        self.position = relative;
+        Ok(relative)
     }
 }
 
@@ -235,7 +364,7 @@ fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read, Seek, SeekFrom};
 
     fn write_u32(data: &mut [u8], offset: usize, value: u32) {
         data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
@@ -423,6 +552,70 @@ mod tests {
             ExeFsHeader::parse(&data, 0x600),
             Err(ExeFsError::OverlappingFiles { .. })
         ));
+    }
+
+    #[test]
+    fn file_reader_cannot_read_or_seek_past_the_file() {
+        let parsed = ExeFsHeader::parse(&valid_header(), 0x600).unwrap();
+        let mut image = vec![0xEE; 0x600];
+        image[0x200..0x300].copy_from_slice(&(0..0x100).map(|byte| byte as u8).collect::<Vec<_>>());
+
+        let file = parsed.file(".code").unwrap().clone();
+        let mut reader = file.reader(Cursor::new(image)).unwrap();
+        let mut actual = Vec::new();
+        reader.read_to_end(&mut actual).unwrap();
+
+        assert_eq!(actual, (0..0x100).map(|byte| byte as u8).collect::<Vec<_>>());
+        assert_eq!(reader.len(), 0x100);
+        assert_eq!(reader.position(), 0x100);
+        assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+
+        assert_eq!(reader.seek(SeekFrom::End(-4)).unwrap(), 0xFC);
+        let mut tail = [0; 8];
+        assert_eq!(reader.read(&mut tail).unwrap(), 4);
+        assert_eq!(&tail[..4], &[0xFC, 0xFD, 0xFE, 0xFF]);
+    }
+
+    #[test]
+    fn file_reader_rejects_invalid_caller_supplied_ranges() {
+        let empty = ExeFsFile {
+            entry_index: 0,
+            name: "empty".to_owned(),
+            offset_bytes: 0,
+            size_bytes: 0,
+            sha256: [0; HASH_SIZE],
+        };
+        assert_eq!(
+            empty.reader(Cursor::new(vec![0; 8])).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let overflowing = ExeFsFile {
+            entry_index: 0,
+            name: "overflow".to_owned(),
+            offset_bytes: u64::MAX - 3,
+            size_bytes: 8,
+            sha256: [0; HASH_SIZE],
+        };
+        assert_eq!(
+            overflowing
+                .reader(Cursor::new(vec![0; 8]))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let outside = ExeFsFile {
+            entry_index: 0,
+            name: "outside".to_owned(),
+            offset_bytes: 4,
+            size_bytes: 8,
+            sha256: [0; HASH_SIZE],
+        };
+        assert_eq!(
+            outside.reader(Cursor::new(vec![0; 8])).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
     }
 
     #[test]
