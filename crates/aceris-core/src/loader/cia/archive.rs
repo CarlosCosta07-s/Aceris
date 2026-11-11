@@ -434,9 +434,7 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
         let mut header_bytes = [0u8; NCCH_HEADER_SIZE];
         decrypted.read_exact(&mut header_bytes).map_err(|error| {
             if error.kind() == io::ErrorKind::UnexpectedEof {
-                CiaArchiveError::InvalidNcchHeader(NcchError::InvalidHeader(
-                    "header is truncated",
-                ))
+                CiaArchiveError::InvalidNcchHeader(NcchError::InvalidHeader("header is truncated"))
             } else {
                 CiaArchiveError::Reader(error)
             }
@@ -643,7 +641,6 @@ fn align_content(offset: u64) -> Option<u64> {
 }
 
 /// A streaming reader that replays a parsed prefix before reading its source.
-#[derive(Debug)]
 struct PrefixedReader<R> {
     prefix: [u8; NCCH_HEADER_SIZE],
     prefix_position: usize,
@@ -681,7 +678,6 @@ impl<R: Read> Read for PrefixedReader<R> {
 ///
 /// The NCCH header is parsed before construction, and the original header
 /// bytes are replayed to the caller as the first bytes of the stream.
-#[derive(Debug)]
 pub struct CiaDecryptedContentNcchReader<'a, R> {
     location: CiaContentLocation,
     header: NcchHeader,
@@ -1184,7 +1180,9 @@ mod tests {
 
         assert!(matches!(
             archive.open_verified_decrypted_ncch_content_reader(content_index, &wrong_title_key),
-            Err(CiaArchiveError::ContentHashMismatch { content_index: 0x0034 })
+            Err(CiaArchiveError::ContentHashMismatch {
+                content_index: 0x0034
+            })
         ));
     }
 
