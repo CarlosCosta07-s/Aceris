@@ -1174,6 +1174,51 @@ mod tests {
     }
 
     #[test]
+    fn arm11_exclusive_instructions_use_process_memory_monitor_end_to_end() {
+        // LDREX r0,[r1] ; STREX r2,r3,[r1] ; LDREX r0,[r1] ;
+        // STR r4,[r1,#4] ; STREX r2,r3,[r1].
+        let mut prepared = prepared_image();
+        let program = [
+            0xE191_0F9F,
+            0xE181_2F93,
+            0xE191_0F9F,
+            0xE581_4004,
+            0xE181_2F93,
+        ];
+        for (index, instruction) in program.into_iter().enumerate() {
+            let start = index * 4;
+            prepared.text[start..start + 4].copy_from_slice(&instruction.to_le_bytes());
+        }
+
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared).unwrap();
+        let data_address = address_space.layout.data.address;
+        address_space.write32(data_address, 0x1122_3344).unwrap();
+        address_space.write32(data_address + 4, 0).unwrap();
+
+        let mut cpu = Arm11Core::new();
+        address_space.initialize_core(&mut cpu);
+        cpu.regs[1] = data_address;
+        cpu.regs[3] = 0xAABB_CCDD;
+        cpu.regs[4] = 0x5566_7788;
+
+        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(cpu.regs[0], 0x1122_3344);
+        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(cpu.regs[2], 0);
+        assert_eq!(address_space.read32(data_address).unwrap(), 0xAABB_CCDD);
+
+        cpu.regs[3] = 0xDEAD_BEEF;
+        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(cpu.regs[0], 0xAABB_CCDD);
+        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+
+        assert_eq!(cpu.regs[2], 1);
+        assert_eq!(address_space.read32(data_address).unwrap(), 0xAABB_CCDD);
+        assert_eq!(address_space.read32(data_address + 4).unwrap(), 0x5566_7788);
+    }
+
+    #[test]
     fn address_space_enforces_code_permissions_and_allows_data_writes() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let text_address = address_space.layout.text.address;
