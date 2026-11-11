@@ -190,15 +190,11 @@ impl IvfcHeader {
         Self::parse(&header, available_size_bytes)
     }
 
-
     /// Resolves the documented physical Level 3 region within an IVFC image.
     ///
     /// RomFS Level 3 starts at 0x1000. The declared Level 3 size is checked
     /// against the available RomFS region before a reader can be opened.
-    pub fn level3_region(
-        &self,
-        available_size_bytes: u64,
-    ) -> Result<IvfcRegion, RomFsError> {
+    pub fn level3_region(&self, available_size_bytes: u64) -> Result<IvfcRegion, RomFsError> {
         let master_hash_start = align_up(
             (IVFC_HEADER_SIZE as u64)
                 .checked_add(u64::from(self.optional_info_size_bytes))
@@ -212,9 +208,7 @@ impl IvfcHeader {
         ))?;
         let master_hash_end = master_hash_start
             .checked_add(u64::from(self.master_hash_size_bytes))
-            .ok_or(RomFsError::InvalidIvfcHeader(
-                "master-hash range overflows",
-            ))?;
+            .ok_or(RomFsError::InvalidIvfcHeader("master-hash range overflows"))?;
         if master_hash_end > LEVEL3_DATA_OFFSET_BYTES {
             return Err(RomFsError::InvalidIvfcHeader(
                 "master-hash area overlaps the Level 3 image",
@@ -401,9 +395,9 @@ impl<R: Read + Seek> RomFsRangeReader<R> {
             ));
         }
 
-        let end = start.checked_add(size).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "RomFS range overflows")
-        })?;
+        let end = start
+            .checked_add(size)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "RomFS range overflows"))?;
         let available = inner.seek(SeekFrom::End(0))?;
         if end > available {
             return Err(io::Error::new(
@@ -1238,7 +1232,9 @@ mod tests {
         let level3 = valid_level3_header();
         image[0x1000..0x1000 + LEVEL3_HEADER_SIZE].copy_from_slice(&level3);
 
-        let reader = header.open_level3_reader(Cursor::new(image), 0x4000).unwrap();
+        let reader = header
+            .open_level3_reader(Cursor::new(image), 0x4000)
+            .unwrap();
         assert_eq!(reader.len(), 0x100);
         assert_eq!(reader.header().directory_hash_offset_bytes, 0x28);
     }

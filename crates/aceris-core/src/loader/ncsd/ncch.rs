@@ -318,23 +318,16 @@ impl NcchHeader {
         &self,
         reader: R,
     ) -> Result<
-        Option<
-            romfs::RomFsLevel3Reader<
-                romfs::RomFsRangeReader<romfs::RomFsRangeReader<R>>,
-            >,
-        >,
+        Option<romfs::RomFsLevel3Reader<romfs::RomFsRangeReader<romfs::RomFsRangeReader<R>>>>,
         romfs::RomFsError,
     > {
         let Some(region) = self.romfs else {
             return Ok(None);
         };
 
-        let mut romfs_reader = romfs::RomFsRangeReader::new(
-            reader,
-            region.offset_bytes,
-            region.size_bytes,
-        )
-        .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+        let mut romfs_reader =
+            romfs::RomFsRangeReader::new(reader, region.offset_bytes, region.size_bytes)
+                .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
         let ivfc = romfs::IvfcHeader::parse_reader(&mut romfs_reader, region.size_bytes)?;
         ivfc.open_level3_reader(romfs_reader, region.size_bytes)
             .map(Some)
