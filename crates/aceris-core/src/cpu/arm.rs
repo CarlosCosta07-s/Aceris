@@ -2061,8 +2061,12 @@ mod tests {
             0xE14F_2000,
             0xE10F_5000,
         ]);
-        m.cpu.switch_mode(super::super::Psr::SUPERVISOR_MODE).unwrap();
-        m.cpu.set_saved_program_status(super::super::Psr(0x1234_0010)).unwrap();
+        m.cpu
+            .switch_mode(super::super::Psr::SUPERVISOR_MODE)
+            .unwrap();
+        m.cpu
+            .set_saved_program_status(super::super::Psr(0x1234_0010))
+            .unwrap();
         m.cpu.regs[4] = 0xA500_0000;
         m.cpu.regs[3] = super::super::Psr::SYSTEM_MODE;
 
@@ -2075,7 +2079,10 @@ mod tests {
         m.step();
         assert_eq!(m.cpu.regs[2], 0xA534_001F);
         m.step();
-        assert_eq!(m.cpu.regs[5] & super::super::Psr::MODE_MASK, super::super::Psr::SUPERVISOR_MODE);
+        assert_eq!(
+            m.cpu.regs[5] & super::super::Psr::MODE_MASK,
+            super::super::Psr::SUPERVISOR_MODE
+        );
     }
 
     #[test]
