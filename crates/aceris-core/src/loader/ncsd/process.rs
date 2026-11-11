@@ -56,20 +56,37 @@ impl fmt::Display for Arm11DynamicMemoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MisalignedAddress(address) => {
-                write!(formatter, "application heap address {address:#010x} is not page-aligned")
+                write!(
+                    formatter,
+                    "application heap address {address:#010x} is not page-aligned"
+                )
             }
             Self::InvalidSize(size) => {
-                write!(formatter, "application heap size {size:#010x} is zero or not page-aligned")
+                write!(
+                    formatter,
+                    "application heap size {size:#010x} is zero or not page-aligned"
+                )
             }
             Self::OutsideApplicationHeap { address, size } => {
-                write!(formatter, "application heap range {address:#010x}+{size:#x} is outside the supported heap window")
+                write!(
+                    formatter,
+                    "application heap range {address:#010x}+{size:#x} is outside the supported heap window"
+                )
             }
-            Self::OverlappingMapping => formatter.write_str("application heap mapping overlaps existing memory"),
+            Self::OverlappingMapping => {
+                formatter.write_str("application heap mapping overlaps existing memory")
+            }
             Self::MappingNotFound { address, size } => {
-                write!(formatter, "application heap mapping {address:#010x}+{size:#x} does not exist")
+                write!(
+                    formatter,
+                    "application heap mapping {address:#010x}+{size:#x} does not exist"
+                )
             }
             Self::AllocationFailure(reason) => {
-                write!(formatter, "could not allocate application heap backing: {reason}")
+                write!(
+                    formatter,
+                    "could not allocate application heap backing: {reason}"
+                )
             }
         }
     }
@@ -460,17 +477,18 @@ impl Arm11CodeAddressSpace {
             return Err(Arm11DynamicMemoryError::OverlappingMapping);
         }
 
-        let backing_size = usize::try_from(size)
-            .map_err(|_| Arm11DynamicMemoryError::InvalidSize(size))?;
+        let backing_size =
+            usize::try_from(size).map_err(|_| Arm11DynamicMemoryError::InvalidSize(size))?;
         let mut bytes = Vec::new();
-        bytes.try_reserve_exact(backing_size).map_err(|error| {
-            Arm11DynamicMemoryError::AllocationFailure(error.to_string())
-        })?;
+        bytes
+            .try_reserve_exact(backing_size)
+            .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
         bytes.resize(backing_size, 0);
-        self.dynamic_regions.try_reserve(1).map_err(|error| {
-            Arm11DynamicMemoryError::AllocationFailure(error.to_string())
-        })?;
-        self.dynamic_regions.push(DynamicMemoryRegion { address, bytes });
+        self.dynamic_regions
+            .try_reserve(1)
+            .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
+        self.dynamic_regions
+            .push(DynamicMemoryRegion { address, bytes });
         self.dynamic_regions.sort_by_key(|region| region.address);
 
         Ok(address)
@@ -485,9 +503,11 @@ impl Arm11CodeAddressSpace {
         address: u32,
         size: u32,
     ) -> std::result::Result<(), Arm11DynamicMemoryError> {
-        let Some(index) = self.dynamic_regions.iter().position(|region| {
-            region.address == address && region.bytes.len() == size as usize
-        }) else {
+        let Some(index) = self
+            .dynamic_regions
+            .iter()
+            .position(|region| region.address == address && region.bytes.len() == size as usize)
+        else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
         self.dynamic_regions.remove(index);
@@ -700,8 +720,9 @@ impl Arm11CodeAddressSpace {
 
         for (byte, location) in bytes.iter().zip(locations) {
             self.bytes_for_location_mut(location)[match location {
-                MemoryLocation::Static { offset, .. }
-                | MemoryLocation::Dynamic { offset, .. } => offset,
+                MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => {
+                    offset
+                }
             }] = *byte;
         }
 
@@ -715,8 +736,9 @@ impl Bus for Arm11CodeAddressSpace {
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
         let offset = match location {
-            MemoryLocation::Static { offset, .. }
-            | MemoryLocation::Dynamic { offset, .. } => offset,
+            MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => {
+                offset
+            }
         };
         self.bytes_for_location(location)
             .get(offset)

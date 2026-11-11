@@ -18,11 +18,11 @@ use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
-use crate::memory::Bus;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
+use crate::memory::Bus;
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CONTROL_MEMORY, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
-    SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SLEEP_THREAD,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CONTROL_MEMORY, SVC_CREATE_THREAD,
+    SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY, SVC_SET_THREAD_PRIORITY, SVC_SLEEP_THREAD,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -389,9 +389,7 @@ impl Arm11ProcessSession {
                 (MEMOP_FREE, 0, MEMPERM_NONE) => {
                     let output_end = u64::from(output_address) + 4;
                     let mapping_end = u64::from(address) + u64::from(size);
-                    if u64::from(output_address) < mapping_end
-                        && output_end > u64::from(address)
-                    {
+                    if u64::from(output_address) < mapping_end && output_end > u64::from(address) {
                         Err(RESULT_INVALID_ADDRESS)
                     } else {
                         self.address_space
@@ -406,7 +404,11 @@ impl Arm11ProcessSession {
 
         let code = match result {
             Ok((output_value, _was_freed)) => {
-                if self.address_space.write32(output_address, output_value).is_err() {
+                if self
+                    .address_space
+                    .write32(output_address, output_value)
+                    .is_err()
+                {
                     RESULT_INVALID_ADDRESS
                 } else {
                     0
@@ -480,8 +482,9 @@ impl Arm11ProcessSession {
 
 fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
     match error {
-        Arm11DynamicMemoryError::MisalignedAddress(_)
-        | Arm11DynamicMemoryError::InvalidSize(_) => RESULT_MISALIGNED_ADDRESS,
+        Arm11DynamicMemoryError::MisalignedAddress(_) | Arm11DynamicMemoryError::InvalidSize(_) => {
+            RESULT_MISALIGNED_ADDRESS
+        },
         Arm11DynamicMemoryError::AllocationFailure(_) => RESULT_OUT_OF_MEMORY,
         Arm11DynamicMemoryError::OutsideApplicationHeap { .. }
         | Arm11DynamicMemoryError::OverlappingMapping
