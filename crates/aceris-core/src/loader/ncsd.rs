@@ -61,13 +61,8 @@ impl NcsdPartition {
     /// The returned value keeps the parsed header paired with the bounded
     /// partition reader. NCCH decryption and signature verification are not
     /// performed by this operation.
-    pub fn open_ncch<R: Read + Seek>(
-        self,
-        inner: R,
-    ) -> Result<NcsdNcchReader<R>, NcsdNcchError> {
-        let mut reader = self
-            .reader(inner)
-            .map_err(NcsdNcchError::PartitionReader)?;
+    pub fn open_ncch<R: Read + Seek>(self, inner: R) -> std::result::Result<NcsdNcchReader<R>, NcsdNcchError> {
+        let mut reader = self.reader(inner).map_err(NcsdNcchError::PartitionReader)?;
         let header = ncch::NcchHeader::parse_reader(&mut reader, self.size_bytes)
             .map_err(NcsdNcchError::InvalidNcchHeader)?;
 
@@ -209,7 +204,10 @@ impl fmt::Display for NcsdNcchError {
                 write!(formatter, "could not open NCSD partition: {source}")
             }
             Self::InvalidNcchHeader(source) => {
-                write!(formatter, "partition does not contain a valid NCCH header: {source}")
+                write!(
+                    formatter,
+                    "partition does not contain a valid NCCH header: {source}"
+                )
             }
         }
     }
@@ -262,7 +260,8 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
     /// This does not decrypt NCCH content or verify its RSA signature.
     pub fn open_verified_romfs_level3_reader(
         self,
-    ) -> std::result::Result<Option<VerifiedNcsdRomFsLevel3Reader<R>>, ncch::romfs::RomFsError> {
+    ) -> std::result::Result<Option<VerifiedNcsdRomFsLevel3Reader<R>>, ncch::romfs::RomFsError>
+    {
         self.header.open_verified_romfs_level3_reader(self.reader)
     }
 }
@@ -501,7 +500,12 @@ mod tests {
         assert_eq!(opened.partition(), partition);
         assert_eq!(opened.header().content_size_bytes, partition.size_bytes);
         assert_eq!(opened.header().program_id, 0x0004_0000_1234_5678);
-        assert!(opened.open_verified_romfs_level3_reader().unwrap().is_none());
+        assert!(
+            opened
+                .open_verified_romfs_level3_reader()
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -514,7 +518,7 @@ mod tests {
         let error = partition.open_ncch(Cursor::new(image)).unwrap_err();
 
         assert!(matches!(
-            error,
+            &error,
             NcsdNcchError::InvalidNcchHeader(ncch::NcchError::InvalidHeader(
                 "NCCH magic is missing"
             ))
