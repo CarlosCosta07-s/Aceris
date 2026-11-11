@@ -1,8 +1,10 @@
 //! ARM11 process execution session.
 //!
-//! This module connects the validated NCSD loader, an ARM11 process address
-//! space, and the CPU interpreter. Kernel services, privileged modes,
-//! scheduling and hardware devices are intentionally outside this bootstrap.
+//! This module connects the validated NCSD loader, a process address space,
+//! the CPU interpreter, and a small HLE SVC dispatcher. It does not yet model
+//! privileged CPU modes, multiple threads, timers, synchronization, or devices.
+
+pub mod svc;
 
 use std::io::{Read, Seek};
 
@@ -11,30 +13,34 @@ use crate::cpu::{Arm11Core, StepEvent};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::Arm11CodeAddressSpace;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
+use svc::{Arm11SvcDisposition, Arm11SvcDispatcher};
 
 /// Reason an instruction-budgeted run stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arm11RunStopReason {
     /// The requested instruction budget was consumed.
     InstructionBudgetExhausted,
-    /// An SVC was reached; its kernel handler is not implemented yet.
+    /// An SVC was reached but has no implemented handler.
     SupervisorCall { number: u32 },
+    /// The process called ExitProcess and can no longer execute.
+    ProcessExited,
 }
 
-/// Result of one call to [`Arm11ProcessSession::run_instructions`].
+/// Result of one call to Arm11ProcessSession::run_instructions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Arm11RunReport {
-    /// Instructions successfully executed in this call.
+    /// Instructions successfully executed in this call, including SVC instructions.
     pub instructions_executed: u64,
     /// Why execution stopped.
     pub stop_reason: Arm11RunStopReason,
 }
 
-/// An initialized ARM11 CPU paired with its process address space.
+/// An initialized ARM11 CPU paired with its process address space and SVC state.
 #[derive(Debug)]
 pub struct Arm11ProcessSession {
     core: Arm11Core,
     address_space: Arm11CodeAddressSpace,
+    svc_dispatcher: Arm11SvcDispatcher,
     instruction_count: u64,
 }
 
@@ -46,6 +52,7 @@ impl Arm11ProcessSession {
         Self {
             core,
             address_space,
+            svc_dispatcher: Arm11SvcDispatcher::default(),
             instruction_count: 0,
         }
     }
@@ -74,38 +81,67 @@ impl Arm11ProcessSession {
         &self.address_space
     }
 
+    /// Returns whether ExitProcess has already terminated this session.
+    pub const fn process_exited(&self) -> bool {
+        self.svc_dispatcher.process_exited()
+    }
+
     /// Returns the total number of successfully executed instructions.
     pub const fn instruction_count(&self) -> u64 {
         self.instruction_count
     }
 
-    /// Executes exactly one instruction unless an error occurs.
+    /// Executes one raw CPU instruction without dispatching an SVC.
     ///
-    /// SVC is returned to the caller without invoking a kernel handler.
+    /// Use run_instructions for normal execution through the HLE SVC dispatcher.
     pub fn step(&mut self) -> Result<StepEvent> {
         let event = self.core.step(&mut self.address_space)?;
         self.instruction_count = self.instruction_count.saturating_add(1);
         Ok(event)
     }
 
-    /// Runs no more than `instruction_budget` instructions, stopping at SVC.
+    /// Runs no more than instruction_budget instructions, dispatching supported SVCs.
     ///
-    /// A zero budget performs no work. On errors, the error is propagated and
-    /// `instruction_count` retains the number of successful steps before it.
+    /// A zero budget performs no work. Implemented synchronous SVCs continue
+    /// execution within the remaining budget. Unknown SVCs stop the run and
+    /// are returned explicitly. Once ExitProcess is handled, later calls
+    /// return ProcessExited without advancing the CPU.
+    ///
+    /// Errors from instruction fetch or memory access are propagated, and
+    /// instruction_count retains successful steps completed before the error.
     pub fn run_instructions(&mut self, instruction_budget: usize) -> Result<Arm11RunReport> {
+        if self.svc_dispatcher.process_exited() {
+            return Ok(Arm11RunReport {
+                instructions_executed: 0,
+                stop_reason: Arm11RunStopReason::ProcessExited,
+            });
+        }
+
         let mut executed = 0u64;
         for _ in 0..instruction_budget {
             match self.step()? {
                 StepEvent::Executed => executed = executed.saturating_add(1),
                 StepEvent::Svc(number) => {
                     executed = executed.saturating_add(1);
-                    return Ok(Arm11RunReport {
-                        instructions_executed: executed,
-                        stop_reason: Arm11RunStopReason::SupervisorCall { number },
-                    });
+                    match self.svc_dispatcher.dispatch(number, &mut self.core.regs) {
+                        Arm11SvcDisposition::Resume => {}
+                        Arm11SvcDisposition::ProcessExited => {
+                            return Ok(Arm11RunReport {
+                                instructions_executed: executed,
+                                stop_reason: Arm11RunStopReason::ProcessExited,
+                            });
+                        }
+                        Arm11SvcDisposition::Unhandled { number } => {
+                            return Ok(Arm11RunReport {
+                                instructions_executed: executed,
+                                stop_reason: Arm11RunStopReason::SupervisorCall { number },
+                            });
+                        }
+                    }
                 }
             }
         }
+
         Ok(Arm11RunReport {
             instructions_executed: executed,
             stop_reason: Arm11RunStopReason::InstructionBudgetExhausted,
@@ -119,11 +155,12 @@ mod tests {
     use crate::loader::ncsd::PreparedArm11Image;
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
 
-    fn test_session() -> Arm11ProcessSession {
+    fn test_session_with_program(instructions: &[u32]) -> Arm11ProcessSession {
         let mut text = vec![0u8; 0x1000];
-        text[0..4].copy_from_slice(&0xE3A0_0007u32.to_le_bytes()); // MOV r0, #7
-        text[4..8].copy_from_slice(&0xE3A0_1005u32.to_le_bytes()); // MOV r1, #5
-        text[8..12].copy_from_slice(&0xEF00_0042u32.to_le_bytes()); // SVC #0x42
+        for (index, instruction) in instructions.iter().copied().enumerate() {
+            let start = index * 4;
+            text[start..start + 4].copy_from_slice(&instruction.to_le_bytes());
+        }
         let prepared = PreparedArm11Image {
             extended_header: NcchExtendedHeader {
                 application_title: *b"ACERIS!!",
@@ -151,6 +188,14 @@ mod tests {
         Arm11ProcessSession::from_address_space(address_space)
     }
 
+    fn test_session() -> Arm11ProcessSession {
+        test_session_with_program(&[
+            0xE3A0_0007, // MOV r0, #7
+            0xE3A0_1005, // MOV r1, #5
+            0xEF00_0042, // SVC #0x42
+        ])
+    }
+
     #[test]
     fn initializes_entry_pc_and_main_thread_sp() {
         let session = test_session();
@@ -160,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn executes_until_svc_and_returns_its_number() {
+    fn executes_until_unknown_svc_and_returns_its_number() {
         let mut session = test_session();
         let report = session.run_instructions(16).unwrap();
         assert_eq!(session.core().regs[0], 7);
@@ -172,6 +217,50 @@ mod tests {
             report.stop_reason,
             Arm11RunStopReason::SupervisorCall { number: 0x42 }
         );
+    }
+
+    #[test]
+    fn dispatches_get_current_processor_number_and_resumes_execution() {
+        let mut session = test_session_with_program(&[
+            0xE3A0_0007, // MOV r0, #7
+            0xEF00_0011, // SVC #0x11 - GetCurrentProcessorNumber
+            0xE3A0_1009, // MOV r1, #9
+        ]);
+
+        let report = session.run_instructions(3).unwrap();
+
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.core().regs[1], 9);
+        assert_eq!(session.core().pc(), 0x0010_000C);
+        assert_eq!(report.instructions_executed, 3);
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert!(!session.process_exited());
+    }
+
+    #[test]
+    fn exit_process_stops_execution_and_is_terminal() {
+        let mut session = test_session_with_program(&[
+            0xE3A0_00FF, // MOV r0, #255
+            0xEF00_0003, // SVC #0x03 - ExitProcess
+            0xE3A0_1009, // MOV r1, #9 - must not run
+        ]);
+
+        let report = session.run_instructions(16).unwrap();
+
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(report.stop_reason, Arm11RunStopReason::ProcessExited);
+        assert_eq!(session.core().regs[0], 255);
+        assert_eq!(session.core().regs[1], 0);
+        assert_eq!(session.core().pc(), 0x0010_0008);
+        assert!(session.process_exited());
+
+        let second_report = session.run_instructions(16).unwrap();
+        assert_eq!(second_report.instructions_executed, 0);
+        assert_eq!(second_report.stop_reason, Arm11RunStopReason::ProcessExited);
+        assert_eq!(session.core().pc(), 0x0010_0008);
     }
 
     #[test]
