@@ -2,8 +2,8 @@
 
 use crate::gpu::{GpuPhysicalMemory, GpuPhysicalMemoryError};
 use crate::video::{
-    DualScreenDisplay, ScreenSurfaceError, ScreenTarget, BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH,
-    RGBA8_BYTES_PER_PIXEL, TOP_SCREEN_HEIGHT, TOP_SCREEN_WIDTH,
+    BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH, DualScreenDisplay, RGBA8_BYTES_PER_PIXEL,
+    ScreenSurfaceError, ScreenTarget, TOP_SCREEN_HEIGHT, TOP_SCREEN_WIDTH,
 };
 use std::fmt;
 
