@@ -2250,6 +2250,41 @@ mod tests {
     }
 
     #[test]
+    fn ncch_verifies_ivfc_integrity_at_the_declared_romfs_offset() {
+        use crate::loader::ncsd::ncch::NcchHeader;
+
+        let mut ncch_header = vec![0; 0x200];
+        ncch_header[0x100..0x104].copy_from_slice(b"NCCH");
+        write_u32(&mut ncch_header, 0x104, 0x30);
+        write_u32(&mut ncch_header, 0x180, 0x400);
+        write_u32(&mut ncch_header, 0x1B0, 0x20);
+        write_u32(&mut ncch_header, 0x1B4, 0x10);
+        write_u32(&mut ncch_header, 0x1B8, 0x02);
+
+        let parsed = NcchHeader::parse(&ncch_header, 0x6000).unwrap();
+        let (romfs_image, _, layout) = valid_integrity_ivfc_image();
+        let mut container = vec![0; 0x6000];
+        container[..0x200].copy_from_slice(&ncch_header);
+        container[0x4000..0x4000 + romfs_image.len()].copy_from_slice(&romfs_image);
+
+        assert_eq!(
+            parsed
+                .verify_romfs_ivfc_integrity(Cursor::new(container.clone()))
+                .unwrap(),
+            Some(())
+        );
+
+        container[0x4000 + layout.level3.offset_bytes as usize + 5] ^= 0x40;
+        assert_eq!(
+            parsed.verify_romfs_ivfc_integrity(Cursor::new(container)),
+            Err(RomFsError::IvfcHashMismatch {
+                level: 3,
+                block_index: 0,
+            })
+        );
+    }
+
+    #[test]
     fn ncch_returns_none_when_romfs_is_not_declared() {
         use crate::loader::ncsd::ncch::NcchHeader;
 
@@ -2262,6 +2297,10 @@ mod tests {
         let mut reader = Cursor::new(Vec::new());
 
         assert_eq!(parsed.parse_romfs_ivfc_header(&mut reader).unwrap(), None);
+        assert_eq!(
+            parsed.verify_romfs_ivfc_integrity(Cursor::new(Vec::new())).unwrap(),
+            None
+        );
         assert_eq!(reader.position(), 0);
     }
 }

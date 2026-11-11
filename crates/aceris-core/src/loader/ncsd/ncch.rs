@@ -333,6 +333,28 @@ impl NcchHeader {
             .map(Some)
     }
 
+    /// Verifies the internal IVFC SHA-256 chain inside the declared NCCH RomFS region.
+    ///
+    /// The reader must expose cleartext NCCH bytes from offset zero. This does
+    /// not decrypt content or verify the separate NCCH RomFS superblock hash.
+    ///
+    /// Returns None when the NCCH header has no RomFS region.
+    pub fn verify_romfs_ivfc_integrity<R: Read + Seek>(
+        &self,
+        reader: R,
+    ) -> Result<Option<()>, romfs::RomFsError> {
+        let Some(region) = self.romfs else {
+            return Ok(None);
+        };
+
+        let mut romfs_reader =
+            romfs::RomFsRangeReader::new(reader, region.offset_bytes, region.size_bytes)
+                .map_err(|error| romfs::RomFsError::ReaderFailure(error.to_string()))?;
+        let ivfc = romfs::IvfcHeader::parse_reader(&mut romfs_reader, region.size_bytes)?;
+        ivfc.verify_integrity(romfs_reader, region.size_bytes)?;
+        Ok(Some(()))
+    }
+
     /// Parses the RomFS IVFC header from the declared NCCH RomFS region.
     ///
     /// The reader must expose NCCH bytes from offset zero. This reads only the
