@@ -62,7 +62,7 @@ impl std::error::Error for Sha256Error {}
 ///
 /// Call `update` with any number of byte slices, then call `finalize` once.
 /// The final digest is returned in the standard big-endian byte order.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sha256 {
     state: [u32; 8],
     buffer: [u8; BLOCK_SIZE],
