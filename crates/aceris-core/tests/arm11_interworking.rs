@@ -61,3 +61,42 @@ fn arm_and_thumb_branch_exchange_switch_instruction_sets() {
     assert_eq!(cpu.regs[3], 42);
     assert_eq!(cpu.pc(), 0x14);
 }
+
+#[test]
+fn arm_word_store_and_load_round_trip_through_guest_memory() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    // MOV r0, #0x5A; MOV r1, #0x20; STR r0, [r1]; LDR r2, [r1].
+    memory.write32(0x00, 0xE3A0_005A).unwrap();
+    memory.write32(0x04, 0xE3A0_1020).unwrap();
+    memory.write32(0x08, 0xE581_0000).unwrap();
+    memory.write32(0x0C, 0xE591_2000).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    for _ in 0..4 {
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+    }
+
+    assert_eq!(memory.read32(0x20).unwrap(), 0x5A);
+    assert_eq!(cpu.regs[2], 0x5A);
+    assert_eq!(cpu.pc(), 0x10);
+}
+
+#[test]
+fn thumb_word_store_and_load_round_trip_through_guest_memory() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    // MOVS r0, #0x5A; MOVS r1, #0x20; STR r0, [r1]; LDR r2, [r1].
+    memory.write16(0x00, 0x205A).unwrap();
+    memory.write16(0x02, 0x2120).unwrap();
+    memory.write16(0x04, 0x6008).unwrap();
+    memory.write16(0x06, 0x680A).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.cpsr.set_thumb(true);
+    for _ in 0..4 {
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+    }
+
+    assert_eq!(memory.read32(0x20).unwrap(), 0x5A);
+    assert_eq!(cpu.regs[2], 0x5A);
+    assert_eq!(cpu.pc(), 0x08);
+}
