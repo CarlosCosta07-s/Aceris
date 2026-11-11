@@ -5,6 +5,9 @@
 //! privileged CPU modes, multiple threads, timers, synchronization, or devices.
 
 pub mod svc;
+/// ARM11 per-thread contexts and cooperative scheduling primitives.
+pub mod thread;
+pub use thread::{Arm11ThreadScheduler, ThreadId, ThreadInfo, ThreadSchedulerError, ThreadState};
 
 use std::io::{Read, Seek};
 
