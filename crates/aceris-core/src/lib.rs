@@ -12,4 +12,4 @@ pub mod system;
 pub mod video;
 
 pub use aceris_common::{Error, Result};
-pub use system::System;
+pub use system::{DEFAULT_FRAME_INSTRUCTION_BUDGET, System};

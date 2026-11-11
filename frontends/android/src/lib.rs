@@ -9,7 +9,7 @@ use std::slice;
 
 use aceris_core::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use aceris_core::video::{BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH, ScreenSurface};
-use aceris_core::{System, DEFAULT_FRAME_INSTRUCTION_BUDGET};
+use aceris_core::{DEFAULT_FRAME_INSTRUCTION_BUDGET, System};
 
 pub const ACERIS_STATUS_OK: i32 = 0;
 pub const ACERIS_STATUS_INVALID_HANDLE: i32 = -1;
@@ -185,9 +185,7 @@ pub unsafe extern "C" fn aceris_system_run_frame(
 /// # Safety
 /// handle must be a live system instance.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn aceris_system_run_default_frame(
-    handle: *mut AcerisSystemHandle,
-) -> i32 {
+pub unsafe extern "C" fn aceris_system_run_default_frame(handle: *mut AcerisSystemHandle) -> i32 {
     // SAFETY: The caller guarantees the handle's lifetime.
     let Some(handle) = (unsafe { handle.as_mut() }) else {
         return ACERIS_STATUS_INVALID_HANDLE;
