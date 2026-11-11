@@ -888,8 +888,7 @@ impl Arm11Core {
         if (0x8..=0xB).contains(&opcode) && !bit(word, 20) {
             return self.misc_instruction(word);
         }
-        self.data_processing(word);
-        Ok(StepEvent::Executed)
+        self.data_processing(word)
     }
 
     /// Evaluates the shifter operand: `(value, carry_out, pc_offset)`, where
@@ -920,7 +919,7 @@ impl Arm11Core {
         }
     }
 
-    fn data_processing(&mut self, word: u32) {
+    fn data_processing(&mut self, word: u32) -> Result<StepEvent> {
         let opcode = bits(word, 24, 21);
         let set_flags = bit(word, 20);
         let rn = bits(word, 19, 16);
@@ -950,8 +949,13 @@ impl Arm11Core {
         };
         let is_compare = (0x8..=0xB).contains(&opcode);
 
-        // `S` with `rd == pc` would restore the CPSR from the SPSR, which only
-        // exists in privileged modes; in user mode the flags are left alone.
+        // S + Rd == PC performs an exception return: restore CPSR from the
+        // active mode's SPSR, then branch using the restored ARM/Thumb state.
+        if set_flags && !is_compare && rd as usize == PC {
+            self.exception_return(word, result)?;
+            return Ok(StepEvent::Executed);
+        }
+
         if set_flags && (is_compare || rd as usize != PC) {
             match outcome {
                 Alu::Logical(value) => {
@@ -972,6 +976,41 @@ impl Arm11Core {
         if !is_compare {
             self.write_reg(rd, result);
         }
+        Ok(StepEvent::Executed)
+    }
+
+    /// Restores the active exception mode's SPSR and branches to an
+    /// instruction address aligned for the restored ARM or Thumb state.
+    fn exception_return(&mut self, word: u32, target: u32) -> Result<()> {
+        let current_mode = self.cpsr.mode();
+        if !super::Psr::mode_has_spsr(current_mode) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        let restored = self
+            .saved_program_status()
+            .ok_or(Error::Unimplemented("SPSR has not been initialized"))?;
+        if !super::Psr::is_valid_mode(restored.mode()) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        // Switch banks before restoring the complete status word. The target
+        // is already captured because switching modes changes the visible LR.
+        self.switch_mode(restored.mode())?;
+        self.cpsr = restored;
+        let aligned_target = if restored.thumb() {
+            target & !1
+        } else {
+            target & !3
+        };
+        self.branch(aligned_target);
+        Ok(())
     }
 
     fn multiply_or_swap<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
@@ -1639,6 +1678,76 @@ mod tests {
     }
 
     // ----- data processing --------------------------------------------------
+
+    #[test]
+    fn armv6_movs_pc_lr_restores_spsr_and_thumb_state() {
+        // MOVS pc,lr returns to Thumb state with bit 1 of the target preserved.
+        let mut m = Machine::new(&[0xE1B0_F00E]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        let restored = Psr(0xA000_003F | Psr::SYSTEM_MODE);
+        m.cpu.set_saved_program_status(restored).unwrap();
+        m.cpu.regs[LR] = 0x1237;
+
+        m.step();
+
+        assert_eq!(m.cpu.cpsr, restored);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::SYSTEM_MODE);
+        assert!(m.cpu.cpsr.thumb());
+        assert_eq!(m.cpu.pc(), 0x1236);
+    }
+
+    #[test]
+    fn armv6_movs_pc_lr_restores_arm_state_and_word_alignment() {
+        // MOVS pc,lr returns to ARM state and clears both low address bits.
+        let mut m = Machine::new(&[0xE1B0_F00E]);
+        m.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        let restored = Psr(0x5000_001F);
+        m.cpu.set_saved_program_status(restored).unwrap();
+        m.cpu.regs[LR] = 0x1237;
+
+        m.step();
+
+        assert_eq!(m.cpu.cpsr, restored);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::SYSTEM_MODE);
+        assert!(!m.cpu.cpsr.thumb());
+        assert_eq!(m.cpu.pc(), 0x1234);
+    }
+
+    #[test]
+    fn armv6_movs_pc_lr_rejects_missing_or_invalid_spsr_without_switching_modes() {
+        // User mode has no SPSR.
+        let mut user = Machine::new(&[0xE1B0_F00E]);
+        user.cpu.regs[LR] = 0x1237;
+        assert!(matches!(
+            user.cpu.step(&mut user.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+        assert_eq!(user.cpu.cpsr.mode(), Psr::USER_MODE);
+        assert_eq!(user.cpu.pc(), 0);
+
+        // An exception mode with no saved status cannot return.
+        let mut missing = Machine::new(&[0xE1B0_F00E]);
+        missing.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        missing.cpu.regs[LR] = 0x1237;
+        assert!(matches!(
+            missing.cpu.step(&mut missing.mem),
+            Err(Error::Unimplemented("SPSR has not been initialized"))
+        ));
+        assert_eq!(missing.cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+        assert_eq!(missing.cpu.pc(), 0);
+
+        // SPSR mode 0x15 is reserved and must not partially switch banks.
+        let mut invalid = Machine::new(&[0xE1B0_F00E]);
+        invalid.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        invalid.cpu.set_saved_program_status(Psr(0x15)).unwrap();
+        invalid.cpu.regs[LR] = 0x1237;
+        assert!(matches!(
+            invalid.cpu.step(&mut invalid.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+        assert_eq!(invalid.cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+        assert_eq!(invalid.cpu.pc(), 0);
+    }
 
     #[test]
     fn mov_immediate_then_add_registers() {
