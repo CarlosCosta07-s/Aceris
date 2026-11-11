@@ -2,7 +2,7 @@
 
 use crate::cpu::Arm11Core;
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
-use crate::loader::ncsd::session::{Arm11ProcessSession, Arm11RunReport};
+use crate::loader::ncsd::session::{Arm11ProcessSession, Arm11RunReport, Arm11RunStopReason};
 use crate::loader::{self, ImageFormat};
 use aceris_common::{Error, Result};
 use std::fs::File;
@@ -23,9 +23,9 @@ impl System {
         Self::default()
     }
 
-    /// Identifies and loads the game image at `path`.
+    /// Identifies a game image at `path` and records its validated container format.
     ///
-    /// Identification validates the public container header. To prepare an
+    /// This does not prepare a CPU process. To prepare an
     /// encrypted NCSD cartridge for CPU execution, use
     /// [load_ncsd_file_with_keys] with caller-supplied NCCH keys.
     pub fn load(&mut self, path: &Path) -> Result<ImageFormat> {
@@ -51,17 +51,13 @@ impl System {
         menu_info_key: [u8; AES_BLOCK_SIZE],
         content_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<ImageFormat> {
-        let session = Arm11ProcessSession::load_primary_ncsd(
-            reader,
-            menu_info_key,
-            content_key,
-        )
-        .map_err(|error| {
-            Error::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("could not prepare the primary NCSD program: {error}"),
-            ))
-        })?;
+        let session = Arm11ProcessSession::load_primary_ncsd(reader, menu_info_key, content_key)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("could not prepare the primary NCSD program: {error}"),
+                ))
+            })?;
 
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Ncsd);
@@ -117,9 +113,7 @@ impl System {
             "an NCSD ARM11 process session has not been prepared",
         ))?;
         let report = session.run_instructions(instruction_budget)?;
-        if let Some(core) = session.current_core() {
-            self.cpu = core.clone();
-        }
+        self.cpu = session.core().clone();
         Ok(report)
     }
 
@@ -131,7 +125,9 @@ impl System {
         if self.image.is_none() {
             return Err(Error::NoImageLoaded);
         }
-        Err(Error::Unimplemented("frame scheduling and hardware presentation"))
+        Err(Error::Unimplemented(
+            "frame scheduling and hardware presentation",
+        ))
     }
 }
 
@@ -164,7 +160,8 @@ mod tests {
 
         let mut image = vec![0u8; PARTITION_OFFSET + PARTITION_SIZE];
         image[0x100..0x104].copy_from_slice(b"NCSD");
-        write_u32(&mut image, 0x104, (image.len() / 0x200) as u32);
+        let media_size_units = (image.len() / 0x200) as u32;
+        write_u32(&mut image, 0x104, media_size_units);
         write_u32(&mut image, 0x120, 0x20);
         write_u32(&mut image, 0x124, 0x40);
 
@@ -190,23 +187,23 @@ mod tests {
         write_u32(&mut extended_header, 0x34, 2);
         write_u32(&mut extended_header, 0x38, SEGMENT_SIZE as u32);
         write_u32(&mut extended_header, 0x3C, SEGMENT_SIZE as u32);
-        image[ncch + 0x160..ncch + 0x180]
-            .copy_from_slice(&sha256_digest(&extended_header));
+        image[ncch + 0x160..ncch + 0x180].copy_from_slice(&sha256_digest(&extended_header));
         image[ncch + 0x200..ncch + 0x600].copy_from_slice(&extended_header);
 
         let mut code = vec![0x11; SEGMENT_SIZE];
         code[..4].copy_from_slice(&0xE3A0_0007u32.to_le_bytes()); // MOV r0, #7
         code[4..8].copy_from_slice(&0xE3A0_1005u32.to_le_bytes()); // MOV r1, #5
-        code.extend(vec![0x22; SEGMENT_SIZE]);
-        code.extend(vec![0x33; SEGMENT_SIZE]);
+        let code_size = code.len();
+        code.resize(code_size + SEGMENT_SIZE, 0x22);
+        let code_size = code.len();
+        code.resize(code_size + SEGMENT_SIZE, 0x33);
 
         let mut exefs = vec![0u8; EXEFS_SIZE];
         exefs[..5].copy_from_slice(b".code");
         write_u32(&mut exefs, 12, code.len() as u32);
         exefs[0x1E0..0x200].copy_from_slice(&sha256_digest(&code));
         exefs[0x200..0x200 + code.len()].copy_from_slice(&code);
-        image[ncch + 0x1C0..ncch + 0x1E0]
-            .copy_from_slice(&sha256_digest(&exefs[..0x200]));
+        image[ncch + 0x1C0..ncch + 0x1E0].copy_from_slice(&sha256_digest(&exefs[..0x200]));
         let exefs_start = ncch + EXEFS_OFFSET;
         image[exefs_start..exefs_start + EXEFS_SIZE].copy_from_slice(&exefs);
 
@@ -216,10 +213,8 @@ mod tests {
     #[test]
     fn loads_and_steps_ncsd_cartridges_from_both_3ds_and_cci_paths() {
         for extension in ["3ds", "cci"] {
-            let path = std::env::temp_dir().join(format!(
-                "aceris-system-{}.{extension}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("aceris-system-{}.{extension}", std::process::id()));
             std::fs::write(&path, clear_ncsd_cartridge_fixture()).unwrap();
 
             let mut system = System::new();
@@ -231,7 +226,10 @@ mod tests {
 
             let report = system.run_instructions(2).unwrap();
             assert_eq!(report.instructions_executed, 2);
-            assert_eq!(report.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+            assert_eq!(
+                report.stop_reason,
+                Arm11RunStopReason::InstructionBudgetExhausted
+            );
             assert_eq!(system.cpu().regs[0], 7);
             assert_eq!(system.cpu().regs[1], 5);
         }
@@ -240,7 +238,11 @@ mod tests {
     #[test]
     fn failed_ncsd_loading_does_not_replace_the_current_image() {
         let mut system = System::new();
-        assert!(system.load_ncsd_with_keys(std::io::Cursor::new(vec![0; 0x200]), [0; 16], [0; 16]).is_err());
+        assert!(
+            system
+                .load_ncsd_with_keys(std::io::Cursor::new(vec![0; 0x200]), [0; 16], [0; 16])
+                .is_err()
+        );
         assert_eq!(system.image(), None);
         assert!(system.ncsd_session().is_none());
     }
