@@ -187,8 +187,6 @@ mod tests {
         if value == 1 {
             super::super::thread::MAIN_THREAD_ID
         } else {
-            let mut core = crate::cpu::Arm11Core::new();
-            core.set_pc(0x1000);
             scheduler
                 .create_thread(0x1000, 0, 0x2000, 0x30, 0)
                 .unwrap()

@@ -2,8 +2,8 @@
 //!
 //! This module joins the validated NCSD loader, protected process memory,
 //! independent ARM11 thread contexts, a cooperative scheduler and HLE SVCs.
-//! Privileged CPU modes, hardware timers, synchronization objects, heap
-//! allocation and peripheral mappings are still outside this bootstrap.
+//! Privileged CPU modes, blocking synchronization waits, timers, heap
+//! resource accounting and peripheral mappings remain outside this bootstrap.
 
 pub mod kernel;
 pub mod svc;
@@ -834,7 +834,7 @@ mod tests {
         ]);
         {
             let main = session.scheduler.current_core_mut().unwrap();
-            main.regs[0] = 0x20;
+            main.regs[0] = 0x3F;
             main.regs[1] = 0x0010_0020;
             main.regs[2] = 0xCAFE_BABE;
             main.regs[3] = 0x0020_2000;
@@ -978,7 +978,10 @@ mod tests {
             session.kernel_objects.event_reset_type(handle),
             Some(EventResetType::Sticky)
         );
-        assert_eq!(session.kernel_objects.event_is_signaled(handle), Some(false));
+        assert_eq!(
+            session.kernel_objects.event_is_signaled(handle),
+            Some(false)
+        );
     }
 
     #[test]
@@ -997,7 +1000,10 @@ mod tests {
 
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
-        assert_eq!(session.kernel_objects.event_is_signaled(handle), Some(true));
+        assert_eq!(
+            session.kernel_objects.event_is_signaled(handle),
+            Some(true)
+        );
 
         session.scheduler.current_core_mut().unwrap().regs[0] = handle;
         session.run_instructions(1).unwrap();
@@ -1056,10 +1062,9 @@ mod tests {
         let child_handle = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[1];
         assert_ne!(child_handle, 2);
         let child_id = session.thread_id_for_handle(child_handle).unwrap();
-        assert_eq!(session.thread_info(child_id).unwrap().priority, 0x20);
+        assert_eq!(session.thread_info(child_id).unwrap().priority, 0x3F);
 
-        session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[1] =
-            CURRENT_THREAD_HANDLE;
+        session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[1] = CURRENT_THREAD_HANDLE;
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
         assert_eq!(session.core().regs[1], DEFAULT_MAIN_THREAD_PRIORITY as u32);
