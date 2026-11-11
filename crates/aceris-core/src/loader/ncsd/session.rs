@@ -21,7 +21,7 @@ use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::memory::Bus;
-use kernel::{Arm11KernelObjectTable, CURRENT_THREAD_HANDLE, EventResetType, KernelHandleError};
+use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY,
     SVC_CREATE_EVENT, SVC_CREATE_THREAD, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
@@ -608,6 +608,7 @@ fn thread_scheduler_result_code(error: ThreadSchedulerError) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::kernel::CURRENT_THREAD_HANDLE;
     use crate::loader::ncsd::PreparedArm11Image;
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
 
