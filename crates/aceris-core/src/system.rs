@@ -1,10 +1,7 @@
 //! Top-level emulated system.
 
 use crate::cpu::Arm11Core;
-use crate::gpu::{
-    Pica200, PicaCommandBufferDescriptor, REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0,
-    REG_COMMAND_BUFFER_SIZE_0,
-};
+use crate::gpu::Pica200;
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
@@ -411,6 +408,9 @@ impl System {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gpu::{
+        REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_SIZE_0,
+    };
     use crate::loader::ncsd::session::Arm11RunStopReason;
 
     #[test]
