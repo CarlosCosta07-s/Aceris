@@ -35,6 +35,7 @@ impl fmt::Display for Arm11SegmentKind {
             Self::Text => formatter.write_str("text"),
             Self::ReadOnly => formatter.write_str("read-only"),
             Self::Data => formatter.write_str("data"),
+            Self::Bss => formatter.write_str("bss"),
         }
     }
 }
@@ -415,8 +416,8 @@ fn make_bss_segment(
     let bss_size = total_data_memory_size
         .checked_sub(initialized_data_size)
         .ok_or(Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
-    let mapped_size_bytes = u32::try_from(bss_size)
-        .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
+    let mapped_size_bytes =
+        u32::try_from(bss_size).map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
 
     if mapped_size_bytes == 0 {
         return Ok(Arm11MemorySegment {
@@ -629,10 +630,12 @@ mod tests {
         let bss_address = address_space.layout.bss.address;
         let bss_size = address_space.layout.bss.mapped_size_bytes as usize;
 
-        assert!(address_space
-            .segment_bytes(Arm11SegmentKind::Bss)
-            .iter()
-            .all(|byte| *byte == 0));
+        assert!(
+            address_space
+                .segment_bytes(Arm11SegmentKind::Bss)
+                .iter()
+                .all(|byte| *byte == 0)
+        );
         assert_eq!(bss_size, 0x2000);
 
         address_space.write32(bss_address, 0x1234_5678).unwrap();
