@@ -6,6 +6,9 @@
 
 use std::io;
 
+/// Structural TMD parser used by CIA archives.
+pub mod tmd;
+
 pub const HEADER_SIZE: usize = 0x2020;
 pub const CONTENT_INDEX_OFFSET: usize = 0x20;
 pub const CONTENT_INDEX_SIZE: usize = 0x2000;
@@ -143,6 +146,14 @@ impl CiaHeader {
     /// its bit ordering or asserting that the referenced content is valid.
     pub const fn content_index_bitmap(&self) -> &[u8; CONTENT_INDEX_SIZE] {
         &self.content_index_bitmap
+    }
+
+    /// Parses the TMD section and checks that every CIA-selected content index
+    /// has a corresponding TMD content record.
+    pub fn parse_title_metadata(&self, data: &[u8]) -> Result<tmd::TmdHeader, tmd::TmdError> {
+        let tmd = tmd::TmdHeader::parse(data)?;
+        tmd.validate_cia_content_index_bitmap(&self.content_index_bitmap)?;
+        Ok(tmd)
     }
 
     /// Counts set bits in the content-index bitmap.
