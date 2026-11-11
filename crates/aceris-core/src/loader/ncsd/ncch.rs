@@ -417,6 +417,49 @@ impl NcchHeader {
         crypto::initial_ctr(self.partition_id, self.version, region, offset)
     }
 
+    /// Opens one encrypted NCCH region as a bounded, seekable plaintext reader.
+    ///
+    /// The caller must supply the AES-128 content key derived from lawful
+    /// system material. No key material is stored or discovered by Aceris.
+    /// For NoCrypto content, do not call this method; use a clear bounded
+    /// region reader instead. Returns None when the selected region is absent.
+    pub fn open_decrypted_region_reader<R: Read + Seek>(
+        &self,
+        reader: R,
+        region: crypto::NcchCtrRegion,
+        key: [u8; crypto::AES_BLOCK_SIZE],
+    ) -> Result<Option<crypto::NcchCtrReader<R>>, crypto::NcchCtrReaderError> {
+        if self.declares_no_crypto() {
+            return Err(crypto::NcchCtrReaderError::ContentAlreadyClear);
+        }
+
+        let (offset, size) = match region {
+            crypto::NcchCtrRegion::ExtendedHeader => {
+                if self.extended_header_size == 0 {
+                    return Ok(None);
+                }
+                (HEADER_SIZE as u64, u64::from(self.extended_header_size))
+            }
+            crypto::NcchCtrRegion::ExeFs => {
+                let Some(region) = self.exefs else {
+                    return Ok(None);
+                };
+                (region.offset_bytes, region.size_bytes)
+            }
+            crypto::NcchCtrRegion::RomFs => {
+                let Some(region) = self.romfs else {
+                    return Ok(None);
+                };
+                (region.offset_bytes, region.size_bytes)
+            }
+        };
+
+        let initial_counter = self
+            .initial_ctr_for_region(region)
+            .map_err(crypto::NcchCtrReaderError::Crypto)?;
+        crypto::NcchCtrReader::new(reader, offset, size, key, initial_counter).map(Some)
+    }
+
     /// Returns the content keyslot selected by NCCH flag byte 3.
     ///
     /// This identifies the slot only; it does not provide console-specific
@@ -1031,6 +1074,61 @@ mod tests {
                 0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41, 0x03, 0, 0, 0, 0, 0, 0, 0,
             ])
         );
+    }
+
+
+    #[test]
+    fn ncch_header_opens_exefs_as_decrypted_bounded_region() {
+        use std::io::Read;
+
+        let mut header_bytes = valid_header();
+        header_bytes[FLAGS_OFFSET + 7] &= !NO_CRYPTO_FLAG;
+        let parsed = NcchHeader::parse(&header_bytes, 0x1_0000).unwrap();
+        let region = parsed.exefs.unwrap();
+        let key = [0x37; crypto::AES_BLOCK_SIZE];
+        let initial_counter = parsed
+            .initial_ctr_for_region(crypto::NcchCtrRegion::ExeFs)
+            .unwrap();
+
+        let plaintext: Vec<u8> = (0..region.size_bytes)
+            .map(|index| (index.wrapping_mul(19) & 0xff) as u8)
+            .collect();
+        let mut ciphertext = plaintext.clone();
+        crypto::Aes128Ctr::new(key, initial_counter)
+            .apply_keystream(&mut ciphertext)
+            .unwrap();
+
+        let mut image = vec![0; 0x1_0000];
+        image[..HEADER_SIZE].copy_from_slice(&header_bytes);
+        let start = region.offset_bytes as usize;
+        image[start..start + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut reader = parsed
+            .open_decrypted_region_reader(
+                Cursor::new(image),
+                crypto::NcchCtrRegion::ExeFs,
+                key,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reader.len(), region.size_bytes);
+
+        let mut decoded = Vec::new();
+        reader.read_to_end(&mut decoded).unwrap();
+        assert_eq!(decoded, plaintext);
+    }
+
+    #[test]
+    fn ncch_header_refuses_ctr_reader_for_no_crypto_content() {
+        let parsed = NcchHeader::parse(&valid_header(), 0x1_0000).unwrap();
+        assert!(matches!(
+            parsed.open_decrypted_region_reader(
+                Cursor::new(vec![0; 0x1_0000]),
+                crypto::NcchCtrRegion::ExeFs,
+                [0x37; crypto::AES_BLOCK_SIZE],
+            ),
+            Err(crypto::NcchCtrReaderError::ContentAlreadyClear)
+        ));
     }
 
     #[test]

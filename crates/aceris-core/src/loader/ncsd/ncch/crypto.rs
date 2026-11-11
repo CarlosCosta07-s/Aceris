@@ -335,6 +335,245 @@ impl Aes128Ctr {
     }
 }
 
+
+/// Errors while opening a bounded NCCH AES-CTR region reader.
+#[derive(Debug)]
+pub enum NcchCtrReaderError {
+    ContentAlreadyClear,
+    EmptyRegion,
+    RegionRangeOverflow,
+    RegionOutOfBounds { end_bytes: u64, available_bytes: u64 },
+    Crypto(NcchCryptoError),
+    ReaderFailure(std::io::Error),
+}
+
+impl std::fmt::Display for NcchCtrReaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ContentAlreadyClear => {
+                f.write_str("NCCH content is marked as already clear")
+            }
+            Self::EmptyRegion => f.write_str("NCCH encrypted region has zero length"),
+            Self::RegionRangeOverflow => f.write_str("NCCH encrypted region range overflows"),
+            Self::RegionOutOfBounds { end_bytes, available_bytes } => write!(
+                f,
+                "NCCH encrypted region ends at 0x{end_bytes:x}, beyond reader length 0x{available_bytes:x}"
+            ),
+            Self::Crypto(error) => write!(f, "NCCH AES-CTR setup failed: {error}"),
+            Self::ReaderFailure(error) => write!(f, "NCCH encrypted region reader failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for NcchCtrReaderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Crypto(error) => Some(error),
+            Self::ReaderFailure(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+/// A seekable, decrypting view of one NCCH AES-CTR region.
+///
+/// The reader exposes only the selected region, with byte zero corresponding
+/// to the first byte of that region. The caller supplies the AES-128 content
+/// key and the region's initial counter; no console keys are embedded here.
+/// Random seeks reset the CTR stream to the matching byte position.
+pub struct NcchCtrReader<R> {
+    inner: R,
+    start: u64,
+    size: u64,
+    position: u64,
+    key: [u8; AES_BLOCK_SIZE],
+    initial_counter: [u8; AES_BLOCK_SIZE],
+    stream: Option<Aes128Ctr>,
+}
+
+impl<R: std::io::Read + std::io::Seek> NcchCtrReader<R> {
+    /// Creates a decrypting reader for `[region_offset, region_offset + region_size)`.
+    ///
+    /// The complete region is checked against both the underlying reader and
+    /// the 128-bit CTR counter range before the reader is returned.
+    pub fn new(
+        mut inner: R,
+        region_offset: u64,
+        region_size: u64,
+        key: [u8; AES_BLOCK_SIZE],
+        initial_counter: [u8; AES_BLOCK_SIZE],
+    ) -> Result<Self, NcchCtrReaderError> {
+        if region_size == 0 {
+            return Err(NcchCtrReaderError::EmptyRegion);
+        }
+
+        let end = region_offset
+            .checked_add(region_size)
+            .ok_or(NcchCtrReaderError::RegionRangeOverflow)?;
+        let available = inner
+            .seek(std::io::SeekFrom::End(0))
+            .map_err(NcchCtrReaderError::ReaderFailure)?;
+        if end > available {
+            return Err(NcchCtrReaderError::RegionOutOfBounds {
+                end_bytes: end,
+                available_bytes: available,
+            });
+        }
+
+        let final_block = u128::from((region_size - 1) / AES_BLOCK_SIZE as u64);
+        u128::from_be_bytes(initial_counter)
+            .checked_add(final_block)
+            .ok_or(NcchCtrReaderError::Crypto(
+                NcchCryptoError::CounterRangeOverflow,
+            ))?;
+
+        let actual = inner
+            .seek(std::io::SeekFrom::Start(region_offset))
+            .map_err(NcchCtrReaderError::ReaderFailure)?;
+        if actual != region_offset {
+            return Err(NcchCtrReaderError::ReaderFailure(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "underlying reader did not seek to the NCCH region",
+                ),
+            ));
+        }
+
+        Ok(Self {
+            inner,
+            start: region_offset,
+            size: region_size,
+            position: 0,
+            key,
+            initial_counter,
+            stream: Some(Aes128Ctr::new(key, initial_counter)),
+        })
+    }
+
+    /// Returns the visible length of the decrypted region.
+    pub const fn len(&self) -> u64 {
+        self.size
+    }
+
+    /// Returns true when the region has no bytes.
+    pub const fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    /// Returns the current position relative to the region start.
+    pub const fn position(&self) -> u64 {
+        self.position
+    }
+}
+
+impl<R: std::io::Read + std::io::Seek> std::io::Read for NcchCtrReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if buffer.is_empty() || self.position == self.size {
+            return Ok(0);
+        }
+
+        let remaining = self.size - self.position;
+        let readable = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let bytes_read = self.inner.read(&mut buffer[..readable])?;
+        if bytes_read == 0 {
+            return Ok(0);
+        }
+
+        let stream = self.stream.as_mut().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "CTR stream is unavailable before the end of the region",
+            )
+        })?;
+        if let Err(error) = stream.apply_keystream(&mut buffer[..bytes_read]) {
+            let absolute = self.start.checked_add(self.position).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "NCCH reader position overflows",
+                )
+            })?;
+            let _ = self.inner.seek(std::io::SeekFrom::Start(absolute));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+        }
+
+        self.position += bytes_read as u64;
+        Ok(bytes_read)
+    }
+}
+
+impl<R: std::io::Read + std::io::Seek> std::io::Seek for NcchCtrReader<R> {
+    fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+        let target = match from {
+            std::io::SeekFrom::Start(offset) => i128::from(offset),
+            std::io::SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+            std::io::SeekFrom::End(offset) => i128::from(self.size) + i128::from(offset),
+        };
+        if !(0..=i128::from(self.size)).contains(&target) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek is outside the NCCH encrypted region",
+            ));
+        }
+
+        let relative = u64::try_from(target).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "relative NCCH region position is invalid",
+            )
+        })?;
+        let absolute = self.start.checked_add(relative).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "absolute NCCH region position overflows",
+            )
+        })?;
+
+        let next_stream = if relative == self.size {
+            None
+        } else {
+            Some(
+                stream_at_offset(self.key, self.initial_counter, relative)
+                    .map_err(|error| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
+                    })?,
+            )
+        };
+
+        let actual = self.inner.seek(std::io::SeekFrom::Start(absolute))?;
+        if actual != absolute {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the requested NCCH position",
+            ));
+        }
+
+        self.position = relative;
+        self.stream = next_stream;
+        Ok(relative)
+    }
+}
+
+fn stream_at_offset(
+    key: [u8; AES_BLOCK_SIZE],
+    initial_counter: [u8; AES_BLOCK_SIZE],
+    byte_offset: u64,
+) -> Result<Aes128Ctr, NcchCryptoError> {
+    let block_offset = u128::from(byte_offset / AES_BLOCK_SIZE as u64);
+    let remainder = (byte_offset % AES_BLOCK_SIZE as u64) as usize;
+    let counter = u128::from_be_bytes(initial_counter)
+        .checked_add(block_offset)
+        .ok_or(NcchCryptoError::CounterOffsetOverflow)?;
+    let mut stream = Aes128Ctr::new(key, counter.to_be_bytes());
+
+    if remainder != 0 {
+        let mut discard = [0; AES_BLOCK_SIZE];
+        stream.apply_keystream(&mut discard[..remainder])?;
+    }
+    Ok(stream)
+}
+
 fn increment_counter(counter: &mut [u8; AES_BLOCK_SIZE]) {
     for byte in counter.iter_mut().rev() {
         let (next, overflow) = byte.overflowing_add(1);
@@ -504,6 +743,74 @@ mod tests {
             Err(NcchCryptoError::CounterRangeOverflow)
         );
         assert_eq!(next, [0x3c; 1]);
+    }
+
+
+    #[test]
+    fn ncch_ctr_reader_decrypts_region_and_supports_unaligned_seeks() {
+        use std::io::{Cursor, Read, Seek, SeekFrom};
+
+        let key = hex("000102030405060708090a0b0c0d0e0f");
+        let counter = hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let plaintext: Vec<u8> = (0..73).map(|value| (value * 11) as u8).collect();
+        let mut ciphertext = plaintext.clone();
+        Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut ciphertext)
+            .unwrap();
+
+        let mut container = vec![0xA5; 13];
+        container.extend_from_slice(&ciphertext);
+        container.extend_from_slice(&[0x5A; 9]);
+
+        let mut reader =
+            NcchCtrReader::new(Cursor::new(container), 13, ciphertext.len() as u64, key, counter)
+                .unwrap();
+        assert_eq!(reader.len(), plaintext.len() as u64);
+
+        let mut decoded = Vec::new();
+        reader.read_to_end(&mut decoded).unwrap();
+        assert_eq!(decoded, plaintext);
+        assert_eq!(reader.position(), plaintext.len() as u64);
+
+        reader.seek(SeekFrom::Start(7)).unwrap();
+        let mut middle = [0; 19];
+        reader.read_exact(&mut middle).unwrap();
+        assert_eq!(&middle, &plaintext[7..26]);
+
+        reader.seek(SeekFrom::End(-5)).unwrap();
+        let mut tail = [0; 5];
+        reader.read_exact(&mut tail).unwrap();
+        assert_eq!(&tail, &plaintext[plaintext.len() - 5..]);
+
+        assert!(reader.seek(SeekFrom::Start(plaintext.len() as u64 + 1)).is_err());
+    }
+
+    #[test]
+    fn ncch_ctr_reader_rejects_truncated_and_counter_wrapping_regions() {
+        use std::io::Cursor;
+
+        let key = hex("000102030405060708090a0b0c0d0e0f");
+        let counter = hex("00000000000000000000000000000000");
+        assert!(matches!(
+            NcchCtrReader::new(Cursor::new(vec![0; 16]), 8, 9, key, counter),
+            Err(NcchCtrReaderError::RegionOutOfBounds {
+                end_bytes: 17,
+                available_bytes: 16
+            })
+        ));
+
+        assert!(matches!(
+            NcchCtrReader::new(
+                Cursor::new(vec![0; 17]),
+                0,
+                17,
+                key,
+                [u8::MAX; AES_BLOCK_SIZE]
+            ),
+            Err(NcchCtrReaderError::Crypto(
+                NcchCryptoError::CounterRangeOverflow
+            ))
+        ));
     }
 
     #[test]
