@@ -8,10 +8,10 @@
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom};
 
-/// Original AES-128, CTR mode, and NCCH cryptographic parameter primitives.
-pub mod crypto;
 /// Backwards LZ decompression for compressed ExeFS code.
 pub mod blz;
+/// Original AES-128, CTR mode, and NCCH cryptographic parameter primitives.
+pub mod crypto;
 /// Structural ExeFS header parser for NCCH executable files.
 pub mod exefs;
 /// Parser for the 0x400-byte NCCH extended header.
