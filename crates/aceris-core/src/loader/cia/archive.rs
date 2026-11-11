@@ -369,7 +369,7 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
         let source = self
             .open_content_reader(content_index)?
             .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
-        let decrypted = Aes128CbcReader::new(
+        let decrypted = Aes128CbcReader::new_seekable(
             source,
             *title_key.as_bytes(),
             cia_content_iv(location.content_index),
@@ -445,7 +445,7 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
         Ok(Some(CiaDecryptedContentNcchReader {
             location,
             header,
-            reader: PrefixedReader::new(header_bytes, decrypted),
+            reader: PrefixedReader::new(header_bytes, decrypted, location.size_bytes),
         }))
     }
 
@@ -645,14 +645,18 @@ struct PrefixedReader<R> {
     prefix: [u8; NCCH_HEADER_SIZE],
     prefix_position: usize,
     reader: R,
+    size_bytes: u64,
+    position_bytes: u64,
 }
 
 impl<R> PrefixedReader<R> {
-    fn new(prefix: [u8; NCCH_HEADER_SIZE], reader: R) -> Self {
+    fn new(prefix: [u8; NCCH_HEADER_SIZE], reader: R, size_bytes: u64) -> Self {
         Self {
             prefix,
             prefix_position: 0,
             reader,
+            size_bytes,
+            position_bytes: 0,
         }
     }
 }
@@ -668,9 +672,52 @@ impl<R: Read> Read for PrefixedReader<R> {
             let end = self.prefix_position + count;
             buffer[..count].copy_from_slice(&self.prefix[self.prefix_position..end]);
             self.prefix_position = end;
+            self.position_bytes += count as u64;
             return Ok(count);
         }
-        self.reader.read(buffer)
+        let read = self.reader.read(buffer)?;
+        self.position_bytes += read as u64;
+        Ok(read)
+    }
+}
+
+impl<R: Read + Seek> Seek for PrefixedReader<R> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let target = match from {
+            SeekFrom::Start(position) => i128::from(position),
+            SeekFrom::Current(offset) => i128::from(self.position_bytes) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(self.size_bytes) + i128::from(offset),
+        };
+        if !(0..=i128::from(self.size_bytes)).contains(&target) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek is outside the decrypted CIA content range",
+            ));
+        }
+
+        let target = u64::try_from(target).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "decrypted CIA content position is invalid",
+            )
+        })?;
+        let prefix_size = self.prefix.len() as u64;
+        let underlying_target = target.max(prefix_size);
+        let actual = self.reader.seek(SeekFrom::Start(underlying_target))?;
+        if actual != underlying_target {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "decrypted CIA source did not seek to the requested position",
+            ));
+        }
+
+        self.prefix_position = usize::try_from(target.min(prefix_size))
+            .expect("NCCH header size fits in usize");
+        if target >= prefix_size {
+            self.prefix_position = self.prefix.len();
+        }
+        self.position_bytes = target;
+        Ok(target)
     }
 }
 
@@ -696,14 +743,22 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
     }
 
     /// Returns the complete cleartext NCCH stream, starting at byte zero.
-    pub fn reader_mut(&mut self) -> &mut dyn Read {
-        &mut self.reader
+    ///
+    /// The returned object implements both Read and Seek.
+    pub fn reader_mut(&mut self) -> &mut Self {
+        self
     }
 }
 
 impl<R: Read + Seek> Read for CiaDecryptedContentNcchReader<'_, R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         self.reader.read(buffer)
+    }
+}
+
+impl<R: Read + Seek> Seek for CiaDecryptedContentNcchReader<'_, R> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        self.reader.seek(from)
     }
 }
 
@@ -1158,6 +1213,44 @@ mod tests {
             .read_to_end(&mut reopened_content)
             .unwrap();
         assert_eq!(reopened_content, cleartext);
+    }
+
+    #[test]
+    fn decrypted_ncch_reader_supports_random_access_after_tmd_verification() {
+        let key = [0x39; 16];
+        let title_key = TitleKey::new(key);
+        let mut cleartext = vec![0u8; 0x1_0000];
+        cleartext[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut cleartext, 0x104, 0x80);
+        cleartext[0x4000..0x4008].copy_from_slice(b"seekable");
+
+        let content_index = 0x0167;
+        let (mut data, locations) =
+            make_cia(&[(0x5110, content_index, CONTENT_TYPE_ENCRYPTED, &cleartext)]);
+        let ciphertext = encrypt_cia_content(key, content_index, &cleartext);
+        let offset = usize::try_from(locations[0].1).unwrap();
+        data[offset..offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let mut ncch = archive
+            .open_verified_decrypted_ncch_content_reader(content_index, &title_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(ncch.seek(SeekFrom::Start(0x4000)).unwrap(), 0x4000);
+        let mut region_bytes = [0u8; 8];
+        ncch.read_exact(&mut region_bytes).unwrap();
+        assert_eq!(&region_bytes, b"seekable");
+
+        assert_eq!(ncch.seek(SeekFrom::Start(0x1FF)).unwrap(), 0x1FF);
+        let mut boundary = [0u8; 3];
+        ncch.read_exact(&mut boundary).unwrap();
+        assert_eq!(boundary, [0, 0, 0]);
+
+        ncch.seek(SeekFrom::Start(0)).unwrap();
+        let mut reopened = Vec::new();
+        ncch.read_to_end(&mut reopened).unwrap();
+        assert_eq!(reopened, cleartext);
     }
 
     #[test]
