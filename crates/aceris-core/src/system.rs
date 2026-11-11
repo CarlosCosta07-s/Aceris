@@ -6,7 +6,6 @@ use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
-use crate::memory::Bus;
 use crate::video::DualScreenDisplay;
 use aceris_common::{Error, Result};
 use std::fs::File;
@@ -288,10 +287,9 @@ impl System {
             ))?;
             let mut words = Vec::new();
             words.try_reserve_exact(word_count).map_err(|error| {
-                Error::Io(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("could not allocate PICA200 command buffer: {error}"),
-                ))
+                Error::Io(io::Error::other(format!(
+                    "could not allocate PICA200 command buffer: {error}"
+                )))
             })?;
             for index in 0..word_count {
                 let offset = u32::try_from(index.checked_mul(4).ok_or_else(|| {

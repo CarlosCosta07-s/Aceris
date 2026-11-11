@@ -86,8 +86,7 @@ impl Arm11Core {
                 });
             }
             let value = self.regs[rm];
-            self.regs[rd] =
-                ((value & 0x00FF_00FF) << 8) | ((value & 0xFF00_FF00) >> 8);
+            self.regs[rd] = ((value & 0x00FF_00FF) << 8) | ((value & 0xFF00_FF00) >> 8);
         } else if word & 0x0FFF_0FF0 == 0x06FF_0FB0 {
             // REVSH Rd, Rm
             if rd == PC || rm == PC {
