@@ -33,6 +33,19 @@ fn arithmetic(a: u32, b: u32, carry_in: bool) -> Alu {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParallelOperation {
+    Add,
+    Subtract,
+    AddSubtractExchange,
+    SubtractAddExchange,
+}
+
+fn sign_extend_lane(value: u32, width: u32) -> i64 {
+    let shift = 32 - width;
+    i64::from(((value << shift) as i32) >> shift)
+}
+
 impl Arm11Core {
     pub(super) fn execute_arm<B: Bus + ?Sized>(
         &mut self,
@@ -244,19 +257,6 @@ impl Arm11Core {
 
         Ok(StepEvent::Executed)
     }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ParallelOperation {
-    Add,
-    Subtract,
-    AddSubtractExchange,
-    SubtractAddExchange,
-}
-
-fn sign_extend_lane(value: u32, width: u32) -> i64 {
-    let shift = 32 - width;
-    i64::from(((value << shift) as i32) >> shift)
-}
 
     /// Executes non-saturating ARMv6 parallel add/subtract media instructions.
     ///
@@ -1421,13 +1421,16 @@ mod tests {
         m.cpu.regs[7] = 0x0001_0000;
         m.cpu.regs[8] = 0x0001_0001;
 
-        m.run(3);
-
+        m.run(1);
         assert_eq!(m.cpu.regs[0], 0x8000_7FFF);
         assert_eq!(m.cpu.cpsr.ge(), 0b1100);
+
+        m.run(1);
         assert_eq!(m.cpu.regs[3], 0x0000_0001);
-        assert_eq!(m.cpu.cpsr.ge(), 0b0011);
-        assert_eq!(m.cpu.regs[6], 0xFFFF_FFFF);
+        assert_eq!(m.cpu.cpsr.ge(), 0b1100);
+
+        m.run(1);
+        assert_eq!(m.cpu.regs[6], 0x0000_FFFF);
         assert_eq!(m.cpu.cpsr.ge(), 0b1100);
     }
 
