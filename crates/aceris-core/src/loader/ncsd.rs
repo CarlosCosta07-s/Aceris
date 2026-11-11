@@ -5,6 +5,7 @@
 //! executable. Those checks belong to later loading stages.
 
 use aceris_common::{Error, Result};
+use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
 /// Structural NCCH parser for content stored inside an NCSD partition.
@@ -53,6 +54,28 @@ impl NcsdPartition {
     /// returned value, preventing outside code from moving it past the range.
     pub fn reader<R: Read + Seek>(self, inner: R) -> io::Result<NcsdPartitionReader<R>> {
         NcsdPartitionReader::new(inner, self)
+    }
+
+    /// Opens this partition as a structurally validated, cleartext NCCH container.
+    ///
+    /// The returned value keeps the parsed header paired with the bounded
+    /// partition reader. NCCH decryption and signature verification are not
+    /// performed by this operation.
+    pub fn open_ncch<R: Read + Seek>(
+        self,
+        inner: R,
+    ) -> Result<NcsdNcchReader<R>, NcsdNcchError> {
+        let mut reader = self
+            .reader(inner)
+            .map_err(NcsdNcchError::PartitionReader)?;
+        let header = ncch::NcchHeader::parse_reader(&mut reader, self.size_bytes)
+            .map_err(NcsdNcchError::InvalidNcchHeader)?;
+
+        Ok(NcsdNcchReader {
+            partition: self,
+            header,
+            reader,
+        })
     }
 }
 
@@ -167,6 +190,80 @@ impl<R: Read + Seek> Seek for NcsdPartitionReader<R> {
 
         self.position = relative;
         Ok(relative)
+    }
+}
+
+/// Errors produced while opening an NCSD partition as an NCCH container.
+#[derive(Debug)]
+pub enum NcsdNcchError {
+    /// The bounded NCSD partition reader could not be created.
+    PartitionReader(io::Error),
+    /// The partition does not contain a valid structural NCCH header.
+    InvalidNcchHeader(ncch::NcchError),
+}
+
+impl fmt::Display for NcsdNcchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PartitionReader(source) => {
+                write!(formatter, "could not open NCSD partition: {source}")
+            }
+            Self::InvalidNcchHeader(source) => {
+                write!(formatter, "partition does not contain a valid NCCH header: {source}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for NcsdNcchError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::PartitionReader(source) => Some(source),
+            Self::InvalidNcchHeader(source) => Some(source),
+        }
+    }
+}
+
+/// An NCCH header paired with the bounded reader for its containing NCSD partition.
+///
+/// Keeping these values together prevents offsets from the NCCH header from
+/// accidentally being applied to the full cartridge image.
+#[derive(Debug)]
+pub struct NcsdNcchReader<R> {
+    partition: NcsdPartition,
+    header: ncch::NcchHeader,
+    reader: NcsdPartitionReader<R>,
+}
+
+/// RomFS Level 3 reader returned after NCCH superblock and IVFC hashes validate.
+pub type VerifiedNcsdRomFsLevel3Reader<R> = ncch::romfs::RomFsLevel3Reader<
+    ncch::romfs::RomFsRangeReader<ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>>,
+>;
+
+impl<R: Read + Seek> NcsdNcchReader<R> {
+    /// Returns the NCSD partition that contains this NCCH container.
+    pub const fn partition(&self) -> NcsdPartition {
+        self.partition
+    }
+
+    /// Returns the structurally validated NCCH header.
+    pub const fn header(&self) -> &ncch::NcchHeader {
+        &self.header
+    }
+
+    /// Provides mutable access to the bounded partition reader.
+    pub fn reader_mut(&mut self) -> &mut NcsdPartitionReader<R> {
+        &mut self.reader
+    }
+
+    /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
+    ///
+    /// An empty result means the NCCH header does not declare a RomFS region.
+    /// This does not decrypt NCCH content or verify its RSA signature.
+    pub fn open_verified_romfs_level3_reader(
+        self,
+    ) -> std::result::Result<Option<VerifiedNcsdRomFsLevel3Reader<R>>, ncch::romfs::RomFsError> {
+        self.header.open_verified_romfs_level3_reader(self.reader)
     }
 }
 
@@ -374,6 +471,55 @@ mod tests {
         data[PARTITION_IDS_OFFSET..PARTITION_IDS_OFFSET + 8]
             .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
         data
+    }
+
+    fn image_with_primary_ncch() -> Vec<u8> {
+        const PARTITION_OFFSET: usize = 0x4000;
+        const PARTITION_SIZE: usize = 0x4000;
+
+        let mut image = vec![0; PARTITION_OFFSET + PARTITION_SIZE];
+        image[MAGIC_OFFSET..MAGIC_OFFSET + 4].copy_from_slice(b"NCSD");
+        write_u32(&mut image, MEDIA_SIZE_OFFSET, 0x40);
+        write_partition(&mut image, 0, 0x20, 0x20);
+
+        let ncch_start = PARTITION_OFFSET;
+        image[ncch_start + 0x100..ncch_start + 0x104].copy_from_slice(b"NCCH");
+        write_u32(&mut image, ncch_start + 0x104, 0x20);
+        image[ncch_start + 0x118..ncch_start + 0x120]
+            .copy_from_slice(&0x0004_0000_1234_5678u64.to_le_bytes());
+        image
+    }
+
+    #[test]
+    fn opens_primary_partition_as_a_bounded_ncch_container() {
+        let image = image_with_primary_ncch();
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+
+        let opened = partition.open_ncch(Cursor::new(image)).unwrap();
+
+        assert_eq!(opened.partition(), partition);
+        assert_eq!(opened.header().content_size_bytes, partition.size_bytes);
+        assert_eq!(opened.header().program_id, 0x0004_0000_1234_5678);
+        assert!(opened.open_verified_romfs_level3_reader().unwrap().is_none());
+    }
+
+    #[test]
+    fn rejects_a_partition_without_a_valid_ncch_header() {
+        let mut image = image_with_primary_ncch();
+        image[0x4000 + 0x100..0x4000 + 0x104].copy_from_slice(b"NOPE");
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+
+        let error = partition.open_ncch(Cursor::new(image)).unwrap_err();
+
+        assert!(matches!(
+            error,
+            NcsdNcchError::InvalidNcchHeader(ncch::NcchError::InvalidHeader(
+                "NCCH magic is missing"
+            ))
+        ));
+        assert!(std::error::Error::source(&error).is_some());
     }
 
     #[test]
