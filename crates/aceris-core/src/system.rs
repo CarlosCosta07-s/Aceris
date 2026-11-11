@@ -138,16 +138,13 @@ impl System {
 
         let mut ncch_header_bytes = [0; ncch::HEADER_SIZE];
         reader.read_exact(&mut ncch_header_bytes)?;
-        let ncch_header = ncch::NcchHeader::parse(
-            &ncch_header_bytes,
-            primary_partition.size_bytes,
-        )
-        .map_err(|error| {
-            Error::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid primary NCCH header: {error}"),
-            ))
-        })?;
+        let ncch_header = ncch::NcchHeader::parse(&ncch_header_bytes, primary_partition.size_bytes)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid primary NCCH header: {error}"),
+                ))
+            })?;
 
         if !ncch_header.declares_no_crypto() {
             return Err(Error::Unimplemented(
