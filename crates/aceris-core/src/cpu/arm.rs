@@ -812,9 +812,7 @@ impl Arm11Core {
             let valid_encoding = if imod == 0 {
                 change_mode && interrupt_mask == 0 && valid_mode
             } else {
-                matches!(imod, 0b10 | 0b11)
-                    && interrupt_mask != 0
-                    && (!change_mode || valid_mode)
+                matches!(imod, 0b10 | 0b11) && interrupt_mask != 0 && (!change_mode || valid_mode)
             };
             if !valid_encoding {
                 return Err(Error::UndefinedInstruction {
@@ -831,8 +829,7 @@ impl Arm11Core {
                     "CPS mode changes require banked register support",
                 ));
             }
-            self.cpsr
-                .set_interrupt_masks(interrupt_mask, imod == 0b10);
+            self.cpsr.set_interrupt_masks(interrupt_mask, imod == 0b10);
             return Ok(StepEvent::Executed);
         }
         if bits(word, 27, 25) != 0b101 {
@@ -1926,12 +1923,7 @@ mod tests {
     #[test]
     fn armv6_cpsid_and_cpsie_update_interrupt_masks_without_touching_flags() {
         // CPSID i ; CPSIE i ; CPSID aif ; CPSIE aif.
-        let mut m = Machine::new(&[
-            0xF10C_0080,
-            0xF108_0080,
-            0xF10C_01C0,
-            0xF108_01C0,
-        ]);
+        let mut m = Machine::new(&[0xF10C_0080, 0xF108_0080, 0xF10C_01C0, 0xF108_01C0]);
         m.cpu.cpsr.0 = (m.cpu.cpsr.0 & !0x1F) | 0x13; // Supervisor mode.
         m.cpu.cpsr.set_flags(true, false, true, false);
         m.cpu.cpsr.set_q();
@@ -1964,7 +1956,9 @@ mod tests {
         privileged.cpu.cpsr.0 = (privileged.cpu.cpsr.0 & !0x1F) | 0x13;
         assert!(matches!(
             privileged.cpu.step(&mut privileged.mem),
-            Err(Error::Unimplemented("CPS mode changes require banked register support"))
+            Err(Error::Unimplemented(
+                "CPS mode changes require banked register support"
+            ))
         ));
         assert_eq!(privileged.cpu.cpsr.mode(), 0x13);
     }

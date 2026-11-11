@@ -372,8 +372,7 @@ impl Arm11Core {
                 });
             }
             if self.cpsr.privileged() {
-                self.cpsr
-                    .set_interrupt_masks(interrupt_mask, !bit(half, 4));
+                self.cpsr.set_interrupt_masks(interrupt_mask, !bit(half, 4));
             }
             return Ok(StepEvent::Executed);
         }
