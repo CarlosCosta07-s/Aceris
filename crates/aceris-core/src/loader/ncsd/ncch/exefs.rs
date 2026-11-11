@@ -416,7 +416,7 @@ mod tests {
 
         data = valid_header();
         let base = FILE_TABLE_OFFSET + 2 * FILE_ENTRY_SIZE;
-        data[base..base + 8].copy_from_slice(b"overlap");
+        write_name(&mut data, base, b"overlap");
         write_u32(&mut data, base + 8, 0x80);
         write_u32(&mut data, base + 12, 0x20);
         assert!(matches!(
