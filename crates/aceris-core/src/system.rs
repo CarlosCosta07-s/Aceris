@@ -306,8 +306,10 @@ mod tests {
     #[test]
     fn loads_no_crypto_ncsd_without_caller_keys_from_both_3ds_and_cci_paths() {
         for extension in ["3ds", "cci"] {
-            let path = std::env::temp_dir()
-                .join(format!("aceris-no-crypto-{}.{extension}", std::process::id()));
+            let path = std::env::temp_dir().join(format!(
+                "aceris-no-crypto-{}.{extension}",
+                std::process::id()
+            ));
             std::fs::write(&path, clear_ncsd_cartridge_fixture()).unwrap();
 
             let mut system = System::new();
@@ -337,8 +339,8 @@ mod tests {
             .unwrap();
         let original_pc = system.cpu().pc();
 
-        let path = std::env::temp_dir()
-            .join(format!("aceris-encrypted-{}.3ds", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("aceris-encrypted-{}.3ds", std::process::id()));
         let mut encrypted = clear_ncsd_cartridge_fixture();
         encrypted[0x4000 + 0x18F] &= !0x04;
         std::fs::write(&path, encrypted).unwrap();
