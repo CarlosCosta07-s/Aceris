@@ -1356,6 +1356,7 @@ mod tests {
     #[test]
     fn rejects_ivfc_level_alignment_overflow() {
         let mut bytes = valid_ivfc_header();
+        write_u64(&mut bytes, 0x44, 0x8000_0000_0000_0000);
         write_u32(&mut bytes, 0x3C + 16, 63);
         let header = IvfcHeader::parse(&bytes, u64::MAX).unwrap();
         assert_eq!(
@@ -1367,6 +1368,7 @@ mod tests {
         );
 
         bytes = valid_ivfc_header();
+        write_u64(&mut bytes, 0x44, 0x8000_0000_0000_0000);
         write_u32(&mut bytes, 0x0C + 16, 63);
         let header = IvfcHeader::parse(&bytes, u64::MAX).unwrap();
         assert_eq!(
