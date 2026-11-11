@@ -829,7 +829,7 @@ impl Arm11Core {
                     "CPS mode changes require banked register support",
                 ));
             }
-            self.cpsr.set_interrupt_masks(interrupt_mask, imod == 0b10);
+            self.cpsr.set_interrupt_masks(interrupt_mask, imod == 0b11);
             return Ok(StepEvent::Executed);
         }
         if bits(word, 27, 25) != 0b101 {

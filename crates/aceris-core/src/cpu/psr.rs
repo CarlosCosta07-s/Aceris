@@ -115,8 +115,9 @@ impl Psr {
         }
     }
 
-    /// Updates selected A/I/F interrupt masks (mask bit 0=A, 1=I, 2=F).
-    pub fn set_interrupt_masks(&mut self, mask: u8, enabled: bool) {
+    /// Sets or clears selected A/I/F interrupt masks (mask bit 0=A, 1=I, 2=F).
+    /// The boolean is true for CPSID (masked) and false for CPSIE (unmasked).
+    pub fn set_interrupt_masks(&mut self, mask: u8, masked: bool) {
         let mut bits = 0;
         if mask & 0b001 != 0 {
             bits |= Self::A;
@@ -127,7 +128,7 @@ impl Psr {
         if mask & 0b100 != 0 {
             bits |= Self::F;
         }
-        if enabled {
+        if masked {
             self.0 |= bits;
         } else {
             self.0 &= !bits;
