@@ -1,9 +1,9 @@
-//! Structural parser and cleartext integrity checks for Nintendo 3DS NCCH.
+//! Structural parsing, integrity checks, and AES-CTR region readers for Nintendo 3DS NCCH.
 //!
 //! This module parses the fixed 0x200-byte header, validates declared content
-//! regions, and exposes ExeFS/RomFS metadata readers. RomFS integrity validation
-//! checks the NCCH superblock hash and internal IVFC chain. It does not verify
-//! RSA signatures or decrypt NCCH content.
+//! regions, and exposes bounded ExeFS/RomFS readers. Encrypted NCCH regions can
+//! be decrypted when the caller supplies the AES-128 content key. The module
+//! does not acquire console keys or verify NCCH RSA signatures.
 
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom};
@@ -714,6 +714,66 @@ impl NcchHeader {
             .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))
     }
 
+    /// Opens one decrypted ExeFS file after validating its superblock and file digest.
+    ///
+    /// The caller must supply the AES-128 content key for an encrypted NCCH.
+    /// The ExeFS superblock hash is checked before parsing its file table, and
+    /// the requested file's SHA-256 digest is checked before its bounded reader
+    /// is returned. The other ExeFS files are not verified by this operation.
+    ///
+    /// Returns None when the NCCH header does not declare an ExeFS region.
+    /// Cleartext (NoCrypto) content is rejected; use
+    /// [open_verified_exefs_file_reader] for an already-decrypted NCCH.
+    pub fn open_decrypted_verified_exefs_file_reader<R: Read + Seek>(
+        &self,
+        reader: R,
+        file_name: &str,
+        key: [u8; crypto::AES_BLOCK_SIZE],
+    ) -> Result<
+        Option<exefs::ExeFsFileReader<crypto::NcchCtrReader<R>>>,
+        exefs::ExeFsError,
+    > {
+        let Some(region) = self.exefs else {
+            return Ok(None);
+        };
+
+        let mut decrypted_region = self
+            .open_decrypted_region_reader(reader, crypto::NcchCtrRegion::ExeFs, key)
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?
+            .ok_or_else(|| {
+                exefs::ExeFsError::ReaderFailure(
+                    "NCCH ExeFS region disappeared from validated header".to_owned(),
+                )
+            })?;
+
+        verify_decrypted_exefs_superblock_hash(
+            &mut decrypted_region,
+            region.hash_region_size_bytes,
+            &self.exefs_superblock_hash,
+        )?;
+
+        let position = decrypted_region
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+        if position != 0 {
+            return Err(exefs::ExeFsError::ReaderFailure(
+                "could not rewind the decrypted NCCH ExeFS region".to_owned(),
+            ));
+        }
+
+        let header = exefs::ExeFsHeader::parse_reader(&mut decrypted_region, region.size_bytes)?;
+        let file = header
+            .file(file_name)
+            .cloned()
+            .ok_or_else(|| exefs::ExeFsError::FileNotFound(file_name.to_owned()))?;
+
+        verify_decrypted_exefs_file_hash(&mut decrypted_region, &file)?;
+
+        file.reader(decrypted_region)
+            .map(Some)
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))
+    }
+
     /// Returns true when the NCCH NoCrypto flag is set.
     ///
     /// This reports the header flag only; it does not decrypt or validate data.
@@ -930,6 +990,85 @@ fn verify_exefs_file_hash<R: Read + Seek>(
         hasher.update(&buffer[..amount]).map_err(|_| {
             exefs::ExeFsError::ReaderFailure(
                 "ExeFS file exceeds the SHA-256 message limit".to_owned(),
+            )
+        })?;
+        remaining -= amount as u64;
+    }
+
+    if hasher.finalize() != file.sha256 {
+        return Err(exefs::ExeFsError::FileHashMismatch(file.name.clone()));
+    }
+
+    Ok(())
+}
+
+fn verify_decrypted_exefs_superblock_hash<R: Read + Seek>(
+    reader: &mut R,
+    hash_region_size_bytes: u64,
+    expected_hash: &[u8; 32],
+) -> Result<(), exefs::ExeFsError> {
+    if hash_region_size_bytes == 0 {
+        return Err(exefs::ExeFsError::InvalidHashRegion);
+    }
+
+    let position = reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+    if position != 0 {
+        return Err(exefs::ExeFsError::ReaderFailure(
+            "could not seek to the start of the decrypted NCCH ExeFS region".to_owned(),
+        ));
+    }
+
+    let mut hasher = romfs::sha256::Sha256::new();
+    let mut remaining = hash_region_size_bytes;
+    let mut buffer = [0u8; 8 * 1024];
+
+    while remaining != 0 {
+        let amount = remaining.min(buffer.len() as u64) as usize;
+        reader
+            .read_exact(&mut buffer[..amount])
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+        hasher.update(&buffer[..amount]).map_err(|_| {
+            exefs::ExeFsError::ReaderFailure(
+                "decrypted ExeFS superblock exceeds the SHA-256 message limit".to_owned(),
+            )
+        })?;
+        remaining -= amount as u64;
+    }
+
+    if &hasher.finalize() != expected_hash {
+        return Err(exefs::ExeFsError::SuperblockHashMismatch);
+    }
+
+    Ok(())
+}
+
+fn verify_decrypted_exefs_file_hash<R: Read + Seek>(
+    reader: &mut R,
+    file: &exefs::ExeFsFile,
+) -> Result<(), exefs::ExeFsError> {
+    let position = reader
+        .seek(SeekFrom::Start(file.offset_bytes))
+        .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+    if position != file.offset_bytes {
+        return Err(exefs::ExeFsError::ReaderFailure(
+            "could not seek to the requested decrypted ExeFS file".to_owned(),
+        ));
+    }
+
+    let mut hasher = romfs::sha256::Sha256::new();
+    let mut remaining = file.size_bytes;
+    let mut buffer = [0u8; 8 * 1024];
+
+    while remaining != 0 {
+        let amount = remaining.min(buffer.len() as u64) as usize;
+        reader
+            .read_exact(&mut buffer[..amount])
+            .map_err(|error| exefs::ExeFsError::ReaderFailure(error.to_string()))?;
+        hasher.update(&buffer[..amount]).map_err(|_| {
+            exefs::ExeFsError::ReaderFailure(
+                "decrypted ExeFS file exceeds the SHA-256 message limit".to_owned(),
             )
         })?;
         remaining -= amount as u64;
@@ -1287,6 +1426,88 @@ mod tests {
         reader.read_to_end(&mut actual).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+    }
+
+    fn encrypted_exefs_image() -> (Vec<u8>, NcchHeader, [u8; 16], Vec<u8>) {
+        let (mut image, _) = valid_exefs_image();
+        image[FLAGS_OFFSET + 7] &= !NO_CRYPTO_FLAG;
+        let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let region = parsed.exefs.unwrap();
+        let key = [0x61; crypto::AES_BLOCK_SIZE];
+        let start = region.offset_bytes as usize;
+        let end = start + region.size_bytes as usize;
+        let mut plaintext = image[start..end].to_vec();
+        let expected_code = plaintext[0x200..0x300].to_vec();
+        let counter = parsed
+            .initial_ctr_for_region(crypto::NcchCtrRegion::ExeFs)
+            .unwrap();
+        crypto::Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut plaintext)
+            .unwrap();
+        image[start..end].copy_from_slice(&plaintext);
+        (image, parsed, key, expected_code)
+    }
+
+    #[test]
+    fn opens_a_decrypted_verified_exefs_file_as_a_bounded_reader() {
+        use std::io::Read;
+
+        let (image, parsed, key, expected) = encrypted_exefs_image();
+        let mut reader = parsed
+            .open_decrypted_verified_exefs_file_reader(Cursor::new(image), ".code", key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reader.len(), expected.len() as u64);
+        let mut actual = Vec::new();
+        reader.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+    }
+
+    #[test]
+    fn rejects_a_decrypted_exefs_file_when_the_superblock_hash_is_invalid() {
+        let (mut image, parsed, key, _) = encrypted_exefs_image();
+        let region = parsed.exefs.unwrap();
+        image[region.offset_bytes as usize + 0x10] ^= 0x80;
+
+        assert_eq!(
+            parsed
+                .open_decrypted_verified_exefs_file_reader(Cursor::new(image), ".code", key)
+                .err(),
+            Some(exefs::ExeFsError::SuperblockHashMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_a_decrypted_exefs_file_when_its_digest_is_invalid() {
+        let (mut image, parsed, key, _) = encrypted_exefs_image();
+        let region = parsed.exefs.unwrap();
+        image[region.offset_bytes as usize + 0x200 + 0x10] ^= 0x80;
+
+        assert_eq!(
+            parsed
+                .open_decrypted_verified_exefs_file_reader(Cursor::new(image), ".code", key)
+                .err(),
+            Some(exefs::ExeFsError::FileHashMismatch(".code".to_owned()))
+        );
+    }
+
+    #[test]
+    fn decrypted_exefs_file_api_refuses_nocrypto_content() {
+        let (image, parsed) = valid_exefs_image();
+
+        assert!(matches!(
+            parsed
+                .open_decrypted_verified_exefs_file_reader(
+                    Cursor::new(image),
+                    ".code",
+                    [0x61; crypto::AES_BLOCK_SIZE],
+                )
+                .err(),
+            Some(exefs::ExeFsError::ReaderFailure(reason))
+                if reason.contains("already clear")
+        ));
     }
 
     #[test]
