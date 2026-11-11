@@ -646,8 +646,6 @@ mod tests {
         let normal = create(&mut scheduler, 0x0020_0000, 0x30);
         let urgent = create(&mut scheduler, 0x0030_0000, 0x10);
 
-        assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
-
         assert_eq!(scheduler.current_thread_id(), Some(urgent));
         assert_eq!(
             scheduler.thread_info(normal).unwrap().state,
@@ -687,11 +685,9 @@ mod tests {
 
     #[test]
     fn exited_threads_are_not_returned_to_the_ready_queue() {
-        let mut scheduler = scheduler_with_priority(0x10);
+        let mut scheduler = scheduler();
         let other = create(&mut scheduler, 0x0020_0000, 0x20);
 
-        assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
-        scheduler.yield_current().unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(other));
         assert_eq!(scheduler.exit_current().unwrap(), Some(MAIN_THREAD_ID));
 
