@@ -402,10 +402,7 @@ impl Arm11Core {
                     updates_ge = true;
                     if is_add {
                         let value = u64::from(a) + u64::from(b);
-                        (
-                            value as u32 & lane_mask,
-                            Some(value > u64::from(lane_mask)),
-                        )
+                        (value as u32 & lane_mask, Some(value > u64::from(lane_mask)))
                     } else {
                         (a.wrapping_sub(b) & lane_mask, Some(a >= b))
                     }
@@ -1581,12 +1578,7 @@ mod tests {
     #[test]
     fn armv6_parallel_saturating_and_halving_variants_preserve_all_flags() {
         // QADD16, UQADD8, SHADD8, UHSUB16.
-        let mut m = Machine::new(&[
-            0xE621_0F12,
-            0xE664_3F95,
-            0xE637_6F98,
-            0xE67A_9F7B,
-        ]);
+        let mut m = Machine::new(&[0xE621_0F12, 0xE664_3F95, 0xE637_6F98, 0xE67A_9F7B]);
         m.cpu.regs[1] = 0x7FFF_8000;
         m.cpu.regs[2] = 0x0001_FFFF;
         m.cpu.regs[4] = 0xFF00_80FE;
