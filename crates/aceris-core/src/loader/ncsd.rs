@@ -305,7 +305,10 @@ impl fmt::Display for NcsdExecutableLoadError {
                 write!(formatter, "could not read ExeFS .code: {reason}")
             }
             Self::AllocationFailure(reason) => {
-                write!(formatter, "could not allocate the ARM11 code image: {reason}")
+                write!(
+                    formatter,
+                    "could not allocate the ARM11 code image: {reason}"
+                )
             }
         }
     }
@@ -440,10 +443,7 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
         } else {
             let mut reader = self
                 .header
-                .open_decrypted_verified_extended_header_reader(
-                    &mut self.reader,
-                    menu_info_key,
-                )
+                .open_decrypted_verified_extended_header_reader(&mut self.reader, menu_info_key)
                 .map_err(NcsdExecutableLoadError::ExtendedHeaderIntegrity)?
                 .ok_or(NcsdExecutableLoadError::MissingExtendedHeader)?;
             ncch::extended_header::NcchExtendedHeader::parse_reader(&mut reader)
@@ -717,12 +717,11 @@ fn read_verified_code_file<R: Read>(
     reader: &mut ncch::exefs::ExeFsFileReader<R>,
     maximum_size: usize,
 ) -> std::result::Result<Vec<u8>, NcsdExecutableLoadError> {
-    let stored_size = usize::try_from(reader.len()).map_err(|_| {
-        NcsdExecutableLoadError::CodeImageTooLarge {
+    let stored_size =
+        usize::try_from(reader.len()).map_err(|_| NcsdExecutableLoadError::CodeImageTooLarge {
             requested_size: usize::MAX,
             maximum_size,
-        }
-    })?;
+        })?;
     if stored_size > maximum_size {
         return Err(NcsdExecutableLoadError::CodeImageTooLarge {
             requested_size: stored_size,
@@ -817,13 +816,16 @@ mod tests {
 
         let mut decode_order = Vec::new();
         for group in operations.chunks(8) {
-            let flags = group.iter().enumerate().fold(0u8, |flags, (index, operation)| {
-                if matches!(operation, Operation::BackReference(_)) {
-                    flags | (0x80 >> index)
-                } else {
-                    flags
-                }
-            });
+            let flags = group
+                .iter()
+                .enumerate()
+                .fold(0u8, |flags, (index, operation)| {
+                    if matches!(operation, Operation::BackReference(_)) {
+                        flags | (0x80 >> index)
+                    } else {
+                        flags
+                    }
+                });
             decode_order.push(flags);
             for operation in group {
                 match operation {
@@ -1010,8 +1012,7 @@ mod tests {
 
     #[test]
     fn prepares_blz_compressed_arm11_code_segments_from_ncsd() {
-        let (image, expected_text, expected_read_only, expected_data) =
-            image_with_arm11_code(true);
+        let (image, expected_text, expected_read_only, expected_data) = image_with_arm11_code(true);
         let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         let partition = *parsed.primary_partition().unwrap();
 
