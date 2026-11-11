@@ -827,9 +827,7 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
     ) -> Result<
         Option<
             crate::loader::ncsd::ncch::romfs::RomFsLevel3Reader<
-                crate::loader::ncsd::ncch::romfs::RomFsRangeReader<
-                    NcchCtrReader<Self>,
-                >,
+                crate::loader::ncsd::ncch::romfs::RomFsRangeReader<NcchCtrReader<Self>>,
             >,
         >,
         crate::loader::ncsd::ncch::romfs::RomFsError,
@@ -1016,9 +1014,7 @@ fn verify_decrypted_romfs_superblock_hash<R: Read + Seek>(
             .read_exact(&mut buffer[..amount])
             .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
         hasher.update(&buffer[..amount]).map_err(|_| {
-            RomFsError::InvalidIvfcHeader(
-                "NCCH RomFS superblock exceeds the SHA-256 message limit",
-            )
+            RomFsError::InvalidIvfcHeader("NCCH RomFS superblock exceeds the SHA-256 message limit")
         })?;
         remaining -= amount as u64;
     }
@@ -1784,9 +1780,7 @@ mod tests {
         ncch[0x1E0..0x200].copy_from_slice(&superblock_hash);
 
         let parsed = NcchHeader::parse(&ncch[..NCCH_HEADER_SIZE], ncch.len() as u64).unwrap();
-        let counter = parsed
-            .initial_ctr_for_region(NcchCtrRegion::RomFs)
-            .unwrap();
+        let counter = parsed.initial_ctr_for_region(NcchCtrRegion::RomFs).unwrap();
         Aes128Ctr::new(romfs_key, counter)
             .apply_keystream(&mut romfs_image)
             .unwrap();
@@ -1862,10 +1856,12 @@ mod tests {
 
         assert!(matches!(
             ncch.open_decrypted_verified_romfs_level3_reader(fixture.romfs_key),
-            Err(crate::loader::ncsd::ncch::romfs::RomFsError::IvfcHashMismatch {
-                level: 3,
-                block_index: 0,
-            })
+            Err(
+                crate::loader::ncsd::ncch::romfs::RomFsError::IvfcHashMismatch {
+                    level: 3,
+                    block_index: 0,
+                }
+            )
         ));
     }
 
