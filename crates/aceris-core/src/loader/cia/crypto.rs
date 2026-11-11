@@ -218,14 +218,10 @@ fn inverse_mix_columns(state: &mut [u8; BLOCK_SIZE]) {
         let c = state[offset + 2];
         let d = state[offset + 3];
 
-        state[offset] =
-            gf_mul(a, 14) ^ gf_mul(b, 11) ^ gf_mul(c, 13) ^ gf_mul(d, 9);
-        state[offset + 1] =
-            gf_mul(a, 9) ^ gf_mul(b, 14) ^ gf_mul(c, 11) ^ gf_mul(d, 13);
-        state[offset + 2] =
-            gf_mul(a, 13) ^ gf_mul(b, 9) ^ gf_mul(c, 14) ^ gf_mul(d, 11);
-        state[offset + 3] =
-            gf_mul(a, 11) ^ gf_mul(b, 13) ^ gf_mul(c, 9) ^ gf_mul(d, 14);
+        state[offset] = gf_mul(a, 14) ^ gf_mul(b, 11) ^ gf_mul(c, 13) ^ gf_mul(d, 9);
+        state[offset + 1] = gf_mul(a, 9) ^ gf_mul(b, 14) ^ gf_mul(c, 11) ^ gf_mul(d, 13);
+        state[offset + 2] = gf_mul(a, 13) ^ gf_mul(b, 9) ^ gf_mul(c, 14) ^ gf_mul(d, 11);
+        state[offset + 3] = gf_mul(a, 11) ^ gf_mul(b, 13) ^ gf_mul(c, 9) ^ gf_mul(d, 14);
     }
 }
 
@@ -260,10 +256,7 @@ mod tests {
         let ciphertext = decode_hex::<16>("7649abac8119b246cee98e9b12e9197d");
         let expected = decode_hex::<16>("6bc1bee22e409f96e93d7e117393172a");
 
-        assert_eq!(
-            decrypt_aes128_cbc_block(key, iv, ciphertext),
-            expected
-        );
+        assert_eq!(decrypt_aes128_cbc_block(key, iv, ciphertext), expected);
     }
 
     #[test]

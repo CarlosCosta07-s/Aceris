@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use super::crypto::{decrypt_aes128_cbc_block, TitleKey};
+use super::crypto::{TitleKey, decrypt_aes128_cbc_block};
 
 /// Fixed size of the 3DS ticket-data area after its aligned signature block.
 pub const TICKET_DATA_SIZE: usize = 0x210;
