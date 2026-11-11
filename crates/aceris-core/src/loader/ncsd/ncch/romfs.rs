@@ -8,6 +8,9 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
+/// SHA-256 incremental used by RomFS IVFC integrity validation.
+pub mod sha256;
+
 pub const IVFC_HEADER_SIZE: usize = 0x5C;
 /// Physical start of the RomFS Level 3 image inside an IVFC container.
 pub const LEVEL3_DATA_OFFSET_BYTES: u64 = 0x1000;
