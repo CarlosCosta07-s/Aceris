@@ -811,6 +811,59 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
             content_key,
         )
     }
+
+    /// Opens the RomFS Level 3 filesystem after verifying CIA, NCCH, and IVFC hashes.
+    ///
+    /// The CIA TMD hash was verified when this NCCH reader was created. This
+    /// method decrypts only the NCCH RomFS region with the caller-provided key,
+    /// validates the NCCH RomFS superblock hash and the complete IVFC chain,
+    /// and returns the bounded Level 3 reader.
+    ///
+    /// Returns None when the NCCH header declares no RomFS region. No key
+    /// material is acquired or persisted by Aceris.
+    pub fn open_decrypted_verified_romfs_level3_reader(
+        self,
+        romfs_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<
+        Option<
+            crate::loader::ncsd::ncch::romfs::RomFsLevel3Reader<
+                crate::loader::ncsd::ncch::romfs::RomFsRangeReader<
+                    NcchCtrReader<Self>,
+                >,
+            >,
+        >,
+        crate::loader::ncsd::ncch::romfs::RomFsError,
+    > {
+        let header = self.header.clone();
+        let Some(region) = header.romfs else {
+            return Ok(None);
+        };
+
+        let mut decrypted_region = header
+            .open_decrypted_region_reader(self, NcchCtrRegion::RomFs, romfs_key)
+            .map_err(|error| {
+                crate::loader::ncsd::ncch::romfs::RomFsError::ReaderFailure(error.to_string())
+            })?
+            .ok_or_else(|| {
+                crate::loader::ncsd::ncch::romfs::RomFsError::ReaderFailure(
+                    "NCCH RomFS region disappeared from validated header".to_owned(),
+                )
+            })?;
+
+        verify_decrypted_romfs_superblock_hash(
+            &mut decrypted_region,
+            &header.romfs_superblock_hash,
+            region.hash_region_size_bytes,
+        )?;
+
+        let ivfc = crate::loader::ncsd::ncch::romfs::IvfcHeader::parse_reader(
+            &mut decrypted_region,
+            region.size_bytes,
+        )?;
+        ivfc.verify_integrity_reader(&mut decrypted_region, region.size_bytes)?;
+        ivfc.open_level3_reader(decrypted_region, region.size_bytes)
+            .map(Some)
+    }
 }
 
 impl<R: Read + Seek> Read for CiaDecryptedContentNcchReader<'_, R> {
@@ -929,6 +982,61 @@ impl<R: Read + Seek> Seek for CiaContentReader<'_, R> {
         self.position_bytes = relative;
         Ok(relative)
     }
+}
+
+fn verify_decrypted_romfs_superblock_hash<R: Read + Seek>(
+    reader: &mut R,
+    expected_hash: &[u8; 32],
+    hash_region_size_bytes: u64,
+) -> Result<(), crate::loader::ncsd::ncch::romfs::RomFsError> {
+    use crate::loader::ncsd::ncch::romfs::RomFsError;
+
+    if hash_region_size_bytes == 0 {
+        return Err(RomFsError::InvalidIvfcHeader(
+            "NCCH RomFS superblock hash region is empty",
+        ));
+    }
+
+    let start = reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+    if start != 0 {
+        return Err(RomFsError::ReaderFailure(
+            "could not seek to the start of the decrypted NCCH RomFS region".to_owned(),
+        ));
+    }
+
+    let mut hasher = Sha256::new();
+    let mut remaining = hash_region_size_bytes;
+    let mut buffer = [0u8; 8 * 1024];
+
+    while remaining != 0 {
+        let amount = remaining.min(buffer.len() as u64) as usize;
+        reader
+            .read_exact(&mut buffer[..amount])
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+        hasher.update(&buffer[..amount]).map_err(|_| {
+            RomFsError::InvalidIvfcHeader(
+                "NCCH RomFS superblock exceeds the SHA-256 message limit",
+            )
+        })?;
+        remaining -= amount as u64;
+    }
+
+    if &hasher.finalize() != expected_hash {
+        return Err(RomFsError::NcchSuperblockHashMismatch);
+    }
+
+    let position = reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+    if position != 0 {
+        return Err(RomFsError::ReaderFailure(
+            "could not rewind the decrypted NCCH RomFS reader".to_owned(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1557,6 +1665,208 @@ mod tests {
                 crate::loader::ncsd::ncch::exefs::ExeFsError::FileHashMismatch(".code".to_owned())
             )
         );
+    }
+
+    struct EncryptedRomFsCiaFixture {
+        cia: Vec<u8>,
+        cia_title_key: [u8; 16],
+        romfs_key: [u8; 16],
+    }
+
+    fn write_ivfc_hash_table(data: &[u8], block_size: usize) -> Vec<u8> {
+        let mut hashes = Vec::new();
+        for block in data.chunks(block_size) {
+            let mut hasher = Sha256::new();
+            hasher.update(block).unwrap();
+            let padding = vec![0; block_size - block.len()];
+            hasher.update(&padding).unwrap();
+            hashes.extend_from_slice(&hasher.finalize());
+        }
+        hashes
+    }
+
+    fn make_valid_romfs_ivfc_image() -> Vec<u8> {
+        const IVFC_HEADER_SIZE: usize = 0x5C;
+        let mut ivfc_header = vec![0u8; IVFC_HEADER_SIZE];
+        ivfc_header[..4].copy_from_slice(b"IVFC");
+        write_le_u32(&mut ivfc_header, 0x04, 0x0001_0000);
+        write_le_u32(&mut ivfc_header, 0x08, 0x40);
+        for (offset, logical, size, block_log2) in [
+            (0x0C, 0u64, 0x40u64, 5u32),
+            (0x24, 0x40, 0x40, 5),
+            (0x3C, 0x80, 0x80, 6),
+        ] {
+            ivfc_header[offset..offset + 8].copy_from_slice(&logical.to_le_bytes());
+            ivfc_header[offset + 8..offset + 16].copy_from_slice(&size.to_le_bytes());
+            write_le_u32(&mut ivfc_header, offset + 16, block_log2);
+        }
+
+        let parsed =
+            crate::loader::ncsd::ncch::romfs::IvfcHeader::parse(&ivfc_header, 0x2000).unwrap();
+        let layout = parsed.physical_layout(0x2000).unwrap();
+
+        let mut level3 = vec![0u8; 0x80];
+        write_le_u32(&mut level3, 0x00, 0x28);
+        write_le_u32(&mut level3, 0x04, 0x28);
+        write_le_u32(&mut level3, 0x08, 0x04);
+        write_le_u32(&mut level3, 0x0C, 0x2C);
+        write_le_u32(&mut level3, 0x10, 0x18);
+        write_le_u32(&mut level3, 0x14, 0x44);
+        write_le_u32(&mut level3, 0x18, 0x04);
+        write_le_u32(&mut level3, 0x1C, 0x48);
+        write_le_u32(&mut level3, 0x20, 0x24);
+        write_le_u32(&mut level3, 0x24, 0x6C);
+
+        write_le_u32(&mut level3, 0x2C, 0);
+        write_le_u32(&mut level3, 0x30, u32::MAX);
+        write_le_u32(&mut level3, 0x34, u32::MAX);
+        write_le_u32(&mut level3, 0x38, 0);
+        write_le_u32(&mut level3, 0x3C, u32::MAX);
+        write_le_u32(&mut level3, 0x40, 0);
+        write_le_u32(&mut level3, 0x44, 0);
+
+        write_le_u32(&mut level3, 0x48, 0);
+        write_le_u32(&mut level3, 0x4C, u32::MAX);
+        level3[0x50..0x58].copy_from_slice(&2u64.to_le_bytes());
+        level3[0x58..0x60].copy_from_slice(&5u64.to_le_bytes());
+        write_le_u32(&mut level3, 0x60, u32::MAX);
+        write_le_u32(&mut level3, 0x64, 4);
+        level3[0x68..0x6C].copy_from_slice(&[b'x', 0, b'y', 0]);
+        level3[0x6E..0x73].copy_from_slice(b"HELLO");
+
+        let level2 = write_ivfc_hash_table(&level3, 0x40);
+        let level1 = write_ivfc_hash_table(&level2, 0x20);
+        let master_hash = write_ivfc_hash_table(&level1, 0x20);
+        assert_eq!(master_hash.len() as u64, layout.master_hash.size_bytes);
+        assert_eq!(level1.len() as u64, layout.level1.size_bytes);
+        assert_eq!(level2.len() as u64, layout.level2.size_bytes);
+        assert_eq!(level3.len() as u64, layout.level3.size_bytes);
+
+        let mut image = vec![0u8; 0x2000];
+        image[..IVFC_HEADER_SIZE].copy_from_slice(&ivfc_header);
+        for (region, contents) in [
+            (layout.master_hash, master_hash.as_slice()),
+            (layout.level1, level1.as_slice()),
+            (layout.level2, level2.as_slice()),
+            (layout.level3, level3.as_slice()),
+        ] {
+            let start = region.offset_bytes as usize;
+            image[start..start + contents.len()].copy_from_slice(contents);
+        }
+        image
+    }
+
+    fn make_encrypted_romfs_cia(
+        corrupt_superblock: bool,
+        corrupt_ivfc: bool,
+    ) -> EncryptedRomFsCiaFixture {
+        let cia_title_key = [0x38; AES_BLOCK_SIZE];
+        let romfs_key = [0x73; AES_BLOCK_SIZE];
+        let mut romfs_image = make_valid_romfs_ivfc_image();
+        let superblock_hash = Sha256::digest(&romfs_image[..0x400]).unwrap();
+
+        if corrupt_superblock {
+            romfs_image[0x10] ^= 0x40;
+        }
+        if corrupt_ivfc {
+            romfs_image[0x1000 + 0x70] ^= 0x80;
+        }
+
+        let mut ncch = vec![0u8; 0x6000];
+        ncch[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut ncch, 0x104, 0x30);
+        ncch[0x108..0x110].copy_from_slice(b"ACERIS01");
+        ncch[0x112..0x114].copy_from_slice(&2u16.to_le_bytes());
+        ncch[0x18F] &= !0x04;
+        write_le_u32(&mut ncch, 0x1B0, 0x20);
+        write_le_u32(&mut ncch, 0x1B4, 0x10);
+        write_le_u32(&mut ncch, 0x1B8, 0x02);
+        ncch[0x1E0..0x200].copy_from_slice(&superblock_hash);
+
+        let parsed = NcchHeader::parse(&ncch[..NCCH_HEADER_SIZE], ncch.len() as u64).unwrap();
+        let counter = parsed
+            .initial_ctr_for_region(NcchCtrRegion::RomFs)
+            .unwrap();
+        Aes128Ctr::new(romfs_key, counter)
+            .apply_keystream(&mut romfs_image)
+            .unwrap();
+        ncch[0x4000..0x6000].copy_from_slice(&romfs_image);
+
+        let content_index = 0x0311;
+        let (mut cia, locations) =
+            make_cia(&[(0x5610, content_index, CONTENT_TYPE_ENCRYPTED, &ncch)]);
+        let encrypted_content = encrypt_cia_content(cia_title_key, content_index, &ncch);
+        let content_offset = usize::try_from(locations[0].1).unwrap();
+        cia[content_offset..content_offset + encrypted_content.len()]
+            .copy_from_slice(&encrypted_content);
+
+        EncryptedRomFsCiaFixture {
+            cia,
+            cia_title_key,
+            romfs_key,
+        }
+    }
+
+    #[test]
+    fn opens_verified_romfs_level3_from_an_encrypted_cia() {
+        let fixture = make_encrypted_romfs_cia(false, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(
+                0x0311,
+                &TitleKey::new(fixture.cia_title_key),
+            )
+            .unwrap()
+            .unwrap();
+        let mut level3 = ncch
+            .open_decrypted_verified_romfs_level3_reader(fixture.romfs_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(level3.len(), 0x80);
+        let tree = level3.read_tree().unwrap();
+        assert_eq!(tree.files.len(), 1);
+        assert_eq!(tree.files[0].path, "xy");
+    }
+
+    #[test]
+    fn rejects_a_corrupted_romfs_superblock_inside_a_tmd_valid_cia() {
+        let fixture = make_encrypted_romfs_cia(true, false);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(
+                0x0311,
+                &TitleKey::new(fixture.cia_title_key),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            ncch.open_decrypted_verified_romfs_level3_reader(fixture.romfs_key)
+                .err(),
+            Some(crate::loader::ncsd::ncch::romfs::RomFsError::NcchSuperblockHashMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_a_corrupted_romfs_ivfc_chain_inside_a_tmd_valid_cia() {
+        let fixture = make_encrypted_romfs_cia(false, true);
+        let mut archive = CiaArchiveReader::open(Cursor::new(fixture.cia)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(
+                0x0311,
+                &TitleKey::new(fixture.cia_title_key),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(
+            ncch.open_decrypted_verified_romfs_level3_reader(fixture.romfs_key),
+            Err(crate::loader::ncsd::ncch::romfs::RomFsError::IvfcHashMismatch {
+                level: 3,
+                block_index: 0,
+            })
+        ));
     }
 
     fn make_encrypted_ncch_with_extended_header(
