@@ -1286,7 +1286,7 @@ mod tests {
 
         let region_offset = 0x2000;
         let region_size = 0x2000;
-        let expected_region: Vec<u8> = (0..region_size)
+        let expected_region: Vec<u8> = (0usize..region_size)
             .map(|position| (position.wrapping_mul(29) ^ (position >> 3)) as u8)
             .collect();
         cleartext[region_offset..region_offset + region_size].copy_from_slice(&expected_region);
