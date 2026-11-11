@@ -50,7 +50,7 @@ impl Arm11Core {
         match bits(word, 27, 25) {
             0b000 | 0b001 => self.execute_data_space(bus, word),
             0b010 => self.single_transfer(bus, word),
-            0b011 if bit(word, 4) => Err(Error::Unimplemented("media instructions")),
+            0b011 if bit(word, 4) => self.execute_media_instruction(word),
             0b011 => self.single_transfer(bus, word),
             0b100 => self.block_transfer(bus, word),
             0b101 => {
@@ -61,6 +61,71 @@ impl Arm11Core {
             _ if bit(word, 24) => Ok(StepEvent::Svc(bits(word, 23, 0))),
             _ => Err(Error::Unimplemented("coprocessor instructions")),
         }
+    }
+
+    /// Executes the ARMv6 scalar media instructions implemented by this core.
+    fn execute_media_instruction(&mut self, word: u32) -> Result<StepEvent> {
+        let rd = bits(word, 15, 12) as usize;
+        let rm = bits(word, 3, 0) as usize;
+
+        if word & 0x0FFF_0FF0 == 0x06BF_0F30 {
+            // REV Rd, Rm
+            if rd == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            self.regs[rd] = self.regs[rm].swap_bytes();
+        } else if word & 0x0FFF_0FF0 == 0x06BF_0FB0 {
+            // REV16 Rd, Rm
+            if rd == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            let value = self.regs[rm];
+            self.regs[rd] =
+                ((value & 0x00FF_00FF) << 8) | ((value & 0xFF00_FF00) >> 8);
+        } else if word & 0x0FFF_0FF0 == 0x06FF_0FB0 {
+            // REVSH Rd, Rm
+            if rd == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            self.regs[rd] = i32::from((self.regs[rm] as u16).swap_bytes() as i16) as u32;
+        } else if word & 0x0FF0_00F0 == 0x0780_0010 {
+            // USAD8 / USADA8 Rd, Rm, Rs, [Ra]
+            let accumulator = bits(word, 15, 12) as usize;
+            let source_a = bits(word, 11, 8) as usize;
+            let source_b = rm;
+            if rd == PC || source_a == PC || source_b == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+
+            let a = self.regs[source_a];
+            let b = self.regs[source_b];
+            let mut sum = 0u32;
+            for lane in 0..4 {
+                let byte_a = (a >> (lane * 8)) & 0xFF;
+                let byte_b = (b >> (lane * 8)) & 0xFF;
+                sum = sum.wrapping_add(byte_a.abs_diff(byte_b));
+            }
+            if accumulator != PC {
+                sum = sum.wrapping_add(self.regs[accumulator]);
+            }
+            self.regs[rd] = sum;
+        } else {
+            return Err(Error::Unimplemented("ARMv6 media instruction"));
+        }
+
+        Ok(StepEvent::Executed)
     }
 
     // ----- register helpers -------------------------------------------------
@@ -1046,6 +1111,37 @@ mod tests {
         let mut m = Machine::new(&[0xFB00_0000]);
         m.step();
         assert_eq!(m.cpu.pc(), 0xA);
+    }
+
+    #[test]
+    fn armv6_reverse_media_instructions_transform_bytes_without_flags() {
+        // REV r0,r1 ; REV16 r2,r3 ; REVSH r4,r5
+        let mut m = Machine::new(&[0xE6BF_0F31, 0xE6BF_2FB3, 0xE6FF_4FB5]);
+        m.cpu.regs[1] = 0x1234_5678;
+        m.cpu.regs[3] = 0x1234_5678;
+        m.cpu.regs[5] = 0x0000_80FE;
+        m.cpu.cpsr.set_flags(true, false, true, false);
+
+        m.run(3);
+
+        assert_eq!(m.cpu.regs[0], 0x7856_3412);
+        assert_eq!(m.cpu.regs[2], 0x3412_7856);
+        assert_eq!(m.cpu.regs[4], 0xFFFF_FE80);
+        assert_eq!(m.flags(), (true, false, true, false));
+    }
+
+    #[test]
+    fn armv6_usad8_and_usada8_sum_absolute_byte_differences() {
+        // USAD8 r0,r1,r2 ; USADA8 r4,r1,r2,r3
+        let mut m = Machine::new(&[0xE780_F112, 0xE780_4312]);
+        m.cpu.regs[1] = 0xFF00_8040;
+        m.cpu.regs[2] = 0x0180_8020;
+        m.cpu.regs[3] = 10;
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[0], 414);
+        assert_eq!(m.cpu.regs[4], 424);
     }
 
     // ----- multiply, CLZ, status, SWI ---------------------------------------
