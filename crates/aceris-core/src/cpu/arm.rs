@@ -96,8 +96,84 @@ impl Arm11Core {
                 });
             }
             self.regs[rd] = i32::from((self.regs[rm] as u16).swap_bytes() as i16) as u32;
+        } else if word & 0x0FFF_03F0 == 0x06AF_0070
+            || word & 0x0FFF_03F0 == 0x06BF_0070
+            || word & 0x0FFF_03F0 == 0x06EF_0070
+            || word & 0x0FFF_03F0 == 0x06FF_0070
+        {
+            // SXTB, SXTH, UXTB and UXTH allow a byte rotation before extraction.
+            let rd = bits(word, 15, 12) as usize;
+            let rm = bits(word, 3, 0) as usize;
+            if rd == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            let rotated = self.regs[rm].rotate_right(bits(word, 11, 10) * 8);
+            let value = match word & 0x0FFF_03F0 {
+                0x06AF_0070 => i32::from(rotated as u8 as i8) as u32,
+                0x06BF_0070 => i32::from(rotated as u16 as i16) as u32,
+                0x06EF_0070 => u32::from(rotated as u8),
+                0x06FF_0070 => u32::from(rotated as u16),
+                _ => unreachable!("the media extension encodings were checked above"),
+            };
+            self.regs[rd] = value;
+        } else if word & 0x0FE0_0070 == 0x06A0_0010
+            || word & 0x0FE0_0070 == 0x06E0_0010
+        {
+            // SSAT/USAT: shift a signed source, saturate, and set sticky CPSR.Q
+            // only when the result is clamped.
+            let rd = bits(word, 15, 12) as usize;
+            let rm = bits(word, 3, 0) as usize;
+            if rd == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+
+            let shift_amount = bits(word, 11, 7);
+            let shifted = if bit(word, 6) {
+                // ASR #32 is encoded as an immediate of zero.
+                if shift_amount == 0 {
+                    (self.regs[rm] as i32 >> 31) as u32
+                } else {
+                    ((self.regs[rm] as i32) >> shift_amount) as u32
+                }
+            } else {
+                self.regs[rm].wrapping_shl(shift_amount)
+            };
+            let signed_value = i64::from(shifted as i32);
+            let saturation_bits = bits(word, 20, 16);
+            let signed_saturate = word & 0x0FE0_0070 == 0x06A0_0010;
+
+            let (result, saturated) = if signed_saturate {
+                let width = saturation_bits + 1;
+                let (minimum, maximum) = if width == 32 {
+                    (i64::from(i32::MIN), i64::from(i32::MAX))
+                } else {
+                    (-(1i64 << (width - 1)), (1i64 << (width - 1)) - 1)
+                };
+                let clamped = signed_value.clamp(minimum, maximum);
+                (clamped as u32, clamped != signed_value)
+            } else {
+                let maximum = if saturation_bits == 0 {
+                    0
+                } else {
+                    (1i64 << saturation_bits) - 1
+                };
+                let clamped = signed_value.clamp(0, maximum);
+                (clamped as u32, clamped != signed_value)
+            };
+
+            self.regs[rd] = result;
+            if saturated {
+                self.cpsr.set_q();
+            }
         } else if word & 0x0FF0_00F0 == 0x0780_0010 {
-            // USAD8 / USADA8 Rd, Rm, Rs, [Ra]
+            // USAD8/USADA8: Rd is bits 19:16 and Ra is bits 15:12.
+            let rd = bits(word, 19, 16) as usize;
             let accumulator = bits(word, 15, 12) as usize;
             let source_a = bits(word, 11, 8) as usize;
             let source_b = rm;
@@ -1130,9 +1206,45 @@ mod tests {
     }
 
     #[test]
+    fn armv6_extend_instructions_apply_rotation_and_sign_extension() {
+        // SXTB r0,r1,ror #8; SXTH r2,r1,ror #16;
+        // UXTB r3,r1,ror #24; UXTH r4,r1,ror #8.
+        let mut m = Machine::new(&[
+            0xE6AF_0471,
+            0xE6BF_2871,
+            0xE6EF_0C71,
+            0xE6FF_4471,
+        ]);
+        m.cpu.regs[1] = 0x80FE_1234;
+        m.run(4);
+
+        assert_eq!(m.cpu.regs[0], 0xFFFF_FE12);
+        assert_eq!(m.cpu.regs[2], 0x0000_80FE);
+        assert_eq!(m.cpu.regs[3], 0x0000_0080);
+        assert_eq!(m.cpu.regs[4], 0x0000_1234);
+    }
+
+    #[test]
+    fn armv6_saturate_instructions_set_sticky_q_only_when_clamping() {
+        // SSAT r0,#8,r1 ; USAT r2,#7,r3,LSL #1 ; SSAT r4,#16,r5
+        let mut m = Machine::new(&[0xE6A7_0011, 0xE6E7_2193, 0xE6AF_4015]);
+        m.cpu.regs[1] = 384;
+        m.cpu.regs[3] = 128;
+        m.cpu.regs[5] = 100;
+        assert!(!m.cpu.cpsr.q());
+
+        m.run(3);
+
+        assert_eq!(m.cpu.regs[0], 127);
+        assert_eq!(m.cpu.regs[2], 127);
+        assert_eq!(m.cpu.regs[4], 100);
+        assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
     fn armv6_usad8_and_usada8_sum_absolute_byte_differences() {
         // USAD8 r0,r1,r2 ; USADA8 r4,r1,r2,r3
-        let mut m = Machine::new(&[0xE780_F112, 0xE780_4312]);
+        let mut m = Machine::new(&[0xE780_F112, 0xE784_3112]);
         m.cpu.regs[1] = 0xFF00_8040;
         m.cpu.regs[2] = 0x0180_8020;
         m.cpu.regs[3] = 10;

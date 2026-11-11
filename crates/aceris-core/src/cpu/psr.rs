@@ -15,6 +15,8 @@ impl Psr {
     pub const Z: u32 = 1 << 30;
     pub const C: u32 = 1 << 29;
     pub const V: u32 = 1 << 28;
+    /// Sticky saturation flag.
+    pub const Q: u32 = 1 << 27;
     /// Big-endian data access state.
     pub const E: u32 = 1 << 9;
     /// Asynchronous abort mask.
@@ -61,6 +63,16 @@ impl Psr {
 
     pub const fn v(self) -> bool {
         self.0 & Self::V != 0
+    }
+
+    /// Returns the sticky saturation flag.
+    pub const fn q(self) -> bool {
+        self.0 & Self::Q != 0
+    }
+
+    /// Sets the sticky saturation flag. It is never cleared implicitly.
+    pub fn set_q(&mut self) {
+        self.0 |= Self::Q;
     }
 
     pub const fn thumb(self) -> bool {
