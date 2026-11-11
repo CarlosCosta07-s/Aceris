@@ -661,8 +661,9 @@ mod tests {
         archive
             .verify_content_stream(0, Cursor::new(cleartext))
             .unwrap();
+        let wrong_cleartext = vec![0xFF; cleartext.len()];
         assert!(matches!(
-            archive.verify_content_stream(0, Cursor::new(b"wrong cleartext")),
+            archive.verify_content_stream(0, Cursor::new(wrong_cleartext)),
             Err(CiaArchiveError::ContentHashMismatch { content_index: 0 })
         ));
     }
