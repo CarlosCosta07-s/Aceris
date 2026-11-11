@@ -182,9 +182,7 @@ impl Arm11Core {
             if saturated {
                 self.cpsr.set_q();
             }
-        } else if word & 0x0FF0_0070 == 0x0680_0010
-            || word & 0x0FF0_0070 == 0x0680_0050
-        {
+        } else if word & 0x0FF0_0070 == 0x0680_0010 || word & 0x0FF0_0070 == 0x0680_0050 {
             // PKHBT / PKHTB: combine halfwords after shifting Rm.
             let rn = bits(word, 19, 16) as usize;
             if rd == PC || rn == PC || rm == PC {
@@ -301,8 +299,9 @@ impl Arm11Core {
 
         for lane in 0..lane_count {
             let rhs_lane = match operation {
-                ParallelOperation::AddSubtractExchange
-                | ParallelOperation::SubtractAddExchange => lane_count - lane - 1,
+                ParallelOperation::AddSubtractExchange | ParallelOperation::SubtractAddExchange => {
+                    lane_count - lane - 1
+                },
                 _ => lane,
             };
             let shift_lhs = lane * width;
@@ -327,7 +326,10 @@ impl Arm11Core {
                 (arithmetic as u32 & lane_mask, arithmetic >= 0)
             } else if is_add {
                 let arithmetic = u64::from(a) + u64::from(b);
-                (arithmetic as u32 & lane_mask, arithmetic > u64::from(lane_mask))
+                (
+                    arithmetic as u32 & lane_mask,
+                    arithmetic > u64::from(lane_mask),
+                )
             } else {
                 (a.wrapping_sub(b) & lane_mask, a >= b)
             };
@@ -1409,11 +1411,7 @@ mod tests {
     #[test]
     fn armv6_parallel_signed_and_unsigned_halfword_operations_set_ge() {
         // SADD16 r0,r1,r2 ; UADD16 r3,r4,r5 ; USUB16 r6,r7,r8
-        let mut m = Machine::new(&[
-            0xE611_0F12,
-            0xE651_3F15,
-            0xE657_6F18,
-        ]);
+        let mut m = Machine::new(&[0xE611_0F12, 0xE651_3F15, 0xE657_6F18]);
         m.cpu.regs[1] = 0x7FFF_8000;
         m.cpu.regs[2] = 0x0001_FFFF;
         m.cpu.regs[4] = 0xFFFF_0000;
@@ -1437,17 +1435,14 @@ mod tests {
     #[test]
     fn armv6_parallel_exchange_operations_swap_the_second_operand_lanes() {
         // SADDSUBX r0,r1,r2 ; SSUBADDX r3,r1,r2
-        let mut m = Machine::new(&[
-            0xE611_0F32,
-            0xE611_3F52,
-        ]);
+        let mut m = Machine::new(&[0xE611_0F32, 0xE611_3F52]);
         m.cpu.regs[1] = 0x000A_0014;
         m.cpu.regs[2] = 0x0003_0005;
 
         m.run(2);
 
-        assert_eq!(m.cpu.regs[0], 0x000D_000F);
-        assert_eq!(m.cpu.regs[3], 0x0007_0017);
+        assert_eq!(m.cpu.regs[0], 0x000F_0011);
+        assert_eq!(m.cpu.regs[3], 0x0005_0017);
     }
 
     #[test]
