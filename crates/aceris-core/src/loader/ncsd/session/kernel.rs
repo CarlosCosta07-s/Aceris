@@ -310,9 +310,7 @@ impl Arm11KernelObjectTable {
     /// Returns the current and maximum count of a semaphore handle.
     pub fn semaphore_counts(&self, handle: u32) -> Option<(u32, u32)> {
         match self.objects.get(&handle) {
-            Some(KernelObject::Semaphore(semaphore)) => {
-                Some((semaphore.count, semaphore.maximum))
-            }
+            Some(KernelObject::Semaphore(semaphore)) => Some((semaphore.count, semaphore.maximum)),
             _ => None,
         }
     }
@@ -340,10 +338,7 @@ impl Arm11KernelObjectTable {
         self.objects.len()
     }
 
-    fn mutex_mut(
-        &mut self,
-        handle: u32,
-    ) -> Result<&mut KernelMutex, KernelHandleError> {
+    fn mutex_mut(&mut self, handle: u32) -> Result<&mut KernelMutex, KernelHandleError> {
         match self.objects.get_mut(&handle) {
             Some(KernelObject::Mutex(mutex)) => Ok(mutex),
             Some(_) => Err(KernelHandleError::WrongType),
@@ -351,10 +346,7 @@ impl Arm11KernelObjectTable {
         }
     }
 
-    fn semaphore_mut(
-        &mut self,
-        handle: u32,
-    ) -> Result<&mut KernelSemaphore, KernelHandleError> {
+    fn semaphore_mut(&mut self, handle: u32) -> Result<&mut KernelSemaphore, KernelHandleError> {
         match self.objects.get_mut(&handle) {
             Some(KernelObject::Semaphore(semaphore)) => Ok(semaphore),
             Some(_) => Err(KernelHandleError::WrongType),
