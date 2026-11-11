@@ -119,9 +119,7 @@ impl Arm11Core {
                 _ => unreachable!("the media extension encodings were checked above"),
             };
             self.regs[rd] = value;
-        } else if word & 0x0FE0_0070 == 0x06A0_0010
-            || word & 0x0FE0_0070 == 0x06E0_0010
-        {
+        } else if word & 0x0FE0_0070 == 0x06A0_0010 || word & 0x0FE0_0070 == 0x06E0_0010 {
             // SSAT/USAT: shift a signed source, saturate, and set sticky CPSR.Q
             // only when the result is clamped.
             let rd = bits(word, 15, 12) as usize;
@@ -1209,12 +1207,7 @@ mod tests {
     fn armv6_extend_instructions_apply_rotation_and_sign_extension() {
         // SXTB r0,r1,ror #8; SXTH r2,r1,ror #16;
         // UXTB r3,r1,ror #24; UXTH r4,r1,ror #8.
-        let mut m = Machine::new(&[
-            0xE6AF_0471,
-            0xE6BF_2871,
-            0xE6EF_0C71,
-            0xE6FF_4471,
-        ]);
+        let mut m = Machine::new(&[0xE6AF_0471, 0xE6BF_2871, 0xE6EF_0C71, 0xE6FF_4471]);
         m.cpu.regs[1] = 0x80FE_1234;
         m.run(4);
 
