@@ -1305,7 +1305,10 @@ mod tests {
     #[test]
     fn finite_wait_timeout_wakes_thread_and_removes_it_from_object_queue() {
         let mut session = test_session_with_program(&[0xEF00_0024]);
-        let event = session.kernel_objects.insert_event(EventResetType::OneShot).unwrap();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
         let child = session
             .scheduler
             .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
@@ -1348,7 +1351,10 @@ mod tests {
     #[test]
     fn successful_object_signal_cancels_a_pending_finite_timeout() {
         let mut session = test_session_with_program(&[0xEF00_0024]);
-        let event = session.kernel_objects.insert_event(EventResetType::OneShot).unwrap();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
         let child = session
             .scheduler
             .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)

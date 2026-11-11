@@ -517,8 +517,8 @@ mod tests {
             vec![first, second]
         );
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
-        assert!(table.try_wait_synchronization(semaphore, third).unwrap());
         assert!(!table.try_wait_synchronization(semaphore, third).unwrap());
+        assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
     }
 
     #[test]
