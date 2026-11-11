@@ -102,12 +102,7 @@ impl TicketHeader {
 
         ensure_range(data, 0, signature_data_size_bytes, "signature data")?;
         let ticket_data_start = signature_data_size_bytes;
-        ensure_range(
-            data,
-            ticket_data_start,
-            TICKET_DATA_SIZE,
-            "ticket data",
-        )?;
+        ensure_range(data, ticket_data_start, TICKET_DATA_SIZE, "ticket data")?;
         let ticket_data_end = ticket_data_start
             .checked_add(TICKET_DATA_SIZE)
             .ok_or(TicketError::SizeOverflow)?;
@@ -208,7 +203,9 @@ impl fmt::Display for TicketError {
                 write!(formatter, "unsupported ticket signature type {value:#010x}")
             }
             Self::Truncated { section } => write!(formatter, "ticket is truncated in {section}"),
-            Self::SizeOverflow => formatter.write_str("ticket section size overflows the host range"),
+            Self::SizeOverflow => {
+                formatter.write_str("ticket section size overflows the host range")
+            }
         }
     }
 }

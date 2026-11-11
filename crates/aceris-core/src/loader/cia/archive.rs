@@ -85,11 +85,17 @@ impl fmt::Display for CiaArchiveError {
             Self::AllocationFailed => {
                 formatter.write_str("could not allocate memory for CIA title metadata")
             }
-            Self::TicketSectionTooLarge { declared_size, maximum_size } => write!(
+            Self::TicketSectionTooLarge {
+                declared_size,
+                maximum_size,
+            } => write!(
                 formatter,
                 "CIA ticket section size {declared_size} exceeds the structural limit of {maximum_size} bytes"
             ),
-            Self::TicketTitleIdMismatch { ticket_title_id, tmd_title_id } => write!(
+            Self::TicketTitleIdMismatch {
+                ticket_title_id,
+                tmd_title_id,
+            } => write!(
                 formatter,
                 "CIA ticket title ID {ticket_title_id:#018x} does not match TMD title ID {tmd_title_id:#018x}"
             ),
