@@ -7,6 +7,7 @@
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
+use crate::loader::ncsd::ncch::{NcchError, NcchHeader};
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
 
 use super::tmd::{CONTENT_TYPE_ENCRYPTED, MAX_TMD_SIZE_BYTES, TmdError, TmdHeader};
@@ -31,6 +32,7 @@ pub enum CiaArchiveError {
     Reader(io::Error),
     InvalidHeader(io::Error),
     InvalidTmd(TmdError),
+    InvalidNcchHeader(NcchError),
     TmdSectionTooLarge {
         declared_size: u64,
         maximum_size: usize,
@@ -59,6 +61,9 @@ impl fmt::Display for CiaArchiveError {
             Self::Reader(error) => write!(formatter, "CIA reader failed: {error}"),
             Self::InvalidHeader(error) => write!(formatter, "invalid CIA header: {error}"),
             Self::InvalidTmd(error) => write!(formatter, "invalid CIA title metadata: {error}"),
+            Self::InvalidNcchHeader(error) => {
+                write!(formatter, "invalid NCCH content in CIA archive: {error}")
+            }
             Self::TmdSectionTooLarge {
                 declared_size,
                 maximum_size,
@@ -108,6 +113,7 @@ impl std::error::Error for CiaArchiveError {
         match self {
             Self::Reader(error) | Self::InvalidHeader(error) => Some(error),
             Self::InvalidTmd(error) => Some(error),
+            Self::InvalidNcchHeader(error) => Some(error),
             _ => None,
         }
     }
@@ -246,6 +252,36 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
             start_bytes: location.offset_bytes,
             size_bytes: location.size_bytes,
             position_bytes: 0,
+        }))
+    }
+
+    /// Verifies and opens the NCCH header of a selected, cleartext CIA content.
+    ///
+    /// This checks the TMD SHA-256 first, then parses the NCCH header from the
+    /// bounded content reader. It does not decrypt the outer CIA AES-CBC layer
+    /// or NCCH-internal regions; encrypted CIA contents are rejected.
+    pub fn open_verified_ncch_content_reader(
+        &mut self,
+        content_index: u16,
+    ) -> Result<Option<CiaContentNcchReader<'_, R>>, CiaArchiveError> {
+        let Some(location) = self.content_location(content_index) else {
+            return Ok(None);
+        };
+
+        self.verify_content(content_index)?;
+        let mut reader = self
+            .open_content_reader(content_index)?
+            .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
+        let header = NcchHeader::parse_reader(&mut reader, location.size_bytes)
+            .map_err(CiaArchiveError::InvalidNcchHeader)?;
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(CiaArchiveError::Reader)?;
+
+        Ok(Some(CiaContentNcchReader {
+            location,
+            header,
+            reader,
         }))
     }
 
@@ -408,6 +444,31 @@ fn align_content(offset: u64) -> Option<u64> {
     offset
         .checked_add(CONTENT_ALIGNMENT - 1)
         .map(|aligned| aligned & !(CONTENT_ALIGNMENT - 1))
+}
+
+/// A TMD-verified NCCH content paired with its bounded source reader.
+#[derive(Debug)]
+pub struct CiaContentNcchReader<'a, R> {
+    location: CiaContentLocation,
+    header: NcchHeader,
+    reader: CiaContentReader<'a, R>,
+}
+
+impl<R: Read + Seek> CiaContentNcchReader<'_, R> {
+    /// Returns the TMD content location.
+    pub const fn location(&self) -> CiaContentLocation {
+        self.location
+    }
+
+    /// Returns the structurally validated NCCH header.
+    pub const fn header(&self) -> &NcchHeader {
+        &self.header
+    }
+
+    /// Returns the bounded reader, positioned at the beginning of the NCCH.
+    pub fn reader_mut(&mut self) -> &mut CiaContentReader<'_, R> {
+        &mut self.reader
+    }
 }
 
 /// A seekable reader restricted to one CIA content byte range.
@@ -646,6 +707,41 @@ mod tests {
 
         archive.verify_content(0).unwrap();
         archive.verify_content(2).unwrap();
+    }
+
+    #[test]
+    fn opens_a_tmd_verified_ncch_from_a_cleartext_cia_content() {
+        let mut content = vec![0u8; 0x1_0000];
+        content[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut content, 0x104, 0x80);
+
+        let (data, _) = make_cia(&[(0x3000, 0, 0, &content)]);
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let mut ncch = archive
+            .open_verified_ncch_content_reader(0)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(ncch.location().content_index, 0);
+        assert_eq!(ncch.header().content_size_bytes, 0x1_0000);
+        assert_eq!(ncch.reader_mut().position(), 0);
+
+        ncch.reader_mut().seek(SeekFrom::Start(0x100)).unwrap();
+        let mut magic = [0u8; 4];
+        ncch.reader_mut().read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, b"NCCH");
+    }
+
+    #[test]
+    fn rejects_non_ncch_bytes_after_verifying_the_tmd_content_hash() {
+        let content = vec![0u8; 0x1_0000];
+        let (data, _) = make_cia(&[(0x3000, 0, 0, &content)]);
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+
+        assert!(matches!(
+            archive.open_verified_ncch_content_reader(0),
+            Err(CiaArchiveError::InvalidNcchHeader(_))
+        ));
     }
 
     #[test]

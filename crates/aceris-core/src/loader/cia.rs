@@ -11,7 +11,9 @@ pub mod archive;
 /// Structural TMD parser used by CIA archives.
 pub mod tmd;
 
-pub use archive::{CiaArchiveError, CiaArchiveReader, CiaContentLocation, CiaContentReader};
+pub use archive::{
+    CiaArchiveError, CiaArchiveReader, CiaContentLocation, CiaContentNcchReader, CiaContentReader,
+};
 
 pub const HEADER_SIZE: usize = 0x2020;
 pub const CONTENT_INDEX_OFFSET: usize = 0x20;
