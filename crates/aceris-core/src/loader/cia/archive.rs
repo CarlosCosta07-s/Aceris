@@ -11,7 +11,9 @@ use crate::loader::ncsd::ncch::crypto::{
     AES_BLOCK_SIZE, NcchCtrReader, NcchCtrReaderError, NcchCtrRegion,
 };
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
-use crate::loader::ncsd::ncch::{HEADER_SIZE as NCCH_HEADER_SIZE, NcchError, NcchHeader};
+use crate::loader::ncsd::ncch::{
+    HEADER_SIZE as NCCH_HEADER_SIZE, NcchError, NcchHeader, NcchIntegrityError,
+};
 
 use super::crypto::{Aes128CbcReader, TitleKey, cia_content_iv};
 use super::ticket::{MAX_TICKET_SIZE_BYTES, TicketError, TicketHeader};
@@ -766,6 +768,22 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
         let header = self.header.clone();
         header.open_decrypted_region_reader(self, region, key)
     }
+
+    /// Decrypts and verifies the 0x400-byte extended header from this NCCH.
+    ///
+    /// The outer CIA content hash was checked before this reader was created.
+    /// This method applies the NCCH extended-header counter, verifies its
+    /// cleartext SHA-256 against the NCCH header, and returns only the declared
+    /// extended-header range. The caller supplies the menu-info key.
+    ///
+    /// Returns None when the NCCH header declares no extended header.
+    pub fn open_decrypted_verified_extended_header_reader(
+        self,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<Option<NcchCtrReader<Self>>, NcchIntegrityError> {
+        let header = self.header.clone();
+        header.open_decrypted_verified_extended_header_reader(self, menu_info_key)
+    }
 }
 
 impl<R: Read + Seek> Read for CiaDecryptedContentNcchReader<'_, R> {
@@ -1322,6 +1340,136 @@ mod tests {
         let mut actual_region = Vec::new();
         decrypted_exefs.read_to_end(&mut actual_region).unwrap();
         assert_eq!(actual_region, expected_region);
+    }
+
+    fn make_encrypted_ncch_with_extended_header(
+        extended_header: &[u8],
+        expected_hash: [u8; 32],
+    ) -> (Vec<u8>, [u8; 16], Vec<u8>) {
+        assert_eq!(extended_header.len(), 0x400);
+        let menu_info_key = [0x91; 16];
+        let mut ncch = vec![0u8; 0x1_0000];
+        ncch[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut ncch, 0x104, 0x80);
+        ncch[0x108..0x110].copy_from_slice(b"ACERIS01");
+        ncch[0x112..0x114].copy_from_slice(&2u16.to_le_bytes());
+        ncch[0x160..0x180].copy_from_slice(&expected_hash);
+        write_le_u32(&mut ncch, 0x180, extended_header.len() as u32);
+        ncch[0x200..0x600].copy_from_slice(extended_header);
+
+        let header = NcchHeader::parse(&ncch[..NCCH_HEADER_SIZE], ncch.len() as u64).unwrap();
+        let counter = header
+            .initial_ctr_for_region(NcchCtrRegion::ExtendedHeader)
+            .unwrap();
+        Aes128Ctr::new(menu_info_key, counter)
+            .apply_keystream(&mut ncch[0x200..0x600])
+            .unwrap();
+        (ncch, menu_info_key, extended_header.to_vec())
+    }
+
+    #[test]
+    fn opens_a_decrypted_verified_extended_header_from_a_cia() {
+        let mut extended_header = vec![0u8; 0x400];
+        extended_header[..8].copy_from_slice(b"ACERIS01");
+        extended_header[0x0E..0x10].copy_from_slice(&7u16.to_le_bytes());
+        extended_header[0x1C..0x20].copy_from_slice(&0x8000u32.to_le_bytes());
+        let expected_hash = Sha256::digest(&extended_header).unwrap();
+        let (ncch, menu_info_key, expected) =
+            make_encrypted_ncch_with_extended_header(&extended_header, expected_hash);
+
+        let cia_key = [0x4B; 16];
+        let title_key = TitleKey::new(cia_key);
+        let content_index = 0x0220;
+        let (mut data, locations) =
+            make_cia(&[(0x5500, content_index, CONTENT_TYPE_ENCRYPTED, &ncch)]);
+        let ciphertext = encrypt_cia_content(cia_key, content_index, &ncch);
+        let content_offset = usize::try_from(locations[0].1).unwrap();
+        data[content_offset..content_offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let ncch_reader = archive
+            .open_verified_decrypted_ncch_content_reader(content_index, &title_key)
+            .unwrap()
+            .unwrap();
+        let mut extended_reader = ncch_reader
+            .open_decrypted_verified_extended_header_reader(menu_info_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(extended_reader.len(), 0x400);
+        let parsed = crate::loader::ncsd::ncch::extended_header::NcchExtendedHeader::parse_reader(
+            &mut extended_reader,
+        )
+        .unwrap();
+        assert_eq!(&parsed.application_title, b"ACERIS01");
+        assert_eq!(parsed.remaster_version, 7);
+        assert_eq!(parsed.stack_size_bytes, 0x8000);
+
+        assert_eq!(extended_reader.seek(SeekFrom::Start(0)).unwrap(), 0);
+        let mut actual = Vec::new();
+        extended_reader.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rejects_a_decrypted_extended_header_with_an_invalid_sha256() {
+        let mut extended_header = vec![0u8; 0x400];
+        extended_header[..8].copy_from_slice(b"BADHASH!");
+        let (ncch, menu_info_key, _) =
+            make_encrypted_ncch_with_extended_header(&extended_header, [0xA7; 32]);
+
+        let cia_key = [0x4C; 16];
+        let title_key = TitleKey::new(cia_key);
+        let content_index = 0x0221;
+        let (mut data, locations) =
+            make_cia(&[(0x5501, content_index, CONTENT_TYPE_ENCRYPTED, &ncch)]);
+        let ciphertext = encrypt_cia_content(cia_key, content_index, &ncch);
+        let content_offset = usize::try_from(locations[0].1).unwrap();
+        data[content_offset..content_offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let ncch_reader = archive
+            .open_verified_decrypted_ncch_content_reader(content_index, &title_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            ncch_reader
+                .open_decrypted_verified_extended_header_reader(menu_info_key)
+                .err(),
+            Some(NcchIntegrityError::ExtendedHeaderHashMismatch)
+        );
+    }
+
+    #[test]
+    fn returns_none_when_verified_ncch_has_no_extended_header() {
+        let mut ncch = vec![0u8; 0x1_0000];
+        ncch[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut ncch, 0x104, 0x80);
+        ncch[0x108..0x110].copy_from_slice(b"ACERIS01");
+        ncch[0x112..0x114].copy_from_slice(&2u16.to_le_bytes());
+
+        let cia_key = [0x4D; 16];
+        let title_key = TitleKey::new(cia_key);
+        let content_index = 0x0222;
+        let (mut data, locations) =
+            make_cia(&[(0x5502, content_index, CONTENT_TYPE_ENCRYPTED, &ncch)]);
+        let ciphertext = encrypt_cia_content(cia_key, content_index, &ncch);
+        let content_offset = usize::try_from(locations[0].1).unwrap();
+        data[content_offset..content_offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let ncch_reader = archive
+            .open_verified_decrypted_ncch_content_reader(content_index, &title_key)
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            ncch_reader
+                .open_decrypted_verified_extended_header_reader([0x91; 16])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
