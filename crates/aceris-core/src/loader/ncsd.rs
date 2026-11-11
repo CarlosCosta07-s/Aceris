@@ -10,6 +10,8 @@ use std::io::{self, Read, Seek, SeekFrom};
 
 /// Structural NCCH parser for content stored inside an NCSD partition.
 pub mod ncch;
+/// Validated ARM11 process mappings derived from a prepared executable image.
+pub mod process;
 
 pub const HEADER_SIZE: usize = 0x200;
 pub const PARTITION_COUNT: usize = 8;
