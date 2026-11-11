@@ -6,6 +6,8 @@
 pub mod cpu;
 pub mod loader;
 pub mod memory;
+pub mod gpu;
+pub mod video;
 pub mod selftest;
 pub mod system;
 
