@@ -249,6 +249,7 @@ pub struct Aes128Ctr {
     counter: [u8; AES_BLOCK_SIZE],
     keystream_block: [u8; AES_BLOCK_SIZE],
     keystream_offset: usize,
+    counter_exhausted: bool,
 }
 
 impl Aes128Ctr {
@@ -258,23 +259,46 @@ impl Aes128Ctr {
             counter: initial_counter,
             keystream_block: [0; AES_BLOCK_SIZE],
             keystream_offset: AES_BLOCK_SIZE,
+            counter_exhausted: false,
         }
     }
 
     /// XORs the next bytes of the CTR keystream into data.
     ///
     /// Repeated calls continue at the exact byte position reached previously,
-    /// including calls which end in the middle of a block.
-    pub fn apply_keystream(&mut self, data: &mut [u8]) {
+    /// including calls which end in the middle of a block. The complete request
+    /// is checked before the buffer or stream state changes. The final counter
+    /// block can be consumed once; attempting to generate another block returns
+    /// `CounterRangeOverflow` instead of reusing an earlier keystream block.
+    pub fn apply_keystream(&mut self, data: &mut [u8]) -> Result<(), NcchCryptoError> {
+        let available = AES_BLOCK_SIZE - self.keystream_offset;
+        let bytes_needing_blocks = data.len().saturating_sub(available);
+        let required_blocks = bytes_needing_blocks.div_ceil(AES_BLOCK_SIZE);
+
+        if required_blocks != 0 {
+            if self.counter_exhausted {
+                return Err(NcchCryptoError::CounterRangeOverflow);
+            }
+            let final_block_offset = (required_blocks - 1) as u128;
+            u128::from_be_bytes(self.counter)
+                .checked_add(final_block_offset)
+                .ok_or(NcchCryptoError::CounterRangeOverflow)?;
+        }
+
         for byte in data {
             if self.keystream_offset == AES_BLOCK_SIZE {
                 self.keystream_block = self.cipher.encrypt_block(self.counter);
-                increment_counter(&mut self.counter);
+                if self.counter == [u8::MAX; AES_BLOCK_SIZE] {
+                    self.counter_exhausted = true;
+                } else {
+                    increment_counter(&mut self.counter);
+                }
                 self.keystream_offset = 0;
             }
             *byte ^= self.keystream_block[self.keystream_offset];
             self.keystream_offset += 1;
         }
+        Ok(())
     }
 
     /// Applies CTR at an arbitrary byte offset without processing prior data.
@@ -297,14 +321,16 @@ impl Aes128Ctr {
             counter_value
                 .checked_add(final_block)
                 .ok_or(NcchCryptoError::CounterRangeOverflow)?;
+        } else {
+            return Ok(());
         }
         let mut stream = Self::new(key, counter_value.to_be_bytes());
 
         if remainder != 0 {
             let mut discard = [0; AES_BLOCK_SIZE];
-            stream.apply_keystream(&mut discard[..remainder]);
+            stream.apply_keystream(&mut discard[..remainder])?;
         }
-        stream.apply_keystream(data);
+        stream.apply_keystream(data)?;
         Ok(())
     }
 }
@@ -356,10 +382,10 @@ mod tests {
              5ae4df3edbd5d35e5b4f09020db03eab\
              1e031dda2fbe03d1792170a0f3009cee",
         );
-        Aes128Ctr::new(key, counter).apply_keystream(&mut data);
+        Aes128Ctr::new(key, counter).apply_keystream(&mut data).unwrap();
         assert_eq!(data, expected);
 
-        Aes128Ctr::new(key, counter).apply_keystream(&mut data);
+        Aes128Ctr::new(key, counter).apply_keystream(&mut data).unwrap();
         assert_eq!(
             data,
             hex::<64>(
@@ -380,13 +406,13 @@ mod tests {
              ae2d8a571e03ac9c9eb76fac45",
         );
         let mut expected = plaintext;
-        Aes128Ctr::new(key, counter).apply_keystream(&mut expected);
+        Aes128Ctr::new(key, counter).apply_keystream(&mut expected).unwrap();
 
         let mut actual = plaintext;
         let mut stream = Aes128Ctr::new(key, counter);
-        stream.apply_keystream(&mut actual[..3]);
-        stream.apply_keystream(&mut actual[3..19]);
-        stream.apply_keystream(&mut actual[19..]);
+        stream.apply_keystream(&mut actual[..3]).unwrap();
+        stream.apply_keystream(&mut actual[3..19]).unwrap();
+        stream.apply_keystream(&mut actual[19..]).unwrap();
         assert_eq!(actual, expected);
     }
 
@@ -395,7 +421,7 @@ mod tests {
         let key = hex("000102030405060708090a0b0c0d0e0f");
         let counter = hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
         let mut sequential = [0u8; 73];
-        Aes128Ctr::new(key, counter).apply_keystream(&mut sequential);
+        Aes128Ctr::new(key, counter).apply_keystream(&mut sequential).unwrap();
         let mut random_access = [0u8; 37];
         Aes128Ctr::apply_keystream_at_offset(key, counter, 21, &mut random_access).unwrap();
         assert_eq!(&random_access[..], &sequential[21..58]);
@@ -423,6 +449,53 @@ mod tests {
             Err(NcchCryptoError::CounterRangeOverflow)
         );
         assert_eq!(unaligned_crossing, [0xa5; 2]);
+    }
+
+    #[test]
+    fn ctr_stream_rejects_counter_wrap_without_mutating_input_or_state() {
+        let key = hex("000102030405060708090a0b0c0d0e0f");
+        let counter = [u8::MAX; AES_BLOCK_SIZE];
+        let mut stream = Aes128Ctr::new(key, counter);
+
+        let mut crossing = [0x5a; 17];
+        assert_eq!(
+            stream.apply_keystream(&mut crossing),
+            Err(NcchCryptoError::CounterRangeOverflow)
+        );
+        assert_eq!(crossing, [0x5a; 17]);
+
+        let mut final_block = [0; AES_BLOCK_SIZE];
+        stream.apply_keystream(&mut final_block).unwrap();
+        assert_eq!(final_block, Aes128::new(key).encrypt_block(counter));
+
+        let mut after_exhaustion = [0xa5; 1];
+        assert_eq!(
+            stream.apply_keystream(&mut after_exhaustion),
+            Err(NcchCryptoError::CounterRangeOverflow)
+        );
+        assert_eq!(after_exhaustion, [0xa5; 1]);
+    }
+
+    #[test]
+    fn ctr_stream_can_finish_cached_bytes_of_the_final_counter_block() {
+        let key = hex("000102030405060708090a0b0c0d0e0f");
+        let counter = [u8::MAX; AES_BLOCK_SIZE];
+        let mut stream = Aes128Ctr::new(key, counter);
+        let mut actual = [0; AES_BLOCK_SIZE];
+
+        stream.apply_keystream(&mut actual[..5]).unwrap();
+        stream.apply_keystream(&mut actual[5..]).unwrap();
+        assert_eq!(actual, Aes128::new(key).encrypt_block(counter));
+
+        let mut empty = [0u8; 0];
+        stream.apply_keystream(&mut empty).unwrap();
+
+        let mut next = [0x3c; 1];
+        assert_eq!(
+            stream.apply_keystream(&mut next),
+            Err(NcchCryptoError::CounterRangeOverflow)
+        );
+        assert_eq!(next, [0x3c; 1]);
     }
 
     #[test]
@@ -497,7 +570,7 @@ mod tests {
         let key = hex("000102030405060708090a0b0c0d0e0f");
         let counter = hex("000000000000000000000000000000ff");
         let mut bytes = [0u8; 32];
-        Aes128Ctr::new(key, counter).apply_keystream(&mut bytes);
+        Aes128Ctr::new(key, counter).apply_keystream(&mut bytes).unwrap();
         let first = Aes128::new(key).encrypt_block(counter);
         let second = Aes128::new(key).encrypt_block(hex("00000000000000000000000000000100"));
         let mut expected = [0; 32];
