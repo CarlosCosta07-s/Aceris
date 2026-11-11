@@ -266,6 +266,7 @@ pub enum NcsdExecutableLoadError {
     },
     ExtendedHeaderIntegrity(ncch::NcchIntegrityError),
     ExtendedHeaderParse(ncch::extended_header::ExtendedHeaderError),
+    ProcessLayout(process::Arm11ProcessLayoutError),
     ExeFs(ncch::exefs::ExeFsError),
     Blz(ncch::blz::BlzError),
     ReaderFailure(String),
@@ -301,6 +302,9 @@ impl fmt::Display for NcsdExecutableLoadError {
             Self::ExtendedHeaderParse(error) => {
                 write!(formatter, "could not parse NCCH extended header: {error}")
             }
+            Self::ProcessLayout(error) => {
+                write!(formatter, "ARM11 process layout validation failed: {error}")
+            }
             Self::ExeFs(error) => write!(formatter, "ExeFS loading failed: {error}"),
             Self::Blz(error) => write!(formatter, "ExeFS .code decompression failed: {error}"),
             Self::ReaderFailure(reason) => {
@@ -321,6 +325,7 @@ impl std::error::Error for NcsdExecutableLoadError {
         match self {
             Self::ExtendedHeaderIntegrity(error) => Some(error),
             Self::ExtendedHeaderParse(error) => Some(error),
+            Self::ProcessLayout(error) => Some(error),
             Self::ExeFs(error) => Some(error),
             Self::Blz(error) => Some(error),
             _ => None,
@@ -524,6 +529,27 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
             read_only,
             data,
         })
+    }
+
+    /// Loads the verified executable image into a bootstrap ARM11 address space.
+    ///
+    /// This is the single Rust entry point for NCSD partition -> NCCH/ExeFS ->
+    /// verified and optionally decompressed .code -> text/rodata/data/BSS/stack.
+    /// Menu-info and content keys are supplied by the caller and are never
+    /// discovered or stored by Aceris.
+    ///
+    /// The resulting bus can be passed directly to Arm11Core. Call
+    /// Arm11CodeAddressSpace::initialize_core to set the initial PC and SP.
+    /// Privileged CPU modes, exception vectors, scheduler state, shared memory,
+    /// and hardware peripherals are not initialized by this bootstrap loader.
+    pub fn load_arm11_address_space(
+        self,
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+        content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<process::Arm11CodeAddressSpace, NcsdExecutableLoadError> {
+        let prepared = self.prepare_arm11_executable_image(menu_info_key, content_key)?;
+        process::Arm11CodeAddressSpace::from_prepared(prepared)
+            .map_err(NcsdExecutableLoadError::ProcessLayout)
     }
 
     /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
@@ -889,6 +915,7 @@ mod tests {
             extended_header[0x0D] = 0x01;
         }
         write_u32(&mut extended_header, 0x10, 0x0010_0000);
+        write_u32(&mut extended_header, 0x1C, 0x4000);
         write_u32(&mut extended_header, 0x14, 1);
         write_u32(&mut extended_header, 0x18, CODE_SEGMENT_SIZE as u32);
         write_u32(&mut extended_header, 0x20, 0x0010_1000);
@@ -1039,6 +1066,48 @@ mod tests {
         image[exefs_start..exefs_end].copy_from_slice(&encrypted_exefs);
 
         image
+    }
+
+    #[test]
+    fn loads_a_complete_bootstrap_arm11_address_space_from_ncsd() {
+        let (image, expected_text, expected_read_only, expected_data) =
+            image_with_arm11_code(false);
+        let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let partition = *parsed.primary_partition().unwrap();
+
+        let address_space = partition
+            .open_ncch(Cursor::new(image))
+            .unwrap()
+            .load_arm11_address_space([0x41; 16], [0x42; 16])
+            .unwrap();
+
+        assert_eq!(
+            address_space.segment_bytes(process::Arm11SegmentKind::Text),
+            expected_text
+        );
+        assert_eq!(
+            address_space.segment_bytes(process::Arm11SegmentKind::ReadOnly),
+            expected_read_only
+        );
+        assert_eq!(
+            address_space.segment_bytes(process::Arm11SegmentKind::Data),
+            expected_data
+        );
+        assert!(
+            address_space
+                .segment_bytes(process::Arm11SegmentKind::Bss)
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+        assert!(
+            address_space
+                .segment_bytes(process::Arm11SegmentKind::Stack)
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+        assert_eq!(address_space.layout().entry_point, 0x0010_0000);
+        assert_eq!(address_space.layout().initial_stack_pointer, 0x1000_0000);
+        assert_eq!(address_space.layout().stack_size_bytes, 0x4000);
     }
 
     #[test]
