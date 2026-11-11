@@ -7,8 +7,8 @@
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
-use crate::loader::ncsd::ncch::{NcchError, NcchHeader};
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
+use crate::loader::ncsd::ncch::{NcchError, NcchHeader};
 
 use super::tmd::{CONTENT_TYPE_ENCRYPTED, MAX_TMD_SIZE_BYTES, TmdError, TmdHeader};
 use super::{CiaHeader, HEADER_SIZE};
