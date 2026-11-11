@@ -11,6 +11,8 @@ use std::io::{self, Read, Seek, SeekFrom};
 /// SHA-256 incremental used by RomFS IVFC integrity validation.
 pub mod sha256;
 
+use self::sha256::Sha256;
+
 pub const IVFC_HEADER_SIZE: usize = 0x5C;
 /// Physical start of the RomFS Level 3 image inside an IVFC container.
 pub const LEVEL3_DATA_OFFSET_BYTES: u64 = 0x1000;
@@ -74,6 +76,7 @@ pub struct Level3Header {
 pub enum RomFsError {
     InvalidIvfcHeader(&'static str),
     InvalidIvfcLevel { index: u8, reason: &'static str },
+    IvfcHashMismatch { level: u8, block_index: u64 },
     InvalidLevel3Header(&'static str),
     InvalidTree(&'static str),
     InvalidDirectoryEntry(&'static str),
@@ -90,6 +93,10 @@ impl fmt::Display for RomFsError {
             Self::InvalidIvfcLevel { index, reason } => {
                 write!(formatter, "invalid RomFS IVFC level {index}: {reason}")
             }
+            Self::IvfcHashMismatch { level, block_index } => write!(
+                formatter,
+                "RomFS IVFC Level {level} hash mismatch at block {block_index}"
+            ),
             Self::InvalidLevel3Header(reason) => {
                 write!(formatter, "invalid RomFS Level 3 header: {reason}")
             }
@@ -301,6 +308,48 @@ impl IvfcHeader {
     /// Resolves the physical Level 3 region and validates the complete IVFC layout.
     pub fn level3_region(&self, available_size_bytes: u64) -> Result<IvfcRegion, RomFsError> {
         Ok(self.physical_layout(available_size_bytes)?.level3)
+    }
+
+    /// Verifies the complete SHA-256 chain from the master hash to Level 3.
+    ///
+    /// The reader must start at the IVFC header and expose cleartext RomFS bytes.
+    /// Each stored digest is checked against the corresponding next-level block,
+    /// with the final partial block padded with zero bytes to its declared size.
+    pub fn verify_integrity<R: Read + Seek>(
+        &self,
+        inner: R,
+        available_size_bytes: u64,
+    ) -> Result<(), RomFsError> {
+        let layout = self.physical_layout(available_size_bytes)?;
+        let mut image = RomFsRangeReader::new(inner, 0, available_size_bytes)
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+
+        verify_ivfc_hash_table(
+            &mut image,
+            layout.level1,
+            self.level1.block_size_bytes,
+            layout.master_hash,
+            1,
+            available_size_bytes,
+        )?;
+        verify_ivfc_hash_table(
+            &mut image,
+            layout.level2,
+            self.level2.block_size_bytes,
+            layout.level1,
+            2,
+            available_size_bytes,
+        )?;
+        verify_ivfc_hash_table(
+            &mut image,
+            layout.level3,
+            self.level3.block_size_bytes,
+            layout.level2,
+            3,
+            available_size_bytes,
+        )?;
+
+        Ok(())
     }
 
     /// Opens the Level 3 image as an isolated, bounded stream.
@@ -1180,6 +1229,120 @@ fn read_metadata_name<R: Read + Seek>(
     String::from_utf16(&code_units).map_err(|_| "metadata name contains invalid UTF-16")
 }
 
+fn verify_ivfc_hash_table<R: Read + Seek>(
+    reader: &mut R,
+    data_region: IvfcRegion,
+    block_size_bytes: u64,
+    hash_region: IvfcRegion,
+    level: u8,
+    available_size_bytes: u64,
+) -> Result<(), RomFsError> {
+    if block_size_bytes > available_size_bytes {
+        return Err(RomFsError::InvalidIvfcLevel {
+            index: level,
+            reason: "hash block size exceeds the RomFS image size",
+        });
+    }
+
+    let block_count = data_region.size_bytes / block_size_bytes
+        + u64::from(data_region.size_bytes % block_size_bytes != 0);
+    let expected_hash_size = block_count
+        .checked_mul(SHA256_SIZE)
+        .ok_or(RomFsError::InvalidIvfcLevel {
+            index: level,
+            reason: "expected hash table size overflows",
+        })?;
+    if expected_hash_size != hash_region.size_bytes {
+        return Err(RomFsError::InvalidIvfcLevel {
+            index: level,
+            reason: "hash table size does not match the number of data blocks",
+        });
+    }
+
+    const IO_BUFFER_SIZE: usize = 8 * 1024;
+    let mut data_buffer = [0u8; IO_BUFFER_SIZE];
+    let zero_buffer = [0u8; IO_BUFFER_SIZE];
+    let mut data_offset = 0u64;
+
+    for block_index in 0..block_count {
+        let hash_offset = hash_region
+            .offset_bytes
+            .checked_add(
+                block_index
+                    .checked_mul(SHA256_SIZE)
+                    .ok_or(RomFsError::InvalidIvfcLevel {
+                        index: level,
+                        reason: "hash entry offset overflows",
+                    })?,
+            )
+            .ok_or(RomFsError::InvalidIvfcLevel {
+                index: level,
+                reason: "hash entry offset overflows",
+            })?;
+        reader
+            .seek(SeekFrom::Start(hash_offset))
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+
+        let mut expected_digest = [0u8; SHA256_SIZE as usize];
+        reader
+            .read_exact(&mut expected_digest)
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+
+        let block_data_size = (data_region.size_bytes - data_offset).min(block_size_bytes);
+        let block_offset = data_region
+            .offset_bytes
+            .checked_add(data_offset)
+            .ok_or(RomFsError::InvalidIvfcLevel {
+                index: level,
+                reason: "data block offset overflows",
+            })?;
+        reader
+            .seek(SeekFrom::Start(block_offset))
+            .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+
+        let mut hasher = Sha256::new();
+        let mut actual_remaining = block_data_size;
+        while actual_remaining != 0 {
+            let amount = actual_remaining.min(IO_BUFFER_SIZE as u64) as usize;
+            reader
+                .read_exact(&mut data_buffer[..amount])
+                .map_err(|error| RomFsError::ReaderFailure(error.to_string()))?;
+            hasher
+                .update(&data_buffer[..amount])
+                .map_err(|_| RomFsError::InvalidIvfcLevel {
+                    index: level,
+                    reason: "hash block exceeds the SHA-256 message limit",
+                })?;
+            actual_remaining -= amount as u64;
+        }
+
+        let mut padding_remaining = block_size_bytes - block_data_size;
+        while padding_remaining != 0 {
+            let amount = padding_remaining.min(IO_BUFFER_SIZE as u64) as usize;
+            hasher
+                .update(&zero_buffer[..amount])
+                .map_err(|_| RomFsError::InvalidIvfcLevel {
+                    index: level,
+                    reason: "padded hash block exceeds the SHA-256 message limit",
+                })?;
+            padding_remaining -= amount as u64;
+        }
+
+        if hasher.finalize() != expected_digest {
+            return Err(RomFsError::IvfcHashMismatch { level, block_index });
+        }
+
+        data_offset = data_offset
+            .checked_add(block_data_size)
+            .ok_or(RomFsError::InvalidIvfcLevel {
+                index: level,
+                reason: "processed data offset overflows",
+            })?;
+    }
+
+    Ok(())
+}
+
 fn align_up(value: u64, alignment: u64) -> Option<u64> {
     if alignment == 0 || !alignment.is_power_of_two() {
         return None;
@@ -1379,6 +1542,149 @@ mod tests {
             Err(RomFsError::InvalidIvfcLevel {
                 index: 2,
                 reason: "physical Level 2 alignment overflows",
+            })
+        );
+    }
+
+    fn valid_integrity_ivfc_header() -> Vec<u8> {
+        let mut data = vec![0; IVFC_HEADER_SIZE];
+        data[..4].copy_from_slice(IVFC_MAGIC);
+        write_u32(&mut data, 0x04, IVFC_VERSION);
+        write_u32(&mut data, 0x08, 0x40);
+
+        for (offset, logical, size, block_log2) in [
+            (0x0C, 0, 0x40, 5),
+            (0x24, 0x40, 0x40, 5),
+            (0x3C, 0x80, 0x64, 6),
+        ] {
+            write_u64(&mut data, offset, logical);
+            write_u64(&mut data, offset + 8, size);
+            write_u32(&mut data, offset + 16, block_log2);
+        }
+
+        data
+    }
+
+    fn build_hash_table(data: &[u8], block_size: usize) -> Vec<u8> {
+        let mut hashes = Vec::new();
+        for block in data.chunks(block_size) {
+            let mut hasher = Sha256::new();
+            hasher.update(block).unwrap();
+            let padding = vec![0; block_size - block.len()];
+            hasher.update(&padding).unwrap();
+            hashes.extend_from_slice(&hasher.finalize());
+        }
+        hashes
+    }
+
+    fn valid_integrity_ivfc_image() -> (Vec<u8>, IvfcHeader, IvfcLayout) {
+        let header = IvfcHeader::parse(&valid_integrity_ivfc_header(), 0x2000).unwrap();
+        let layout = header.physical_layout(0x2000).unwrap();
+        let level3 = (0..0x64)
+            .map(|index| (index as u8).wrapping_mul(17).wrapping_add(3))
+            .collect::<Vec<_>>();
+        let level2 = build_hash_table(&level3, 0x40);
+        let level1 = build_hash_table(&level2, 0x20);
+        let master_hash = build_hash_table(&level1, 0x20);
+
+        assert_eq!(master_hash.len() as u64, layout.master_hash.size_bytes);
+        assert_eq!(level1.len() as u64, layout.level1.size_bytes);
+        assert_eq!(level2.len() as u64, layout.level2.size_bytes);
+        assert_eq!(level3.len() as u64, layout.level3.size_bytes);
+
+        let mut image = vec![0; layout.level2.end_offset_bytes().unwrap() as usize];
+        let copy_region = |image: &mut [u8], region: IvfcRegion, contents: &[u8]| {
+            let start = region.offset_bytes as usize;
+            image[start..start + contents.len()].copy_from_slice(contents);
+        };
+
+        copy_region(&mut image, layout.master_hash, &master_hash);
+        copy_region(&mut image, layout.level1, &level1);
+        copy_region(&mut image, layout.level2, &level2);
+        copy_region(&mut image, layout.level3, &level3);
+
+        (image, header, layout)
+    }
+
+    #[test]
+    fn verifies_complete_ivfc_hash_chain_with_partial_final_block_padding() {
+        let (image, header, _) = valid_integrity_ivfc_image();
+        header
+            .verify_integrity(Cursor::new(image.clone()), image.len() as u64)
+            .unwrap();
+    }
+
+    #[test]
+    fn reports_level_and_block_for_ivfc_hash_mismatches() {
+        let (mut image, header, layout) = valid_integrity_ivfc_image();
+        image[layout.level3.offset_bytes as usize + 3] ^= 0x80;
+        assert_eq!(
+            header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
+            Err(RomFsError::IvfcHashMismatch {
+                level: 3,
+                block_index: 0,
+            })
+        );
+
+        let (mut image, header, layout) = valid_integrity_ivfc_image();
+        image[layout.level2.offset_bytes as usize + 2] ^= 0x40;
+        assert_eq!(
+            header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
+            Err(RomFsError::IvfcHashMismatch {
+                level: 2,
+                block_index: 0,
+            })
+        );
+
+        let (mut image, header, layout) = valid_integrity_ivfc_image();
+        image[layout.level1.offset_bytes as usize + 1] ^= 0x20;
+        assert_eq!(
+            header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
+            Err(RomFsError::IvfcHashMismatch {
+                level: 1,
+                block_index: 0,
+            })
+        );
+
+        let (mut image, header, layout) = valid_integrity_ivfc_image();
+        image[layout.master_hash.offset_bytes as usize] ^= 0x01;
+        assert_eq!(
+            header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
+            Err(RomFsError::IvfcHashMismatch {
+                level: 1,
+                block_index: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_hash_tables_with_an_incorrect_number_of_digests() {
+        let mut bytes = valid_integrity_ivfc_header();
+        write_u64(&mut bytes, 0x14, 0x20);
+        let header = IvfcHeader::parse(&bytes, 0x2000).unwrap();
+        let mut image = vec![0; 0x2000];
+
+        assert_eq!(
+            header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
+            Err(RomFsError::InvalidIvfcLevel {
+                index: 2,
+                reason: "hash table size does not match the number of data blocks",
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_hash_blocks_larger_than_the_romfs_image() {
+        let mut bytes = valid_integrity_ivfc_header();
+        write_u32(&mut bytes, 0x3C + 16, 63);
+        let header = IvfcHeader::parse(&bytes, 0x2000).unwrap();
+        let image = vec![0; 0x2000];
+
+        assert_eq!(
+            header.verify_integrity(Cursor::new(image.clone()), image.len() as u64),
+            Err(RomFsError::InvalidIvfcLevel {
+                index: 3,
+                reason: "hash block size exceeds the RomFS image size",
             })
         );
     }
