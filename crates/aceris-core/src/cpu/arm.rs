@@ -109,29 +109,12 @@ impl Arm11Core {
                 });
             }
             self.regs[rd] = i32::from((self.regs[rm] as u16).swap_bytes() as i16) as u32;
-        } else if word & 0x0FFF_03F0 == 0x06AF_0070
-            || word & 0x0FFF_03F0 == 0x06BF_0070
-            || word & 0x0FFF_03F0 == 0x06EF_0070
-            || word & 0x0FFF_03F0 == 0x06FF_0070
-        {
-            // SXTB, SXTH, UXTB and UXTH allow a byte rotation before extraction.
-            let rd = bits(word, 15, 12) as usize;
-            let rm = bits(word, 3, 0) as usize;
-            if rd == PC || rm == PC {
-                return Err(Error::UndefinedInstruction {
-                    pc: self.pc(),
-                    word,
-                });
-            }
-            let rotated = self.regs[rm].rotate_right(bits(word, 11, 10) * 8);
-            let value = match word & 0x0FFF_03F0 {
-                0x06AF_0070 => i32::from(rotated as u8 as i8) as u32,
-                0x06BF_0070 => i32::from(rotated as u16 as i16) as u32,
-                0x06EF_0070 => u32::from(rotated as u8),
-                0x06FF_0070 => u32::from(rotated as u16),
-                _ => unreachable!("the media extension encodings were checked above"),
-            };
-            self.regs[rd] = value;
+        } else if matches!(
+            word & 0x0FF0_03F0,
+            0x0680_0070 | 0x06A0_0070 | 0x06B0_0070 | 0x06C0_0070 | 0x06E0_0070 | 0x06F0_0070
+        ) {
+            // ARMv6 signed/unsigned extend, optionally accumulating into Rn.
+            return self.execute_extend_instruction(word);
         } else if word & 0x0FE0_0070 == 0x06A0_0010 || word & 0x0FE0_0070 == 0x06E0_0010 {
             // SSAT/USAT: shift a signed source, saturate, and set sticky CPSR.Q
             // only when the result is clamped.
@@ -251,6 +234,79 @@ impl Arm11Core {
             self.regs[rd] = sum;
         } else {
             return Err(Error::Unimplemented("ARMv6 media instruction"));
+        }
+
+        Ok(StepEvent::Executed)
+    }
+
+    /// Executes ARMv6 byte/halfword extension and extension-with-add forms.
+    ///
+    /// Rn=PC selects the non-accumulating operation. The input is rotated
+    /// right by 0, 8, 16, or 24 bits before extraction; additions wrap at the
+    /// destination width and do not alter CPSR flags.
+    fn execute_extend_instruction(&mut self, word: u32) -> Result<StepEvent> {
+        let operation = bits(word, 21, 20);
+        let unsigned = bit(word, 22);
+        let rn = bits(word, 19, 16) as usize;
+        let rd = bits(word, 15, 12) as usize;
+        let rotation = bits(word, 11, 10) * 8;
+        let rm = bits(word, 3, 0) as usize;
+
+        if rd == PC || rm == PC {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        let rotated = self.regs[rm].rotate_right(rotation);
+        let accumulator = if rn == PC { 0 } else { self.regs[rn] };
+
+        match operation {
+            0b00 => {
+                // SXTB16/UXTB16 and SXTAB16/UXTAB16.
+                let upper_byte = (rotated >> 16) as u8;
+                let lower_byte = rotated as u8;
+                let upper = if unsigned {
+                    u16::from(upper_byte)
+                } else {
+                    i16::from(upper_byte as i8) as u16
+                };
+                let lower = if unsigned {
+                    u16::from(lower_byte)
+                } else {
+                    i16::from(lower_byte as i8) as u16
+                };
+                let upper_base = (accumulator >> 16) as u16;
+                let lower_base = accumulator as u16;
+                let result = (upper_base.wrapping_add(upper) as u32) << 16
+                    | u32::from(lower_base.wrapping_add(lower));
+                self.regs[rd] = result;
+            }
+            0b10 => {
+                // SXTB/UXTB and SXTAB/UXTAB.
+                let extended = if unsigned {
+                    u32::from(rotated as u8)
+                } else {
+                    i32::from(rotated as u8 as i8) as u32
+                };
+                self.regs[rd] = accumulator.wrapping_add(extended);
+            }
+            0b11 => {
+                // SXTH/UXTH and SXTAH/UXTAH.
+                let extended = if unsigned {
+                    u32::from(rotated as u16)
+                } else {
+                    i32::from(rotated as u16 as i16) as u32
+                };
+                self.regs[rd] = accumulator.wrapping_add(extended);
+            }
+            _ => {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
         }
 
         Ok(StepEvent::Executed)
@@ -1370,6 +1426,50 @@ mod tests {
         assert_eq!(m.cpu.regs[3], 0x0000_0080);
         assert_eq!(m.cpu.regs[4], 0x0000_FE12);
         assert_eq!(m.cpu.regs[5], 0xFFFF_FFFE);
+    }
+
+    #[test]
+    fn armv6_extend_and_add_instructions_apply_rotation_and_wraparound() {
+        // SXTAB r0,r1,r2,ror #16 ; SXTAH r3,r4,r2,ror #16
+        // UXTAB r5,r6,r2 ; UXTAH r7,r6,r2.
+        let mut m = Machine::new(&[
+            0xE6A1_0872,
+            0xE6B4_3872,
+            0xE6E6_5072,
+            0xE6F6_7072,
+        ]);
+        m.cpu.regs[1] = 100;
+        m.cpu.regs[2] = 0x80FE_1234;
+        m.cpu.regs[4] = 0x0001_0000;
+        m.cpu.regs[6] = 0x0001_0000;
+
+        m.run(4);
+
+        assert_eq!(m.cpu.regs[0], 98);
+        assert_eq!(m.cpu.regs[3], 0x0000_80FE);
+        assert_eq!(m.cpu.regs[5], 0x0001_0034);
+        assert_eq!(m.cpu.regs[7], 0x0001_1234);
+    }
+
+    #[test]
+    fn armv6_extend_byte16_instructions_extend_both_selected_lanes() {
+        // SXTB16 r0,r1,ror #8 ; UXTB16 r2,r1,ror #8
+        // SXTAB16 r3,r4,r1,ror #8 ; UXTAB16 r5,r4,r1,ror #8.
+        let mut m = Machine::new(&[
+            0xE68F_0471,
+            0xE6CF_2471,
+            0xE684_3471,
+            0xE6C4_5471,
+        ]);
+        m.cpu.regs[1] = 0x8010_2030;
+        m.cpu.regs[4] = 0x0001_0002;
+
+        m.run(4);
+
+        assert_eq!(m.cpu.regs[0], 0xFF80_0020);
+        assert_eq!(m.cpu.regs[2], 0x0080_0020);
+        assert_eq!(m.cpu.regs[3], 0xFF81_0022);
+        assert_eq!(m.cpu.regs[5], 0x0081_0022);
     }
 
     #[test]
