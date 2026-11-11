@@ -653,8 +653,8 @@ mod tests {
     #[test]
     fn rejects_bss_mappings_above_the_bootstrap_memory_limit() {
         let mut prepared = prepared_image();
-        prepared.extended_header.bss_size_bytes = 0x1010_0000;
-        prepared.extended_header.data_code_set.physical_size_pages = 0x1011;
+        prepared.extended_header.bss_size_bytes = 0x1000_1000;
+        prepared.extended_header.data_code_set.physical_size_pages = 0x10002;
 
         assert!(matches!(
             prepared.process_layout(),
