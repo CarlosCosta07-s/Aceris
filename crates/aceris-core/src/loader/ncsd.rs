@@ -520,7 +520,7 @@ mod tests {
         let parsed = NcsdHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         let partition = *parsed.primary_partition().unwrap();
 
-        let mut opened = partition.open_ncch(Cursor::new(image)).unwrap();
+        let mut opened = partition.open_ncch(Cursor::new(image.clone())).unwrap();
 
         assert_eq!(opened.partition(), partition);
         assert_eq!(opened.header().content_size_bytes, partition.size_bytes);
