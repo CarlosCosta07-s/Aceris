@@ -1207,14 +1207,21 @@ mod tests {
     fn armv6_extend_instructions_apply_rotation_and_sign_extension() {
         // SXTB r0,r1,ror #8; SXTH r2,r1,ror #16;
         // UXTB r3,r1,ror #24; UXTH r4,r1,ror #8.
-        let mut m = Machine::new(&[0xE6AF_0471, 0xE6BF_2871, 0xE6EF_0C71, 0xE6FF_4471]);
+        let mut m = Machine::new(&[
+            0xE6AF_0471, // SXTB r0,r1,ror #8
+            0xE6BF_2871, // SXTH r2,r1,ror #16
+            0xE6EF_0C71, // UXTB r3,r1,ror #24
+            0xE6FF_4471, // UXTH r4,r1,ror #8
+            0xE6AF_5871, // SXTB r5,r1,ror #16 (selects 0xFE)
+        ]);
         m.cpu.regs[1] = 0x80FE_1234;
-        m.run(4);
+        m.run(5);
 
-        assert_eq!(m.cpu.regs[0], 0xFFFF_FE12);
+        assert_eq!(m.cpu.regs[0], 0x0000_0012);
         assert_eq!(m.cpu.regs[2], 0x0000_80FE);
         assert_eq!(m.cpu.regs[3], 0x0000_0080);
-        assert_eq!(m.cpu.regs[4], 0x0000_1234);
+        assert_eq!(m.cpu.regs[4], 0x0000_FE12);
+        assert_eq!(m.cpu.regs[5], 0xFFFF_FFFE);
     }
 
     #[test]
