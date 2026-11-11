@@ -5,7 +5,7 @@
 //! This software implementation is not hardened against local side-channel attacks.
 
 use std::fmt;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 
 const BLOCK_SIZE: usize = 16;
 const EXPANDED_KEY_SIZE: usize = 176;
@@ -233,10 +233,14 @@ fn inverse_mix_columns(state: &mut [u8; BLOCK_SIZE]) {
 pub struct Aes128CbcReader<R> {
     reader: R,
     cipher: Aes128Decryptor,
+    initial_iv: [u8; BLOCK_SIZE],
     previous_ciphertext: [u8; BLOCK_SIZE],
     plaintext_block: [u8; BLOCK_SIZE],
     plaintext_offset: usize,
+    ciphertext_size_bytes: u64,
     ciphertext_remaining: u64,
+    position_bytes: u64,
+    source_start_bytes: Option<u64>,
     failure: Option<io::ErrorKind>,
 }
 
@@ -260,10 +264,14 @@ impl<R: Read> Aes128CbcReader<R> {
         Ok(Self {
             reader,
             cipher: Aes128Decryptor::new(key),
+            initial_iv: iv,
             previous_ciphertext: iv,
             plaintext_block: [0; BLOCK_SIZE],
             plaintext_offset: BLOCK_SIZE,
+            ciphertext_size_bytes,
             ciphertext_remaining: ciphertext_size_bytes,
+            position_bytes: 0,
+            source_start_bytes: None,
             failure: None,
         })
     }
@@ -296,6 +304,135 @@ impl<R: Read> Aes128CbcReader<R> {
         self.previous_ciphertext = ciphertext;
         self.plaintext_offset = 0;
         Ok(true)
+    }
+}
+
+impl<R: Read + Seek> Aes128CbcReader<R> {
+    /// Creates a CBC reader whose source can be repositioned for random access.
+    ///
+    /// Unlike `new`, this constructor records the source's current position.
+    /// Seeking decrypts only the requested AES block and its predecessor,
+    /// while preserving the caller's bounded source.
+    pub fn new_seekable(
+        mut reader: R,
+        key: [u8; BLOCK_SIZE],
+        iv: [u8; BLOCK_SIZE],
+        ciphertext_size_bytes: u64,
+    ) -> io::Result<Self> {
+        let source_start_bytes = reader.stream_position()?;
+        source_start_bytes.checked_add(ciphertext_size_bytes).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "AES-CBC source range overflows the seek address space",
+            )
+        })?;
+        let mut result = Self::new(reader, key, iv, ciphertext_size_bytes)?;
+        result.source_start_bytes = Some(source_start_bytes);
+        Ok(result)
+    }
+
+    fn seek_source_to(&mut self, source_offset: u64) -> io::Result<()> {
+        let source_start = self.source_start_bytes.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                "AES-CBC source was not opened with the seekable constructor",
+            )
+        })?;
+        let absolute = source_start.checked_add(source_offset).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "AES-CBC source position overflows",
+            )
+        })?;
+        let actual = self.reader.seek(SeekFrom::Start(absolute))?;
+        if actual != absolute {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "AES-CBC source did not seek to the requested ciphertext block",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<R: Read + Seek> Seek for Aes128CbcReader<R> {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let target = match from {
+            SeekFrom::Start(position) => i128::from(position),
+            SeekFrom::Current(offset) => i128::from(self.position_bytes) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(self.ciphertext_size_bytes) + i128::from(offset),
+        };
+        if !(0..=i128::from(self.ciphertext_size_bytes)).contains(&target) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek is outside the AES-CBC plaintext range",
+            ));
+        }
+        if self.source_start_bytes.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "AES-CBC source was not opened with the seekable constructor",
+            ));
+        }
+
+        let target = u64::try_from(target).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "AES-CBC plaintext position is invalid",
+            )
+        })?;
+
+        if target == self.ciphertext_size_bytes {
+            if let Err(error) = self.seek_source_to(target) {
+                self.failure = Some(error.kind());
+                return Err(error);
+            }
+            self.previous_ciphertext = self.initial_iv;
+            self.plaintext_offset = BLOCK_SIZE;
+            self.ciphertext_remaining = 0;
+            self.position_bytes = target;
+            self.failure = None;
+            return Ok(target);
+        }
+
+        let block_start = target / BLOCK_SIZE as u64 * BLOCK_SIZE as u64;
+        let within_block = (target - block_start) as usize;
+        let previous_ciphertext = if block_start == 0 {
+            self.initial_iv
+        } else {
+            let previous_offset = block_start - BLOCK_SIZE as u64;
+            if let Err(error) = self.seek_source_to(previous_offset) {
+                self.failure = Some(error.kind());
+                return Err(error);
+            }
+            let mut previous = [0u8; BLOCK_SIZE];
+            if let Err(error) = self.reader.read_exact(&mut previous) {
+                self.failure = Some(error.kind());
+                return Err(error);
+            }
+            previous
+        };
+
+        if let Err(error) = self.seek_source_to(block_start) {
+            self.failure = Some(error.kind());
+            return Err(error);
+        }
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        if let Err(error) = self.reader.read_exact(&mut ciphertext) {
+            self.failure = Some(error.kind());
+            return Err(error);
+        }
+
+        self.plaintext_block = self.cipher.decrypt_block(ciphertext);
+        for (byte, previous) in self.plaintext_block.iter_mut().zip(previous_ciphertext) {
+            *byte ^= previous;
+        }
+        self.previous_ciphertext = ciphertext;
+        self.plaintext_offset = within_block;
+        self.ciphertext_remaining = self.ciphertext_size_bytes - block_start - BLOCK_SIZE as u64;
+        self.position_bytes = target;
+        self.failure = None;
+        Ok(target)
     }
 }
 
@@ -334,6 +471,7 @@ impl<R: Read> Read for Aes128CbcReader<R> {
             output[written..written + requested]
                 .copy_from_slice(&self.plaintext_block[self.plaintext_offset..block_end]);
             self.plaintext_offset = block_end;
+            self.position_bytes += requested as u64;
             written += requested;
         }
 
@@ -410,6 +548,69 @@ mod tests {
         let mut reader = Aes128CbcReader::new(source, key, iv, ciphertext.len() as u64).unwrap();
         let mut actual = Vec::new();
 
+        reader.read_to_end(&mut actual).unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn supports_random_access_across_cbc_block_boundaries() {
+        let key = decode_hex::<16>("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = decode_hex::<16>("000102030405060708090a0b0c0d0e0f");
+        let ciphertext = decode_hex::<32>(
+            "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2",
+        );
+        let expected = decode_hex::<32>(
+            "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51",
+        );
+        let mut reader = Aes128CbcReader::new_seekable(
+            std::io::Cursor::new(ciphertext.to_vec()),
+            key,
+            iv,
+            ciphertext.len() as u64,
+        )
+        .unwrap();
+
+        assert_eq!(reader.seek(SeekFrom::Start(17)).unwrap(), 17);
+        let mut middle = [0u8; 7];
+        reader.read_exact(&mut middle).unwrap();
+        assert_eq!(&middle, &expected[17..24]);
+
+        assert_eq!(reader.seek(SeekFrom::Start(15)).unwrap(), 15);
+        let mut crossing = [0u8; 4];
+        reader.read_exact(&mut crossing).unwrap();
+        assert_eq!(&crossing, &expected[15..19]);
+
+        assert_eq!(reader.seek(SeekFrom::End(-7)).unwrap(), 25);
+        let mut tail = Vec::new();
+        reader.read_to_end(&mut tail).unwrap();
+        assert_eq!(tail, &expected[25..]);
+
+        assert_eq!(reader.seek(SeekFrom::Start(32)).unwrap(), 32);
+        assert_eq!(reader.read(&mut [0u8; 1]).unwrap(), 0);
+        assert!(reader.seek(SeekFrom::Current(1)).is_err());
+        assert!(reader.seek(SeekFrom::Start(u64::MAX)).is_err());
+    }
+
+    #[test]
+    fn seekable_cbc_reader_preserves_a_nonzero_source_origin() {
+        let key = decode_hex::<16>("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = decode_hex::<16>("000102030405060708090a0b0c0d0e0f");
+        let ciphertext = decode_hex::<32>(
+            "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2",
+        );
+        let expected = decode_hex::<32>(
+            "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51",
+        );
+        let mut bytes = vec![0xCC; 23];
+        bytes.extend_from_slice(&ciphertext);
+        let mut source = std::io::Cursor::new(bytes);
+        source.seek(SeekFrom::Start(23)).unwrap();
+        let mut reader =
+            Aes128CbcReader::new_seekable(source, key, iv, ciphertext.len() as u64).unwrap();
+
+        reader.seek(SeekFrom::Start(0)).unwrap();
+        let mut actual = Vec::new();
         reader.read_to_end(&mut actual).unwrap();
 
         assert_eq!(actual, expected);
