@@ -38,8 +38,7 @@ fn image_with_sparse_partitions() -> Vec<u8> {
 
     let auxiliary_start = 0x40 * MEDIA_UNIT;
     image[auxiliary_start..auxiliary_start + 11].copy_from_slice(b"AUX-PART-05");
-    image[auxiliary_start + 0x1FFC..auxiliary_start + 0x2000]
-        .copy_from_slice(b"END5");
+    image[auxiliary_start + 0x1FFC..auxiliary_start + 0x2000].copy_from_slice(b"END5");
 
     image
 }
