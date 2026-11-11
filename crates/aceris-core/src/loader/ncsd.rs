@@ -426,7 +426,7 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
     /// This prepares the image only; it does not map memory, configure the
     /// ARM11 process, or start CPU execution.
     pub fn prepare_arm11_executable_image(
-        self,
+        mut self,
         menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
         content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
     ) -> std::result::Result<PreparedArm11Image, NcsdExecutableLoadError> {
