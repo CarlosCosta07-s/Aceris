@@ -229,6 +229,26 @@ impl Arm11KernelObjectTable {
         Ok(())
     }
 
+    /// Removes one thread from every synchronization-object wait queue.
+    ///
+    /// This is used when a finite wait times out, so a later signal cannot
+    /// wake a thread that has already returned RESULT_TIMEOUT.
+    pub fn remove_waiter(&mut self, thread: ThreadId) -> bool {
+        let mut removed = false;
+        for object in self.objects.values_mut() {
+            let waiters = match object {
+                KernelObject::Event(event) => &mut event.waiters,
+                KernelObject::Mutex(mutex) => &mut mutex.waiters,
+                KernelObject::Semaphore(semaphore) => &mut semaphore.waiters,
+                KernelObject::Thread(_) => continue,
+            };
+            let previous_len = waiters.len();
+            waiters.retain(|waiter| *waiter != thread);
+            removed |= waiters.len() != previous_len;
+        }
+        removed
+    }
+
     /// Sets an event signaled and returns the threads released by the signal.
     pub fn signal_event(&mut self, handle: u32) -> Result<Vec<ThreadId>, KernelHandleError> {
         let event = self.event_mut(handle)?;
@@ -499,6 +519,20 @@ mod tests {
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
         assert!(table.try_wait_synchronization(semaphore, third).unwrap());
         assert!(!table.try_wait_synchronization(semaphore, third).unwrap());
+    }
+
+    #[test]
+    fn removing_a_timed_out_waiter_prevents_a_stale_signal_wakeup() {
+        let waiter = thread_id(1);
+        let mut table = Arm11KernelObjectTable::default();
+        let event = table.insert_event(EventResetType::OneShot).unwrap();
+        table.enqueue_waiter(event, waiter).unwrap();
+
+        assert!(table.remove_waiter(waiter));
+        assert!(!table.remove_waiter(waiter));
+        assert!(table.signal_event(event).unwrap().is_empty());
+        assert_eq!(table.event_is_signaled(event), Some(true));
+        assert_eq!(table.close_handle(event), Ok(()));
     }
 
     #[test]

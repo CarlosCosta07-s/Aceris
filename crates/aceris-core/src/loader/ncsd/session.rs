@@ -13,6 +13,7 @@ pub use thread::{
     Arm11ThreadScheduler, MAIN_THREAD_ID, ThreadId, ThreadInfo, ThreadSchedulerError, ThreadState,
 };
 
+use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use crate::Result;
@@ -101,6 +102,8 @@ pub struct Arm11ProcessSession {
     address_space: Arm11CodeAddressSpace,
     svc_dispatcher: Arm11SvcDispatcher,
     kernel_objects: Arm11KernelObjectTable,
+    /// Finite WaitSynchronization1 deadlines mapped to their object handles.
+    wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
     instruction_count: u64,
 }
 
@@ -117,6 +120,7 @@ impl Arm11ProcessSession {
             address_space,
             svc_dispatcher: Arm11SvcDispatcher::default(),
             kernel_objects: Arm11KernelObjectTable::default(),
+            wait_deadlines: BTreeMap::new(),
             instruction_count: 0,
         }
     }
@@ -199,7 +203,25 @@ impl Arm11ProcessSession {
     /// This is an explicit virtual-time hook, not a claim that hardware timers
     /// or real-time scheduling are already emulated.
     pub fn advance_time(&mut self, nanoseconds: u64) -> Option<ThreadId> {
-        self.scheduler.advance_time(nanoseconds)
+        self.scheduler.advance_time(nanoseconds);
+        let now = self.scheduler.virtual_time_ns();
+        let expired = self
+            .wait_deadlines
+            .iter()
+            .filter_map(|(thread, (_, deadline))| (*deadline <= now).then_some(*thread))
+            .collect::<Vec<_>>();
+
+        for thread in expired {
+            if self.wait_deadlines.remove(&thread).is_some() {
+                self.kernel_objects.remove_waiter(thread);
+                if let Some(core) = self.scheduler.core_mut(thread) {
+                    core.regs[0] = RESULT_TIMEOUT;
+                }
+                let _ = self.scheduler.wake_thread(thread);
+            }
+        }
+
+        self.scheduler.current_thread_id()
     }
 
     /// Runs no more than instruction_budget instructions and dispatches supported SVCs.
@@ -643,26 +665,38 @@ impl Arm11ProcessSession {
         if timeout == 0 {
             return self.write_svc_result(caller, RESULT_TIMEOUT);
         }
-        if timeout != -1 {
+        if timeout < -1 {
             return self.write_svc_result(caller, RESULT_INVALID_ENUM);
         }
         if let Err(error) = self.kernel_objects.enqueue_waiter(handle, caller) {
             return self.write_svc_result(caller, kernel_handle_result_code(error));
         }
+        if timeout > 0 {
+            let deadline = self
+                .scheduler
+                .virtual_time_ns()
+                .saturating_add(timeout as u64);
+            self.wait_deadlines.insert(caller, (handle, deadline));
+        }
 
         match self.scheduler.wait_current() {
             Ok(Some(_)) => SvcRunDisposition::Resume,
             Ok(None) => SvcRunDisposition::NoRunnableThread,
-            Err(_) => SvcRunDisposition::KernelServiceError {
-                number: SVC_WAIT_SYNCHRONIZATION1,
-                result: RESULT_INVALID_ENUM,
-            },
+            Err(_) => {
+                self.wait_deadlines.remove(&caller);
+                self.kernel_objects.remove_waiter(caller);
+                SvcRunDisposition::KernelServiceError {
+                    number: SVC_WAIT_SYNCHRONIZATION1,
+                    result: RESULT_INVALID_ENUM,
+                }
+            }
         }
     }
 
     /// Completes an object handoff and makes its blocked thread(s) schedulable.
     fn wake_synchronization_waiters(&mut self, waiters: impl IntoIterator<Item = ThreadId>) {
         for waiter in waiters {
+            self.wait_deadlines.remove(&waiter);
             if let Some(core) = self.scheduler.core_mut(waiter) {
                 core.regs[0] = 0;
             }
@@ -1262,6 +1296,80 @@ mod tests {
         assert_eq!(session.kernel_objects.mutex_owner(handle), Some(child));
         assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
         assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Running
+        );
+    }
+
+    #[test]
+    fn finite_wait_timeout_wakes_thread_and_removes_it_from_object_queue() {
+        let mut session = test_session_with_program(&[0xEF00_0024]);
+        let event = session.kernel_objects.insert_event(EventResetType::OneShot).unwrap();
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        assert_eq!(session.current_thread_id(), Some(child));
+
+        {
+            let core = session.scheduler.core_mut(child).unwrap();
+            core.regs[0] = event;
+            core.regs[2] = 100;
+            core.regs[3] = 0;
+        }
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
+
+        session.advance_time(99);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], event);
+
+        session.advance_time(1);
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Running
+        );
+        assert_eq!(
+            session.scheduler.core(child).unwrap().regs[0],
+            RESULT_TIMEOUT
+        );
+        assert_eq!(session.kernel_objects.close_handle(event), Ok(()));
+    }
+
+    #[test]
+    fn successful_object_signal_cancels_a_pending_finite_timeout() {
+        let mut session = test_session_with_program(&[0xEF00_0024]);
+        let event = session.kernel_objects.insert_event(EventResetType::OneShot).unwrap();
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+
+        {
+            let core = session.scheduler.core_mut(child).unwrap();
+            core.regs[0] = event;
+            core.regs[2] = 100;
+            core.regs[3] = 0;
+        }
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        let awakened = session.kernel_objects.signal_event(event).unwrap();
+        session.wake_synchronization_waiters(awakened);
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
+
+        session.advance_time(100);
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
         assert_eq!(
             session.thread_info(child).unwrap().state,
             ThreadState::Running
