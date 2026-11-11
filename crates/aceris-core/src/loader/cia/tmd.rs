@@ -17,8 +17,7 @@ const CONTENT_INFO_RECORD_COUNT: usize = 64;
 const CONTENT_INFO_TABLE_SIZE: usize = CONTENT_INFO_RECORD_SIZE * CONTENT_INFO_RECORD_COUNT;
 const CONTENT_RECORD_SIZE: usize = 0x30;
 const CONTENT_INFO_TABLE_OFFSET: usize = HEADER_SIZE;
-const CONTENT_RECORDS_OFFSET: usize =
-    CONTENT_INFO_TABLE_OFFSET + CONTENT_INFO_TABLE_SIZE;
+const CONTENT_RECORDS_OFFSET: usize = CONTENT_INFO_TABLE_OFFSET + CONTENT_INFO_TABLE_SIZE;
 const SECTION_ALIGNMENT: usize = 0x40;
 const CONTENT_INDEX_BITMAP_SIZE: usize = 0x2000;
 
@@ -192,7 +191,9 @@ impl TmdHeader {
                 let actual_hash =
                     Sha256::digest(group_bytes).map_err(|_| TmdError::HashInputTooLong)?;
                 if actual_hash != record.hash {
-                    return Err(TmdError::ContentGroupHashMismatch { record_index: index });
+                    return Err(TmdError::ContentGroupHashMismatch {
+                        record_index: index,
+                    });
                 }
                 covered_content_count = group_end;
             }
@@ -379,10 +380,12 @@ fn ensure_range(
 fn read_array<const N: usize>(data: &[u8], offset: usize) -> Result<[u8; N], TmdError> {
     let bytes = data
         .get(offset..checked_add(offset, N)?)
-        .ok_or(TmdError::Truncated { section: "fixed fields" })?;
-    bytes
-        .try_into()
-        .map_err(|_| TmdError::Truncated { section: "fixed fields" })
+        .ok_or(TmdError::Truncated {
+            section: "fixed fields",
+        })?;
+    bytes.try_into().map_err(|_| TmdError::Truncated {
+        section: "fixed fields",
+    })
 }
 
 fn read_u16_be(data: &[u8], offset: usize) -> Result<u16, TmdError> {
@@ -407,10 +410,7 @@ mod tests {
     fn fixture(contents: &[(u32, u16, u16, u64, [u8; 32])]) -> Vec<u8> {
         let signature_size = aligned_signature_data_size(TmdSignatureType::Rsa2048Sha256).unwrap();
         let content_records_size = contents.len() * CONTENT_RECORD_SIZE;
-        let mut data = vec![
-            0u8;
-            signature_size + CONTENT_RECORDS_OFFSET + content_records_size
-        ];
+        let mut data = vec![0u8; signature_size + CONTENT_RECORDS_OFFSET + content_records_size];
         data[0..4].copy_from_slice(&TmdSignatureType::Rsa2048Sha256.raw_value().to_be_bytes());
 
         let header_start = signature_size;
@@ -449,16 +449,12 @@ mod tests {
         }
 
         if !contents.is_empty() {
-            let group_hash = Sha256::digest(
-                &data[records_start..records_start + content_records_size],
-            )
-            .unwrap();
+            let group_hash =
+                Sha256::digest(&data[records_start..records_start + content_records_size]).unwrap();
             data[info_start + 4..info_start + 0x24].copy_from_slice(&group_hash);
         }
-        let info_hash = Sha256::digest(
-            &data[info_start..info_start + CONTENT_INFO_TABLE_SIZE],
-        )
-        .unwrap();
+        let info_hash =
+            Sha256::digest(&data[info_start..info_start + CONTENT_INFO_TABLE_SIZE]).unwrap();
         data[header_start + 0xA4..header_start + 0xC4].copy_from_slice(&info_hash);
         data
     }
