@@ -12,6 +12,8 @@ use std::io::{Read, Seek, SeekFrom};
 pub mod crypto;
 /// Structural ExeFS header parser for NCCH executable files.
 pub mod exefs;
+/// Parser for the 0x400-byte NCCH extended header.
+pub mod extended_header;
 /// Structural RomFS IVFC and Level 3 header parser.
 pub mod romfs;
 
@@ -385,6 +387,63 @@ impl NcchHeader {
         romfs::RomFsRangeReader::new(reader, EXTENDED_HEADER_OFFSET, EXTENDED_HEADER_HASH_SIZE)
             .map(Some)
             .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))
+    }
+
+    /// Opens the encrypted extended header after validating its cleartext SHA-256.
+    ///
+    /// The caller supplies the AES-128 menu-info key. The returned reader is
+    /// bounded to the declared extended-header region and starts at byte zero.
+    /// Use [extended_header::NcchExtendedHeader] to parse the 0x400-byte
+    /// system-control and access-control structures. NoCrypto content is
+    /// rejected; use [open_verified_extended_header_reader] for cleartext data.
+    pub fn open_decrypted_verified_extended_header_reader<R: Read + Seek>(
+        &self,
+        reader: R,
+        menu_info_key: [u8; crypto::AES_BLOCK_SIZE],
+    ) -> Result<Option<crypto::NcchCtrReader<R>>, NcchIntegrityError> {
+        if self.extended_header_size == 0 {
+            return Ok(None);
+        }
+
+        if u64::from(self.extended_header_size) < EXTENDED_HEADER_HASH_SIZE {
+            return Err(NcchIntegrityError::ExtendedHeaderTooSmall {
+                declared_size: self.extended_header_size,
+                required_size: EXTENDED_HEADER_HASH_SIZE,
+            });
+        }
+
+        let mut decrypted_region = self
+            .open_decrypted_region_reader(
+                reader,
+                crypto::NcchCtrRegion::ExtendedHeader,
+                menu_info_key,
+            )
+            .map_err(|error| {
+                NcchIntegrityError::ReaderFailure(format!(
+                    "could not decrypt NCCH extended header: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                NcchIntegrityError::ReaderFailure(
+                    "NCCH extended header disappeared from validated header".to_owned(),
+                )
+            })?;
+
+        verify_decrypted_extended_header_hash(
+            &mut decrypted_region,
+            &self.extended_header_hash,
+        )?;
+
+        let position = decrypted_region
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+        if position != 0 {
+            return Err(NcchIntegrityError::ReaderFailure(
+                "could not rewind the decrypted NCCH extended header".to_owned(),
+            ));
+        }
+
+        Ok(Some(decrypted_region))
     }
 
     /// Builds the documented initial CTR for an encrypted NCCH region.
@@ -789,6 +848,43 @@ impl NcchHeader {
     pub const fn declares_no_crypto(&self) -> bool {
         self.flags[7] & NO_CRYPTO_FLAG != 0
     }
+}
+
+fn verify_decrypted_extended_header_hash<R: Read + Seek>(
+    reader: &mut R,
+    expected_hash: &[u8; 32],
+) -> Result<(), NcchIntegrityError> {
+    let position = reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+    if position != 0 {
+        return Err(NcchIntegrityError::ReaderFailure(
+            "could not seek to the start of the decrypted NCCH extended header".to_owned(),
+        ));
+    }
+
+    let mut hasher = romfs::sha256::Sha256::new();
+    let mut remaining = EXTENDED_HEADER_HASH_SIZE;
+    let mut buffer = [0u8; 4096];
+
+    while remaining != 0 {
+        let amount = remaining.min(buffer.len() as u64) as usize;
+        reader
+            .read_exact(&mut buffer[..amount])
+            .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+        hasher.update(&buffer[..amount]).map_err(|_| {
+            NcchIntegrityError::ReaderFailure(
+                "decrypted NCCH extended header exceeds the SHA-256 message limit".to_owned(),
+            )
+        })?;
+        remaining -= amount as u64;
+    }
+
+    if &hasher.finalize() != expected_hash {
+        return Err(NcchIntegrityError::ExtendedHeaderHashMismatch);
+    }
+
+    Ok(())
 }
 
 fn verify_extended_header_hash<R: Read + Seek>(
@@ -1349,6 +1445,66 @@ mod tests {
 
         let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         (image, parsed)
+    }
+
+    fn encrypted_extended_header_image() -> (Vec<u8>, NcchHeader, [u8; 16], Vec<u8>) {
+        let (mut image, _, expected) = valid_extended_header_image();
+        image[FLAGS_OFFSET + 7] &= !NO_CRYPTO_FLAG;
+        let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        let key = [0x53; crypto::AES_BLOCK_SIZE];
+        let counter = parsed
+            .initial_ctr_for_region(crypto::NcchCtrRegion::ExtendedHeader)
+            .unwrap();
+        let mut encrypted = expected.clone();
+        crypto::Aes128Ctr::new(key, counter)
+            .apply_keystream(&mut encrypted)
+            .unwrap();
+        let start = EXTENDED_HEADER_OFFSET as usize;
+        image[start..start + encrypted.len()].copy_from_slice(&encrypted);
+        (image, parsed, key, expected)
+    }
+
+    #[test]
+    fn opens_a_decrypted_verified_extended_header() {
+        let (image, parsed, key, expected) = encrypted_extended_header_image();
+        let mut reader = parsed
+            .open_decrypted_verified_extended_header_reader(Cursor::new(image), key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(reader.len(), EXTENDED_HEADER_HASH_SIZE);
+        let mut actual = Vec::new();
+        reader.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rejects_a_decrypted_extended_header_with_a_mismatched_hash() {
+        let (mut image, parsed, key, _) = encrypted_extended_header_image();
+        image[EXTENDED_HEADER_OFFSET as usize + 0x40] ^= 0x80;
+
+        assert_eq!(
+            parsed
+                .open_decrypted_verified_extended_header_reader(Cursor::new(image), key)
+                .err(),
+            Some(NcchIntegrityError::ExtendedHeaderHashMismatch)
+        );
+    }
+
+    #[test]
+    fn decrypted_extended_header_api_refuses_nocrypto_content() {
+        let (image, parsed, _) = valid_extended_header_image();
+
+        assert!(matches!(
+            parsed
+                .open_decrypted_verified_extended_header_reader(
+                    Cursor::new(image),
+                    [0x53; crypto::AES_BLOCK_SIZE],
+                )
+                .err(),
+            Some(NcchIntegrityError::ReaderFailure(reason))
+                if reason.contains("already clear")
+        ));
     }
 
     #[test]

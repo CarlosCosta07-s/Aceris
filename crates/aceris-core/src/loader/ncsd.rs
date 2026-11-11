@@ -244,6 +244,10 @@ pub type VerifiedNcsdExeFsFileReader<R> =
 pub type DecryptedVerifiedNcsdExeFsFileReader<R> =
     ncch::exefs::ExeFsFileReader<ncch::crypto::NcchCtrReader<NcsdPartitionReader<R>>>;
 
+/// Decrypted extended-header reader returned after the NCCH SHA-256 check.
+pub type DecryptedVerifiedNcsdExtendedHeaderReader<R> =
+    ncch::crypto::NcchCtrReader<NcsdPartitionReader<R>>;
+
 /// RomFS Level 3 reader returned after NCCH superblock and IVFC hashes validate.
 pub type VerifiedNcsdRomFsLevel3Reader<R> = ncch::romfs::RomFsLevel3Reader<
     ncch::romfs::RomFsRangeReader<ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>>,
@@ -281,6 +285,21 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
     ) -> std::result::Result<Option<VerifiedNcsdExeFsFileReader<R>>, ncch::exefs::ExeFsError> {
         self.header
             .open_verified_exefs_file_reader(self.reader, file_name)
+    }
+
+    /// Opens the encrypted NCCH extended header after verifying its SHA-256.
+    ///
+    /// The caller supplies the AES-128 menu-info key. The reader remains
+    /// bounded to the containing NCSD partition and declared NCCH header.
+    pub fn open_decrypted_verified_extended_header_reader(
+        self,
+        menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    ) -> std::result::Result<
+        Option<DecryptedVerifiedNcsdExtendedHeaderReader<R>>,
+        ncch::NcchIntegrityError,
+    > {
+        self.header
+            .open_decrypted_verified_extended_header_reader(self.reader, menu_info_key)
     }
 
     /// Opens a file from encrypted ExeFS after validating both SHA-256 layers.
