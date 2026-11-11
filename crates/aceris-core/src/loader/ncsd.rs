@@ -945,15 +945,15 @@ mod tests {
             .initial_ctr_for_region(ncch::crypto::NcchCtrRegion::ExeFs)
             .unwrap();
         let exefs_start = ncch_start + EXEFS_OFFSET;
-        ncch::crypto::Aes128Ctr::new(menu_info_key, exefs_counter)
-            .apply_keystream(&mut image[exefs_start..exefs_start + 0x200])
-            .unwrap();
-
         let stored_code_size = u32::from_le_bytes(
             image[exefs_start + 12..exefs_start + 16]
                 .try_into()
                 .unwrap(),
         ) as usize;
+
+        ncch::crypto::Aes128Ctr::new(menu_info_key, exefs_counter)
+            .apply_keystream(&mut image[exefs_start..exefs_start + 0x200])
+            .unwrap();
         let code_start = exefs_start + 0x200;
         ncch::crypto::Aes128Ctr::apply_keystream_at_offset(
             content_key,
