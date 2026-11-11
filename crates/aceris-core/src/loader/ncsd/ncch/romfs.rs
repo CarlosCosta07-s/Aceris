@@ -4,6 +4,7 @@
 //! NCCH content, locate physical IVFC levels, verify SHA-256 hashes, walk the
 //! directory tree, or extract files.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -69,6 +70,7 @@ pub enum RomFsError {
     InvalidIvfcHeader(&'static str),
     InvalidIvfcLevel { index: u8, reason: &'static str },
     InvalidLevel3Header(&'static str),
+    InvalidTree(&'static str),
     InvalidDirectoryEntry(&'static str),
     InvalidFileEntry(&'static str),
     ReaderFailure(String),
@@ -86,6 +88,7 @@ impl fmt::Display for RomFsError {
             Self::InvalidLevel3Header(reason) => {
                 write!(formatter, "invalid RomFS Level 3 header: {reason}")
             }
+            Self::InvalidTree(reason) => write!(formatter, "invalid RomFS tree: {reason}"),
             Self::InvalidDirectoryEntry(reason) => {
                 write!(formatter, "invalid RomFS directory entry: {reason}")
             }
@@ -328,6 +331,30 @@ pub struct RomFsFileEntry {
     pub name: String,
 }
 
+/// A directory included in a validated RomFS tree walk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RomFsTreeDirectory {
+    /// Canonical path relative to the RomFS root, using forward slashes.
+    /// The root directory is represented by an empty path.
+    pub path: String,
+    pub entry: RomFsDirectoryEntry,
+}
+
+/// A file included in a validated RomFS tree walk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RomFsTreeFile {
+    /// Canonical path relative to the RomFS root, using forward slashes.
+    pub path: String,
+    pub entry: RomFsFileEntry,
+}
+
+/// Flattened directory and file entries discovered from the RomFS root.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RomFsTree {
+    pub directories: Vec<RomFsTreeDirectory>,
+    pub files: Vec<RomFsTreeFile>,
+}
+
 /// Reader for an already-isolated logical RomFS Level 3 image.
 ///
 /// The supplied stream must start at Level 3 byte zero. IVFC physical layout,
@@ -500,6 +527,109 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
         })
     }
 
+    /// Traverses the root directory (metadata offset zero) without recursion.
+    ///
+    /// Directory and file sibling chains are followed independently. The walk
+    /// rejects cycles, reused metadata records, broken parent links, unsafe path
+    /// components, and duplicate paths. Hash chains are not needed to enumerate
+    /// the tree and are not traversed by this method.
+    pub fn read_tree(&mut self) -> Result<RomFsTree, RomFsError> {
+        const NO_ENTRY: u32 = u32::MAX;
+
+        let root = self.read_directory_entry(0)?;
+        if root.parent_directory_offset_bytes != 0 {
+            return Err(RomFsError::InvalidTree(
+                "root directory does not point to itself as parent",
+            ));
+        }
+        if !root.name.is_empty() {
+            return Err(RomFsError::InvalidTree(
+                "root directory name is not empty",
+            ));
+        }
+
+        let mut tree = RomFsTree::default();
+        let mut seen_directories = HashSet::new();
+        let mut seen_files = HashSet::new();
+        let mut seen_paths = HashSet::new();
+
+        seen_directories.insert(0);
+        seen_paths.insert(String::new());
+
+        let mut pending = vec![(root, String::new())];
+
+        while let Some((directory, directory_path)) = pending.pop() {
+            let directory_offset = directory.metadata_offset_bytes;
+            tree.directories.push(RomFsTreeDirectory {
+                path: directory_path.clone(),
+                entry: directory.clone(),
+            });
+
+            let mut file_offset = directory.first_file_offset_bytes;
+            while file_offset != NO_ENTRY {
+                if !seen_files.insert(file_offset) {
+                    return Err(RomFsError::InvalidTree(
+                        "file metadata record is referenced more than once or forms a cycle",
+                    ));
+                }
+
+                let file = self.read_file_entry(file_offset)?;
+                if file.parent_directory_offset_bytes != directory_offset {
+                    return Err(RomFsError::InvalidTree(
+                        "file parent does not match the directory containing it",
+                    ));
+                }
+                validate_path_component(&file.name)
+                    .map_err(RomFsError::InvalidTree)?;
+
+                let path = append_path_component(&directory_path, &file.name);
+                if !seen_paths.insert(path.clone()) {
+                    return Err(RomFsError::InvalidTree(
+                        "multiple entries resolve to the same path",
+                    ));
+                }
+
+                file_offset = file.next_sibling_file_offset_bytes;
+                tree.files.push(RomFsTreeFile { path, entry: file });
+            }
+
+            let mut child_offset = directory.first_child_directory_offset_bytes;
+            let mut children = Vec::new();
+            while child_offset != NO_ENTRY {
+                if !seen_directories.insert(child_offset) {
+                    return Err(RomFsError::InvalidTree(
+                        "directory metadata record is referenced more than once or forms a cycle",
+                    ));
+                }
+
+                let child = self.read_directory_entry(child_offset)?;
+                if child.parent_directory_offset_bytes != directory_offset {
+                    return Err(RomFsError::InvalidTree(
+                        "directory parent does not match the directory containing it",
+                    ));
+                }
+                validate_path_component(&child.name)
+                    .map_err(RomFsError::InvalidTree)?;
+
+                let path = append_path_component(&directory_path, &child.name);
+                if !seen_paths.insert(path.clone()) {
+                    return Err(RomFsError::InvalidTree(
+                        "multiple entries resolve to the same path",
+                    ));
+                }
+
+                child_offset = child.next_sibling_directory_offset_bytes;
+                children.push((child, path));
+            }
+
+            for child in children.into_iter().rev() {
+                pending.push(child);
+            }
+        }
+
+        Ok(tree)
+    }
+
     /// Opens a file as a bounded reader over the Level 3 file-data area.
     ///
     /// The returned reader borrows this Level 3 reader and cannot read or seek
@@ -661,6 +791,34 @@ impl<R: Read + Seek> Seek for RomFsFileReader<'_, R> {
 
         self.position = relative;
         Ok(relative)
+    }
+}
+
+fn validate_path_component(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("non-root entry has an empty name");
+    }
+    if name == "." || name == ".." {
+        return Err("entry name is a dot path component");
+    }
+    if name
+        .chars()
+        .any(|character| matches!(character, '/' | '\\' | '\0'))
+    {
+        return Err("entry name contains a path separator or NUL");
+    }
+    Ok(())
+}
+
+fn append_path_component(parent: &str, component: &str) -> String {
+    if parent.is_empty() {
+        component.to_owned()
+    } else {
+        let mut path = String::with_capacity(parent.len() + 1 + component.len());
+        path.push_str(parent);
+        path.push('/');
+        path.push_str(component);
+        path
     }
 }
 
@@ -1106,6 +1264,55 @@ mod tests {
         data
     }
 
+    fn valid_nested_level3_image() -> Vec<u8> {
+        let mut data = vec![0; 0x93];
+        write_u32(&mut data, 0x00, 0x28);
+        write_u32(&mut data, 0x04, 0x28);
+        write_u32(&mut data, 0x08, 0x04);
+        write_u32(&mut data, 0x0C, 0x2C);
+        write_u32(&mut data, 0x10, 0x38);
+        write_u32(&mut data, 0x14, 0x64);
+        write_u32(&mut data, 0x18, 0x04);
+        write_u32(&mut data, 0x1C, 0x68);
+        write_u32(&mut data, 0x20, 0x24);
+        write_u32(&mut data, 0x24, 0x8C);
+
+        // Empty directory hash bucket.
+        write_u32(&mut data, 0x28, u32::MAX);
+
+        // Root directory at metadata offset zero; child directory at 0x18.
+        write_u32(&mut data, 0x2C, 0);
+        write_u32(&mut data, 0x30, u32::MAX);
+        write_u32(&mut data, 0x34, 0x18);
+        write_u32(&mut data, 0x38, u32::MAX);
+        write_u32(&mut data, 0x3C, u32::MAX);
+        write_u32(&mut data, 0x40, 0);
+
+        // Child directory named "sub", with file metadata record zero.
+        write_u32(&mut data, 0x44, 0);
+        write_u32(&mut data, 0x48, u32::MAX);
+        write_u32(&mut data, 0x4C, u32::MAX);
+        write_u32(&mut data, 0x50, 0);
+        write_u32(&mut data, 0x54, u32::MAX);
+        write_u32(&mut data, 0x58, 6);
+        data[0x5C..0x62].copy_from_slice(&[
+            b's', 0, b'u', 0, b'b', 0,
+        ]);
+
+        // File hash bucket and a file named "xy" under directory offset 0x18.
+        write_u32(&mut data, 0x64, 0);
+        write_u32(&mut data, 0x68, 0x18);
+        write_u32(&mut data, 0x6C, u32::MAX);
+        data[0x70..0x78].copy_from_slice(&2u64.to_le_bytes());
+        data[0x78..0x80].copy_from_slice(&5u64.to_le_bytes());
+        write_u32(&mut data, 0x80, u32::MAX);
+        write_u32(&mut data, 0x84, 4);
+        data[0x88..0x8C].copy_from_slice(&[b'x', 0, b'y', 0]);
+
+        data[0x8E..0x93].copy_from_slice(b"HELLO");
+        data
+    }
+
     #[test]
     fn reads_root_directory_and_file_metadata() {
         let image = valid_level3_image();
@@ -1200,6 +1407,74 @@ mod tests {
                 "name extends beyond its metadata table"
             ))
         ));
+    }
+
+    #[test]
+    fn traverses_nested_directories_and_files_into_stable_paths() {
+        let image = valid_nested_level3_image();
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x93).unwrap();
+        let tree = reader.read_tree().unwrap();
+
+        assert_eq!(tree.directories.len(), 2);
+        assert_eq!(tree.directories[0].path, "");
+        assert_eq!(tree.directories[1].path, "sub");
+        assert_eq!(tree.files.len(), 1);
+        assert_eq!(tree.files[0].path, "sub/xy");
+        assert_eq!(tree.files[0].entry.parent_directory_offset_bytes, 0x18);
+
+        let mut contents = Vec::new();
+        reader
+            .open_file(&tree.files[0].entry)
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
+        assert_eq!(contents, b"HELLO");
+    }
+
+    #[test]
+    fn rejects_directory_and_file_sibling_cycles() {
+        let mut image = valid_nested_level3_image();
+        write_u32(&mut image, 0x48, 0x18);
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x93).unwrap();
+        assert_eq!(
+            reader.read_tree(),
+            Err(RomFsError::InvalidTree(
+                "directory metadata record is referenced more than once or forms a cycle"
+            ))
+        );
+
+        let mut image = valid_nested_level3_image();
+        write_u32(&mut image, 0x6C, 0);
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x93).unwrap();
+        assert_eq!(
+            reader.read_tree(),
+            Err(RomFsError::InvalidTree(
+                "file metadata record is referenced more than once or forms a cycle"
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_parent_mismatches_and_unsafe_path_components() {
+        let mut image = valid_nested_level3_image();
+        write_u32(&mut image, 0x44, 0x10);
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x93).unwrap();
+        assert_eq!(
+            reader.read_tree(),
+            Err(RomFsError::InvalidTree(
+                "directory parent does not match the directory containing it"
+            ))
+        );
+
+        let mut image = valid_nested_level3_image();
+        image[0x5C..0x60].copy_from_slice(&[b'.', 0, b'.', 0]);
+        let mut reader = RomFsLevel3Reader::new(Cursor::new(image), 0x93).unwrap();
+        assert_eq!(
+            reader.read_tree(),
+            Err(RomFsError::InvalidTree(
+                "entry name is a dot path component"
+            ))
+        );
     }
 
     #[test]
