@@ -1592,6 +1592,7 @@ mod tests {
         assert_eq!(level3.len() as u64, layout.level3.size_bytes);
 
         let mut image = vec![0; layout.level2.end_offset_bytes().unwrap() as usize];
+        image[..IVFC_HEADER_SIZE].copy_from_slice(&valid_integrity_ivfc_header());
         let copy_region = |image: &mut [u8], region: IvfcRegion, contents: &[u8]| {
             let start = region.offset_bytes as usize;
             image[start..start + contents.len()].copy_from_slice(contents);
