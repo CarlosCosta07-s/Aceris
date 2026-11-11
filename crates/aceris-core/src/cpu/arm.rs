@@ -1534,8 +1534,7 @@ impl Arm11Core {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::{Psr, SP};
-    use crate::cpu::Psr;
+    use crate::cpu::{Psr, SP};
     use crate::memory::FlatMemory;
 
     /// Scratch area for load/store tests.
