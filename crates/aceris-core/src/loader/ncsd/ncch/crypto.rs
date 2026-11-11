@@ -335,14 +335,16 @@ impl Aes128Ctr {
     }
 }
 
-
 /// Errors while opening a bounded NCCH AES-CTR region reader.
 #[derive(Debug)]
 pub enum NcchCtrReaderError {
     ContentAlreadyClear,
     EmptyRegion,
     RegionRangeOverflow,
-    RegionOutOfBounds { end_bytes: u64, available_bytes: u64 },
+    RegionOutOfBounds {
+        end_bytes: u64,
+        available_bytes: u64,
+    },
     Crypto(NcchCryptoError),
     ReaderFailure(std::io::Error),
 }
@@ -350,12 +352,13 @@ pub enum NcchCtrReaderError {
 impl std::fmt::Display for NcchCtrReaderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ContentAlreadyClear => {
-                f.write_str("NCCH content is marked as already clear")
-            }
+            Self::ContentAlreadyClear => f.write_str("NCCH content is marked as already clear"),
             Self::EmptyRegion => f.write_str("NCCH encrypted region has zero length"),
             Self::RegionRangeOverflow => f.write_str("NCCH encrypted region range overflows"),
-            Self::RegionOutOfBounds { end_bytes, available_bytes } => write!(
+            Self::RegionOutOfBounds {
+                end_bytes,
+                available_bytes,
+            } => write!(
                 f,
                 "NCCH encrypted region ends at 0x{end_bytes:x}, beyond reader length 0x{available_bytes:x}"
             ),
@@ -431,12 +434,10 @@ impl<R: std::io::Read + std::io::Seek> NcchCtrReader<R> {
             .seek(std::io::SeekFrom::Start(region_offset))
             .map_err(NcchCtrReaderError::ReaderFailure)?;
         if actual != region_offset {
-            return Err(NcchCtrReaderError::ReaderFailure(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "underlying reader did not seek to the NCCH region",
-                ),
-            ));
+            return Err(NcchCtrReaderError::ReaderFailure(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "underlying reader did not seek to the NCCH region",
+            )));
         }
 
         Ok(Self {
@@ -534,10 +535,9 @@ impl<R: std::io::Read + std::io::Seek> std::io::Seek for NcchCtrReader<R> {
             None
         } else {
             Some(
-                stream_at_offset(self.key, self.initial_counter, relative)
-                    .map_err(|error| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
-                    })?,
+                stream_at_offset(self.key, self.initial_counter, relative).map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
+                })?,
             )
         };
 
@@ -745,7 +745,6 @@ mod tests {
         assert_eq!(next, [0x3c; 1]);
     }
 
-
     #[test]
     fn ncch_ctr_reader_decrypts_region_and_supports_unaligned_seeks() {
         use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -762,9 +761,14 @@ mod tests {
         container.extend_from_slice(&ciphertext);
         container.extend_from_slice(&[0x5A; 9]);
 
-        let mut reader =
-            NcchCtrReader::new(Cursor::new(container), 13, ciphertext.len() as u64, key, counter)
-                .unwrap();
+        let mut reader = NcchCtrReader::new(
+            Cursor::new(container),
+            13,
+            ciphertext.len() as u64,
+            key,
+            counter,
+        )
+        .unwrap();
         assert_eq!(reader.len(), plaintext.len() as u64);
 
         let mut decoded = Vec::new();
@@ -782,7 +786,11 @@ mod tests {
         reader.read_exact(&mut tail).unwrap();
         assert_eq!(&tail, &plaintext[plaintext.len() - 5..]);
 
-        assert!(reader.seek(SeekFrom::Start(plaintext.len() as u64 + 1)).is_err());
+        assert!(
+            reader
+                .seek(SeekFrom::Start(plaintext.len() as u64 + 1))
+                .is_err()
+        );
     }
 
     #[test]

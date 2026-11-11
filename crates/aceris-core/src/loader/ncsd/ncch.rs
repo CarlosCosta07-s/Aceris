@@ -1076,7 +1076,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn ncch_header_opens_exefs_as_decrypted_bounded_region() {
         use std::io::Read;
@@ -1104,11 +1103,7 @@ mod tests {
         image[start..start + ciphertext.len()].copy_from_slice(&ciphertext);
 
         let mut reader = parsed
-            .open_decrypted_region_reader(
-                Cursor::new(image),
-                crypto::NcchCtrRegion::ExeFs,
-                key,
-            )
+            .open_decrypted_region_reader(Cursor::new(image), crypto::NcchCtrRegion::ExeFs, key)
             .unwrap()
             .unwrap();
         assert_eq!(reader.len(), region.size_bytes);
