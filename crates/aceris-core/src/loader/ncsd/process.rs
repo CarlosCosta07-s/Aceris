@@ -849,7 +849,8 @@ mod tests {
         assert!(address_space.is_writable_range(0x0010_3000, 0x1000));
         assert!(address_space.is_writable_range(0x0010_3FFC, 8));
         assert!(!address_space.is_writable_range(0x0010_2FFC, 8));
-        assert!(!address_space.is_writable_range(0x0010_4000, 1));
+        assert!(address_space.is_writable_range(0x0010_4000, 1));
+        assert!(!address_space.is_writable_range(0x0010_6000, 1));
         assert!(!address_space.is_writable_range(0x0010_3000, 0));
     }
 

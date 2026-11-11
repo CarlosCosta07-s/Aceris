@@ -550,12 +550,11 @@ mod tests {
     }
 
     #[test]
-    fn creates_starts_and_exits_a_guest_thread_through_svc() {
+    fn create_thread_preempts_immediately_and_exit_thread_restores_the_main_context() {
         let mut session = test_session_with_program_and_data(&[
             (0x00, 0xEF00_0008), // SVC CreateThread
-            (0x04, 0xE1A0_0001), // MOV r0, r1
-            (0x08, 0xEF00_0009), // SVC StartThread
-            (0x0C, 0xEF00_0009), // SVC ExitThread (main)
+            (0x04, 0xE1A0_0001), // MOV r0, r1 (main resumes here)
+            (0x08, 0xEF00_0009), // SVC ExitThread (main)
             (0x20, 0xE3A0_0009), // MOV r0, #9 (child)
             (0x24, 0xEF00_0009), // SVC ExitThread (child)
         ]);
@@ -573,26 +572,18 @@ mod tests {
             created.stop_reason,
             Arm11RunStopReason::InstructionBudgetExhausted
         );
-        assert_eq!(session.core().regs[0], 0);
-        let child_handle = session.core().regs[1];
+        let main_context = session.scheduler.core(MAIN_THREAD_ID).unwrap();
+        assert_eq!(main_context.regs[0], 0);
+        let child_handle = main_context.regs[1];
         assert_eq!(child_handle, 2);
         assert_eq!(session.scheduler.thread_count(), 2);
-
-        let started = session.run_instructions(2).unwrap();
-        assert_eq!(
-            started.stop_reason,
-            Arm11RunStopReason::InstructionBudgetExhausted
-        );
-        assert_eq!(
-            session.current_thread_id(),
-            Some(
-                session
-                    .scheduler
-                    .thread_id_for_handle(child_handle)
-                    .unwrap()
-            )
-        );
+        let child_id = session.scheduler.thread_id_for_handle(child_handle).unwrap();
+        assert_eq!(session.current_thread_id(), Some(child_id));
         assert_eq!(session.core().regs[0], 0xCAFE_BABE);
+        assert_eq!(
+            session.thread_info(child_id).unwrap().state,
+            ThreadState::Running
+        );
 
         let child_exit = session.run_instructions(2).unwrap();
         assert_eq!(
@@ -600,8 +591,12 @@ mod tests {
             Arm11RunStopReason::InstructionBudgetExhausted
         );
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(
+            session.thread_info(child_id).unwrap().state,
+            ThreadState::Exited
+        );
 
-        let main_exit = session.run_instructions(1).unwrap();
+        let main_exit = session.run_instructions(2).unwrap();
         assert_eq!(main_exit.stop_reason, Arm11RunStopReason::NoRunnableThread);
         assert_eq!(session.current_thread_id(), None);
     }

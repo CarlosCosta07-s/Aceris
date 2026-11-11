@@ -39,9 +39,8 @@ impl ThreadId {
 /// Current lifecycle state of an application thread.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThreadState {
-    /// Created but not yet started by the guest.
-    Created,
-    /// Eligible to be selected by the scheduler.
+    /// Eligible to be selected by the scheduler. The 3DS CreateThread SVC
+    /// makes a newly-created thread Ready immediately.
     Ready,
     /// Currently owns the emulated application CPU.
     Running,
@@ -226,6 +225,7 @@ impl Arm11ThreadScheduler {
         core.regs[13] = stack_top;
         core.cpsr.set_thumb(thumb);
 
+        let order = self.allocate_ready_order();
         let info = ThreadInfo {
             id,
             entrypoint: instruction_address,
@@ -233,45 +233,18 @@ impl Arm11ThreadScheduler {
             stack_top,
             priority,
             processor_id: resolved_processor_id,
-            state: ThreadState::Created,
+            state: ThreadState::Ready,
         };
         self.threads.insert(
             id,
             ThreadControlBlock {
                 info,
                 core,
-                ready_order: None,
+                ready_order: Some(order),
             },
         );
-        Ok(id)
-    }
-
-    /// Marks a newly-created thread Ready and schedules it if it outranks the
-    /// current thread.
-    pub fn start_thread(
-        &mut self,
-        id: ThreadId,
-    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
-        let state = self
-            .threads
-            .get(&id)
-            .ok_or(ThreadSchedulerError::UnknownThread(id))?
-            .info
-            .state;
-        if state != ThreadState::Created {
-            return Err(ThreadSchedulerError::InvalidState {
-                thread_id: id,
-                state,
-                operation: "start",
-            });
-        }
-
-        let order = self.allocate_ready_order();
-        let thread = self.threads.get_mut(&id).expect("thread was checked above");
-        thread.info.state = ThreadState::Ready;
-        thread.ready_order = Some(order);
         self.reschedule_if_needed();
-        Ok(self.current)
+        Ok(id)
     }
 
     /// Returns a thread's current priority.
@@ -598,7 +571,7 @@ mod tests {
     #[test]
     fn creates_an_independent_arm_thread_context() {
         let mut scheduler = scheduler();
-        let id = create(&mut scheduler, 0x0020_0000, 0x20);
+        let id = create(&mut scheduler, 0x0020_0000, 0x30);
         let core = scheduler.core(id).unwrap();
 
         assert_eq!(core.pc(), 0x0020_0000);
@@ -607,7 +580,7 @@ mod tests {
         assert!(!core.cpsr.thumb());
         assert_eq!(
             scheduler.thread_info(id).unwrap().state,
-            ThreadState::Created
+            ThreadState::Ready
         );
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
     }
@@ -676,9 +649,7 @@ mod tests {
         let normal = create(&mut scheduler, 0x0020_0000, 0x30);
         let urgent = create(&mut scheduler, 0x0030_0000, 0x10);
 
-        scheduler.start_thread(normal).unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
-        scheduler.start_thread(urgent).unwrap();
 
         assert_eq!(scheduler.current_thread_id(), Some(urgent));
         assert_eq!(
@@ -693,8 +664,6 @@ mod tests {
         let first = create(&mut scheduler, 0x0020_0000, 0x20);
         let second = create(&mut scheduler, 0x0030_0000, 0x20);
 
-        scheduler.start_thread(first).unwrap();
-        scheduler.start_thread(second).unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
 
         scheduler.yield_current().unwrap();
@@ -709,8 +678,6 @@ mod tests {
     fn changing_a_ready_threads_priority_can_preempt() {
         let mut scheduler = scheduler();
         let other = create(&mut scheduler, 0x0020_0000, 0x30);
-        scheduler.start_thread(other).unwrap();
-
         scheduler.set_priority(other, 0x10).unwrap();
 
         assert_eq!(scheduler.current_thread_id(), Some(other));
@@ -718,22 +685,25 @@ mod tests {
     }
 
     #[test]
-    fn exited_threads_cannot_be_restarted() {
-        let mut scheduler = scheduler();
+    fn exited_threads_are_not_returned_to_the_ready_queue() {
+        let mut scheduler = scheduler_with_priority(0x10);
         let other = create(&mut scheduler, 0x0020_0000, 0x20);
-        scheduler.start_thread(other).unwrap();
-        scheduler.exit_current().unwrap();
+
+        assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
+        scheduler.yield_current().unwrap();
+        assert_eq!(scheduler.current_thread_id(), Some(other));
+        assert_eq!(scheduler.exit_current().unwrap(), Some(MAIN_THREAD_ID));
 
         assert_eq!(
             scheduler.thread_info(other).unwrap().state,
             ThreadState::Exited
         );
         assert_eq!(
-            scheduler.start_thread(other),
+            scheduler.set_priority(other, 0x10),
             Err(ThreadSchedulerError::InvalidState {
                 thread_id: other,
                 state: ThreadState::Exited,
-                operation: "start",
+                operation: "change priority for",
             })
         );
     }
@@ -742,8 +712,6 @@ mod tests {
     fn sleeping_threads_wake_only_after_the_virtual_deadline() {
         let mut scheduler = scheduler_with_priority(0x10);
         let other = create(&mut scheduler, 0x0020_0000, 0x20);
-        scheduler.start_thread(other).unwrap();
-
         scheduler.sleep_current(100).unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(other));
         assert!(matches!(
@@ -767,8 +735,6 @@ mod tests {
     fn zero_and_documented_negative_sleep_values_yield() {
         let mut scheduler = scheduler();
         let other = create(&mut scheduler, 0x0020_0000, 0x30);
-        scheduler.start_thread(other).unwrap();
-
         scheduler.sleep_current(0).unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(other));
         scheduler.sleep_current(-1).unwrap();
@@ -781,8 +747,6 @@ mod tests {
     fn waiting_threads_resume_only_when_woken() {
         let mut scheduler = scheduler_with_priority(0x10);
         let other = create(&mut scheduler, 0x0020_0000, 0x20);
-        scheduler.start_thread(other).unwrap();
-
         scheduler.wait_current().unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(other));
         assert_eq!(
