@@ -306,6 +306,7 @@ fn validate_no_overlap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loader::ncsd::ncch::extended_header::NcchExtendedHeader;
 
     fn prepared_image() -> PreparedArm11Image {
         PreparedArm11Image {
