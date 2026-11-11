@@ -682,7 +682,7 @@ fn verify_exefs_file_hash<R: Read + Seek>(
         remaining -= amount as u64;
     }
 
-    if &hasher.finalize() != &file.sha256 {
+    if hasher.finalize() != file.sha256 {
         return Err(exefs::ExeFsError::FileHashMismatch(file.name.clone()));
     }
 
