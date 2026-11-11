@@ -125,6 +125,33 @@ impl TicketHeader {
             parsed_size_bytes: ticket_data_end,
         })
     }
+
+    /// Builds the 16-byte AES-CBC IV used to decrypt this ticket's title key.
+    ///
+    /// The 64-bit title ID is encoded in big-endian order in the first half;
+    /// the remaining eight bytes are zero. This prepares the IV only and does
+    /// not decrypt or alter the stored encrypted title key.
+    pub const fn title_key_iv(&self) -> [u8; 16] {
+        let title_id = self.title_id.to_be_bytes();
+        [
+            title_id[0],
+            title_id[1],
+            title_id[2],
+            title_id[3],
+            title_id[4],
+            title_id[5],
+            title_id[6],
+            title_id[7],
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]
+    }
 }
 
 fn aligned_signature_data_size(signature_type: TicketSignatureType) -> Result<usize, TicketError> {
@@ -259,6 +286,13 @@ mod tests {
         assert_eq!(ticket.license_type, 1);
         assert_eq!(ticket.common_key_index, 2);
         assert_eq!(ticket.parsed_size_bytes, data.len());
+        assert_eq!(
+            ticket.title_key_iv(),
+            [
+                0x00, 0x04, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00,
+            ]
+        );
     }
 
     #[test]

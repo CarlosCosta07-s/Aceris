@@ -1,13 +1,15 @@
 //! Structural parser for the public CIA (CTR Importable Archive) container.
 //!
 //! This module validates the fixed header and the byte ranges of its sections.
-//! It does not parse tickets or title metadata, verify signatures, decrypt
-//! content, or claim that any contained program is executable.
+//! It does not verify ticket/TMD signatures or provide console key material.
+//! Ticket decryption is prepared through explicit caller-supplied key material.
 
 use std::io;
 
 /// Streaming access to CIA content sections.
 pub mod archive;
+/// Caller-supplied ticket common-key material.
+pub mod key_store;
 /// Structural ticket parser used by CIA archives.
 pub mod ticket;
 /// Structural TMD parser used by CIA archives.
@@ -16,6 +18,7 @@ pub mod tmd;
 pub use archive::{
     CiaArchiveError, CiaArchiveReader, CiaContentLocation, CiaContentNcchReader, CiaContentReader,
 };
+pub use key_store::{COMMON_KEY_COUNT, TicketCommonKeyStore, TicketKeyError};
 pub use ticket::{TicketError, TicketHeader, TicketSignatureType};
 
 pub const HEADER_SIZE: usize = 0x2020;
