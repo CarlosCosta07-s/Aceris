@@ -358,10 +358,7 @@ impl NcchHeader {
             });
         }
 
-        verify_extended_header_hash(
-            reader,
-            &self.extended_header_hash,
-        )?;
+        verify_extended_header_hash(reader, &self.extended_header_hash)?;
         Ok(Some(()))
     }
 
@@ -383,13 +380,9 @@ impl NcchHeader {
             return Ok(None);
         }
 
-        romfs::RomFsRangeReader::new(
-            reader,
-            EXTENDED_HEADER_OFFSET,
-            EXTENDED_HEADER_HASH_SIZE,
-        )
-        .map(Some)
-        .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))
+        romfs::RomFsRangeReader::new(reader, EXTENDED_HEADER_OFFSET, EXTENDED_HEADER_HASH_SIZE)
+            .map(Some)
+            .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))
     }
 
     /// Returns the two low-order content-form bits from NCCH flag byte 5.
@@ -1032,7 +1025,9 @@ mod tests {
         let mut source = Cursor::new(image.clone());
 
         assert_eq!(
-            parsed.verify_extended_header_integrity(&mut source).unwrap(),
+            parsed
+                .verify_extended_header_integrity(&mut source)
+                .unwrap(),
             Some(())
         );
         assert_eq!(source.position(), 0);
