@@ -543,9 +543,7 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
             ));
         }
         if !root.name.is_empty() {
-            return Err(RomFsError::InvalidTree(
-                "root directory name is not empty",
-            ));
+            return Err(RomFsError::InvalidTree("root directory name is not empty"));
         }
 
         let mut tree = RomFsTree::default();
@@ -579,8 +577,7 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
                         "file parent does not match the directory containing it",
                     ));
                 }
-                validate_path_component(&file.name)
-                    .map_err(RomFsError::InvalidTree)?;
+                validate_path_component(&file.name).map_err(RomFsError::InvalidTree)?;
 
                 let path = append_path_component(&directory_path, &file.name);
                 if !seen_paths.insert(path.clone()) {
@@ -608,8 +605,7 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
                         "directory parent does not match the directory containing it",
                     ));
                 }
-                validate_path_component(&child.name)
-                    .map_err(RomFsError::InvalidTree)?;
+                validate_path_component(&child.name).map_err(RomFsError::InvalidTree)?;
 
                 let path = append_path_component(&directory_path, &child.name);
                 if !seen_paths.insert(path.clone()) {
@@ -1295,9 +1291,7 @@ mod tests {
         write_u32(&mut data, 0x50, 0);
         write_u32(&mut data, 0x54, u32::MAX);
         write_u32(&mut data, 0x58, 6);
-        data[0x5C..0x62].copy_from_slice(&[
-            b's', 0, b'u', 0, b'b', 0,
-        ]);
+        data[0x5C..0x62].copy_from_slice(&[b's', 0, b'u', 0, b'b', 0]);
 
         // File hash bucket and a file named "xy" under directory offset 0x18.
         write_u32(&mut data, 0x64, 0);
