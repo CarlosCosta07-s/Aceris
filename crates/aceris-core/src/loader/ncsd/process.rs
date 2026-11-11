@@ -1176,7 +1176,7 @@ mod tests {
         // LDREX r0,[r1] ; STREX r2,r3,[r1] ; LDREX r0,[r1] ;
         // STR r4,[r1,#4] ; STREX r2,r3,[r1].
         let mut prepared = prepared_image();
-        let program = [
+        let program: [u32; 5] = [
             0xE191_0F9F,
             0xE181_2F93,
             0xE191_0F9F,
