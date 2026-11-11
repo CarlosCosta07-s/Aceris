@@ -41,6 +41,16 @@ enum ParallelOperation {
     SubtractAddExchange,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParallelArithmetic {
+    SignedModulo,
+    SignedSaturating,
+    SignedHalving,
+    UnsignedModulo,
+    UnsignedSaturating,
+    UnsignedHalving,
+}
+
 fn sign_extend_lane(value: u32, width: u32) -> i64 {
     let shift = 32 - width;
     i64::from(((value << shift) as i32) >> shift)
@@ -312,46 +322,55 @@ impl Arm11Core {
         Ok(StepEvent::Executed)
     }
 
-    /// Executes non-saturating ARMv6 parallel add/subtract media instructions.
+    /// Executes the complete ARMv6 parallel add/subtract instruction family.
     ///
-    /// Implements signed and unsigned 8-bit and 16-bit lanes, including
-    /// exchanged-halfword add/subtract forms. Signed variants set GE from the
-    /// sign of each widened lane result; unsigned variants set GE from carry
-    /// or no-borrow. Results always retain the low bits of each lane.
+    /// Implements all 36 combinations of signed/unsigned modular,
+    /// saturating, and halving arithmetic over byte and halfword lanes.
+    /// Only the non-saturating, non-halving S/U variants update GE.
     fn execute_parallel_media_instruction(&mut self, word: u32) -> Result<bool> {
-        let encoding = word & 0x0FF0_00F0;
-        let (width, signed, operation) = match encoding {
-            0x0610_0010 => (16, true, ParallelOperation::Add),
-            0x0610_0030 => (16, true, ParallelOperation::AddSubtractExchange),
-            0x0610_0050 => (16, true, ParallelOperation::SubtractAddExchange),
-            0x0610_0070 => (16, true, ParallelOperation::Subtract),
-            0x0610_0090 => (8, true, ParallelOperation::Add),
-            0x0610_00F0 => (8, true, ParallelOperation::Subtract),
-            0x0650_0010 => (16, false, ParallelOperation::Add),
-            0x0650_0030 => (16, false, ParallelOperation::AddSubtractExchange),
-            0x0650_0050 => (16, false, ParallelOperation::SubtractAddExchange),
-            0x0650_0070 => (16, false, ParallelOperation::Subtract),
-            0x0650_0090 => (8, false, ParallelOperation::Add),
-            0x0650_00F0 => (8, false, ParallelOperation::Subtract),
+        if bits(word, 27, 24) != 0b0110 || bits(word, 11, 8) != 0xF || !bit(word, 4) {
+            return Ok(false);
+        }
+
+        let arithmetic = match bits(word, 22, 20) {
+            0b001 => ParallelArithmetic::SignedModulo,
+            0b010 => ParallelArithmetic::SignedSaturating,
+            0b011 => ParallelArithmetic::SignedHalving,
+            0b101 => ParallelArithmetic::UnsignedModulo,
+            0b110 => ParallelArithmetic::UnsignedSaturating,
+            0b111 => ParallelArithmetic::UnsignedHalving,
             _ => return Ok(false),
         };
-
         let rn = bits(word, 19, 16) as usize;
         let rd = bits(word, 15, 12) as usize;
         let rm = bits(word, 3, 0) as usize;
         if rd == PC || rn == PC || rm == PC {
-            return Err(Error::UndefinedInstruction {
-                pc: self.pc(),
-                word,
-            });
+            // REV/REV16/REVSH and other encodings with Rn=PC are decoded
+            // before this helper. Parallel arithmetic itself forbids PC.
+            return Ok(false);
         }
+
+        let width = if bit(word, 7) { 8 } else { 16 };
+        let operation_code = bits(word, 6, 5);
+        let operation = match (width, operation_code) {
+            (8, 0) => ParallelOperation::Add,
+            (8, 3) => ParallelOperation::Subtract,
+            (16, 0) => ParallelOperation::Add,
+            (16, 1) => ParallelOperation::AddSubtractExchange,
+            (16, 2) => ParallelOperation::SubtractAddExchange,
+            (16, 3) => ParallelOperation::Subtract,
+            _ => return Ok(false),
+        };
 
         let lhs = self.regs[rn];
         let rhs = self.regs[rm];
         let lane_count = 32 / width;
         let lane_mask = (1u32 << width) - 1;
+        let signed_min = -(1i64 << (width - 1));
+        let signed_max = (1i64 << (width - 1)) - 1;
         let mut result = 0u32;
         let mut ge = 0u8;
+        let mut updates_ge = false;
 
         for lane in 0..lane_count {
             let rhs_lane = match operation {
@@ -371,37 +390,74 @@ impl Arm11Core {
                 ParallelOperation::SubtractAddExchange => lane != lane_count - 1,
             };
 
-            let (lane_result, ge_set) = if signed {
-                let signed_a = sign_extend_lane(a, width);
-                let signed_b = sign_extend_lane(b, width);
-                let arithmetic = if is_add {
-                    signed_a + signed_b
-                } else {
-                    signed_a - signed_b
-                };
-                (arithmetic as u32 & lane_mask, arithmetic >= 0)
-            } else if is_add {
-                let arithmetic = u64::from(a) + u64::from(b);
-                (
-                    arithmetic as u32 & lane_mask,
-                    arithmetic > u64::from(lane_mask),
-                )
-            } else {
-                (a.wrapping_sub(b) & lane_mask, a >= b)
+            let (lane_result, ge_set) = match arithmetic {
+                ParallelArithmetic::SignedModulo => {
+                    updates_ge = true;
+                    let a = sign_extend_lane(a, width);
+                    let b = sign_extend_lane(b, width);
+                    let value = if is_add { a + b } else { a - b };
+                    (value as u32 & lane_mask, Some(value >= 0))
+                }
+                ParallelArithmetic::UnsignedModulo => {
+                    updates_ge = true;
+                    if is_add {
+                        let value = u64::from(a) + u64::from(b);
+                        (
+                            value as u32 & lane_mask,
+                            Some(value > u64::from(lane_mask)),
+                        )
+                    } else {
+                        (a.wrapping_sub(b) & lane_mask, Some(a >= b))
+                    }
+                }
+                ParallelArithmetic::SignedSaturating => {
+                    let a = sign_extend_lane(a, width);
+                    let b = sign_extend_lane(b, width);
+                    let value = if is_add { a + b } else { a - b };
+                    (value.clamp(signed_min, signed_max) as u32 & lane_mask, None)
+                }
+                ParallelArithmetic::UnsignedSaturating => {
+                    let value = if is_add {
+                        i64::from(a) + i64::from(b)
+                    } else {
+                        i64::from(a) - i64::from(b)
+                    };
+                    (value.clamp(0, i64::from(lane_mask)) as u32, None)
+                }
+                ParallelArithmetic::SignedHalving => {
+                    let a = sign_extend_lane(a, width);
+                    let b = sign_extend_lane(b, width);
+                    let value = if is_add { a + b } else { a - b };
+                    ((value >> 1) as u32 & lane_mask, None)
+                }
+                ParallelArithmetic::UnsignedHalving => {
+                    // The architectural result is the middle half of a
+                    // widened 17-bit add/subtract result, including borrow.
+                    let value = if is_add {
+                        i64::from(a) + i64::from(b)
+                    } else {
+                        i64::from(a) - i64::from(b)
+                    };
+                    ((value >> 1) as u32 & lane_mask, None)
+                }
             };
 
             result |= lane_result << shift_lhs;
-            if ge_set {
-                if width == 16 {
-                    ge |= 0b11 << (lane * 2);
-                } else {
-                    ge |= 1 << lane;
+            if let Some(ge_set) = ge_set {
+                if ge_set {
+                    if width == 16 {
+                        ge |= 0b11 << (lane * 2);
+                    } else {
+                        ge |= 1 << lane;
+                    }
                 }
             }
         }
 
         self.regs[rd] = result;
-        self.cpsr.set_ge(ge);
+        if updates_ge {
+            self.cpsr.set_ge(ge);
+        }
         Ok(true)
     }
 
@@ -1520,6 +1576,49 @@ mod tests {
         m.run(1);
         assert_eq!(m.cpu.regs[6], 0x0000_FFFF);
         assert_eq!(m.cpu.cpsr.ge(), 0b1100);
+    }
+
+    #[test]
+    fn armv6_parallel_saturating_and_halving_variants_preserve_all_flags() {
+        // QADD16, UQADD8, SHADD8, UHSUB16.
+        let mut m = Machine::new(&[
+            0xE621_0F12,
+            0xE664_3F95,
+            0xE637_6F98,
+            0xE67A_9F7B,
+        ]);
+        m.cpu.regs[1] = 0x7FFF_8000;
+        m.cpu.regs[2] = 0x0001_FFFF;
+        m.cpu.regs[4] = 0xFF00_80FE;
+        m.cpu.regs[5] = 0x0201_8080;
+        m.cpu.regs[7] = 0xFF01_807F;
+        m.cpu.regs[8] = 0x01FF_FF01;
+        m.cpu.regs[10] = 0x0001_0000;
+        m.cpu.regs[11] = 0x0001_0001;
+        m.cpu.cpsr.set_ge(0b1010);
+        m.cpu.cpsr.set_q();
+
+        m.run(4);
+
+        assert_eq!(m.cpu.regs[0], 0x7FFF_8000);
+        assert_eq!(m.cpu.regs[3], 0xFF01_FFFF);
+        assert_eq!(m.cpu.regs[6], 0x0000_BF40);
+        assert_eq!(m.cpu.regs[9], 0x0000_FFFF);
+        assert_eq!(m.cpu.cpsr.ge(), 0b1010);
+        assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
+    fn armv6_parallel_exchanged_saturating_and_halving_variants_swap_operands() {
+        // QASX r3,r1,r2 ; UHASX r6,r1,r2.
+        let mut m = Machine::new(&[0xE621_3F32, 0xE671_6F3B]);
+        m.cpu.regs[1] = 0x000A_0014;
+        m.cpu.regs[2] = 0x0003_0005;
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[3], 0x000F_0011);
+        assert_eq!(m.cpu.regs[6], 0x0007_0008);
     }
 
     #[test]
