@@ -85,7 +85,9 @@ fn partition(offset_bytes: u64, size_bytes: u64) -> NcsdPartition {
 fn partition_reader_exposes_original_partition_coordinates() {
     let mut selected = partition(2, 4);
     selected.index = 5;
-    let mut reader = selected.reader(Cursor::new(b"0123456789".to_vec())).unwrap();
+    let mut reader = selected
+        .reader(Cursor::new(b"0123456789".to_vec()))
+        .unwrap();
 
     assert_eq!(reader.partition_index(), 5);
     assert_eq!(reader.start_offset_bytes(), 2);
