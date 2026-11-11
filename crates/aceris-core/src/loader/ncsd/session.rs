@@ -17,11 +17,11 @@ use std::io::{Read, Seek};
 
 use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
-use crate::memory::Bus;
-use kernel::{Arm11KernelObjectTable, CURRENT_THREAD_HANDLE, EventResetType, KernelHandleError};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
+use crate::memory::Bus;
+use kernel::{Arm11KernelObjectTable, CURRENT_THREAD_HANDLE, EventResetType, KernelHandleError};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY,
     SVC_CREATE_EVENT, SVC_CREATE_THREAD, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
@@ -474,7 +474,6 @@ impl Arm11ProcessSession {
             Err(code) => self.write_create_thread_error(caller, code),
         }
     }
-
 
     /// Handles CreateEvent: r0 is the writable guest pointer for the handle,
     /// r1 is ResetType (0 = one-shot, 1 = sticky).

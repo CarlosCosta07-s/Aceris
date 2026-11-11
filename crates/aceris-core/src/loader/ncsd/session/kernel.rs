@@ -78,18 +78,12 @@ impl Default for Arm11KernelObjectTable {
 
 impl Arm11KernelObjectTable {
     /// Inserts a newly created thread and returns its guest-visible handle.
-    pub fn insert_thread(
-        &mut self,
-        thread_id: ThreadId,
-    ) -> Result<u32, KernelHandleError> {
+    pub fn insert_thread(&mut self, thread_id: ThreadId) -> Result<u32, KernelHandleError> {
         self.insert(KernelObject::Thread(thread_id))
     }
 
     /// Creates an unsignaled event and returns its guest-visible handle.
-    pub fn insert_event(
-        &mut self,
-        reset_type: EventResetType,
-    ) -> Result<u32, KernelHandleError> {
+    pub fn insert_event(&mut self, reset_type: EventResetType) -> Result<u32, KernelHandleError> {
         self.insert(KernelObject::Event(KernelEvent {
             reset_type,
             signaled: false,
@@ -179,17 +173,13 @@ mod tests {
 
     fn thread_id(value: u32) -> ThreadId {
         // ThreadId intentionally exposes no public constructor.
-        let mut scheduler = super::super::thread::Arm11ThreadScheduler::new(
-            crate::cpu::Arm11Core::new(),
-            0x30,
-        )
-        .unwrap();
+        let mut scheduler =
+            super::super::thread::Arm11ThreadScheduler::new(crate::cpu::Arm11Core::new(), 0x30)
+                .unwrap();
         if value == 1 {
             super::super::thread::MAIN_THREAD_ID
         } else {
-            scheduler
-                .create_thread(0x1000, 0, 0x2000, 0x30, 0)
-                .unwrap()
+            scheduler.create_thread(0x1000, 0, 0x2000, 0x30, 0).unwrap()
         }
     }
 
