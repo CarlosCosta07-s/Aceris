@@ -6,7 +6,7 @@
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use aceris_core::loader::ncsd::{
-    ncch::romfs::sha256::Sha256, NcsdImageReader, NcsdImageReaderError,
+    NcsdImageReader, NcsdImageReaderError, ncch::romfs::sha256::Sha256,
 };
 
 const MEDIA_UNIT: usize = 0x200;
@@ -92,8 +92,7 @@ fn image_with_verified_exefs_and_secondary_partition() -> (Vec<u8>, Vec<u8>) {
     write_u32(&mut image, ncch_start + 0x1A0, 0x10);
     write_u32(&mut image, ncch_start + 0x1A4, 0x20);
     write_u32(&mut image, ncch_start + 0x1A8, 1);
-    image[ncch_start + 0x1C0..ncch_start + 0x1E0]
-        .copy_from_slice(&exefs_superblock_hash);
+    image[ncch_start + 0x1C0..ncch_start + 0x1E0].copy_from_slice(&exefs_superblock_hash);
 
     let exefs_start = ncch_start + EXEFS_OFFSET;
     image[exefs_start..exefs_start + EXEFS_SIZE].copy_from_slice(&exefs);
