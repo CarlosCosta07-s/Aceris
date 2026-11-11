@@ -2,15 +2,18 @@
 //!
 //! Current scope: an interpreter for ARM (A32) and classic Thumb instruction
 //! sets with banked ARMv6 exception-mode registers and per-mode SPSR storage.
-//! Exception entry/return, CP15, MMU and VFP remain separate milestones.
+//! CP15 register state lives in `cp15`; MMU and VFP remain separate milestones.
 
 mod arm;
 mod condition;
+mod coprocessor;
+mod cp15;
 mod psr;
 mod shifter;
 mod thumb;
 
 pub use condition::Condition;
+pub use cp15::Cp15;
 pub use psr::Psr;
 
 use crate::memory::Bus;
@@ -109,6 +112,7 @@ pub struct Arm11Core {
     high_vectors_enabled: bool,
     exception_big_endian: bool,
     svc_exception_entry_enabled: bool,
+    cp15: Cp15,
 }
 
 impl Default for Arm11Core {
@@ -124,6 +128,7 @@ impl Default for Arm11Core {
             high_vectors_enabled: false,
             exception_big_endian: false,
             svc_exception_entry_enabled: false,
+            cp15: Cp15::default(),
         }
     }
 }
@@ -200,8 +205,8 @@ impl Arm11Core {
 
     /// Configures the CP15-controlled exception vector and endianness state.
     ///
-    /// This is an integration point for SCTLR.V and SCTLR.EE; both default to
-    /// the low-vector, little-endian reset profile until CP15 is implemented.
+    /// Kept in sync automatically when the guest writes SCTLR through CP15; both
+    /// default to the low-vector, little-endian reset profile.
     pub fn configure_exception_entry(
         &mut self,
         high_vectors_enabled: bool,
@@ -260,6 +265,16 @@ impl Arm11Core {
             });
         }
         Ok(())
+    }
+
+    /// CP15 system control state.
+    pub fn cp15(&self) -> &Cp15 {
+        &self.cp15
+    }
+
+    /// Mutable CP15 state, e.g. for the kernel layer to set the thread ID on a context switch.
+    pub fn cp15_mut(&mut self) -> &mut Cp15 {
+        &mut self.cp15
     }
 
     pub fn pc(&self) -> u32 {
