@@ -94,7 +94,9 @@ impl Arm11Core {
             }
             0b110 => Err(Error::Unimplemented("coprocessor load/store")),
             _ if bit(word, 24) => {
-                self.enter_svc_exception(self.pc().wrapping_add(4))?;
+                if self.svc_exception_entry_enabled {
+                    self.enter_svc_exception(self.pc().wrapping_add(4))?;
+                }
                 Ok(StepEvent::Svc(bits(word, 23, 0)))
             }
             _ => Err(Error::Unimplemented("coprocessor instructions")),
@@ -3131,9 +3133,19 @@ mod tests {
     }
 
     #[test]
-    fn swi_reports_its_comment_field_and_enters_supervisor_mode() {
+    fn swi_is_intercepted_for_hle_service_dispatch_by_default() {
+        let mut m = Machine::new(&[0xEF12_3456]);
+        assert_eq!(m.step(), StepEvent::Svc(0x12_3456));
+        assert_eq!(m.cpu.pc(), 0x04);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::USER_MODE);
+        assert_eq!(m.cpu.saved_program_status(), None);
+    }
+
+    #[test]
+    fn swi_enters_supervisor_mode_when_hardware_exception_entry_is_enabled() {
         let mut m = Machine::new(&[0xEF12_3456]);
         let original_cpsr = m.cpu.cpsr;
+        m.cpu.set_svc_exception_entry_enabled(true);
 
         assert_eq!(m.step(), StepEvent::Svc(0x12_3456));
         assert_eq!(m.cpu.pc(), 0x08);
@@ -3149,6 +3161,7 @@ mod tests {
         // The low SVC vector contains MOVS pc,lr.
         let mut m = Machine::new(&[0xEF00_0001, 0xE1A0_0000, 0xE1B0_F00E]);
         let original_cpsr = m.cpu.cpsr;
+        m.cpu.set_svc_exception_entry_enabled(true);
 
         assert_eq!(m.step(), StepEvent::Svc(1));
         assert_eq!(m.cpu.pc(), 0x08);
@@ -3160,6 +3173,7 @@ mod tests {
     #[test]
     fn swi_uses_configured_high_vectors_and_exception_endianness() {
         let mut m = Machine::new(&[0xEF00_0001]);
+        m.cpu.set_svc_exception_entry_enabled(true);
         m.cpu.configure_exception_entry(true, true);
 
         assert_eq!(m.step(), StepEvent::Svc(1));

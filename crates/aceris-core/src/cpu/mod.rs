@@ -29,8 +29,9 @@ const THUMB_INSTRUCTION_SIZE: u32 = 2;
 pub enum StepEvent {
     /// A normal instruction completed.
     Executed,
-    /// A supervisor call was executed and Supervisor exception entry completed.
-    /// The payload is the instruction's 24-bit (A32) or 8-bit (Thumb) comment.
+    /// A supervisor-call instruction was executed; the payload is its encoded
+    /// comment field. Hardware exception entry is optional and disabled by default
+    /// so HLE service dispatch can intercept this event.
     Svc(u32),
     /// A BKPT instruction was encountered. The immediate is retained for a
     /// debugger or the process exception layer.
@@ -107,6 +108,7 @@ pub struct Arm11Core {
     active_mode: u32,
     high_vectors_enabled: bool,
     exception_big_endian: bool,
+    svc_exception_entry_enabled: bool,
 }
 
 impl Default for Arm11Core {
@@ -121,6 +123,7 @@ impl Default for Arm11Core {
             active_mode: Psr::USER_MODE,
             high_vectors_enabled: false,
             exception_big_endian: false,
+            svc_exception_entry_enabled: false,
         }
     }
 }
@@ -206,6 +209,14 @@ impl Arm11Core {
     ) {
         self.high_vectors_enabled = high_vectors_enabled;
         self.exception_big_endian = exception_big_endian;
+    }
+
+    /// Enables or disables hardware SVC exception entry.
+    ///
+    /// Disabled by default so the HLE session can intercept StepEvent::Svc
+    /// and dispatch OS services without requiring a mapped vector page.
+    pub fn set_svc_exception_entry_enabled(&mut self, enabled: bool) {
+        self.svc_exception_entry_enabled = enabled;
     }
 
     /// Enters the ARMv6 Supervisor exception and preserves the previous CPSR.
