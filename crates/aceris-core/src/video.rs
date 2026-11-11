@@ -4,6 +4,14 @@
 //! output. The bottom LCD has one buffer. Frontends consume tightly packed
 //! RGBA8 surfaces; the core does not depend on a windowing system.
 
+mod lcd;
+pub use lcd::{
+    LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport,
+    PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
+    PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT, PDC_FRAMEBUFFER_SELECT,
+    PDC_FRAMEBUFFER_STRIDE,
+};
+
 use std::fmt;
 
 /// Logical top LCD width in pixels.

@@ -441,6 +441,11 @@ mod tests {
         REG_COMMAND_BUFFER_SIZE_0,
     };
     use crate::loader::ncsd::session::Arm11RunStopReason;
+    use crate::video::{
+        LcdPanel, LcdPixelFormat, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST,
+        PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND,
+        PDC_FRAMEBUFFER_FORMAT, PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_WIDTH, BOTTOM_SCREEN_WIDTH,
+    };
 
     #[test]
     fn running_without_an_image_fails() {
