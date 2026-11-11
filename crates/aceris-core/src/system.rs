@@ -430,7 +430,10 @@ impl System {
             .lcd
             .scanout(&self.physical_memory, &mut self.display)
             .map_err(|error| {
-                Error::Io(io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    error.to_string(),
+                ))
             })?;
         let frame_number = self.display.present();
         self.lcd.advance_vblank();
