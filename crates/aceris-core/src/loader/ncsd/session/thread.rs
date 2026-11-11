@@ -452,6 +452,21 @@ impl Arm11ThreadScheduler {
         self.virtual_time_ns
     }
 
+    /// Resolves a guest-visible handle to an internal thread identifier.
+    ///
+    /// This bootstrap implementation uses stable, monotonically allocated
+    /// identifiers as opaque process-local handles. A randomized kernel
+    /// handle table and handle closing semantics are not implemented yet.
+    pub fn thread_id_for_handle(&self, handle: u32) -> Option<ThreadId> {
+        let id = ThreadId(handle);
+        self.threads.contains_key(&id).then_some(id)
+    }
+
+    /// Returns a thread's mutable saved CPU context.
+    pub fn core_mut(&mut self, id: ThreadId) -> Option<&mut Arm11Core> {
+        self.threads.get_mut(&id).map(|thread| &mut thread.core)
+    }
+
     /// Returns a thread's saved CPU context.
     pub fn core(&self, id: ThreadId) -> Option<&Arm11Core> {
         self.threads.get(&id).map(|thread| &thread.core)

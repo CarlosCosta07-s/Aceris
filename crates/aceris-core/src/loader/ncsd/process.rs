@@ -350,6 +350,63 @@ impl Arm11CodeAddressSpace {
         core.regs[SP] = self.layout.initial_stack_pointer;
     }
 
+    /// Returns true when an address belongs to a mapped executable segment.
+    ///
+    /// Bit zero is ignored so a Thumb function pointer can be validated using
+    /// the same mapping check as its aligned instruction address.
+    pub fn is_executable_address(&self, address: u32) -> bool {
+        let instruction_address = address & !1;
+        let Some((kind, _)) = self.locate(instruction_address) else {
+            return false;
+        };
+        self.segment_is_executable(kind)
+    }
+
+    /// Returns true when every byte in a range is mapped and writable.
+    ///
+    /// The range may span adjacent writable data and BSS segments. Empty,
+    /// wrapping, or partially unmapped ranges are rejected.
+    pub fn is_writable_range(&self, address: u32, size: usize) -> bool {
+        if size == 0 {
+            return false;
+        }
+
+        let Some(end) = u64::from(address).checked_add(size as u64) else {
+            return false;
+        };
+        if end > ADDRESS_SPACE_END {
+            return false;
+        }
+
+        let segments = [
+            (Arm11SegmentKind::Text, self.layout.text),
+            (Arm11SegmentKind::ReadOnly, self.layout.read_only),
+            (Arm11SegmentKind::Data, self.layout.data),
+            (Arm11SegmentKind::Bss, self.layout.bss),
+            (Arm11SegmentKind::Stack, self.layout.stack),
+        ];
+
+        let mut cursor = u64::from(address);
+        while cursor < end {
+            let Some((kind, segment)) = segments.iter().find(|(kind, segment)| {
+                self.segment_is_writable(*kind)
+                    && !segment.is_empty()
+                    && cursor >= u64::from(segment.address)
+                    && cursor < segment.end_address()
+            }) else {
+                return false;
+            };
+
+            let next = segment.end_address().min(end);
+            if next <= cursor {
+                return false;
+            }
+            cursor = next;
+        }
+
+        true
+    }
+
     /// Returns the backing bytes for one mapped code segment.
     pub fn segment_bytes(&self, kind: Arm11SegmentKind) -> &[u8] {
         self.bytes_for(kind)
@@ -405,6 +462,16 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::Data => self.layout.data.writable,
             Arm11SegmentKind::Bss => self.layout.bss.writable,
             Arm11SegmentKind::Stack => self.layout.stack.writable,
+        }
+    }
+
+    fn segment_is_executable(&self, kind: Arm11SegmentKind) -> bool {
+        match kind {
+            Arm11SegmentKind::Text => self.layout.text.executable,
+            Arm11SegmentKind::ReadOnly => self.layout.read_only.executable,
+            Arm11SegmentKind::Data => self.layout.data.executable,
+            Arm11SegmentKind::Bss => self.layout.bss.executable,
+            Arm11SegmentKind::Stack => self.layout.stack.executable,
         }
     }
 
@@ -763,6 +830,27 @@ mod tests {
 
         assert!(address_space.write32(data_start - 2, 0xAABB_CCDD).is_err());
         assert_eq!(address_space.read8(data_start).unwrap(), original);
+    }
+
+    #[test]
+    fn validates_executable_entrypoints_and_thumb_function_pointers() {
+        let address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        assert!(address_space.is_executable_address(0x0010_0000));
+        assert!(address_space.is_executable_address(0x0010_0001));
+        assert!(!address_space.is_executable_address(0x0010_2000));
+        assert!(!address_space.is_executable_address(0x000F_FFFF));
+    }
+
+    #[test]
+    fn validates_writable_ranges_without_crossing_unmapped_or_read_only_memory() {
+        let address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        assert!(address_space.is_writable_range(0x0010_3000, 0x1000));
+        assert!(address_space.is_writable_range(0x0010_3FFC, 8));
+        assert!(!address_space.is_writable_range(0x0010_2FFC, 8));
+        assert!(!address_space.is_writable_range(0x0010_4000, 1));
+        assert!(!address_space.is_writable_range(0x0010_3000, 0));
     }
 
     #[test]
