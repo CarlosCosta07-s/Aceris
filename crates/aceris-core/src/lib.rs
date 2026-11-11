@@ -6,6 +6,7 @@
 pub mod cpu;
 pub mod loader;
 pub mod memory;
+pub mod selftest;
 pub mod system;
 
 pub use aceris_common::{Error, Result};

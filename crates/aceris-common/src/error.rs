@@ -18,6 +18,12 @@ pub enum Error {
     #[error("invalid memory access at {addr:#010x}")]
     InvalidAccess { addr: u32 },
 
+    #[error("undefined instruction {word:#010x} at {pc:#010x}")]
+    UndefinedInstruction { pc: u32, word: u32 },
+
     #[error("not implemented yet: {0}")]
     Unimplemented(&'static str),
+
+    #[error("CPU self-test failed: {0}")]
+    SelfTest(&'static str),
 }

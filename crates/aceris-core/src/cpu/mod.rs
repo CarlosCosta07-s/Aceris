@@ -1,7 +1,13 @@
-//! ARM11 CPU core (work in progress).
+//! ARM11 CPU core.
+//!
+//! Current scope: an interpreter for the ARM (A32) instruction set in a single
+//! user-mode register bank. Thumb, banked registers, privileged modes,
+//! coprocessors and VFP are still to come.
 
+mod arm;
 mod condition;
 mod psr;
+mod shifter;
 
 pub use condition::Condition;
 pub use psr::Psr;
@@ -9,16 +15,31 @@ pub use psr::Psr;
 use crate::memory::Bus;
 use aceris_common::{Error, Result};
 
-/// Index of the program counter in the register file.
+/// Register indices with a special role.
+pub const SP: usize = 13;
+pub const LR: usize = 14;
 pub const PC: usize = 15;
 
 const ARM_INSTRUCTION_SIZE: u32 = 4;
 
+/// What happened when the CPU executed one instruction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepEvent {
+    /// A normal instruction completed.
+    Executed,
+    /// A supervisor call was executed; the payload is its 24-bit comment
+    /// field. `pc` already points to the following instruction.
+    Svc(u32),
+}
+
 /// A single ARM11 core.
 #[derive(Clone, Debug, Default)]
 pub struct Arm11Core {
+    /// `r0`-`r15`. While an instruction executes, `r15` holds the address of
+    /// that instruction; operand reads of `pc` add the pipeline offset.
     pub regs: [u32; 16],
     pub cpsr: Psr,
+    branch_taken: bool,
 }
 
 impl Arm11Core {
@@ -34,21 +55,21 @@ impl Arm11Core {
         self.regs[PC] = pc;
     }
 
-    /// Fetches and executes one ARM instruction.
-    ///
-    /// Only fetch and condition-code evaluation exist so far: instructions
-    /// whose condition fails are skipped, everything else reports
-    /// [`Error::Unimplemented`].
-    pub fn step<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<()> {
-        let word = bus.read32(self.pc())?;
-        let condition = Condition::from_bits((word >> 28) as u8);
-
-        if !condition.passes(self.cpsr) {
-            self.set_pc(self.pc().wrapping_add(ARM_INSTRUCTION_SIZE));
-            return Ok(());
+    /// Fetches and executes one instruction.
+    pub fn step<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
+        if self.cpsr.thumb() {
+            return Err(Error::Unimplemented("Thumb instruction execution"));
         }
 
-        Err(Error::Unimplemented("ARM instruction execution"))
+        let pc = self.pc();
+        let word = bus.read32(pc)?;
+
+        self.branch_taken = false;
+        let event = self.execute_arm(bus, word)?;
+        if !self.branch_taken {
+            self.regs[PC] = pc.wrapping_add(ARM_INSTRUCTION_SIZE);
+        }
+        Ok(event)
     }
 }
 
@@ -70,18 +91,8 @@ mod tests {
         let mut cpu = Arm11Core::new();
         cpu.cpsr = Psr::from_flags(false, true, false, false);
 
-        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
         assert_eq!(cpu.pc(), 4);
-    }
-
-    #[test]
-    fn executable_instruction_is_reported_as_unimplemented() {
-        // `MOV r0, r0` with the always condition.
-        let mut mem = memory_with(0xE1A0_0000);
-        let mut cpu = Arm11Core::new();
-
-        assert!(matches!(cpu.step(&mut mem), Err(Error::Unimplemented(_))));
-        assert_eq!(cpu.pc(), 0);
     }
 
     #[test]
@@ -92,5 +103,13 @@ mod tests {
             cpu.step(&mut mem),
             Err(Error::InvalidAccess { .. })
         ));
+    }
+
+    #[test]
+    fn thumb_state_is_not_executable_yet() {
+        let mut mem = memory_with(0);
+        let mut cpu = Arm11Core::new();
+        cpu.cpsr.set_thumb(true);
+        assert!(matches!(cpu.step(&mut mem), Err(Error::Unimplemented(_))));
     }
 }

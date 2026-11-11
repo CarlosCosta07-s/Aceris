@@ -23,14 +23,25 @@ Ele expõe um `System` que o frontend carrega com um jogo e avança quadro a qua
 |-------|-------|
 | `aceris-common` | Tipo de erro (`Error`/`Result`), nome e versão do projeto. |
 | `aceris-core` | `cpu` (núcleo ARM11), `memory` (trait `Bus`), `loader` (identificação de imagens), `system`. |
-| `aceris-desktop` | Binário `aceris`. Hoje é só linha de comando. |
-| `aceris-android` | `cdylib` carregada pelo app Android. Hoje exporta apenas `aceris_version()`. |
+| `aceris-desktop` | Binário `aceris`. Hoje é só linha de comando (`--selftest`). |
+| `aceris-android` | `cdylib` carregada pelo app Android. Exporta `aceris_version()` e `aceris_selftest()`. |
 
 ## Estado atual do núcleo
 
-- **CPU:** registradores, `Psr` e avaliação completa dos códigos de condição ARM.
-  `step()` busca a instrução e pula as que falham na condição; a execução em si
-  ainda retorna `Error::Unimplemented`.
+- **CPU (ARM11, estado ARM):** interpretador com banco único de registradores
+  (modo usuário). `step()` busca, decodifica e executa uma instrução e devolve um
+  `StepEvent` (`Executed` ou `Svc(n)`, que será tratado pelo kernel emulado).
+  Já implementado:
+  - processamento de dados (as 16 operações, shifter completo, flags N/Z/C/V);
+  - `LDR/STR/LDRB/STRB` (pré/pós-indexado, writeback, offset escalado);
+  - `LDRH/STRH/LDRSB/LDRSH/LDRD/STRD`, `LDM/STM`, `SWP`;
+  - `MUL/MLA` e multiplicações longas (`UMULL/SMULL/UMLAL/SMLAL`);
+  - `B/BL/BX/BLX`, `CLZ`, `MRS/MSR` (apenas flags) e `SWI`.
+  Ainda faltam: Thumb, modos privilegiados e registradores com banco, instruções
+  de mídia/exclusivas do ARMv6, coprocessadores e VFP.
+- **Autoteste (`selftest`):** programa ARM minúsculo executado pelo interpretador.
+  O desktop o expõe em `aceris --selftest` e o Android em `aceris_selftest()`,
+  provando que as duas plataformas rodam o mesmo núcleo.
 - **Memória:** trait `Bus` (little-endian) e `FlatMemory` para testes e bring-up.
 - **Loader:** identifica ELF, 3DSX, NCSD, NCCH e CIA pelos bytes mágicos.
 - **Sistema:** `System::load` identifica a imagem; `run_frame` ainda não emula.

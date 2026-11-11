@@ -14,12 +14,27 @@ fn print_usage() {
     println!();
     println!("USAGE:");
     println!("    aceris <GAME>");
+    println!("    aceris --selftest");
     println!();
     println!("OPTIONS:");
     println!("    -h, --help       Print this help");
     println!("    -V, --version    Print the version");
+    println!("        --selftest   Run the built-in CPU self-test");
     println!();
     println!("Set RUST_LOG (for example RUST_LOG=debug) to change the log level.");
+}
+
+fn selftest() -> ExitCode {
+    match aceris_core::selftest::run() {
+        Ok(value) => {
+            println!("CPU self-test passed (result: {value})");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            error!("{err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn run(path: PathBuf) -> ExitCode {
@@ -54,6 +69,7 @@ fn main() -> ExitCode {
             println!("{NAME} {VERSION}");
             ExitCode::SUCCESS
         }
+        Some("--selftest") => selftest(),
         Some(path) => run(PathBuf::from(path)),
         None => {
             print_usage();

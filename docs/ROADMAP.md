@@ -10,8 +10,11 @@ Ordem sugerida; os marcos podem ser reordenados conforme o que for aprendido.
 
 ## 1. Núcleo de CPU
 
-- [ ] Decodificação e execução do conjunto de instruções ARM
+- [x] Decodificação e execução do conjunto de instruções ARM (modo usuário)
+- [x] Autoteste da CPU compartilhado por PC e Android
 - [ ] Instruções Thumb
+- [ ] Modos privilegiados e registradores com banco
+- [ ] Instruções do ARMv6 (mídia, exclusivas, saturação, multiplicações DSP)
 - [ ] Coprocessador e unidade de ponto flutuante vetorial
 - [ ] Testes por instrução
 

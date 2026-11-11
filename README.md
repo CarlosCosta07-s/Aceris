@@ -9,7 +9,8 @@
 </p>
 
 > **Status: fase inicial (v0.0.1).** O projeto ainda não executa jogos. Hoje existe
-> apenas a estrutura do workspace, o esqueleto do núcleo e os frontends mínimos.
+> o workspace, os frontends mínimos (PC e Android) e um interpretador ARM funcional
+> no núcleo compartilhado. Veja o [roadmap](docs/ROADMAP.md).
 
 O nome vem da **acerola**, a pequena fruta vermelha cheia de energia.
 
@@ -49,6 +50,7 @@ Requer o [Rust](https://rustup.rs) estável (1.85 ou mais recente).
 cargo build            # compila núcleo e frontend desktop
 cargo test --workspace # roda os testes
 cargo run -- --help    # executa o frontend desktop
+cargo run -- --selftest # roda o autoteste da CPU
 ```
 
 ### Android
