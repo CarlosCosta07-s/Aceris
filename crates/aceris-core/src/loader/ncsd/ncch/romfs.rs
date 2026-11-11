@@ -67,10 +67,7 @@ pub struct Level3Header {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RomFsError {
     InvalidIvfcHeader(&'static str),
-    InvalidIvfcLevel {
-        index: u8,
-        reason: &'static str,
-    },
+    InvalidIvfcLevel { index: u8, reason: &'static str },
     InvalidLevel3Header(&'static str),
     ReaderFailure(String),
 }
@@ -118,8 +115,9 @@ impl IvfcHeader {
             ));
         }
 
-        let master_hash_size_bytes = read_u32_le(data, 0x08)
-            .ok_or(RomFsError::InvalidIvfcHeader("master hash size is truncated"))?;
+        let master_hash_size_bytes = read_u32_le(data, 0x08).ok_or(
+            RomFsError::InvalidIvfcHeader("master hash size is truncated"),
+        )?;
         if u64::from(master_hash_size_bytes) < SHA256_SIZE
             || u64::from(master_hash_size_bytes) % SHA256_SIZE != 0
         {
@@ -161,10 +159,9 @@ impl IvfcHeader {
             level1,
             level2,
             level3,
-            optional_info_size_bytes: read_u32_le(data, 0x58)
-                .ok_or(RomFsError::InvalidIvfcHeader(
-                    "optional-info size is truncated",
-                ))?,
+            optional_info_size_bytes: read_u32_le(data, 0x58).ok_or(
+                RomFsError::InvalidIvfcHeader("optional-info size is truncated"),
+            )?,
         })
     }
 
@@ -191,8 +188,9 @@ impl Level3Header {
             return Err(RomFsError::InvalidLevel3Header("header is truncated"));
         }
 
-        let header_size_bytes = read_u32_le(data, 0x00)
-            .ok_or(RomFsError::InvalidLevel3Header("header-size field is truncated"))?;
+        let header_size_bytes = read_u32_le(data, 0x00).ok_or(RomFsError::InvalidLevel3Header(
+            "header-size field is truncated",
+        ))?;
         if header_size_bytes != LEVEL3_HEADER_SIZE as u32 {
             return Err(RomFsError::InvalidLevel3Header(
                 "fixed header size is not 0x28 bytes",
@@ -201,26 +199,33 @@ impl Level3Header {
 
         let parsed = Self {
             header_size_bytes,
-            directory_hash_offset_bytes: read_u32_le(data, 0x04)
-                .ok_or(RomFsError::InvalidLevel3Header("directory hash offset is truncated"))?,
-            directory_hash_size_bytes: read_u32_le(data, 0x08)
-                .ok_or(RomFsError::InvalidLevel3Header("directory hash size is truncated"))?,
+            directory_hash_offset_bytes: read_u32_le(data, 0x04).ok_or(
+                RomFsError::InvalidLevel3Header("directory hash offset is truncated"),
+            )?,
+            directory_hash_size_bytes: read_u32_le(data, 0x08).ok_or(
+                RomFsError::InvalidLevel3Header("directory hash size is truncated"),
+            )?,
             directory_metadata_offset_bytes: read_u32_le(data, 0x0C).ok_or(
                 RomFsError::InvalidLevel3Header("directory metadata offset is truncated"),
             )?,
             directory_metadata_size_bytes: read_u32_le(data, 0x10).ok_or(
                 RomFsError::InvalidLevel3Header("directory metadata size is truncated"),
             )?,
-            file_hash_offset_bytes: read_u32_le(data, 0x14)
-                .ok_or(RomFsError::InvalidLevel3Header("file hash offset is truncated"))?,
-            file_hash_size_bytes: read_u32_le(data, 0x18)
-                .ok_or(RomFsError::InvalidLevel3Header("file hash size is truncated"))?,
-            file_metadata_offset_bytes: read_u32_le(data, 0x1C)
-                .ok_or(RomFsError::InvalidLevel3Header("file metadata offset is truncated"))?,
-            file_metadata_size_bytes: read_u32_le(data, 0x20)
-                .ok_or(RomFsError::InvalidLevel3Header("file metadata size is truncated"))?,
-            file_data_offset_bytes: read_u32_le(data, 0x24)
-                .ok_or(RomFsError::InvalidLevel3Header("file data offset is truncated"))?,
+            file_hash_offset_bytes: read_u32_le(data, 0x14).ok_or(
+                RomFsError::InvalidLevel3Header("file hash offset is truncated"),
+            )?,
+            file_hash_size_bytes: read_u32_le(data, 0x18).ok_or(
+                RomFsError::InvalidLevel3Header("file hash size is truncated"),
+            )?,
+            file_metadata_offset_bytes: read_u32_le(data, 0x1C).ok_or(
+                RomFsError::InvalidLevel3Header("file metadata offset is truncated"),
+            )?,
+            file_metadata_size_bytes: read_u32_le(data, 0x20).ok_or(
+                RomFsError::InvalidLevel3Header("file metadata size is truncated"),
+            )?,
+            file_data_offset_bytes: read_u32_le(data, 0x24).ok_or(
+                RomFsError::InvalidLevel3Header("file data offset is truncated"),
+            )?,
         };
 
         let tables = [
@@ -242,9 +247,9 @@ impl Level3Header {
         let mut previous_end = u64::from(LEVEL3_HEADER_SIZE as u32);
         for (index, (offset, size)) in tables.into_iter().enumerate() {
             let start = u64::from(offset);
-            let end = start.checked_add(u64::from(size)).ok_or(
-                RomFsError::InvalidLevel3Header("table range overflows"),
-            )?;
+            let end = start
+                .checked_add(u64::from(size))
+                .ok_or(RomFsError::InvalidLevel3Header("table range overflows"))?;
 
             if start < u64::from(LEVEL3_HEADER_SIZE as u32) {
                 return Err(RomFsError::InvalidLevel3Header(
@@ -348,11 +353,7 @@ mod tests {
         write_u32(&mut data, 0x04, IVFC_VERSION);
         write_u32(&mut data, 0x08, 0x20);
 
-        for (offset, logical, size) in [
-            (0x0C, 0, 0x20),
-            (0x24, 0x20, 0x20),
-            (0x3C, 0x40, 0x100),
-        ] {
+        for (offset, logical, size) in [(0x0C, 0, 0x20), (0x24, 0x20, 0x20), (0x3C, 0x40, 0x100)] {
             write_u64(&mut data, offset, logical);
             write_u64(&mut data, offset + 8, size);
             write_u32(&mut data, offset + 16, 12);
@@ -614,7 +615,10 @@ mod tests {
         image[0x4000..0x4000 + IVFC_HEADER_SIZE].copy_from_slice(&ivfc);
 
         let mut reader = Cursor::new(image);
-        let parsed_ivfc = parsed.parse_romfs_ivfc_header(&mut reader).unwrap().unwrap();
+        let parsed_ivfc = parsed
+            .parse_romfs_ivfc_header(&mut reader)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(parsed_ivfc.level3.hash_data_size_bytes, 0x100);
         assert_eq!(reader.position(), 0x4000 + IVFC_HEADER_SIZE as u64);
