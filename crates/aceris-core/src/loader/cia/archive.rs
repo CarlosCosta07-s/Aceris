@@ -9,7 +9,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
 
-use super::tmd::{MAX_TMD_SIZE_BYTES, TmdError, TmdHeader};
+use super::tmd::{CONTENT_TYPE_ENCRYPTED, MAX_TMD_SIZE_BYTES, TmdError, TmdHeader};
 use super::{CiaHeader, HEADER_SIZE};
 
 const CONTENT_ALIGNMENT: u64 = 0x40;
@@ -37,6 +37,8 @@ pub enum CiaArchiveError {
     },
     AllocationFailed,
     ContentNotIncluded(u16),
+    ContentRequiresDecryption(u16),
+    ContentStreamHasTrailingBytes(u16),
     ContentRangeOutsideSection {
         content_index: u16,
     },
@@ -70,6 +72,14 @@ impl fmt::Display for CiaArchiveError {
             Self::ContentNotIncluded(index) => {
                 write!(formatter, "CIA does not contain content index {index}")
             }
+            Self::ContentRequiresDecryption(index) => write!(
+                formatter,
+                "CIA content index {index} is encrypted; decrypt its AES-CBC layer before checking the TMD hash"
+            ),
+            Self::ContentStreamHasTrailingBytes(index) => write!(
+                formatter,
+                "content stream for CIA index {index} contains bytes beyond the TMD-declared size"
+            ),
             Self::ContentRangeOutsideSection { content_index } => write!(
                 formatter,
                 "CIA content index {content_index} extends outside the declared content section"
@@ -239,9 +249,11 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
         }))
     }
 
-    /// Streams a selected content through SHA-256 and compares it with the TMD.
+    /// Verifies selected content directly from the CIA when it is not encrypted.
     ///
-    /// Memory use is bounded by a fixed 64 KiB buffer regardless of content size.
+    /// TMD hashes apply after the outer CIA AES-CBC layer has been removed.
+    /// Encrypted entries must use `verify_content_stream` with a stream
+    /// supplied by the caller after decryption.
     pub fn verify_content(&mut self, content_index: u16) -> Result<(), CiaArchiveError> {
         let record = self
             .title_metadata
@@ -249,40 +261,99 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
             .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
         let expected_size = record.size_bytes;
         let expected_hash = record.sha256;
+        let content_type = record.content_type;
+
+        if self.content_location(content_index).is_none() {
+            return Err(CiaArchiveError::ContentNotIncluded(content_index));
+        }
+        if content_type & CONTENT_TYPE_ENCRYPTED != 0 {
+            return Err(CiaArchiveError::ContentRequiresDecryption(content_index));
+        }
 
         let mut content_reader = self
             .open_content_reader(content_index)?
             .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; HASH_BUFFER_SIZE];
-        let mut total_read = 0u64;
-
-        while total_read < expected_size {
-            let remaining = expected_size - total_read;
-            let requested = usize::try_from(remaining.min(HASH_BUFFER_SIZE as u64))
-                .expect("bounded by the fixed hash buffer");
-            let read = content_reader
-                .read(&mut buffer[..requested])
-                .map_err(CiaArchiveError::Reader)?;
-            if read == 0 {
-                return Err(CiaArchiveError::ContentTruncated {
-                    content_index,
-                    expected_size,
-                    actual_size: total_read,
-                });
-            }
-
-            hasher
-                .update(&buffer[..read])
-                .map_err(|_| CiaArchiveError::HashInputTooLong)?;
-            total_read += read as u64;
-        }
-
-        if hasher.finalize() != expected_hash {
-            return Err(CiaArchiveError::ContentHashMismatch { content_index });
-        }
-        Ok(())
+        verify_content_stream_bytes(
+            content_index,
+            expected_size,
+            expected_hash,
+            &mut content_reader,
+        )
     }
+
+    /// Verifies a caller-provided content stream against its TMD size and hash.
+    ///
+    /// The supplied stream must expose the bytes after any outer CIA AES-CBC
+    /// decryption. The entire stream is checked with bounded memory; streams
+    /// shorter or longer than the TMD-declared size are rejected.
+    pub fn verify_content_stream<S: Read>(
+        &self,
+        content_index: u16,
+        mut stream: S,
+    ) -> Result<(), CiaArchiveError> {
+        let record = self
+            .title_metadata
+            .content_by_index(content_index)
+            .ok_or(CiaArchiveError::ContentNotIncluded(content_index))?;
+        if self.content_location(content_index).is_none() {
+            return Err(CiaArchiveError::ContentNotIncluded(content_index));
+        }
+
+        verify_content_stream_bytes(
+            content_index,
+            record.size_bytes,
+            record.sha256,
+            &mut stream,
+        )
+    }
+}
+
+fn verify_content_stream_bytes<R: Read>(
+    content_index: u16,
+    expected_size: u64,
+    expected_hash: [u8; 32],
+    reader: &mut R,
+) -> Result<(), CiaArchiveError> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; HASH_BUFFER_SIZE];
+    let mut total_read = 0u64;
+
+    while total_read < expected_size {
+        let remaining = expected_size - total_read;
+        let requested = usize::try_from(remaining.min(HASH_BUFFER_SIZE as u64))
+            .expect("bounded by the fixed hash buffer");
+        let read = reader
+            .read(&mut buffer[..requested])
+            .map_err(CiaArchiveError::Reader)?;
+        if read == 0 {
+            return Err(CiaArchiveError::ContentTruncated {
+                content_index,
+                expected_size,
+                actual_size: total_read,
+            });
+        }
+
+        hasher
+            .update(&buffer[..read])
+            .map_err(|_| CiaArchiveError::HashInputTooLong)?;
+        total_read += read as u64;
+    }
+
+    let mut trailing_byte = [0u8; 1];
+    if reader
+        .read(&mut trailing_byte)
+        .map_err(CiaArchiveError::Reader)?
+        != 0
+    {
+        return Err(CiaArchiveError::ContentStreamHasTrailingBytes(
+            content_index,
+        ));
+    }
+
+    if hasher.finalize() != expected_hash {
+        return Err(CiaArchiveError::ContentHashMismatch { content_index });
+    }
+    Ok(())
 }
 
 fn build_content_locations(
@@ -578,6 +649,25 @@ mod tests {
 
         archive.verify_content(0).unwrap();
         archive.verify_content(2).unwrap();
+    }
+
+    #[test]
+    fn encrypted_content_requires_decryption_before_tmd_hash_verification() {
+        let cleartext = b"decrypted content bytes";
+        let (data, _) = make_cia(&[(0x1000, 0, CONTENT_TYPE_ENCRYPTED, cleartext)]);
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+
+        assert!(matches!(
+            archive.verify_content(0),
+            Err(CiaArchiveError::ContentRequiresDecryption(0))
+        ));
+        archive
+            .verify_content_stream(0, Cursor::new(cleartext))
+            .unwrap();
+        assert!(matches!(
+            archive.verify_content_stream(0, Cursor::new(b"wrong cleartext")),
+            Err(CiaArchiveError::ContentHashMismatch { content_index: 0 })
+        ));
     }
 
     #[test]
