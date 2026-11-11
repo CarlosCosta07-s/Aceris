@@ -386,8 +386,7 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
     ) -> Result<RomFsDirectoryEntry, RomFsError> {
         let table_size = u64::from(self.header.directory_metadata_size_bytes);
         let offset = u64::from(metadata_offset_bytes);
-        validate_entry_offset(offset, table_size)
-            .map_err(RomFsError::InvalidDirectoryEntry)?;
+        validate_entry_offset(offset, table_size).map_err(RomFsError::InvalidDirectoryEntry)?;
 
         let fixed = read_metadata_fixed::<0x18, _>(
             &mut self.inner,
@@ -412,11 +411,8 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
             .map_err(RomFsError::InvalidDirectoryEntry)?;
         validate_optional_reference(next_hash, table_size)
             .map_err(RomFsError::InvalidDirectoryEntry)?;
-        validate_optional_reference(
-            first_file,
-            u64::from(self.header.file_metadata_size_bytes),
-        )
-        .map_err(RomFsError::InvalidDirectoryEntry)?;
+        validate_optional_reference(first_file, u64::from(self.header.file_metadata_size_bytes))
+            .map_err(RomFsError::InvalidDirectoryEntry)?;
 
         let name = read_metadata_name(
             &mut self.inner,
@@ -446,8 +442,7 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
     ) -> Result<RomFsFileEntry, RomFsError> {
         let table_size = u64::from(self.header.file_metadata_size_bytes);
         let offset = u64::from(metadata_offset_bytes);
-        validate_entry_offset(offset, table_size)
-            .map_err(RomFsError::InvalidFileEntry)?;
+        validate_entry_offset(offset, table_size).map_err(RomFsError::InvalidFileEntry)?;
 
         let fixed = read_metadata_fixed::<0x20, _>(
             &mut self.inner,
@@ -466,10 +461,8 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
 
         validate_optional_reference(parent, u64::from(self.header.directory_metadata_size_bytes))
             .map_err(RomFsError::InvalidFileEntry)?;
-        validate_optional_reference(sibling, table_size)
-            .map_err(RomFsError::InvalidFileEntry)?;
-        validate_optional_reference(next_hash, table_size)
-            .map_err(RomFsError::InvalidFileEntry)?;
+        validate_optional_reference(sibling, table_size).map_err(RomFsError::InvalidFileEntry)?;
+        validate_optional_reference(next_hash, table_size).map_err(RomFsError::InvalidFileEntry)?;
 
         let file_data_size = self
             .level3_size_bytes
@@ -518,7 +511,9 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
         let file_data_size = self
             .level3_size_bytes
             .checked_sub(u64::from(self.header.file_data_offset_bytes))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid file-data offset"))?;
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid file-data offset")
+            })?;
         let data_end = file
             .data_offset_bytes
             .checked_add(file.data_size_bytes)
@@ -550,10 +545,7 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
     }
 
     /// Reads one directory hash-bucket head. None represents the 0xFFFFFFFF sentinel.
-    pub fn read_directory_hash_bucket(
-        &mut self,
-        index: u32,
-    ) -> Result<Option<u32>, RomFsError> {
+    pub fn read_directory_hash_bucket(&mut self, index: u32) -> Result<Option<u32>, RomFsError> {
         let value = self.read_hash_bucket(
             u64::from(self.header.directory_hash_offset_bytes),
             u64::from(self.header.directory_hash_size_bytes),
@@ -578,20 +570,27 @@ impl<R: Read + Seek> RomFsLevel3Reader<R> {
         table_size: u64,
         index: u32,
     ) -> Result<u32, RomFsError> {
-        let byte_offset = u64::from(index)
-            .checked_mul(4)
-            .ok_or(RomFsError::InvalidLevel3Header("hash bucket offset overflows"))?;
-        if byte_offset.checked_add(4).is_none_or(|end| end > table_size) {
+        let byte_offset =
+            u64::from(index)
+                .checked_mul(4)
+                .ok_or(RomFsError::InvalidLevel3Header(
+                    "hash bucket offset overflows",
+                ))?;
+        if byte_offset
+            .checked_add(4)
+            .is_none_or(|end| end > table_size)
+        {
             return Err(RomFsError::InvalidLevel3Header(
                 "hash bucket index exceeds its table",
             ));
         }
 
-        let absolute = table_offset
-            .checked_add(byte_offset)
-            .ok_or(RomFsError::InvalidLevel3Header(
-                "hash bucket position overflows",
-            ))?;
+        let absolute =
+            table_offset
+                .checked_add(byte_offset)
+                .ok_or(RomFsError::InvalidLevel3Header(
+                    "hash bucket position overflows",
+                ))?;
         let mut bytes = [0; 4];
         self.inner
             .seek(SeekFrom::Start(absolute))
@@ -1073,6 +1072,7 @@ mod tests {
         let mut data = vec![0; 0x80];
         write_u32(&mut data, 0x00, 0x28);
         write_u32(&mut data, 0x04, 0x28);
+        write_u32(&mut data, 0x28, u32::MAX);
         write_u32(&mut data, 0x08, 0x04);
         write_u32(&mut data, 0x0C, 0x2C);
         write_u32(&mut data, 0x10, 0x18);
