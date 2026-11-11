@@ -314,11 +314,12 @@ impl Arm11CodeAddressSpace {
             .map_err(|error| Arm11ProcessLayoutError::BssAllocationFailure(error.to_string()))?;
         bss.resize(bss_size, 0);
 
-        let stack_size = usize::try_from(layout.stack.mapped_size_bytes)
-            .map_err(|_| Arm11ProcessLayoutError::StackTooLarge {
+        let stack_size = usize::try_from(layout.stack.mapped_size_bytes).map_err(|_| {
+            Arm11ProcessLayoutError::StackTooLarge {
                 requested_size_bytes: layout.stack.mapped_size_bytes,
                 maximum_size_bytes: MAIN_STACK_TOP,
-            })?;
+            }
+        })?;
         let mut stack = Vec::new();
         stack
             .try_reserve_exact(stack_size)
@@ -537,8 +538,8 @@ fn make_stack_segment(
         });
     }
 
-    let mapped_size_bytes = u32::try_from(aligned_size)
-        .map_err(|_| Arm11ProcessLayoutError::StackTooLarge {
+    let mapped_size_bytes =
+        u32::try_from(aligned_size).map_err(|_| Arm11ProcessLayoutError::StackTooLarge {
             requested_size_bytes,
             maximum_size_bytes: MAIN_STACK_TOP,
         })?;
