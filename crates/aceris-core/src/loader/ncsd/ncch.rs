@@ -35,6 +35,8 @@ const ROMFS_HASH_OFFSET: usize = 0x1B8;
 const EXEFS_SUPERBLOCK_HASH_OFFSET: usize = 0x1C0;
 const ROMFS_SUPERBLOCK_HASH_OFFSET: usize = 0x1E0;
 const BASE_MEDIA_UNIT_SIZE: u64 = 0x200;
+const EXTENDED_HEADER_OFFSET: u64 = HEADER_SIZE as u64;
+const EXTENDED_HEADER_HASH_SIZE: u64 = 0x400;
 const NO_CRYPTO_FLAG: u8 = 0x04;
 
 /// The type of a byte range declared by the NCCH header.
@@ -109,6 +111,39 @@ impl fmt::Display for NcchError {
 }
 
 impl std::error::Error for NcchError {}
+
+/// Errors reported while validating the cleartext NCCH extended header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NcchIntegrityError {
+    ExtendedHeaderTooSmall {
+        declared_size: u32,
+        required_size: u64,
+    },
+    ExtendedHeaderHashMismatch,
+    ReaderFailure(String),
+}
+
+impl fmt::Display for NcchIntegrityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ExtendedHeaderTooSmall {
+                declared_size,
+                required_size,
+            } => write!(
+                formatter,
+                "NCCH extended header is too small: declared {declared_size} bytes, need at least {required_size}"
+            ),
+            Self::ExtendedHeaderHashMismatch => {
+                write!(formatter, "NCCH extended header SHA-256 hash mismatch")
+            }
+            Self::ReaderFailure(reason) => {
+                write!(formatter, "NCCH extended header reader failure: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for NcchIntegrityError {}
 
 /// Validated structural information from an NCCH header.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -298,6 +333,63 @@ impl NcchHeader {
             .read_exact(&mut header)
             .map_err(|_| NcchError::InvalidHeader("header is truncated"))?;
         Self::parse(&header, file_len)
+    }
+
+    /// Verifies the SHA-256 hash of the cleartext extended-header data.
+    ///
+    /// The NCCH format stores the extended header at offset 0x200 and hashes
+    /// its first 0x400 bytes. The reader must expose cleartext NCCH content
+    /// from offset zero; this method does not decrypt the extended header or
+    /// verify the NCCH RSA signature.
+    ///
+    /// Returns None when the NCCH header declares no extended header.
+    pub fn verify_extended_header_integrity<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+    ) -> Result<Option<()>, NcchIntegrityError> {
+        if self.extended_header_size == 0 {
+            return Ok(None);
+        }
+
+        if u64::from(self.extended_header_size) < EXTENDED_HEADER_HASH_SIZE {
+            return Err(NcchIntegrityError::ExtendedHeaderTooSmall {
+                declared_size: self.extended_header_size,
+                required_size: EXTENDED_HEADER_HASH_SIZE,
+            });
+        }
+
+        verify_extended_header_hash(
+            reader,
+            &self.extended_header_hash,
+        )?;
+        Ok(Some(()))
+    }
+
+    /// Opens the 0x400-byte extended-header hash region after its SHA-256 hash passes.
+    ///
+    /// The reader must expose cleartext NCCH content from offset zero. The
+    /// returned reader is bounded to the bytes covered by the extended-header
+    /// hash. This does not decrypt content or verify the NCCH RSA signature.
+    ///
+    /// Returns None when the NCCH header declares no extended header.
+    pub fn open_verified_extended_header_reader<R: Read + Seek>(
+        &self,
+        mut reader: R,
+    ) -> Result<Option<romfs::RomFsRangeReader<R>>, NcchIntegrityError> {
+        if self
+            .verify_extended_header_integrity(&mut reader)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+
+        romfs::RomFsRangeReader::new(
+            reader,
+            EXTENDED_HEADER_OFFSET,
+            EXTENDED_HEADER_HASH_SIZE,
+        )
+        .map(Some)
+        .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))
     }
 
     /// Returns the two low-order content-form bits from NCCH flag byte 5.
@@ -552,6 +644,49 @@ impl NcchHeader {
     pub const fn declares_no_crypto(&self) -> bool {
         self.flags[7] & NO_CRYPTO_FLAG != 0
     }
+}
+
+fn verify_extended_header_hash<R: Read + Seek>(
+    reader: &mut R,
+    expected_hash: &[u8; 32],
+) -> Result<(), NcchIntegrityError> {
+    let original_position = reader
+        .stream_position()
+        .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+
+    reader
+        .seek(SeekFrom::Start(EXTENDED_HEADER_OFFSET))
+        .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+
+    let hash_result = (|| {
+        let mut hasher = romfs::sha256::Sha256::new();
+        let mut remaining = EXTENDED_HEADER_HASH_SIZE;
+        let mut buffer = [0; 4096];
+
+        while remaining > 0 {
+            let amount = remaining.min(buffer.len() as u64) as usize;
+            reader
+                .read_exact(&mut buffer[..amount])
+                .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+            hasher
+                .update(&buffer[..amount])
+                .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+            remaining -= amount as u64;
+        }
+
+        Ok::<[u8; 32], NcchIntegrityError>(hasher.finalize())
+    })();
+
+    reader
+        .seek(SeekFrom::Start(original_position))
+        .map_err(|error| NcchIntegrityError::ReaderFailure(error.to_string()))?;
+
+    let actual_hash = hash_result?;
+    if &actual_hash != expected_hash {
+        return Err(NcchIntegrityError::ExtendedHeaderHashMismatch);
+    }
+
+    Ok(())
 }
 
 fn read_region(
@@ -846,6 +981,25 @@ mod tests {
         hasher.finalize()
     }
 
+    fn valid_extended_header_image() -> (Vec<u8>, NcchHeader, Vec<u8>) {
+        let mut image = vec![0; 0x1_0000];
+        let header = valid_header();
+        image[..HEADER_SIZE].copy_from_slice(&header);
+
+        let extended_header: Vec<u8> = (0..EXTENDED_HEADER_HASH_SIZE)
+            .map(|byte| (byte.wrapping_mul(17) & 0xFF) as u8)
+            .collect();
+        let start = EXTENDED_HEADER_OFFSET as usize;
+        let end = start + extended_header.len();
+        image[start..end].copy_from_slice(&extended_header);
+        let digest = sha256_digest(&extended_header);
+        image[EXTENDED_HEADER_HASH_OFFSET..EXTENDED_HEADER_HASH_OFFSET + 32]
+            .copy_from_slice(&digest);
+
+        let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
+        (image, parsed, extended_header)
+    }
+
     fn valid_exefs_image() -> (Vec<u8>, NcchHeader) {
         let mut ncch_header = valid_header();
         write_u32(&mut ncch_header, EXEFS_HASH_OFFSET, 1);
@@ -870,6 +1024,73 @@ mod tests {
 
         let parsed = NcchHeader::parse(&image[..HEADER_SIZE], image.len() as u64).unwrap();
         (image, parsed)
+    }
+
+    #[test]
+    fn verifies_and_opens_the_bounded_extended_header() {
+        let (image, parsed, expected) = valid_extended_header_image();
+        let mut source = Cursor::new(image.clone());
+
+        assert_eq!(
+            parsed.verify_extended_header_integrity(&mut source).unwrap(),
+            Some(())
+        );
+        assert_eq!(source.position(), 0);
+
+        let mut reader = parsed
+            .open_verified_extended_header_reader(Cursor::new(image))
+            .unwrap()
+            .unwrap();
+        let mut actual = Vec::new();
+        reader.read_to_end(&mut actual).unwrap();
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual.len(), EXTENDED_HEADER_HASH_SIZE as usize);
+        assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+    }
+
+    #[test]
+    fn rejects_an_extended_header_with_a_corrupt_hash_region() {
+        let (mut image, parsed, _) = valid_extended_header_image();
+        image[EXTENDED_HEADER_OFFSET as usize + 0x20] ^= 0x80;
+
+        assert_eq!(
+            parsed.verify_extended_header_integrity(&mut Cursor::new(image)),
+            Err(NcchIntegrityError::ExtendedHeaderHashMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_a_declared_extended_header_smaller_than_the_hashed_region() {
+        let mut header = valid_header();
+        write_u32(&mut header, EXTENDED_HEADER_SIZE_OFFSET, 0x200);
+        let parsed = NcchHeader::parse(&header, 0x1_0000).unwrap();
+
+        assert_eq!(
+            parsed.verify_extended_header_integrity(&mut Cursor::new(vec![0; 0x1_0000])),
+            Err(NcchIntegrityError::ExtendedHeaderTooSmall {
+                declared_size: 0x200,
+                required_size: EXTENDED_HEADER_HASH_SIZE,
+            })
+        );
+    }
+
+    #[test]
+    fn reports_no_extended_header_when_the_declared_size_is_zero() {
+        let mut header = valid_header();
+        write_u32(&mut header, EXTENDED_HEADER_SIZE_OFFSET, 0);
+        let parsed = NcchHeader::parse(&header, 0x1_0000).unwrap();
+
+        assert_eq!(
+            parsed.verify_extended_header_integrity(&mut Cursor::new(vec![0; 0x1_0000])),
+            Ok(None)
+        );
+        assert!(
+            parsed
+                .open_verified_extended_header_reader(Cursor::new(vec![0; 0x1_0000]))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
