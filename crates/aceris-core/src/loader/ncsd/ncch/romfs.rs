@@ -2317,20 +2317,20 @@ mod tests {
 
         let mut corrupted_level3 = container.clone();
         corrupted_level3[0x4000 + layout.level3.offset_bytes as usize + 5] ^= 0x40;
-        assert_eq!(
+        assert!(matches!(
             parsed.open_verified_romfs_level3_reader(Cursor::new(corrupted_level3)),
             Err(RomFsError::IvfcHashMismatch {
                 level: 3,
                 block_index: 0,
             })
-        );
+        ));
 
         let mut corrupted_superblock = container;
         corrupted_superblock[0x4000 + 0x20] ^= 0x01;
-        assert_eq!(
+        assert!(matches!(
             parsed.open_verified_romfs_level3_reader(Cursor::new(corrupted_superblock)),
             Err(RomFsError::NcchSuperblockHashMismatch)
-        );
+        ));
     }
 
     #[test]
@@ -2352,12 +2352,10 @@ mod tests {
                 .unwrap(),
             None
         );
-        assert_eq!(
-            parsed
-                .open_verified_romfs_level3_reader(Cursor::new(Vec::new()))
-                .unwrap(),
-            None
-        );
+        assert!(matches!(
+            parsed.open_verified_romfs_level3_reader(Cursor::new(Vec::new())),
+            Ok(None)
+        ));
         assert_eq!(reader.position(), 0);
     }
 }
