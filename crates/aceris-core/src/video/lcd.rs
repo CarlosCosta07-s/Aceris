@@ -617,10 +617,10 @@ mod tests {
         let second_left = FCRAM_BASE + 0xC000;
         let first_right = FCRAM_BASE + 0xD000;
         let second_right = FCRAM_BASE + 0xE000;
-        memory.write(first_left, &[1, 2, 3, 4]).unwrap();
-        memory.write(second_left, &[5, 6, 7, 8]).unwrap();
-        memory.write(first_right, &[9, 10, 11, 12]).unwrap();
-        memory.write(second_right, &[13, 14, 15, 16]).unwrap();
+        memory.write(first_left, &[4, 3, 2, 1]).unwrap();
+        memory.write(second_left, &[8, 7, 6, 5]).unwrap();
+        memory.write(first_right, &[12, 11, 10, 9]).unwrap();
+        memory.write(second_right, &[16, 15, 14, 13]).unwrap();
 
         let mut controller = LcdController::new();
         controller
