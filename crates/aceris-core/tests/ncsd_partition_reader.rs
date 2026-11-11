@@ -210,7 +210,7 @@ fn partition_reader_handles_short_reads_until_the_partition_is_consumed() {
     let mut actual = Vec::new();
     reader.read_to_end(&mut actual).unwrap();
 
-    assert_eq!(actual, b"234567");
+    assert_eq!(actual, (2u8..8).collect::<Vec<_>>());
     assert_eq!(reader.position(), 6);
     assert_eq!(reader.remaining(), 0);
 }
