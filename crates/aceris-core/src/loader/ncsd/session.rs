@@ -23,11 +23,10 @@ use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE,
-    SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE,
-    SVC_CREATE_THREAD, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY, SVC_RELEASE_MUTEX,
-    SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
-    SVC_WAIT_SYNCHRONIZATION1,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CLEAR_EVENT, SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY,
+    SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_EXIT_THREAD,
+    SVC_GET_THREAD_PRIORITY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY,
+    SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -496,7 +495,11 @@ impl Arm11ProcessSession {
 
     /// Handles CreateMutex: r0 points to the output handle and r1 is initialLocked.
     fn svc_create_mutex(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         let output_address = registers[0];
         let initially_locked = registers[1];
         if initially_locked > 1 {
@@ -506,7 +509,10 @@ impl Arm11ProcessSession {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
 
-        let handle = match self.kernel_objects.insert_mutex(initially_locked != 0, caller) {
+        let handle = match self
+            .kernel_objects
+            .insert_mutex(initially_locked != 0, caller)
+        {
             Ok(handle) => handle,
             Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
         };
@@ -519,7 +525,11 @@ impl Arm11ProcessSession {
 
     /// Handles ReleaseMutex using the handle in r0.
     fn svc_release_mutex(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let handle = self.scheduler.core(caller).expect("caller context exists").regs[0];
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs[0];
         match self.kernel_objects.release_mutex(handle, caller) {
             Ok(Some(waiter)) => {
                 self.wake_synchronization_waiters([waiter]);
@@ -532,7 +542,11 @@ impl Arm11ProcessSession {
 
     /// Handles CreateSemaphore: r0 is output pointer, r1 initial count, r2 maximum.
     fn svc_create_semaphore(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         let output_address = registers[0];
         let initial_count = registers[1] as i32;
         let maximum_count = registers[2] as i32;
@@ -555,7 +569,11 @@ impl Arm11ProcessSession {
 
     /// Handles ReleaseSemaphore: r0 output pointer, r1 handle, r2 release count.
     fn svc_release_semaphore(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         let output_address = registers[0];
         let handle = registers[1];
         let release_count = registers[2];
@@ -569,7 +587,11 @@ impl Arm11ProcessSession {
         };
         let awakened_count = awakened.len() as u32;
         self.wake_synchronization_waiters(awakened);
-        if self.address_space.write32(output_address, awakened_count).is_err() {
+        if self
+            .address_space
+            .write32(output_address, awakened_count)
+            .is_err()
+        {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
         self.write_svc_result(caller, 0)
@@ -580,7 +602,11 @@ impl Arm11ProcessSession {
     /// r0 is the synchronization handle and r2-r3 contain the signed 64-bit
     /// timeout in nanoseconds. A finite positive timeout is not scheduled yet.
     fn svc_wait_synchronization1(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         let handle = registers[0];
         let timeout = (u64::from(registers[2]) | (u64::from(registers[3]) << 32)) as i64;
 
@@ -613,10 +639,7 @@ impl Arm11ProcessSession {
     }
 
     /// Completes an object handoff and makes its blocked thread(s) schedulable.
-    fn wake_synchronization_waiters(
-        &mut self,
-        waiters: impl IntoIterator<Item = ThreadId>,
-    ) {
+    fn wake_synchronization_waiters(&mut self, waiters: impl IntoIterator<Item = ThreadId>) {
         for waiter in waiters {
             if let Some(core) = self.scheduler.core_mut(waiter) {
                 core.regs[0] = 0;
@@ -1148,7 +1171,10 @@ mod tests {
         let handle = session.address_space.read32(0x0020_0000).unwrap();
         assert_eq!(session.kernel_objects.mutex_owner(handle), Some(main));
 
-        session.kernel_objects.enqueue_waiter(handle, child).unwrap();
+        session
+            .kernel_objects
+            .enqueue_waiter(handle, child)
+            .unwrap();
         session.scheduler.wait_current().unwrap();
         assert_eq!(session.current_thread_id(), Some(child));
         session.scheduler.core_mut(child).unwrap().regs[0] = handle;
@@ -1171,10 +1197,21 @@ mod tests {
         session.dispatch_svc(SVC_CREATE_SEMAPHORE);
         assert_eq!(session.core().regs[0], 0);
         let handle = session.address_space.read32(0x0020_0000).unwrap();
-        assert_eq!(session.kernel_objects.semaphore_counts(handle), Some((1, 2)));
+        assert_eq!(
+            session.kernel_objects.semaphore_counts(handle),
+            Some((1, 2))
+        );
 
-        assert_eq!(session.kernel_objects.try_wait_synchronization(handle, MAIN_THREAD_ID), Ok(true));
-        assert_eq!(session.kernel_objects.semaphore_counts(handle), Some((0, 2)));
+        assert_eq!(
+            session
+                .kernel_objects
+                .try_wait_synchronization(handle, MAIN_THREAD_ID),
+            Ok(true)
+        );
+        assert_eq!(
+            session.kernel_objects.semaphore_counts(handle),
+            Some((0, 2))
+        );
 
         {
             let core = session.scheduler.current_core_mut().unwrap();
@@ -1185,7 +1222,10 @@ mod tests {
         session.dispatch_svc(SVC_RELEASE_SEMAPHORE);
         assert_eq!(session.core().regs[0], 0);
         assert_eq!(session.address_space.read32(0x0020_0004).unwrap(), 0);
-        assert_eq!(session.kernel_objects.semaphore_counts(handle), Some((1, 2)));
+        assert_eq!(
+            session.kernel_objects.semaphore_counts(handle),
+            Some((1, 2))
+        );
     }
 
     #[test]
@@ -1207,7 +1247,10 @@ mod tests {
             core.regs[3] = 0;
         }
         session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1);
-        assert_eq!(session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0], RESULT_TIMEOUT);
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+            RESULT_TIMEOUT
+        );
 
         {
             let core = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
