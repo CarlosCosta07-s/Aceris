@@ -1485,6 +1485,9 @@ mod tests {
         session.dispatch_svc(SVC_CLEAR_TIMER);
         assert_eq!(session.kernel_objects.timer_is_signaled(timer), Some(false));
 
+        // ClearTimer returns its result in r0, so reload the handle for the
+        // following CancelTimer call just as a guest program must do.
+        session.scheduler.core_mut(main).unwrap().regs[0] = timer;
         session.dispatch_svc(SVC_CANCEL_TIMER);
         session.advance_time(100);
         assert_eq!(session.kernel_objects.timer_is_signaled(timer), Some(false));
