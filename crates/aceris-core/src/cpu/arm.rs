@@ -1210,7 +1210,7 @@ mod tests {
         let mut m = Machine::new(&[
             0xE6AF_0471, // SXTB r0,r1,ror #8
             0xE6BF_2871, // SXTH r2,r1,ror #16
-            0xE6EF_0C71, // UXTB r3,r1,ror #24
+            0xE6EF_3C71, // UXTB r3,r1,ror #24
             0xE6FF_4471, // UXTH r4,r1,ror #8
             0xE6AF_5871, // SXTB r5,r1,ror #16 (selects 0xFE)
         ]);
