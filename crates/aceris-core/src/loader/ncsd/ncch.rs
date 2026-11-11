@@ -1,8 +1,9 @@
-//! Structural parser for a Nintendo 3DS NCCH content container.
+//! Structural parser and cleartext integrity checks for Nintendo 3DS NCCH.
 //!
-//! This module parses the fixed 0x200-byte header and validates the declared
-//! content regions. It does not verify RSA signatures, decrypt content, verify
-//! hashes, or parse the extended header, ExeFS, or RomFS filesystems.
+//! This module parses the fixed 0x200-byte header, validates declared content
+//! regions, and exposes ExeFS/RomFS metadata readers. RomFS integrity validation
+//! checks the NCCH superblock hash and internal IVFC chain. It does not verify
+//! RSA signatures or decrypt NCCH content.
 
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom};

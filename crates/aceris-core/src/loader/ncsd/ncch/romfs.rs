@@ -2287,18 +2287,20 @@ mod tests {
             Some(())
         );
 
-        container[0x4000 + layout.level3.offset_bytes as usize + 5] ^= 0x40;
+        let mut corrupted_level3 = container.clone();
+        corrupted_level3[0x4000 + layout.level3.offset_bytes as usize + 5] ^= 0x40;
         assert_eq!(
-            parsed.verify_romfs_integrity(Cursor::new(container.clone())),
+            parsed.verify_romfs_integrity(Cursor::new(corrupted_level3)),
             Err(RomFsError::IvfcHashMismatch {
                 level: 3,
                 block_index: 0,
             })
         );
 
-        container[0x4000 + 0x20] ^= 0x01;
+        let mut corrupted_superblock = container;
+        corrupted_superblock[0x4000 + 0x20] ^= 0x01;
         assert_eq!(
-            parsed.verify_romfs_integrity(Cursor::new(container)),
+            parsed.verify_romfs_integrity(Cursor::new(corrupted_superblock)),
             Err(RomFsError::NcchSuperblockHashMismatch)
         );
     }
