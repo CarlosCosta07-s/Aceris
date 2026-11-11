@@ -7,6 +7,9 @@
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 
+use crate::loader::ncsd::ncch::crypto::{
+    AES_BLOCK_SIZE, NcchCtrReader, NcchCtrReaderError, NcchCtrRegion,
+};
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
 use crate::loader::ncsd::ncch::{HEADER_SIZE as NCCH_HEADER_SIZE, NcchError, NcchHeader};
 
@@ -414,9 +417,8 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
     /// header is parsed; the header bytes are retained in front of the reader
     /// so callers receive the complete cleartext content from offset zero.
     ///
-    /// The returned reader is sequential because the outer AES-CBC stream
-    /// does not provide random access. NCCH-internal AES-CTR regions remain
-    /// encrypted and must be opened through the NCCH crypto APIs separately.
+    /// The returned reader supports bounded random access. NCCH-internal
+    /// AES-CTR regions remain encrypted until opened with their own key.
     pub fn open_verified_decrypted_ncch_content_reader(
         &mut self,
         content_index: u16,
@@ -748,6 +750,22 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
     pub fn reader_mut(&mut self) -> &mut Self {
         self
     }
+
+    /// Consumes this TMD-verified NCCH stream and opens one AES-CTR region.
+    ///
+    /// The outer CIA AES-CBC layer has already been removed and the content
+    /// hash has already been verified. The caller supplies the region key;
+    /// Aceris does not discover or embed console keys. For ExeFS, this low-level
+    /// view applies one key to the whole region; use the verified ExeFS file
+    /// reader for content groups that require different keys.
+    pub fn open_decrypted_ncch_region_reader(
+        self,
+        region: NcchCtrRegion,
+        key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<Option<NcchCtrReader<Self>>, NcchCtrReaderError> {
+        let header = self.header.clone();
+        header.open_decrypted_region_reader(self, region, key)
+    }
 }
 
 impl<R: Read + Seek> Read for CiaDecryptedContentNcchReader<'_, R> {
@@ -871,7 +889,7 @@ impl<R: Read + Seek> Seek for CiaContentReader<'_, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::ncsd::ncch::crypto::Aes128;
+    use crate::loader::ncsd::ncch::crypto::{Aes128, Aes128Ctr, NcchCtrRegion};
     use std::io::Cursor;
 
     const TEST_SIGNATURE_SIZE: usize = 0x140;
@@ -1251,6 +1269,59 @@ mod tests {
         let mut reopened = Vec::new();
         ncch.read_to_end(&mut reopened).unwrap();
         assert_eq!(reopened, cleartext);
+    }
+
+    #[test]
+    fn opens_an_ncch_ctr_region_through_both_cia_and_ncch_crypto_layers() {
+        let cia_key = [0x4A; 16];
+        let cia_title_key = TitleKey::new(cia_key);
+        let ncch_key = [0xB3; 16];
+
+        let mut cleartext = vec![0u8; 0x1_0000];
+        cleartext[0x100..0x104].copy_from_slice(b"NCCH");
+        write_le_u32(&mut cleartext, 0x104, 0x80);
+        cleartext[0x108..0x110].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        write_le_u32(&mut cleartext, 0x1A0, 0x10);
+        write_le_u32(&mut cleartext, 0x1A4, 0x10);
+
+        let region_offset = 0x2000;
+        let region_size = 0x2000;
+        let expected_region: Vec<u8> = (0..region_size)
+            .map(|position| (position.wrapping_mul(29) ^ (position >> 3)) as u8)
+            .collect();
+        cleartext[region_offset..region_offset + region_size].copy_from_slice(&expected_region);
+
+        let parsed_header =
+            NcchHeader::parse(&cleartext[..NCCH_HEADER_SIZE], cleartext.len() as u64).unwrap();
+        let initial_counter = parsed_header
+            .initial_ctr_for_region(NcchCtrRegion::ExeFs)
+            .unwrap();
+        let mut ncch_ctr = Aes128Ctr::new(ncch_key, initial_counter);
+        ncch_ctr
+            .apply_keystream(&mut cleartext[region_offset..region_offset + region_size])
+            .unwrap();
+
+        let content_index = 0x0201;
+        let (mut data, locations) =
+            make_cia(&[(0x5400, content_index, CONTENT_TYPE_ENCRYPTED, &cleartext)]);
+        let ciphertext = encrypt_cia_content(cia_key, content_index, &cleartext);
+        let content_offset = usize::try_from(locations[0].1).unwrap();
+        data[content_offset..content_offset + ciphertext.len()].copy_from_slice(&ciphertext);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(content_index, &cia_title_key)
+            .unwrap()
+            .unwrap();
+        let mut decrypted_exefs = ncch
+            .open_decrypted_ncch_region_reader(NcchCtrRegion::ExeFs, ncch_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decrypted_exefs.len(), region_size as u64);
+        let mut actual_region = Vec::new();
+        decrypted_exefs.read_to_end(&mut actual_region).unwrap();
+        assert_eq!(actual_region, expected_region);
     }
 
     #[test]
