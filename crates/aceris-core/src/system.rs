@@ -2,8 +2,8 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    Pica200, PicaCommandBufferDescriptor, REG_COMMAND_BUFFER_ADDRESS_0,
-    REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_SIZE_0,
+    Pica200, PicaCommandBufferDescriptor, REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0,
+    REG_COMMAND_BUFFER_SIZE_0,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
@@ -333,7 +333,10 @@ impl System {
                 .gpu
                 .command_buffer_descriptor(channel)
                 .map_err(|error| {
-                    Error::Io(io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+                    Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        error.to_string(),
+                    ))
                 })?;
             if let Some(descriptor) = descriptor {
                 if descriptor.word_count() > MAX_PICA_COMMAND_WORDS {
@@ -348,14 +351,14 @@ impl System {
 
         let mut submitted = 0u64;
         for descriptor in pending {
-            self.submit_pica_command_list_from_memory(
-                descriptor.address,
-                descriptor.word_count(),
-            )?;
+            self.submit_pica_command_list_from_memory(descriptor.address, descriptor.word_count())?;
             self.gpu
                 .acknowledge_command_buffer(descriptor)
                 .map_err(|error| {
-                    Error::Io(io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+                    Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        error.to_string(),
+                    ))
                 })?;
             submitted = submitted.saturating_add(1);
         }
@@ -459,12 +462,7 @@ mod tests {
             )
             .unwrap();
 
-        let command_list = [
-            0xDEAD_BEEF,
-            0x000F_0100,
-            0x1234_5678,
-            0x000F_0101,
-        ];
+        let command_list = [0xDEAD_BEEF, 0x000F_0100, 0x1234_5678, 0x000F_0101];
         for (index, word) in command_list.iter().copied().enumerate() {
             system
                 .ncsd_session_mut()
@@ -473,12 +471,18 @@ mod tests {
                 .unwrap();
         }
 
-        system.gpu_mut().write_register(REG_COMMAND_BUFFER_SIZE_0, 2).unwrap();
+        system
+            .gpu_mut()
+            .write_register(REG_COMMAND_BUFFER_SIZE_0, 2)
+            .unwrap();
         system
             .gpu_mut()
             .write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3)
             .unwrap();
-        system.gpu_mut().write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
+        system
+            .gpu_mut()
+            .write_register(REG_COMMAND_BUFFER_JUMP_0, 1)
+            .unwrap();
 
         let report = system.run_frame_with_budget(0).unwrap();
 
@@ -499,9 +503,18 @@ mod tests {
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
-        system.gpu_mut().write_register(REG_COMMAND_BUFFER_SIZE_0, 1).unwrap();
-        system.gpu_mut().write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3).unwrap();
-        system.gpu_mut().write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
+        system
+            .gpu_mut()
+            .write_register(REG_COMMAND_BUFFER_SIZE_0, 1)
+            .unwrap();
+        system
+            .gpu_mut()
+            .write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3)
+            .unwrap();
+        system
+            .gpu_mut()
+            .write_register(REG_COMMAND_BUFFER_JUMP_0, 1)
+            .unwrap();
 
         assert!(system.run_frame_with_budget(0).is_err());
         assert_eq!(system.gpu().register(REG_COMMAND_BUFFER_JUMP_0), Some(1));

@@ -94,7 +94,10 @@ impl fmt::Display for PicaCommandError {
                 "PICA200 command parameter {parameter_index} targets invalid register {register:#x}"
             ),
             Self::InvalidCommandBufferChannel { channel } => {
-                write!(formatter, "PICA200 command buffer channel {channel} is invalid")
+                write!(
+                    formatter,
+                    "PICA200 command buffer channel {channel} is invalid"
+                )
             }
             Self::InvalidCommandBufferConfiguration {
                 channel,
@@ -265,9 +268,8 @@ impl Pica200 {
             return Ok(None);
         }
 
-        let size_is_valid = size_units != 0
-            && size_units & !0x001F_FFFF == 0
-            && size_units & 1 == 0;
+        let size_is_valid =
+            size_units != 0 && size_units & !0x001F_FFFF == 0 && size_units & 1 == 0;
         let address_is_valid = address_units & !0x1FFF_FFFF == 0;
         let size_bytes = size_units.checked_mul(8);
         let address = address_units.checked_mul(8);
@@ -481,10 +483,12 @@ mod tests {
     fn command_buffer_channels_decode_size_address_and_trigger() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_COMMAND_BUFFER_SIZE_0, 2).unwrap();
-        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x0010_2000 >> 3)
+            .unwrap();
         gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
         gpu.write_register(REG_COMMAND_BUFFER_SIZE_1, 4).unwrap();
-        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_1, 0x0020_0000 >> 3).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_1, 0x0020_0000 >> 3)
+            .unwrap();
         gpu.write_register(REG_COMMAND_BUFFER_JUMP_1, 0x80).unwrap();
 
         assert_eq!(
@@ -515,7 +519,8 @@ mod tests {
     fn command_buffer_requires_a_nonzero_trigger_and_aligned_nonzero_size() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_COMMAND_BUFFER_SIZE_0, 1).unwrap();
-        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x1000 >> 3).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x1000 >> 3)
+            .unwrap();
         assert_eq!(gpu.command_buffer_descriptor(0).unwrap(), None);
 
         gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
@@ -529,16 +534,14 @@ mod tests {
     fn command_buffer_acknowledgement_does_not_clear_a_newer_trigger() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_COMMAND_BUFFER_SIZE_0, 2).unwrap();
-        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x1000 >> 3).unwrap();
+        gpu.write_register(REG_COMMAND_BUFFER_ADDRESS_0, 0x1000 >> 3)
+            .unwrap();
         gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 1).unwrap();
         let descriptor = gpu.command_buffer_descriptor(0).unwrap().unwrap();
 
         gpu.write_register(REG_COMMAND_BUFFER_JUMP_0, 2).unwrap();
         assert!(!gpu.acknowledge_command_buffer(descriptor).unwrap());
-        assert_eq!(
-            gpu.register(REG_COMMAND_BUFFER_JUMP_0),
-            Some(2)
-        );
+        assert_eq!(gpu.register(REG_COMMAND_BUFFER_JUMP_0), Some(2));
     }
 
     #[test]
