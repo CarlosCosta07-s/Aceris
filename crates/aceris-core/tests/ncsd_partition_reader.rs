@@ -75,8 +75,6 @@ fn partition_reader_rejects_empty_and_overflowing_ranges() {
     let empty_error = partition(0, 0).reader(image.clone()).unwrap_err();
     assert_eq!(empty_error.kind(), std::io::ErrorKind::InvalidInput);
 
-    let overflow_error = partition(u64::MAX - 1, 4)
-        .reader(image)
-        .unwrap_err();
+    let overflow_error = partition(u64::MAX - 1, 4).reader(image).unwrap_err();
     assert_eq!(overflow_error.kind(), std::io::ErrorKind::InvalidInput);
 }
