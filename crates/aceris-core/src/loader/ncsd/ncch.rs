@@ -8,12 +8,12 @@
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom};
 
+/// Original AES-128, CTR mode, and NCCH cryptographic parameter primitives.
+pub mod crypto;
 /// Structural ExeFS header parser for NCCH executable files.
 pub mod exefs;
 /// Structural RomFS IVFC and Level 3 header parser.
 pub mod romfs;
-/// Original AES-128, CTR mode, and NCCH cryptographic parameter primitives.
-pub mod crypto;
 
 pub const HEADER_SIZE: usize = 0x200;
 
@@ -402,14 +402,16 @@ impl NcchHeader {
                 }
                 HEADER_SIZE as u64
             }
-            crypto::NcchCtrRegion::ExeFs => self
-                .exefs
-                .ok_or(crypto::NcchCryptoError::RegionNotPresent(region))?
-                .offset_bytes,
-            crypto::NcchCtrRegion::RomFs => self
-                .romfs
-                .ok_or(crypto::NcchCryptoError::RegionNotPresent(region))?
-                .offset_bytes,
+            crypto::NcchCtrRegion::ExeFs => {
+                self.exefs
+                    .ok_or(crypto::NcchCryptoError::RegionNotPresent(region))?
+                    .offset_bytes
+            }
+            crypto::NcchCtrRegion::RomFs => {
+                self.romfs
+                    .ok_or(crypto::NcchCryptoError::RegionNotPresent(region))?
+                    .offset_bytes
+            }
         };
 
         crypto::initial_ctr(self.partition_id, self.version, region, offset)
@@ -1014,22 +1016,19 @@ mod tests {
         assert_eq!(
             parsed.initial_ctr_for_region(crypto::NcchCtrRegion::ExtendedHeader),
             Ok([
-                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41,
-                0x01, 0, 0, 0, 0, 0, 0, 0,
+                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41, 0x01, 0, 0, 0, 0, 0, 0, 0,
             ])
         );
         assert_eq!(
             parsed.initial_ctr_for_region(crypto::NcchCtrRegion::ExeFs),
             Ok([
-                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41,
-                0x02, 0, 0, 0, 0, 0, 0, 0,
+                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41, 0x02, 0, 0, 0, 0, 0, 0, 0,
             ])
         );
         assert_eq!(
             parsed.initial_ctr_for_region(crypto::NcchCtrRegion::RomFs),
             Ok([
-                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41,
-                0x03, 0, 0, 0, 0, 0, 0, 0,
+                0x31, 0x30, 0x53, 0x49, 0x52, 0x45, 0x43, 0x41, 0x03, 0, 0, 0, 0, 0, 0, 0,
             ])
         );
     }
@@ -1043,8 +1042,7 @@ mod tests {
         assert_eq!(
             parsed.initial_ctr_for_region(crypto::NcchCtrRegion::ExeFs),
             Ok([
-                b'A', b'C', b'E', b'R', b'I', b'S', b'0', b'1',
-                0, 0, 0, 0, 0, 0x00, 0x20, 0x00,
+                b'A', b'C', b'E', b'R', b'I', b'S', b'0', b'1', 0, 0, 0, 0, 0, 0x00, 0x20, 0x00,
             ])
         );
     }
