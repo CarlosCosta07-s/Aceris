@@ -299,12 +299,7 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
             return Err(CiaArchiveError::ContentNotIncluded(content_index));
         }
 
-        verify_content_stream_bytes(
-            content_index,
-            record.size_bytes,
-            record.sha256,
-            &mut stream,
-        )
+        verify_content_stream_bytes(content_index, record.size_bytes, record.sha256, &mut stream)
     }
 }
 
