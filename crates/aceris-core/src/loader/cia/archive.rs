@@ -979,6 +979,124 @@ impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
     pub fn reader_mut<'b>(&'b mut self) -> &'b mut CiaContentReader<'a, R> {
         &mut self.reader
     }
+
+    /// Opens one encrypted NCCH region from this TMD-verified CIA content.
+    ///
+    /// The outer CIA content is cleartext, but the selected NCCH region may
+    /// still use AES-CTR. The caller supplies the region key. For ExeFS,
+    /// prefer the verified file reader below when the file hash must be checked.
+    pub fn open_decrypted_ncch_region_reader(
+        self,
+        region: NcchCtrRegion,
+        key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<Option<NcchCtrReader<CiaContentReader<'a, R>>>, NcchCtrReaderError> {
+        let Self { header, reader, .. } = self;
+        header.open_decrypted_region_reader(reader, region, key)
+    }
+
+    /// Decrypts and verifies the extended header in a TMD-verified CIA content.
+    ///
+    /// The CIA content is clear at the outer layer; the caller supplies the
+    /// NCCH menu-info key for the internal AES-CTR region.
+    pub fn open_decrypted_verified_extended_header_reader(
+        self,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<Option<NcchCtrReader<CiaContentReader<'a, R>>>, NcchIntegrityError> {
+        let Self { header, reader, .. } = self;
+        header.open_decrypted_verified_extended_header_reader(reader, menu_info_key)
+    }
+
+    /// Opens one internally encrypted ExeFS file after verifying its hashes.
+    ///
+    /// The CIA TMD hash was checked before this NCCH reader was created.
+    /// The caller supplies the menu-info and content keys used by the NCCH
+    /// ExeFS key groups. No key material is discovered or persisted by Aceris.
+    pub fn open_decrypted_verified_exefs_file_reader(
+        self,
+        file_name: &str,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<
+        Option<
+            crate::loader::ncsd::ncch::exefs::ExeFsFileReader<
+                NcchCtrReader<CiaContentReader<'a, R>>,
+            >,
+        >,
+        crate::loader::ncsd::ncch::exefs::ExeFsError,
+    > {
+        let Self { header, reader, .. } = self;
+        header.open_decrypted_verified_exefs_file_reader(
+            reader,
+            file_name,
+            menu_info_key,
+            content_key,
+        )
+    }
+
+    /// Opens a verified Level 3 RomFS reader from this TMD-verified CIA content.
+    ///
+    /// The caller supplies the internal NCCH RomFS key. The NCCH superblock
+    /// hash and full IVFC SHA-256 chain are checked before the reader is returned.
+    pub fn open_decrypted_verified_romfs_level3_reader(
+        self,
+        romfs_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<
+        Option<
+            crate::loader::ncsd::ncch::romfs::RomFsLevel3Reader<
+                crate::loader::ncsd::ncch::romfs::RomFsRangeReader<
+                    NcchCtrReader<CiaContentReader<'a, R>>,
+                >,
+            >,
+        >,
+        crate::loader::ncsd::ncch::romfs::RomFsError,
+    > {
+        let Self { header, reader, .. } = self;
+        let Some(region) = header.romfs else {
+            return Ok(None);
+        };
+        let mut decrypted_region = header
+            .open_decrypted_region_reader(reader, NcchCtrRegion::RomFs, romfs_key)
+            .map_err(|error| {
+                crate::loader::ncsd::ncch::romfs::RomFsError::ReaderFailure(error.to_string())
+            })?
+            .ok_or_else(|| {
+                crate::loader::ncsd::ncch::romfs::RomFsError::ReaderFailure(
+                    "NCCH RomFS region disappeared from validated header".to_owned(),
+                )
+            })?;
+
+        verify_decrypted_romfs_superblock_hash(
+            &mut decrypted_region,
+            &header.romfs_superblock_hash,
+            region.hash_region_size_bytes,
+        )?;
+        let ivfc = crate::loader::ncsd::ncch::romfs::IvfcHeader::parse_reader(
+            &mut decrypted_region,
+            region.size_bytes,
+        )?;
+        ivfc.verify_integrity_reader(&mut decrypted_region, region.size_bytes)?;
+        ivfc.open_level3_reader(decrypted_region, region.size_bytes)
+            .map(Some)
+    }
+
+    /// Opens a path-indexed RomFS view after verifying all enclosing hashes.
+    ///
+    /// This validates the CIA TMD hash (before reader construction), the NCCH
+    /// RomFS superblock, the complete IVFC chain, and the Level 3 tree.
+    /// File paths are relative to the RomFS root and use forward slashes.
+    pub fn open_decrypted_verified_romfs_reader(
+        self,
+        romfs_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<
+        Option<CiaVerifiedRomFsReader<NcchCtrReader<CiaContentReader<'a, R>>>>,
+        crate::loader::ncsd::ncch::romfs::RomFsError,
+    > {
+        let Some(mut level3) = self.open_decrypted_verified_romfs_level3_reader(romfs_key)? else {
+            return Ok(None);
+        };
+        let tree = level3.read_tree()?;
+        Ok(Some(CiaVerifiedRomFsReader { level3, tree }))
+    }
 }
 
 /// A seekable reader restricted to one CIA content byte range.
@@ -1560,6 +1678,7 @@ mod tests {
         content_key: [u8; 16],
         code: Vec<u8>,
         banner: Vec<u8>,
+        ncch: Vec<u8>,
     }
 
     fn make_encrypted_exefs_cia(
@@ -1643,7 +1762,48 @@ mod tests {
             content_key,
             code,
             banner,
+            ncch,
         }
+    }
+
+    #[test]
+    fn opens_decrypted_exefs_files_from_a_tmd_verified_clear_cia_content() {
+        let fixture = make_encrypted_exefs_cia(false, false);
+        let (data, _) = make_cia(&[(0x5600, 0x0310, 0, &fixture.ncch)]);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data.clone())).unwrap();
+        let ncch = archive
+            .open_verified_ncch_content_reader(0x0310)
+            .unwrap()
+            .unwrap();
+        let mut code_reader = ncch
+            .open_decrypted_verified_exefs_file_reader(
+                ".code",
+                fixture.menu_info_key,
+                fixture.content_key,
+            )
+            .unwrap()
+            .unwrap();
+        let mut code = Vec::new();
+        code_reader.read_to_end(&mut code).unwrap();
+        assert_eq!(code, fixture.code);
+
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let ncch = archive
+            .open_verified_ncch_content_reader(0x0310)
+            .unwrap()
+            .unwrap();
+        let mut banner_reader = ncch
+            .open_decrypted_verified_exefs_file_reader(
+                "banner",
+                fixture.menu_info_key,
+                fixture.content_key,
+            )
+            .unwrap()
+            .unwrap();
+        let mut banner = Vec::new();
+        banner_reader.read_to_end(&mut banner).unwrap();
+        assert_eq!(banner, fixture.banner);
     }
 
     #[test]
@@ -1747,6 +1907,7 @@ mod tests {
         cia: Vec<u8>,
         cia_title_key: [u8; 16],
         romfs_key: [u8; 16],
+        ncch: Vec<u8>,
     }
 
     fn write_ivfc_hash_table(data: &[u8], block_size: usize) -> Vec<u8> {
@@ -1878,7 +2039,29 @@ mod tests {
             cia,
             cia_title_key,
             romfs_key,
+            ncch,
         }
+    }
+
+    #[test]
+    fn opens_path_indexed_romfs_from_a_tmd_verified_clear_cia_content() {
+        let fixture = make_encrypted_romfs_cia(false, false);
+        let (data, _) = make_cia(&[(0x5610, 0x0311, 0, &fixture.ncch)]);
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let ncch = archive
+            .open_verified_ncch_content_reader(0x0311)
+            .unwrap()
+            .unwrap();
+        let mut romfs = ncch
+            .open_decrypted_verified_romfs_reader(fixture.romfs_key)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(romfs.tree().files.len(), 1);
+        let mut file = romfs.open_file("xy").unwrap().unwrap();
+        let mut actual = Vec::new();
+        file.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, b"HELLO");
     }
 
     #[test]
@@ -2017,6 +2200,32 @@ mod tests {
             .apply_keystream(&mut ncch[0x200..0x600])
             .unwrap();
         (ncch, menu_info_key, extended_header.to_vec())
+    }
+
+    #[test]
+    fn opens_a_decrypted_extended_header_from_a_tmd_verified_clear_cia_content() {
+        let mut extended_header = vec![0u8; 0x400];
+        extended_header[..8].copy_from_slice(b"ACERIS01");
+        extended_header[0x0E..0x10].copy_from_slice(&9u16.to_le_bytes());
+        extended_header[0x1C..0x20].copy_from_slice(&0x9000u32.to_le_bytes());
+        let expected_hash = Sha256::digest(&extended_header).unwrap();
+        let (ncch, menu_info_key, expected) =
+            make_encrypted_ncch_with_extended_header(&extended_header, expected_hash);
+        let content_index = 0x0223;
+        let (data, _) = make_cia(&[(0x5503, content_index, 0, &ncch)]);
+        let mut archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let ncch_reader = archive
+            .open_verified_ncch_content_reader(content_index)
+            .unwrap()
+            .unwrap();
+        let mut extended_reader = ncch_reader
+            .open_decrypted_verified_extended_header_reader(menu_info_key)
+            .unwrap()
+            .unwrap();
+
+        let mut actual = Vec::new();
+        extended_reader.read_to_end(&mut actual).unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]
