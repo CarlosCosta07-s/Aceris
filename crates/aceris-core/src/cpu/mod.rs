@@ -174,7 +174,6 @@ impl Arm11Core {
             self.load_sp_lr(mode);
         }
 
-        self.active_mode = mode;
         self.cpsr.0 = (self.cpsr.0 & !Psr::MODE_MASK) | mode;
         Ok(())
     }
