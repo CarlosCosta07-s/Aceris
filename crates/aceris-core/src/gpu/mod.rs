@@ -1,5 +1,6 @@
 //! PICA200 graphics hardware model and its software bring-up primitives.
 
+mod address_space;
 mod fixed_attribute;
 mod geometry;
 mod index;
@@ -10,6 +11,10 @@ mod rasterizer;
 mod shader_input;
 mod vertex;
 
+pub use address_space::{
+    GpuAddressSpaceError, GpuDmaAddressSpace, GpuLinearMapping, ResolvedGpuRange,
+    LINEAR_PAGE_SIZE, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE, OLD_LINEAR_END,
+};
 pub use fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, Float24, IMMEDIATE_ATTRIBUTE_INDEX,
     REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
