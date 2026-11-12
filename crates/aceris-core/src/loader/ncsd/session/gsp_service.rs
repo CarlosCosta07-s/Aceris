@@ -201,8 +201,8 @@ impl GspServiceRegistry {
         interrupt: GspInterruptId,
     ) -> Result<GspInterruptDeliveryReport, GspServiceError> {
         let index = Self::client_index(client_id)?;
-        let registration = self.clients[index]
-            .ok_or(GspServiceError::ClientNotRegistered { client_id })?;
+        let registration =
+            self.clients[index].ok_or(GspServiceError::ClientNotRegistered { client_id })?;
         if session
             .kernel_objects
             .event_reset_type(registration.event_handle)
