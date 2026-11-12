@@ -155,7 +155,9 @@ impl RawVertexInput {
     /// Converts all fetched array attributes while preserving the fixed mask.
     pub fn to_numeric(&self) -> NumericVertexInput {
         NumericVertexInput {
-            attributes: self.attributes.map(|attribute| attribute.map(|value| value.to_numeric())),
+            attributes: self
+                .attributes
+                .map(|attribute| attribute.map(|value| value.to_numeric())),
             fixed_attribute_mask: self.fixed_attribute_mask,
         }
     }
@@ -674,12 +676,9 @@ mod tests {
         let format_low = 0 | (1 << 4) | (2 << 8) | (3 << 12);
         let config1 = 0x3210;
         let config2 = (8 << 16) | (4 << 28);
-        let layout = PicaVertexInputLayout::from_registers(
-            format_low,
-            3 << 28,
-            &[(0x10, config1, config2)],
-        )
-        .unwrap();
+        let layout =
+            PicaVertexInputLayout::from_registers(format_low, 3 << 28, &[(0x10, config1, config2)])
+                .unwrap();
 
         memory
             .write(
