@@ -105,7 +105,10 @@ pub enum GspGxCommandQueueError {
     CommandListTooLarge { size_bytes: u32, maximum_bytes: usize },
     CommandListSubmission { reason: String },
     ProcessMemory(String),
-    AddressOverflow { base: u32, offset: u64 },
+    AddressOverflow {
+        base: u32,
+        offset: u64,
+    },
 }
 
 impl fmt::Display for GspGxCommandQueueError {
@@ -252,8 +255,7 @@ impl GspGxCommandQueue {
         if client_id >= GSP_GX_COMMAND_QUEUE_CLIENT_COUNT {
             return Err(GspGxCommandQueueError::InvalidClientId { client_id });
         }
-        Ok(GSP_GX_COMMAND_QUEUE_OFFSET
-            + u32::from(client_id) * GSP_GX_COMMAND_QUEUE_CLIENT_STRIDE)
+        Ok(GSP_GX_COMMAND_QUEUE_OFFSET + u32::from(client_id) * GSP_GX_COMMAND_QUEUE_CLIENT_STRIDE)
     }
 }
 
