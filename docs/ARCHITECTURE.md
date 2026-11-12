@@ -83,7 +83,7 @@ A infraestrutura atual contém contextos por thread, escalonamento cooperativo, 
 
 ## GPU PICA200 e LCD
 
-A GPU possui banco inicial de registradores, parser de command lists, canais de command buffer, fila GX inicial e armazenamento de transferências de código/descriptors/uniforms de vertex shader. Há fetch inicial de atributos e índices, transformação geométrica genérica, clipping e rasterizador de referência em CPU.
+A GPU possui banco inicial de registradores, parser de command lists, canais de command buffer, fila GX e modelo da GSP Interrupt Relay Queue. A fila de interrupções mantém o layout de 0x40 bytes por cliente, ring de eventos, contadores de PDC perdidos e flag ignore-PDC. `System::enqueue_gsp_interrupt_for_client` lê o bloco no espaço de memória do processo, adiciona o evento, grava o bloco novamente e informa se o serviço deve sinalizar o evento registrado. O handle ainda não é sinalizado e a criação/mapping do shared memory, registro de clientes, direitos de renderização e despacho IPC completo continuam pendentes. Há fetch inicial de atributos e índices, transformação geométrica genérica, clipping e rasterizador de referência em CPU.
 
 Ainda faltam a execução real dos vertex shaders PICA200, decodificação e execução integrada de DRAWARRAYS/DRAWELEMENTS, fragment pipeline, texturas, blending, sincronização GSP/IPC e coerência de cache.
 

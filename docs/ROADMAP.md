@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `8c16cdb0b4b9c26d2b90f75b5ccde6d3ba752621`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `6e7d0e81d6d43a03d734fd24526737072b637db3`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -17,7 +17,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Workflow do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
-- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `8c16cdb0b4b9c26d2b90f75b5ccde6d3ba752621`, sem anunciar compatibilidade não testada
+- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `6e7d0e81d6d43a03d734fd24526737072b637db3`, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
 
@@ -159,8 +159,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [ ] Implementar executor do subconjunto de opcodes PICA200 verificado, com registradores v/o/r/c, swizzles, máscaras, conversões e controle de fluxo; não tratar o armazenamento/transferência atual como execução
 - [ ] Integrar o fetch de atributos/índices ao executor do vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
-- [~] Modelo inicial da fila GX e despacho síncrono de `ProcessCommandList`; RequestDMA, MemoryFill, DisplayTransfer, TextureCopy, FlushCacheRegions, estados busy, sincronização assíncrona e interrupções ainda não são despachados
-- [ ] Implementar GSP service IPC: RegisterInterruptRelayQueue/TriggerCmdReqQueue, direitos de renderização, criação/mapeamento do shared memory, eventos de conclusão e notificações de interrupção
+- [~] Modelo inicial da fila GX e despacho síncrono de `ProcessCommandList`; RequestDMA, MemoryFill, DisplayTransfer, TextureCopy, FlushCacheRegions, estados busy e sincronização assíncrona ainda não são despachados
+- [~] Modelo da GSP Interrupt Relay Queue por cliente: bloco de 0x40 bytes com ring de 52 eventos, PDC0/PDC1 limitados a 0x20 com contadores de perdas, `ignore_pdc` e endereçamento de quatro clientes; `System::enqueue_gsp_interrupt_for_client` lê/grava a fila no espaço de memória do processo e retorna se o serviço deve sinalizar o evento. Ainda não registra clientes, cria/mapeia a shared memory nem sinaliza handles
+- [ ] Implementar GSP service IPC: `RegisterInterruptRelayQueue`/`TriggerCmdReqQueue`, direitos de renderização, criação/mapeamento do shared memory, registro de handles de eventos, sinalização real e callbacks de interrupção
 - [ ] Implementar comandos GX adicionais e semântica de busy/erro/async com registros GPU e devices correspondentes
 - [~] Transformação matricial e clipping genéricos implementados; clipping, montagem de primitivas, culling e convenções exatas do PICA200 ainda pendentes
 - [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
@@ -229,6 +230,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] VFPv2 short vectors: bancos circulares single/double, wrap, broadcast scalar Fm, stride 1/2, unary sqrt, rejeição de combinações LEN/STRIDE fora da tabela VFP11 e regressões para VCMP/VCVT sempre escalares; Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux/Windows/macOS e build Android `arm64-v8a` aprovado no workflow [43235400622](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43235400622)
 - [x] MMU legacy XP=0: permissões AP0–AP3 de seções/páginas, regras S/R de AP=00 e extended-small-page em coarse tables; XP=1 rejeita L2 type 0b11 reservado. Rustfmt, Clippy, testes em Linux/Windows/macOS e build Android ARM64 aprovados no workflow [43234327123](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43234327123)
 - [x] CP15 WFI e despertar por IRQ/FIQ: espera sem consumo de instruções, PC preservado, despertar com interrupção mascarada sem exceção e vetor IRQ quando desmascarada; Rustfmt, Clippy, testes Linux/Windows/macOS e build Android `arm64-v8a` aprovados no workflow [43236859913](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43236859913)
+- [x] GSP Interrupt Relay Queue: bloco 0x40 por cliente, ring de 52 eventos, PDC overflow/ignore, integração de leitura e gravação no espaço de memória do processo e relatório `event_signal_required`; Rustfmt, Clippy e testes em Linux/Windows/macOS e build Android `arm64-v8a` aprovados no workflow [43238985073](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43238985073)
 - [x] Testes adicionais de arredondamento VFP para multiplicação, divisão, raiz quadrada, underflow e flush-to-zero aprovados em Linux, Windows e macOS; build Android `arm64-v8a` aprovado no workflow [43227896584](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43227896584)
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
