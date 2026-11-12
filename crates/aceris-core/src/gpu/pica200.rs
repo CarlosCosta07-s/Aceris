@@ -160,6 +160,7 @@ pub struct Pica200 {
     vertex_shader_operand_descriptors: [u32; VSH_OPDESC_TRANSFER_WORDS],
     vertex_shader_operand_descriptors_uploaded: [bool; VSH_OPDESC_TRANSFER_WORDS],
     vertex_shader_uniforms: [[f32; 4]; VSH_FLOAT_UNIFORM_COUNT],
+    vertex_shader_uniforms_uploaded: [bool; VSH_FLOAT_UNIFORM_COUNT],
     pending_uniform_words: Vec<u32>,
     vertex_shader_program_ready: bool,
     command_lists_submitted: u64,
@@ -177,6 +178,7 @@ impl Default for Pica200 {
             vertex_shader_operand_descriptors: [0; VSH_OPDESC_TRANSFER_WORDS],
             vertex_shader_operand_descriptors_uploaded: [false; VSH_OPDESC_TRANSFER_WORDS],
             vertex_shader_uniforms: [[0.0; 4]; VSH_FLOAT_UNIFORM_COUNT],
+            vertex_shader_uniforms_uploaded: [false; VSH_FLOAT_UNIFORM_COUNT],
             pending_uniform_words: Vec::with_capacity(4),
             vertex_shader_program_ready: false,
             command_lists_submitted: 0,
@@ -287,7 +289,10 @@ impl Pica200 {
 
     /// Returns one decoded vertex shader float4 constant register.
     pub fn vertex_shader_uniform(&self, index: usize) -> Option<[f32; 4]> {
-        self.vertex_shader_uniforms.get(index).copied()
+        self.vertex_shader_uniforms
+            .get(index)
+            .copied()
+            .filter(|_| self.vertex_shader_uniforms_uploaded.get(index).copied().unwrap_or(false))
     }
 
     /// Returns whether the guest signaled completion of the latest code upload.
@@ -394,6 +399,7 @@ impl Pica200 {
                         .to_numeric()
                         .components
                     };
+                    self.vertex_shader_uniforms_uploaded[index] = true;
                 }
                 self.pending_uniform_words.clear();
                 let next_index = (index_value & 0xFF).saturating_add(1);
@@ -576,6 +582,7 @@ impl Pica200 {
         self.vertex_shader_operand_descriptors.fill(0);
         self.vertex_shader_operand_descriptors_uploaded.fill(false);
         self.vertex_shader_uniforms.fill([0.0; 4]);
+        self.vertex_shader_uniforms_uploaded.fill(false);
         self.pending_uniform_words.clear();
         self.vertex_shader_program_ready = false;
         self.command_lists_submitted = 0;
@@ -844,6 +851,23 @@ mod tests {
     }
 
     #[test]
+    fn uniforms_distinguish_unwritten_constants_from_uploaded_zero_vectors() {
+        let mut gpu = Pica200::new();
+        assert_eq!(gpu.vertex_shader_uniform(0), None);
+
+        gpu.write_register(REG_VSH_FLOATUNIFORM_INDEX, 0).unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0, 0).unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 1, 0).unwrap();
+        assert_eq!(gpu.pending_vertex_shader_uniform_words(), 2);
+        assert_eq!(gpu.vertex_shader_uniform(0), None);
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 2, 0).unwrap();
+
+        assert_eq!(gpu.pending_vertex_shader_uniform_words(), 0);
+        assert_eq!(gpu.vertex_shader_uniform(0), Some([0.0; 4]));
+        assert_eq!(gpu.vertex_shader_uniform(1), None);
+    }
+
+    #[test]
     fn changing_vertex_shader_uniform_index_discards_incomplete_transfer() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_VSH_FLOATUNIFORM_INDEX, 2).unwrap();
@@ -861,7 +885,7 @@ mod tests {
             .unwrap();
         gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 2, 0x003F_0000)
             .unwrap();
-        assert_eq!(gpu.vertex_shader_uniform(2), Some([0.0; 4]));
+        assert_eq!(gpu.vertex_shader_uniform(2), None);
         assert_eq!(gpu.vertex_shader_uniform(3), Some([1.0, 2.0, 2.0, 4.0]));
     }
 
@@ -949,7 +973,7 @@ mod tests {
 
         assert_eq!(gpu.vertex_shader_instruction(0), None);
         assert_eq!(gpu.vertex_shader_operand_descriptor(7), None);
-        assert_eq!(gpu.vertex_shader_uniform(0), Some([0.0; 4]));
+        assert_eq!(gpu.vertex_shader_uniform(0), None);
         assert_eq!(gpu.pending_vertex_shader_uniform_words(), 0);
         assert!(!gpu.vertex_shader_program_ready());
         assert_eq!(gpu.register(REG_VSH_CODETRANSFER_INDEX), Some(0));
