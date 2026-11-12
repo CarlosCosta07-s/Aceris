@@ -1832,6 +1832,57 @@ mod tests {
     }
 
     #[test]
+    fn interrupt_dispatch_prevalidates_all_event_handles_before_queue_mutation() {
+        let mut first_session = test_session();
+        let mut second_session = test_session();
+        let first_event = first_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let second_event = second_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut first_session, 0, SHARED_MEMORY_BASE, first_event)
+            .unwrap();
+        registry
+            .register_client(&mut second_session, 1, SHARED_MEMORY_BASE, second_event)
+            .unwrap();
+
+        second_session
+            .kernel_objects
+            .close_handle(second_event)
+            .unwrap();
+
+        assert_eq!(
+            registry.deliver_interrupt_to_sessions(
+                GspInterruptId::Pdc0,
+                [(0, &mut first_session), (1, &mut second_session)],
+            ),
+            Err(GspServiceError::InvalidEventHandle {
+                handle: second_event,
+            })
+        );
+        assert_eq!(
+            first_session.kernel_objects.event_is_signaled(first_event),
+            Some(false)
+        );
+
+        let first_queue_offset = GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let mut first_queue_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        first_session
+            .read_memory_bytes(
+                SHARED_MEMORY_BASE + first_queue_offset,
+                &mut first_queue_bytes,
+            )
+            .unwrap();
+        let first_queue = GspInterruptRelayQueue::parse(&first_queue_bytes).unwrap();
+        assert!(first_queue.pending_interrupts().unwrap().is_empty());
+    }
+
+    #[test]
     fn interrupt_dispatch_rejects_missing_duplicate_and_unregistered_sessions() {
         let mut first_session = test_session();
         let mut second_session = test_session();
