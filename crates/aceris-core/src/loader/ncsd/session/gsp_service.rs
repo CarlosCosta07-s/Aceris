@@ -172,6 +172,15 @@ pub enum GspRenderingRightAcquireOutcome {
     AlreadyWaiting { position: usize },
 }
 
+/// Describes the ownership transfer performed by a successful ReleaseRight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspRenderingRightHandoff {
+    /// Client that released the exclusive rendering right.
+    pub previous_owner: u8,
+    /// Oldest registered waiter that received the right, if one existed.
+    pub next_owner: Option<u8>,
+}
+
 /// Errors raised while registering a client or delivering a relay interrupt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GspServiceError {
@@ -401,6 +410,9 @@ impl GspServiceRegistry {
 
         if self.rendering_client.is_none() {
             self.grant_next_rendering_waiter();
+            if self.rendering_client == Some(client_id) {
+                return Ok(true);
+            }
             if self.rendering_client.is_none() && self.rendering_waiters.is_empty() {
                 self.rendering_client = Some(client_id);
                 return Ok(true);
@@ -455,7 +467,24 @@ impl GspServiceRegistry {
     }
 
     /// Releases rendering rights and transfers them to the next FIFO waiter.
+    ///
+    /// This compatibility wrapper discards the handoff details. IPC/scheduler
+    /// integration should use release_rendering_right_with_handoff to identify
+    /// which waiting client may now be resumed.
     pub fn release_rendering_right(&mut self, client_id: u8) -> Result<(), GspServiceError> {
+        self.release_rendering_right_with_handoff(client_id)
+            .map(|_| ())
+    }
+
+    /// Releases rendering rights and reports the client that received them.
+    ///
+    /// The returned client ID is the FIFO successor that an eventual IPC
+    /// dispatcher/scheduler must wake. This registry still does not suspend or
+    /// resume guest threads itself.
+    pub fn release_rendering_right_with_handoff(
+        &mut self,
+        client_id: u8,
+    ) -> Result<GspRenderingRightHandoff, GspServiceError> {
         let index = Self::client_index(client_id)?;
         if self.clients[index].is_none() {
             return Err(GspServiceError::ClientNotRegistered { client_id });
@@ -464,8 +493,11 @@ impl GspServiceRegistry {
             return Err(GspServiceError::RenderingRightNotOwned { client_id });
         }
         self.rendering_client = None;
-        self.grant_next_rendering_waiter();
-        Ok(())
+        let next_owner = self.grant_next_rendering_waiter();
+        Ok(GspRenderingRightHandoff {
+            previous_owner: client_id,
+            next_owner,
+        })
     }
 
     /// Returns the current rendering-right owner.
@@ -1010,7 +1042,13 @@ mod tests {
         assert_eq!(registry.rendering_right_waiter_count(), 1);
         assert_eq!(registry.rendering_right_waiter_position(2), Some(1));
 
-        registry.release_rendering_right(0).unwrap();
+        assert_eq!(
+            registry.release_rendering_right_with_handoff(0).unwrap(),
+            GspRenderingRightHandoff {
+                previous_owner: 0,
+                next_owner: Some(2),
+            }
+        );
         assert_eq!(registry.rendering_right_owner(), Some(2));
         assert_eq!(registry.rendering_right_waiter_count(), 0);
 
@@ -1023,9 +1061,45 @@ mod tests {
         assert_eq!(registry.rendering_right_owner(), Some(3));
         assert!(registry.owns_rendering_right(3));
 
-        registry.release_rendering_right(3).unwrap();
+        assert_eq!(
+            registry.release_rendering_right_with_handoff(3).unwrap(),
+            GspRenderingRightHandoff {
+                previous_owner: 3,
+                next_owner: None,
+            }
+        );
         assert_eq!(registry.rendering_right_owner(), None);
         assert!(registry.try_acquire_rendering_right(0).unwrap());
+    }
+
+    #[test]
+    fn try_acquire_claims_right_when_existing_waiter_is_next_in_line() {
+        let mut session = test_session();
+        let events = (0..2)
+            .map(|_| {
+                session
+                    .kernel_objects
+                    .insert_event(EventResetType::Sticky)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut registry = GspServiceRegistry::new();
+        for (client_id, event_handle) in events.iter().copied().enumerate() {
+            registry
+                .register_client(
+                    &mut session,
+                    client_id as u8,
+                    SHARED_MEMORY_BASE,
+                    event_handle,
+                )
+                .unwrap();
+        }
+
+        // Exercise the recovery path for a vacant owner with a queued waiter.
+        registry.rendering_waiters.push_back(1);
+        assert!(registry.try_acquire_rendering_right(1).unwrap());
+        assert_eq!(registry.rendering_right_owner(), Some(1));
+        assert_eq!(registry.rendering_right_waiter_count(), 0);
     }
 
     #[test]
