@@ -1576,18 +1576,31 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 1]
         );
-        assert!(broadcast.deliveries.iter().all(|delivery| delivery.event_signaled));
+        assert!(
+            broadcast
+                .deliveries
+                .iter()
+                .all(|delivery| delivery.event_signaled)
+        );
         assert_eq!(
             first_session.kernel_objects.event_is_signaled(first_event),
             Some(true)
         );
         assert_eq!(
-            second_session.kernel_objects.event_is_signaled(second_event),
+            second_session
+                .kernel_objects
+                .event_is_signaled(second_event),
             Some(true)
         );
 
-        first_session.kernel_objects.clear_event(first_event).unwrap();
-        second_session.kernel_objects.clear_event(second_event).unwrap();
+        first_session
+            .kernel_objects
+            .clear_event(first_event)
+            .unwrap();
+        second_session
+            .kernel_objects
+            .clear_event(second_event)
+            .unwrap();
         let owner_only = registry
             .deliver_interrupt_to_sessions(GspInterruptId::Dma, [(1, &mut second_session)])
             .unwrap();
@@ -1599,7 +1612,9 @@ mod tests {
             Some(false)
         );
         assert_eq!(
-            second_session.kernel_objects.event_is_signaled(second_event),
+            second_session
+                .kernel_objects
+                .event_is_signaled(second_event),
             Some(true)
         );
     }
