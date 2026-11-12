@@ -431,21 +431,14 @@ impl System {
         })?;
         let resolved = self
             .gpu_address_space
-            .resolve_physical_range(
-                &self.physical_memory,
-                linear_virtual_address,
-                byte_count,
-            )
+            .resolve_physical_range(&self.physical_memory, linear_virtual_address, byte_count)
             .map_err(|error| {
                 Error::Io(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     error.to_string(),
                 ))
             })?;
-        self.submit_pica_command_list_from_physical_memory(
-            resolved.physical_address,
-            word_count,
-        )
+        self.submit_pica_command_list_from_physical_memory(resolved.physical_address, word_count)
     }
 
     /// Processes PICA200 command buffers triggered through internal registers.
@@ -636,9 +629,11 @@ mod tests {
             )
             .unwrap();
 
-        assert!(system
-            .submit_pica_command_list_from_linear_memory(0x1400_2000, 2)
-            .is_err());
+        assert!(
+            system
+                .submit_pica_command_list_from_linear_memory(0x1400_2000, 2)
+                .is_err()
+        );
         assert_eq!(system.gpu().register(0x100), Some(0));
     }
 
