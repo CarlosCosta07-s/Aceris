@@ -228,10 +228,10 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 1. Resolver endereços dos arrays e índices por mapa físico/DMA e corrigir o bridge de command buffers para não tratar endereços visíveis ao processo como endereços físicos.
 2. Confirmar ABI completa de entrada do shader e implementar armazenamento/decodificação de programa, uniforms e execução do vertex shader; os atributos fixos e o mapeamento `v0–v15` já têm infraestrutura inicial.
-4. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
-5. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
-6. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
-7. Expor as superfícies LCD no frontend desktop e depois Android.
+3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
+4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
+5. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
+6. Expor as superfícies LCD no frontend desktop e depois Android.
 
 ## Critérios para concluir um item
 
