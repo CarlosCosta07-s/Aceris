@@ -162,21 +162,34 @@ pub struct PicaVertexInputLayout {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VertexInputError {
-    TooManyArrays { count: usize },
-    InvalidAttributeCount { count: usize },
+    TooManyArrays {
+        count: usize,
+    },
+    InvalidAttributeCount {
+        count: usize,
+    },
     InvalidAttributeIndex {
         array: usize,
         attribute: usize,
         active_count: usize,
     },
-    InvalidComponentCount { array: usize, count: usize },
-    TooManyComponentsForAttribute { attribute: usize, count: usize },
+    InvalidComponentCount {
+        array: usize,
+        count: usize,
+    },
+    TooManyComponentsForAttribute {
+        attribute: usize,
+        count: usize,
+    },
     InvalidStride {
         array: usize,
         calculated: usize,
         configured: usize,
     },
-    AddressOverflow { base: u32, offset: u64 },
+    AddressOverflow {
+        base: u32,
+        offset: u64,
+    },
     PhysicalMemory(GpuPhysicalMemoryError),
 }
 
@@ -415,10 +428,7 @@ impl PicaVertexInputLayout {
                 })?;
 
                 let mut bytes = [0u8; 4];
-                memory.read(
-                    address,
-                    &mut bytes[..usize::from(component.byte_width)],
-                )?;
+                memory.read(address, &mut bytes[..usize::from(component.byte_width)])?;
                 let raw_bits = u32::from_le_bytes(bytes);
                 let attribute_index = usize::from(attribute_code);
                 let attribute = output.attributes[attribute_index]
@@ -492,18 +502,12 @@ mod tests {
         let format_low = 1 | (6 << 4);
         let config1 = 0 | (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
-        let layout = PicaVertexInputLayout::from_registers(
-            format_low,
-            1 << 28,
-            &[(0x20, config1, config2)],
-        )
-        .unwrap();
+        let layout =
+            PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0x20, config1, config2)])
+                .unwrap();
 
         memory
-            .write(
-                physical_base + 0x20,
-                &[0x7F, 0x00, 0xFE, 0xFF, 0, 0, 0, 0],
-            )
+            .write(physical_base + 0x20, &[0x7F, 0x00, 0xFE, 0xFF, 0, 0, 0, 0])
             .unwrap();
         let vertex = layout.read_vertex(&memory, physical_base, 0).unwrap();
 
@@ -525,20 +529,15 @@ mod tests {
         let format_low = 0xF;
         let config1 = 0;
         let config2 = (12 << 16) | (3 << 28);
-        let layout = PicaVertexInputLayout::from_registers(
-            format_low,
-            1 << 28,
-            &[(0, config1, config2)],
-        )
-        .unwrap();
+        let layout =
+            PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0, config1, config2)])
+                .unwrap();
 
         memory
             .write(
                 physical_base,
                 &[
-                    0x00, 0x00, 0x80, 0x3F,
-                    0x00, 0x00, 0x00, 0x40,
-                    0x00, 0x00, 0x40, 0x40,
+                    0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x40,
                 ],
             )
             .unwrap();
@@ -554,11 +553,8 @@ mod tests {
 
     #[test]
     fn rejects_stride_that_does_not_match_decoded_record_size() {
-        let layout = PicaVertexInputLayout::from_registers(
-            1,
-            1 << 28,
-            &[(0, 0, (4 << 16) | (1 << 28))],
-        );
+        let layout =
+            PicaVertexInputLayout::from_registers(1, 1 << 28, &[(0, 0, (4 << 16) | (1 << 28))]);
         assert!(matches!(
             layout,
             Err(VertexInputError::InvalidStride {
@@ -571,21 +567,15 @@ mod tests {
 
     #[test]
     fn rejects_inactive_attributes_and_more_than_four_components() {
-        let inactive = PicaVertexInputLayout::from_registers(
-            0,
-            0,
-            &[(0, 1, (1 << 16) | (1 << 28))],
-        );
+        let inactive =
+            PicaVertexInputLayout::from_registers(0, 0, &[(0, 1, (1 << 16) | (1 << 28))]);
         assert!(matches!(
             inactive,
             Err(VertexInputError::InvalidAttributeIndex { .. })
         ));
 
-        let too_many = PicaVertexInputLayout::from_registers(
-            0,
-            0,
-            &[(0, 0, (5 << 16) | (5 << 28))],
-        );
+        let too_many =
+            PicaVertexInputLayout::from_registers(0, 0, &[(0, 0, (5 << 16) | (5 << 28))]);
         assert!(matches!(
             too_many,
             Err(VertexInputError::TooManyComponentsForAttribute { .. })
@@ -595,12 +585,9 @@ mod tests {
     #[test]
     fn rejects_reads_from_unmapped_physical_memory() {
         let memory = GpuPhysicalMemory::new();
-        let layout = PicaVertexInputLayout::from_registers(
-            1,
-            1 << 28,
-            &[(0, 0, (1 << 16) | (1 << 28))],
-        )
-        .unwrap();
+        let layout =
+            PicaVertexInputLayout::from_registers(1, 1 << 28, &[(0, 0, (1 << 16) | (1 << 28))])
+                .unwrap();
 
         assert!(matches!(
             layout.read_vertex(&memory, 0x1000, 0),
