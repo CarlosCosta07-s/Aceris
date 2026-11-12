@@ -92,7 +92,10 @@ pub enum GspInterruptQueuePushResult {
     /// PDC was disabled by the guest's ignore-PDC configuration flag.
     IgnoredPdc,
     /// The event was not stored; the corresponding missed-PDC counter increased.
-    MissedPdc { interrupt: GspInterruptId, total: u32 },
+    MissedPdc {
+        interrupt: GspInterruptId,
+        total: u32,
+    },
     /// A non-PDC event arrived while all ring slots were occupied.
     Full,
 }
@@ -241,8 +244,8 @@ impl GspInterruptRelayQueue {
     pub fn pending_interrupts(&self) -> Result<Vec<GspInterruptId>, GspInterruptQueueError> {
         (0..self.number_interrupts)
             .map(|offset| {
-                let slot = (usize::from(self.index) + usize::from(offset))
-                    % GSP_INTERRUPT_QUEUE_CAPACITY;
+                let slot =
+                    (usize::from(self.index) + usize::from(offset)) % GSP_INTERRUPT_QUEUE_CAPACITY;
                 GspInterruptId::try_from(self.slots[slot])
             })
             .collect()
@@ -283,7 +286,10 @@ mod tests {
         assert!(bytes[12..].iter().all(|byte| *byte == 0));
         assert_eq!(GspInterruptRelayQueue::parse(&bytes).unwrap(), queue);
         assert_eq!(GspInterruptRelayQueue::client_queue_offset(0).unwrap(), 0);
-        assert_eq!(GspInterruptRelayQueue::client_queue_offset(3).unwrap(), 0xC0);
+        assert_eq!(
+            GspInterruptRelayQueue::client_queue_offset(3).unwrap(),
+            0xC0
+        );
         assert!(matches!(
             GspInterruptRelayQueue::client_queue_offset(4),
             Err(GspInterruptQueueError::InvalidClientId { client_id: 4 })
@@ -383,9 +389,18 @@ mod tests {
                 GspInterruptQueuePushResult::Queued { .. }
             ));
         }
-        assert_eq!(queue.number_interrupts(), GSP_INTERRUPT_QUEUE_CAPACITY as u8);
-        assert_eq!(queue.push(GspInterruptId::Dma), GspInterruptQueuePushResult::Full);
-        assert_eq!(queue.number_interrupts(), GSP_INTERRUPT_QUEUE_CAPACITY as u8);
+        assert_eq!(
+            queue.number_interrupts(),
+            GSP_INTERRUPT_QUEUE_CAPACITY as u8
+        );
+        assert_eq!(
+            queue.push(GspInterruptId::Dma),
+            GspInterruptQueuePushResult::Full
+        );
+        assert_eq!(
+            queue.number_interrupts(),
+            GSP_INTERRUPT_QUEUE_CAPACITY as u8
+        );
         assert_eq!(queue.error_code(), GSP_INTERRUPT_QUEUE_FULL_ERROR);
     }
 
@@ -398,10 +413,7 @@ mod tests {
         let mut bytes = [0xA5; GSP_INTERRUPT_QUEUE_SIZE];
         bytes[0] = 0;
         bytes[1] = 0;
-        assert!(matches!(
-            GspInterruptRelayQueue::parse(&bytes),
-            Ok(_)
-        ));
+        assert!(matches!(GspInterruptRelayQueue::parse(&bytes), Ok(_)));
         bytes[0] = GSP_INTERRUPT_QUEUE_CAPACITY as u8;
         assert!(matches!(
             GspInterruptRelayQueue::parse(&bytes),
