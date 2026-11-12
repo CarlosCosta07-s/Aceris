@@ -263,7 +263,12 @@ impl Arm11Core {
             }
             self.regs[rd] = sum;
         } else {
-            return Err(Error::Unimplemented("ARMv6 media instruction"));
+            // Every ARMv6 media encoding is handled above; the rest of this
+            // space (including the permanently-undefined UDF encoding) is undefined.
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
         }
 
         Ok(StepEvent::Executed)

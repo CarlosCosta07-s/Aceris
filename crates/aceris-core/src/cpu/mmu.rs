@@ -294,6 +294,8 @@ impl Arm11Core {
         let mut mmu = MmuBus::new(bus, params);
         let outcome = self.fetch_and_execute(&mut mmu, pc);
         if let Some(fault) = mmu.fault {
+            self.fault_latched = true;
+            self.prefetch_fault = fault.access == Access::Execute;
             match fault.access {
                 Access::Execute => self.cp15.latch_prefetch_fault(fault.status, fault.address),
                 access => {

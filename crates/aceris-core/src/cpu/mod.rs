@@ -8,6 +8,7 @@ mod arm;
 mod condition;
 mod coprocessor;
 mod cp15;
+mod faults;
 mod mmu;
 mod psr;
 mod shifter;
@@ -118,6 +119,11 @@ pub struct Arm11Core {
     fiq_line_asserted: bool,
     cp15: Cp15,
     vfp: Vfp,
+    fault_exception_entry_enabled: bool,
+    /// Set while one step runs: the fault being reported came from the fetch.
+    prefetch_fault: bool,
+    /// Set while one step runs: the MMU already latched FSR/FAR for this fault.
+    fault_latched: bool,
 }
 
 impl Arm11Core {
@@ -314,7 +320,23 @@ impl Arm11Core {
     }
 
     /// Fetches and executes one instruction.
+    ///
+    /// With fault-exception entry enabled (see `set_fault_exception_entry_enabled`),
+    /// undefined instructions and aborts become hardware exceptions instead of errors.
     pub fn step<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
+        if !self.fault_exception_entry_enabled {
+            return self.step_instruction(bus);
+        }
+        let snapshot = (self.regs, self.cpsr);
+        self.prefetch_fault = false;
+        self.fault_latched = false;
+        match self.step_instruction(bus) {
+            Err(error) => self.take_fault_exception(snapshot, error),
+            ok => ok,
+        }
+    }
+
+    fn step_instruction<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
         let pc = self.pc();
         self.branch_taken = false;
 
@@ -326,12 +348,20 @@ impl Arm11Core {
             return self.step_translated(bus, pc);
         }
 
-        let (event, size) = if self.cpsr.thumb() {
-            let half = u32::from(bus.read16(pc)?);
-            (self.execute_thumb(bus, half)?, THUMB_INSTRUCTION_SIZE)
+        let thumb = self.cpsr.thumb();
+        let fetched = if thumb {
+            bus.read16(pc).map(u32::from)
         } else {
-            let word = bus.read32(pc)?;
-            (self.execute_arm(bus, word)?, ARM_INSTRUCTION_SIZE)
+            bus.read32(pc)
+        };
+        let instruction = fetched.inspect_err(|_| self.prefetch_fault = true)?;
+        let (event, size) = if thumb {
+            (
+                self.execute_thumb(bus, instruction)?,
+                THUMB_INSTRUCTION_SIZE,
+            )
+        } else {
+            (self.execute_arm(bus, instruction)?, ARM_INSTRUCTION_SIZE)
         };
 
         if !self.branch_taken {
