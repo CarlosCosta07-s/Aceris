@@ -427,21 +427,13 @@ mod tests {
             ));
         }
 
-        let client_zero_offset =
-            GspInterruptRelayQueue::client_queue_offset(0).unwrap();
-        let client_one_offset =
-            GspInterruptRelayQueue::client_queue_offset(1).unwrap();
+        let client_zero_offset = GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let client_one_offset = GspInterruptRelayQueue::client_queue_offset(1).unwrap();
         session
-            .write_memory_bytes(
-                SHARED_MEMORY_BASE + client_zero_offset,
-                &pdc_queue.encode(),
-            )
+            .write_memory_bytes(SHARED_MEMORY_BASE + client_zero_offset, &pdc_queue.encode())
             .unwrap();
         session
-            .write_memory_bytes(
-                SHARED_MEMORY_BASE + client_one_offset,
-                &full_queue.encode(),
-            )
+            .write_memory_bytes(SHARED_MEMORY_BASE + client_one_offset, &full_queue.encode())
             .unwrap();
 
         let mut registry = GspServiceRegistry::new();
@@ -470,8 +462,14 @@ mod tests {
         assert_eq!(full.push_result, GspInterruptQueuePushResult::Full);
         assert!(!full.event_signaled);
 
-        assert_eq!(session.kernel_objects.event_is_signaled(pdc_event), Some(false));
-        assert_eq!(session.kernel_objects.event_is_signaled(full_event), Some(false));
+        assert_eq!(
+            session.kernel_objects.event_is_signaled(pdc_event),
+            Some(false)
+        );
+        assert_eq!(
+            session.kernel_objects.event_is_signaled(full_event),
+            Some(false)
+        );
 
         let mut pdc_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
         session
@@ -485,7 +483,10 @@ mod tests {
             .read_memory_bytes(SHARED_MEMORY_BASE + client_one_offset, &mut full_bytes)
             .unwrap();
         let full_queue = GspInterruptRelayQueue::parse(&full_bytes).unwrap();
-        assert_eq!(full_queue.error_code(), crate::gpu::GSP_INTERRUPT_QUEUE_FULL_ERROR);
+        assert_eq!(
+            full_queue.error_code(),
+            crate::gpu::GSP_INTERRUPT_QUEUE_FULL_ERROR
+        );
     }
 
     #[test]
