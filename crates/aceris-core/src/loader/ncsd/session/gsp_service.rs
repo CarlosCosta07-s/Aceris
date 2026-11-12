@@ -646,12 +646,7 @@ mod tests {
             })
         );
         assert_eq!(
-            decode_gsp_ipc_request(&[
-                GSP_IPC_ACQUIRE_RIGHT_HEADER,
-                0,
-                2,
-                0x6789,
-            ]),
+            decode_gsp_ipc_request(&[GSP_IPC_ACQUIRE_RIGHT_HEADER, 0, 2, 0x6789,]),
             Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor: 2 })
         );
         assert_eq!(
