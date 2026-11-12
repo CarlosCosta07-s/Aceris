@@ -39,7 +39,11 @@ impl Pica200 {
         vertex_index: u32,
     ) -> Result<NumericVertexInput, VertexInputError> {
         self.read_vertex_at_physical_base(memory, resolved_physical_byte_base, vertex_index)
-            .map(|raw| raw.to_numeric())
+            .and_then(|raw| raw.to_numeric())
+            .map(|mut input| {
+                self.apply_fixed_vertex_attributes(&mut input);
+                input
+            })
     }
 
     /// Fetches raw indices using the current PICA200 index-buffer register.
