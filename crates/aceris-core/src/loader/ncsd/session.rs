@@ -1594,7 +1594,7 @@ mod tests {
 
     #[test]
     fn create_memory_block_svc_shares_existing_regular_heap_pages_without_copying() {
-        let mut session = test_session_with_program(&[0xEF00_001E]);
+        let mut session = test_session_with_program(&[0xEF00_001E, 0xEF00_001F]);
         session
             .address_space
             .allocate_application_heap_region(0x0800_0000, 0x2000)
@@ -1621,11 +1621,6 @@ mod tests {
             registers[2] = 3;
             registers[3] = 1;
         }
-        session
-            .scheduler
-            .core_mut(MAIN_THREAD_ID)
-            .unwrap()
-            .set_pc(0x0010_0004);
         let mapped = session.run_instructions(1).unwrap();
         assert_eq!(mapped.instructions_executed, 1);
         assert_eq!(session.core().regs[0], 0);
