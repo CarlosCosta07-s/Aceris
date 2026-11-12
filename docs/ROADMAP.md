@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na branch `main` no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`.
+> Estado revisado em 12/11/2026, com base na implementação no commit `f35066cae383d251d3bad8180ab1db5d27ff01c3`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -135,6 +135,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Leitura de atributos brutos por vértice a partir de VRAM/FCRAM: payloads little-endian preservados como bits, sem conversão numérica ou execução de shader
 - [~] Snapshot dos registradores de índice/contagem/offset: 0x227, 0x228 e 0x22A; base e offset permanecem valores brutos de registrador
 - [~] Leitor de índices U8/U16 em little-endian, com limite defensivo e validação de faixa física; ainda não aplica vertex offset nem resolve o endereço DMA
+- [~] `Pica200::read_vertex_at_physical_base` e `read_indices_at_physical_base` conectam snapshots dos registradores aos leitores físicos usando uma base já resolvida pelo chamador; não fazem tradução DMA, conversão numérica, aplicação de vertex offset nem dispatch de draw
 - [ ] Resolver `GPUREG_ATTRIBBUFFERS_LOC` e endereços de arrays/índices pelo mapa físico e pela rota DMA real antes de acessar memória
 - [ ] Converter componentes brutos para entradas numéricas do shader com a normalização, extensão de sinal e tratamento float corretos
 - [ ] Integrar o fetch de atributos/índices ao vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
@@ -198,6 +199,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
+- [~] Testes do bridge PICA200→memória física para fetch de vértices e índices adicionados no commit `f35066cae383d251d3bad8180ab1db5d27ff01c3`; execução no CI deste commit ainda pendente
 - [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
