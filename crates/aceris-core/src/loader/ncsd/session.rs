@@ -1474,28 +1474,16 @@ mod tests {
         let mut session = test_session();
         let handle = session.create_memory_block(0x1000, 3, 1).unwrap();
 
-        session
-            .map_memory_block(handle, 0x0800_0000, 3, 1)
-            .unwrap();
-        session
-            .map_memory_block(handle, 0x0810_0000, 1, 1)
-            .unwrap();
+        session.map_memory_block(handle, 0x0800_0000, 3, 1).unwrap();
+        session.map_memory_block(handle, 0x0810_0000, 1, 1).unwrap();
 
-        session
-            .write_memory_u32(0x0800_0000, 0xA1B2_C3D4)
-            .unwrap();
-        assert_eq!(
-            session.read_memory_u32(0x0810_0000).unwrap(),
-            0xA1B2_C3D4
-        );
+        session.write_memory_u32(0x0800_0000, 0xA1B2_C3D4).unwrap();
+        assert_eq!(session.read_memory_u32(0x0810_0000).unwrap(), 0xA1B2_C3D4);
         assert!(session.write_memory_u32(0x0810_0000, 0xDEAD_BEEF).is_err());
 
         session.unmap_memory_block(handle, 0x0810_0000).unwrap();
         assert!(session.read_memory_u32(0x0810_0000).is_err());
-        assert_eq!(
-            session.read_memory_u32(0x0800_0000).unwrap(),
-            0xA1B2_C3D4
-        );
+        assert_eq!(session.read_memory_u32(0x0800_0000).unwrap(), 0xA1B2_C3D4);
         session.unmap_memory_block(handle, 0x0800_0000).unwrap();
         assert!(session.read_memory_u32(0x0800_0000).is_err());
     }

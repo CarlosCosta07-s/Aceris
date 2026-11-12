@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use super::process::SharedMemoryBacking;
+use crate::loader::ncsd::process::SharedMemoryBacking;
 use super::thread::ThreadId;
 
 /// Pseudo-handle that always identifies the calling thread.

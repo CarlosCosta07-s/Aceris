@@ -146,7 +146,9 @@ impl SharedMemoryBacking {
     /// Allocates a zero-filled shared backing of exactly `size` bytes.
     pub fn zeroed(size: usize) -> std::result::Result<Self, String> {
         let mut bytes = Vec::new();
-        bytes.try_reserve_exact(size).map_err(|error| error.to_string())?;
+        bytes
+            .try_reserve_exact(size)
+            .map_err(|error| error.to_string())?;
         bytes.resize(size, 0);
         Ok(Self {
             bytes: Arc::new(Mutex::new(bytes)),
@@ -654,8 +656,7 @@ impl Arm11CodeAddressSpace {
             })
         });
         let overlaps_linear = self.linear_regions.iter().any(|region| {
-            u64::from(address) < region.virtual_end()
-                && end > u64::from(region.virtual_base)
+            u64::from(address) < region.virtual_end() && end > u64::from(region.virtual_base)
         });
         if overlaps_static || overlaps_dynamic || overlaps_shared || overlaps_linear {
             return Err(Arm11DynamicMemoryError::OverlappingMapping);
@@ -1185,7 +1186,9 @@ impl Arm11CodeAddressSpace {
 
         if let Some((index, region)) = self.shared_regions.iter().enumerate().find(|(_, region)| {
             address >= region.address
-                && region.end_address().is_some_and(|end| u64::from(address) < end)
+                && region
+                    .end_address()
+                    .is_some_and(|end| u64::from(address) < end)
         }) {
             let offset = usize::try_from(address - region.address).ok()?;
             return Some(MemoryLocation::Shared { index, offset });
@@ -1273,9 +1276,7 @@ impl Arm11CodeAddressSpace {
                 let region = self.dynamic_regions.get(index)?;
                 Some(u64::from(region.address) + region.bytes.len() as u64)
             }
-            MemoryLocation::Shared { index, .. } => {
-                self.shared_regions.get(index)?.end_address()
-            }
+            MemoryLocation::Shared { index, .. } => self.shared_regions.get(index)?.end_address(),
             MemoryLocation::Physical { index, .. } => {
                 Some(self.linear_regions.get(index)?.virtual_end())
             }
