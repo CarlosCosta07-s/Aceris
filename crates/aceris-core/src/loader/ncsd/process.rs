@@ -1214,6 +1214,103 @@ impl Arm11CodeAddressSpace {
         true
     }
 
+    /// Returns whether every byte in a range is mapped and readable.
+    ///
+    /// Empty, wrapping, or partially unmapped ranges are rejected. Shared
+    /// mappings require their read-permission bit; ordinary process and linear
+    /// memory are readable in this bootstrap model.
+    pub fn is_readable_range(&self, address: u32, size: usize) -> bool {
+        if size == 0 {
+            return false;
+        }
+
+        let Some(end) = u64::from(address).checked_add(size as u64) else {
+            return false;
+        };
+        if end > ADDRESS_SPACE_END {
+            return false;
+        }
+
+        let mut cursor = u64::from(address);
+        while cursor < end {
+            let Ok(current_address) = u32::try_from(cursor) else {
+                return false;
+            };
+            let Some(location) = self.locate(current_address) else {
+                return false;
+            };
+            if !self.location_is_readable(location) {
+                return false;
+            }
+
+            let Some(region_end) = self.location_end(location) else {
+                return false;
+            };
+            let next = region_end.min(end);
+            if next <= cursor {
+                return false;
+            }
+            cursor = next;
+        }
+
+        true
+    }
+
+    /// Returns the physically contiguous FCRAM chunks for a wholly linear range.
+    ///
+    /// Every byte must be backed by a registered linear-memory mapping. Adjacent
+    /// virtual mappings whose physical addresses are also adjacent are coalesced.
+    /// Private heap, static image, TLS and shared-block views intentionally have
+    /// no fabricated physical address in this model.
+    pub fn linear_physical_chunks_for_range(
+        &self,
+        address: u32,
+        size: u32,
+    ) -> Option<Vec<(u32, u32)>> {
+        if size == 0 {
+            return None;
+        }
+        let end = u64::from(address).checked_add(u64::from(size))?;
+        if end > ADDRESS_SPACE_END {
+            return None;
+        }
+
+        let mut chunks: Vec<(u32, u32)> = Vec::new();
+        let mut cursor = u64::from(address);
+        while cursor < end {
+            let current = u32::try_from(cursor).ok()?;
+            let Some(MemoryLocation::Physical {
+                address: physical_address,
+                ..
+            }) = self.locate(current)
+            else {
+                return None;
+            };
+            let location = self.locate(current)?;
+            let region_end = self.location_end(location)?;
+            let chunk_end = region_end.min(end);
+            let chunk_size = u32::try_from(chunk_end - cursor).ok()?;
+            if chunk_size == 0 {
+                return None;
+            }
+
+            if let Some((previous_address, previous_size)) = chunks.last_mut() {
+                if previous_address.checked_add(*previous_size) == Some(physical_address) {
+                    *previous_size = previous_size.checked_add(chunk_size)?;
+                } else {
+                    chunks.try_reserve(1).ok()?;
+                    chunks.push((physical_address, chunk_size));
+                }
+            } else {
+                chunks.try_reserve(1).ok()?;
+                chunks.push((physical_address, chunk_size));
+            }
+            cursor = chunk_end;
+        }
+
+        Some(chunks)
+    }
+
     /// Queries the mapped or free virtual region containing an address.
     ///
     /// Adjacent mappings with identical permissions and state are coalesced.
@@ -1422,6 +1519,18 @@ impl Arm11CodeAddressSpace {
             | MemoryLocation::Physical { .. } => {
                 unreachable!("dynamic, shared and physical locations are read from their backing")
             }
+        }
+    }
+
+    fn location_is_readable(&self, location: MemoryLocation) -> bool {
+        match location {
+            MemoryLocation::Static { .. }
+            | MemoryLocation::Dynamic { .. }
+            | MemoryLocation::Physical { .. } => true,
+            MemoryLocation::Shared { index, .. } => self
+                .shared_regions
+                .get(index)
+                .is_some_and(|region| region.permissions & 1 != 0),
         }
     }
 
@@ -2147,6 +2256,36 @@ mod tests {
             Err(Error::InvalidAccess { addr }) if addr == virtual_base
         ));
         memory.free_linear_fcram(physical_base, 0x2000).unwrap();
+    }
+
+    #[test]
+    fn linear_physical_chunks_coalesce_contiguous_aliases_and_reject_host_backings() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x3000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x2000)
+            .unwrap();
+        address_space
+            .map_linear_memory_region(virtual_base + 0x2000, physical_base + 0x2000, 0x1000)
+            .unwrap();
+
+        assert_eq!(
+            address_space.linear_physical_chunks_for_range(virtual_base + 0x1FF0, 0x30),
+            Some(vec![(physical_base + 0x1FF0, 0x30)])
+        );
+        assert!(address_space.is_readable_range(virtual_base, 0x3000));
+        assert!(address_space.is_writable_range(virtual_base, 0x3000));
+        assert_eq!(
+            address_space.linear_physical_chunks_for_range(0x0010_3000, 0x20),
+            None
+        );
+        assert_eq!(address_space.linear_physical_chunks_for_range(virtual_base, 0), None);
+
+        memory.free_linear_fcram(physical_base, 0x3000).unwrap();
     }
 
     #[test]

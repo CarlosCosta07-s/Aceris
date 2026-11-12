@@ -132,6 +132,24 @@ pub enum IpcStaticBufferTranslationError {
     DestinationWriteFailed { address: u32 },
 }
 
+/// Failure while materializing IPC type-2/3 physical buffer chunk tables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpcPhysicalBufferTranslationError {
+    TranslationDecode(ipc::IpcTranslationSectionError),
+    NoPhysicalBufferParameters,
+    UnsupportedTranslationParameter { descriptor: u32 },
+    UnknownDestinationThread(ThreadId),
+    ExitedDestinationThread(ThreadId),
+    InvalidDestinationTls { address: u32 },
+    InvalidDestinationBuffer { address: u32, capacity: u32 },
+    DestinationBufferNotPhysical { address: u32 },
+    DestinationBufferTooSmall { capacity: u32, required: u32 },
+    SourceRangeNotPhysical { address: u32, size_bytes: u32 },
+    SourcePermissionsInsufficient { address: u32, size_bytes: u32 },
+    AllocationFailure,
+    DestinationWriteFailed { address: u32 },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SvcRunDisposition {
     Resume,
@@ -628,6 +646,227 @@ impl Arm11ProcessSession {
         }
 
         Ok(())
+    }
+
+    /// Materializes type-2/3 IPC physical chunk tables in the receiver's static buffers.
+    ///
+    /// Only ranges backed by the process's explicit linear FCRAM mappings are
+    /// accepted. This never invents a physical address for private host Vec,
+    /// executable, TLS or ordinary shared-memory backing. The returned pairs
+    /// contain each descriptor's word offset in the translation section and
+    /// the physical address of its receiver-side chunk table.
+    pub fn translate_physical_buffer_tables_from_ipc(
+        &mut self,
+        source: &Arm11ProcessSession,
+        destination_thread: ThreadId,
+        message: ipc::IpcMessage<'_>,
+    ) -> std::result::Result<Vec<(usize, u32)>, IpcPhysicalBufferTranslationError> {
+        let parameters = message
+            .translation_parameters()
+            .map_err(IpcPhysicalBufferTranslationError::TranslationDecode)?;
+        if parameters.is_empty() {
+            return Err(IpcPhysicalBufferTranslationError::NoPhysicalBufferParameters);
+        }
+
+        let thread_info = self.scheduler.thread_info(destination_thread).ok_or(
+            IpcPhysicalBufferTranslationError::UnknownDestinationThread(destination_thread),
+        )?;
+        if thread_info.state == ThreadState::Exited {
+            return Err(IpcPhysicalBufferTranslationError::ExitedDestinationThread(
+                destination_thread,
+            ));
+        }
+        let tls_address = self
+            .scheduler
+            .core(destination_thread)
+            .map(|core| core.cp15().tpidruro())
+            .ok_or(IpcPhysicalBufferTranslationError::UnknownDestinationThread(
+                destination_thread,
+            ))?;
+        if tls_address == 0 {
+            return Err(IpcPhysicalBufferTranslationError::InvalidDestinationTls {
+                address: tls_address,
+            });
+        }
+
+        struct PendingPhysicalTable {
+            destination_address: u32,
+            bytes: Vec<u8>,
+            physical_address: u32,
+        }
+
+        let mut pending = Vec::new();
+        let mut translated = Vec::new();
+        pending
+            .try_reserve_exact(parameters.len())
+            .map_err(|_| IpcPhysicalBufferTranslationError::AllocationFailure)?;
+        translated
+            .try_reserve_exact(parameters.len())
+            .map_err(|_| IpcPhysicalBufferTranslationError::AllocationFailure)?;
+
+        for parameter in parameters {
+            let (word_offset, buffer_index, size_bytes, source_address, read_only) =
+                match parameter {
+                    ipc::IpcTranslationParameter::PhysicalBufferTable {
+                        word_offset,
+                        buffer_index,
+                        size_bytes,
+                        source_address,
+                        read_only,
+                        ..
+                    } => (
+                        word_offset,
+                        buffer_index,
+                        size_bytes,
+                        source_address,
+                        read_only,
+                    ),
+                    other => {
+                        let descriptor = match other {
+                            ipc::IpcTranslationParameter::Handles { descriptor, .. }
+                            | ipc::IpcTranslationParameter::StaticBuffer { descriptor, .. }
+                            | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. } => {
+                                descriptor
+                            }
+                            ipc::IpcTranslationParameter::PhysicalBufferTable { .. } => {
+                                unreachable!("physical table parameters were matched above")
+                            }
+                        };
+                        return Err(
+                            IpcPhysicalBufferTranslationError::UnsupportedTranslationParameter {
+                                descriptor,
+                            },
+                        );
+                    }
+                };
+
+            let entry_address = self
+                .address_space
+                .thread_local_static_buffer_descriptor_address(tls_address, buffer_index)
+                .ok_or(IpcPhysicalBufferTranslationError::InvalidDestinationTls {
+                    address: tls_address,
+                })?;
+            let capacity_address = entry_address.checked_add(4).ok_or(
+                IpcPhysicalBufferTranslationError::InvalidDestinationTls {
+                    address: entry_address,
+                },
+            )?;
+            let destination_address = self.read_memory_u32(entry_address).map_err(|_| {
+                IpcPhysicalBufferTranslationError::InvalidDestinationTls {
+                    address: entry_address,
+                }
+            })?;
+            let capacity = self.read_memory_u32(capacity_address).map_err(|_| {
+                IpcPhysicalBufferTranslationError::InvalidDestinationTls {
+                    address: capacity_address,
+                }
+            })?;
+
+            if destination_address == 0
+                || destination_address & 0xFFF != 0
+                || capacity == 0
+                || capacity > 0x1000
+            {
+                return Err(
+                    IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
+                        address: destination_address,
+                        capacity,
+                    },
+                );
+            }
+
+            let source_size = usize::try_from(size_bytes)
+                .map_err(|_| IpcPhysicalBufferTranslationError::AllocationFailure)?;
+            let source_permissions_valid = source.address_space.is_readable_range(
+                source_address,
+                source_size,
+            ) && (read_only
+                || source
+                    .address_space
+                    .is_writable_range(source_address, source_size));
+            if !source_permissions_valid {
+                return Err(
+                    IpcPhysicalBufferTranslationError::SourcePermissionsInsufficient {
+                        address: source_address,
+                        size_bytes,
+                    },
+                );
+            }
+
+            let source_chunks = source
+                .address_space
+                .linear_physical_chunks_for_range(source_address, size_bytes)
+                .ok_or(
+                    IpcPhysicalBufferTranslationError::SourceRangeNotPhysical {
+                        address: source_address,
+                        size_bytes,
+                    },
+                )?;
+            let table_size = source_chunks
+                .len()
+                .checked_mul(8)
+                .and_then(|size| u32::try_from(size).ok())
+                .ok_or(IpcPhysicalBufferTranslationError::AllocationFailure)?;
+            if table_size > capacity {
+                return Err(IpcPhysicalBufferTranslationError::DestinationBufferTooSmall {
+                    capacity,
+                    required: table_size,
+                });
+            }
+            if !self.address_space.is_writable_range(destination_address, table_size as usize) {
+                return Err(IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
+                    address: destination_address,
+                    capacity,
+                });
+            }
+
+            let destination_chunks = self
+                .address_space
+                .linear_physical_chunks_for_range(destination_address, capacity)
+                .ok_or(
+                    IpcPhysicalBufferTranslationError::DestinationBufferNotPhysical {
+                        address: destination_address,
+                    },
+                )?;
+            if destination_chunks.len() != 1
+                || destination_chunks[0].0 & 0xFFF != 0
+                || destination_chunks[0].1 < capacity
+            {
+                return Err(
+                    IpcPhysicalBufferTranslationError::DestinationBufferNotPhysical {
+                        address: destination_address,
+                    },
+                );
+            }
+
+            let mut bytes = Vec::new();
+            bytes
+                .try_reserve_exact(table_size as usize)
+                .map_err(|_| IpcPhysicalBufferTranslationError::AllocationFailure)?;
+            for (physical_address, chunk_size) in source_chunks {
+                bytes.extend_from_slice(&physical_address.to_le_bytes());
+                bytes.extend_from_slice(&chunk_size.to_le_bytes());
+            }
+
+            let table_physical_address = destination_chunks[0].0;
+            pending.push(PendingPhysicalTable {
+                destination_address,
+                bytes,
+                physical_address: table_physical_address,
+            });
+            translated.push((word_offset, table_physical_address));
+        }
+
+        for table in pending {
+            self.write_memory_bytes(table.destination_address, &table.bytes)
+                .map_err(|_| {
+                    IpcPhysicalBufferTranslationError::DestinationWriteFailed {
+                        address: table.destination_address,
+                    }
+                })?;
+        }
+
+        Ok(translated)
     }
 
     /// Maps a memory-block handle into this process with the requested R/W permissions.
@@ -2578,6 +2817,101 @@ mod tests {
                     descriptor: 0x0000_010A,
                 }
             )
+        );
+    }
+
+    #[test]
+    fn ipc_type_two_builds_physical_chunk_table_in_receiver_static_buffer() {
+        let mut source = test_session();
+        let mut destination = test_session();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
+        let dma = GpuDmaAddressSpace::new();
+        source.attach_gpu_services(memory.clone(), dma.clone());
+        destination.attach_gpu_services(memory.clone(), dma);
+
+        source
+            .address_space
+            .map_linear_memory_region(0x1400_0000, physical_base, 0x1000)
+            .unwrap();
+        destination
+            .address_space
+            .map_linear_memory_region(0x1401_0000, physical_base + 0x1000, 0x1000)
+            .unwrap();
+        source
+            .write_memory_bytes(0x1400_0100, &[0x5A; 0x40])
+            .unwrap();
+
+        let tls = destination
+            .scheduler
+            .core(MAIN_THREAD_ID)
+            .unwrap()
+            .cp15()
+            .tpidruro();
+        destination
+            .write_memory_u32(tls + 0x180 + 3 * 8, 0x1401_0000)
+            .unwrap();
+        destination
+            .write_memory_u32(tls + 0x184 + 3 * 8, 0x1000)
+            .unwrap();
+
+        let descriptor = (0x40u32 << 8) | (3 << 4) | 0x04;
+        let words = [0x1234_0002, descriptor, 0x1400_0100];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+        let translated = destination
+            .translate_physical_buffer_tables_from_ipc(&source, MAIN_THREAD_ID, message)
+            .unwrap();
+
+        assert_eq!(translated, vec![(0, physical_base + 0x1000)]);
+        assert_eq!(
+            memory.read_u32(physical_base + 0x1000).unwrap(),
+            physical_base + 0x100
+        );
+        assert_eq!(memory.read_u32(physical_base + 0x1004).unwrap(), 0x40);
+    }
+
+    #[test]
+    fn ipc_type_three_requires_readable_physical_source_and_page_aligned_static_table() {
+        let mut source = test_session();
+        let mut destination = test_session();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
+        let dma = GpuDmaAddressSpace::new();
+        source.attach_gpu_services(memory.clone(), dma.clone());
+        destination.attach_gpu_services(memory.clone(), dma);
+        source
+            .address_space
+            .map_linear_memory_region(0x1400_0000, physical_base, 0x1000)
+            .unwrap();
+        destination
+            .address_space
+            .map_linear_memory_region(0x1401_0000, physical_base + 0x1000, 0x1000)
+            .unwrap();
+
+        let tls = destination
+            .scheduler
+            .core(MAIN_THREAD_ID)
+            .unwrap()
+            .cp15()
+            .tpidruro();
+        destination
+            .write_memory_u32(tls + 0x180, 0x1401_0001)
+            .unwrap();
+        destination.write_memory_u32(tls + 0x184, 0x1000).unwrap();
+
+        let descriptor = (0x20u32 << 8) | 0x06;
+        let words = [0x1234_0002, descriptor, 0x1400_0000];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+        assert_eq!(
+            destination.translate_physical_buffer_tables_from_ipc(
+                &source,
+                MAIN_THREAD_ID,
+                message,
+            ),
+            Err(IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
+                address: 0x1401_0001,
+                capacity: 0x1000,
+            })
         );
     }
 

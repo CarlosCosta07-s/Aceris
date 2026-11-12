@@ -55,6 +55,7 @@ pub enum IpcTranslationParameter<'a> {
     /// A type-0 handle transfer, including its untouched handle words.
     Handles {
         descriptor: u32,
+        word_offset: usize,
         handle_count: u8,
         move_handles: bool,
         requests_process_id: bool,
@@ -63,6 +64,7 @@ pub enum IpcTranslationParameter<'a> {
     /// A type-1 static-buffer copy targeting the receiver's TLS static-buffer slot.
     StaticBuffer {
         descriptor: u32,
+        word_offset: usize,
         buffer_index: u8,
         size_bytes: u32,
         source_address: u32,
@@ -70,9 +72,19 @@ pub enum IpcTranslationParameter<'a> {
     /// A type-5/6/7 temporary buffer mapping with source access permissions.
     MappedBuffer {
         descriptor: u32,
+        word_offset: usize,
         permissions: u8,
         size_bytes: u32,
         source_address: u32,
+    },
+    /// Type-2/3 physical chunk table written into a page-aligned receiver static buffer.
+    PhysicalBufferTable {
+        descriptor: u32,
+        word_offset: usize,
+        buffer_index: u8,
+        size_bytes: u32,
+        source_address: u32,
+        read_only: bool,
     },
 }
 
@@ -95,9 +107,10 @@ pub enum IpcTranslationSectionError {
 
 /// Decodes every parameter in a translation section without touching guest memory.
 ///
-/// This recognizes type 0 handles, type 1 static-buffer copies and type 5/6/7
-/// temporary buffer mappings. Types 2/3 and unknown encodings are rejected
-/// until their backing-page-table semantics are implemented.
+/// This recognizes type 0 handles, type 1 static-buffer copies, type 2/3
+/// physical chunk tables and type 5/6/7 temporary buffer mappings. The parser
+/// validates descriptor structure only; process-memory validation and transfer
+/// are performed by the session transport layer.
 pub fn decode_translation_section(
     words: &[u32],
 ) -> Result<Vec<IpcTranslationParameter<'_>>, IpcTranslationSectionError> {
@@ -115,7 +128,7 @@ pub fn decode_translation_section(
                     .map_err(|_| IpcTranslationSectionError::InvalidDescriptor { descriptor })?;
                 usize::from(decoded.handle_count())
             }
-            1 | 5 | 6 | 7 => 1,
+            1 | 2 | 3 | 5 | 6 | 7 => 1,
             other => {
                 return Err(IpcTranslationSectionError::UnsupportedTranslationType {
                     descriptor,
@@ -141,6 +154,7 @@ pub fn decode_translation_section(
                     .map_err(|_| IpcTranslationSectionError::InvalidDescriptor { descriptor })?;
                 IpcTranslationParameter::Handles {
                     descriptor,
+                    word_offset: cursor - payload_words - 1,
                     handle_count: decoded.handle_count(),
                     move_handles: decoded.moves_handle(),
                     requests_process_id: decoded.requests_process_id(),
@@ -154,9 +168,23 @@ pub fn decode_translation_section(
                 }
                 IpcTranslationParameter::StaticBuffer {
                     descriptor,
+                    word_offset: cursor - payload_words - 1,
                     buffer_index: ((descriptor >> 10) & 0x0F) as u8,
                     size_bytes: descriptor >> 14,
                     source_address: payload[0],
+                }
+            }
+            2 | 3 => {
+                if descriptor & 1 != 0 || descriptor >> 8 == 0 {
+                    return Err(IpcTranslationSectionError::InvalidDescriptor { descriptor });
+                }
+                IpcTranslationParameter::PhysicalBufferTable {
+                    descriptor,
+                    word_offset: cursor - payload_words - 1,
+                    buffer_index: ((descriptor >> 4) & 0x0F) as u8,
+                    size_bytes: descriptor >> 8,
+                    source_address: payload[0],
+                    read_only: translation_type == 3,
                 }
             }
             5..=7 => {
@@ -165,6 +193,7 @@ pub fn decode_translation_section(
                 }
                 IpcTranslationParameter::MappedBuffer {
                     descriptor,
+                    word_offset: cursor - payload_words - 1,
                     permissions: translation_type & 0x03,
                     size_bytes: descriptor >> 4,
                     source_address: payload[0],
@@ -390,16 +419,48 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_physical_buffer_descriptor_types() {
-        for descriptor in [0x0000_0004, 0x0000_0006] {
+    fn decodes_type_two_and_three_physical_buffer_table_descriptors() {
+        let type_two = (0x400u32 << 8) | (3 << 4) | 0x04;
+        let type_three = (0x200u32 << 8) | (2 << 4) | 0x06;
+        let words = [
+            type_two,
+            0x1400_0100,
+            type_three,
+            0x1400_2000,
+        ];
+
+        let parameters = super::decode_translation_section(&words).unwrap();
+        assert_eq!(parameters.len(), 2);
+        assert!(matches!(
+            parameters[0],
+            super::IpcTranslationParameter::PhysicalBufferTable {
+                buffer_index: 3,
+                size_bytes: 0x400,
+                source_address: 0x1400_0100,
+                read_only: false,
+                word_offset: 0,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parameters[1],
+            super::IpcTranslationParameter::PhysicalBufferTable {
+                buffer_index: 2,
+                size_bytes: 0x200,
+                source_address: 0x1400_2000,
+                read_only: true,
+                word_offset: 2,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_sized_or_reserved_physical_buffer_descriptors() {
+        for descriptor in [0x0000_0004, 0x0000_0006, 0x0000_0005, 0x0000_0007] {
             assert_eq!(
-                super::decode_translation_section(&[descriptor, 0, 0]),
-                Err(
-                    super::IpcTranslationSectionError::UnsupportedTranslationType {
-                        descriptor,
-                        translation_type: ((descriptor >> 1) & 7) as u8,
-                    }
-                )
+                super::decode_translation_section(&[descriptor, 0]),
+                Err(super::IpcTranslationSectionError::InvalidDescriptor { descriptor })
             );
         }
     }

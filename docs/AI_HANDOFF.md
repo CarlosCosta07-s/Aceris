@@ -302,3 +302,12 @@ Foram adicionados testes unitários para os tipos reconhecidos, erros de truncam
 - Quatro testes cobrem cópia para o slot TLS, capacidade insuficiente sem escrita, pré-staging transacional diante de origem inválida e recusa de outro tipo de tradução.
 
 Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pelo futuro caminho de recepção/sessão. O registro dos buffers continua sendo responsabilidade do código convidado. Types 5/6/7 só são decodificados; o mapeamento temporário, limpeza de aliases e buffers físicos types 2/3 continuam pendentes. Confirme rustfmt, Clippy e cargo test --workspace via CI antes de considerar a etapa aprovada.
+
+
+## Tradução IPC de buffers físicos type-2/type-3 (12/11/2026)
+
+- `session::ipc::decode_translation_section` reconhece type 2 (tabela RW) e type 3 (tabela read-only), extrai índice de static buffer, tamanho, source pointer e offset do descritor no trecho de tradução. Tamanho zero e bit reservado são rejeitados.
+- `Arm11CodeAddressSpace::linear_physical_chunks_for_range` fornece os pares físicos apenas quando cada byte está coberto por mapeamentos lineares explícitos; chunks virtual e fisicamente contíguos são coalescidos. `is_readable_range` complementa a validação de permissões.
+- `Arm11ProcessSession::translate_physical_buffer_tables_from_ipc` exige que o static buffer receptor seja page-aligned, tenha capacidade de até uma página e também seja respaldado por um mapeamento linear físico. A tabela produzida contém `{physical_address, byte_size}` em little-endian e retorna o endereço físico da tabela para substituição no word de payload da mensagem.
+- A implementação não fabrica endereços para code/data/TLS/heap host-side ou shared memory sem PA observável. O caminho PXI especial de firmware e as verificações de cache/segurança específicas de hardware ainda exigem integração e testes próprios.
+- Testes adicionados cobrem chunks lineares contíguos, rejeição de host backing, criação de uma tabela type-2 e validação de alinhamento do buffer receptor type-3. Executar CI antes de considerar concluído.
