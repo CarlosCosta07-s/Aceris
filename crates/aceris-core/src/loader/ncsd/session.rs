@@ -267,6 +267,8 @@ impl Arm11ProcessSession {
             .ok_or(KernelHandleError::WrongType)?;
         if my_permissions > 3
             || other_permissions > 3
+            || my_permissions == 2
+            || other_permissions == 2
             || my_permissions & !owner_permissions != 0
             || other_permissions & !peer_permissions != 0
         {
@@ -1679,6 +1681,20 @@ mod tests {
             session.core().regs[0],
             RESULT_INVALID_ENUM,
             "mapping must not grant more than the peer permission recorded by the block"
+        );
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = handle;
+            registers[1] = 0x0810_0000;
+            registers[2] = 2;
+            registers[3] = 1;
+        }
+        session.svc_map_memory_block(MAIN_THREAD_ID);
+        assert_eq!(
+            session.core().regs[0],
+            RESULT_INVALID_ENUM,
+            "write-only permission is not a valid ARM11 memory permission"
         );
 
         {
