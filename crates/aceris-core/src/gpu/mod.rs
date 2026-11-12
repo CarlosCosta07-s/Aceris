@@ -4,6 +4,7 @@ mod geometry;
 mod physical_memory;
 mod pica200;
 mod rasterizer;
+mod vertex;
 
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
@@ -21,4 +22,10 @@ pub use pica200::{
 };
 pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
+};
+pub use vertex::{
+    AttributeBitWidth, AttributeDataType, PicaVertexInputLayout, RawVertexAttribute,
+    RawVertexInput, VertexArrayLayout, VertexAttributeFormat, VertexInputError,
+    MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE, MAX_VERTEX_ARRAYS,
+    MAX_VERTEX_ATTRIBUTES,
 };
