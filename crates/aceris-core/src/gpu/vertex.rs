@@ -8,8 +8,7 @@
 //! DMA/address translation.
 
 use super::{
-    GpuAddressSpaceError, GpuDmaAddressSpace, GpuPhysicalMemory, GpuPhysicalMemoryError,
-    Pica200,
+    GpuAddressSpaceError, GpuDmaAddressSpace, GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200,
 };
 
 pub const REG_ATTRIBBUFFERS_LOC: u16 = 0x200;
@@ -559,16 +558,20 @@ impl PicaVertexInputLayout {
         physical_base: u32,
         vertex_index: u32,
     ) -> Result<RawVertexInput, VertexInputError> {
-        self.read_vertex_with_resolver(physical_base, vertex_index, |absolute, width| {
-            let address = u32::try_from(absolute).map_err(|_| {
-                VertexInputError::AddressOverflow {
-                    base: physical_base,
-                    offset: u64::from(u32::MAX) + 1,
-                }
-            })?;
-            memory.validate_range(address, usize::from(width))?;
-            Ok(address)
-        }, memory)
+        self.read_vertex_with_resolver(
+            physical_base,
+            vertex_index,
+            |absolute, width| {
+                let address =
+                    u32::try_from(absolute).map_err(|_| VertexInputError::AddressOverflow {
+                        base: physical_base,
+                        offset: u64::from(u32::MAX) + 1,
+                    })?;
+                memory.validate_range(address, usize::from(width))?;
+                Ok(address)
+            },
+            memory,
+        )
     }
 
     /// Fetches one vertex through registered process-linear to GPU-physical mappings.
@@ -586,12 +589,11 @@ impl PicaVertexInputLayout {
             linear_virtual_base,
             vertex_index,
             |absolute, width| {
-                let address = u32::try_from(absolute).map_err(|_| {
-                    VertexInputError::AddressOverflow {
+                let address =
+                    u32::try_from(absolute).map_err(|_| VertexInputError::AddressOverflow {
                         base: linear_virtual_base,
                         offset: u64::from(u32::MAX) + 1,
-                    }
-                })?;
+                    })?;
                 Ok(address_space
                     .resolve_physical_range(memory, address, usize::from(width))?
                     .physical_address)
@@ -636,12 +638,12 @@ impl PicaVertexInputLayout {
                         base: base_address,
                         offset: u64::MAX,
                     })?;
-                let absolute_address = u64::from(base_address)
-                    .checked_add(relative_offset)
-                    .ok_or(VertexInputError::AddressOverflow {
+                let absolute_address = u64::from(base_address).checked_add(relative_offset).ok_or(
+                    VertexInputError::AddressOverflow {
                         base: base_address,
                         offset: relative_offset,
-                    })?;
+                    },
+                )?;
                 let address = resolve_address(absolute_address, component.byte_width)?;
 
                 let mut bytes = [0u8; 4];
