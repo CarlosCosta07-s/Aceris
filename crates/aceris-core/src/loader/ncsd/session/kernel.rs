@@ -143,7 +143,11 @@ impl Arm11KernelObjectTable {
         if size == 0 || size & 0xFFF != 0 {
             return Err(KernelHandleError::InvalidMemoryBlockSize);
         }
-        if owner_permissions > 3 || other_permissions > 3 {
+        if owner_permissions > 3
+            || other_permissions > 3
+            || owner_permissions == 2
+            || other_permissions == 2
+        {
             return Err(KernelHandleError::InvalidMemoryPermission);
         }
         let backing = SharedMemoryBacking::zeroed(size as usize)
@@ -162,7 +166,11 @@ impl Arm11KernelObjectTable {
         if size == 0 || size & 0xFFF != 0 {
             return Err(KernelHandleError::InvalidMemoryBlockSize);
         }
-        if owner_permissions > 3 || other_permissions > 3 {
+        if owner_permissions > 3
+            || other_permissions > 3
+            || owner_permissions == 2
+            || other_permissions == 2
+        {
             return Err(KernelHandleError::InvalidMemoryPermission);
         }
         self.insert(KernelObject::MemoryBlock(KernelMemoryBlock {
@@ -646,6 +654,14 @@ mod tests {
         );
         assert_eq!(
             table.create_memory_block(0x1000, 4, 1),
+            Err(KernelHandleError::InvalidMemoryPermission)
+        );
+        assert_eq!(
+            table.create_memory_block(0x1000, 2, 1),
+            Err(KernelHandleError::InvalidMemoryPermission)
+        );
+        assert_eq!(
+            table.create_memory_block(0x1000, 3, 2),
             Err(KernelHandleError::InvalidMemoryPermission)
         );
 
