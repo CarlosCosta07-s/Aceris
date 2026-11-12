@@ -11,9 +11,7 @@ pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
     Viewport,
 };
-pub use index::{
-    IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
-};
+pub use index::{IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ};
 pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,
     VRAM_BASE, VRAM_SIZE,
