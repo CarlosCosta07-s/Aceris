@@ -200,8 +200,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
-- [~] Testes do bridge e da conversão escalar PICA200 (signed byte, unsigned byte, signed short e float32) adicionados no commit `39d2ef4a4d3b44a867440ed5fa447f3eb7c91029`; CI deste commit em execução
-- [~] Testes do snapshot e mapeamento de entradas do vertex shader adicionados; CI multiplataforma do commit `8aedeb346014917935985cd5fe913ee9606e18cc` em validação
+- [x] Bridge de fetch físico, conversão escalar PICA200 e mapeamento de atributos para entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43176284651](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43176284651), código no commit `8aedeb346014917935985cd5fe913ee9606e18cc`
 - [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
