@@ -546,9 +546,7 @@ impl Arm11ProcessSession {
             None
         } else {
             let hint_end = u64::from(address_hint) + u64::from(size);
-            if u64::from(address_hint) >= u64::from(OLD_LINEAR_BASE)
-                && hint_end <= OLD_LINEAR_END
-            {
+            if u64::from(address_hint) >= u64::from(OLD_LINEAR_BASE) && hint_end <= OLD_LINEAR_END {
                 Some((
                     address_hint,
                     address_hint + OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET,
@@ -556,10 +554,7 @@ impl Arm11ProcessSession {
             } else if u64::from(address_hint) >= u64::from(NEW_LINEAR_BASE)
                 && hint_end <= NEW_LINEAR_END
             {
-                Some((
-                    address_hint,
-                    FCRAM_BASE + (address_hint - NEW_LINEAR_BASE),
-                ))
+                Some((address_hint, FCRAM_BASE + (address_hint - NEW_LINEAR_BASE)))
             } else {
                 return Err(RESULT_INVALID_ADDRESS);
             }
