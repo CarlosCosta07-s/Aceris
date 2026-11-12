@@ -516,11 +516,9 @@ impl Arm11ProcessSession {
         parameters: &[ipc::IpcTranslationParameter<'_>],
     ) -> std::result::Result<Vec<Arm11IpcHandleGroup>, kernel::IpcHandleTranslationError> {
         let mut groups = Vec::new();
-        groups
-            .try_reserve_exact(parameters.len())
-            .map_err(|_| {
-                kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory)
-            })?;
+        groups.try_reserve_exact(parameters.len()).map_err(|_| {
+            kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory)
+        })?;
 
         let mut moved_source_handles = Vec::new();
         let mut total_non_null_handles = 0usize;
@@ -547,7 +545,9 @@ impl Arm11ProcessSession {
             }
             total_non_null_handles = total_non_null_handles
                 .checked_add(handles.iter().filter(|handle| **handle != 0).count())
-                .ok_or(kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory))?;
+                .ok_or(kernel::IpcHandleTranslationError::Kernel(
+                    KernelHandleError::OutOfMemory,
+                ))?;
 
             for source_handle in handles.iter().copied().filter(|handle| *handle != 0) {
                 source
@@ -3241,7 +3241,9 @@ mod tests {
         let mut source = test_session();
         let mut destination = test_session();
         let mut memory = GpuPhysicalMemory::new();
-        let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let destination_physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        assert_eq!(destination_physical_base, physical_base + 0x1000);
         let dma = GpuDmaAddressSpace::new();
         source.attach_gpu_services(memory.clone(), dma.clone());
         destination.attach_gpu_services(memory.clone(), dma);
@@ -3252,7 +3254,7 @@ mod tests {
             .unwrap();
         destination
             .address_space
-            .map_linear_memory_region(0x1401_0000, physical_base + 0x1000, 0x1000)
+            .map_linear_memory_region(0x1401_0000, destination_physical_base, 0x1000)
             .unwrap();
         source
             .write_memory_bytes(0x1400_0100, &[0x5A; 0x40])
@@ -3278,12 +3280,15 @@ mod tests {
             .translate_physical_buffer_tables_from_ipc(&source, MAIN_THREAD_ID, message)
             .unwrap();
 
-        assert_eq!(translated, vec![(0, physical_base + 0x1000)]);
+        assert_eq!(translated, vec![(0, destination_physical_base)]);
         assert_eq!(
-            memory.read_u32(physical_base + 0x1000).unwrap(),
+            memory.read_u32(destination_physical_base).unwrap(),
             physical_base + 0x100
         );
-        assert_eq!(memory.read_u32(physical_base + 0x1004).unwrap(), 0x40);
+        assert_eq!(
+            memory.read_u32(destination_physical_base + 4).unwrap(),
+            0x40
+        );
     }
 
     #[test]
@@ -3291,7 +3296,9 @@ mod tests {
         let mut source = test_session();
         let mut destination = test_session();
         let mut memory = GpuPhysicalMemory::new();
-        let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let destination_physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        assert_eq!(destination_physical_base, physical_base + 0x1000);
         let dma = GpuDmaAddressSpace::new();
         source.attach_gpu_services(memory.clone(), dma.clone());
         destination.attach_gpu_services(memory.clone(), dma);
@@ -3301,7 +3308,7 @@ mod tests {
             .unwrap();
         destination
             .address_space
-            .map_linear_memory_region(0x1401_0000, physical_base + 0x1000, 0x1000)
+            .map_linear_memory_region(0x1401_0000, destination_physical_base, 0x1000)
             .unwrap();
 
         let tls = destination

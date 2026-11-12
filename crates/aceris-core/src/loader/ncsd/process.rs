@@ -2407,7 +2407,9 @@ mod tests {
     fn linear_physical_chunks_coalesce_contiguous_aliases_and_reject_host_backings() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
-        let physical_base = memory.allocate_linear_fcram(0x3000).unwrap();
+        let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
+        let second_physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        assert_eq!(second_physical_base, physical_base + 0x2000);
         let virtual_base = physical_base - 0x0C00_0000;
         address_space.attach_gpu_memory(memory.clone());
 
@@ -2415,7 +2417,7 @@ mod tests {
             .map_linear_memory_region(virtual_base, physical_base, 0x2000)
             .unwrap();
         address_space
-            .map_linear_memory_region(virtual_base + 0x2000, physical_base + 0x2000, 0x1000)
+            .map_linear_memory_region(virtual_base + 0x2000, second_physical_base, 0x1000)
             .unwrap();
 
         assert_eq!(
@@ -2433,7 +2435,8 @@ mod tests {
             None
         );
 
-        memory.free_linear_fcram(physical_base, 0x3000).unwrap();
+        memory.free_linear_fcram(physical_base, 0x2000).unwrap();
+        memory.free_linear_fcram(second_physical_base, 0x1000).unwrap();
     }
 
     #[test]
