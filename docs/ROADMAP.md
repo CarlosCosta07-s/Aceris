@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na branch `main` no commit `55014b05448153ec3f802fbe50ecda5daa8d79a8`.
+> Estado revisado em 12/11/2026, com base na branch `main` no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -15,7 +15,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] CI configurado para Linux, Windows e macOS com Rustfmt, Clippy e testes; build Android ARM64 separado
 - [x] Workflow completo do commit `849e5a33933ea9444122f2160daf867e2d4e60d0` terminou com sucesso em 12/11/2026, incluindo a etapa Android ARM64
 - [x] Workflow do commit `55014b05448153ec3f802fbe50ecda5daa8d79a8` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
-- [ ] Executar e registrar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` e `cargo build --locked --workspace` no mesmo estado de código
+- [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
+- [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
 - [ ] Manter README, arquitetura e roadmap sincronizados com o código, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
@@ -126,7 +127,10 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Integração inicial no ciclo de frame: captura command buffers da memória visível ao processo e aplica as escritas aos registradores
 - [~] O bridge atual trata o endereço decodificado do command buffer como endereço visível ao processo; tradução DMA/endereçamento físico do hardware ainda precisa ser implementada
 - [~] Rasterizador de referência próprio em CPU para triângulos já transformados: interpolação de cor/profundidade, teste de profundidade e regra top-left; testes de cobertura, orientação, profundidade e entradas inválidas
-- [ ] Ligar o rasterizador ao pipeline PICA200; atualmente ele é um primitivo de bring-up e não é chamado pelo command processor nem gera frames de jogos
+- [x] Estágio geométrico de referência independente: matriz 4x4 column-major, transformação homogênea, clipping contra os seis planos canônicos, proteção de W positivo, triangulação em leque e viewport com Y descendente
+- [x] Rasterizador de referência com interpolação de cor perspective-correct por reciprocal W, interpolação de profundidade e teste de depth
+- [~] O estágio geométrico e o rasterizador podem ser usados juntos por `GeometryPipeline::draw_triangle`, mas ainda são genéricos e independentes dos registradores, shaders e comandos reais do PICA200
+- [ ] Ligar a entrada real do PICA200 ao estágio geométrico e rasterizador; ainda não há renderização de jogos nem saída gráfica derivada do command processor
 - [ ] Modelo completo de command processor, filas, sincronização, interrupções e efeitos dos registradores
 - [ ] Formatos de vértice, atributos, uniformes, vertex shader e transformações
 - [ ] Clipping, montagem de primitivas e regras de culling
@@ -207,11 +211,11 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ## Próximas tarefas prioritárias
 
-1. Confirmar Rustfmt, Clippy e testes dos commits do rasterizador; corrigir qualquer regressão antes de ampliar o código.
-2. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
-3. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
-4. Corrigir o bridge de command buffers para usar o mapa físico e a tradução corretos, sem presumir que endereço virtual de processo é endereço DMA.
-5. Definir o formato de vértice e o contrato de entrada/saída da pipeline PICA200; conectar transformação, clipping e rasterizador.
+1. Documentar, com fontes independentes de hardware, o formato de atributos, o fluxo de vértices e as semânticas dos registradores PICA200 antes de criar um decoder específico.
+2. Corrigir o bridge de command buffers para usar endereços físicos/DMA e mapeamento de memória corretos, sem presumir que endereço virtual de processo é endereço DMA.
+3. Implementar o fetch/decode de atributos de vértice e conectá-lo ao estágio genérico de transformação, clipping e rasterização.
+4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
+5. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
 6. Expor as superfícies LCD no frontend desktop e depois Android.
 
 ## Critérios para concluir um item
