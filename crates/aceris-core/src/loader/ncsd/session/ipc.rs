@@ -428,12 +428,7 @@ mod tests {
     fn decodes_type_two_and_three_physical_buffer_table_descriptors() {
         let type_two = (0x400u32 << 8) | (3 << 4) | 0x04;
         let type_three = (0x200u32 << 8) | (2 << 4) | 0x06;
-        let words = [
-            type_two,
-            0x1400_0100,
-            type_three,
-            0x1400_2000,
-        ];
+        let words = [type_two, 0x1400_0100, type_three, 0x1400_2000];
 
         let parameters = super::decode_translation_section(&words).unwrap();
         assert_eq!(parameters.len(), 2);

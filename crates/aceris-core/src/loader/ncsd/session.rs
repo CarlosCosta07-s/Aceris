@@ -552,7 +552,8 @@ impl Arm11ProcessSession {
                     ..
                 } => (buffer_index, size_bytes, source_address),
                 ipc::IpcTranslationParameter::Handles { descriptor, .. }
-                | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. } => {
+                | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. }
+                | ipc::IpcTranslationParameter::PhysicalBufferTable { descriptor, .. } => {
                     return Err(
                         IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
                             descriptor,
@@ -705,8 +706,8 @@ impl Arm11ProcessSession {
             .map_err(|_| IpcPhysicalBufferTranslationError::AllocationFailure)?;
 
         for parameter in parameters {
-            let (word_offset, buffer_index, size_bytes, source_address, read_only) =
-                match parameter {
+            let (word_offset, buffer_index, size_bytes, source_address, read_only) = match parameter
+            {
                     ipc::IpcTranslationParameter::PhysicalBufferTable {
                         word_offset,
                         buffer_index,
@@ -777,13 +778,13 @@ impl Arm11ProcessSession {
 
             let source_size = usize::try_from(size_bytes)
                 .map_err(|_| IpcPhysicalBufferTranslationError::AllocationFailure)?;
-            let source_permissions_valid = source.address_space.is_readable_range(
-                source_address,
-                source_size,
-            ) && (read_only
-                || source
-                    .address_space
-                    .is_writable_range(source_address, source_size));
+            let source_permissions_valid = source
+                .address_space
+                .is_readable_range(source_address, source_size)
+                && (read_only
+                    || source
+                        .address_space
+                        .is_writable_range(source_address, source_size));
             if !source_permissions_valid {
                 return Err(
                     IpcPhysicalBufferTranslationError::SourcePermissionsInsufficient {
@@ -796,28 +797,33 @@ impl Arm11ProcessSession {
             let source_chunks = source
                 .address_space
                 .linear_physical_chunks_for_range(source_address, size_bytes)
-                .ok_or(
-                    IpcPhysicalBufferTranslationError::SourceRangeNotPhysical {
-                        address: source_address,
-                        size_bytes,
-                    },
-                )?;
+                .ok_or(IpcPhysicalBufferTranslationError::SourceRangeNotPhysical {
+                    address: source_address,
+                    size_bytes,
+                })?;
             let table_size = source_chunks
                 .len()
                 .checked_mul(8)
                 .and_then(|size| u32::try_from(size).ok())
                 .ok_or(IpcPhysicalBufferTranslationError::AllocationFailure)?;
             if table_size > capacity {
-                return Err(IpcPhysicalBufferTranslationError::DestinationBufferTooSmall {
-                    capacity,
-                    required: table_size,
-                });
+                return Err(
+                    IpcPhysicalBufferTranslationError::DestinationBufferTooSmall {
+                        capacity,
+                        required: table_size,
+                    },
+                );
             }
-            if !self.address_space.is_writable_range(destination_address, table_size as usize) {
-                return Err(IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
-                    address: destination_address,
-                    capacity,
-                });
+            if !self
+                .address_space
+                .is_writable_range(destination_address, table_size as usize)
+            {
+                return Err(
+                    IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
+                        address: destination_address,
+                        capacity,
+                    },
+                );
             }
 
             let destination_chunks = self
@@ -859,11 +865,11 @@ impl Arm11ProcessSession {
 
         for table in pending {
             self.write_memory_bytes(table.destination_address, &table.bytes)
-                .map_err(|_| {
-                    IpcPhysicalBufferTranslationError::DestinationWriteFailed {
+                .map_err(
+                    |_| IpcPhysicalBufferTranslationError::DestinationWriteFailed {
                         address: table.destination_address,
-                    }
-                })?;
+                    },
+                )?;
         }
 
         Ok(translated)
@@ -2903,15 +2909,14 @@ mod tests {
         let words = [0x1234_0002, descriptor, 0x1400_0000];
         let message = ipc::IpcMessage::decode(&words).unwrap();
         assert_eq!(
-            destination.translate_physical_buffer_tables_from_ipc(
-                &source,
-                MAIN_THREAD_ID,
-                message,
-            ),
-            Err(IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
-                address: 0x1401_0001,
-                capacity: 0x1000,
-            })
+            destination
+                .translate_physical_buffer_tables_from_ipc(&source, MAIN_THREAD_ID, message,),
+            Err(
+                IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
+                    address: 0x1401_0001,
+                    capacity: 0x1000,
+                }
+            )
         );
     }
 

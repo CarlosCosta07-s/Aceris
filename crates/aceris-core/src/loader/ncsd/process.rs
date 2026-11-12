@@ -2284,7 +2284,10 @@ mod tests {
             address_space.linear_physical_chunks_for_range(0x0010_3000, 0x20),
             None
         );
-        assert_eq!(address_space.linear_physical_chunks_for_range(virtual_base, 0), None);
+        assert_eq!(
+            address_space.linear_physical_chunks_for_range(virtual_base, 0),
+            None
+        );
 
         memory.free_linear_fcram(physical_base, 0x3000).unwrap();
     }
