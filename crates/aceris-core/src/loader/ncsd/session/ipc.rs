@@ -227,6 +227,13 @@ impl<'a> IpcMessage<'a> {
     pub const fn translation_words(self) -> &'a [u32] {
         self.translation_words
     }
+
+    /// Decodes the complete translation section into typed, borrowed parameters.
+    pub fn translation_parameters(
+        self,
+    ) -> Result<Vec<IpcTranslationParameter<'a>>, IpcTranslationSectionError> {
+        decode_translation_section(self.translation_words)
+    }
 }
 
 #[cfg(test)]
@@ -284,5 +291,134 @@ mod tests {
         let header = IpcCommandHeader::decode(0x1234_3000);
         assert_eq!(header.reserved_bits(), 3);
         assert_eq!(header.raw(), 0x1234_3000);
+    }
+
+    #[test]
+    fn decodes_handle_static_buffer_and_mapped_buffer_parameters() {
+        let handles = [0x1111, 0x2222];
+        let words = [
+            0x0400_0000, // COPY two handles.
+            handles[0],
+            handles[1],
+            0x0008_0C02, // Static buffer 3, 0x20 bytes.
+            0x0030_0000,
+            0x0001_000A, // Read-only mapped buffer, 0x1000 bytes.
+            0x0040_0000,
+            0x0002_000C, // Write-only mapped buffer, 0x200 bytes.
+            0x0050_0000,
+            0x0003_000E, // Read/write mapped buffer, 0x300 bytes.
+            0x0060_0000,
+        ];
+
+        let parameters = super::decode_translation_section(&words).unwrap();
+        assert_eq!(parameters.len(), 5);
+        assert!(matches!(
+            parameters[0],
+            super::IpcTranslationParameter::Handles {
+                handle_count: 2,
+                move_handles: false,
+                requests_process_id: false,
+                handles: actual,
+                ..
+            } if actual == handles
+        ));
+        assert!(matches!(
+            parameters[1],
+            super::IpcTranslationParameter::StaticBuffer {
+                buffer_index: 3,
+                size_bytes: 0x20,
+                source_address: 0x0030_0000,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parameters[2],
+            super::IpcTranslationParameter::MappedBuffer {
+                permissions: 1,
+                size_bytes: 0x1000,
+                source_address: 0x0040_0000,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parameters[3],
+            super::IpcTranslationParameter::MappedBuffer {
+                permissions: 2,
+                size_bytes: 0x200,
+                source_address: 0x0050_0000,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parameters[4],
+            super::IpcTranslationParameter::MappedBuffer {
+                permissions: 3,
+                size_bytes: 0x300,
+                source_address: 0x0060_0000,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_truncated_translation_payloads() {
+        assert_eq!(
+            super::decode_translation_section(&[0x0400_0000, 0x1234]),
+            Err(super::IpcTranslationSectionError::TruncatedParameter {
+                descriptor: 0x0400_0000,
+                expected_words: 2,
+                available_words: 1,
+            })
+        );
+        assert_eq!(
+            super::decode_translation_section(&[0x0008_0C02]),
+            Err(super::IpcTranslationSectionError::TruncatedParameter {
+                descriptor: 0x0008_0C02,
+                expected_words: 1,
+                available_words: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_physical_buffer_descriptor_types() {
+        for descriptor in [0x0000_0004, 0x0000_0006] {
+            assert_eq!(
+                super::decode_translation_section(&[descriptor, 0, 0]),
+                Err(super::IpcTranslationSectionError::UnsupportedTranslationType {
+                    descriptor,
+                    translation_type: ((descriptor >> 1) & 7) as u8,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_reserved_static_buffer_descriptor_bits() {
+        let descriptor = 0x0008_0C12;
+        assert_eq!(
+            super::decode_translation_section(&[descriptor, 0x0030_0000]),
+            Err(super::IpcTranslationSectionError::InvalidDescriptor { descriptor })
+        );
+    }
+
+    #[test]
+    fn an_empty_translation_section_contains_no_parameters() {
+        assert!(super::decode_translation_section(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn message_exposes_typed_translation_parameters() {
+        let words = [0x1234_0082, 0x0000_1002, 0x0040_0000];
+        let message = IpcMessage::decode(&words).unwrap();
+        assert!(matches!(
+            message.translation_parameters().unwrap().as_slice(),
+            [super::IpcTranslationParameter::StaticBuffer {
+                buffer_index: 0,
+                size_bytes: 1,
+                source_address: 0x0040_0000,
+                ..
+            }]
+        ));
     }
 }
