@@ -476,7 +476,7 @@ mod tests {
         let config1 = 0 | (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
         let layout =
-            PicaVertexInputLayout::from_registers(format_low, 2 << 28, &[(0x20, config1, config2)])
+            PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0x20, config1, config2)])
                 .unwrap();
 
         let array = &layout.arrays()[0];
@@ -494,7 +494,7 @@ mod tests {
         let config2 = (8 << 16) | (3 << 28);
         let layout = PicaVertexInputLayout::from_registers(
             format_low,
-            2 << 28,
+            1 << 28,
             &[(0x20, config1, config2)],
         )
         .unwrap();
@@ -573,7 +573,7 @@ mod tests {
     fn rejects_inactive_attributes_and_more_than_four_components() {
         let inactive = PicaVertexInputLayout::from_registers(
             0,
-            1 << 28,
+            0,
             &[(0, 1, (1 << 16) | (1 << 28))],
         );
         assert!(matches!(
@@ -583,7 +583,7 @@ mod tests {
 
         let too_many = PicaVertexInputLayout::from_registers(
             0,
-            1 << 28,
+            0,
             &[(0, 0, (5 << 16) | (5 << 28))],
         );
         assert!(matches!(
