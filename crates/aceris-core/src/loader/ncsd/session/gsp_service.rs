@@ -7,8 +7,8 @@
 
 use std::fmt;
 
-use super::kernel::KernelHandleError;
 use super::Arm11ProcessSession;
+use super::kernel::KernelHandleError;
 use crate::gpu::{
     GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId,
     GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
