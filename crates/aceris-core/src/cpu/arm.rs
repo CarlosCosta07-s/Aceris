@@ -1114,15 +1114,20 @@ impl Arm11Core {
         let saved_status = self.saved_program_status().ok_or(Error::Unimplemented(
             "SRS source SPSR has not been initialized",
         ))?;
-        let base = self
+        let raw_base = self
             .banked_sp(target_mode)
             .ok_or(Error::UndefinedInstruction {
                 pc: self.pc(),
                 word,
             })?;
-        if base & 3 != 0 {
-            return Err(Error::InvalidAccess { addr: base });
-        }
+        let base = if raw_base & 3 != 0 {
+            if self.cp15.alignment_fault_enabled() {
+                return Err(Error::InvalidAccess { addr: raw_base });
+            }
+            raw_base & !3
+        } else {
+            raw_base
+        };
 
         let pre_index = bit(word, 24);
         let increment = bit(word, 23);
@@ -2008,7 +2013,7 @@ mod tests {
     }
 
     #[test]
-    fn armv6_srs_rejects_user_mode_invalid_target_and_unaligned_sp() {
+    fn armv6_srs_alignment_obeys_sctlr_a_and_u() {
         let mut user = Machine::new(&[0xF84D_0512]);
         assert!(matches!(
             user.cpu.step(&mut user.mem),
@@ -2030,20 +2035,39 @@ mod tests {
             Err(Error::UndefinedInstruction { pc: 0, .. })
         ));
 
+        // With both alignment controls clear, SRS uses Align(SP) for its
+        // transfer address rather than rejecting the unaligned banked SP.
         let mut unaligned = Machine::new(&[0xF84D_0512]);
         unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        unaligned.cpu.regs[super::LR] = 0x1122_3344;
         unaligned.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
         unaligned.cpu.regs[SP] = 0x901;
         unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
-        unaligned
-            .cpu
-            .set_saved_program_status(Psr(Psr::USER_MODE))
-            .unwrap();
-        assert!(matches!(
-            unaligned.cpu.step(&mut unaligned.mem),
-            Err(Error::InvalidAccess { addr: 0x901 })
-        ));
-        assert_eq!(unaligned.cpu.pc(), 0);
+        let saved = Psr(Psr::USER_MODE);
+        unaligned.cpu.set_saved_program_status(saved).unwrap();
+        assert_eq!(
+            unaligned.cpu.step(&mut unaligned.mem).unwrap(),
+            StepEvent::Executed
+        );
+        assert_eq!(unaligned.mem.read32(0x8FC).unwrap(), 0x1122_3344);
+        assert_eq!(unaligned.mem.read32(0x900).unwrap(), saved.0);
+        assert_eq!(unaligned.cpu.pc(), 4);
+
+        // ARMv6 SRS checks alignment whenever either SCTLR.A or SCTLR.U is set.
+        for control in [1 << 1, 1 << 22] {
+            let mut strict = Machine::new(&[0xF84D_0512]);
+            strict.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            strict.cpu.set_saved_program_status(saved).unwrap();
+            strict.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+            strict.cpu.regs[SP] = 0x901;
+            strict.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            strict.cpu.cp15.write(true, 0, 1, 0, 0, control).unwrap();
+            assert!(matches!(
+                strict.cpu.step(&mut strict.mem),
+                Err(Error::InvalidAccess { addr: 0x901 })
+            ));
+            assert_eq!(strict.cpu.pc(), 0);
+        }
     }
 
     #[test]

@@ -49,7 +49,7 @@ pub const TLBTR_MP11: u32 = 0x0000_0800;
 
 const SCTLR_RESET: u32 = 0x0005_0078;
 /// Writable SCTLR bits: M, A, C, Z, I, V, RR, EE and XP.
-const SCTLR_WRITABLE: u32 = 0x0080_F807;
+const SCTLR_WRITABLE: u32 = 0x00C0_F807;
 const SCTLR_M: u32 = 1;
 const SCTLR_XP: u32 = 1 << 23;
 const FSR_WRITE_NOT_READ: u32 = 1 << 11;
@@ -123,6 +123,12 @@ impl Cp15 {
     pub fn mmu_enabled(&self) -> bool {
         self.sctlr & SCTLR_M != 0
     }
+
+    /// SCTLR.U or SCTLR.A: ARMv6 multiword accesses check word alignment.
+    pub(super) fn alignment_fault_enabled(&self) -> bool {
+        self.sctlr & ((1 << 22) | (1 << 1)) != 0
+    }
+
 
     /// SCTLR.XP: ARMv6 page-table format (AP[1:0] plus APX/XN, no subpages).
     pub fn extended_page_tables(&self) -> bool {
@@ -374,6 +380,21 @@ mod tests {
         assert!(cp15.high_vectors() && cp15.exception_big_endian());
         cp15.write(true, 0, 1, 0, 0, 0).unwrap();
         assert_eq!(cp15.sctlr(), SCTLR_RESET & !SCTLR_WRITABLE);
+    }
+
+    #[test]
+    fn sctlr_u_and_a_bits_are_writable_alignment_controls() {
+        let mut cp15 = Cp15::default();
+        cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+        assert_ne!(cp15.sctlr() & (1 << 22), 0);
+        assert!(cp15.alignment_fault_enabled());
+
+        cp15.write(true, 0, 1, 0, 0, 1 << 1).unwrap();
+        assert_eq!(cp15.sctlr() & (1 << 22), 0);
+        assert!(cp15.alignment_fault_enabled());
+
+        cp15.write(true, 0, 1, 0, 0, 0).unwrap();
+        assert!(!cp15.alignment_fault_enabled());
     }
 
     #[test]
