@@ -2,8 +2,9 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
-    GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue, GspGxCommandQueueError,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
+    GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue,
+    GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue,
     GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -56,6 +57,20 @@ pub struct GspGxCommandQueueReport {
     pub status: u8,
     pub last_result: u32,
     pub error: Option<GspGxCommandQueueError>,
+}
+
+/// Result of enqueueing one GSP interrupt into a client's relay queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspInterruptRelayReport {
+    pub client_id: u8,
+    pub interrupt: GspInterruptId,
+    pub push_result: GspInterruptQueuePushResult,
+    /// The service layer must signal the client's registered event when true.
+    pub event_signal_required: bool,
+    pub pending_interrupts: u8,
+    pub missed_pdc0: u32,
+    pub missed_pdc1: u32,
+    pub error_code: u8,
 }
 
 /// Result of one completed development frame.
@@ -590,6 +605,63 @@ impl System {
         Ok(report)
     }
 
+    /// Queues one interrupt for a client whose GSP relay queue is registered.
+    ///
+    /// shared_memory_base is the guest virtual address of the 0x1000-byte GSP
+    /// shared-memory block. The queue is located at client_id * 0x40. The
+    /// returned event_signal_required tells the service layer to signal that
+    /// client's registered kernel event; this method does not own or signal
+    /// IPC event handles itself.
+    pub fn enqueue_gsp_interrupt_for_client(
+        &mut self,
+        shared_memory_base: u32,
+        client_id: u8,
+        interrupt: GspInterruptId,
+    ) -> Result<GspInterruptRelayReport> {
+        let queue_offset =
+            GspInterruptRelayQueue::client_queue_offset(client_id).map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    error.to_string(),
+                ))
+            })?;
+        let queue_address = shared_memory_base.checked_add(queue_offset).ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "GSP interrupt relay queue address overflowed the process address space",
+            ))
+        })?;
+
+        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+            "a prepared ARM11 process session is required for GSP interrupt delivery",
+        ))?;
+        let mut bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        session.read_memory_bytes(queue_address, &mut bytes)?;
+        let mut queue = GspInterruptRelayQueue::parse(&bytes).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid GSP interrupt relay queue: {error}"),
+            ))
+        })?;
+
+        let push_result = queue.push(interrupt);
+        let event_signal_required =
+            matches!(push_result, GspInterruptQueuePushResult::Queued { .. });
+        let report = GspInterruptRelayReport {
+            client_id,
+            interrupt,
+            push_result,
+            event_signal_required,
+            pending_interrupts: queue.number_interrupts(),
+            missed_pdc0: queue.missed_pdc0(),
+            missed_pdc1: queue.missed_pdc1(),
+            error_code: queue.error_code(),
+        };
+
+        session.write_memory_bytes(queue_address, &queue.encode())?;
+        Ok(report)
+    }
+
     fn dispatch_gsp_gx_command_queue(
         &mut self,
         queue: &mut GspGxCommandQueue,
@@ -880,6 +952,101 @@ mod tests {
             system.submit_pica_command_list_from_memory(0x0010_2000, 2),
             Err(Error::Unimplemented(_))
         ));
+    }
+
+    #[test]
+    fn gsp_interrupt_delivery_updates_client_shared_memory_and_requests_event_signal() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (shared_memory_base, queue_address) = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            let shared_block = [0u8; GSP_INTERRUPT_QUEUE_CLIENT_STRIDE as usize
+                * crate::gpu::GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize];
+            assert!(stack.mapped_size_bytes as usize >= shared_block.len());
+            session.write_memory_bytes(stack.address, &shared_block).unwrap();
+            (
+                stack.address,
+                stack.address + GSP_INTERRUPT_QUEUE_CLIENT_STRIDE * 2,
+            )
+        };
+
+        let report = system
+            .enqueue_gsp_interrupt_for_client(shared_memory_base, 2, GspInterruptId::P3d)
+            .unwrap();
+        assert_eq!(report.client_id, 2);
+        assert_eq!(report.interrupt, GspInterruptId::P3d);
+        assert_eq!(
+            report.push_result,
+            GspInterruptQueuePushResult::Queued { slot: 0 }
+        );
+        assert!(report.event_signal_required);
+        assert_eq!(report.pending_interrupts, 1);
+        assert_eq!(report.error_code, 0);
+
+        let mut bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(queue_address, &mut bytes)
+            .unwrap();
+        let queue = GspInterruptRelayQueue::parse(&bytes).unwrap();
+        assert_eq!(queue.pending_interrupts().unwrap(), [GspInterruptId::P3d]);
+    }
+
+    #[test]
+    fn gsp_interrupt_delivery_respects_guest_ignore_pdc_flag() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (shared_memory_base, queue_address) = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            let mut shared_block = [0u8; GSP_INTERRUPT_QUEUE_CLIENT_STRIDE as usize
+                * crate::gpu::GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize];
+            shared_block[3] = crate::gpu::GSP_INTERRUPT_QUEUE_IGNORE_PDC;
+            session.write_memory_bytes(stack.address, &shared_block).unwrap();
+            (
+                stack.address,
+                stack.address + GSP_INTERRUPT_QUEUE_CLIENT_STRIDE,
+            )
+        };
+
+        let report = system
+            .enqueue_gsp_interrupt_for_client(shared_memory_base, 1, GspInterruptId::Pdc0)
+            .unwrap();
+        assert_eq!(
+            report.push_result,
+            GspInterruptQueuePushResult::IgnoredPdc
+        );
+        assert!(!report.event_signal_required);
+        assert_eq!(report.pending_interrupts, 0);
+        assert_eq!(report.missed_pdc0, 0);
+
+        let mut bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(queue_address, &mut bytes)
+            .unwrap();
+        let queue = GspInterruptRelayQueue::parse(&bytes).unwrap();
+        assert!(queue.ignores_pdc());
+        assert!(queue.pending_interrupts().unwrap().is_empty());
     }
 
     #[test]
