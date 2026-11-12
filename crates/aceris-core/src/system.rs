@@ -309,6 +309,15 @@ impl System {
     }
 
     /// Registers the process in the first free GSP client slot.
+    pub fn register_next_gsp_client(
+        &mut self,
+        shared_memory_base: u32,
+        event_handle: u32,
+    ) -> std::result::Result<u8, GspServiceError> {
+        self.register_next_gsp_client_with_flags(shared_memory_base, event_handle, 0)
+    }
+
+    /// Registers the process in the first free GSP client slot.
     pub fn register_next_gsp_client_with_flags(
         &mut self,
         shared_memory_base: u32,
@@ -667,11 +676,12 @@ impl System {
 
     /// Reads, dispatches and writes back one client's GSP GX shared-memory queue.
     ///
-    /// The caller supplies the base virtual address returned by the future GSP
-    /// shared-memory service and the client slot (0..4). The queue slot must
-    /// already be mapped read/write in the process. Only ProcessCommandList is
-    /// dispatched in this first implementation; the other GX command families,
-    /// GSP IPC rights/busy arbitration and interrupt delivery remain pending.
+    /// The caller supplies the registered 0x1000-byte shared-memory base and
+    /// the client slot (0..4). Only ProcessCommandList is implemented so far.
+    /// It is submitted to PICA200 only when this client owns rendering rights;
+    /// without rights the queue entry is consumed as a no-op. TriggerCmdReqQueue
+    /// itself does not require rendering rights. Other GX command families,
+    /// busy arbitration and the guest IPC/scheduler dispatcher remain pending.
     pub fn process_gsp_gx_command_queue(
         &mut self,
         shared_memory_base: u32,
@@ -737,13 +747,13 @@ impl System {
         self.process_gsp_gx_command_queue(registration.shared_memory_base(), client_id)
     }
 
-    /// Queues one interrupt for a client whose GSP relay queue is registered.
+    /// Legacy low-level helper that updates one relay queue without signaling
+    /// the registered event handle. Prefer dispatch_gsp_interrupt for normal
+    /// service delivery, which routes recipients and signals their process-local
+    /// event objects after successfully queuing the interrupt.
     ///
     /// shared_memory_base is the guest virtual address of the 0x1000-byte GSP
-    /// shared-memory block. The queue is located at client_id * 0x40. The
-    /// returned event_signal_required tells the service layer to signal that
-    /// client's registered kernel event; this method does not own or signal
-    /// IPC event handles itself.
+    /// shared-memory block. The queue is located at client_id * 0x40.
     pub fn enqueue_gsp_interrupt_for_client(
         &mut self,
         shared_memory_base: u32,
