@@ -1772,7 +1772,10 @@ mod tests {
             .clear_event(second_event)
             .unwrap();
         let owner_only = registry
-            .deliver_interrupt_to_sessions(GspInterruptId::Dma, [(1, &mut second_session)])
+            .deliver_interrupt_to_sessions(
+                GspInterruptId::Dma,
+                [(0, &mut first_session), (1, &mut second_session)],
+            )
             .unwrap();
         assert_eq!(owner_only.deliveries.len(), 1);
         assert_eq!(owner_only.deliveries[0].client_id, 1);
