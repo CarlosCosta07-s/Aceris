@@ -86,8 +86,12 @@ pub enum Arm11RunStopReason {
     ProcessExited,
     /// A BKPT instruction stopped execution for a debugger or exception layer.
     Breakpoint(u16),
-    /// The current core executed CP15 WFI and is waiting for an IRQ or FIQ.
+    /// A WFI instruction is waiting for an IRQ or FIQ, even when masked.
     WaitForInterrupt,
+    /// The current core is waiting for an ARMv6K event.
+    WaitForEvent,
+    /// A guest SEV instruction retired and must be broadcast by the system scheduler.
+    SendEvent,
     /// No thread is currently eligible to execute.
     NoRunnableThread,
     /// A void SVC could not be completed by the current bootstrap.
@@ -1411,12 +1415,24 @@ impl Arm11ProcessSession {
 
     /// Drives the current thread's external FIQ input.
     ///
-    /// An asserted FIQ wakes a core in CP15 WFI even when CPSR.F masks FIQ
+    /// An asserted FIQ wakes a core in WFI even when CPSR.F masks FIQ
     /// exception entry. In that case the guest resumes without taking FIQ.
     pub fn set_fiq_line(&mut self, asserted: bool) {
         if let Some(core) = self.scheduler.current_core_mut() {
             core.set_fiq_line(asserted);
         }
+    }
+
+    /// Signals an external ARMv6K event to the currently running CPU context.
+    ///
+    /// The system layer also exposes this hook to device and multi-core schedulers.
+    pub fn signal_cpu_event(&mut self) -> Result<()> {
+        let core = self
+            .scheduler
+            .current_core_mut()
+            .ok_or(crate::Error::Unimplemented("no runnable ARM11 thread"))?;
+        core.signal_event();
+        Ok(())
     }
 
     /// Returns the total number of successfully executed instructions.
@@ -1434,7 +1450,10 @@ impl Arm11ProcessSession {
             .current_core_mut()
             .ok_or(crate::Error::Unimplemented("no runnable ARM11 thread"))?;
         let event = core.step(&mut self.address_space)?;
-        if event != StepEvent::WaitingForInterrupt {
+        if !matches!(
+            event,
+            StepEvent::WaitingForInterrupt | StepEvent::WaitingForEvent
+        ) {
             self.instruction_count = self.instruction_count.saturating_add(1);
         }
         Ok(event)
@@ -1512,6 +1531,26 @@ impl Arm11ProcessSession {
                     return Ok(Arm11RunReport {
                         instructions_executed: executed,
                         stop_reason: Arm11RunStopReason::WaitForInterrupt,
+                    });
+                }
+                StepEvent::WaitForEvent => {
+                    executed = executed.saturating_add(1);
+                    return Ok(Arm11RunReport {
+                        instructions_executed: executed,
+                        stop_reason: Arm11RunStopReason::WaitForEvent,
+                    });
+                }
+                StepEvent::WaitingForEvent => {
+                    return Ok(Arm11RunReport {
+                        instructions_executed: executed,
+                        stop_reason: Arm11RunStopReason::WaitForEvent,
+                    });
+                }
+                StepEvent::SendEvent => {
+                    executed = executed.saturating_add(1);
+                    return Ok(Arm11RunReport {
+                        instructions_executed: executed,
+                        stop_reason: Arm11RunStopReason::SendEvent,
                     });
                 }
                 StepEvent::Breakpoint(immediate) => {
@@ -2552,6 +2591,52 @@ mod tests {
         assert_eq!(session.core().pc(), 0x18);
         assert_eq!(session.core().cpsr.mode(), crate::cpu::Psr::IRQ_MODE);
         session.set_irq_line(false);
+    }
+
+    #[test]
+    fn a32_wfe_stops_session_until_an_external_cpu_event_arrives() {
+        let mut session = test_session_with_program(&[0xE320_F002, 0xE3A0_0007]);
+
+        let entered = session.run_instructions(8).unwrap();
+        assert_eq!(entered.instructions_executed, 1);
+        assert_eq!(entered.stop_reason, Arm11RunStopReason::WaitForEvent);
+        assert_eq!(session.core().pc(), 0x0010_0004);
+        assert_eq!(session.instruction_count(), 1);
+
+        let asleep = session.run_instructions(8).unwrap();
+        assert_eq!(asleep.instructions_executed, 0);
+        assert_eq!(asleep.stop_reason, Arm11RunStopReason::WaitForEvent);
+        assert_eq!(session.core().pc(), 0x0010_0004);
+        assert_eq!(session.instruction_count(), 1);
+
+        session.signal_cpu_event().unwrap();
+        let resumed = session.run_instructions(1).unwrap();
+        assert_eq!(resumed.instructions_executed, 1);
+        assert_eq!(
+            resumed.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.core().regs[0], 7);
+        assert_eq!(session.core().pc(), 0x0010_0008);
+        assert_eq!(session.instruction_count(), 2);
+    }
+
+    #[test]
+    fn a32_sev_is_reported_to_the_system_scheduler() {
+        let mut session = test_session_with_program(&[0xE320_F004, 0xE3A0_0007]);
+
+        let report = session.run_instructions(8).unwrap();
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(report.stop_reason, Arm11RunStopReason::SendEvent);
+        assert_eq!(session.core().pc(), 0x0010_0004);
+
+        let resumed = session.run_instructions(1).unwrap();
+        assert_eq!(resumed.instructions_executed, 1);
+        assert_eq!(
+            resumed.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.core().regs[0], 7);
     }
 
     #[test]

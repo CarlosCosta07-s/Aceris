@@ -431,6 +431,18 @@ impl System {
         }
     }
 
+    /// Signals an external ARMv6K CPU event to the active process core.
+    ///
+    /// Multi-core orchestration can call this for each target core after a guest SEV.
+    pub fn signal_cpu_event(&mut self) -> Result<()> {
+        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+            "an NCSD ARM11 process session has not been prepared",
+        ))?;
+        session.signal_cpu_event()?;
+        self.cpu = session.core().clone();
+        Ok(())
+    }
+
     /// Returns the explicitly registered process-linear to GPU-physical mappings.
     pub const fn gpu_address_space(&self) -> &GpuDmaAddressSpace {
         &self.gpu_address_space
