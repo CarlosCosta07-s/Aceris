@@ -2263,8 +2263,7 @@ mod tests {
         let message = ipc::IpcMessage::decode(&words).unwrap();
 
         assert_eq!(
-            destination
-                .translate_memory_block_translation_section_from_ipc(&mut source, message,),
+            destination.translate_memory_block_translation_section_from_ipc(&mut source, message,),
             Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
         );
         assert_eq!(destination.kernel_objects.handle_count(), 0);
