@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `a7cd047b17db9e1a1441f19f540941259445770a`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `c47b97484444262e5710d6c3ab4b8f4f7751590f`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -128,7 +128,10 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Banco inicial de 0x400 registradores PICA200
 - [x] Decodificador de command lists com parâmetros, cabeçalhos, máscaras de byte, escrita consecutiva e validação de limites
 - [x] Descritores e acknowledgement dos canais de command buffer 0 e 1
-- [~] Integração inicial no ciclo de frame: captura descritores dos dois canais PICA200, lê command buffers do backing físico FCRAM/VRAM e aplica as escritas aos registradores; o despacho do serviço GSP ainda não está implementado
+- [~] Integração inicial no ciclo de frame: captura descritores dos dois canais PICA200, lê command buffers do backing físico FCRAM/VRAM e aplica as escritas aos registradores; os pedidos GSP via IPC e eventos continuam pendentes
+- [~] Parser do GX command queue em shared memory: cabeçalho de 8 bytes, ring de 15 entradas de 32 bytes, wrap do índice, contagem/status/resultado, flags halt-after e fail-if-busy
+- [~] Dispatcher inicial para GX `ProcessCommandList` (ID 0x01): valida slot/client, tamanho e alinhamento, resolve intervalos de VRAM ou DMA linear, submete a lista ao parser PICA200, consome entradas, atualiza o cabeçalho e registra erro de endereço; a API exige que o bloco de shared memory já esteja mapeado no processo
+- [~] Flags flush-buffer, update-GAS e fail-if-busy são reconhecidas e expostas no relatório; cache flush real, GAS e arbitragem de busy não são simulados
 - [~] `GpuDmaAddressSpace` compartilha seus registros com o processo e traduz intervalos lineares virtuais para FCRAM físico: janela antiga `0x14000000–0x1C000000` com deslocamento `+0x0C000000`, e janela nova `0x30000000–0x38000000` relativa ao início de FCRAM; intervalos são registrados automaticamente pelo `ControlMemory` e validados por alinhamento, sobreposição, overflow e limite físico
 - [~] `ControlMemory` aloca e libera linear FCRAM nos aliases antigo e novo; hints não nulos são honrados por reserva física exata, e ponteiros CPU mapeados usam o mesmo backing observado pelo DMA/GPU/LCD
 - [~] `System::submit_pica_command_list_from_linear_memory` já resolve o intervalo completo pelo mapa DMA automático e encaminha a lista ao parser PICA200; descritores internos do command buffer PICA são tratados separadamente como endereços físicos
@@ -148,7 +151,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Fetch de vértices e índices dispõe de rotas DMA que validam intervalos completos; o caminho DRAW real, a semântica do base address PICA, cache flush/invalidate e coerência ARM/GPU ainda não estão integrados
 - [ ] Integrar o fetch de atributos/índices ao vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
-- [ ] Modelo completo de command processor, filas, sincronização, interrupções e efeitos dos registradores
+- [~] Modelo inicial da fila GX e despacho síncrono de `ProcessCommandList`; RequestDMA, MemoryFill, DisplayTransfer, TextureCopy, FlushCacheRegions, estados busy, sincronização assíncrona e interrupções ainda não são despachados
+- [ ] Implementar GSP service IPC: RegisterInterruptRelayQueue/TriggerCmdReqQueue, direitos de renderização, criação/mapeamento do shared memory, eventos de conclusão e notificações de interrupção
+- [ ] Implementar comandos GX adicionais e semântica de busy/erro/async com registros GPU e devices correspondentes
 - [~] Transformação matricial e clipping genéricos implementados; clipping, montagem de primitivas, culling e convenções exatas do PICA200 ainda pendentes
 - [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
 - [ ] Depth/stencil, blending, máscaras e operações completas de framebuffer
@@ -233,7 +238,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ## Próximas tarefas prioritárias
 
-1. Implementar a fila GSP Shared Memory (`TriggerCmdReqQueue`), começando por `ProcessCommandList`: índices/contagem/status, limites de 15 entradas, validação de alinhamento/endereço linear e envio ao parser PICA200; manter cache flush/invalidate explicitamente pendente.
+1. Implementar o serviço GSP IPC em torno do GX queue: mapping de shared memory, rendering rights, `TriggerCmdReqQueue`, relay queue/eventos e callbacks; conectar cache flush/invalidate somente quando houver um modelo de cache ARM observável.
 2. Confirmar ABI completa de entrada do shader e implementar armazenamento/decodificação de programa, uniforms e execução do vertex shader; os atributos fixos e o mapeamento `v0–v15` já têm infraestrutura inicial.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
