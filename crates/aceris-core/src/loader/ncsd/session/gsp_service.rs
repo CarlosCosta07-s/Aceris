@@ -43,6 +43,46 @@ pub enum GspIpcRequest {
     ReleaseRight,
 }
 
+/// One-word-result IPC reply used by simple GSP service commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspIpcResultResponse {
+    /// Response header: same command ID, one normal result word, no translations.
+    pub header: u32,
+    pub result_code: u32,
+}
+
+impl GspIpcResultResponse {
+    /// Builds a simple result response for commands that have no output handles.
+    ///
+    /// RegisterInterruptRelayQueue is excluded because its response also
+    /// transfers a shared-memory handle and returns a GSP thread identifier.
+    pub const fn for_request(
+        request: GspIpcRequest,
+        result_code: u32,
+    ) -> Option<Self> {
+        let command_id = match request {
+            GspIpcRequest::TriggerCmdReqQueue => GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER,
+            GspIpcRequest::UnregisterInterruptRelayQueue => {
+                GSP_IPC_UNREGISTER_INTERRUPT_RELAY_QUEUE_HEADER
+            }
+            GspIpcRequest::TryAcquireRight { .. } => GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER,
+            GspIpcRequest::AcquireRight { .. } => GSP_IPC_ACQUIRE_RIGHT_HEADER,
+            GspIpcRequest::ReleaseRight => GSP_IPC_RELEASE_RIGHT_HEADER,
+            GspIpcRequest::RegisterInterruptRelayQueue { .. } => return None,
+        };
+
+        Some(Self {
+            header: (command_id & 0xFFFF_0000) | 0x40,
+            result_code,
+        })
+    }
+
+    /// Serializes the response into the first two TLS command-buffer words.
+    pub const fn encode(self) -> [u32; 2] {
+        [self.header, self.result_code]
+    }
+}
+
 /// Errors returned when decoding a GSP GPU service IPC request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GspIpcRequestError {
@@ -930,6 +970,58 @@ mod tests {
                 flags: 0xA5A5_0001,
                 event_handle: 0x1234,
             })
+        );
+    }
+
+    #[test]
+    fn gsp_ipc_result_responses_use_one_result_word_and_preserve_command_id() {
+        let cases = [
+            (
+                GspIpcRequest::TriggerCmdReqQueue,
+                0x000C_0040,
+            ),
+            (
+                GspIpcRequest::UnregisterInterruptRelayQueue,
+                0x0014_0040,
+            ),
+            (
+                GspIpcRequest::TryAcquireRight {
+                    process_handle: 0x1234,
+                },
+                0x0015_0040,
+            ),
+            (
+                GspIpcRequest::AcquireRight {
+                    flags: 1,
+                    process_handle: 0x5678,
+                },
+                0x0016_0040,
+            ),
+            (
+                GspIpcRequest::ReleaseRight,
+                0x0017_0040,
+            ),
+        ];
+
+        for (request, expected_header) in cases {
+            let response = GspIpcResultResponse::for_request(request, 0xDEAD_BEEF).unwrap();
+            assert_eq!(response.header, expected_header);
+            assert_eq!(response.result_code, 0xDEAD_BEEF);
+            assert_eq!(response.encode(), [expected_header, 0xDEAD_BEEF]);
+        }
+    }
+
+    #[test]
+    fn register_relay_queue_requires_its_extended_response_shape() {
+        assert_eq!(
+            GspIpcResultResponse::for_request(
+                GspIpcRequest::RegisterInterruptRelayQueue {
+                    flags: 0,
+                    event_handle: 0x100,
+                },
+                0,
+            ),
+            None
         );
     }
 
