@@ -12,8 +12,8 @@ pub use geometry::{
     Viewport,
 };
 pub use index::{
-    IndexBufferError, IndexBufferLayout, IndexElementWidth, PicaIndexInputState,
-    MAX_INDICES_PER_READ, REG_INDEXBUFFER_CONFIG, REG_NUMVERTICES, REG_VERTEX_OFFSET,
+    IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
+    PicaIndexInputState, REG_INDEXBUFFER_CONFIG, REG_NUMVERTICES, REG_VERTEX_OFFSET,
 };
 pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,
@@ -31,7 +31,7 @@ pub use rasterizer::{
 pub use vertex::{
     AttributeBitWidth, AttributeDataType, MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE,
     MAX_VERTEX_ARRAYS, MAX_VERTEX_ATTRIBUTES, PicaVertexInputLayout, PicaVertexInputState,
-    RawVertexAttribute, RawVertexInput, VertexArrayLayout, VertexAttributeFormat, VertexInputError,
     REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
-    REG_ATTRIBBUFFERS_LOC,
+    REG_ATTRIBBUFFERS_LOC, RawVertexAttribute, RawVertexInput, VertexArrayLayout,
+    VertexAttributeFormat, VertexInputError,
 };
