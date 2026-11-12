@@ -74,9 +74,39 @@ impl Arm11Core {
         bus: &mut B,
         word: u32,
     ) -> Result<StepEvent> {
-        // ARM1136 NOP is a true no-op: its condition field is ignored and
-        // the hint byte has no effect on this processor revision.
+        // A32 WFE/WFI/SEV share the architectural NOP32 hint encoding.
+        // NOP, YIELD, and reserved hints are no-ops independent of condition;
+        // WFE, WFI, and SEV retain their normal ARM condition check.
         if word & 0x0FFF_FF00 == 0x0320_F000 {
+            let hint = bits(word, 7, 0);
+            if (2..=4).contains(&hint) {
+                let condition = (word >> 28) as u8;
+                if !Condition::from_bits(condition).passes(self.cpsr) {
+                    return Ok(StepEvent::Executed);
+                }
+
+                return match hint {
+                    2 => {
+                        if self.event_registered {
+                            self.event_registered = false;
+                            Ok(StepEvent::Executed)
+                        } else {
+                            self.waiting_for_event = true;
+                            Ok(StepEvent::WaitForEvent)
+                        }
+                    }
+                    3 => {
+                        self.waiting_for_interrupt = true;
+                        Ok(StepEvent::WaitForInterrupt)
+                    }
+                    4 => {
+                        self.signal_event();
+                        Ok(StepEvent::SendEvent)
+                    }
+                    _ => unreachable!(),
+                };
+            }
+
             return Ok(StepEvent::Executed);
         }
 
@@ -2971,6 +3001,89 @@ mod tests {
         assert_eq!(m.cpu.regs[0], 0x1122_3344);
         assert_eq!(m.cpu.regs[1], 0x5566_7788);
         assert_eq!(m.cpu.cpsr, before_cpsr);
+    }
+
+    #[test]
+    fn armv6k_a32_wfe_consumes_pending_event_or_suspends_until_signaled() {
+        let mut immediate = Machine::new(&[0xE320_F002]);
+        immediate.cpu.signal_event();
+        assert_eq!(immediate.step(), StepEvent::Executed);
+        assert!(!immediate.cpu.event_registered);
+        assert_eq!(immediate.cpu.pc(), 4);
+
+        let mut waiting = Machine::new(&[0xE320_F002, 0xE3A0_0007, 0xE320_F002]);
+        assert_eq!(waiting.step(), StepEvent::WaitForEvent);
+        assert_eq!(waiting.cpu.pc(), 4);
+        assert_eq!(waiting.step(), StepEvent::WaitingForEvent);
+        assert_eq!(waiting.cpu.pc(), 4);
+
+        waiting.cpu.signal_event();
+        assert_eq!(waiting.step(), StepEvent::Executed);
+        assert_eq!(waiting.cpu.regs[0], 7);
+        assert!(waiting.cpu.event_registered);
+        assert_eq!(waiting.step(), StepEvent::Executed);
+        assert!(!waiting.cpu.event_registered);
+        assert_eq!(waiting.cpu.pc(), 12);
+    }
+
+    #[test]
+    fn armv6k_a32_wfe_wakes_on_unmasked_interrupt_and_keeps_masked_irq_asleep() {
+        let mut m = Machine::new(&[0xE320_F002, 0xE3A0_0001]);
+        assert_eq!(m.step(), StepEvent::WaitForEvent);
+
+        m.cpu.cpsr.0 |= Psr::I;
+        m.cpu.set_irq_line(true);
+        assert_eq!(m.step(), StepEvent::WaitingForEvent);
+        assert_eq!(m.cpu.pc(), 4);
+
+        m.cpu.cpsr.0 &= !Psr::I;
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::IRQ_MODE);
+        assert!(m.cpu.event_registered);
+        assert_eq!(m.cpu.pc(), 0x18);
+    }
+
+    #[test]
+    fn armv6k_a32_wfi_hint_wakes_even_when_interrupt_is_masked() {
+        let mut m = Machine::new(&[0xE320_F003, 0xE3A0_2007]);
+        assert_eq!(m.step(), StepEvent::WaitForInterrupt);
+        assert_eq!(m.cpu.pc(), 4);
+
+        m.cpu.cpsr.0 |= Psr::I | Psr::F;
+        m.cpu.set_irq_line(true);
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::USER_MODE);
+        assert_eq!(m.cpu.regs[2], 7);
+        assert_eq!(m.cpu.pc(), 8);
+    }
+
+    #[test]
+    fn armv6k_a32_sev_reports_broadcast_and_sets_local_event_register() {
+        let mut m = Machine::new(&[0xE320_F004, 0xE320_F002]);
+        assert_eq!(m.step(), StepEvent::SendEvent);
+        assert!(m.cpu.event_registered);
+        assert_eq!(m.cpu.pc(), 4);
+
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert!(!m.cpu.event_registered);
+        assert_eq!(m.cpu.pc(), 8);
+    }
+
+    #[test]
+    fn armv6k_a32_wait_hints_obey_condition_while_reserved_hints_remain_nops() {
+        let mut conditional = Machine::new(&[0x0320_F002, 0x0320_F003, 0x0320_F004]);
+        assert_eq!(conditional.step(), StepEvent::Executed);
+        assert_eq!(conditional.step(), StepEvent::Executed);
+        assert_eq!(conditional.step(), StepEvent::Executed);
+        assert_eq!(conditional.cpu.pc(), 12);
+        assert!(!conditional.cpu.waiting_for_event);
+        assert!(!conditional.cpu.waiting_for_interrupt);
+        assert!(!conditional.cpu.event_registered);
+
+        let mut hints = Machine::new(&[0x0320_F001, 0x0320_F0A5]);
+        hints.run(2);
+        assert_eq!(hints.cpu.pc(), 8);
+        assert!(!hints.cpu.waiting_for_event);
     }
 
     #[test]

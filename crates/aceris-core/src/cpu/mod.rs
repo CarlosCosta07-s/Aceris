@@ -44,6 +44,12 @@ pub enum StepEvent {
     WaitForInterrupt,
     /// The core remains in the WFI state; no guest instruction was executed.
     WaitingForInterrupt,
+    /// An A32 WFE instruction retired and suspended the core waiting for an event.
+    WaitForEvent,
+    /// The core remains suspended in WFE; no guest instruction was executed.
+    WaitingForEvent,
+    /// A core executed SEV; the system scheduler must signal the other CPU cores.
+    SendEvent,
     /// A BKPT instruction was encountered. The immediate is retained for a
     /// debugger or the process exception layer.
     Breakpoint(u16),
@@ -122,6 +128,8 @@ pub struct Arm11Core {
     irq_line_asserted: bool,
     fiq_line_asserted: bool,
     waiting_for_interrupt: bool,
+    waiting_for_event: bool,
+    event_registered: bool,
     cp15: Cp15,
     tlb: mmu::TranslationLookasideBuffer,
     vfp: Vfp,
@@ -330,6 +338,14 @@ impl Arm11Core {
         self.exclusive_reservation = None;
     }
 
+    /// Signals an event to this core's ARMv6K event register.
+    ///
+    /// The system scheduler uses this for external events, a remote core's
+    /// SEV, and the cross-core return-from-exception wakeup condition.
+    pub fn signal_event(&mut self) {
+        self.event_registered = true;
+    }
+
     /// Fetches and executes one instruction.
     ///
     /// With fault-exception entry enabled (see `set_fault_exception_entry_enabled`),
@@ -348,9 +364,22 @@ impl Arm11Core {
     }
 
     fn step_instruction<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
-        // ARMv6K CP15 WFI suspends instruction execution until an IRQ or FIQ
-        // input is asserted. The wakeup condition ignores CPSR.I/F; those
-        // masks control exception acceptance, not whether WFI can complete.
+        // WFE wakes for a registered event or an unmasked IRQ/FIQ. The
+        // event register stays set after wakeup and is consumed by the next WFE.
+        if self.waiting_for_event {
+            let unmasked_interrupt = (self.irq_line_asserted && self.cpsr.0 & Psr::I == 0)
+                || (self.fiq_line_asserted && self.cpsr.0 & Psr::F == 0);
+            if self.event_registered || unmasked_interrupt {
+                self.waiting_for_event = false;
+                if unmasked_interrupt {
+                    self.event_registered = true;
+                }
+            } else {
+                return Ok(StepEvent::WaitingForEvent);
+            }
+        }
+
+        // WFI wakes for an IRQ or FIQ even when CPSR.I/F masks exception entry.
         if self.waiting_for_interrupt {
             if !self.irq_line_asserted && !self.fiq_line_asserted {
                 return Ok(StepEvent::WaitingForInterrupt);
