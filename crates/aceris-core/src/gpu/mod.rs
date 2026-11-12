@@ -2,8 +2,8 @@
 
 mod address_space;
 mod fixed_attribute;
-mod gsp_queue;
 mod geometry;
+mod gsp_queue;
 mod index;
 mod input_fetch;
 mod physical_memory;
