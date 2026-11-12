@@ -38,12 +38,8 @@ impl Pica200 {
         resolved_physical_byte_base: u32,
         vertex_index: u32,
     ) -> Result<NumericVertexInput, VertexInputError> {
-        self.read_vertex_at_physical_base(
-            memory,
-            resolved_physical_byte_base,
-            vertex_index,
-        )
-        .map(|raw| raw.to_numeric())
+        self.read_vertex_at_physical_base(memory, resolved_physical_byte_base, vertex_index)
+            .map(|raw| raw.to_numeric())
     }
 
     /// Fetches raw indices using the current PICA200 index-buffer register.
@@ -110,7 +106,8 @@ mod tests {
         gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000)
             .unwrap();
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
-        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0)
+            .unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x80).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
