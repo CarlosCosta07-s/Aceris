@@ -311,3 +311,12 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - `Arm11ProcessSession::translate_physical_buffer_tables_from_ipc` exige que o static buffer receptor seja page-aligned, tenha capacidade de até uma página e também seja respaldado por um mapeamento linear físico. A tabela produzida contém `{physical_address, byte_size}` em little-endian e retorna o endereço físico da tabela para substituição no word de payload da mensagem.
 - A implementação não fabrica endereços para code/data/TLS/heap host-side ou shared memory sem PA observável. O caminho PXI especial de firmware e as verificações de cache/segurança específicas de hardware ainda exigem integração e testes próprios.
 - Testes adicionados cobrem chunks lineares contíguos, rejeição de host backing, criação de uma tabela type-2 e validação de alinhamento do buffer receptor type-3. Executar CI antes de considerar concluído.
+
+## Correção de privilégio CPSR para modos reservados (12/11/2026)
+
+- `89eb900` — `Psr::privileged()` agora reconhece como privilegiados somente FIQ, IRQ, Supervisor, Abort, Undefined e System. User e codificações de modo reservadas não recebem privilégios de controle do CPSR.
+- `psr.rs`: teste cobre cada modo privilegiado definido, User e vários valores reservados.
+- `arm.rs`: teste A32 confirma que `MSR CPSR_c,r6` não consegue trocar um modo reservado para System.
+- A alteração ficou isolada nos arquivos `crates/aceris-core/src/cpu/psr.rs` e `crates/aceris-core/src/cpu/arm.rs`; não modificou `thumb.rs) nem os módulos recentes de IPC.
+- Não foi possível executar Rustfmt, Clippy ou `cargo test --workspace` neste ambiente porque Cargo/Rust não estão instalados. A consulta de checks e de Actions para `89eb900` não retornou execuções no momento do registro; os novos testes permanecem pendentes de CI.
+
