@@ -3,17 +3,16 @@
 //! The registry is owned by the service layer, not by the guest process. It
 //! connects a registered client slot to a process-mapped GSP shared-memory
 //! block and a process-local kernel event handle. Shared-memory creation,
-//! mapping and IPC command decoding remain responsibilities of later layers.
+//! mapping and IPC command dispatch remain responsibilities of later layers.
 
 use std::fmt;
 
-use super::Arm11ProcessSession;
 use super::kernel::KernelHandleError;
+use super::Arm11ProcessSession;
 use crate::gpu::{
     GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId,
     GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
 };
-
 /// Complete GSP shared-memory size used by the current GX and relay layouts.
 pub const GSP_SHARED_MEMORY_SIZE: usize = 0x1000;
 
