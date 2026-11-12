@@ -6,6 +6,7 @@
 //! the caller has independently confirmed were allocated by the process.
 
 use std::fmt;
+use std::sync::{Arc, RwLock};
 
 use super::physical_memory::{FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError};
 
@@ -96,7 +97,7 @@ impl From<GpuPhysicalMemoryError> for GpuAddressSpaceError {
 /// register a range only after the corresponding guest memory operation succeeds.
 #[derive(Clone, Debug, Default)]
 pub struct GpuDmaAddressSpace {
-    mappings: Vec<GpuLinearMapping>,
+    mappings: Arc<RwLock<Vec<GpuLinearMapping>>>,
 }
 
 impl GpuDmaAddressSpace {
@@ -104,8 +105,12 @@ impl GpuDmaAddressSpace {
         Self::default()
     }
 
-    pub fn mappings(&self) -> &[GpuLinearMapping] {
-        &self.mappings
+    /// Returns a snapshot of the currently registered linear mappings.
+    pub fn mappings(&self) -> Vec<GpuLinearMapping> {
+        self.mappings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Registers one page-aligned, successfully allocated linear-memory range.
@@ -132,7 +137,11 @@ impl GpuDmaAddressSpace {
         )?;
         let physical_base = Self::linear_physical_base(virtual_base, size)?;
 
-        if self.mappings.iter().any(|mapping| {
+        let mut mappings = self
+            .mappings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if mappings.iter().any(|mapping| {
             u64::from(virtual_base) < mapping.virtual_end()
                 && virtual_end > u64::from(mapping.virtual_base)
         }) {
@@ -140,7 +149,7 @@ impl GpuDmaAddressSpace {
         }
 
         let physical_end = u64::from(physical_base) + u64::from(size);
-        if self.mappings.iter().any(|mapping| {
+        if mappings.iter().any(|mapping| {
             u64::from(physical_base) < mapping.physical_end()
                 && physical_end > u64::from(mapping.physical_base)
         }) {
@@ -152,8 +161,8 @@ impl GpuDmaAddressSpace {
             physical_base,
             size,
         };
-        self.mappings.push(mapping);
-        self.mappings.sort_by_key(|item| item.virtual_base);
+        mappings.push(mapping);
+        mappings.sort_by_key(|item| item.virtual_base);
         Ok(mapping)
     }
 
@@ -163,8 +172,11 @@ impl GpuDmaAddressSpace {
         virtual_base: u32,
         size: u32,
     ) -> Result<(), GpuAddressSpaceError> {
-        let Some(index) = self
+        let mut mappings = self
             .mappings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(index) = mappings
             .iter()
             .position(|mapping| mapping.virtual_base == virtual_base && mapping.size == size)
         else {
@@ -173,7 +185,7 @@ impl GpuDmaAddressSpace {
                 size,
             });
         };
-        self.mappings.remove(index);
+        mappings.remove(index);
         Ok(())
     }
 
@@ -206,7 +218,11 @@ impl GpuDmaAddressSpace {
             });
         }
 
-        let Some(mapping) = self.mappings.iter().find(|mapping| {
+        let mappings = self
+            .mappings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(mapping) = mappings.iter().find(|mapping| {
             u64::from(virtual_address) >= u64::from(mapping.virtual_base)
                 && virtual_end <= mapping.virtual_end()
         }) else {
