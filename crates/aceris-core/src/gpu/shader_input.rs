@@ -163,8 +163,8 @@ impl PicaVertexShaderInputLayout {
 mod tests {
     use super::*;
     use crate::gpu::{
-        AttributeDataType, VertexAttributeFormat, REG_VSH_INPUTBUFFER_CONFIG,
-        REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+        AttributeDataType, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+        REG_VSH_INPUTBUFFER_CONFIG, VertexAttributeFormat,
     };
 
     fn numeric_attribute(value: f32) -> NumericVertexAttribute {
@@ -182,11 +182,8 @@ mod tests {
     fn snapshots_shader_input_count_and_permutation_registers() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_VSH_INPUTBUFFER_CONFIG, 2).unwrap();
-        gpu.write_register(
-            REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            5 | (1 << 4) | (9 << 8),
-        )
-        .unwrap();
+        gpu.write_register(REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 5 | (1 << 4) | (9 << 8))
+            .unwrap();
         gpu.write_register(REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0x7654_3210)
             .unwrap();
 
@@ -202,12 +199,8 @@ mod tests {
 
     #[test]
     fn maps_numeric_attributes_to_shader_registers_and_preserves_fixed_mask() {
-        let layout = PicaVertexShaderInputLayout::from_registers(
-            2,
-            7 | (3 << 4) | (12 << 8),
-            0,
-        )
-        .unwrap();
+        let layout =
+            PicaVertexShaderInputLayout::from_registers(2, 7 | (3 << 4) | (12 << 8), 0).unwrap();
         let mut vertex = NumericVertexInput {
             attributes: [None; 12],
             fixed_attribute_mask: 1 << 2,
@@ -228,8 +221,7 @@ mod tests {
 
     #[test]
     fn preserves_duplicate_destination_registers_without_guessing_precedence() {
-        let layout =
-            PicaVertexShaderInputLayout::from_registers(1, 4 | (4 << 4), 0).unwrap();
+        let layout = PicaVertexShaderInputLayout::from_registers(1, 4 | (4 << 4), 0).unwrap();
         let mut vertex = NumericVertexInput {
             attributes: [None; 12],
             fixed_attribute_mask: 0,
