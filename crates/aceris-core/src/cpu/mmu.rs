@@ -121,7 +121,11 @@ fn legacy_permission_allows(
         3 => (2, 2),
         _ => (0, 0),
     };
-    let level = if privileged { privileged_level } else { user_level };
+    let level = if privileged {
+        privileged_level
+    } else {
+        user_level
+    };
     if write { level == 2 } else { level >= 1 }
 }
 
@@ -322,7 +326,11 @@ fn walk_page_tables<B: Bus + ?Sized>(
         match l1 & 3 {
             0b10 if params.xp => {
                 let supersection = bit(l1, 18);
-                let address_mask = if supersection { 0xFF00_0000 } else { 0xFFF0_0000 };
+                let address_mask = if supersection {
+                    0xFF00_0000
+                } else {
+                    0xFFF0_0000
+                };
                 let physical = if supersection {
                     (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
                 } else {
@@ -365,13 +373,8 @@ fn walk_page_tables<B: Bus + ?Sized>(
                 let descriptor_type = l2 & 3;
 
                 if descriptor_type == 0 || (!params.xp && descriptor_type == 3) {
-                    let page_fault = match fault(
-                        FaultKind::Translation,
-                        false,
-                        domain,
-                        va,
-                        access,
-                    ) {
+                    let page_fault = match fault(FaultKind::Translation, false, domain, va, access)
+                    {
                         Walk::Fault(value) => value,
                         Walk::Mapped(_) => unreachable!(),
                     };
@@ -1409,5 +1412,4 @@ mod tests {
             0xD
         );
     }
-
 }

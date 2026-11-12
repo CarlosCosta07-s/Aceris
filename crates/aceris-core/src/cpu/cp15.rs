@@ -144,7 +144,6 @@ impl Cp15 {
         self.sctlr & (1 << 9) != 0
     }
 
-
     pub fn ttbr0(&self) -> u32 {
         self.ttbr0
     }
