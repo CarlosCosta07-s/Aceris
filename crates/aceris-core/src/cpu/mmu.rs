@@ -372,7 +372,10 @@ fn walk_page_tables<B: Bus + ?Sized>(
                 let l2 = bus.read32(l2_address)?;
                 let descriptor_type = l2 & 3;
 
-                if descriptor_type == 0 {
+                // In the ARMv6 XP=1 format, L2 type 0b11 is reserved.
+                // It is an extended-small-page descriptor only in the
+                // backwards-compatible XP=0 format handled below.
+                if descriptor_type == 0 || (params.xp && descriptor_type == 0b11) {
                     let page_fault = match fault(FaultKind::Translation, false, domain, va, access)
                     {
                         Walk::Fault(value) => value,
@@ -906,6 +909,21 @@ mod tests {
             walk(&cpu, &mut mem, 0x0030_0000, Access::Write),
             Walk::Mapped(_)
         ));
+    }
+
+    #[test]
+    fn xp_format_rejects_reserved_extended_small_page_descriptor() {
+        let (cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+
+        // L2 type 0b11 is reserved with SCTLR.XP=1. It must not be
+        // interpreted as the legacy extended-small-page format.
+        mem.write32(L2, 0x0004_0000 | (0b11 << 4) | 0b11)
+            .unwrap();
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Read)),
+            0x7
+        );
     }
 
     #[test]
