@@ -75,6 +75,26 @@ impl PicaShaderOperandDescriptor {
     }
 }
 
+impl PicaVertexShaderInstruction {
+    /// Returns the operand descriptor table index used by this instruction.
+    ///
+    /// The descriptor ID is a word offset in the separate operand-descriptor
+    /// table. Flow-control and emit formats do not reference that table.
+    pub const fn operand_descriptor_index(self) -> Option<usize> {
+        match self {
+            Self::Format1(value) => Some(value.descriptor as usize),
+            Self::Format1Inverted(value) => Some(value.descriptor as usize),
+            Self::Format1Unary(value) => Some(value.descriptor as usize),
+            Self::Format1Compare(value) => Some(value.descriptor as usize),
+            Self::Format5MultiplyAdd(value) => Some(value.descriptor as usize),
+            Self::Format5InvertedMultiplyAdd(value) => Some(value.descriptor as usize),
+            Self::Format2Flow(_)
+            | Self::Format3BooleanFlow(_)
+            | Self::Format4Emit(_) => None,
+        }
+    }
+}
+
 /// Raw fields for register-operation instruction Format 1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PicaShaderFormat1 {
@@ -293,6 +313,42 @@ mod tests {
 
     const fn bits(value: u32, shift: u32) -> u32 {
         value << shift
+    }
+
+    #[test]
+    fn instruction_formats_expose_descriptor_indices_only_when_present() {
+        let format1 = PicaVertexShaderInstruction::Format1(PicaShaderFormat1 {
+            descriptor: 0x55,
+            source2: 0,
+            source1: 0,
+            source1_address_index: 0,
+            destination: 0,
+            opcode: 0,
+        });
+        assert_eq!(format1.operand_descriptor_index(), Some(0x55));
+
+        let format5 = PicaVertexShaderInstruction::Format5MultiplyAdd(
+            PicaShaderFormat5MultiplyAdd {
+                descriptor: 0x1B,
+                source3: 0,
+                source2: 0,
+                source1: 0,
+                source2_address_index: 0,
+                destination: 0,
+                opcode: 0,
+            },
+        );
+        assert_eq!(format5.operand_descriptor_index(), Some(0x1B));
+
+        let flow = PicaVertexShaderInstruction::Format2Flow(PicaShaderFormat2Flow {
+            instruction_count: 0,
+            destination_offset: 0,
+            condition_operator: 0,
+            reference_y: false,
+            reference_x: false,
+            opcode: 0,
+        });
+        assert_eq!(flow.operand_descriptor_index(), None);
     }
 
     #[test]
