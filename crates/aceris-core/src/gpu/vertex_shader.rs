@@ -138,10 +138,7 @@ impl PicaVertexShaderInstruction {
     ///
     /// The caller supplies the format because opcode-to-format identification
     /// has ambiguities and undocumented combinations in the available ISA notes.
-    pub const fn decode(
-        word: u32,
-        format: PicaVertexShaderInstructionFormat,
-    ) -> Self {
+    pub const fn decode(word: u32, format: PicaVertexShaderInstructionFormat) -> Self {
         match format {
             PicaVertexShaderInstructionFormat::Format1 => Self::Format1(PicaShaderFormat1 {
                 descriptor: field(word, 0, 7) as u8,
@@ -250,10 +247,7 @@ mod tests {
             | bits(0x1A, 21)
             | bits(0x13, 26);
         assert_eq!(
-            PicaVertexShaderInstruction::decode(
-                word,
-                PicaVertexShaderInstructionFormat::Format1,
-            ),
+            PicaVertexShaderInstruction::decode(word, PicaVertexShaderInstructionFormat::Format1,),
             PicaVertexShaderInstruction::Format1(PicaShaderFormat1 {
                 descriptor: 0x55,
                 source2: 0x12,
@@ -288,11 +282,7 @@ mod tests {
             })
         );
 
-        let unary = bits(0x32, 0)
-            | bits(0x65, 12)
-            | bits(1, 19)
-            | bits(0x1F, 21)
-            | bits(0x0E, 26);
+        let unary = bits(0x32, 0) | bits(0x65, 12) | bits(1, 19) | bits(0x1F, 21) | bits(0x0E, 26);
         assert_eq!(
             PicaVertexShaderInstruction::decode(
                 unary,
@@ -354,10 +344,7 @@ mod tests {
             })
         );
 
-        let bool_flow = bits(0x5C, 0)
-            | bits(0x321, 10)
-            | bits(0xA, 22)
-            | bits(0x27, 26);
+        let bool_flow = bits(0x5C, 0) | bits(0x321, 10) | bits(0xA, 22) | bits(0x27, 26);
         assert_eq!(
             PicaVertexShaderInstruction::decode(
                 bool_flow,
