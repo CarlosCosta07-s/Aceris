@@ -736,7 +736,7 @@ mod tests {
         let mut gpu = Pica200::new();
         gpu.write_register(
             REG_VSH_FLOATUNIFORM_INDEX,
-            (VSH_FLOAT_UNIFORM_COUNT - 1) as u32,
+            0x8000_0000 | (VSH_FLOAT_UNIFORM_COUNT - 1) as u32,
         )
         .unwrap();
         gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0, 4.0f32.to_bits())
@@ -753,7 +753,7 @@ mod tests {
         );
         assert_eq!(
             gpu.register(REG_VSH_FLOATUNIFORM_INDEX),
-            Some(VSH_FLOAT_UNIFORM_COUNT as u32)
+            Some(0x8000_0000 | VSH_FLOAT_UNIFORM_COUNT as u32)
         );
 
         gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0, 4.0f32.to_bits())
