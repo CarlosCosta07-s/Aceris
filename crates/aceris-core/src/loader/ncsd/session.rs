@@ -529,13 +529,13 @@ impl Arm11ProcessSession {
             .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
 
         for parameter in parameters {
-            let (descriptor, buffer_index, size_bytes, source_address) = match parameter {
+            let (buffer_index, size_bytes, source_address) = match parameter {
                 ipc::IpcTranslationParameter::StaticBuffer {
-                    descriptor,
                     buffer_index,
                     size_bytes,
                     source_address,
-                } => (descriptor, buffer_index, size_bytes, source_address),
+                    ..
+                } => (buffer_index, size_bytes, source_address),
                 ipc::IpcTranslationParameter::Handles { descriptor, .. }
                 | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. } => {
                     return Err(
