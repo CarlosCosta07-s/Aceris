@@ -6,8 +6,7 @@
 
 use super::{
     GpuDmaAddressSpace, GpuPhysicalMemory, IndexBufferError, NumericVertexInput, Pica200,
-    RawVertexInput,
-    VertexInputError,
+    RawVertexInput, VertexInputError,
 };
 
 impl Pica200 {
@@ -234,9 +233,11 @@ mod tests {
     #[test]
     fn pica200_fetches_numeric_vertex_through_registered_linear_dma_mapping() {
         let mut gpu = Pica200::new();
-        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_5000).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_5000)
+            .unwrap();
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
-        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0)
+            .unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x80).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
@@ -258,7 +259,8 @@ mod tests {
     #[test]
     fn pica200_fetches_indices_through_registered_linear_dma_mapping() {
         let mut gpu = Pica200::new();
-        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_6000).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_6000)
+            .unwrap();
         gpu.write_register(REG_INDEXBUFFER_CONFIG, 0x8000_0020)
             .unwrap();
         gpu.write_register(REG_NUMVERTICES, 2).unwrap();
@@ -282,7 +284,8 @@ mod tests {
     #[test]
     fn dma_vertex_fetch_rejects_components_outside_registered_mapping() {
         let mut gpu = Pica200::new();
-        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_7000).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_7000)
+            .unwrap();
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0xFFC).unwrap();
