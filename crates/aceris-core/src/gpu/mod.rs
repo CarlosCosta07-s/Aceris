@@ -2,6 +2,7 @@
 
 mod address_space;
 mod fixed_attribute;
+mod gsp_queue;
 mod geometry;
 mod index;
 mod input_fetch;
@@ -22,6 +23,13 @@ pub use fixed_attribute::{
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
     Viewport,
+};
+pub use gsp_queue::{
+    GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_CAPACITY,
+    GSP_GX_COMMAND_QUEUE_CLIENT_COUNT, GSP_GX_COMMAND_QUEUE_CLIENT_STRIDE,
+    GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_OFFSET, GSP_GX_COMMAND_QUEUE_SIZE,
+    GSP_INVALID_ADDRESS_RESULT, GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError,
+    GspProcessCommandList,
 };
 pub use index::{
     IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
