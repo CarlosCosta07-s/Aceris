@@ -152,10 +152,17 @@ impl PicaVertexShaderInputLayout {
             });
         }
 
+        let mut unresolved_fixed_attribute_mask =
+            vertex.fixed_attribute_mask & !vertex.resolved_fixed_attribute_mask;
+        for (index, attribute) in vertex.attributes.iter().enumerate() {
+            if attribute.is_some() {
+                unresolved_fixed_attribute_mask &= !(1u16 << index);
+            }
+        }
+
         VertexShaderInputBindings {
             attributes,
-            unresolved_fixed_attribute_mask: vertex.fixed_attribute_mask
-                & !vertex.resolved_fixed_attribute_mask,
+            unresolved_fixed_attribute_mask,
         }
     }
 }
