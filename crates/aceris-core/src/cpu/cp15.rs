@@ -128,7 +128,6 @@ impl Cp15 {
         self.pending_tlb_maintenance.take()
     }
 
-
     pub fn dfsr(&self) -> u32 {
         self.dfsr
     }
@@ -346,7 +345,10 @@ mod tests {
         let mut cp15 = Cp15::default();
 
         cp15.write(true, 0, 8, 5, 0, 0).unwrap();
-        assert_eq!(cp15.take_tlb_maintenance(), Some(TlbMaintenance::InvalidateAll));
+        assert_eq!(
+            cp15.take_tlb_maintenance(),
+            Some(TlbMaintenance::InvalidateAll)
+        );
 
         cp15.write(true, 0, 8, 6, 1, 0x1234_567A).unwrap();
         assert_eq!(

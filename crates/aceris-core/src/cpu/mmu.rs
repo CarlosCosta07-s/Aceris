@@ -51,6 +51,52 @@ pub(super) enum Walk {
     Fault(Fault),
 }
 
+#[derive(Clone, Copy)]
+enum FaultKind {
+    Translation,
+    Domain,
+    Permission,
+}
+
+fn fault(kind: FaultKind, section: bool, domain: u32, address: u32, access: Access) -> Walk {
+    let code = match (kind, section) {
+        (FaultKind::Translation, true) => 0x5,
+        (FaultKind::Translation, false) => 0x7,
+        (FaultKind::Domain, true) => 0x9,
+        (FaultKind::Domain, false) => 0xB,
+        (FaultKind::Permission, true) => 0xD,
+        (FaultKind::Permission, false) => 0xF,
+    };
+    Walk::Fault(Fault {
+        address,
+        status: code | (domain << 4),
+        access,
+    })
+}
+
+/// Whether (APX, AP) grants the requested access to the requesting privilege level.
+fn permission_allows(apx: u32, ap: u32, privileged: bool, write: bool) -> bool {
+    // (privileged access, user access) as 0 = none, 1 = read-only, 2 = read/write
+    let (privileged_level, user_level) = match (apx, ap) {
+        (0, 1) => (2, 0),
+        (0, 2) => (2, 1),
+        (0, 3) => (2, 2),
+        (1, 1) => (1, 0),
+        (1, 2) | (1, 3) => (1, 1),
+        _ => (0, 0),
+    };
+    let level = if privileged {
+        privileged_level
+    } else {
+        user_level
+    };
+    if write {
+        level == 2
+    } else {
+        level >= 1
+    }
+}
+
 /// One cached short-descriptor translation. Entries retain their original
 /// mapping size so MVA invalidation removes a complete section/large page,
 /// rather than only an arbitrary 4 KiB subpage.
@@ -134,8 +180,7 @@ impl TranslationLookasideBuffer {
         self.entries.retain(|existing| {
             existing.virtual_base != entry.virtual_base
                 || existing.address_mask != entry.address_mask
-                || existing.global != entry.global
-                || (!entry.global && existing.asid != entry.asid)
+                || (!entry.global && !existing.global && existing.asid != entry.asid)
         });
 
         if self.entries.len() < TLB_CAPACITY {
@@ -194,7 +239,11 @@ fn walk_page_tables<B: Bus + ?Sized>(
     let (domain, ap, apx, xn, physical, global, address_mask, section) = match l1 & 3 {
         0b10 => {
             let supersection = bit(l1, 18);
-            let address_mask = if supersection { 0xFF00_0000 } else { 0xFFF0_0000 };
+            let address_mask = if supersection {
+                0xFF00_0000
+            } else {
+                0xFFF0_0000
+            };
             let physical = if supersection {
                 (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
             } else {
@@ -217,13 +266,7 @@ fn walk_page_tables<B: Bus + ?Sized>(
             let l2 = bus.read32(l2_address)?;
             match l2 & 3 {
                 0b00 => {
-                    let fault = match fault(
-                        FaultKind::Translation,
-                        false,
-                        domain,
-                        va,
-                        access,
-                    ) {
+                    let fault = match fault(FaultKind::Translation, false, domain, va, access) {
                         Walk::Fault(value) => value,
                         Walk::Mapped(_) => unreachable!(),
                     };
@@ -426,13 +469,7 @@ impl Arm11Core {
                 "MMU with subpage permissions (SCTLR.XP = 0)",
             ));
         }
-        // Apply CP15 c8 maintenance before the next guest access. An MCR
-        // therefore affects subsequent data accesses and instruction fetches.
-        let maintenance = self.cp15.take_tlb_maintenance();
         let mut tlb = std::mem::take(&mut self.tlb);
-        if let Some(operation) = maintenance {
-            tlb.maintain(operation);
-        }
 
         let params = Params {
             ttbr0: self.cp15.ttbr0(),
@@ -884,8 +921,16 @@ mod tests {
 
         tlb.maintain(TlbMaintenance::InvalidateAsid { asid: 7 });
         assert_eq!(tlb.len(), 2);
-        assert!(tlb.entries.iter().any(|entry| entry.virtual_base == 0x1000 && entry.global));
-        assert!(tlb.entries.iter().any(|entry| entry.virtual_base == 0x3000 && entry.asid == 8));
+        assert!(
+            tlb.entries
+                .iter()
+                .any(|entry| entry.virtual_base == 0x1000 && entry.global)
+        );
+        assert!(
+            tlb.entries
+                .iter()
+                .any(|entry| entry.virtual_base == 0x3000 && entry.asid == 8)
+        );
 
         tlb.maintain(TlbMaintenance::InvalidateMvaAsid {
             mva: 0x1000,

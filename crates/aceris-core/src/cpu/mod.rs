@@ -338,6 +338,10 @@ impl Arm11Core {
     }
 
     fn step_instruction<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
+        if let Some(operation) = self.cp15.take_tlb_maintenance() {
+            self.tlb.maintain(operation);
+        }
+
         let pc = self.pc();
         self.branch_taken = false;
 
