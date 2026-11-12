@@ -1245,6 +1245,47 @@ mod tests {
     }
 
     #[test]
+    fn gsp_gx_queue_consumes_process_command_list_without_rendering_rights() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let command_list_address = VRAM_BASE + 0x1000;
+        system
+            .physical_memory_mut()
+            .write_u32(command_list_address, 0xDEAD_BEEF)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(command_list_address + 4, 0x000F_0100)
+            .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8]
+            .copy_from_slice(&command_list_address.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, false);
+
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.command_lists_submitted, 0);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.error.is_none());
+        assert_eq!(system.gpu().register(0x100), Some(0));
+        assert_eq!(&queue.encode_header()[0..2], &[1, 0]);
+    }
+
+    #[test]
     fn gsp_gx_queue_rejects_unmapped_process_command_list_address() {
         let mut system = System::new();
         system
