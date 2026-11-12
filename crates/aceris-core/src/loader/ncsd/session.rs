@@ -5,6 +5,7 @@
 //! Privileged CPU modes, blocking synchronization waits, timers, heap
 //! resource accounting and peripheral mappings remain outside this bootstrap.
 
+pub mod gsp_service;
 pub mod kernel;
 pub mod svc;
 /// ARM11 per-thread contexts and cooperative scheduling primitives.
