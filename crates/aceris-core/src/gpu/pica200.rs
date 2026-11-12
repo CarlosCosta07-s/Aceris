@@ -156,7 +156,9 @@ pub struct Pica200 {
     fixed_attributes: [[u32; 3]; FIXED_ATTRIBUTE_COUNT],
     immediate_mode_attribute: [u32; 3],
     vertex_shader_code: [u32; VSH_CODE_TRANSFER_WORDS],
+    vertex_shader_code_uploaded: [bool; VSH_CODE_TRANSFER_WORDS],
     vertex_shader_operand_descriptors: [u32; VSH_OPDESC_TRANSFER_WORDS],
+    vertex_shader_operand_descriptors_uploaded: [bool; VSH_OPDESC_TRANSFER_WORDS],
     vertex_shader_uniforms: [[f32; 4]; VSH_FLOAT_UNIFORM_COUNT],
     pending_uniform_words: Vec<u32>,
     vertex_shader_program_ready: bool,
@@ -171,7 +173,9 @@ impl Default for Pica200 {
             fixed_attributes: [[0; 3]; FIXED_ATTRIBUTE_COUNT],
             immediate_mode_attribute: [0; 3],
             vertex_shader_code: [0; VSH_CODE_TRANSFER_WORDS],
+            vertex_shader_code_uploaded: [false; VSH_CODE_TRANSFER_WORDS],
             vertex_shader_operand_descriptors: [0; VSH_OPDESC_TRANSFER_WORDS],
+            vertex_shader_operand_descriptors_uploaded: [false; VSH_OPDESC_TRANSFER_WORDS],
             vertex_shader_uniforms: [[0.0; 4]; VSH_FLOAT_UNIFORM_COUNT],
             pending_uniform_words: Vec::with_capacity(4),
             vertex_shader_program_ready: false,
@@ -219,7 +223,10 @@ impl Pica200 {
 
     /// Returns one uploaded vertex shader instruction word.
     pub fn vertex_shader_instruction(&self, index: usize) -> Option<u32> {
-        self.vertex_shader_code.get(index).copied()
+        self.vertex_shader_code
+            .get(index)
+            .copied()
+            .filter(|_| self.vertex_shader_code_uploaded.get(index).copied().unwrap_or(false))
     }
 
     /// Decodes a previously uploaded instruction using a caller-supplied format.
@@ -237,7 +244,15 @@ impl Pica200 {
 
     /// Returns one uploaded vertex shader operand descriptor word.
     pub fn vertex_shader_operand_descriptor(&self, index: usize) -> Option<u32> {
-        self.vertex_shader_operand_descriptors.get(index).copied()
+        self.vertex_shader_operand_descriptors
+            .get(index)
+            .copied()
+            .filter(|_| {
+                self.vertex_shader_operand_descriptors_uploaded
+                    .get(index)
+                    .copied()
+                    .unwrap_or(false)
+            })
     }
 
     /// Decodes an uploaded instruction and resolves its optional operand descriptor.
@@ -319,6 +334,7 @@ impl Pica200 {
             let index_register = usize::from(REG_VSH_CODETRANSFER_INDEX);
             let index = (self.registers[index_register] & 0x0FFF) as usize;
             self.vertex_shader_code[index] = self.registers[usize::from(id)];
+            self.vertex_shader_code_uploaded[index] = true;
             self.registers[index_register] = ((index + 1) % VSH_CODE_TRANSFER_WORDS) as u32;
             self.vertex_shader_program_ready = false;
             return;
@@ -339,6 +355,7 @@ impl Pica200 {
             let index_register = usize::from(REG_VSH_OPDESCS_INDEX);
             let index = (self.registers[index_register] & 0x0FFF) as usize;
             self.vertex_shader_operand_descriptors[index] = self.registers[usize::from(id)];
+            self.vertex_shader_operand_descriptors_uploaded[index] = true;
             self.registers[index_register] = ((index + 1) % VSH_OPDESC_TRANSFER_WORDS) as u32;
             return;
         }
@@ -555,7 +572,9 @@ impl Pica200 {
         self.fixed_attributes.fill([0; 3]);
         self.immediate_mode_attribute.fill(0);
         self.vertex_shader_code.fill(0);
+        self.vertex_shader_code_uploaded.fill(false);
         self.vertex_shader_operand_descriptors.fill(0);
+        self.vertex_shader_operand_descriptors_uploaded.fill(false);
         self.vertex_shader_uniforms.fill([0.0; 4]);
         self.pending_uniform_words.clear();
         self.vertex_shader_program_ready = false;
@@ -730,6 +749,23 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn shader_upload_readers_distinguish_unwritten_zero_from_uploaded_zero() {
+        let mut gpu = Pica200::new();
+        assert_eq!(gpu.vertex_shader_instruction(3), None);
+        assert_eq!(gpu.vertex_shader_operand_descriptor(7), None);
+
+        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 3).unwrap();
+        gpu.write_register(REG_VSH_CODETRANSFER_DATA0, 0).unwrap();
+        gpu.write_register(REG_VSH_OPDESCS_INDEX, 7).unwrap();
+        gpu.write_register(REG_VSH_OPDESCS_DATA0, 0).unwrap();
+
+        assert_eq!(gpu.vertex_shader_instruction(3), Some(0));
+        assert_eq!(gpu.vertex_shader_operand_descriptor(7), Some(0));
+        assert_eq!(gpu.vertex_shader_instruction(4), None);
+        assert_eq!(gpu.vertex_shader_operand_descriptor(8), None);
     }
 
     #[test]
@@ -911,8 +947,8 @@ mod tests {
 
         gpu.reset();
 
-        assert_eq!(gpu.vertex_shader_instruction(0), Some(0));
-        assert_eq!(gpu.vertex_shader_operand_descriptor(7), Some(0));
+        assert_eq!(gpu.vertex_shader_instruction(0), None);
+        assert_eq!(gpu.vertex_shader_operand_descriptor(7), None);
         assert_eq!(gpu.vertex_shader_uniform(0), Some([0.0; 4]));
         assert_eq!(gpu.pending_vertex_shader_uniform_words(), 0);
         assert!(!gpu.vertex_shader_program_ready());
