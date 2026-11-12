@@ -2763,14 +2763,8 @@ mod tests {
 
         m.step();
 
-        let expected = Psr::N
-            | Psr::Z
-            | Psr::C
-            | Psr::V
-            | Psr::Q
-            | Psr::GE_MASK
-            | Psr::E
-            | Psr::USER_MODE;
+        let expected =
+            Psr::N | Psr::Z | Psr::C | Psr::V | Psr::Q | Psr::GE_MASK | Psr::E | Psr::USER_MODE;
         assert_eq!(m.cpu.cpsr.0, expected);
     }
 
