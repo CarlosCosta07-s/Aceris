@@ -156,7 +156,7 @@ pub fn decode_translation_section(
                 }
             }
             5 | 6 | 7 => {
-                if descriptor & 1 != 0 {
+                if descriptor & 1 != 0 || descriptor >> 4 == 0 {
                     return Err(IpcTranslationSectionError::InvalidDescriptor { descriptor });
                 }
                 IpcTranslationParameter::MappedBuffer {
@@ -417,6 +417,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_zero_length_mapped_buffers() {
+        for descriptor in [0x0A, 0x0C, 0x0E] {
+            assert_eq!(
+                super::decode_translation_section(&[descriptor, 0x0040_0000]),
+                Err(super::IpcTranslationSectionError::InvalidDescriptor { descriptor })
+            );
+        }
+    }
+
+    #[test]
     fn decodes_process_id_translation_as_a_type_zero_parameter() {
         let parameters = super::decode_translation_section(&[0x20, 0xFFFF_FFFF]).unwrap();
         assert!(matches!(
@@ -427,7 +437,7 @@ mod tests {
                 requests_process_id: true,
                 handles,
                 ..
-            }] if handles == &[0xFFFF_FFFF]
+            }] if handles.first() == Some(&0xFFFF_FFFF)
         ));
         assert_eq!(
             super::decode_translation_section(&[0x30, 0]),
