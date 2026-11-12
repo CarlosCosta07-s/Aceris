@@ -543,6 +543,11 @@ impl GspServiceRegistry {
         self.rendering_waiters.len()
     }
 
+    /// Returns queued clients in FIFO order without exposing mutation.
+    pub fn rendering_right_waiters(&self) -> impl Iterator<Item = u8> + '_ {
+        self.rendering_waiters.iter().copied()
+    }
+
     /// Returns the one-based position of a waiting client, if any.
     pub fn rendering_right_waiter_position(&self, client_id: u8) -> Option<usize> {
         self.rendering_waiters
@@ -1160,12 +1165,17 @@ mod tests {
             GspRenderingRightAcquireOutcome::AlreadyWaiting { position: 1 }
         );
         assert_eq!(registry.rendering_right_waiter_count(), 2);
+        assert_eq!(
+            registry.rendering_right_waiters().collect::<Vec<_>>(),
+            [1, 2]
+        );
         assert_eq!(registry.rendering_right_waiter_position(2), Some(2));
         assert!(!registry.try_acquire_rendering_right(3).unwrap());
 
         // Removing a queued client must not leave a stale slot in the FIFO.
         registry.unregister_client(1).unwrap();
         assert_eq!(registry.rendering_right_waiter_count(), 1);
+        assert_eq!(registry.rendering_right_waiters().collect::<Vec<_>>(), [2]);
         assert_eq!(registry.rendering_right_waiter_position(2), Some(1));
 
         assert_eq!(
@@ -1287,6 +1297,7 @@ mod tests {
         assert!(!registry.cancel_rendering_right_wait(1).unwrap());
         assert!(registry.client_registration(1).is_some());
         assert_eq!(registry.rendering_right_waiter_count(), 1);
+        assert_eq!(registry.rendering_right_waiters().collect::<Vec<_>>(), [2]);
         assert_eq!(registry.rendering_right_waiter_position(2), Some(1));
 
         registry.release_rendering_right(0).unwrap();
