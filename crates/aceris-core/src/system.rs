@@ -58,6 +58,7 @@ impl System {
     /// [load_ncsd_file_with_keys] with caller-supplied NCCH keys.
     pub fn load(&mut self, path: &Path) -> Result<ImageFormat> {
         let format = loader::identify_file(path)?;
+        self.reset_gpu_linear_memory();
         self.image = Some(format);
         self.ncsd_session = None;
         self.cpu = Arm11Core::new();
@@ -96,7 +97,7 @@ impl System {
         menu_info_key: [u8; AES_BLOCK_SIZE],
         content_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<ImageFormat> {
-        let session = Arm11ProcessSession::load_primary_ncsd(reader, menu_info_key, content_key)
+        let mut session = Arm11ProcessSession::load_primary_ncsd(reader, menu_info_key, content_key)
             .map_err(|error| {
                 Error::Io(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -104,6 +105,8 @@ impl System {
                 ))
             })?;
 
+        self.reset_gpu_linear_memory();
+        session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Ncsd);
         self.ncsd_session = Some(session);
@@ -243,6 +246,27 @@ impl System {
     /// Returns mutable access to physical memory for loader, DMA and display setup.
     pub fn physical_memory_mut(&mut self) -> &mut GpuPhysicalMemory {
         &mut self.physical_memory
+    }
+
+    /// Releases all linear FCRAM allocations and clears the DMA alias table.
+    ///
+    /// This is used when replacing the active process so stale process mappings
+    /// cannot be reused by the next title.
+    fn reset_gpu_linear_memory(&mut self) {
+        let mappings = self.gpu_address_space.mappings();
+        for mapping in mappings {
+            let _ = self
+                .gpu_address_space
+                .unmap_linear_region(mapping.virtual_base(), mapping.size());
+            if self
+                .physical_memory
+                .has_linear_fcram_allocation(mapping.physical_base(), mapping.size())
+            {
+                let _ = self
+                    .physical_memory
+                    .free_linear_fcram(mapping.physical_base(), mapping.size());
+            }
+        }
     }
 
     /// Returns the explicitly registered process-linear to GPU-physical mappings.
