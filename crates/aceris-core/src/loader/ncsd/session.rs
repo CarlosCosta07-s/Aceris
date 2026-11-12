@@ -1451,7 +1451,10 @@ impl Arm11ProcessSession {
             .scheduler
             .current_core_mut()
             .ok_or(crate::Error::Unimplemented("no runnable ARM11 thread"))?;
-        let event = core.step(&mut self.address_space)?;
+        let mut event = core.step(&mut self.address_space)?;
+        if core.take_exception_return_wakeup() {
+            event = StepEvent::ExceptionReturn;
+        }
         if !matches!(
             event,
             StepEvent::WaitingForInterrupt | StepEvent::WaitingForEvent

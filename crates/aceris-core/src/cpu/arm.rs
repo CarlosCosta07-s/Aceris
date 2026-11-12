@@ -1099,7 +1099,8 @@ impl Arm11Core {
         // S + Rd == PC performs an exception return: restore CPSR from the
         // active mode's SPSR, then branch using the restored ARM/Thumb state.
         if set_flags && !is_compare && rd as usize == PC {
-            return self.exception_return(word, result);
+            self.exception_return(word, result)?;
+            return Ok(StepEvent::Executed);
         }
 
         if set_flags && (is_compare || rd as usize != PC) {
@@ -1127,7 +1128,7 @@ impl Arm11Core {
 
     /// Restores the active exception mode's SPSR and branches to an
     /// instruction address aligned for the restored ARM or Thumb state.
-    fn exception_return(&mut self, word: u32, target: u32) -> Result<StepEvent> {
+    fn exception_return(&mut self, word: u32, target: u32) -> Result<()> {
         let current_mode = self.cpsr.mode();
         if !super::Psr::mode_has_spsr(current_mode) {
             return Err(Error::UndefinedInstruction {
@@ -1143,13 +1144,14 @@ impl Arm11Core {
     }
 
     /// Shared architectural state restoration used by MOVS-to-PC, LDM exception
-    /// returns, and RFE. The event lets an MPCore scheduler wake the other CPUs.
+    /// returns, and RFE. A latched notification lets the MPCore scheduler wake
+    /// the other CPUs without changing the direct CPU-step result.
     fn restore_status_and_branch(
         &mut self,
         word: u32,
         target: u32,
         restored: super::Psr,
-    ) -> Result<StepEvent> {
+    ) -> Result<()> {
         if !super::Psr::is_valid_mode(restored.mode()) {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
@@ -1167,7 +1169,8 @@ impl Arm11Core {
             target & !3
         };
         self.branch(aligned_target);
-        Ok(StepEvent::ExceptionReturn)
+        self.exception_return_wakeup = true;
+        Ok(())
     }
 
     /// Reads the SP belonging to a processor mode without changing the active bank.
@@ -1357,7 +1360,8 @@ impl Arm11Core {
             };
         }
 
-        self.restore_status_and_branch(word, target, status)
+        self.restore_status_and_branch(word, target, status)?;
+        Ok(StepEvent::Executed)
     }
 
     fn multiply_or_swap<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
@@ -2058,7 +2062,7 @@ impl Arm11Core {
                 }
             }
             if exception_return {
-                return self.exception_return(word, values[PC]);
+                self.exception_return(word, values[PC])?;
             } else if pc_in_list {
                 self.branch_exchange(values[PC]);
             }
@@ -2259,7 +2263,7 @@ mod tests {
             m.mem.write32(transfer_address, 0x1237).unwrap();
             m.mem.write32(transfer_address + 4, restored.0).unwrap();
 
-            assert_eq!(m.step(), StepEvent::ExceptionReturn);
+            assert_eq!(m.step(), StepEvent::Executed);
             assert_eq!(m.cpu.pc(), 0x1236);
             assert_eq!(m.cpu.cpsr, restored);
 
@@ -2280,7 +2284,7 @@ mod tests {
         m.mem.write32(DATA, 0x2345).unwrap();
         m.mem.write32(DATA + 4, restored.0).unwrap();
 
-        assert_eq!(m.step(), StepEvent::ExceptionReturn);
+        assert_eq!(m.step(), StepEvent::Executed);
         assert_eq!(m.cpu.pc(), 0x2344);
         assert_eq!(m.cpu.cpsr, restored);
         assert_eq!(m.cpu.regs[0], DATA);
@@ -2344,12 +2348,26 @@ mod tests {
         m.cpu.set_saved_program_status(restored).unwrap();
         m.cpu.regs[LR] = 0x1237;
 
-        assert_eq!(m.step(), StepEvent::ExceptionReturn);
+        assert_eq!(m.step(), StepEvent::Executed);
 
         assert_eq!(m.cpu.cpsr, restored);
         assert_eq!(m.cpu.cpsr.mode(), Psr::SYSTEM_MODE);
         assert!(m.cpu.cpsr.thumb());
         assert_eq!(m.cpu.pc(), 0x1236);
+    }
+
+    #[test]
+    fn exception_return_sets_a_single_host_wakeup_notification() {
+        let mut m = Machine::new(&[0xE1B0_F00E]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu
+            .set_saved_program_status(Psr(Psr::USER_MODE))
+            .unwrap();
+        m.cpu.regs[LR] = 0x1234;
+
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert!(m.cpu.take_exception_return_wakeup());
+        assert!(!m.cpu.take_exception_return_wakeup());
     }
 
     #[test]
@@ -2361,7 +2379,7 @@ mod tests {
         m.cpu.set_saved_program_status(restored).unwrap();
         m.cpu.regs[LR] = 0x1237;
 
-        assert_eq!(m.step(), StepEvent::ExceptionReturn);
+        assert_eq!(m.step(), StepEvent::Executed);
 
         assert_eq!(m.cpu.cpsr, restored);
         assert_eq!(m.cpu.cpsr.mode(), Psr::SYSTEM_MODE);

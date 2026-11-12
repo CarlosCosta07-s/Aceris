@@ -132,6 +132,8 @@ pub struct Arm11Core {
     waiting_for_interrupt: bool,
     waiting_for_event: bool,
     event_registered: bool,
+    /// Set by exception-return instructions until the host scheduler consumes it.
+    exception_return_wakeup: bool,
     cp15: Cp15,
     tlb: mmu::TranslationLookasideBuffer,
     vfp: Vfp,
@@ -346,6 +348,15 @@ impl Arm11Core {
     /// SEV, and the cross-core return-from-exception wakeup condition.
     pub fn signal_event(&mut self) {
         self.event_registered = true;
+    }
+
+    /// Takes the pending exception-return notification for the host MPCore scheduler.
+    ///
+    /// A return from exception on one MP11 CPU is a WakeUpAction for the other
+    /// CPUs. This latch is separate from StepEvent so direct core execution keeps
+    /// its existing result semantics; process sessions translate it for scheduling.
+    pub fn take_exception_return_wakeup(&mut self) -> bool {
+        std::mem::take(&mut self.exception_return_wakeup)
     }
 
     /// Fetches and executes one instruction.
