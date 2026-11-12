@@ -8,11 +8,11 @@ use crate::gpu::{
     GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
+use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::session::gsp_service::{
     GspClientUnregistration, GspInterruptDispatchReport, GspRenderingRightAcquireOutcome,
     GspRenderingRightHandoff, GspServiceError, GspServiceRegistry,
 };
-use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
 use crate::video::{DualScreenDisplay, LcdController};
@@ -705,10 +705,8 @@ impl System {
             ))
         })?;
         let client_has_rendering_right = self.gsp_service.owns_rendering_right(client_id);
-        let report = self.dispatch_gsp_gx_command_queue_with_right(
-            &mut queue,
-            client_has_rendering_right,
-        );
+        let report =
+            self.dispatch_gsp_gx_command_queue_with_right(&mut queue, client_has_rendering_right);
 
         self.ncsd_session
             .as_mut()
@@ -724,10 +722,7 @@ impl System {
     ///
     /// TriggerCmdReqQueue itself does not require rendering rights. Individual
     /// queue commands apply their own rights requirements during dispatch.
-    pub fn trigger_gsp_cmd_req_queue(
-        &mut self,
-        client_id: u8,
-    ) -> Result<GspGxCommandQueueReport> {
+    pub fn trigger_gsp_cmd_req_queue(&mut self, client_id: u8) -> Result<GspGxCommandQueueReport> {
         let registration = self
             .gsp_service
             .client_registration(client_id)

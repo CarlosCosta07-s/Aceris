@@ -1819,17 +1819,33 @@ mod tests {
             .deliver_interrupt_to_session(&mut session, GspInterruptId::Pdc0)
             .unwrap();
         assert_eq!(
-            pdc.deliveries.iter().map(|delivery| delivery.client_id).collect::<Vec<_>>(),
+            pdc.deliveries
+                .iter()
+                .map(|delivery| delivery.client_id)
+                .collect::<Vec<_>>(),
             [0, 1]
         );
-        assert!(session.kernel_objects.event_is_signaled(first_event).unwrap());
-        assert!(session.kernel_objects.event_is_signaled(second_event).unwrap());
+        assert!(
+            session
+                .kernel_objects
+                .event_is_signaled(first_event)
+                .unwrap()
+        );
+        assert!(
+            session
+                .kernel_objects
+                .event_is_signaled(second_event)
+                .unwrap()
+        );
 
         let p3d = registry
             .deliver_interrupt_to_session(&mut session, GspInterruptId::P3d)
             .unwrap();
         assert_eq!(
-            p3d.deliveries.iter().map(|delivery| delivery.client_id).collect::<Vec<_>>(),
+            p3d.deliveries
+                .iter()
+                .map(|delivery| delivery.client_id)
+                .collect::<Vec<_>>(),
             [1]
         );
     }
