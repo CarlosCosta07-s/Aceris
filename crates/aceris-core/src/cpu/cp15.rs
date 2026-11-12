@@ -24,6 +24,10 @@ pub(super) enum Cp15Fault {
 
 /// Main ID register value reported by the core (ARM11 MPCore family).
 pub const MIDR: u32 = 0x410F_B024;
+/// MP11 cache type: separate 16 KiB, four-way, 8-word-line I/D caches.
+pub const CTR_MP11: u32 = 0x1D15_2152;
+/// MP11 unified TLB type: zero instruction-lockable and eight data/unified lockable entries.
+pub const TLBTR_MP11: u32 = 0x0000_0800;
 
 const SCTLR_RESET: u32 = 0x0005_0078;
 /// Writable SCTLR bits: M, A, C, Z, I, V, RR, EE and XP.
@@ -218,6 +222,8 @@ impl Cp15 {
         }
         Ok(match (crn, crm, opc2) {
             (0, 0, 0) => MIDR,
+            (0, 0, 1) => CTR_MP11,
+            (0, 0, 3) => TLBTR_MP11,
             (0, 0, 5) => 0x8000_0000 | self.core_id,
             (1, 0, 0) => self.sctlr,
             (1, 0, 1) => self.actlr,
@@ -340,6 +346,17 @@ mod tests {
         assert_eq!(cp15.write(false, 0, 7, 10, 5, 0), Ok(()));
         assert_eq!(cp15.read(false, 0, 1, 0, 0), Err(Cp15Fault::Undefined));
         assert_eq!(cp15.write(false, 0, 1, 0, 0, 1), Err(Cp15Fault::Undefined));
+    }
+
+    #[test]
+    fn mp11_cache_and_tlb_type_registers_report_the_documented_configuration() {
+        let cp15 = Cp15::default();
+        assert_eq!(cp15.read(true, 0, 0, 0, 0), Ok(MIDR));
+        assert_eq!(cp15.read(true, 0, 0, 0, 1), Ok(CTR_MP11));
+        assert_eq!(cp15.read(true, 0, 0, 0, 3), Ok(TLBTR_MP11));
+
+        assert_eq!(cp15.read(false, 0, 0, 0, 1), Err(Cp15Fault::Undefined));
+        assert_eq!(cp15.read(false, 0, 0, 0, 3), Err(Cp15Fault::Undefined));
     }
 
     #[test]
