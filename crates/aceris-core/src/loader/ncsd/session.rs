@@ -478,9 +478,9 @@ impl Arm11ProcessSession {
         SvcRunDisposition::Resume
     }
 
-    /// Handles the raw ARM11 ControlMemory SVC register ABI for ordinary
-    /// RW application-heap allocations and exact frees. Shared, linear,
-    /// mirrored mappings and executable permissions are not implemented.
+    /// Handles the raw ARM11 ControlMemory SVC register ABI for RW application
+    /// heap and original-model linear FCRAM allocations. Shared, mirrored
+    /// mappings and executable permissions are not implemented.
     ///
     /// The SVC enters with operation in r0, addr0 in r1, addr1 in r2, size in
     /// r3 and permissions in r4. The result is returned in r0 and addr_out in r1.
@@ -1329,6 +1329,108 @@ mod tests {
         assert_eq!(session.core().regs[0], 0);
         assert_eq!(session.core().regs[1], 0x0800_0000);
         assert!(!session.address_space.is_writable_range(0x0800_0000, 1));
+    }
+
+    #[test]
+    fn control_memory_allocates_linear_fcram_and_shares_bytes_with_gpu_dma() {
+        let mut session = test_session_with_program(&[
+            0xEF00_0001, // SVC ControlMemory: allocate linear
+            0xEF00_0001, // SVC ControlMemory: free linear
+        ]);
+        let mut memory = GpuPhysicalMemory::new();
+        let mut dma = GpuDmaAddressSpace::new();
+        session.attach_gpu_services(memory.clone(), dma.clone());
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_ALLOC | MEMOP_LINEAR;
+            core.regs[1] = 0; // addr0: let the kernel choose an address
+            core.regs[2] = 0; // addr1
+            core.regs[3] = 0x2000; // two contiguous pages
+            core.regs[4] = MEMPERM_READ_WRITE;
+        }
+
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        let virtual_base = session.core().regs[1];
+        assert_eq!(virtual_base, OLD_LINEAR_BASE);
+        assert!(session.address_space.is_writable_range(virtual_base, 0x2000));
+        assert_eq!(dma.mappings().len(), 1);
+
+        let physical_base = virtual_base + OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET;
+        assert!(memory.has_linear_fcram_allocation(physical_base, 0x2000));
+        session
+            .write_memory_u32(virtual_base + 0x100, 0xCAFE_BABE)
+            .unwrap();
+        assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0xCAFE_BABE);
+
+        memory
+            .write_u32(physical_base + 0x104, 0x1234_5678)
+            .unwrap();
+        assert_eq!(
+            session.read_memory_u32(virtual_base + 0x104).unwrap(),
+            0x1234_5678
+        );
+
+        let resolved = dma
+            .resolve_physical_range(&memory, virtual_base + 0x100, 8)
+            .unwrap();
+        assert_eq!(resolved.physical_address, physical_base + 0x100);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_FREE | MEMOP_LINEAR;
+            core.regs[1] = virtual_base;
+            core.regs[2] = 0;
+            core.regs[3] = 0x2000;
+            core.regs[4] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.core().regs[1], virtual_base);
+        assert!(dma.mappings().is_empty());
+        assert!(!memory.has_linear_fcram_allocation(physical_base, 0x2000));
+        assert!(!session.address_space.is_writable_range(virtual_base, 4));
+        assert_eq!(
+            memory.read_u32(physical_base + 0x100).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn control_memory_linear_requires_gpu_memory_services_and_valid_alignment() {
+        let mut session = test_session_with_program(&[
+            0xEF00_0001, // SVC ControlMemory without attached GPU services
+            0xEF00_0001, // SVC ControlMemory with misaligned size
+        ]);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_ALLOC | MEMOP_LINEAR;
+            core.regs[1] = 0;
+            core.regs[2] = 0;
+            core.regs[3] = 0x1000;
+            core.regs[4] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], RESULT_OUT_OF_MEMORY);
+        assert!(session.address_space.linear_regions.is_empty());
+
+        let mut memory = GpuPhysicalMemory::new();
+        let dma = GpuDmaAddressSpace::new();
+        session.attach_gpu_services(memory.clone(), dma.clone());
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_ALLOC | MEMOP_LINEAR;
+            core.regs[1] = 0;
+            core.regs[2] = 0;
+            core.regs[3] = 0x1001;
+            core.regs[4] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], RESULT_MISALIGNED_ADDRESS);
+        assert!(dma.mappings().is_empty());
+        assert!(!memory.has_linear_fcram_allocation(FCRAM_BASE, 0x1000));
     }
 
     #[test]
