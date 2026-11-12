@@ -30,7 +30,7 @@ const THUMB_INSTRUCTION_SIZE: u32 = 2;
 /// What happened when the CPU executed one instruction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepEvent {
-    /// A normal instruction completed.
+    /// A CPU step completed, either by executing an instruction or accepting an interrupt.
     Executed,
     /// A supervisor-call instruction was executed; the payload is its encoded
     /// comment field. Hardware exception entry is optional and disabled by default
@@ -111,6 +111,8 @@ pub struct Arm11Core {
     high_vectors_enabled: bool,
     exception_big_endian: bool,
     svc_exception_entry_enabled: bool,
+    irq_line_asserted: bool,
+    fiq_line_asserted: bool,
     cp15: Cp15,
 }
 
@@ -126,6 +128,8 @@ impl Default for Arm11Core {
             high_vectors_enabled: false,
             exception_big_endian: false,
             svc_exception_entry_enabled: false,
+            irq_line_asserted: false,
+            fiq_line_asserted: false,
             cp15: Cp15::default(),
         }
     }
@@ -222,20 +226,36 @@ impl Arm11Core {
         self.svc_exception_entry_enabled = enabled;
     }
 
-    /// Enters the ARMv6 Supervisor exception and preserves the previous CPSR.
-    ///
-    /// The current exception entry profile uses the configured vector base,
-    /// switches to ARM state, and masks IRQ. The SVC vector is at offset 0x08.
-    fn enter_svc_exception(&mut self, return_address: u32) -> Result<()> {
+    /// Drives the external IRQ input. The line remains asserted until the
+    /// interrupt controller deasserts it; CPSR.I masks acceptance, not the line.
+    pub fn set_irq_line(&mut self, asserted: bool) {
+        self.irq_line_asserted = asserted;
+    }
+
+    /// Drives the external FIQ input. FIQ has priority over IRQ when both
+    /// lines are asserted and CPSR.F permits its acceptance.
+    pub fn set_fiq_line(&mut self, asserted: bool) {
+        self.fiq_line_asserted = asserted;
+    }
+
+    /// Enters an ARMv6 exception, banking the old CPSR and selecting its vector.
+    fn enter_exception(
+        &mut self,
+        mode: u32,
+        vector_offset: u32,
+        return_address: u32,
+        interrupt_masks: u32,
+    ) -> Result<()> {
         let previous_cpsr = self.cpsr;
-        self.switch_mode(Psr::SUPERVISOR_MODE)?;
+        self.switch_mode(mode)?;
         self.set_saved_program_status(previous_cpsr)?;
         self.regs[LR] = return_address;
 
-        let mut entered_cpsr = previous_cpsr.0 & !(Psr::MODE_MASK | (1 << 5) | (1 << 7) | (1 << 9));
-        entered_cpsr |= Psr::SUPERVISOR_MODE | (1 << 7);
+        let mut entered_cpsr =
+            previous_cpsr.0 & !(Psr::MODE_MASK | Psr::T | Psr::E);
+        entered_cpsr |= mode | interrupt_masks;
         if self.exception_big_endian {
-            entered_cpsr |= 1 << 9;
+            entered_cpsr |= Psr::E;
         }
         self.cpsr.0 = entered_cpsr;
 
@@ -244,8 +264,40 @@ impl Arm11Core {
         } else {
             0
         };
-        self.branch(vector_base + 0x08);
+        self.branch(vector_base.wrapping_add(vector_offset));
         Ok(())
+    }
+
+    /// Enters the ARMv6 Supervisor exception and preserves the previous CPSR.
+    /// SVC uses vector offset 0x08 and masks IRQ on entry.
+    fn enter_svc_exception(&mut self, return_address: u32) -> Result<()> {
+        self.enter_exception(
+            Psr::SUPERVISOR_MODE,
+            0x08,
+            return_address,
+            Psr::I,
+        )
+    }
+
+    /// Accepts a pending FIQ before IRQ, provided its CPSR mask is clear.
+    /// Returns true when an exception was entered instead of fetching an
+    /// instruction. The interrupt input remains level-sensitive.
+    fn service_pending_interrupt(&mut self) -> Result<bool> {
+        let return_address = self.pc().wrapping_add(4);
+        if self.fiq_line_asserted && self.cpsr.0 & Psr::F == 0 {
+            self.enter_exception(
+                Psr::FIQ_MODE,
+                0x1C,
+                return_address,
+                Psr::I | Psr::F,
+            )?;
+            return Ok(true);
+        }
+        if self.irq_line_asserted && self.cpsr.0 & Psr::I == 0 {
+            self.enter_exception(Psr::IRQ_MODE, 0x18, return_address, Psr::I)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Returns the SPSR belonging to the active exception mode, if one exists.
@@ -292,6 +344,10 @@ impl Arm11Core {
     pub fn step<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
         let pc = self.pc();
         self.branch_taken = false;
+
+        if self.service_pending_interrupt()? {
+            return Ok(StepEvent::Executed);
+        }
 
         let (event, size) = if self.cpsr.thumb() {
             let half = u32::from(bus.read16(pc)?);
@@ -409,6 +465,80 @@ mod tests {
         assert!(cpu.switch_mode(0x15).is_err());
         assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
         assert_eq!(cpu.regs[SP], 0x1234);
+    }
+
+    #[test]
+    fn irq_waits_for_unmasking_then_enters_irq_vector_and_returns() {
+        let mut memory = FlatMemory::new(0, 0x40);
+        memory.write32(0, 0xE1A0_0000).unwrap(); // MOV r0,r0
+        memory.write32(0x18, 0xE25E_F004).unwrap(); // SUBS pc,lr,#4
+        let mut cpu = Arm11Core::new();
+        cpu.set_irq_line(true);
+        cpu.cpsr.0 |= Psr::I;
+
+        // A masked IRQ remains asserted while the current instruction runs.
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
+
+        cpu.cpsr.0 &= !Psr::I;
+        let interrupted_status = cpu.cpsr;
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
+        assert_eq!(cpu.pc(), 0x18);
+        assert_eq!(cpu.regs[LR], 8);
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_status));
+        assert_ne!(cpu.cpsr.0 & Psr::I, 0);
+
+        // Deassert the level before the handler returns to the interrupted PC.
+        cpu.set_irq_line(false);
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.cpsr, interrupted_status);
+    }
+
+    #[test]
+    fn fiq_has_priority_and_sets_both_interrupt_masks() {
+        let mut memory = FlatMemory::new(0, 4);
+        let mut cpu = Arm11Core::new();
+        cpu.set_irq_line(true);
+        cpu.set_fiq_line(true);
+        let interrupted_status = cpu.cpsr;
+
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.cpsr.mode(), Psr::FIQ_MODE);
+        assert_eq!(cpu.pc(), 0x1C);
+        assert_eq!(cpu.regs[LR], 4);
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_status));
+        assert_eq!(cpu.cpsr.0 & (Psr::I | Psr::F), Psr::I | Psr::F);
+    }
+
+    #[test]
+    fn masked_fiq_does_not_block_an_unmasked_irq() {
+        let mut memory = FlatMemory::new(0, 4);
+        let mut cpu = Arm11Core::new();
+        cpu.cpsr.0 |= Psr::F;
+        cpu.set_irq_line(true);
+        cpu.set_fiq_line(true);
+
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
+        assert_eq!(cpu.pc(), 0x18);
+        assert_ne!(cpu.cpsr.0 & Psr::I, 0);
+        assert_ne!(cpu.cpsr.0 & Psr::F, 0);
+    }
+
+    #[test]
+    fn interrupt_entry_uses_high_vectors_and_exception_endianness() {
+        let mut memory = FlatMemory::new(0, 4);
+        let mut cpu = Arm11Core::new();
+        cpu.configure_exception_entry(true, true);
+        cpu.set_irq_line(true);
+
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.pc(), 0xFFFF_0018);
+        assert!(cpu.cpsr.big_endian());
+        assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
     }
 
     #[test]
