@@ -95,15 +95,36 @@ pub struct GspProcessCommandList {
 /// Queue decoding or state-transition error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GspGxCommandQueueError {
-    InvalidQueueSize { actual: usize, minimum: usize },
-    InvalidClientId { client_id: u8 },
-    InvalidCommandIndex { index: u8 },
-    TooManyPendingCommands { count: u8 },
-    UnsupportedCommand { command_id: u8 },
-    InvalidCommandListAddress { address: u32, size_bytes: u32 },
-    InvalidCommandListSize { size_bytes: u32 },
-    CommandListTooLarge { size_bytes: u32, maximum_bytes: usize },
-    CommandListSubmission { reason: String },
+    InvalidQueueSize {
+        actual: usize,
+        minimum: usize,
+    },
+    InvalidClientId {
+        client_id: u8,
+    },
+    InvalidCommandIndex {
+        index: u8,
+    },
+    TooManyPendingCommands {
+        count: u8,
+    },
+    UnsupportedCommand {
+        command_id: u8,
+    },
+    InvalidCommandListAddress {
+        address: u32,
+        size_bytes: u32,
+    },
+    InvalidCommandListSize {
+        size_bytes: u32,
+    },
+    CommandListTooLarge {
+        size_bytes: u32,
+        maximum_bytes: usize,
+    },
+    CommandListSubmission {
+        reason: String,
+    },
     ProcessMemory(String),
     AddressOverflow {
         base: u32,
