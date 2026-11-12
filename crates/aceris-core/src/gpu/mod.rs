@@ -30,10 +30,9 @@ pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
 pub use vertex::{
-    AttributeDataType, MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE,
-    MAX_VERTEX_ARRAYS, MAX_VERTEX_ATTRIBUTES, NumericVertexAttribute, NumericVertexInput,
-    PicaVertexInputLayout, PicaVertexInputState,
-    REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
-    REG_ATTRIBBUFFERS_LOC, RawVertexAttribute, RawVertexInput, VertexArrayLayout,
-    VertexAttributeFormat, VertexInputError,
+    AttributeDataType, MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE, MAX_VERTEX_ARRAYS,
+    MAX_VERTEX_ATTRIBUTES, NumericVertexAttribute, NumericVertexInput, PicaVertexInputLayout,
+    PicaVertexInputState, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
+    REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, RawVertexAttribute, RawVertexInput,
+    VertexArrayLayout, VertexAttributeFormat, VertexInputError,
 };
