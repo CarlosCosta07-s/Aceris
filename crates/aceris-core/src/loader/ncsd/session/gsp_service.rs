@@ -13,6 +13,82 @@ use crate::gpu::{
     GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId,
     GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
 };
+
+/// IPC command headers exposed by the `gsp::Gpu` service.
+pub const GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER: u32 = 0x000C_0000;
+pub const GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER: u32 = 0x0013_0042;
+pub const GSP_IPC_UNREGISTER_INTERRUPT_RELAY_QUEUE_HEADER: u32 = 0x0014_0000;
+
+/// Descriptor for one copied kernel handle in an IPC translation section.
+pub const GSP_IPC_ONE_HANDLE_DESCRIPTOR: u32 = 0;
+
+/// A decoded request to the GSP GPU service.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GspIpcRequest {
+    /// Start processing entries in the caller's GX command queue.
+    TriggerCmdReqQueue,
+    /// Register the caller's event and flags for relay queue delivery.
+    RegisterInterruptRelayQueue { flags: u32, event_handle: u32 },
+    /// Remove the caller's interrupt relay queue registration.
+    UnregisterInterruptRelayQueue,
+}
+
+/// Errors returned when decoding a GSP GPU service IPC request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GspIpcRequestError {
+    EmptyMessage,
+    UnsupportedCommandHeader { header: u32 },
+    TruncatedMessage {
+        header: u32,
+        expected_words: usize,
+        actual_words: usize,
+    },
+    InvalidHandleDescriptor { descriptor: u32 },
+}
+
+impl fmt::Display for GspIpcRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for GspIpcRequestError {}
+
+/// Decodes the GSP relay-registration and command-queue IPC requests.
+///
+/// The kernel is expected to have translated handles before the message is
+/// delivered to this service. The input slice may include unused TLS command
+/// buffer words after the parameters declared by the IPC header.
+pub fn decode_gsp_ipc_request(words: &[u32]) -> Result<GspIpcRequest, GspIpcRequestError> {
+    let header = *words.first().ok_or(GspIpcRequestError::EmptyMessage)?;
+
+    match header {
+        GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER => Ok(GspIpcRequest::TriggerCmdReqQueue),
+        GSP_IPC_UNREGISTER_INTERRUPT_RELAY_QUEUE_HEADER => {
+            Ok(GspIpcRequest::UnregisterInterruptRelayQueue)
+        }
+        GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER => {
+            if words.len() < 4 {
+                return Err(GspIpcRequestError::TruncatedMessage {
+                    header,
+                    expected_words: 4,
+                    actual_words: words.len(),
+                });
+            }
+            let descriptor = words[2];
+            if descriptor != GSP_IPC_ONE_HANDLE_DESCRIPTOR {
+                return Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor });
+            }
+
+            Ok(GspIpcRequest::RegisterInterruptRelayQueue {
+                flags: words[1],
+                event_handle: words[3],
+            })
+        }
+        _ => Err(GspIpcRequestError::UnsupportedCommandHeader { header }),
+    }
+}
+
 /// Complete GSP shared-memory size used by the current GX and relay layouts.
 pub const GSP_SHARED_MEMORY_SIZE: usize = 0x1000;
 
@@ -405,6 +481,77 @@ mod tests {
         };
         let address_space = Arm11CodeAddressSpace::from_prepared(prepared).unwrap();
         Arm11ProcessSession::from_address_space(address_space)
+    }
+
+    #[test]
+    fn gsp_ipc_decoder_recognizes_supported_command_headers() {
+        assert_eq!(
+            decode_gsp_ipc_request(&[GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER]),
+            Ok(GspIpcRequest::TriggerCmdReqQueue)
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[GSP_IPC_UNREGISTER_INTERRUPT_RELAY_QUEUE_HEADER]),
+            Ok(GspIpcRequest::UnregisterInterruptRelayQueue)
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[
+                GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER,
+                0xA5A5_0001,
+                GSP_IPC_ONE_HANDLE_DESCRIPTOR,
+                0x1234,
+            ]),
+            Ok(GspIpcRequest::RegisterInterruptRelayQueue {
+                flags: 0xA5A5_0001,
+                event_handle: 0x1234,
+            })
+        );
+    }
+
+    #[test]
+    fn gsp_ipc_decoder_rejects_empty_truncated_and_malformed_messages() {
+        assert_eq!(
+            decode_gsp_ipc_request(&[]),
+            Err(GspIpcRequestError::EmptyMessage)
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER, 0]),
+            Err(GspIpcRequestError::TruncatedMessage {
+                header: GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER,
+                expected_words: 4,
+                actual_words: 2,
+            })
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[
+                GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER,
+                0,
+                2,
+                0x1234,
+            ]),
+            Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor: 2 })
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[0x0020_0040, 0, 0]),
+            Err(GspIpcRequestError::UnsupportedCommandHeader { header: 0x0020_0040 })
+        );
+    }
+
+    #[test]
+    fn gsp_ipc_decoder_ignores_unused_tls_words_after_declared_parameters() {
+        assert_eq!(
+            decode_gsp_ipc_request(&[
+                GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER,
+                0x55,
+                GSP_IPC_ONE_HANDLE_DESCRIPTOR,
+                0x100,
+                0xDEAD_BEEF,
+                0xCAFE_BABE,
+            ]),
+            Ok(GspIpcRequest::RegisterInterruptRelayQueue {
+                flags: 0x55,
+                event_handle: 0x100,
+            })
+        );
     }
 
     #[test]
