@@ -48,8 +48,8 @@ pub const CTR_MP11: u32 = 0x1D15_2152;
 pub const TLBTR_MP11: u32 = 0x0000_0800;
 
 const SCTLR_RESET: u32 = 0x0005_0078;
-/// Writable SCTLR bits: M, A, C, Z, I, V, RR, EE and XP.
-const SCTLR_WRITABLE: u32 = 0x00C0_F807;
+/// Writable SCTLR bits: M, A, C, Z, I, V, RR, S/R, U, EE and XP.
+const SCTLR_WRITABLE: u32 = 0x00C0_FB07;
 const SCTLR_M: u32 = 1;
 const SCTLR_XP: u32 = 1 << 23;
 const FSR_WRITE_NOT_READ: u32 = 1 << 11;
@@ -133,6 +133,17 @@ impl Cp15 {
     pub fn extended_page_tables(&self) -> bool {
         self.sctlr & SCTLR_XP != 0
     }
+
+    /// Legacy SCTLR.S control for AP=00 section/page descriptors.
+    pub(super) fn legacy_sctlr_s(&self) -> bool {
+        self.sctlr & (1 << 8) != 0
+    }
+
+    /// Legacy SCTLR.R control for AP=00 section/page descriptors.
+    pub(super) fn legacy_sctlr_r(&self) -> bool {
+        self.sctlr & (1 << 9) != 0
+    }
+
 
     pub fn ttbr0(&self) -> u32 {
         self.ttbr0
@@ -394,6 +405,21 @@ mod tests {
 
         cp15.write(true, 0, 1, 0, 0, 0).unwrap();
         assert!(!cp15.alignment_fault_enabled());
+    }
+
+    #[test]
+    fn sctlr_s_and_r_are_writable_legacy_permission_controls() {
+        let mut cp15 = Cp15::default();
+        cp15.write(true, 0, 1, 0, 0, 1 << 8).unwrap();
+        assert!(cp15.legacy_sctlr_s());
+        assert!(!cp15.legacy_sctlr_r());
+
+        cp15.write(true, 0, 1, 0, 0, 1 << 9).unwrap();
+        assert!(!cp15.legacy_sctlr_s());
+        assert!(cp15.legacy_sctlr_r());
+
+        cp15.write(true, 0, 1, 0, 0, (1 << 8) | (1 << 9)).unwrap();
+        assert!(cp15.legacy_sctlr_s() && cp15.legacy_sctlr_r());
     }
 
     #[test]

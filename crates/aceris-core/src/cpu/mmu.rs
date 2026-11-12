@@ -44,6 +44,9 @@ pub(super) struct Params {
     pub dacr: u32,
     pub asid: u8,
     pub fcse_pid: u32,
+    pub xp: bool,
+    pub sctlr_s: bool,
+    pub sctlr_r: bool,
     pub tlb_preserve: bool,
     pub tlb_victim: usize,
     pub privileged: bool,
@@ -97,6 +100,31 @@ fn permission_allows(apx: u32, ap: u32, privileged: bool, write: bool) -> bool {
     if write { level == 2 } else { level >= 1 }
 }
 
+/// Legacy AP[1:0] permission rules used when SCTLR.XP is clear.
+fn legacy_permission_allows(
+    ap: u8,
+    sctlr_s: bool,
+    sctlr_r: bool,
+    privileged: bool,
+    write: bool,
+) -> bool {
+    let (privileged_level, user_level) = match ap {
+        0 => match (sctlr_s, sctlr_r) {
+            (false, false) => (0, 0),
+            (false, true) => (1, 1),
+            (true, false) => (1, 0),
+            // S=1,R=1 is reserved; deny access rather than invent behavior.
+            (true, true) => (0, 0),
+        },
+        1 => (2, 0),
+        2 => (2, 1),
+        3 => (2, 2),
+        _ => (0, 0),
+    };
+    let level = if privileged { privileged_level } else { user_level };
+    if write { level == 2 } else { level >= 1 }
+}
+
 /// One cached short-descriptor translation. Entries retain their original
 /// mapping size so MVA invalidation removes a complete section/large page,
 /// rather than only an arbitrary 4 KiB subpage.
@@ -108,7 +136,11 @@ struct TlbEntry {
     asid: u8,
     global: bool,
     domain: u8,
-    ap: u8,
+    ap: [u8; 4],
+    subpage_shift: u8,
+    legacy: bool,
+    sctlr_s: bool,
+    sctlr_r: bool,
     apx: bool,
     xn: bool,
     section: bool,
@@ -125,15 +157,31 @@ impl TlbEntry {
 
     fn resolve(&self, params: &Params, address: u32, access: Access) -> Walk {
         let physical = self.physical_base | (address & !self.address_mask);
+        let subpage = if self.subpage_shift == 0 {
+            0
+        } else {
+            ((address >> self.subpage_shift) & 3) as usize
+        };
+        let allowed = if self.legacy {
+            legacy_permission_allows(
+                self.ap[subpage],
+                self.sctlr_s,
+                self.sctlr_r,
+                params.privileged,
+                access == Access::Write,
+            )
+        } else {
+            permission_allows(
+                u32::from(self.apx),
+                u32::from(self.ap[subpage]),
+                params.privileged,
+                access == Access::Write,
+            )
+        };
         match (params.dacr >> (2 * u32::from(self.domain))) & 3 {
             0b11 => Walk::Mapped(physical),
             0b01 => {
-                let allowed = permission_allows(
-                    u32::from(self.apx),
-                    u32::from(self.ap),
-                    params.privileged,
-                    access == Access::Write,
-                ) && !(access == Access::Execute && self.xn);
+                let allowed = allowed && !(access == Access::Execute && self.xn);
                 if allowed {
                     Walk::Mapped(physical)
                 } else {
@@ -270,72 +318,139 @@ fn walk_page_tables<B: Bus + ?Sized>(
     };
     let l1 = bus.read32(l1_address)?;
 
-    let (domain, ap, apx, xn, physical, global, address_mask, section) = match l1 & 3 {
-        0b10 => {
-            let supersection = bit(l1, 18);
-            let address_mask = if supersection {
-                0xFF00_0000
-            } else {
-                0xFFF0_0000
-            };
-            let physical = if supersection {
-                (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
-            } else {
-                (l1 & 0xFFF0_0000) | (va & 0x000F_FFFF)
-            };
-            (
-                if supersection { 0 } else { bits(l1, 8, 5) },
-                bits(l1, 11, 10),
-                bits(l1, 15, 15),
-                bit(l1, 4),
-                physical,
-                !bit(l1, 17),
-                address_mask,
-                true,
-            )
-        }
-        0b01 => {
-            let domain = bits(l1, 8, 5);
-            let l2_address = (l1 & 0xFFFF_FC00) | (((va >> 12) & 0xFF) << 2);
-            let l2 = bus.read32(l2_address)?;
-            match l2 & 3 {
-                0b00 => {
-                    let fault = match fault(FaultKind::Translation, false, domain, va, access) {
+    let (domain, ap, subpage_shift, apx, xn, physical, global, address_mask, section, legacy) =
+        match l1 & 3 {
+            0b10 if params.xp => {
+                let supersection = bit(l1, 18);
+                let address_mask = if supersection { 0xFF00_0000 } else { 0xFFF0_0000 };
+                let physical = if supersection {
+                    (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
+                } else {
+                    (l1 & 0xFFF0_0000) | (va & 0x000F_FFFF)
+                };
+                (
+                    if supersection { 0 } else { bits(l1, 8, 5) },
+                    [bits(l1, 11, 10) as u8; 4],
+                    0,
+                    bits(l1, 15, 15) != 0,
+                    bit(l1, 4),
+                    physical,
+                    !bit(l1, 17),
+                    address_mask,
+                    true,
+                    false,
+                )
+            }
+            0b10 => {
+                // Legacy section descriptors have one AP field for the full 1 MiB.
+                let ap = bits(l1, 11, 10) as u8;
+                let address_mask = 0xFFF0_0000;
+                (
+                    bits(l1, 8, 5),
+                    [ap; 4],
+                    0,
+                    false,
+                    false,
+                    (l1 & address_mask) | (va & !address_mask),
+                    true,
+                    address_mask,
+                    true,
+                    true,
+                )
+            }
+            0b01 => {
+                let domain = bits(l1, 8, 5);
+                let l2_address = (l1 & 0xFFFF_FC00) | (((va >> 12) & 0xFF) << 2);
+                let l2 = bus.read32(l2_address)?;
+                let descriptor_type = l2 & 3;
+
+                if descriptor_type == 0 || (!params.xp && descriptor_type == 3) {
+                    let page_fault = match fault(
+                        FaultKind::Translation,
+                        false,
+                        domain,
+                        va,
+                        access,
+                    ) {
                         Walk::Fault(value) => value,
                         Walk::Mapped(_) => unreachable!(),
                     };
-                    return Ok(PageWalk::Fault(fault));
+                    return Ok(PageWalk::Fault(page_fault));
                 }
-                0b01 => (
-                    domain,
-                    bits(l2, 5, 4),
-                    bits(l2, 9, 9),
-                    bit(l2, 15),
-                    (l2 & 0xFFFF_0000) | (va & 0xFFFF),
-                    !bit(l2, 11),
-                    0xFFFF_0000,
-                    false,
-                ),
-                _ => (
-                    domain,
-                    bits(l2, 5, 4),
-                    bits(l2, 9, 9),
-                    bit(l2, 0),
-                    (l2 & 0xFFFF_F000) | (va & 0xFFF),
-                    !bit(l2, 11),
-                    0xFFFF_F000,
-                    false,
-                ),
+
+                if params.xp {
+                    if descriptor_type == 0b01 {
+                        (
+                            domain,
+                            [bits(l2, 5, 4) as u8; 4],
+                            0,
+                            bits(l2, 9, 9) != 0,
+                            bit(l2, 15),
+                            (l2 & 0xFFFF_0000) | (va & 0xFFFF),
+                            !bit(l2, 11),
+                            0xFFFF_0000,
+                            false,
+                            false,
+                        )
+                    } else {
+                        (
+                            domain,
+                            [bits(l2, 5, 4) as u8; 4],
+                            0,
+                            bits(l2, 9, 9) != 0,
+                            descriptor_type == 0b11,
+                            (l2 & 0xFFFF_F000) | (va & 0xFFF),
+                            !bit(l2, 11),
+                            0xFFFF_F000,
+                            false,
+                            false,
+                        )
+                    }
+                } else {
+                    // Legacy large/small pages each have four independent AP fields.
+                    let ap = [
+                        bits(l2, 5, 4) as u8,
+                        bits(l2, 7, 6) as u8,
+                        bits(l2, 9, 8) as u8,
+                        bits(l2, 11, 10) as u8,
+                    ];
+                    if descriptor_type == 0b01 {
+                        (
+                            domain,
+                            ap,
+                            14,
+                            false,
+                            false,
+                            (l2 & 0xFFFF_0000) | (va & 0xFFFF),
+                            true,
+                            0xFFFF_0000,
+                            false,
+                            true,
+                        )
+                    } else {
+                        (
+                            domain,
+                            ap,
+                            10,
+                            false,
+                            false,
+                            (l2 & 0xFFFF_F000) | (va & 0xFFF),
+                            true,
+                            0xFFFF_F000,
+                            false,
+                            true,
+                        )
+                    }
+                }
             }
-        }
-        _ => {
-            let fault = match fault(FaultKind::Translation, true, 0, va, access) {
-                Walk::Fault(value) => value,
-                Walk::Mapped(_) => unreachable!(),
-            };
-            return Ok(PageWalk::Fault(fault));
-        }
-    };
+            _ => {
+                let page_fault = match fault(FaultKind::Translation, true, 0, va, access) {
+                    Walk::Fault(value) => value,
+                    Walk::Mapped(_) => unreachable!(),
+                };
+                return Ok(PageWalk::Fault(page_fault));
+            }
+        };
 
     Ok(PageWalk::Mapped(TlbEntry {
         virtual_base: va & address_mask,
@@ -344,8 +459,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
         asid: params.asid,
         global,
         domain: domain as u8,
-        ap: ap as u8,
-        apx: apx != 0,
+        ap,
+        subpage_shift,
+        legacy,
+        sctlr_s: params.sctlr_s,
+        sctlr_r: params.sctlr_r,
+        apx,
         xn,
         section,
     }))
@@ -508,11 +627,6 @@ impl Arm11Core {
         bus: &mut B,
         pc: u32,
     ) -> Result<StepEvent> {
-        if !self.cp15.extended_page_tables() {
-            return Err(Error::Unimplemented(
-                "MMU with subpage permissions (SCTLR.XP = 0)",
-            ));
-        }
         let mut tlb = std::mem::take(&mut self.tlb);
 
         let params = Params {
@@ -522,6 +636,9 @@ impl Arm11Core {
             dacr: self.cp15.dacr(),
             asid: self.cp15.asid(),
             fcse_pid: self.cp15.fcse_pid(),
+            xp: self.cp15.extended_page_tables(),
+            sctlr_s: self.cp15.legacy_sctlr_s(),
+            sctlr_r: self.cp15.legacy_sctlr_r(),
             tlb_preserve: self.cp15.tlb_preserve(),
             tlb_victim: self.cp15.tlb_victim(),
             privileged: self.cpsr.privileged(),
@@ -626,6 +743,9 @@ mod tests {
             dacr: cpu.cp15.dacr(),
             asid: cpu.cp15.asid(),
             fcse_pid: cpu.cp15.fcse_pid(),
+            xp: cpu.cp15.extended_page_tables(),
+            sctlr_s: cpu.cp15.legacy_sctlr_s(),
+            sctlr_r: cpu.cp15.legacy_sctlr_r(),
             tlb_preserve: cpu.cp15.tlb_preserve(),
             tlb_victim: cpu.cp15.tlb_victim(),
             privileged: cpu.cpsr.privileged(),
@@ -994,7 +1114,11 @@ mod tests {
             asid,
             global,
             domain: 0,
-            ap: 3,
+            ap: [3; 4],
+            subpage_shift: 0,
+            legacy: false,
+            sctlr_s: false,
+            sctlr_r: false,
             apx: false,
             xn: false,
             section: false,
@@ -1039,7 +1163,11 @@ mod tests {
                 asid: 0,
                 global: false,
                 domain: 0,
-                ap: 3,
+                ap: [3; 4],
+                subpage_shift: 0,
+                legacy: false,
+                sctlr_s: false,
+                sctlr_r: false,
                 apx: false,
                 xn: false,
                 section: false,
@@ -1061,7 +1189,11 @@ mod tests {
             asid,
             global,
             domain: 0,
-            ap: 3,
+            ap: [3; 4],
+            subpage_shift: 0,
+            legacy: false,
+            sctlr_s: false,
+            sctlr_r: false,
             apx: false,
             xn: false,
             section: false,
@@ -1132,11 +1264,150 @@ mod tests {
         assert_eq!(cpu.regs[0], 2);
     }
 
-    #[test]
-    fn subpage_permission_format_is_refused_explicitly() {
-        let (mut cpu, mut mem) = machine();
-        cpu.cp15.write(true, 0, 1, 0, 0, 1).unwrap(); // M=1, XP=0
-        cpu.set_pc(0);
-        assert!(matches!(cpu.step(&mut mem), Err(Error::Unimplemented(_))));
+    fn legacy_machine() -> (Arm11Core, FlatMemory) {
+        let (mut cpu, mem) = machine();
+        // Enable the MMU with the legacy short-descriptor format (XP=0), S=R=0.
+        cpu.cp15.write(true, 0, 1, 0, 0, 1).unwrap();
+        (cpu, mem)
     }
+
+    fn legacy_ap_fields(ap: [u32; 4]) -> u32 {
+        (ap[0] << 4) | (ap[1] << 6) | (ap[2] << 8) | (ap[3] << 10)
+    }
+
+    #[test]
+    fn legacy_small_page_uses_four_1kb_access_permission_subpages() {
+        let (mut cpu, mut mem) = legacy_machine();
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        let descriptor = 0x0002_0000 | SMALL | legacy_ap_fields([1, 2, 3, 0]);
+        mem.write32(L2, descriptor).unwrap();
+
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Write),
+            Walk::Mapped(0x0002_0000)
+        );
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Read)),
+            0xF
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0400, Access::Read),
+            Walk::Mapped(0x0002_0400)
+        );
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0400, Access::Write)),
+            0xF
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0800, Access::Write),
+            Walk::Mapped(0x0002_0800)
+        );
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0C00, Access::Read)),
+            0xF
+        );
+    }
+
+    #[test]
+    fn legacy_large_page_uses_four_16kb_access_permission_subpages() {
+        let (mut cpu, mut mem) = legacy_machine();
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        let descriptor = 0x0003_0000 | 0b01 | legacy_ap_fields([3, 2, 1, 0]);
+        for index in 0..16 {
+            mem.write32(L2 + index * 4, descriptor).unwrap();
+        }
+
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Write),
+            Walk::Mapped(0x0003_0000)
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_4000, Access::Read),
+            Walk::Mapped(0x0003_4000)
+        );
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_4000, Access::Write)),
+            0xF
+        );
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_8000, Access::Read)),
+            0xF
+        );
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_C000, Access::Read)),
+            0xF
+        );
+    }
+
+    #[test]
+    fn legacy_ap_zero_uses_sctlr_s_and_r_access_rules() {
+        let (mut cpu, mut mem) = legacy_machine();
+        set_l1(&mut mem, 0x200, SECTION);
+
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Read)),
+            0xD
+        );
+
+        cpu.cp15.write(true, 0, 1, 0, 0, 1 | (1 << 9)).unwrap();
+        assert!(matches!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Read),
+            Walk::Mapped(_)
+        ));
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Write)),
+            0xD
+        );
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert!(matches!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Read),
+            Walk::Mapped(_)
+        ));
+
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.cp15.write(true, 0, 1, 0, 0, 1 | (1 << 8)).unwrap();
+        assert!(matches!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Read),
+            Walk::Mapped(_)
+        ));
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Write)),
+            0xD
+        );
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Read)),
+            0xD
+        );
+
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.cp15
+            .write(true, 0, 1, 0, 0, 1 | (1 << 8) | (1 << 9))
+            .unwrap();
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Read)),
+            0xD
+        );
+    }
+
+    #[test]
+    fn legacy_section_uses_a_single_ap_field_for_the_entire_megabyte() {
+        let (mut cpu, mut mem) = legacy_machine();
+        set_l1(&mut mem, 0x200, SECTION | (0b10 << 10));
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Read),
+            Walk::Mapped(0)
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x200F_FFFF, Access::Read),
+            Walk::Mapped(0x000F_FFFF)
+        );
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2008_0000, Access::Write)),
+            0xD
+        );
+    }
+
 }
