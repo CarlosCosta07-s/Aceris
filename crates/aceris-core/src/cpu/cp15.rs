@@ -38,7 +38,7 @@ const FSR_WRITE_NOT_READ: u32 = 1 << 11;
 const SCTLR_V: u32 = 1 << 13;
 const SCTLR_EE: u32 = 1 << 15;
 const CPACR_WRITABLE: u32 = 0x00F0_0000;
-const TLB_LOCKDOWN_WRITABLE: u32 = 0x1C00_0001;
+const TLB_LOCKDOWN_WRITABLE: u32 = 0x9C00_0000;
 
 /// CP15 register file of one core.
 #[derive(Clone, Debug)]
@@ -132,7 +132,7 @@ impl Cp15 {
 
     /// CP15 c10, c0, 0 controls the TLB's eight lockdown slots.
     pub(super) fn tlb_preserve(&self) -> bool {
-        self.tlb_lockdown & 1 != 0
+        self.tlb_lockdown & (1 << 31) != 0
     }
 
     pub(super) fn tlb_victim(&self) -> usize {
@@ -410,13 +410,19 @@ mod tests {
     #[test]
     fn tlb_lockdown_register_preserves_only_documented_fields() {
         let mut cp15 = Cp15::default();
-        let value = (5 << 26) | 1 | 0x8000_0000 | 0x0000_001E;
+        // P is bit 31; Victim occupies bits 28:26. The rest is SBZ/UNP.
+        let value = (1 << 31) | (5 << 26) | 0x0000_001F;
         cp15.write(true, 0, 10, 0, 0, value).unwrap();
-        assert_eq!(cp15.read(true, 0, 10, 0, 0), Ok((5 << 26) | 1));
+        assert_eq!(
+            cp15.read(true, 0, 10, 0, 0),
+            Ok((1 << 31) | (5 << 26))
+        );
         assert!(cp15.tlb_preserve());
         assert_eq!(cp15.tlb_victim(), 5);
 
-        cp15.write(true, 0, 10, 0, 0, 6 << 26).unwrap();
+        // With P clear, Victim is still readable but page walks use the
+        // two-way set-associative region. Bit 0 must not enable preservation.
+        cp15.write(true, 0, 10, 0, 0, (6 << 26) | 1).unwrap();
         assert!(!cp15.tlb_preserve());
         assert_eq!(cp15.tlb_victim(), 6);
         assert_eq!(cp15.write(false, 0, 10, 0, 0, 0), Err(Cp15Fault::Undefined));
