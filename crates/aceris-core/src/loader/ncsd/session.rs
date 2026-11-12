@@ -1348,7 +1348,7 @@ mod tests {
             0xEF00_0001, // SVC ControlMemory: allocate linear
             0xEF00_0001, // SVC ControlMemory: free linear
         ]);
-        let memory = GpuPhysicalMemory::new();
+        let mut memory = GpuPhysicalMemory::new();
         let dma = GpuDmaAddressSpace::new();
         session.attach_gpu_services(memory.clone(), dma.clone());
 
