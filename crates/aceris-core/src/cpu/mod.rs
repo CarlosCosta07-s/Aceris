@@ -98,7 +98,7 @@ impl SavedStatusRegisters {
 }
 
 /// One ARM11 processor core with banked exception-mode registers.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Arm11Core {
     /// `r0`-`r15`. While an instruction executes, `r15` holds the address of
     /// that instruction; operand reads of `pc` add the pipeline offset.
@@ -114,25 +114,6 @@ pub struct Arm11Core {
     irq_line_asserted: bool,
     fiq_line_asserted: bool,
     cp15: Cp15,
-}
-
-impl Default for Arm11Core {
-    fn default() -> Self {
-        Self {
-            regs: [0; 16],
-            cpsr: Psr::default(),
-            branch_taken: false,
-            exclusive_reservation: None,
-            banked: BankedRegisters::default(),
-            saved_status: SavedStatusRegisters::default(),
-            high_vectors_enabled: false,
-            exception_big_endian: false,
-            svc_exception_entry_enabled: false,
-            irq_line_asserted: false,
-            fiq_line_asserted: false,
-            cp15: Cp15::default(),
-        }
-    }
 }
 
 impl Arm11Core {
