@@ -32,8 +32,9 @@ use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
     SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE,
     SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
-    SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY,
-    SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_WAIT_SYNCHRONIZATION1,
+    SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
+    SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
+    SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -498,6 +499,8 @@ impl Arm11ProcessSession {
 
         match number {
             SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
+            SVC_MAP_MEMORY_BLOCK => self.svc_map_memory_block(caller),
+            SVC_UNMAP_MEMORY_BLOCK => self.svc_unmap_memory_block(caller),
             SVC_QUERY_MEMORY => self.svc_query_memory(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
             SVC_CREATE_MUTEX => self.svc_create_mutex(caller),
@@ -601,6 +604,35 @@ impl Arm11ProcessSession {
                 }
             }
         }
+    }
+
+    /// Handles MapMemoryBlock: r0 = handle, r1 = address,
+    /// r2 = this-process permissions, r3 = peer-process permissions.
+    fn svc_map_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        let result = self
+            .map_memory_block(registers[0], registers[1], registers[2], registers[3])
+            .map(|()| 0)
+            .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
+    }
+
+    /// Handles UnmapMemoryBlock: r0 = handle, r1 = mapping base address.
+    fn svc_unmap_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        let result = self
+            .unmap_memory_block(registers[0], registers[1])
+            .map(|()| 0)
+            .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
     }
 
     /// Handles QueryMemory: r2 is the queried address; r0-r5 receive result and region.
@@ -1211,7 +1243,11 @@ fn kernel_handle_result_code(error: KernelHandleError) -> u32 {
         | KernelHandleError::WaitersPending => RESULT_INVALID_HANDLE,
         KernelHandleError::InvalidCount
         | KernelHandleError::InvalidDuration
-        | KernelHandleError::CountLimitExceeded => RESULT_INVALID_ENUM,
+        | KernelHandleError::CountLimitExceeded
+        | KernelHandleError::InvalidMemoryPermission => RESULT_INVALID_ENUM,
+        KernelHandleError::InvalidMemoryBlockSize => RESULT_MISALIGNED_ADDRESS,
+        KernelHandleError::OutOfMemory => RESULT_OUT_OF_MEMORY,
+        KernelHandleError::InvalidMemoryBlockMapping => RESULT_INVALID_ADDRESS,
     }
 }
 
@@ -1226,7 +1262,9 @@ fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
         | Arm11DynamicMemoryError::PhysicalMemoryUnavailable
         | Arm11DynamicMemoryError::OverlappingMapping
         | Arm11DynamicMemoryError::MappingNotFound { .. }
-        | Arm11DynamicMemoryError::LinearMappingNotFound { .. } => RESULT_INVALID_ADDRESS,
+        | Arm11DynamicMemoryError::LinearMappingNotFound { .. }
+        | Arm11DynamicMemoryError::AddressRangeOverflow { .. } => RESULT_INVALID_ADDRESS,
+        Arm11DynamicMemoryError::InvalidPermissions(_) => RESULT_INVALID_ENUM,
     }
 }
 
@@ -1386,6 +1424,49 @@ mod tests {
         session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[0] = 1.5f32.to_bits();
         session.run_instructions(16).unwrap();
         assert_eq!(f32::from_bits(session.core().vfp().s(14)), 3.0);
+    }
+
+    #[test]
+    fn memory_block_mapping_svc_validates_handle_permissions_and_unmapping() {
+        let mut session = test_session();
+        let handle = session.create_memory_block(0x1000, 3, 1).unwrap();
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = handle;
+            registers[1] = 0x0800_0000;
+            registers[2] = 3;
+            registers[3] = 1;
+        }
+        assert_eq!(
+            session.svc_map_memory_block(MAIN_THREAD_ID),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(session.core().regs[0], 0);
+        session.write_memory_u32(0x0800_0000, 0x5566_7788).unwrap();
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = handle;
+            registers[1] = 0x0810_0000;
+            registers[2] = 3;
+            registers[3] = 3;
+        }
+        session.svc_map_memory_block(MAIN_THREAD_ID);
+        assert_eq!(
+            session.core().regs[0],
+            RESULT_INVALID_ENUM,
+            "mapping must not grant more than the peer permission recorded by the block"
+        );
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = handle;
+            registers[1] = 0x0800_0000;
+        }
+        session.svc_unmap_memory_block(MAIN_THREAD_ID);
+        assert_eq!(session.core().regs[0], 0);
+        assert!(session.read_memory_u32(0x0800_0000).is_err());
     }
 
     #[test]
