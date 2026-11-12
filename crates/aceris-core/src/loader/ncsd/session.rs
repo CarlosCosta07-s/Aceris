@@ -1627,7 +1627,10 @@ mod tests {
         assert_eq!(mapped.instructions_executed, 1);
         assert_eq!(session.core().regs[0], 0);
         let alias_region = session.address_space().query_memory(0x0900_0000);
-        assert_eq!(alias_region.state, crate::loader::ncsd::process::Arm11MemoryState::Shared);
+        assert_eq!(
+            alias_region.state,
+            crate::loader::ncsd::process::Arm11MemoryState::Shared
+        );
         assert_eq!(session.read_memory_u32(0x0900_0000).unwrap(), 0x1122_3344);
 
         session.write_memory_u32(0x0900_0000, 0xAABB_CCDD).unwrap();
