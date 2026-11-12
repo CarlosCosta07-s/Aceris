@@ -661,7 +661,7 @@ mod tests {
 
         gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0x10)
             .unwrap();
-        let instruction = (0x03u32 << 26) | (0x21 << 0);
+        let instruction = (0x03u32 << 26) | 0x21;
         gpu.write_register(REG_VSH_CODETRANSFER_DATA0, instruction)
             .unwrap();
 
