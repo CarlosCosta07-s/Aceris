@@ -225,10 +225,12 @@ impl Pica200 {
 
     /// Returns one uploaded vertex shader instruction word.
     pub fn vertex_shader_instruction(&self, index: usize) -> Option<u32> {
-        self.vertex_shader_code
-            .get(index)
-            .copied()
-            .filter(|_| self.vertex_shader_code_uploaded.get(index).copied().unwrap_or(false))
+        self.vertex_shader_code.get(index).copied().filter(|_| {
+            self.vertex_shader_code_uploaded
+                .get(index)
+                .copied()
+                .unwrap_or(false)
+        })
     }
 
     /// Decodes a previously uploaded instruction using a caller-supplied format.
@@ -289,10 +291,12 @@ impl Pica200 {
 
     /// Returns one decoded vertex shader float4 constant register.
     pub fn vertex_shader_uniform(&self, index: usize) -> Option<[f32; 4]> {
-        self.vertex_shader_uniforms
-            .get(index)
-            .copied()
-            .filter(|_| self.vertex_shader_uniforms_uploaded.get(index).copied().unwrap_or(false))
+        self.vertex_shader_uniforms.get(index).copied().filter(|_| {
+            self.vertex_shader_uniforms_uploaded
+                .get(index)
+                .copied()
+                .unwrap_or(false)
+        })
     }
 
     /// Returns whether the guest signaled completion of the latest code upload.
@@ -857,10 +861,12 @@ mod tests {
 
         gpu.write_register(REG_VSH_FLOATUNIFORM_INDEX, 0).unwrap();
         gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0, 0).unwrap();
-        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 1, 0).unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 1, 0)
+            .unwrap();
         assert_eq!(gpu.pending_vertex_shader_uniform_words(), 2);
         assert_eq!(gpu.vertex_shader_uniform(0), None);
-        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 2, 0).unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 2, 0)
+            .unwrap();
 
         assert_eq!(gpu.pending_vertex_shader_uniform_words(), 0);
         assert_eq!(gpu.vertex_shader_uniform(0), Some([0.0; 4]));
