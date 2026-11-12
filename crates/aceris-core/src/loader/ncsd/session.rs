@@ -1259,10 +1259,7 @@ mod tests {
 
         let entered = session.run_instructions(8).unwrap();
         assert_eq!(entered.instructions_executed, 1);
-        assert_eq!(
-            entered.stop_reason,
-            Arm11RunStopReason::WaitForInterrupt
-        );
+        assert_eq!(entered.stop_reason, Arm11RunStopReason::WaitForInterrupt);
         assert_eq!(session.core().pc(), 0x0010_0004);
         assert_eq!(session.instruction_count(), 1);
 
@@ -1270,10 +1267,7 @@ mod tests {
         // guest instructions and leave the PC parked after the WFI MCR.
         let asleep = session.run_instructions(8).unwrap();
         assert_eq!(asleep.instructions_executed, 0);
-        assert_eq!(
-            asleep.stop_reason,
-            Arm11RunStopReason::WaitForInterrupt
-        );
+        assert_eq!(asleep.stop_reason, Arm11RunStopReason::WaitForInterrupt);
         assert_eq!(session.core().pc(), 0x0010_0004);
         assert_eq!(session.instruction_count(), 1);
 
@@ -1309,10 +1303,7 @@ mod tests {
         let resumed = session.run_instructions(1).unwrap();
         assert_eq!(resumed.instructions_executed, 1);
         assert_eq!(session.core().pc(), 0x18);
-        assert_eq!(
-            session.core().cpsr.mode(),
-            crate::cpu::Psr::IRQ_MODE
-        );
+        assert_eq!(session.core().cpsr.mode(), crate::cpu::Psr::IRQ_MODE);
         session.set_irq_line(false);
     }
 
