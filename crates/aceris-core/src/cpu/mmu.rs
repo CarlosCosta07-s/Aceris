@@ -1093,6 +1093,51 @@ mod tests {
     }
 
     #[test]
+    fn a32_unprivileged_transfers_succeed_with_user_permissions_and_write_back() {
+        let (mut cpu, mut mem) = machine();
+        let data_va = 0x0020_0100;
+
+        set_l1(&mut mem, 0x401, SECTION | SECTION_AP_RW_ALL);
+        set_l1(&mut mem, 0x002, SECTION | SECTION_AP_RW_ALL);
+        mem.write32(0x100, 0xCAFE_BABE).unwrap();
+        mem.write8(0x104, 0x5A).unwrap();
+
+        // LDRT r1,[r0],#4 ; LDRBT r2,[r0],#1 ;
+        // STRT r3,[r0],#4 ; STRBT r4,[r0],#1.
+        for (offset, instruction) in [
+            (0, 0xE4B0_1004),
+            (4, 0xE4F0_2001),
+            (8, 0xE4A0_3004),
+            (12, 0xE4E0_4001),
+        ] {
+            mem.write32(offset, instruction).unwrap();
+        }
+
+        cpu.regs[0] = data_va;
+        cpu.regs[3] = 0x1122_3344;
+        cpu.regs[4] = 0xAA;
+        cpu.set_pc(0x4010_0000);
+
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[1], 0xCAFE_BABE);
+        assert_eq!(cpu.regs[0], data_va + 4);
+
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[2], 0x5A);
+        assert_eq!(cpu.regs[0], data_va + 5);
+
+        cpu.regs[0] = data_va;
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[0], data_va + 4);
+        assert_eq!(mem.read32(0x100).unwrap(), 0x1122_3344);
+
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[0], data_va + 5);
+        assert_eq!(mem.read8(0x104).unwrap(), 0xAA);
+        assert_eq!(cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+    }
+
+    #[test]
     fn cpu_runs_translated_code_and_data_accesses() {
         let (mut cpu, mut mem) = machine();
         // VA 0x4010_0000 -> PA 0 (code); VA 0x2000_0000 page -> PA 0x20000 (data).
