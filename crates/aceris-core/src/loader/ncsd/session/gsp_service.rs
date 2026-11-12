@@ -283,6 +283,7 @@ pub enum GspServiceError {
     ClientSessionUnavailable {
         client_id: u8,
     },
+    ProcessSessionUnavailable,
 }
 
 impl fmt::Display for GspServiceError {
@@ -801,6 +802,34 @@ impl GspServiceRegistry {
             missed_pdc0: queue.missed_pdc0(),
             missed_pdc1: queue.missed_pdc1(),
             error_code: queue.error_code(),
+        })
+    }
+
+    /// Delivers one interrupt to all registered clients in a single process session.
+    ///
+    /// This is the system-bootstrap path while Aceris owns one ARM11 process
+    /// session. Every registration is prevalidated before any relay queue is
+    /// modified. Multiple client IDs may therefore share this session while
+    /// retaining independent queues and process-local event handles.
+    pub fn deliver_interrupt_to_session(
+        &self,
+        session: &mut Arm11ProcessSession,
+        interrupt: GspInterruptId,
+    ) -> Result<GspInterruptDispatchReport, GspServiceError> {
+        let recipients = self.interrupt_recipients(interrupt).collect::<Vec<_>>();
+
+        for client_id in recipients.iter().copied() {
+            self.validate_interrupt_delivery(session, client_id, interrupt)?;
+        }
+
+        let mut deliveries = Vec::with_capacity(recipients.len());
+        for client_id in recipients {
+            deliveries.push(self.deliver_interrupt(session, client_id, interrupt)?);
+        }
+
+        Ok(GspInterruptDispatchReport {
+            interrupt,
+            deliveries,
         })
     }
 
@@ -1761,6 +1790,48 @@ mod tests {
             Err(GspServiceError::RenderingRightNotOwned { client_id: 1 })
         );
         assert!(registry.owns_rendering_right(0));
+    }
+
+    #[test]
+    fn single_session_dispatch_supports_multiple_registered_clients() {
+        let mut session = test_session();
+        let first_event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let second_event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut session, 0, SHARED_MEMORY_BASE, first_event)
+            .unwrap();
+        registry
+            .register_client(&mut session, 1, SHARED_MEMORY_BASE, second_event)
+            .unwrap();
+        assert_eq!(
+            registry.acquire_rendering_right(1),
+            Ok(GspRenderingRightAcquireOutcome::Acquired)
+        );
+
+        let pdc = registry
+            .deliver_interrupt_to_session(&mut session, GspInterruptId::Pdc0)
+            .unwrap();
+        assert_eq!(
+            pdc.deliveries.iter().map(|delivery| delivery.client_id).collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert!(session.kernel_objects.event_is_signaled(first_event).unwrap());
+        assert!(session.kernel_objects.event_is_signaled(second_event).unwrap());
+
+        let p3d = registry
+            .deliver_interrupt_to_session(&mut session, GspInterruptId::P3d)
+            .unwrap();
+        assert_eq!(
+            p3d.deliveries.iter().map(|delivery| delivery.client_id).collect::<Vec<_>>(),
+            [1]
+        );
     }
 
     #[test]
