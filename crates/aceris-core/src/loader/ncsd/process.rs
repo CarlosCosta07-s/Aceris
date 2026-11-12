@@ -604,7 +604,8 @@ impl Arm11CodeAddressSpace {
             physical_base,
             size,
         });
-        self.linear_regions.sort_by_key(|region| region.virtual_base);
+        self.linear_regions
+            .sort_by_key(|region| region.virtual_base);
         Ok(())
     }
 
@@ -673,8 +674,7 @@ impl Arm11CodeAddressSpace {
             let region_end = u64::from(region.address) + region.bytes.len() as u64;
             u64::from(address) < region_end && end > u64::from(region.address)
         }) || self.linear_regions.iter().any(|region| {
-            u64::from(address) < region.virtual_end()
-                && end > u64::from(region.virtual_base)
+            u64::from(address) < region.virtual_end() && end > u64::from(region.virtual_base)
         }) {
             return Err(Arm11DynamicMemoryError::OverlappingMapping);
         }
