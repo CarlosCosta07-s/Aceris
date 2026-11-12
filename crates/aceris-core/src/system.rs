@@ -1265,8 +1265,7 @@ mod tests {
         let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[entry + 2] = 1;
-        queue_bytes[entry + 4..entry + 8]
-            .copy_from_slice(&command_list_address.to_le_bytes());
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&command_list_address.to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
 
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
