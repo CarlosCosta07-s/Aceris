@@ -1178,6 +1178,32 @@ mod tests {
     }
 
     #[test]
+    fn automatic_registration_preserves_uninterpreted_ipc_flags() {
+        let mut session = test_session();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        let flags = 0x5A5A_0003;
+
+        let client_id = registry
+            .register_next_available_client_with_flags(
+                &mut session,
+                SHARED_MEMORY_BASE,
+                event,
+                flags,
+            )
+            .unwrap();
+
+        assert_eq!(client_id, 0);
+        assert_eq!(
+            registry.client_registration(client_id).unwrap().flags(),
+            flags
+        );
+    }
+
+    #[test]
     fn automatic_registration_allocates_free_slots_and_reuses_unregistered_slots() {
         let mut session = test_session();
         let events = (0..5)
