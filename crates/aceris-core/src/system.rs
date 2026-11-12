@@ -984,18 +984,16 @@ impl System {
         let top = self
             .dispatch_gsp_interrupt(GspInterruptId::Pdc0)
             .map_err(|error| {
-                Error::Io(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("GSP PDC0 interrupt delivery failed: {error}"),
-                ))
+                Error::Io(io::Error::other(format!(
+                    "GSP PDC0 interrupt delivery failed: {error}"
+                )))
             })?;
         let bottom = self
             .dispatch_gsp_interrupt(GspInterruptId::Pdc1)
             .map_err(|error| {
-                Error::Io(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("GSP PDC1 interrupt delivery failed: {error}"),
-                ))
+                Error::Io(io::Error::other(format!(
+                    "GSP PDC1 interrupt delivery failed: {error}"
+                )))
             })?;
 
         let deliveries = top.deliveries.len().saturating_add(bottom.deliveries.len());
