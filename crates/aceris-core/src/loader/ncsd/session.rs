@@ -201,9 +201,8 @@ impl Arm11ProcessSession {
     /// Reads a byte range through the permission-aware ARM11 process bus.
     pub fn read_memory_bytes(&mut self, address: u32, output: &mut [u8]) -> Result<()> {
         for (index, byte) in output.iter_mut().enumerate() {
-            let offset = u32::try_from(index).map_err(|_| crate::Error::InvalidAccess {
-                addr: address,
-            })?;
+            let offset =
+                u32::try_from(index).map_err(|_| crate::Error::InvalidAccess { addr: address })?;
             let current = address
                 .checked_add(offset)
                 .ok_or(crate::Error::InvalidAccess { addr: address })?;
