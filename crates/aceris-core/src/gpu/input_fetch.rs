@@ -4,9 +4,7 @@
 //! address/DMA mapping and pass the resulting physical byte address. This
 //! module deliberately does not interpret raw GPU register addresses.
 
-use super::{
-    GpuPhysicalMemory, IndexBufferError, Pica200, RawVertexInput, VertexInputError,
-};
+use super::{GpuPhysicalMemory, IndexBufferError, Pica200, RawVertexInput, VertexInputError};
 
 impl Pica200 {
     /// Fetches one vertex using the current PICA200 attribute-array registers.
@@ -41,12 +39,9 @@ impl Pica200 {
         count: usize,
     ) -> Result<Vec<u32>, IndexBufferError> {
         let state = self.index_input_state()?;
-        state.index_buffer.read_indices(
-            memory,
-            resolved_physical_byte_base,
-            first_index,
-            count,
-        )
+        state
+            .index_buffer
+            .read_indices(memory, resolved_physical_byte_base, first_index, count)
     }
 }
 
@@ -54,9 +49,9 @@ impl Pica200 {
 mod tests {
     use super::*;
     use crate::gpu::{
-        AttributeDataType, FCRAM_BASE, IndexElementWidth, REG_ATTRIBBUFFERS_FORMAT_HIGH,
-        REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_INDEXBUFFER_CONFIG,
-        REG_NUMVERTICES, REG_VERTEX_OFFSET, REG_ATTRIBBUFFER0_OFFSET,
+        AttributeDataType, FCRAM_BASE, IndexElementWidth, REG_ATTRIBBUFFER0_OFFSET,
+        REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
+        REG_INDEXBUFFER_CONFIG, REG_NUMVERTICES, REG_VERTEX_OFFSET,
     };
 
     #[test]
@@ -65,18 +60,14 @@ mod tests {
         gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000)
             .unwrap();
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
-        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0)
+            .unwrap();
 
         // One unsigned 8-bit component in attribute 0; one-byte stride.
-        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x40)
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x40).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
             .unwrap();
-        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0)
-            .unwrap();
-        gpu.write_register(
-            REG_ATTRIBBUFFER0_OFFSET + 2,
-            (1 << 16) | (1 << 28),
-        )
-        .unwrap();
 
         let mut memory = GpuPhysicalMemory::new();
         let resolved_base = FCRAM_BASE + 0x3000;
