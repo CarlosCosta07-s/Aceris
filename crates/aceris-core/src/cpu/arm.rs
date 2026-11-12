@@ -1100,10 +1100,9 @@ impl Arm11Core {
                 word,
             });
         }
-        let saved_status = self.saved_program_status().ok_or(Error::Unimplemented(
-            "SRS source SPSR has not been initialized",
-        ))?;
-
+        // Validate the target mode before consulting the source SPSR, so
+        // architecturally undefined target encodings are never masked by
+        // the emulator's uninitialized-SPSR diagnostic.
         let target_mode = bits(word, 4, 0);
         if !super::Psr::is_valid_mode(target_mode) {
             return Err(Error::UndefinedInstruction {
@@ -1111,6 +1110,10 @@ impl Arm11Core {
                 word,
             });
         }
+
+        let saved_status = self.saved_program_status().ok_or(Error::Unimplemented(
+            "SRS source SPSR has not been initialized",
+        ))?;
         let base = self
             .banked_sp(target_mode)
             .ok_or(Error::UndefinedInstruction {

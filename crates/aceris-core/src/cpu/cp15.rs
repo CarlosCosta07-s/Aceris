@@ -413,10 +413,7 @@ mod tests {
         // P is bit 31; Victim occupies bits 28:26. The rest is SBZ/UNP.
         let value = (1 << 31) | (5 << 26) | 0x0000_001F;
         cp15.write(true, 0, 10, 0, 0, value).unwrap();
-        assert_eq!(
-            cp15.read(true, 0, 10, 0, 0),
-            Ok((1 << 31) | (5 << 26))
-        );
+        assert_eq!(cp15.read(true, 0, 10, 0, 0), Ok((1 << 31) | (5 << 26)));
         assert!(cp15.tlb_preserve());
         assert_eq!(cp15.tlb_victim(), 5);
 
