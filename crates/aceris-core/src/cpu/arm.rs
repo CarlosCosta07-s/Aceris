@@ -2360,9 +2360,7 @@ mod tests {
     fn exception_return_sets_a_single_host_wakeup_notification() {
         let mut m = Machine::new(&[0xE1B0_F00E]);
         m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
-        m.cpu
-            .set_saved_program_status(Psr(Psr::USER_MODE))
-            .unwrap();
+        m.cpu.set_saved_program_status(Psr(Psr::USER_MODE)).unwrap();
         m.cpu.regs[LR] = 0x1234;
 
         assert_eq!(m.step(), StepEvent::Executed);
