@@ -848,6 +848,11 @@ impl Arm11Core {
             }
             return Ok(StepEvent::Executed);
         }
+        // SRS stores the current mode's LR/SPSR on a selected banked SP.
+        // It is unconditional in A32 and was introduced by ARMv6.
+        if word & 0xFE4F_FFE0 == 0xF84D_0500 {
+            return self.store_return_state(bus, word);
+        }
         // RFE loads the target PC and CPSR from two consecutive words. It is
         // an ARMv6 privileged instruction and exists only in A32.
         if word & 0xFE50_FFFF == 0xF810_0A00 {
@@ -1040,6 +1045,125 @@ impl Arm11Core {
         };
         self.branch(aligned_target);
         Ok(())
+    }
+
+    /// Reads the SP belonging to a processor mode without changing the active bank.
+    fn banked_sp(&self, mode: u32) -> Option<u32> {
+        let current = self.cpsr.mode();
+        let shares_user_bank = matches!(current, super::Psr::USER_MODE | super::Psr::SYSTEM_MODE)
+            && matches!(mode, super::Psr::USER_MODE | super::Psr::SYSTEM_MODE);
+        if current == mode || shares_user_bank {
+            return Some(self.regs[super::SP]);
+        }
+
+        match mode {
+            super::Psr::USER_MODE | super::Psr::SYSTEM_MODE => {
+                Some(self.banked.user_sp_lr[0])
+            }
+            super::Psr::FIQ_MODE => Some(self.banked.fiq_r8_r14[5]),
+            super::Psr::IRQ_MODE => Some(self.banked.irq_sp_lr[0]),
+            super::Psr::SUPERVISOR_MODE => Some(self.banked.svc_sp_lr[0]),
+            super::Psr::ABORT_MODE => Some(self.banked.abort_sp_lr[0]),
+            super::Psr::UNDEFINED_MODE => Some(self.banked.undefined_sp_lr[0]),
+            _ => None,
+        }
+    }
+
+    /// Updates the SP belonging to a processor mode without changing the active bank.
+    fn set_banked_sp(&mut self, mode: u32, value: u32) -> bool {
+        let current = self.cpsr.mode();
+        let shares_user_bank = matches!(current, super::Psr::USER_MODE | super::Psr::SYSTEM_MODE)
+            && matches!(mode, super::Psr::USER_MODE | super::Psr::SYSTEM_MODE);
+        if current == mode || shares_user_bank {
+            self.regs[super::SP] = value;
+            return true;
+        }
+
+        match mode {
+            super::Psr::USER_MODE | super::Psr::SYSTEM_MODE => {
+                self.banked.user_sp_lr[0] = value;
+            }
+            super::Psr::FIQ_MODE => self.banked.fiq_r8_r14[5] = value,
+            super::Psr::IRQ_MODE => self.banked.irq_sp_lr[0] = value,
+            super::Psr::SUPERVISOR_MODE => self.banked.svc_sp_lr[0] = value,
+            super::Psr::ABORT_MODE => self.banked.abort_sp_lr[0] = value,
+            super::Psr::UNDEFINED_MODE => self.banked.undefined_sp_lr[0] = value,
+            _ => return false,
+        }
+        true
+    }
+
+    /// Executes ARMv6 SRS using the banked SP selected by the instruction.
+    fn store_return_state<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+    ) -> Result<StepEvent> {
+        let current_mode = self.cpsr.mode();
+        if !super::Psr::mode_has_spsr(current_mode) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+        let saved_status = self
+            .saved_program_status()
+            .ok_or(Error::Unimplemented("SRS source SPSR has not been initialized"))?;
+
+        let target_mode = bits(word, 4, 0);
+        if !super::Psr::is_valid_mode(target_mode) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+        let base = self
+            .banked_sp(target_mode)
+            .ok_or(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            })?;
+        if base & 3 != 0 {
+            return Err(Error::InvalidAccess { addr: base });
+        }
+
+        let pre_index = bit(word, 24);
+        let increment = bit(word, 23);
+        let writeback = bit(word, 21);
+
+        // SRS transfers exactly two words: LR_current followed by SPSR_current.
+        // The start address follows the four LDM/STM addressing-mode conventions.
+        let mut address = if increment {
+            base
+        } else {
+            base.wrapping_sub(8)
+        };
+        if pre_index == increment {
+            address = address.wrapping_add(4);
+        }
+
+        let (link_value, status_value) = if self.cpsr.big_endian() {
+            (self.regs[LR].swap_bytes(), saved_status.0.swap_bytes())
+        } else {
+            (self.regs[LR], saved_status.0)
+        };
+        bus.write32(address, link_value)?;
+        bus.write32(address.wrapping_add(4), status_value)?;
+
+        if writeback {
+            let updated = if increment {
+                base.wrapping_add(8)
+            } else {
+                base.wrapping_sub(8)
+            };
+            if !self.set_banked_sp(target_mode, updated) {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+        }
+        Ok(StepEvent::Executed)
     }
 
     /// Executes the A32 Return From Exception instruction.
@@ -1827,6 +1951,92 @@ mod tests {
     }
 
     // ----- data processing --------------------------------------------------
+
+    #[test]
+    fn armv6_srs_supports_all_four_addressing_modes_and_updates_target_bank() {
+        let cases = [
+            (false, true, 0x900, 0x908),  // SRSIA sp!, #irq
+            (true, true, 0x904, 0x908),   // SRSIB sp!, #irq
+            (false, false, 0x8FC, 0x8F8), // SRSDA sp!, #irq
+            (true, false, 0x8F8, 0x8F8),  // SRSDB sp!, #irq
+        ];
+        let link = 0x1234_5678;
+        let saved = Psr(0xA000_0030 | Psr::USER_MODE);
+
+        for (pre, increment, transfer_address, expected_sp) in cases {
+            let mut m = Machine::new(&[0]);
+            m.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+            m.cpu.regs[SP] = 0x900;
+            m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            m.cpu.regs[SP] = 0x700;
+            m.cpu.regs[super::LR] = link;
+            m.cpu.set_saved_program_status(saved).unwrap();
+
+            let instruction = 0xF84D_0500
+                | (u32::from(pre) << 24)
+                | (u32::from(increment) << 23)
+                | (1 << 21)
+                | Psr::IRQ_MODE;
+            m.mem.write32(0, instruction).unwrap();
+
+            assert_eq!(m.step(), StepEvent::Executed);
+            assert_eq!(m.mem.read32(transfer_address).unwrap(), link);
+            assert_eq!(m.mem.read32(transfer_address + 4).unwrap(), saved.0);
+
+            // SRS writes back to IRQ's banked SP, not the current SVC SP.
+            m.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+            assert_eq!(m.cpu.regs[SP], expected_sp);
+            m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            assert_eq!(m.cpu.regs[SP], 0x700);
+        }
+    }
+
+    #[test]
+    fn armv6_srs_without_writeback_and_big_endian_storage() {
+        let mut m = Machine::new(&[0]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.regs[SP] = 0x800;
+        m.cpu.regs[super::LR] = 0x1122_3344;
+        let saved = Psr(0xA000_0010 | Psr::USER_MODE);
+        m.cpu.set_saved_program_status(saved).unwrap();
+        m.cpu.cpsr.set_big_endian(true);
+
+        // SRSIA #svc, without writeback.
+        let instruction = 0xF8CD_0500 | Psr::SUPERVISOR_MODE;
+        m.mem.write32(0, instruction).unwrap();
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.mem.read32(0x800).unwrap(), 0x4433_2211);
+        assert_eq!(m.mem.read32(0x804).unwrap(), saved.0.swap_bytes());
+        assert_eq!(m.cpu.regs[SP], 0x800);
+    }
+
+    #[test]
+    fn armv6_srs_rejects_user_mode_invalid_target_and_unaligned_sp() {
+        let mut user = Machine::new(&[0xF84D_0512]);
+        assert!(matches!(
+            user.cpu.step(&mut user.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+        assert_eq!(user.cpu.pc(), 0);
+
+        let mut invalid_target = Machine::new(&[0xF84D_0516]);
+        invalid_target.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert!(matches!(
+            invalid_target.cpu.step(&mut invalid_target.mem),
+            Err(Error::UndefinedInstruction { pc: 0, .. })
+        ));
+
+        let mut unaligned = Machine::new(&[0xF84D_0512]);
+        unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        unaligned.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        unaligned.cpu.regs[SP] = 0x901;
+        unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert!(matches!(
+            unaligned.cpu.step(&mut unaligned.mem),
+            Err(Error::InvalidAccess { addr: 0x901 })
+        ));
+        assert_eq!(unaligned.cpu.pc(), 0);
+    }
 
     #[test]
     fn armv6_rfe_supports_all_four_addressing_modes_and_sp_writeback() {
