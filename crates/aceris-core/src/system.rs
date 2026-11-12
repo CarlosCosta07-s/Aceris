@@ -2,7 +2,7 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError, GspProcessCommandList,
+    GspGxCommandQueue, GspGxCommandQueueError, GspProcessCommandList,
     GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
     GpuDmaAddressSpace, GpuPhysicalMemory, Pica200, VRAM_BASE, VRAM_SIZE,
 };
@@ -635,7 +635,7 @@ impl System {
                     }
                     Err(error) => {
                         let result = matches!(
-                            error,
+                            &error,
                             GspGxCommandQueueError::InvalidCommandListAddress { .. }
                                 | GspGxCommandQueueError::InvalidCommandListSize { .. }
                         )
@@ -885,6 +885,86 @@ mod tests {
             system.submit_pica_command_list_from_memory(0x0010_2000, 2),
             Err(Error::Unimplemented(_))
         ));
+    }
+
+    #[test]
+    fn gsp_gx_queue_dispatches_process_command_list_to_pica200() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let command_list_address = VRAM_BASE + 0x1000;
+        system
+            .physical_memory_mut()
+            .write_u32(command_list_address, 0xDEAD_BEEF)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(command_list_address + 4, 0x000F_0100)
+            .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[0] = 0;
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
+        queue_bytes[entry + 2] = 1; // halt after this entry
+        queue_bytes[entry + 4..entry + 8]
+            .copy_from_slice(&command_list_address.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&1u32.to_le_bytes());
+        queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue(&mut queue);
+
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.command_lists_submitted, 1);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.cache_flush_requested);
+        assert!(report.gas_blend_update_requested);
+        assert!(report.halted);
+        assert!(report.error.is_none());
+        assert_eq!(system.gpu().register(0x100), Some(0xDEAD_BEEF));
+        assert_eq!(&queue.encode_header()[0..4], &[1, 0, 1, 1]);
+    }
+
+    #[test]
+    fn gsp_gx_queue_rejects_unmapped_process_command_list_address() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&0x1400_4000u32.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue(&mut queue);
+
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.command_lists_submitted, 0);
+        assert_eq!(report.pending_commands, 0);
+        assert_eq!(report.status, 0x81);
+        assert_eq!(report.last_result, GSP_INVALID_ADDRESS_RESULT);
+        assert!(matches!(
+            report.error,
+            Some(GspGxCommandQueueError::InvalidCommandListAddress { .. })
+        ));
+        assert_eq!(system.gpu().register(0x100), Some(0));
     }
 
     #[test]
