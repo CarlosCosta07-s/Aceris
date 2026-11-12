@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `6e7d0e81d6d43a03d734fd24526737072b637db3`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `da94e087ebcabd6c1ac8d19705ccd82276697949`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -110,8 +110,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Alocação e liberação de TLS por thread
 - [~] Prioridades, sleep/yield, espera com timeout e despertar existem em escopo inicial; preempção e temporização precisa ainda faltam
 - [~] Objetos de mutex, semáforo, evento e timer com operações iniciais
-- [~] SVCs com handlers iniciais: ControlMemory, QueryMemory, ExitProcess, CreateThread, ExitThread, SleepThread, Get/SetThreadPriority, GetProcessorId, mutexes, semáforos, eventos, timers, WaitSynchronization1 e CloseHandle
-- [ ] Completar ABI, códigos de retorno, validações de parâmetros, direitos de acesso e comportamento de erro de todos os SVCs presentes
+- [~] SVCs com handlers iniciais: ControlMemory, QueryMemory, CreateMemoryBlock (somente bloco anônimo com addr=0), MapMemoryBlock, UnmapMemoryBlock, ExitProcess, CreateThread, ExitThread, SleepThread, Get/SetThreadPriority, GetProcessorId, mutexes, semáforos, eventos, timers, WaitSynchronization1 e CloseHandle
+- [ ] Completar ABI, códigos de retorno, validações de parâmetros, restrições por memory type, backing de blocos criados a partir de regiões existentes e comportamento de erro de todos os SVCs presentes
 - [ ] Completar espera múltipla, timeout, cancelamento, herança de prioridade e ciclo de vida dos objetos
 - [ ] Completar ciclo de vida de processos, handles, compartilhamento e limpeza de recursos
 
@@ -160,8 +160,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [ ] Integrar o fetch de atributos/índices ao executor do vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
 - [~] Modelo inicial da fila GX e despacho síncrono de `ProcessCommandList`; RequestDMA, MemoryFill, DisplayTransfer, TextureCopy, FlushCacheRegions, estados busy e sincronização assíncrona ainda não são despachados
-- [~] Modelo da GSP Interrupt Relay Queue por cliente: bloco de 0x40 bytes com ring de 52 eventos, PDC0/PDC1 limitados a 0x20 com contadores de perdas, `ignore_pdc` e endereçamento de quatro clientes; `System::enqueue_gsp_interrupt_for_client` lê/grava a fila no espaço de memória do processo e retorna se o serviço deve sinalizar o evento. Ainda não registra clientes, cria/mapeia a shared memory nem sinaliza handles
-- [ ] Implementar GSP service IPC: `RegisterInterruptRelayQueue`/`TriggerCmdReqQueue`, direitos de renderização, criação/mapeamento do shared memory, registro de handles de eventos, sinalização real e callbacks de interrupção
+- [~] Modelo da GSP Interrupt Relay Queue por cliente: bloco de 0x40 bytes com ring de 52 eventos, PDC0/PDC1 limitados a 0x20 com contadores de perdas, `ignore_pdc` e endereçamento de quatro clientes; o registro GSP e a entrega de eventos já usam shared memory mapeada e handles de evento. O kernel agora cria blocos anônimos e implementa os SVCs Create/Map/UnmapMemoryBlock; o despacho IPC de registro e a resposta estendida ainda não estão integrados
+- [ ] Implementar o dispatcher GSP IPC ponta a ponta: tradução/importação de handles, `RegisterInterruptRelayQueue` com resposta estendida e thread ID, `TriggerCmdReqQueue`, direitos de renderização e handoff que bloqueie/reative threads IPC. A criação de bloco anônimo e o mapeamento local já existem, mas blocos criados a partir de regiões existentes e compartilhamento de handles entre processos continuam pendentes
 - [ ] Implementar comandos GX adicionais e semântica de busy/erro/async com registros GPU e devices correspondentes
 - [~] Transformação matricial e clipping genéricos implementados; clipping, montagem de primitivas, culling e convenções exatas do PICA200 ainda pendentes
 - [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
