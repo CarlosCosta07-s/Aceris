@@ -296,7 +296,7 @@ mod tests {
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0)
             .unwrap();
-        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0xFFC).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0xFFF).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
             .unwrap();
