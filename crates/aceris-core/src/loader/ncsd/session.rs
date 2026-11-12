@@ -1415,6 +1415,52 @@ mod tests {
     }
 
     #[test]
+    fn control_memory_honors_the_new_linear_window_address_hint() {
+        let mut session =
+            test_session_with_program(&[0xEF00_0001, 0xEF00_0001]);
+        let mut memory = GpuPhysicalMemory::new();
+        let mut dma = GpuDmaAddressSpace::new();
+        session.attach_gpu_services(memory.clone(), dma.clone());
+        let requested_virtual = NEW_LINEAR_BASE + 0x8000;
+        let expected_physical = FCRAM_BASE + 0x8000;
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_ALLOC | MEMOP_LINEAR;
+            core.regs[1] = requested_virtual;
+            core.regs[2] = 0;
+            core.regs[3] = 0x2000;
+            core.regs[4] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.core().regs[1], requested_virtual);
+        assert!(memory.has_linear_fcram_allocation(expected_physical, 0x2000));
+        assert_eq!(dma.mappings().len(), 1);
+        assert_eq!(
+            dma.resolve_physical_range(&memory, requested_virtual + 0x20, 4)
+                .unwrap()
+                .physical_address,
+            expected_physical + 0x20
+        );
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_FREE | MEMOP_LINEAR;
+            core.regs[1] = requested_virtual;
+            core.regs[2] = 0;
+            core.regs[3] = 0x2000;
+            core.regs[4] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+
+        assert_eq!(session.core().regs[0], 0);
+        assert!(dma.mappings().is_empty());
+        assert!(!memory.has_linear_fcram_allocation(expected_physical, 0x2000));
+    }
+
+    #[test]
     fn control_memory_linear_requires_gpu_memory_services_and_valid_alignment() {
         let mut session = test_session_with_program(&[
             0xEF00_0001, // SVC ControlMemory without attached GPU services
