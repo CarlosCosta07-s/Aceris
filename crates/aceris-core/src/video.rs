@@ -5,6 +5,7 @@
 //! RGBA8 surfaces; the core does not depend on a windowing system.
 
 mod lcd;
+pub mod png;
 pub use lcd::{
     LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport, PDC_CONTROL,
     PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
@@ -114,6 +115,12 @@ impl ScreenSurface {
 
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
+    }
+
+    /// Encodes the surface as an RGBA8 PNG image.
+    pub fn to_png(&self) -> Vec<u8> {
+        png::encode_rgba8(self.width, self.height, &self.pixels)
+            .expect("surface dimensions and pixel buffer always agree")
     }
 
     pub fn copy_from_rgba8(&mut self, pixels: &[u8]) -> Result<(), ScreenSurfaceError> {
