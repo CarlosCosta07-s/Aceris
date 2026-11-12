@@ -48,6 +48,8 @@ pub enum GspServiceError {
     InvalidEventHandle { handle: u32 },
     InvalidRelayQueue { source: GspInterruptQueueError },
     EventSignalFailed { source: KernelHandleError },
+    RenderingRightRequired { client_id: u8, interrupt: GspInterruptId },
+    RenderingRightNotOwned { client_id: u8 },
 }
 
 impl fmt::Display for GspServiceError {
@@ -80,12 +82,14 @@ pub struct GspInterruptDeliveryReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GspServiceRegistry {
     clients: [Option<GspClientRegistration>; GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize],
+    rendering_client: Option<u8>,
 }
 
 impl Default for GspServiceRegistry {
     fn default() -> Self {
         Self {
             clients: [None; GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize],
+            rendering_client: None,
         }
     }
 }
@@ -94,6 +98,7 @@ impl GspServiceRegistry {
     pub const fn new() -> Self {
         Self {
             clients: [None; GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize],
+            rendering_client: None,
         }
     }
 
@@ -191,9 +196,13 @@ impl GspServiceRegistry {
         client_id: u8,
     ) -> Result<GspClientRegistration, GspServiceError> {
         let index = Self::client_index(client_id)?;
-        self.clients[index]
+        let registration = self.clients[index]
             .take()
-            .ok_or(GspServiceError::ClientNotRegistered { client_id })
+            .ok_or(GspServiceError::ClientNotRegistered { client_id })?;
+        if self.rendering_client == Some(client_id) {
+            self.rendering_client = None;
+        }
+        Ok(registration)
     }
 
     /// Returns the current registration for a client slot, if present.
@@ -211,6 +220,67 @@ impl GspServiceRegistry {
             .count()
     }
 
+    /// Attempts to grant exclusive GPU rendering rights to a registered client.
+    ///
+    /// Returns `true` when the caller now owns the right, including when it
+    /// already held it. Returns `false` when another client owns the right.
+    /// This non-blocking primitive is the basis for GSP TryAcquireRight;
+    /// blocking AcquireRight needs the IPC wait/notification layer.
+    pub fn try_acquire_rendering_right(
+        &mut self,
+        client_id: u8,
+    ) -> Result<bool, GspServiceError> {
+        let index = Self::client_index(client_id)?;
+        if self.clients[index].is_none() {
+            return Err(GspServiceError::ClientNotRegistered { client_id });
+        }
+
+        match self.rendering_client {
+            None => {
+                self.rendering_client = Some(client_id);
+                Ok(true)
+            }
+            Some(owner) if owner == client_id => Ok(true),
+            Some(_) => Ok(false),
+        }
+    }
+
+    /// Releases GPU rendering rights held by the specified client.
+    pub fn release_rendering_right(&mut self, client_id: u8) -> Result<(), GspServiceError> {
+        let index = Self::client_index(client_id)?;
+        if self.clients[index].is_none() {
+            return Err(GspServiceError::ClientNotRegistered { client_id });
+        }
+        if self.rendering_client != Some(client_id) {
+            return Err(GspServiceError::RenderingRightNotOwned { client_id });
+        }
+        self.rendering_client = None;
+        Ok(())
+    }
+
+    /// Returns whether a registered client currently owns rendering rights.
+    pub fn owns_rendering_right(&self, client_id: u8) -> bool {
+        Self::client_index(client_id).is_ok()
+            && self.clients[usize::from(client_id)].is_some()
+            && self.rendering_client == Some(client_id)
+    }
+
+    /// Returns whether a client is eligible to receive a particular interrupt.
+    ///
+    /// PDC0 and PDC1 are broadcast to all registered clients. All other GSP
+    /// interrupts are routed only to the client holding rendering rights.
+    pub fn client_may_receive_interrupt(
+        &self,
+        client_id: u8,
+        interrupt: GspInterruptId,
+    ) -> Result<bool, GspServiceError> {
+        let index = Self::client_index(client_id)?;
+        if self.clients[index].is_none() {
+            return Err(GspServiceError::ClientNotRegistered { client_id });
+        }
+        Ok(interrupt.is_pdc() || self.rendering_client == Some(client_id))
+    }
+
     /// Appends an interrupt to the client's guest relay queue and signals its
     /// kernel event only when the queue accepted the interrupt.
     ///
@@ -225,6 +295,12 @@ impl GspServiceRegistry {
         let index = Self::client_index(client_id)?;
         let registration =
             self.clients[index].ok_or(GspServiceError::ClientNotRegistered { client_id })?;
+        if !self.client_may_receive_interrupt(client_id, interrupt)? {
+            return Err(GspServiceError::RenderingRightRequired {
+                client_id,
+                interrupt,
+            });
+        }
         if session
             .kernel_objects
             .event_reset_type(registration.event_handle)
@@ -418,6 +494,7 @@ mod tests {
             .register_client(&mut session, 1, SHARED_MEMORY_BASE, event)
             .unwrap();
 
+        assert!(registry.try_acquire_rendering_right(1).unwrap());
         let report = registry
             .deliver_interrupt(&mut session, 1, GspInterruptId::P3d)
             .unwrap();
@@ -467,6 +544,66 @@ mod tests {
     }
 
     #[test]
+    fn rendering_right_is_exclusive_controls_interrupt_routing_and_is_released() {
+        let mut session = test_session();
+        let first_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
+        let second_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut session, 0, SHARED_MEMORY_BASE, first_event)
+            .unwrap();
+        registry
+            .register_client(&mut session, 1, SHARED_MEMORY_BASE, second_event)
+            .unwrap();
+
+        assert!(!registry.client_may_receive_interrupt(0, GspInterruptId::Dma).unwrap());
+        assert!(registry.client_may_receive_interrupt(0, GspInterruptId::Pdc0).unwrap());
+        assert!(registry.try_acquire_rendering_right(0).unwrap());
+        assert!(registry.owns_rendering_right(0));
+        assert!(registry.try_acquire_rendering_right(0).unwrap());
+        assert!(!registry.try_acquire_rendering_right(1).unwrap());
+        assert!(!registry.client_may_receive_interrupt(1, GspInterruptId::P3d).unwrap());
+        assert!(registry.client_may_receive_interrupt(1, GspInterruptId::Pdc1).unwrap());
+
+        assert_eq!(
+            registry.deliver_interrupt(&mut session, 1, GspInterruptId::Dma),
+            Err(GspServiceError::RenderingRightRequired {
+                client_id: 1,
+                interrupt: GspInterruptId::Dma,
+            })
+        );
+        registry.release_rendering_right(0).unwrap();
+        assert!(!registry.owns_rendering_right(0));
+        assert!(registry.try_acquire_rendering_right(1).unwrap());
+        assert!(registry.owns_rendering_right(1));
+
+        registry.unregister_client(1).unwrap();
+        assert!(!registry.owns_rendering_right(1));
+        assert!(registry.try_acquire_rendering_right(0).unwrap());
+    }
+
+    #[test]
+    fn releasing_rendering_right_from_another_client_is_rejected() {
+        let mut session = test_session();
+        let first_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
+        let second_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut session, 0, SHARED_MEMORY_BASE, first_event)
+            .unwrap();
+        registry
+            .register_client(&mut session, 1, SHARED_MEMORY_BASE, second_event)
+            .unwrap();
+        assert!(registry.try_acquire_rendering_right(0).unwrap());
+
+        assert_eq!(
+            registry.release_rendering_right(1),
+            Err(GspServiceError::RenderingRightNotOwned { client_id: 1 })
+        );
+        assert!(registry.owns_rendering_right(0));
+    }
+
+    #[test]
     fn missed_pdc_and_full_queue_events_do_not_signal_registered_handles() {
         let mut session = test_session();
         let pdc_event = session
@@ -509,6 +646,7 @@ mod tests {
         registry
             .register_client(&mut session, 1, SHARED_MEMORY_BASE, full_event)
             .unwrap();
+        assert!(registry.try_acquire_rendering_right(1).unwrap());
 
         let missed = registry
             .deliver_interrupt(&mut session, 0, GspInterruptId::Pdc1)
@@ -614,6 +752,7 @@ mod tests {
         registry
             .register_client(&mut session, 0, SHARED_MEMORY_BASE, event)
             .unwrap();
+        assert!(registry.try_acquire_rendering_right(0).unwrap());
         session.kernel_objects.close_handle(event).unwrap();
 
         assert_eq!(
