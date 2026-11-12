@@ -43,7 +43,7 @@ O produto permanece implementado em Rust e usa somente crates internos do worksp
 
 O núcleo usa um interpretador para estados A32 e Thumb. O estado da CPU inclui CPSR, bancos de registradores para User/System, FIQ, IRQ, Supervisor, Abort e Undefined, além de SPSR nos modos de exceção.
 
-A implementação inclui processamento de dados, desvios, transferências de memória, operações de bloco, multiplicações, instruções ARMv6 de mídia/DSP, exclusivas, CPS, SETEND, BKPT, SRS/RFE, entrada de exceções opcional e sinais IRQ/FIQ. O suporte é amplo, mas ainda não constitui uma implementação certificada de todas as codificações ARMv6/ARMv6K.
+A implementação inclui processamento de dados, desvios, transferências de memória, operações de bloco, multiplicações, instruções ARMv6 de mídia/DSP, exclusivas, CPS, SETEND, BKPT, SRS/RFE e sinais IRQ/FIQ. SRS usa o SP bancado do modo-alvo e respeita SCTLR.A/U para alinhamento; a entrada de exceções permanece opcional. O suporte é amplo, mas ainda não constitui uma implementação certificada de todas as codificações ARMv6/ARMv6K.
 
 As falhas de instrução não implementada ou acesso inválido são reportadas explicitamente; não devem ser interpretadas como compatibilidade.
 
@@ -61,7 +61,7 @@ A região normal do TLB tem 64 entradas de software com substituição round-rob
 
 O estado VFP inclui registradores S0–S31 (com pares D), FPSCR, FPEXC e FPSID. Há transferências entre registradores ARM e VFP, loads/stores escalares e múltiplos, operações aritméticas escalares, comparação, raiz quadrada e conversões.
 
-As operações escalares consultam FPSCR.RMode e registram flags como IXC e UFC nos caminhos implementados. A implementação ainda é parcial: short-vector mode, exceções VFP habilitadas/trap, formas legadas FLDMX/FSTMX e casos extremos de precisão/subnormais precisam de trabalho e validação independente. Não se deve inferir compatibilidade integral do VFPv2 a partir dos testes existentes.
+As operações escalares consultam FPSCR.RMode e registram flags como IXC e UFC nos caminhos implementados. Um subconjunto de short vectors também está integrado: operações aritméticas de três operandos (VMLA/VMLS/VNMLA/VNMLS/VMUL/VNMUL/VADD/VSUB/VDIV) e operações de dois operandos (VMOV/VABS/VNEG/VSQRT) percorrem os quatro bancos circulares, aplicam wrap, suportam Fm escalar em bank 0 e respeitam a seleção escalar quando Fd está em bank 0. LEN/STRIDE que repetiriam um registrador são rejeitados como imprevisíveis. Comparações e conversões permanecem escalares. A implementação ainda é parcial: exceções VFP habilitadas/trap, formas legadas FLDMX/FSTMX e casos extremos de precisão/subnormais precisam de trabalho e validação independente. Não se deve inferir compatibilidade integral do VFPv2 a partir dos testes existentes.
 
 ## Memória e barramentos
 

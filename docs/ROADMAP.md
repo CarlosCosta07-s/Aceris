@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `cbba96c67d36a99d8ef4bb5a1214c855ebde7b33`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `0434887b0358286f1b33e124204a6b7a0262d419`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -17,7 +17,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Workflow do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
-- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `cbba96c67d36a99d8ef4bb5a1214c855ebde7b33`, sem anunciar compatibilidade não testada
+- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `0434887b0358286f1b33e124204a6b7a0262d419`, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
 
@@ -31,7 +31,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Sinais IRQ/FIQ externos com prioridade de FIQ e respeito às máscaras CPSR
 - [x] Entrada opcional em Undefined Instruction, Prefetch Abort e Data Abort; falhas de emulação continuam sendo reportadas como erros
 - [x] Retorno de exceção A32 por instrução de processamento de dados e RFE
-- [x] SRS ARMv6: grava LR/SPSR em SP bancado selecionado, com os quatro modos de endereçamento, writeback, validação de modo e endianness; testes aprovados no workflow [43230359524](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43230359524)
+- [x] SRS ARMv6: grava LR/SPSR em SP bancado selecionado, com os quatro modos de endereçamento, writeback, validação de modo e endianness; SP desalinhado é alinhado quando SCTLR.A/U estão claros e gera fault quando qualquer um está habilitado; testes aprovados no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
 - [~] Validar todas as combinações de exceção, vetores altos, endianness, máscaras, abortos durante transferências múltiplas e retornos em sequências longas
 - [ ] Integrar um controlador de interrupções e temporizadores do sistema ao modelo de IRQ/FIQ
 
@@ -54,8 +54,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Operações de manutenção do TLB CP15 c8 estão ligadas ao TLB unificado de software; manutenção de cache, coerência entre agentes e algumas barreiras ainda não têm efeitos arquiteturais modelados
 - [~] MMU ARMv6 de descritores curtos: TTBR0/TTBR1 e TTBCR.N, seções, superseções, coarse tables, páginas grandes/pequenas, FCSE PID (VA abaixo de 32 MiB → MVA), domínios, permissões AP/APX e XN
 - [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; atributos TEX, permissões de subpágina no formato antigo (XP=0) e faults de alinhamento ainda não estão modelados
-- [~] VFPv2 escalar: registradores S/D, FPSCR/FPEXC/FPSID, transferências ARM/VFP, loads/stores múltiplos, operações aritméticas, comparação e conversões; operações escalares agora consultam FPSCR.RMode
-- [~] Semântica VFP ainda parcial: short-vector mode (FPSCR.LEN), exceções habilitadas/trap, FLDMX/FSTMX e casos-limite de precisão/subnormal precisam de implementação e validação independente; IXC/UFC são registrados no caminho escalar comum
+- [~] VFPv2: registradores S/D, FPSCR/FPEXC/FPSID, transferências ARM/VFP, loads/stores múltiplos, operações aritméticas, comparação e conversões; operações escalares consultam FPSCR.RMode e registram IXC/UFC conforme o caminho implementado
+- [~] Short vectors VFPv2 implementados para VADD/VSUB/VMUL/VNMUL/VDIV, VMLA/VMLS/VNMLA/VNMLS e VMOV/VABS/VNEG/VSQRT; inclui quatro bancos circulares, wrap, Fm escalar em bank 0, destino escalar em bank 0 e validação de LEN/STRIDE. Comparações/conversões permanecem escalares; traps VFP, FLDMX/FSTMX e casos extremos ainda precisam de validação/implementação
 - [x] TLB unificado de software integrado ao caminho real de tradução: cacheia seções, superseções, páginas grandes e pequenas; aplica ASID/global, oito slots de lockdown controlados por CP15 c10 e TLBIALL/TLBIMVA/TLBIASID/TLBIMVAA. A região normal ainda usa capacidade de 64 entradas e substituição round-robin simplificada, sem equivalência ao replacement set-associative físico
 - [ ] Implementar caches ARM observáveis, invalidação/manutenção de caches e barreiras com efeitos coerentes entre CPU e dispositivos
 - [x] Integrar o monitor exclusivo ao caminho MMU e validar reservas perante escritas da CPU por aliases virtuais distintos do mesmo endereço físico; invalidação por outros agentes/dispositivos ainda depende da coerência de memória compartilhada
@@ -224,7 +224,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] TLB ARMv6, invalidações CP15 c8, exclusivas pelo caminho MMU, arredondamento escalar VFPv2 e regressões Thumb: Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux, Windows e macOS; build Android `arm64-v8a` aprovado no workflow [43227584938](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43227584938)
 - [x] Lockdown TLB c10, bit P/Victim, registradores CTR/TLBTR e regressões de invalidação: Rustfmt, Clippy e testes aprovados em Linux/Windows/macOS e build Android ARM64 no workflow [43229169229](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43229169229)
 - [x] CP15 ARM11 PFR/DFR/MMFR/ISAR, FCSE PID no caminho MMU, FCSE/TLB isolation tests e TPIDRURO write rules: Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43230750417](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43230750417)
-- [x] SRS ARMv6, incluindo modos inválidos e SP desalinhado com SPSR inicializado, aprovado em Linux/Windows/macOS e Android ARM64 no workflow [43230359524](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43230359524)
+- [x] SRS ARMv6, incluindo modos inválidos, alinhamento condicionado por SCTLR.A/U e SP desalinhado com SPSR válido, aprovado em Linux/Windows/macOS e Android ARM64 no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
+- [x] VFPv2 short vectors: bancos circulares single/double, wrap, broadcast scalar Fm, stride 1/2, unary sqrt e LEN/STRIDE imprevisíveis rejeitados; Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux/Windows/macOS e build Android `arm64-v8a` aprovado no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
 - [x] Testes adicionais de arredondamento VFP para multiplicação, divisão, raiz quadrada, underflow e flush-to-zero aprovados em Linux, Windows e macOS; build Android `arm64-v8a` aprovado no workflow [43227896584](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43227896584)
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
