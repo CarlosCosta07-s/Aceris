@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `c47b97484444262e5710d6c3ab4b8f4f7751590f`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `d559ef7b14fddac6cf758613f72fa75350cf96a5`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -147,9 +147,14 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] `Pica200::read_vertex_at_physical_base`, `read_numeric_vertex_at_physical_base` e `read_indices_at_physical_base` conectam snapshots ao fetch físico usando base já resolvida; rotas separadas `read_numeric_vertex_via_dma`/`read_indices_via_dma` usam ponteiro linear de CPU explicitamente retido pelo chamador e o mapa registrado; nenhuma rota dispara draw ou aplica vertex offset
 - [~] Snapshot de `GPUREG_VSH_INPUTBUFFER_CONFIG` (0x2B9) e permutações (0x2BB/0x2BC); associação explícita dos atributos numéricos a `v0–v15`, sem execução do vertex shader
 - [~] Armazenamento dos doze atributos fixos via `GPUREG_FIXEDATTRIB_INDEX` (0x232) e `DATA0–2` (0x233–0x235), incluindo writes por command list e canal imediato 0xF
+- [~] Upload de instruções do vertex shader por `GPUREG_VSH_CODETRANSFER_INDEX/DATA0–7` (0x2CB–0x2D3), com avanço automático do índice de 12 bits, armazenamento do espaço de transferência endereçável e sinalização de `CODETRANSFER_END`; o flag indica apenas fim do upload, não validação/execução do programa
+- [~] Upload de operand descriptors por `GPUREG_VSH_OPDESCS_INDEX/DATA0–2` (0x2D5–0x2D8), com avanço automático do offset; a capacidade armazenada corresponde ao espaço endereçável de 12 bits, não a uma afirmação sobre quantidade máxima efetiva de descritores executáveis
+- [~] Decodificação de uniforms vetoriais c0–c95 pelo FIFO `GPUREG_VSH_FLOATUNIFORM_INDEX/DATA0–7`: float24 1.7.16 em três palavras empacotadas na ordem reversa e float32 IEEE em quatro palavras também na ordem reversa; índices, modo de transferência, agrupamento e limites são testados
 - [~] Desempacotamento XYZW float1.7.16 (float24) e aplicação de atributos fixos selecionados pelo mask; valores fornecidos por arrays têm precedência; saída marcada como resolvida para o shader
 - [~] Fetch de vértices e índices dispõe de rotas DMA que validam intervalos completos; o caminho DRAW real, a semântica do base address PICA, cache flush/invalidate e coerência ARM/GPU ainda não estão integrados
-- [ ] Integrar o fetch de atributos/índices ao vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
+- [ ] Decodificar as codificações de instrução e operand descriptors do vertex shader em uma representação tipada; o material de ISA disponível é reverse-engineered e exige testes independentes por formato/opcode antes de habilitar execução
+- [ ] Implementar executor do subconjunto de opcodes PICA200 verificado, com registradores v/o/r/c, swizzles, máscaras, conversões e controle de fluxo; não tratar o armazenamento/transferência atual como execução
+- [ ] Integrar o fetch de atributos/índices ao executor do vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
 - [~] Modelo inicial da fila GX e despacho síncrono de `ProcessCommandList`; RequestDMA, MemoryFill, DisplayTransfer, TextureCopy, FlushCacheRegions, estados busy, sincronização assíncrona e interrupções ainda não são despachados
 - [ ] Implementar GSP service IPC: RegisterInterruptRelayQueue/TriggerCmdReqQueue, direitos de renderização, criação/mapeamento do shared memory, eventos de conclusão e notificações de interrupção
@@ -216,6 +221,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
+- [x] Bancos de upload de vertex shader (instruções e operand descriptors), conclusão de transferência e uniforms float24/float32 passaram Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43185644119](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43185644119), código no commit `d559ef7b14fddac6cf758613f72fa75350cf96a5`; execução de shader continua pendente
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
 - [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis
@@ -239,7 +245,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ## Próximas tarefas prioritárias
 
 1. Implementar o serviço GSP IPC em torno do GX queue: mapping de shared memory, rendering rights, `TriggerCmdReqQueue`, relay queue/eventos e callbacks; conectar cache flush/invalidate somente quando houver um modelo de cache ARM observável.
-2. Confirmar ABI completa de entrada do shader e implementar armazenamento/decodificação de programa, uniforms e execução do vertex shader; os atributos fixos e o mapeamento `v0–v15` já têm infraestrutura inicial.
+2. Implementar decodificadores tipados para os formatos de instrução e operand descriptors de vertex shader, priorizando formatos 1/1i/1u/1c e opcodes aritméticos básicos documentados; adicionar testes de campo e rejeitar codificações desconhecidas. O armazenamento de código/descriptors e uniforms já existe, sem executor.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
 5. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
