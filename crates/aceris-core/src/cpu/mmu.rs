@@ -629,6 +629,53 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_accesses_follow_the_physical_address_across_aliases() {
+        let (mut cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x401, SECTION | SECTION_AP_RW_ALL);
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        // Two virtual pages alias the same physical page.
+        mem.write32(L2, 0x0002_0000 | SMALL | SMALL_AP_RW_ALL)
+            .unwrap();
+        mem.write32(L2 + 4, 0x0002_0000 | SMALL | SMALL_AP_RW_ALL)
+            .unwrap();
+        let program = [
+            0xE190_1F9F, // ldrex r1,[r0]
+            0xE580_3000, // str r3,[r0]   (store through the other alias)
+            0xE180_2F91, // strex r2,r1,[r0]
+        ];
+        for (i, word) in program.iter().enumerate() {
+            mem.write32(i as u32 * 4, *word).unwrap();
+        }
+        cpu.cp15.write(true, 0, 1, 0, 0, 1 | (1 << 23)).unwrap();
+
+        // Undisturbed pair succeeds and the value lands at the physical address.
+        cpu.regs[0] = 0x2000_0000;
+        cpu.regs[1] = 0;
+        cpu.set_pc(0x4010_0000);
+        cpu.step(&mut mem).unwrap();
+        cpu.regs[1] = 0xAAAA_0001;
+        cpu.set_pc(0x4010_0008);
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[2], 0);
+        assert_eq!(mem.read32(0x2_0000).unwrap(), 0xAAAA_0001);
+
+        // A store through the other virtual alias in between kills the reservation.
+        cpu.regs[0] = 0x2000_0000;
+        cpu.set_pc(0x4010_0000);
+        cpu.step(&mut mem).unwrap();
+        cpu.regs[0] = 0x2000_1004; // second alias, same 8-byte granule
+        cpu.regs[3] = 0x55;
+        cpu.set_pc(0x4010_0004);
+        cpu.step(&mut mem).unwrap();
+        cpu.regs[0] = 0x2000_0000;
+        cpu.regs[1] = 0xBBBB_0002;
+        cpu.set_pc(0x4010_0008);
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[2], 1);
+        assert_eq!(mem.read32(0x2_0000).unwrap(), 0xAAAA_0001);
+    }
+
+    #[test]
     fn subpage_permission_format_is_refused_explicitly() {
         let (mut cpu, mut mem) = machine();
         cpu.cp15.write(true, 0, 1, 0, 0, 1).unwrap(); // M=1, XP=0
