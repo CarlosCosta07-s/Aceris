@@ -160,9 +160,9 @@ pub fn decode_translation_section(
                     return Err(IpcTranslationSectionError::InvalidDescriptor { descriptor });
                 }
                 IpcTranslationParameter::MappedBuffer {
-                descriptor,
-                permissions: translation_type & 0x03,
-                size_bytes: descriptor >> 4,
+                    descriptor,
+                    permissions: translation_type & 0x03,
+                    size_bytes: descriptor >> 4,
                     source_address: payload[0],
                 }
             }
@@ -325,7 +325,7 @@ mod tests {
                 requests_process_id: false,
                 handles: actual,
                 ..
-            } if actual == handles
+            } if actual == handles.as_slice()
         ));
         assert!(matches!(
             parameters[1],
@@ -404,6 +404,36 @@ mod tests {
         assert_eq!(
             super::decode_translation_section(&[descriptor, 0x0030_0000]),
             Err(super::IpcTranslationSectionError::InvalidDescriptor { descriptor })
+        );
+    }
+
+    #[test]
+    fn rejects_reserved_mapped_buffer_descriptor_bit() {
+        let descriptor = 0x0001_000B;
+        assert_eq!(
+            super::decode_translation_section(&[descriptor, 0x0040_0000]),
+            Err(super::IpcTranslationSectionError::InvalidDescriptor { descriptor })
+        );
+    }
+
+    #[test]
+    fn decodes_process_id_translation_as_a_type_zero_parameter() {
+        let parameters = super::decode_translation_section(&[0x20, 0xFFFF_FFFF]).unwrap();
+        assert!(matches!(
+            parameters.as_slice(),
+            [super::IpcTranslationParameter::Handles {
+                handle_count: 1,
+                move_handles: false,
+                requests_process_id: true,
+                handles,
+                ..
+            }] if handles == &[0xFFFF_FFFF]
+        ));
+        assert_eq!(
+            super::decode_translation_section(&[0x30, 0]),
+            Err(super::IpcTranslationSectionError::InvalidDescriptor {
+                descriptor: 0x30
+            })
         );
     }
 
