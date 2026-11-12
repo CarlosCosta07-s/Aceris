@@ -402,8 +402,7 @@ mod tests {
 
         for (encoded, expected) in cases {
             let mut data = valid_extended_header();
-            let descriptor =
-                OTHER_CAPABILITIES_DESCRIPTOR | (encoded << MEMORY_TYPE_SHIFT);
+            let descriptor = OTHER_CAPABILITIES_DESCRIPTOR | (encoded << MEMORY_TYPE_SHIFT);
             write_u32(
                 &mut data,
                 ACCESS_CONTROL_INFO_OFFSET + ARM11_KERNEL_CAPABILITIES_OFFSET,
