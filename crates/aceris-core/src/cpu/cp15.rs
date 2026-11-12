@@ -34,6 +34,7 @@ const FSR_WRITE_NOT_READ: u32 = 1 << 11;
 const SCTLR_V: u32 = 1 << 13;
 const SCTLR_EE: u32 = 1 << 15;
 const CPACR_WRITABLE: u32 = 0x00F0_0000;
+const TLB_LOCKDOWN_WRITABLE: u32 = 0x1C00_0001;
 
 /// CP15 register file of one core.
 #[derive(Clone, Debug)]
@@ -55,6 +56,7 @@ pub struct Cp15 {
     tpidruro: u32,
     tpidrprw: u32,
     pending_tlb_maintenance: Option<TlbMaintenance>,
+    tlb_lockdown: u32,
 }
 
 impl Default for Cp15 {
@@ -83,6 +85,7 @@ impl Cp15 {
             tpidruro: 0,
             tpidrprw: 0,
             pending_tlb_maintenance: None,
+            tlb_lockdown: 0,
         }
     }
 
@@ -122,6 +125,16 @@ impl Cp15 {
     pub(super) fn asid(&self) -> u8 {
         self.context_id as u8
     }
+
+    /// CP15 c10, c0, 0 controls the TLB's eight lockdown slots.
+    pub(super) fn tlb_preserve(&self) -> bool {
+        self.tlb_lockdown & 1 != 0
+    }
+
+    pub(super) fn tlb_victim(&self) -> usize {
+        ((self.tlb_lockdown >> 26) & 7) as usize
+    }
+
 
     /// Takes the pending maintenance command after the issuing instruction.
     pub(super) fn take_tlb_maintenance(&mut self) -> Option<TlbMaintenance> {
@@ -218,6 +231,7 @@ impl Cp15 {
             (5, 0, 1) => self.ifsr,
             (6, 0, 0) => self.dfar,
             (6, 0, 2) => self.ifar,
+            (10, 0, 0) => self.tlb_lockdown,
             (13, 0, 1) => self.context_id,
             (13, 0, 2) => self.tpidrurw,
             (13, 0, 3) => self.tpidruro,
@@ -256,6 +270,7 @@ impl Cp15 {
             (5, 0, 1) => self.ifsr = value,
             (6, 0, 0) => self.dfar = value,
             (6, 0, 2) => self.ifar = value,
+            (10, 0, 0) => self.tlb_lockdown = value & TLB_LOCKDOWN_WRITABLE,
             (13, 0, 1) => self.context_id = value,
             (13, 0, 2) => self.tpidrurw = value,
             (13, 0, 4) => self.tpidrprw = value,
@@ -374,6 +389,28 @@ mod tests {
         assert_eq!(cp15.write(false, 0, 8, 7, 0, 0), Err(Cp15Fault::Undefined));
         assert_eq!(cp15.write(true, 0, 8, 4, 0, 0), Err(Cp15Fault::Unsupported));
         assert_eq!(cp15.write(true, 0, 8, 7, 4, 0), Err(Cp15Fault::Unsupported));
+    }
+
+    #[test]
+    fn tlb_lockdown_register_preserves_only_documented_fields() {
+        let mut cp15 = Cp15::default();
+        let value = (5 << 26) | 1 | 0x8000_0000 | 0x0000_001E;
+        cp15.write(true, 0, 10, 0, 0, value).unwrap();
+        assert_eq!(cp15.read(true, 0, 10, 0, 0), Ok((5 << 26) | 1));
+        assert!(cp15.tlb_preserve());
+        assert_eq!(cp15.tlb_victim(), 5);
+
+        cp15.write(true, 0, 10, 0, 0, 6 << 26).unwrap();
+        assert!(!cp15.tlb_preserve());
+        assert_eq!(cp15.tlb_victim(), 6);
+        assert_eq!(
+            cp15.write(false, 0, 10, 0, 0, 0),
+            Err(Cp15Fault::Undefined)
+        );
+        assert_eq!(
+            cp15.read(false, 0, 10, 0, 0),
+            Err(Cp15Fault::Undefined)
+        );
     }
 
     #[test]

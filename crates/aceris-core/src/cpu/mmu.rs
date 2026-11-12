@@ -7,10 +7,11 @@
 //!
 //! Supported: sections, supersections, coarse page tables, large (64 KiB) and
 //! small (4 KiB) pages in the ARMv6 format (SCTLR.XP = 1: AP[1:0], APX, XN),
-//! plus a bounded unified software TLB with ASID/global matching and ARM11
-//! CP15 c8 invalidation operations.
-//! Not modeled: hardware-exact TLB replacement/lockdown, subpage permissions
-//! (XP = 0), memory attributes/TEX, alignment faults, and cache behavior. A
+//! plus a unified software TLB with ASID/global matching, eight ARM11
+//! lockdown slots, and CP15 c8 invalidation operations.
+//! Set-associative replacement remains a bounded software approximation;
+//! subpage permissions (XP = 0), memory attributes/TEX, alignment faults,
+//! and cache behavior are not yet modeled. A
 //! translation fault is reported as `Error::InvalidAccess` with the virtual
 //! address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
 
@@ -42,6 +43,8 @@ pub(super) struct Params {
     pub n: u32,
     pub dacr: u32,
     pub asid: u8,
+    pub tlb_preserve: bool,
+    pub tlb_victim: usize,
     pub privileged: bool,
 }
 
@@ -160,25 +163,41 @@ const TLB_CAPACITY: usize = 64;
 #[derive(Clone, Debug, Default)]
 pub(super) struct TranslationLookasideBuffer {
     entries: Vec<TlbEntry>,
+    lockdown_entries: [Option<TlbEntry>; 8],
     next_victim: usize,
 }
 
 impl TranslationLookasideBuffer {
     fn lookup(&self, params: &Params, address: u32) -> Option<TlbEntry> {
-        self.entries
+        self.lockdown_entries
             .iter()
             .rev()
+            .flatten()
             .copied()
             .find(|entry| entry.matches_context(params, address))
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|entry| entry.matches_context(params, address))
+            })
     }
 
-    fn insert(&mut self, entry: TlbEntry) {
-        self.entries.retain(|existing| {
-            existing.virtual_base != entry.virtual_base
-                || existing.address_mask != entry.address_mask
-                || (!entry.global && !existing.global && existing.asid != entry.asid)
-        });
+    fn insert(&mut self, entry: TlbEntry, preserve: bool, victim: usize) {
+        let same_mapping = |existing: &TlbEntry| {
+            existing.virtual_base == entry.virtual_base
+                && existing.address_mask == entry.address_mask
+                && (entry.global || existing.global || existing.asid == entry.asid)
+        };
 
+        if preserve {
+            self.entries.retain(|existing| !same_mapping(existing));
+            self.lockdown_entries[victim % self.lockdown_entries.len()] = Some(entry);
+            return;
+        }
+
+        self.entries.retain(|existing| !same_mapping(existing));
         if self.entries.len() < TLB_CAPACITY {
             self.entries.push(entry);
             return;
@@ -198,6 +217,24 @@ impl TranslationLookasideBuffer {
             TlbMaintenance::Asid { asid } => entry.global || entry.asid != asid,
             TlbMaintenance::MvaAllAsids { mva } => !entry.matches_address(mva),
         });
+
+        for entry in &mut self.lockdown_entries {
+            let Some(cached) = entry else {
+                continue;
+            };
+            let invalidate = match operation {
+                TlbMaintenance::All => false,
+                TlbMaintenance::MvaAsid { mva, asid } => {
+                    cached.matches_address(mva) && (cached.global || cached.asid == asid)
+                }
+                TlbMaintenance::Asid { asid } => !cached.global && cached.asid == asid,
+                TlbMaintenance::MvaAllAsids { mva } => cached.matches_address(mva),
+            };
+            if invalidate {
+                *entry = None;
+            }
+        }
+
         if self.entries.len() < TLB_CAPACITY {
             self.next_victim = 0;
         }
@@ -205,7 +242,7 @@ impl TranslationLookasideBuffer {
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.len() + self.lockdown_entries.iter().flatten().count()
     }
 }
 
@@ -364,7 +401,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             match walk_page_tables(self.inner, &self.params, va, access)? {
                 PageWalk::Mapped(entry) => {
                     let result = entry.resolve(&self.params, va, access);
-                    self.tlb.insert(entry);
+                    self.tlb.insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
                     result
                 }
                 PageWalk::Fault(fault) => Walk::Fault(fault),
@@ -474,6 +511,8 @@ impl Arm11Core {
             n: self.cp15.ttbcr_n(),
             dacr: self.cp15.dacr(),
             asid: self.cp15.asid(),
+            tlb_preserve: self.cp15.tlb_preserve(),
+            tlb_victim: self.cp15.tlb_victim(),
             privileged: self.cpsr.privileged(),
         };
         let (outcome, fault) = {
@@ -575,6 +614,8 @@ mod tests {
             n: cpu.cp15.ttbcr_n(),
             dacr: cpu.cp15.dacr(),
             asid: cpu.cp15.asid(),
+            tlb_preserve: cpu.cp15.tlb_preserve(),
+            tlb_victim: cpu.cp15.tlb_victim(),
             privileged: cpu.cpsr.privileged(),
         }
     }
@@ -959,6 +1000,58 @@ mod tests {
         });
         tlb.maintain(TlbMaintenance::All);
         assert_eq!(tlb.len(), 0);
+    }
+
+    #[test]
+    fn tlbi_all_preserves_lockdown_entries_but_mva_invalidations_remove_them() {
+        let mut tlb = TranslationLookasideBuffer::default();
+        let make_entry = |virtual_base, physical_base, asid, global| TlbEntry {
+            virtual_base,
+            physical_base,
+            address_mask: 0xFFFF_F000,
+            asid,
+            global,
+            domain: 0,
+            ap: 3,
+            apx: false,
+            xn: false,
+            section: false,
+        };
+        tlb.insert(make_entry(0x1000, 0xA000, 7, false), true, 2);
+        tlb.insert(make_entry(0x2000, 0xB000, 7, false), false, 0);
+        tlb.insert(make_entry(0x3000, 0xC000, 7, true), true, 3);
+
+        tlb.maintain(TlbMaintenance::All);
+        assert_eq!(tlb.len(), 2);
+        assert!(tlb.lockdown_entries[2].is_some());
+        assert!(tlb.lockdown_entries[3].is_some());
+
+        tlb.maintain(TlbMaintenance::Asid { asid: 7 });
+        assert_eq!(tlb.len(), 1);
+        assert!(tlb.lockdown_entries[2].is_none());
+        assert!(tlb.lockdown_entries[3].is_some());
+
+        tlb.maintain(TlbMaintenance::MvaAllAsids { mva: 0x3004 });
+        assert!(tlb.lockdown_entries[3].is_none());
+        assert_eq!(tlb.len(), 0);
+    }
+
+    #[test]
+    fn tlb_lockdown_register_routes_page_walk_fill_to_selected_slot() {
+        let (cpu, mut mem) = machine();
+        let va = 0x1230_4567;
+        set_l1(&mut mem, 0x123, SECTION | SECTION_AP_RW_ALL);
+        let mut tlb = TranslationLookasideBuffer::default();
+        let mut params = params(&cpu);
+        params.tlb_preserve = true;
+        params.tlb_victim = 6;
+        {
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert_eq!(mmu.map(va, Access::Read).unwrap(), 0x0000_4567);
+        }
+        assert_eq!(tlb.len(), 1);
+        assert!(tlb.lockdown_entries[6].is_some());
+        assert!(tlb.entries.is_empty());
     }
 
     #[test]
