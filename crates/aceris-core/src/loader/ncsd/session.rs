@@ -542,8 +542,8 @@ impl Arm11ProcessSession {
             }
         }
 
-        let memory = self.gpu_memory.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
-        let dma = self
+        let mut memory = self.gpu_memory.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
+        let mut dma = self
             .gpu_address_space
             .clone()
             .ok_or(RESULT_OUT_OF_MEMORY)?;
@@ -580,9 +580,11 @@ impl Arm11ProcessSession {
             );
             let _ = memory.free_linear_fcram(physical_base, size);
             return Err(match error {
-                crate::gpu::GpuAddressSpaceError::OutOfMemory
-                | crate::gpu::GpuAddressSpaceError::OutsideLinearWindow { .. } => {
-                    RESULT_OUT_OF_MEMORY
+                crate::gpu::GpuAddressSpaceError::MisalignedMapping { .. } => {
+                    RESULT_MISALIGNED_ADDRESS
+                }
+                crate::gpu::GpuAddressSpaceError::OutsideLinearWindow { .. } => {
+                    RESULT_INVALID_ADDRESS
                 }
                 _ => RESULT_INVALID_ADDRESS,
             });
@@ -595,8 +597,8 @@ impl Arm11ProcessSession {
         if size == 0 || size % 0x1000 != 0 {
             return Err(RESULT_MISALIGNED_ADDRESS);
         }
-        let memory = self.gpu_memory.clone().ok_or(RESULT_INVALID_ADDRESS)?;
-        let dma = self
+        let mut memory = self.gpu_memory.clone().ok_or(RESULT_INVALID_ADDRESS)?;
+        let mut dma = self
             .gpu_address_space
             .clone()
             .ok_or(RESULT_INVALID_ADDRESS)?;
