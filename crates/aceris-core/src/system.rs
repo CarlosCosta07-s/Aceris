@@ -1,7 +1,11 @@
 //! Top-level emulated system.
 
 use crate::cpu::Arm11Core;
-use crate::gpu::{GpuDmaAddressSpace, GpuPhysicalMemory, Pica200};
+use crate::gpu::{
+    GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError, GspProcessCommandList,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
+    GpuDmaAddressSpace, GpuPhysicalMemory, Pica200, VRAM_BASE, VRAM_SIZE,
+};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
@@ -34,6 +38,25 @@ pub const DEFAULT_FRAME_INSTRUCTION_BUDGET: usize = 100_000;
 
 /// Maximum guest PICA200 command-list size accepted by one submission.
 pub const MAX_PICA_COMMAND_WORDS: usize = 0x1_0000;
+
+/// Result of processing one GSP GX shared-memory queue snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GspGxCommandQueueReport {
+    /// Number of entries consumed from the ring, including a failing entry.
+    pub commands_consumed: u8,
+    /// Number of ProcessCommandList entries submitted to the PICA200 parser.
+    pub command_lists_submitted: u8,
+    /// Number of entries still pending after this dispatch.
+    pub pending_commands: u8,
+    /// Requests observed but not independently emulated by this GSP layer.
+    pub cache_flush_requested: bool,
+    pub gas_blend_update_requested: bool,
+    pub busy_check_requested: bool,
+    pub halted: bool,
+    pub status: u8,
+    pub last_result: u32,
+    pub error: Option<GspGxCommandQueueError>,
+}
 
 /// Result of one completed development frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -512,6 +535,198 @@ impl System {
             submitted = submitted.saturating_add(1);
         }
         Ok(submitted)
+    }
+
+    /// Reads, dispatches and writes back one client's GSP GX shared-memory queue.
+    ///
+    /// The caller supplies the base virtual address returned by the future GSP
+    /// shared-memory service and the client slot (0..4). The queue slot must
+    /// already be mapped read/write in the process. Only ProcessCommandList is
+    /// dispatched in this first implementation; the other GX command families,
+    /// GSP IPC rights/busy arbitration and interrupt delivery remain pending.
+    pub fn process_gsp_gx_command_queue(
+        &mut self,
+        shared_memory_base: u32,
+        client_id: u8,
+    ) -> Result<GspGxCommandQueueReport> {
+        let queue_offset = GspGxCommandQueue::client_queue_offset(client_id).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                error.to_string(),
+            ))
+        })?;
+        let queue_address = shared_memory_base
+            .checked_add(queue_offset)
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "GSP GX queue address overflowed the process address space",
+                ))
+            })?;
+
+        let mut bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        self.ncsd_session
+            .as_mut()
+            .ok_or(Error::Unimplemented(
+                "a prepared ARM11 process session is required for GSP shared memory",
+            ))?
+            .read_memory_bytes(queue_address, &mut bytes)?;
+
+        let mut queue = GspGxCommandQueue::parse(&bytes).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid GSP GX command queue: {error}"),
+            ))
+        })?;
+        let report = self.dispatch_gsp_gx_command_queue(&mut queue);
+
+        self.ncsd_session
+            .as_mut()
+            .ok_or(Error::Unimplemented(
+                "ARM11 process session was removed during GSP queue dispatch",
+            ))?
+            .write_memory_bytes(queue_address, &queue.encode_header())?;
+
+        Ok(report)
+    }
+
+    fn dispatch_gsp_gx_command_queue(
+        &mut self,
+        queue: &mut GspGxCommandQueue,
+    ) -> GspGxCommandQueueReport {
+        let mut report = GspGxCommandQueueReport {
+            commands_consumed: 0,
+            command_lists_submitted: 0,
+            pending_commands: queue.command_count(),
+            cache_flush_requested: false,
+            gas_blend_update_requested: false,
+            busy_check_requested: false,
+            halted: queue.is_halted(),
+            status: queue.status(),
+            last_result: queue.last_result(),
+            error: None,
+        };
+
+        if !queue.is_halted() {
+            while let Some(command) = queue.consume_next() {
+                report.commands_consumed = report.commands_consumed.saturating_add(1);
+                report.busy_check_requested |= command.fail_if_busy;
+
+                if command.command_id != GSP_GX_COMMAND_PROCESS_COMMAND_LIST {
+                    let error = GspGxCommandQueueError::UnsupportedCommand {
+                        command_id: command.command_id,
+                    };
+                    queue.mark_error(None);
+                    queue.halt();
+                    report.error = Some(error);
+                    break;
+                }
+
+                let arguments = command
+                    .process_command_list()
+                    .expect("command ID was checked immediately above");
+                report.cache_flush_requested |= arguments.flush_buffer;
+                report.gas_blend_update_requested |= arguments.update_gas_blend;
+
+                match self.dispatch_gsp_process_command_list(arguments) {
+                    Ok(()) => {
+                        report.command_lists_submitted =
+                            report.command_lists_submitted.saturating_add(1);
+                    }
+                    Err(error) => {
+                        let result = matches!(
+                            error,
+                            GspGxCommandQueueError::InvalidCommandListAddress { .. }
+                                | GspGxCommandQueueError::InvalidCommandListSize { .. }
+                        )
+                        .then_some(GSP_INVALID_ADDRESS_RESULT);
+                        queue.mark_error(result);
+                        queue.halt();
+                        report.error = Some(error);
+                        break;
+                    }
+                }
+
+                if command.stop_after {
+                    queue.halt();
+                    break;
+                }
+            }
+        }
+
+        report.pending_commands = queue.command_count();
+        report.halted = queue.is_halted();
+        report.status = queue.status();
+        report.last_result = queue.last_result();
+        report
+    }
+
+    fn dispatch_gsp_process_command_list(
+        &mut self,
+        command: GspProcessCommandList,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        let address = command.buffer_address;
+        let size_bytes = command.buffer_size_bytes;
+        if address & 7 != 0 {
+            return Err(GspGxCommandQueueError::InvalidCommandListAddress {
+                address,
+                size_bytes,
+            });
+        }
+        if size_bytes == 0 || size_bytes & 7 != 0 {
+            return Err(GspGxCommandQueueError::InvalidCommandListSize { size_bytes });
+        }
+        let maximum_bytes = MAX_PICA_COMMAND_WORDS * 4;
+        if u64::from(size_bytes) > maximum_bytes as u64 {
+            return Err(GspGxCommandQueueError::CommandListTooLarge {
+                size_bytes,
+                maximum_bytes,
+            });
+        }
+        let end = u64::from(address) + u64::from(size_bytes);
+        if end > 0x1_0000_0000 {
+            return Err(GspGxCommandQueueError::AddressOverflow {
+                base: address,
+                offset: u64::from(size_bytes),
+            });
+        }
+
+        let word_count = usize::try_from(size_bytes / 4).map_err(|_| {
+            GspGxCommandQueueError::CommandListTooLarge {
+                size_bytes,
+                maximum_bytes,
+            }
+        })?;
+
+        let physical_address = if address >= VRAM_BASE
+            && end <= u64::from(VRAM_BASE) + u64::from(VRAM_SIZE)
+        {
+            self.physical_memory
+                .validate_range(address, size_bytes as usize)
+                .map_err(|_| GspGxCommandQueueError::InvalidCommandListAddress {
+                    address,
+                    size_bytes,
+                })?;
+            address
+        } else {
+            self.gpu_address_space
+                .resolve_physical_range(
+                    &self.physical_memory,
+                    address,
+                    size_bytes as usize,
+                )
+                .map_err(|_| GspGxCommandQueueError::InvalidCommandListAddress {
+                    address,
+                    size_bytes,
+                })?
+                .physical_address
+        };
+
+        self.submit_pica_command_list_from_physical_memory(physical_address, word_count)
+            .map_err(|error| GspGxCommandQueueError::CommandListSubmission {
+                reason: error.to_string(),
+            })?;
+        Ok(())
     }
 
     /// Advances one frame using a caller-supplied ARM11 instruction budget.
