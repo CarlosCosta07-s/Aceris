@@ -87,6 +87,8 @@ pub struct SystemFrameReport {
     pub gpu_command_lists_submitted: u64,
     pub lcd_screens_scanned_out: u8,
     pub elapsed_virtual_time_ns: u64,
+    /// Number of client relay-queue deliveries across this frame's PDC0/PDC1 events.
+    pub gsp_interrupt_deliveries: u8,
 }
 
 impl System {
@@ -966,6 +968,7 @@ impl System {
             })?;
         let frame_number = self.display.present();
         self.lcd.advance_vblank();
+        let gsp_interrupt_deliveries = self.dispatch_frame_vblank_interrupts()?;
         Ok(SystemFrameReport {
             frame_number,
             instructions_executed: cpu_report.instructions_executed,
@@ -973,7 +976,30 @@ impl System {
             gpu_command_lists_submitted,
             lcd_screens_scanned_out: lcd_report.screens_updated,
             elapsed_virtual_time_ns: NOMINAL_FRAME_DURATION_NS,
+            gsp_interrupt_deliveries,
         })
+    }
+
+    fn dispatch_frame_vblank_interrupts(&mut self) -> Result<u8> {
+        let top = self
+            .dispatch_gsp_interrupt(GspInterruptId::Pdc0)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("GSP PDC0 interrupt delivery failed: {error}"),
+                ))
+            })?;
+        let bottom = self
+            .dispatch_gsp_interrupt(GspInterruptId::Pdc1)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("GSP PDC1 interrupt delivery failed: {error}"),
+                ))
+            })?;
+
+        let deliveries = top.deliveries.len().saturating_add(bottom.deliveries.len());
+        Ok(u8::try_from(deliveries).unwrap_or(u8::MAX))
     }
 
     /// Runs one development frame using the default instruction budget.
@@ -1340,6 +1366,7 @@ mod tests {
         let report = system.run_frame_with_budget(0).unwrap();
 
         assert_eq!(report.gpu_command_lists_submitted, 1);
+        assert_eq!(report.gsp_interrupt_deliveries, 0);
         assert_eq!(system.gpu().register(0x100), Some(0xDEAD_BEEF));
         assert_eq!(system.gpu().register(0x101), Some(0x1234_5678));
         assert_eq!(system.gpu().register(REG_COMMAND_BUFFER_JUMP_0), Some(0));
