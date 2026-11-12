@@ -10,7 +10,9 @@ use super::fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
     REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
 };
-use super::vertex_shader::{PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat};
+use super::vertex_shader::{
+    PicaShaderOperandDescriptor, PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat,
+};
 
 /// Number of 32-bit internal PICA200 registers addressable by command ID.
 pub const REGISTER_COUNT: usize = 0x400;
@@ -236,6 +238,15 @@ impl Pica200 {
     /// Returns one uploaded vertex shader operand descriptor word.
     pub fn vertex_shader_operand_descriptor(&self, index: usize) -> Option<u32> {
         self.vertex_shader_operand_descriptors.get(index).copied()
+    }
+
+    /// Decodes one uploaded operand descriptor's mask, negation and swizzles.
+    pub fn decode_vertex_shader_operand_descriptor(
+        &self,
+        index: usize,
+    ) -> Option<PicaShaderOperandDescriptor> {
+        self.vertex_shader_operand_descriptor(index)
+            .map(PicaShaderOperandDescriptor::decode)
     }
 
     /// Returns one decoded vertex shader float4 constant register.
@@ -617,6 +628,30 @@ mod tests {
             .unwrap();
         assert_eq!(gpu.vertex_shader_instruction(0x40), Some(0xAABB_CCDD));
         assert!(!gpu.vertex_shader_program_ready());
+    }
+
+    #[test]
+    fn pica200_decodes_uploaded_operand_descriptor_words() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_VSH_OPDESCS_INDEX, 0x07).unwrap();
+        let descriptor_word = 0b1010u32
+            | (1 << 4)
+            | (0x1B << 5)
+            | (0x55 << 14)
+            | (1 << 22)
+            | (0xE4 << 23);
+        gpu.write_register(REG_VSH_OPDESCS_DATA0, descriptor_word)
+            .unwrap();
+
+        let descriptor = gpu.decode_vertex_shader_operand_descriptor(7).unwrap();
+        assert_eq!(descriptor.destination_mask, 0b1010);
+        assert!(descriptor.source1_negate);
+        assert_eq!(descriptor.source1_component(0), Some(0));
+        assert_eq!(descriptor.source1_component(1), Some(1));
+        assert_eq!(descriptor.source1_component(2), Some(2));
+        assert_eq!(descriptor.source1_component(3), Some(3));
+        assert_eq!(descriptor.source2_component(0), Some(1));
+        assert_eq!(descriptor.source3_component(0), Some(3));
     }
 
     #[test]
