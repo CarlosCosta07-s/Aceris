@@ -110,10 +110,14 @@ pub struct Arm11ProcessSession {
 
 impl Arm11ProcessSession {
     /// Creates a process session, initializes the main CPU context and scheduler.
-    pub fn from_address_space(address_space: Arm11CodeAddressSpace) -> Self {
+    pub fn from_address_space(mut address_space: Arm11CodeAddressSpace) -> Self {
         let mut main_core = Arm11Core::new();
         address_space.initialize_core(&mut main_core);
         main_core.enable_vfp();
+        let main_tls = address_space
+            .allocate_thread_local_storage()
+            .expect("a fresh address space has room for the main thread's TLS");
+        main_core.cp15_mut().set_tpidruro(main_tls);
         let scheduler = Arm11ThreadScheduler::new(main_core, DEFAULT_MAIN_THREAD_PRIORITY)
             .expect("the built-in main-thread priority is valid");
 
@@ -342,7 +346,7 @@ impl Arm11ProcessSession {
             SVC_SIGNAL_EVENT => self.svc_signal_event(caller),
             SVC_CLEAR_EVENT => self.svc_clear_event(caller),
             SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
-            SVC_EXIT_THREAD => match self.scheduler.exit_current() {
+            SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
                 Ok(None) => SvcRunDisposition::NoRunnableThread,
                 Err(_) => SvcRunDisposition::KernelServiceError {
@@ -525,9 +529,27 @@ impl Arm11ProcessSession {
             if !self.address_space.is_writable_range(stack_start, 8) {
                 Err(RESULT_INVALID_ADDRESS)
             } else {
-                self.scheduler
-                    .create_thread(entrypoint, argument, stack_top, priority, processor_id)
-                    .map_err(thread_scheduler_result_code)
+                match self.address_space.allocate_thread_local_storage() {
+                    Err(_) => Err(RESULT_OUT_OF_THREAD_RESOURCES),
+                    Ok(tls) => match self
+                        .scheduler
+                        .create_thread(entrypoint, argument, stack_top, priority, processor_id)
+                        .map_err(thread_scheduler_result_code)
+                    {
+                        Ok(id) => {
+                            self.scheduler
+                                .core_mut(id)
+                                .expect("new thread context exists")
+                                .cp15_mut()
+                                .set_tpidruro(tls);
+                            Ok(id)
+                        }
+                        Err(code) => {
+                            self.address_space.release_thread_local_storage(tls);
+                            Err(code)
+                        }
+                    },
+                }
             }
         };
 
@@ -553,6 +575,18 @@ impl Arm11ProcessSession {
             }
             Err(code) => self.write_create_thread_error(caller, code),
         }
+    }
+
+    /// Exits the calling thread and returns its thread-local-storage slot to the pool.
+    fn exit_current_thread(
+        &mut self,
+        caller: ThreadId,
+    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+        if let Some(core) = self.scheduler.core(caller) {
+            let tls = core.cp15().tpidruro();
+            self.address_space.release_thread_local_storage(tls);
+        }
+        self.scheduler.exit_current()
     }
 
     /// Handles CreateMutex: r0 points to the output handle and r1 is initialLocked.
@@ -1220,6 +1254,50 @@ mod tests {
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], RESULT_INVALID_ENUM);
         assert!(!session.address_space.is_writable_range(0x0800_0000, 1));
+    }
+
+    #[test]
+    fn each_thread_gets_its_own_tls_slot_visible_through_cp15() {
+        use crate::memory::Bus;
+        let mut session = test_session_with_program_and_data(&[
+            (0x00, 0xEE1D_5F70), // MRC p15,0,r5,c13,c0,3 (TPIDRURO)
+            (0x04, 0xE585_6000), // STR r6,[r5]
+            (0x08, 0xEF00_0008), // SVC CreateThread
+            (0x0C, 0xEF00_0042), // SVC 0x42 (main resumes here)
+            (0x20, 0xEF00_0009), // SVC ExitThread (child)
+        ]);
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[6] = 0x1234_5678;
+            main.regs[0] = 0x20;
+            main.regs[1] = 0x0010_0020;
+            main.regs[2] = 0;
+            main.regs[3] = 0x0020_2000;
+            main.regs[4] = 0;
+        }
+        assert_eq!(session.core().cp15().tpidruro(), 0x1FF8_2000);
+
+        // MRC, STR, CreateThread: the child is now current with its own slot.
+        session.run_instructions(3).unwrap();
+        assert_eq!(
+            session.address_space.read32(0x1FF8_2000).unwrap(),
+            0x1234_5678
+        );
+        assert_eq!(session.core().cp15().tpidruro(), 0x1FF8_2200);
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[5],
+            0x1FF8_2000
+        );
+
+        // ExitThread frees the child's slot for the next thread.
+        session.run_instructions(1).unwrap();
+        assert_eq!(
+            session
+                .address_space
+                .allocate_thread_local_storage()
+                .unwrap(),
+            0x1FF8_2200
+        );
     }
 
     #[test]

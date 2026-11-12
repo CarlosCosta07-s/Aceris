@@ -19,6 +19,12 @@ const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
 const MAIN_STACK_TOP: u32 = 0x1000_0000;
 const APPLICATION_HEAP_BASE: u32 = 0x0800_0000;
 const APPLICATION_HEAP_END: u64 = 0x0E00_0000;
+/// Base of the per-thread local storage window and the size of one slot.
+const THREAD_LOCAL_STORAGE_BASE: u32 = 0x1FF8_2000;
+const THREAD_LOCAL_STORAGE_SLOT_SIZE: u32 = 0x200;
+const THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE: u32 = 8;
+/// This model supports up to 512 simultaneous threads' worth of storage.
+const THREAD_LOCAL_STORAGE_MAX_PAGES: u32 = 64;
 const MAX_BSS_MAPPING_SIZE_BYTES: usize = 256 * 1024 * 1024;
 
 /// ARM11 code segment category.
@@ -403,6 +409,8 @@ pub struct Arm11CodeAddressSpace {
     dynamic_regions: Vec<DynamicMemoryRegion>,
     /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
     exclusive_versions: BTreeMap<u32, u64>,
+    /// Occupancy of each 0x200-byte thread-local-storage slot.
+    tls_slots_in_use: Vec<bool>,
 }
 
 impl Arm11CodeAddressSpace {
@@ -439,6 +447,7 @@ impl Arm11CodeAddressSpace {
             stack,
             dynamic_regions: Vec::new(),
             exclusive_versions: BTreeMap::new(),
+            tls_slots_in_use: Vec::new(),
         })
     }
 
@@ -519,6 +528,68 @@ impl Arm11CodeAddressSpace {
         Ok(address)
     }
 
+    /// Reserves one zeroed 0x200-byte thread-local-storage slot and returns its
+    /// address (the value a thread's `TPIDRURO` points at).
+    ///
+    /// Slots live in the 0x1FF82000 window, eight per page, and are reused after
+    /// [`release_thread_local_storage`](Self::release_thread_local_storage).
+    pub fn allocate_thread_local_storage(
+        &mut self,
+    ) -> std::result::Result<u32, Arm11DynamicMemoryError> {
+        let slot = match self.tls_slots_in_use.iter().position(|used| !used) {
+            Some(slot) => slot,
+            None => {
+                let slot = self.tls_slots_in_use.len();
+                let page = slot as u32 / THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE;
+                if page >= THREAD_LOCAL_STORAGE_MAX_PAGES {
+                    return Err(Arm11DynamicMemoryError::AllocationFailure(
+                        "thread-local-storage window exhausted".to_string(),
+                    ));
+                }
+                if slot as u32 % THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE == 0 {
+                    let address = THREAD_LOCAL_STORAGE_BASE + page * PAGE_SIZE as u32;
+                    self.dynamic_regions.try_reserve(1).map_err(|error| {
+                        Arm11DynamicMemoryError::AllocationFailure(error.to_string())
+                    })?;
+                    self.dynamic_regions.push(DynamicMemoryRegion {
+                        address,
+                        bytes: vec![0; PAGE_SIZE as usize],
+                    });
+                    self.dynamic_regions.sort_by_key(|region| region.address);
+                }
+                self.tls_slots_in_use.push(false);
+                slot
+            }
+        };
+        self.tls_slots_in_use[slot] = true;
+        let address = THREAD_LOCAL_STORAGE_BASE
+            + (slot as u32 / THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE) * PAGE_SIZE as u32
+            + (slot as u32 % THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE) * THREAD_LOCAL_STORAGE_SLOT_SIZE;
+        // A reused slot must not leak the previous thread's data.
+        for offset in 0..THREAD_LOCAL_STORAGE_SLOT_SIZE {
+            self.write_bytes(address + offset, &[0])
+                .expect("thread-local-storage pages are mapped when a slot is allocated");
+        }
+        Ok(address)
+    }
+
+    /// Returns a slot obtained from `allocate_thread_local_storage` to the pool.
+    /// Unknown or already-free addresses are ignored.
+    pub fn release_thread_local_storage(&mut self, address: u32) {
+        let Some(offset) = address.checked_sub(THREAD_LOCAL_STORAGE_BASE) else {
+            return;
+        };
+        let (page, within) = (offset / PAGE_SIZE as u32, offset % PAGE_SIZE as u32);
+        if within % THREAD_LOCAL_STORAGE_SLOT_SIZE != 0 {
+            return;
+        }
+        let slot = (page * THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE
+            + within / THREAD_LOCAL_STORAGE_SLOT_SIZE) as usize;
+        if let Some(used) = self.tls_slots_in_use.get_mut(slot) {
+            *used = false;
+        }
+    }
+
     /// Releases one dynamic application-heap mapping by exact base and size.
     ///
     /// Static executable, data, BSS and main-stack mappings cannot be released
@@ -528,10 +599,13 @@ impl Arm11CodeAddressSpace {
         address: u32,
         size: u32,
     ) -> std::result::Result<(), Arm11DynamicMemoryError> {
+        let in_heap_window = address >= APPLICATION_HEAP_BASE
+            && u64::from(address) + u64::from(size) <= APPLICATION_HEAP_END;
         let Some(index) = self
             .dynamic_regions
             .iter()
             .position(|region| region.address == address && region.bytes.len() == size as usize)
+            .filter(|_| in_heap_window)
         else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
@@ -1322,6 +1396,36 @@ mod tests {
         assert!(address_space.is_writable_range(0x0010_4000, 1));
         assert!(!address_space.is_writable_range(0x0010_6000, 1));
         assert!(!address_space.is_writable_range(0x0010_3000, 0));
+    }
+
+    #[test]
+    fn thread_local_storage_slots_are_zeroed_reused_and_protected() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let first = address_space.allocate_thread_local_storage().unwrap();
+        let second = address_space.allocate_thread_local_storage().unwrap();
+        assert_eq!((first, second), (0x1FF8_2000, 0x1FF8_2200));
+
+        address_space.write32(second + 0x1FC, 0xDEAD_BEEF).unwrap();
+        address_space.release_thread_local_storage(second);
+        let reused = address_space.allocate_thread_local_storage().unwrap();
+        assert_eq!(reused, second);
+        assert_eq!(address_space.read32(second + 0x1FC).unwrap(), 0);
+
+        // Slot nine opens the second page.
+        for _ in 2..8 {
+            address_space.allocate_thread_local_storage().unwrap();
+        }
+        assert_eq!(
+            address_space.allocate_thread_local_storage().unwrap(),
+            0x1FF8_3000
+        );
+
+        // The guest cannot unmap TLS through the heap-free path.
+        assert!(matches!(
+            address_space.free_application_heap_region(0x1FF8_2000, 0x1000),
+            Err(Arm11DynamicMemoryError::MappingNotFound { .. })
+        ));
+        assert_eq!(address_space.read32(first).unwrap(), 0);
     }
 
     #[test]
