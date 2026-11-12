@@ -1704,6 +1704,128 @@ mod tests {
     }
 
     #[test]
+    fn batch_pdc_dispatch_reports_missed_and_ignored_events_without_signaling() {
+        let mut missed_session = test_session();
+        let mut ignored_session = test_session();
+        let missed_event = missed_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let ignored_event = ignored_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+
+        let mut missed_queue = GspInterruptRelayQueue::new();
+        for _ in 0..0x20 {
+            assert!(matches!(
+                missed_queue.push(GspInterruptId::Pdc0),
+                GspInterruptQueuePushResult::Queued { .. }
+            ));
+        }
+        let mut ignored_queue = GspInterruptRelayQueue::new();
+        ignored_queue.set_ignores_pdc(true);
+
+        let missed_offset = GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let ignored_offset = GspInterruptRelayQueue::client_queue_offset(1).unwrap();
+        missed_session
+            .write_memory_bytes(SHARED_MEMORY_BASE + missed_offset, &missed_queue.encode())
+            .unwrap();
+        ignored_session
+            .write_memory_bytes(SHARED_MEMORY_BASE + ignored_offset, &ignored_queue.encode())
+            .unwrap();
+
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut missed_session, 0, SHARED_MEMORY_BASE, missed_event)
+            .unwrap();
+        registry
+            .register_client(&mut ignored_session, 1, SHARED_MEMORY_BASE, ignored_event)
+            .unwrap();
+
+        let report = registry
+            .deliver_interrupt_to_sessions(
+                GspInterruptId::Pdc1,
+                [(0, &mut missed_session), (1, &mut ignored_session)],
+            )
+            .unwrap();
+        assert_eq!(report.deliveries.len(), 2);
+        assert_eq!(
+            report.deliveries[0].push_result,
+            GspInterruptQueuePushResult::MissedPdc {
+                interrupt: GspInterruptId::Pdc1,
+                total: 1,
+            }
+        );
+        assert_eq!(
+            report.deliveries[1].push_result,
+            GspInterruptQueuePushResult::IgnoredPdc
+        );
+        assert!(
+            report
+                .deliveries
+                .iter()
+                .all(|delivery| !delivery.event_signaled)
+        );
+        assert_eq!(
+            missed_session.kernel_objects.event_is_signaled(missed_event),
+            Some(false)
+        );
+        assert_eq!(
+            ignored_session.kernel_objects.event_is_signaled(ignored_event),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn batch_owner_interrupt_reports_full_queue_without_signaling() {
+        let mut session = test_session();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut full_queue = GspInterruptRelayQueue::new();
+        for _ in 0..0x34 {
+            assert!(matches!(
+                full_queue.push(GspInterruptId::Dma),
+                GspInterruptQueuePushResult::Queued { .. }
+            ));
+        }
+
+        let queue_offset = GspInterruptRelayQueue::client_queue_offset(1).unwrap();
+        session
+            .write_memory_bytes(SHARED_MEMORY_BASE + queue_offset, &full_queue.encode())
+            .unwrap();
+
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut session, 1, SHARED_MEMORY_BASE, event)
+            .unwrap();
+        assert!(registry.try_acquire_rendering_right(1).unwrap());
+
+        let report = registry
+            .deliver_interrupt_to_sessions(GspInterruptId::P3d, [(1, &mut session)])
+            .unwrap();
+        assert_eq!(report.deliveries.len(), 1);
+        assert_eq!(
+            report.deliveries[0].push_result,
+            GspInterruptQueuePushResult::Full
+        );
+        assert!(!report.deliveries[0].event_signaled);
+        assert_eq!(session.kernel_objects.event_is_signaled(event), Some(false));
+
+        let mut queue_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        session
+            .read_memory_bytes(SHARED_MEMORY_BASE + queue_offset, &mut queue_bytes)
+            .unwrap();
+        let queue = GspInterruptRelayQueue::parse(&queue_bytes).unwrap();
+        assert_eq!(
+            queue.error_code(),
+            crate::gpu::GSP_INTERRUPT_QUEUE_FULL_ERROR
+        );
+    }
+
+    #[test]
     fn missed_pdc_and_full_queue_events_do_not_signal_registered_handles() {
         let mut session = test_session();
         let pdc_event = session
