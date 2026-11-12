@@ -693,8 +693,14 @@ mod tests {
     #[test]
     fn rendering_right_is_exclusive_controls_interrupt_routing_and_is_released() {
         let mut session = test_session();
-        let first_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
-        let second_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
+        let first_event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let second_event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
         let mut registry = GspServiceRegistry::new();
         registry
             .register_client(&mut session, 0, SHARED_MEMORY_BASE, first_event)
