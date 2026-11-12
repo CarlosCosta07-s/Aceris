@@ -7,8 +7,8 @@
 use std::fmt;
 
 use super::fixed_attribute::{
-    FIXED_ATTRIBUTE_COUNT, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2,
-    REG_FIXEDATTRIB_INDEX,
+    FixedVertexAttribute, FIXED_ATTRIBUTE_COUNT, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
+    REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
 };
 
 /// Number of 32-bit internal PICA200 registers addressable by command ID.
@@ -17,6 +17,27 @@ pub const REGISTER_COUNT: usize = 0x400;
 pub const REG_COLOR_OPERATION: u16 = 0x100;
 /// First documented geometry-state register.
 pub const REG_ATTRIBUTE_BUFFERS: u16 = 0x200;
+/// Vertex shader float-uniform index/transfer-mode register.
+pub const REG_VSH_FLOATUNIFORM_INDEX: u16 = 0x2C0;
+/// First of eight vertex shader float-uniform data FIFO registers.
+pub const REG_VSH_FLOATUNIFORM_DATA0: u16 = 0x2C1;
+/// Vertex shader program transfer completion register.
+pub const REG_VSH_CODETRANSFER_END: u16 = 0x2BF;
+/// Vertex shader instruction upload index register.
+pub const REG_VSH_CODETRANSFER_INDEX: u16 = 0x2CB;
+/// First of eight vertex shader instruction upload FIFO registers.
+pub const REG_VSH_CODETRANSFER_DATA0: u16 = 0x2CC;
+/// Vertex shader operand-descriptor upload index register.
+pub const REG_VSH_OPDESCS_INDEX: u16 = 0x2D5;
+/// First of three vertex shader operand-descriptor upload FIFO registers.
+pub const REG_VSH_OPDESCS_DATA0: u16 = 0x2D6;
+/// 12-bit address space exposed by the shader instruction transfer index.
+pub const VSH_CODE_TRANSFER_WORDS: usize = 0x1000;
+/// 12-bit address space exposed by the shader operand-descriptor transfer index.
+pub const VSH_OPDESC_TRANSFER_WORDS: usize = 0x1000;
+/// Number of float4 constant registers documented for the vertex shader.
+pub const VSH_FLOAT_UNIFORM_COUNT: usize = 96;
+
 /// First command-buffer size register.
 pub const REG_COMMAND_BUFFER_SIZE_0: u16 = 0x238;
 /// First command-buffer address register.
@@ -131,6 +152,11 @@ pub struct Pica200 {
     registers: [u32; REGISTER_COUNT],
     fixed_attributes: [[u32; 3]; FIXED_ATTRIBUTE_COUNT],
     immediate_mode_attribute: [u32; 3],
+    vertex_shader_code: [u32; VSH_CODE_TRANSFER_WORDS],
+    vertex_shader_operand_descriptors: [u32; VSH_OPDESC_TRANSFER_WORDS],
+    vertex_shader_uniforms: [[f32; 4]; VSH_FLOAT_UNIFORM_COUNT],
+    pending_uniform_words: Vec<u32>,
+    vertex_shader_program_ready: bool,
     command_lists_submitted: u64,
     register_writes: u64,
 }
@@ -141,6 +167,11 @@ impl Default for Pica200 {
             registers: [0; REGISTER_COUNT],
             fixed_attributes: [[0; 3]; FIXED_ATTRIBUTE_COUNT],
             immediate_mode_attribute: [0; 3],
+            vertex_shader_code: [0; VSH_CODE_TRANSFER_WORDS],
+            vertex_shader_operand_descriptors: [0; VSH_OPDESC_TRANSFER_WORDS],
+            vertex_shader_uniforms: [[0.0; 4]; VSH_FLOAT_UNIFORM_COUNT],
+            pending_uniform_words: Vec::with_capacity(4),
+            vertex_shader_program_ready: false,
             command_lists_submitted: 0,
             register_writes: 0,
         }
@@ -168,6 +199,7 @@ impl Pica200 {
         };
         *register = value;
         self.apply_fixed_attribute_register_write(id);
+        self.apply_vertex_shader_register_write(id);
         self.register_writes = self.register_writes.saturating_add(1);
         Ok(())
     }
@@ -180,6 +212,34 @@ impl Pica200 {
     /// Returns the last immediate-mode attribute payload (index register 0xF).
     pub fn immediate_mode_attribute_words(&self) -> [u32; 3] {
         self.immediate_mode_attribute
+    }
+
+    /// Returns one uploaded vertex shader instruction word.
+    pub fn vertex_shader_instruction(&self, index: usize) -> Option<u32> {
+        self.vertex_shader_code.get(index).copied()
+    }
+
+    /// Returns one uploaded vertex shader operand descriptor word.
+    pub fn vertex_shader_operand_descriptor(&self, index: usize) -> Option<u32> {
+        self.vertex_shader_operand_descriptors.get(index).copied()
+    }
+
+    /// Returns one decoded vertex shader float4 constant register.
+    pub fn vertex_shader_uniform(&self, index: usize) -> Option<[f32; 4]> {
+        self.vertex_shader_uniforms.get(index).copied()
+    }
+
+    /// Returns whether the guest signaled completion of the latest code upload.
+    ///
+    /// This is only an upload-state flag; it does not mean that the program has
+    /// been validated or can be executed by Aceris.
+    pub const fn vertex_shader_program_ready(&self) -> bool {
+        self.vertex_shader_program_ready
+    }
+
+    /// Returns the number of float-uniform transfer words waiting for a complete vector.
+    pub fn pending_vertex_shader_uniform_words(&self) -> usize {
+        self.pending_uniform_words.len()
     }
 
     fn apply_fixed_attribute_register_write(&mut self, id: u16) {
@@ -199,6 +259,85 @@ impl Pica200 {
                 self.immediate_mode_attribute[data_index] = value;
             }
             _ => {}
+        }
+    }
+
+    fn apply_vertex_shader_register_write(&mut self, id: u16) {
+        if id == REG_VSH_CODETRANSFER_INDEX {
+            self.registers[usize::from(id)] &= 0x0FFF;
+            return;
+        }
+
+        let code_end = REG_VSH_CODETRANSFER_DATA0 + 7;
+        if (REG_VSH_CODETRANSFER_DATA0..=code_end).contains(&id) {
+            let index_register = usize::from(REG_VSH_CODETRANSFER_INDEX);
+            let index = (self.registers[index_register] & 0x0FFF) as usize;
+            self.vertex_shader_code[index] = self.registers[usize::from(id)];
+            self.registers[index_register] =
+                ((index + 1) % VSH_CODE_TRANSFER_WORDS) as u32;
+            self.vertex_shader_program_ready = false;
+            return;
+        }
+
+        if id == REG_VSH_CODETRANSFER_END {
+            self.vertex_shader_program_ready = self.registers[usize::from(id)] != 0;
+            return;
+        }
+
+        if id == REG_VSH_OPDESCS_INDEX {
+            self.registers[usize::from(id)] &= 0x0FFF;
+            return;
+        }
+
+        let descriptor_end = REG_VSH_OPDESCS_DATA0 + 2;
+        if (REG_VSH_OPDESCS_DATA0..=descriptor_end).contains(&id) {
+            let index_register = usize::from(REG_VSH_OPDESCS_INDEX);
+            let index = (self.registers[index_register] & 0x0FFF) as usize;
+            self.vertex_shader_operand_descriptors[index] = self.registers[usize::from(id)];
+            self.registers[index_register] =
+                ((index + 1) % VSH_OPDESC_TRANSFER_WORDS) as u32;
+            return;
+        }
+
+        if id == REG_VSH_FLOATUNIFORM_INDEX {
+            self.registers[usize::from(id)] &= 0x8000_00FF;
+            self.pending_uniform_words.clear();
+            return;
+        }
+
+        let uniform_data_end = REG_VSH_FLOATUNIFORM_DATA0 + 7;
+        if (REG_VSH_FLOATUNIFORM_DATA0..=uniform_data_end).contains(&id) {
+            let index_register = usize::from(REG_VSH_FLOATUNIFORM_INDEX);
+            let index_value = self.registers[index_register];
+            let float32_mode = index_value & 0x8000_0000 != 0;
+            self.pending_uniform_words.push(self.registers[usize::from(id)]);
+            let words_per_uniform = if float32_mode { 4 } else { 3 };
+
+            if self.pending_uniform_words.len() == words_per_uniform {
+                let index = (index_value & 0xFF) as usize;
+                if index < VSH_FLOAT_UNIFORM_COUNT {
+                    self.vertex_shader_uniforms[index] = if float32_mode {
+                        [
+                            f32::from_bits(self.pending_uniform_words[3]),
+                            f32::from_bits(self.pending_uniform_words[2]),
+                            f32::from_bits(self.pending_uniform_words[1]),
+                            f32::from_bits(self.pending_uniform_words[0]),
+                        ]
+                    } else {
+                        FixedVertexAttribute::from_register_words(
+                            self.pending_uniform_words[0],
+                            self.pending_uniform_words[1],
+                            self.pending_uniform_words[2],
+                        )
+                        .to_numeric()
+                        .components
+                    };
+                }
+                self.pending_uniform_words.clear();
+                let next_index = (index_value & 0xFF).saturating_add(1);
+                self.registers[index_register] =
+                    (index_value & 0x8000_0000) | next_index;
+            }
         }
     }
 
@@ -266,6 +405,7 @@ impl Pica200 {
                 };
                 apply_byte_mask(&mut self.registers[register as usize], value, byte_mask);
                 self.apply_fixed_attribute_register_write(register as u16);
+                self.apply_vertex_shader_register_write(register as u16);
                 report.register_writes = report.register_writes.saturating_add(1);
             }
 
@@ -370,6 +510,11 @@ impl Pica200 {
         self.registers.fill(0);
         self.fixed_attributes.fill([0; 3]);
         self.immediate_mode_attribute.fill(0);
+        self.vertex_shader_code.fill(0);
+        self.vertex_shader_operand_descriptors.fill(0);
+        self.vertex_shader_uniforms.fill([0.0; 4]);
+        self.pending_uniform_words.clear();
+        self.vertex_shader_program_ready = false;
         self.command_lists_submitted = 0;
         self.register_writes = 0;
     }
