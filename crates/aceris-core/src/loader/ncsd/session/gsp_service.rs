@@ -7,8 +7,8 @@
 
 use std::fmt;
 
-use super::kernel::KernelHandleError;
 use super::Arm11ProcessSession;
+use super::kernel::KernelHandleError;
 use crate::gpu::{
     GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId,
     GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
@@ -138,16 +138,14 @@ impl GspServiceRegistry {
             });
         }
 
-        let queue_offset =
-            GspInterruptRelayQueue::client_queue_offset(client_id).map_err(|source| {
-                GspServiceError::InvalidRelayQueue { source }
-            })?;
-        let queue_address = shared_memory_base
-            .checked_add(queue_offset)
-            .ok_or(GspServiceError::AddressOverflow {
+        let queue_offset = GspInterruptRelayQueue::client_queue_offset(client_id)
+            .map_err(|source| GspServiceError::InvalidRelayQueue { source })?;
+        let queue_address = shared_memory_base.checked_add(queue_offset).ok_or(
+            GspServiceError::AddressOverflow {
                 base: shared_memory_base,
                 offset: queue_offset,
-            })?;
+            },
+        )?;
         let mut bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
         session
             .read_memory_bytes(queue_address, &mut bytes)
@@ -185,7 +183,10 @@ impl GspServiceRegistry {
 
     /// Returns the number of currently registered GSP clients.
     pub fn registered_client_count(&self) -> usize {
-        self.clients.iter().filter(|client| client.is_some()).count()
+        self.clients
+            .iter()
+            .filter(|client| client.is_some())
+            .count()
     }
 
     /// Appends an interrupt to the client's guest relay queue and signals its
@@ -212,10 +213,8 @@ impl GspServiceRegistry {
             });
         }
 
-        let queue_offset =
-            GspInterruptRelayQueue::client_queue_offset(client_id).map_err(|source| {
-                GspServiceError::InvalidRelayQueue { source }
-            })?;
+        let queue_offset = GspInterruptRelayQueue::client_queue_offset(client_id)
+            .map_err(|source| GspServiceError::InvalidRelayQueue { source })?;
         let queue_address = registration
             .shared_memory_base
             .checked_add(queue_offset)
@@ -270,11 +269,11 @@ impl GspServiceRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::kernel::EventResetType;
     use super::super::Arm11CodeAddressSpace;
-    use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
+    use super::super::kernel::EventResetType;
+    use super::*;
     use crate::loader::ncsd::PreparedArm11Image;
+    use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
 
     const SHARED_MEMORY_BASE: u32 = 0x0020_0000;
 
@@ -357,14 +356,19 @@ mod tests {
             .deliver_interrupt(&mut session, 1, GspInterruptId::P3d)
             .unwrap();
 
-        assert_eq!(report.push_result, GspInterruptQueuePushResult::Queued { slot: 0 });
+        assert_eq!(
+            report.push_result,
+            GspInterruptQueuePushResult::Queued { slot: 0 }
+        );
         assert!(report.event_signaled);
         assert_eq!(report.pending_interrupts, 1);
         assert_eq!(session.kernel_objects.event_is_signaled(event), Some(true));
 
         let queue_address = SHARED_MEMORY_BASE + GSP_INTERRUPT_QUEUE_SIZE as u32;
         let mut bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
-        session.read_memory_bytes(queue_address, &mut bytes).unwrap();
+        session
+            .read_memory_bytes(queue_address, &mut bytes)
+            .unwrap();
         let queue = GspInterruptRelayQueue::parse(&bytes).unwrap();
         assert_eq!(queue.pending_interrupts().unwrap(), [GspInterruptId::P3d]);
     }
