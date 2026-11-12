@@ -18,6 +18,7 @@ use std::io::{Read, Seek};
 
 use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
+use crate::gpu::{GpuDmaAddressSpace, GpuPhysicalMemory, OLD_LINEAR_BASE, OLD_LINEAR_END};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
@@ -51,6 +52,8 @@ pub const RESULT_OUT_OF_MEMORY: u32 = 0xD860_07F3;
 
 const MEMOP_FREE: u32 = 1;
 const MEMOP_ALLOC: u32 = 3;
+const MEMOP_LINEAR: u32 = 0x0001_0000;
+const OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET: u32 = 0x0C00_0000;
 const MEMPERM_NONE: u32 = 0;
 const MEMPERM_READ_WRITE: u32 = 3;
 
@@ -105,6 +108,8 @@ pub struct Arm11ProcessSession {
     kernel_objects: Arm11KernelObjectTable,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
     wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
+    gpu_memory: Option<GpuPhysicalMemory>,
+    gpu_address_space: Option<GpuDmaAddressSpace>,
     instruction_count: u64,
 }
 
@@ -127,6 +132,8 @@ impl Arm11ProcessSession {
             svc_dispatcher: Arm11SvcDispatcher::default(),
             kernel_objects: Arm11KernelObjectTable::default(),
             wait_deadlines: BTreeMap::new(),
+            gpu_memory: None,
+            gpu_address_space: None,
             instruction_count: 0,
         }
     }
@@ -143,6 +150,20 @@ impl Arm11ProcessSession {
         let address_space = NcsdImageReader::open(reader)?
             .load_primary_arm11_address_space(menu_info_key, content_key)?;
         Ok(Self::from_address_space(address_space))
+    }
+
+    /// Connects this process to the shared physical memory and GPU DMA map.
+    ///
+    /// Cloned handles share their backing state, so ARM11 loads/stores, GPU
+    /// memory reads and LCD scanout observe the same physical FCRAM bytes.
+    pub fn attach_gpu_services(
+        &mut self,
+        memory: GpuPhysicalMemory,
+        address_space: GpuDmaAddressSpace,
+    ) {
+        self.address_space.attach_gpu_memory(memory.clone());
+        self.gpu_memory = Some(memory);
+        self.gpu_address_space = Some(address_space);
     }
 
     /// Returns the currently running core, or the saved main-thread context
@@ -476,6 +497,14 @@ impl Arm11ProcessSession {
         let permissions = registers[4];
 
         let result = match (operation, source_address, permissions) {
+            (operation, 0, MEMPERM_READ_WRITE)
+                if operation == (MEMOP_ALLOC | MEMOP_LINEAR) =>
+            {
+                self.allocate_linear_memory_region(address, size)
+            }
+            (operation, 0, MEMPERM_NONE) if operation == (MEMOP_FREE | MEMOP_LINEAR) => {
+                self.free_linear_memory_region(address, size)
+            }
             (MEMOP_ALLOC, 0, MEMPERM_READ_WRITE) => self
                 .address_space
                 .allocate_application_heap_region(address, size)
@@ -500,6 +529,96 @@ impl Arm11ProcessSession {
             Err(code) => core.regs[0] = code,
         }
         SvcRunDisposition::Resume
+    }
+
+    fn allocate_linear_memory_region(&mut self, address_hint: u32, size: u32) -> Result<u32, u32> {
+        if size == 0 || size % 0x1000 != 0 {
+            return Err(RESULT_MISALIGNED_ADDRESS);
+        }
+        if address_hint != 0 {
+            let hint_end = u64::from(address_hint) + u64::from(size);
+            if address_hint < OLD_LINEAR_BASE || hint_end > OLD_LINEAR_END {
+                return Err(RESULT_INVALID_ADDRESS);
+            }
+        }
+
+        let memory = self.gpu_memory.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
+        let dma = self
+            .gpu_address_space
+            .clone()
+            .ok_or(RESULT_OUT_OF_MEMORY)?;
+        let physical_base = memory
+            .allocate_linear_fcram(size)
+            .map_err(|_| RESULT_OUT_OF_MEMORY)?;
+        let Some(virtual_base) =
+            physical_base.checked_sub(OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET)
+        else {
+            let _ = memory.free_linear_fcram(physical_base, size);
+            return Err(RESULT_OUT_OF_MEMORY);
+        };
+
+        if virtual_base < OLD_LINEAR_BASE
+            || u64::from(virtual_base) + u64::from(size) > OLD_LINEAR_END
+        {
+            let _ = memory.free_linear_fcram(physical_base, size);
+            return Err(RESULT_OUT_OF_MEMORY);
+        }
+
+        if let Err(error) = self
+            .address_space
+            .map_linear_memory_region(virtual_base, physical_base, size)
+        {
+            let _ = memory.free_linear_fcram(physical_base, size);
+            return Err(dynamic_memory_result_code(error));
+        }
+
+        if let Err(error) = dma.map_linear_region(virtual_base, size) {
+            let _ = self.address_space.unmap_linear_memory_region(
+                virtual_base,
+                physical_base,
+                size,
+            );
+            let _ = memory.free_linear_fcram(physical_base, size);
+            return Err(match error {
+                crate::gpu::GpuAddressSpaceError::OutOfMemory
+                | crate::gpu::GpuAddressSpaceError::OutsideLinearWindow { .. } => {
+                    RESULT_OUT_OF_MEMORY
+                }
+                _ => RESULT_INVALID_ADDRESS,
+            });
+        }
+
+        Ok(virtual_base)
+    }
+
+    fn free_linear_memory_region(&mut self, virtual_base: u32, size: u32) -> Result<u32, u32> {
+        if size == 0 || size % 0x1000 != 0 {
+            return Err(RESULT_MISALIGNED_ADDRESS);
+        }
+        let memory = self.gpu_memory.clone().ok_or(RESULT_INVALID_ADDRESS)?;
+        let dma = self
+            .gpu_address_space
+            .clone()
+            .ok_or(RESULT_INVALID_ADDRESS)?;
+
+        let mapping = dma
+            .mappings()
+            .into_iter()
+            .find(|mapping| mapping.virtual_base() == virtual_base && mapping.size() == size)
+            .ok_or(RESULT_INVALID_ADDRESS)?;
+        if !memory.has_linear_fcram_allocation(mapping.physical_base(), size) {
+            return Err(RESULT_INVALID_ADDRESS);
+        }
+
+        self.address_space
+            .unmap_linear_memory_region(virtual_base, mapping.physical_base(), size)
+            .map_err(dynamic_memory_result_code)?;
+        dma.unmap_linear_region(virtual_base, size)
+            .map_err(|_| RESULT_INVALID_ADDRESS)?;
+        memory
+            .free_linear_fcram(mapping.physical_base(), size)
+            .map_err(|_| RESULT_INVALID_ADDRESS)?;
+        Ok(virtual_base)
     }
 
     fn svc_create_thread(&mut self, caller: ThreadId) -> SvcRunDisposition {
@@ -949,8 +1068,11 @@ fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
         }
         Arm11DynamicMemoryError::AllocationFailure(_) => RESULT_OUT_OF_MEMORY,
         Arm11DynamicMemoryError::OutsideApplicationHeap { .. }
+        | Arm11DynamicMemoryError::OutsideLinearMemoryRange { .. }
+        | Arm11DynamicMemoryError::PhysicalMemoryUnavailable
         | Arm11DynamicMemoryError::OverlappingMapping
-        | Arm11DynamicMemoryError::MappingNotFound { .. } => RESULT_INVALID_ADDRESS,
+        | Arm11DynamicMemoryError::MappingNotFound { .. }
+        | Arm11DynamicMemoryError::LinearMappingNotFound { .. } => RESULT_INVALID_ADDRESS,
     }
 }
 
