@@ -180,12 +180,8 @@ impl Prec {
 
     fn max_finite_bits(self, negative: bool) -> u64 {
         match self {
-            Self::Single => {
-                u64::from(0x7F7_FFFFu32 | if negative { 0x8000_0000 } else { 0 })
-            }
-            Self::Double => {
-                0x7FEF_FFFF_FFFF_FFFF | if negative { 1 << 63 } else { 0 }
-            }
+            Self::Single => u64::from(0x7F7_FFFFu32 | if negative { 0x8000_0000 } else { 0 }),
+            Self::Double => 0x7FEF_FFFF_FFFF_FFFF | if negative { 1 << 63 } else { 0 },
         }
     }
 
@@ -255,10 +251,10 @@ impl Prec {
         let infinity = self.infinity_bits(negative);
         let maximum = self.max_finite_bits(negative);
         match mode {
-            0 => infinity, // nearest
+            0 => infinity,              // nearest
             1 if !negative => infinity, // toward +infinity
-            2 if negative => infinity, // toward -infinity
-            _ => maximum, // toward zero or finite direction
+            2 if negative => infinity,  // toward -infinity
+            _ => maximum,               // toward zero or finite direction
         }
     }
 }
@@ -313,13 +309,7 @@ impl Vfp {
 
     /// Converts an unrounded host result to VFP precision and applies FPSCR.RMode.
     /// `exact_relation` is the sign of (exact operation result - host nearest result).
-    fn finish(
-        &mut self,
-        prec: Prec,
-        finite_inputs: bool,
-        value: f64,
-        exact_relation: i8,
-    ) -> u64 {
+    fn finish(&mut self, prec: Prec, finite_inputs: bool, value: f64, exact_relation: i8) -> u64 {
         if value.is_nan() {
             self.raise(FPSCR_IOC);
             return prec.default_nan();

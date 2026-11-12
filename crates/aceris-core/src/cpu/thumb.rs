@@ -1127,17 +1127,23 @@ mod tests {
     #[test]
     fn armv6k_thumb_only_accepts_the_defined_nop_hint() {
         let mut machine = Machine::with(0xBF00, |_, _| {});
-        assert_eq!(machine.step(), StepEvent::Executed);
+        assert_eq!(
+            machine.cpu.step(&mut machine.mem).unwrap(),
+            StepEvent::Executed
+        );
     }
 
     #[test]
     fn armv6k_thumb_rejects_yield_wfe_wfi_and_sev_hint_encodings() {
         for half in [0xBF10, 0xBF20, 0xBF30, 0xBF40] {
             let mut machine = Machine::with(half, |_, _| {});
-            assert!(matches!(
-                machine.step(),
-                StepEvent::Fault(Error::UndefinedInstruction { .. })
-            ), "expected ARMv6K Thumb hint {half:#06x} to be undefined");
+            assert!(
+                matches!(
+                    machine.cpu.step(&mut machine.mem),
+                    Err(Error::UndefinedInstruction { .. })
+                ),
+                "expected ARMv6K Thumb hint {half:#06x} to be undefined"
+            );
         }
     }
 
