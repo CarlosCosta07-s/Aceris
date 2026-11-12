@@ -513,12 +513,9 @@ fn translate<B: Bus + ?Sized>(
     access: Access,
 ) -> Result<Walk> {
     match walk_page_tables(bus, params, va, access)? {
-        PageWalk::Mapped(entry) => Ok(entry.resolve_with_privilege(
-            params,
-            va,
-            access,
-            params.privileged,
-        )),
+        PageWalk::Mapped(entry) => {
+            Ok(entry.resolve_with_privilege(params, va, access, params.privileged))
+        }
         PageWalk::Fault(fault) => Ok(Walk::Fault(fault)),
     }
 }
