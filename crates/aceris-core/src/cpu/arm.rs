@@ -74,6 +74,12 @@ impl Arm11Core {
         bus: &mut B,
         word: u32,
     ) -> Result<StepEvent> {
+        // ARM1136 NOP is a true no-op: its condition field is ignored and
+        // the hint byte has no effect on this processor revision.
+        if word & 0x0FFF_FF00 == 0x0320_F000 {
+            return Ok(StepEvent::Executed);
+        }
+
         let condition = (word >> 28) as u8;
         if condition == 0xF {
             return self.execute_unconditional(bus, word);
@@ -2875,6 +2881,27 @@ mod tests {
         m.step();
         assert!(!m.cpu.cpsr.big_endian());
         assert_eq!(m.cpu.cpsr.0 & !(1 << 9), preserved);
+    }
+
+    #[test]
+    fn arm1136_a32_nop_ignores_condition_and_hint_fields() {
+        // EQ NOP with Z clear, AL NOP with a nonzero hint, and NV-encoded NOP.
+        let mut m = Machine::new(&[
+            0x0320_F0A5,
+            0xE320_F0FF,
+            0xF320_F055,
+        ]);
+        m.cpu.regs[0] = 0x1122_3344;
+        m.cpu.regs[1] = 0x5566_7788;
+        m.cpu.cpsr.set_flags(false, false, true, false);
+        let before_cpsr = m.cpu.cpsr;
+
+        m.run(3);
+
+        assert_eq!(m.cpu.pc(), 12);
+        assert_eq!(m.cpu.regs[0], 0x1122_3344);
+        assert_eq!(m.cpu.regs[1], 0x5566_7788);
+        assert_eq!(m.cpu.cpsr, before_cpsr);
     }
 
     #[test]
