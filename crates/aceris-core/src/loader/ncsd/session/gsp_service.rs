@@ -399,8 +399,7 @@ impl GspServiceRegistry {
         let waiter_count_before = self.rendering_waiters.len();
         self.rendering_waiters
             .retain(|waiting_client| *waiting_client != client_id);
-        let rendering_right_wait_cancelled =
-            self.rendering_waiters.len() != waiter_count_before;
+        let rendering_right_wait_cancelled = self.rendering_waiters.len() != waiter_count_before;
 
         let rendering_right_handoff = if self.rendering_client == Some(client_id) {
             self.rendering_client = None;
