@@ -794,13 +794,6 @@ impl System {
         Ok(report)
     }
 
-    fn dispatch_gsp_gx_command_queue(
-        &mut self,
-        queue: &mut GspGxCommandQueue,
-    ) -> GspGxCommandQueueReport {
-        self.dispatch_gsp_gx_command_queue_with_right(queue, true)
-    }
-
     fn dispatch_gsp_gx_command_queue_with_right(
         &mut self,
         queue: &mut GspGxCommandQueue,
@@ -1226,7 +1219,7 @@ mod tests {
         queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
 
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
-        let report = system.dispatch_gsp_gx_command_queue(&mut queue);
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
 
         assert_eq!(report.commands_consumed, 1);
         assert_eq!(report.command_lists_submitted, 1);
@@ -1298,7 +1291,7 @@ mod tests {
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
 
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
-        let report = system.dispatch_gsp_gx_command_queue(&mut queue);
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
 
         assert_eq!(report.commands_consumed, 1);
         assert_eq!(report.command_lists_submitted, 0);
