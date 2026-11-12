@@ -795,9 +795,11 @@ impl GspServiceRegistry {
     /// Delivers one interrupt to every eligible client session.
     ///
     /// The session list is keyed by the same GSP client IDs used at
-    /// registration. All recipients are prevalidated before any guest queue
-    /// is changed, so a missing session or malformed relay queue cannot leave
-    /// a partially delivered broadcast. Non-recipient sessions may be omitted.
+    /// registration. Each entry must be the exact process session previously
+    /// supplied to register_client for that ID; event handles are process-local.
+    /// All recipients are prevalidated before any guest queue is changed, so
+    /// a missing session or malformed relay queue cannot leave a partially
+    /// delivered broadcast. Non-recipient sessions may be omitted.
     pub fn deliver_interrupt_to_sessions<'a, I>(
         &self,
         interrupt: GspInterruptId,
@@ -1732,7 +1734,7 @@ mod tests {
         let broadcast = registry
             .deliver_interrupt_to_sessions(
                 GspInterruptId::Pdc0,
-                [(0, &mut first_session), (1, &mut second_session)],
+                [(1, &mut second_session), (0, &mut first_session)],
             )
             .unwrap();
         assert_eq!(broadcast.interrupt, GspInterruptId::Pdc0);
