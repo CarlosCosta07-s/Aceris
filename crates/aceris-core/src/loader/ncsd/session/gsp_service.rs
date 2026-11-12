@@ -8,7 +8,7 @@
 use std::fmt;
 
 use super::kernel::KernelHandleError;
-use super::{Arm11ProcessSession, EventResetType};
+use super::Arm11ProcessSession;
 use crate::gpu::{
     GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId,
     GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
@@ -271,9 +271,10 @@ impl GspServiceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::kernel::EventResetType;
+    use super::Arm11CodeAddressSpace;
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
     use crate::loader::ncsd::PreparedArm11Image;
-    use super::super::Arm11CodeAddressSpace;
 
     const SHARED_MEMORY_BASE: u32 = 0x0020_0000;
 
@@ -292,7 +293,7 @@ mod tests {
                 read_only_code_set: CodeSetInfo::default(),
                 data_code_set: CodeSetInfo {
                     address: SHARED_MEMORY_BASE,
-                    physical_size_pages: 4,
+                    physical_size_pages: 1,
                     size_bytes: GSP_SHARED_MEMORY_SIZE as u32,
                 },
                 bss_size_bytes: 0,
@@ -404,7 +405,7 @@ mod tests {
             .unwrap();
         let mutex = session
             .kernel_objects
-            .insert_mutex(false, super::super::MAIN_THREAD_ID)
+            .insert_mutex(false, super::MAIN_THREAD_ID)
             .unwrap();
         let mut registry = GspServiceRegistry::new();
 
