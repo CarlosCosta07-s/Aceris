@@ -95,3 +95,26 @@ O commit `b976afc` passou em `cargo fmt`, Clippy e testes do workspace em Ubuntu
 
 https://github.com/CarlosCosta07-s/Aceris/actions/runs/43293773245
 
+## Continuação da colaboração autorizada — CreateMemoryBlock (12/11/2026)
+
+Carlos Costa autorizou explicitamente o ChatGPT a continuar colaborando no trabalho de Claude. Nesta rodada, a intervenção ficou restrita à superfície do kernel ARM11 para blocos de memória compartilhada e à documentação correspondente.
+
+### Alterações publicadas na branch `main`
+
+- `64dd939` — declara o identificador SVC `CreateMemoryBlock` (0x1E) e atualiza o teste do dispatcher genérico, que continua encaminhando serviços de processo para a sessão.
+- `ae56526` — implementa o handler de `CreateMemoryBlock`: valida o ponteiro de saída, cria um bloco anônimo zerado com permissões de owner/peer, grava o handle no processo e fecha o handle se a gravação falhar.
+- `da94e08` — adiciona testes de integração executando a sequência SVC Create/Map/Unmap e valida o estado QueryMemory Shared; inclui ainda rejeição de ponteiro de saída inválido e de endereço-fonte não suportado.
+
+### Limites que devem ser preservados
+
+- O handler atual suporta somente `addr=0`, isto é, alocação anônima própria. `CreateMemoryBlock` sobre uma região já mapeada ainda retorna erro; não copie a região para simular compartilhamento.
+- As restrições do kernel dependentes do memory type do processo ainda não estão representadas nos metadados do Aceris. Não anunciar compatibilidade total com o SVC até esse modelo ser implementado.
+- `MapMemoryBlock` e `UnmapMemoryBlock` continuam limitados ao mesmo processo/tabela de handles nesta etapa; tradução de handles e importação do bloco para outro processo ainda faltam.
+- O GSP registry continua recebendo um endereço de shared memory e event handle já mapeados/criados. O despacho GSP IPC, a resposta estendida de `RegisterInterruptRelayQueue` e o bloqueio/despertar de threads em `AcquireRight` seguem pendentes.
+- Não alterar a implementação de memória compartilhada existente sem revisar os commits acima e preservar os testes de alias, permissões, QueryMemory, unmap e rollback.
+
+### Verificação
+
+Os testes foram adicionados ao workspace, mas não foram executados localmente nesta intervenção. Confirme o workflow da branch `main` associado ao HEAD antes de marcar a mudança como aprovada:
+https://github.com/CarlosCosta07-s/Aceris/commit/da94e087ebcabd6c1ac8d19705ccd82276697949
+
