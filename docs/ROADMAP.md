@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na branch `main` no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`.
+> Estado revisado em 12/11/2026, com base na branch `main` no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -130,9 +130,16 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Estágio geométrico de referência independente: matriz 4x4 column-major, transformação homogênea, clipping contra os seis planos canônicos, proteção de W positivo, triangulação em leque e viewport com Y descendente
 - [x] Rasterizador de referência com interpolação de cor perspective-correct por reciprocal W, interpolação de profundidade e teste de depth
 - [~] O estágio geométrico e o rasterizador podem ser usados juntos por `GeometryPipeline::draw_triangle`, mas ainda são genéricos e independentes dos registradores, shaders e comandos reais do PICA200
-- [ ] Ligar a entrada real do PICA200 ao estágio geométrico e rasterizador; ainda não há renderização de jogos nem saída gráfica derivada do command processor
+- [~] Snapshot do bloco de entrada de vértices diretamente do banco PICA200: base bruta 0x200, formatos globais 0x201–0x202 e doze triplets offset/config1/config2 em 0x203–0x226
+- [~] Decoder de layout de vértices: até doze atributos e arrays, tipos/larguras, alinhamento de componentes, padding e validação do stride
+- [~] Leitura de atributos brutos por vértice a partir de VRAM/FCRAM: payloads little-endian preservados como bits, sem conversão numérica ou execução de shader
+- [~] Snapshot dos registradores de índice/contagem/offset: 0x227, 0x228 e 0x22A; base e offset permanecem valores brutos de registrador
+- [~] Leitor de índices U8/U16 em little-endian, com limite defensivo e validação de faixa física; ainda não aplica vertex offset nem resolve o endereço DMA
+- [ ] Resolver `GPUREG_ATTRIBBUFFERS_LOC` e endereços de arrays/índices pelo mapa físico e pela rota DMA real antes de acessar memória
+- [ ] Converter componentes brutos para entradas numéricas do shader com a normalização, extensão de sinal e tratamento float corretos
+- [ ] Integrar o fetch de atributos/índices ao vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
+- [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
 - [ ] Modelo completo de command processor, filas, sincronização, interrupções e efeitos dos registradores
-- [ ] Formato de vértice PICA200, atributos, uniformes e semântica de vertex shader, após confirmar a especificação de hardware
 - [~] Transformação matricial e clipping genéricos implementados; clipping, montagem de primitivas, culling e convenções exatas do PICA200 ainda pendentes
 - [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
 - [ ] Depth/stencil, blending, máscaras e operações completas de framebuffer
@@ -190,8 +197,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Testes unitários para CPU, memória, loaders, processo, kernel inicial, PICA200 command lists e LCD
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
-- [x] Regressão Rustfmt/Clippy/testes em Linux, Windows e macOS aprovada no mesmo commit
-- [~] Build Android `arm64-v8a` aprovado; testes de execução no dispositivo Android ainda pendentes
+- [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
+- [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
+- [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
 - [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis
@@ -214,12 +222,13 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ## Próximas tarefas prioritárias
 
-1. Documentar, com fontes independentes de hardware, o formato de atributos, o fluxo de vértices e as semânticas dos registradores PICA200 antes de criar um decoder específico.
-2. Corrigir o bridge de command buffers para usar endereços físicos/DMA e mapeamento de memória corretos, sem presumir que endereço virtual de processo é endereço DMA.
-3. Implementar o fetch/decode de atributos de vértice e conectá-lo ao estágio genérico de transformação, clipping e rasterização.
-4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
-5. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
-6. Expor as superfícies LCD no frontend desktop e depois Android.
+1. Corrigir o bridge de command buffers e resolver a base dos arrays/índices para o mapa físico e DMA real; não tratar valores brutos dos registradores como endereços físicos.
+2. Confirmar a conversão numérica dos componentes (signed byte, unsigned byte, signed short, float e larguras), depois implementar o estágio de entrada do vertex shader.
+3. Integrar fetch de vértices/índices, vertex shader, transformações específicas do PICA200, clipping e rasterizador.
+4. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
+5. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
+6. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
+7. Expor as superfícies LCD no frontend desktop e depois Android.
 
 ## Critérios para concluir um item
 
