@@ -417,6 +417,25 @@ impl Arm11ProcessSession {
         Ok(destination_handles)
     }
 
+    /// Translates a translation section containing one type-0 descriptor and its handles.
+    ///
+    /// The generic IPC decoder has already bounded the section to the word count
+    /// declared by the message header. This adapter requires the entire section
+    /// to contain exactly one type-0 descriptor followed by its handle array.
+    /// Additional descriptor groups and mixed kernel-object arrays remain unsupported.
+    pub fn translate_memory_block_translation_section_from_ipc(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        message: ipc::IpcMessage<'_>,
+    ) -> std::result::Result<Vec<Option<u32>>, kernel::IpcHandleTranslationError> {
+        let translation_words = message.translation_words();
+        let (descriptor, source_handles) = translation_words
+            .split_first()
+            .ok_or(kernel::IpcHandleTranslationError::InvalidDescriptor)?;
+
+        self.translate_memory_block_handles_from_ipc(source, *descriptor, source_handles)
+    }
+
     /// Maps a memory-block handle into this process with the requested R/W permissions.
     pub fn map_memory_block(
         &mut self,
