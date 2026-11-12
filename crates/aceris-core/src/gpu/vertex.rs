@@ -222,7 +222,6 @@ impl From<GpuPhysicalMemoryError> for VertexInputError {
     }
 }
 
-
 impl Pica200 {
     /// Reads the current vertex-input register block and decodes its array layouts.
     ///
@@ -506,20 +505,16 @@ mod tests {
     use super::*;
     use crate::gpu::{FCRAM_BASE, VRAM_BASE};
 
-
     #[test]
     fn reads_global_and_twelve_array_registers_from_pica200() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x0123_4000)
             .unwrap();
-        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1)
-            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
         gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, (1 << 28) | (1 << 16))
             .unwrap();
-        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x20)
-            .unwrap();
-        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0)
-            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x20).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
         gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
             .unwrap();
 
