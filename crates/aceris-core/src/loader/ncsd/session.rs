@@ -198,6 +198,43 @@ impl Arm11ProcessSession {
         self.address_space.write32(address, value)
     }
 
+    /// Reads a byte range through the permission-aware ARM11 process bus.
+    pub fn read_memory_bytes(&mut self, address: u32, output: &mut [u8]) -> Result<()> {
+        for (index, byte) in output.iter_mut().enumerate() {
+            let offset = u32::try_from(index).map_err(|_| crate::Error::InvalidAccess {
+                addr: address,
+            })?;
+            let current = address
+                .checked_add(offset)
+                .ok_or(crate::Error::InvalidAccess { addr: address })?;
+            *byte = self.address_space.read8(current)?;
+        }
+        Ok(())
+    }
+
+    /// Writes a byte range through the permission-aware ARM11 process bus.
+    ///
+    /// The complete range is validated before the first byte is changed, which
+    /// prevents a malformed shared-memory header from causing a partial write.
+    pub fn write_memory_bytes(&mut self, address: u32, bytes: &[u8]) -> Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        if !self.address_space.is_writable_range(address, bytes.len()) {
+            return Err(crate::Error::InvalidAccess { addr: address });
+        }
+        for (index, byte) in bytes.iter().copied().enumerate() {
+            let offset = u32::try_from(index).map_err(|_| crate::Error::InvalidAccess {
+                addr: address,
+            })?;
+            let current = address
+                .checked_add(offset)
+                .ok_or(crate::Error::InvalidAccess { addr: address })?;
+            self.address_space.write8(current, byte)?;
+        }
+        Ok(())
+    }
+
     /// Returns the currently selected thread identifier.
     pub const fn current_thread_id(&self) -> Option<ThreadId> {
         self.scheduler.current_thread_id()
