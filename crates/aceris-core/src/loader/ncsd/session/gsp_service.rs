@@ -1177,6 +1177,10 @@ mod tests {
         assert_eq!(registration.flags(), flags);
         assert_eq!(registration.event_handle(), event);
         assert_eq!(registration.shared_memory_base(), SHARED_MEMORY_BASE);
+
+        let unregistered = registry.unregister_client(2).unwrap();
+        assert_eq!(unregistered.flags(), flags);
+        assert_eq!(registry.registered_client_count(), 0);
     }
 
     #[test]
