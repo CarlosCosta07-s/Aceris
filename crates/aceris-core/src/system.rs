@@ -8,6 +8,10 @@ use crate::gpu::{
     GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
+use crate::loader::ncsd::session::gsp_service::{
+    GspClientUnregistration, GspInterruptDispatchReport, GspRenderingRightAcquireOutcome,
+    GspRenderingRightHandoff, GspServiceError, GspServiceRegistry,
+};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::{self, ImageFormat};
@@ -24,6 +28,7 @@ pub struct System {
     cpu: Arm11Core,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
+    gsp_service: GspServiceRegistry,
     gpu: Pica200,
     physical_memory: GpuPhysicalMemory,
     gpu_address_space: GpuDmaAddressSpace,
@@ -99,6 +104,7 @@ impl System {
         self.reset_gpu_linear_memory();
         self.image = Some(format);
         self.ncsd_session = None;
+        self.gsp_service = GspServiceRegistry::new();
         self.cpu = Arm11Core::new();
         Ok(format)
     }
@@ -150,6 +156,7 @@ impl System {
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Ncsd);
         self.ncsd_session = Some(session);
+        self.gsp_service = GspServiceRegistry::new();
         Ok(ImageFormat::Ncsd)
     }
 
@@ -261,6 +268,110 @@ impl System {
     /// Returns mutable access to the active NCSD process session.
     pub fn ncsd_session_mut(&mut self) -> Option<&mut Arm11ProcessSession> {
         self.ncsd_session.as_mut()
+    }
+
+    /// Returns read-only access to the GSP service registry.
+    pub const fn gsp_service_registry(&self) -> &GspServiceRegistry {
+        &self.gsp_service
+    }
+
+    /// Registers a GSP client using the flags supplied by RegisterInterruptRelayQueue.
+    pub fn register_gsp_client_with_flags(
+        &mut self,
+        client_id: u8,
+        shared_memory_base: u32,
+        event_handle: u32,
+        flags: u32,
+    ) -> std::result::Result<(), GspServiceError> {
+        let session = self
+            .ncsd_session
+            .as_mut()
+            .ok_or(GspServiceError::ProcessSessionUnavailable)?;
+        self.gsp_service.register_client_with_flags(
+            session,
+            client_id,
+            shared_memory_base,
+            event_handle,
+            flags,
+        )
+    }
+
+    /// Registers a GSP client with default flags.
+    pub fn register_gsp_client(
+        &mut self,
+        client_id: u8,
+        shared_memory_base: u32,
+        event_handle: u32,
+    ) -> std::result::Result<(), GspServiceError> {
+        self.register_gsp_client_with_flags(client_id, shared_memory_base, event_handle, 0)
+    }
+
+    /// Registers the process in the first free GSP client slot.
+    pub fn register_next_gsp_client_with_flags(
+        &mut self,
+        shared_memory_base: u32,
+        event_handle: u32,
+        flags: u32,
+    ) -> std::result::Result<u8, GspServiceError> {
+        let session = self
+            .ncsd_session
+            .as_mut()
+            .ok_or(GspServiceError::ProcessSessionUnavailable)?;
+        self.gsp_service.register_next_available_client_with_flags(
+            session,
+            shared_memory_base,
+            event_handle,
+            flags,
+        )
+    }
+
+    /// Removes a GSP client and reports any pending rendering-right handoff.
+    pub fn unregister_gsp_client(
+        &mut self,
+        client_id: u8,
+    ) -> std::result::Result<GspClientUnregistration, GspServiceError> {
+        self.gsp_service.unregister_client_with_handoff(client_id)
+    }
+
+    /// Attempts to acquire rendering rights without joining the wait queue.
+    pub fn try_acquire_gsp_rendering_right(
+        &mut self,
+        client_id: u8,
+    ) -> std::result::Result<bool, GspServiceError> {
+        self.gsp_service.try_acquire_rendering_right(client_id)
+    }
+
+    /// Queues an AcquireRight request in FIFO order.
+    ///
+    /// The service dispatcher must suspend the calling IPC thread when the
+    /// returned outcome is Waiting; this facade does not suspend it.
+    pub fn acquire_gsp_rendering_right(
+        &mut self,
+        client_id: u8,
+    ) -> std::result::Result<GspRenderingRightAcquireOutcome, GspServiceError> {
+        self.gsp_service.acquire_rendering_right(client_id)
+    }
+
+    /// Releases rendering rights and reports the next FIFO owner to wake.
+    pub fn release_gsp_rendering_right(
+        &mut self,
+        client_id: u8,
+    ) -> std::result::Result<GspRenderingRightHandoff, GspServiceError> {
+        self.gsp_service
+            .release_rendering_right_with_handoff(client_id)
+    }
+
+    /// Routes one GPU interrupt through registered relay queues and event handles.
+    pub fn dispatch_gsp_interrupt(
+        &mut self,
+        interrupt: GspInterruptId,
+    ) -> std::result::Result<GspInterruptDispatchReport, GspServiceError> {
+        let session = self
+            .ncsd_session
+            .as_mut()
+            .ok_or(GspServiceError::ProcessSessionUnavailable)?;
+        self.gsp_service
+            .deliver_interrupt_to_session(session, interrupt)
     }
 
     /// Executes up to `instruction_budget` instructions in the loaded ARM11 session.
@@ -593,7 +704,11 @@ impl System {
                 format!("invalid GSP GX command queue: {error}"),
             ))
         })?;
-        let report = self.dispatch_gsp_gx_command_queue(&mut queue);
+        let client_has_rendering_right = self.gsp_service.owns_rendering_right(client_id);
+        let report = self.dispatch_gsp_gx_command_queue_with_right(
+            &mut queue,
+            client_has_rendering_right,
+        );
 
         self.ncsd_session
             .as_mut()
@@ -603,6 +718,26 @@ impl System {
             .write_memory_bytes(queue_address, &queue.encode_header())?;
 
         Ok(report)
+    }
+
+    /// Handles TriggerCmdReqQueue for a previously registered GSP client.
+    ///
+    /// TriggerCmdReqQueue itself does not require rendering rights. Individual
+    /// queue commands apply their own rights requirements during dispatch.
+    pub fn trigger_gsp_cmd_req_queue(
+        &mut self,
+        client_id: u8,
+    ) -> Result<GspGxCommandQueueReport> {
+        let registration = self
+            .gsp_service
+            .client_registration(client_id)
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("GSP client {client_id} is not registered"),
+                ))
+            })?;
+        self.process_gsp_gx_command_queue(registration.shared_memory_base(), client_id)
     }
 
     /// Queues one interrupt for a client whose GSP relay queue is registered.
@@ -668,6 +803,14 @@ impl System {
         &mut self,
         queue: &mut GspGxCommandQueue,
     ) -> GspGxCommandQueueReport {
+        self.dispatch_gsp_gx_command_queue_with_right(queue, true)
+    }
+
+    fn dispatch_gsp_gx_command_queue_with_right(
+        &mut self,
+        queue: &mut GspGxCommandQueue,
+        client_has_rendering_right: bool,
+    ) -> GspGxCommandQueueReport {
         let mut report = GspGxCommandQueueReport {
             commands_consumed: 0,
             command_lists_submitted: 0,
@@ -702,22 +845,24 @@ impl System {
                 report.cache_flush_requested |= arguments.flush_buffer;
                 report.gas_blend_update_requested |= arguments.update_gas_blend;
 
-                match self.dispatch_gsp_process_command_list(arguments) {
-                    Ok(()) => {
-                        report.command_lists_submitted =
-                            report.command_lists_submitted.saturating_add(1);
-                    }
-                    Err(error) => {
-                        let result = matches!(
-                            &error,
-                            GspGxCommandQueueError::InvalidCommandListAddress { .. }
-                                | GspGxCommandQueueError::InvalidCommandListSize { .. }
-                        )
-                        .then_some(GSP_INVALID_ADDRESS_RESULT);
-                        queue.mark_error(result);
-                        queue.halt();
-                        report.error = Some(error);
-                        break;
+                if client_has_rendering_right {
+                    match self.dispatch_gsp_process_command_list(arguments) {
+                        Ok(()) => {
+                            report.command_lists_submitted =
+                                report.command_lists_submitted.saturating_add(1);
+                        }
+                        Err(error) => {
+                            let result = matches!(
+                                &error,
+                                GspGxCommandQueueError::InvalidCommandListAddress { .. }
+                                    | GspGxCommandQueueError::InvalidCommandListSize { .. }
+                            )
+                            .then_some(GSP_INVALID_ADDRESS_RESULT);
+                            queue.mark_error(result);
+                            queue.halt();
+                            report.error = Some(error);
+                            break;
+                        }
                     }
                 }
 
