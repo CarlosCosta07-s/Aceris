@@ -18,6 +18,8 @@ use crate::gpu::{
 pub const GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER: u32 = 0x000C_0000;
 pub const GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER: u32 = 0x0013_0042;
 pub const GSP_IPC_UNREGISTER_INTERRUPT_RELAY_QUEUE_HEADER: u32 = 0x0014_0000;
+pub const GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER: u32 = 0x0015_0002;
+pub const GSP_IPC_RELEASE_RIGHT_HEADER: u32 = 0x0017_0000;
 
 /// Descriptor for one copied kernel handle in an IPC translation section.
 pub const GSP_IPC_ONE_HANDLE_DESCRIPTOR: u32 = 0;
@@ -31,6 +33,10 @@ pub enum GspIpcRequest {
     RegisterInterruptRelayQueue { flags: u32, event_handle: u32 },
     /// Remove the caller's interrupt relay queue registration.
     UnregisterInterruptRelayQueue,
+    /// Attempt to acquire rendering rights without waiting for another client.
+    TryAcquireRight { process_handle: u32 },
+    /// Release rendering rights currently held by the caller.
+    ReleaseRight,
 }
 
 /// Errors returned when decoding a GSP GPU service IPC request.
@@ -67,6 +73,24 @@ pub fn decode_gsp_ipc_request(words: &[u32]) -> Result<GspIpcRequest, GspIpcRequ
         GSP_IPC_UNREGISTER_INTERRUPT_RELAY_QUEUE_HEADER => {
             Ok(GspIpcRequest::UnregisterInterruptRelayQueue)
         }
+        GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER => {
+            if words.len() < 3 {
+                return Err(GspIpcRequestError::TruncatedMessage {
+                    header,
+                    expected_words: 3,
+                    actual_words: words.len(),
+                });
+            }
+            let descriptor = words[1];
+            if descriptor != GSP_IPC_ONE_HANDLE_DESCRIPTOR {
+                return Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor });
+            }
+
+            Ok(GspIpcRequest::TryAcquireRight {
+                process_handle: words[2],
+            })
+        }
+        GSP_IPC_RELEASE_RIGHT_HEADER => Ok(GspIpcRequest::ReleaseRight),
         GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER => {
             if words.len() < 4 {
                 return Err(GspIpcRequestError::TruncatedMessage {
@@ -494,6 +518,20 @@ mod tests {
             Ok(GspIpcRequest::UnregisterInterruptRelayQueue)
         );
         assert_eq!(
+            decode_gsp_ipc_request(&[GSP_IPC_RELEASE_RIGHT_HEADER]),
+            Ok(GspIpcRequest::ReleaseRight)
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[
+                GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER,
+                GSP_IPC_ONE_HANDLE_DESCRIPTOR,
+                0x5678,
+            ]),
+            Ok(GspIpcRequest::TryAcquireRight {
+                process_handle: 0x5678,
+            })
+        );
+        assert_eq!(
             decode_gsp_ipc_request(&[
                 GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER,
                 0xA5A5_0001,
@@ -528,6 +566,18 @@ mod tests {
                 2,
                 0x1234,
             ]),
+            Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor: 2 })
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER, 0]),
+            Err(GspIpcRequestError::TruncatedMessage {
+                header: GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER,
+                expected_words: 3,
+                actual_words: 2,
+            })
+        );
+        assert_eq!(
+            decode_gsp_ipc_request(&[GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER, 2, 0x5678]),
             Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor: 2 })
         );
         assert_eq!(
