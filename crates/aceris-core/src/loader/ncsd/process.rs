@@ -967,14 +967,9 @@ impl Arm11CodeAddressSpace {
             }
         }
 
-        if let Some((index, region)) = self
-            .linear_regions
-            .iter()
-            .enumerate()
-            .find(|(_, region)| {
-                address >= region.virtual_base && u64::from(address) < region.virtual_end()
-            })
-        {
+        if let Some((index, region)) = self.linear_regions.iter().enumerate().find(|(_, region)| {
+            address >= region.virtual_base && u64::from(address) < region.virtual_end()
+        }) {
             let offset = address - region.virtual_base;
             return Some(MemoryLocation::Physical {
                 index,
@@ -1179,12 +1174,11 @@ impl Bus for Arm11CodeAddressSpace {
                     .map_err(|_| Error::InvalidAccess { addr: address })?;
                 Ok(byte[0])
             }
-            MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => {
-                self.bytes_for_location(location)
-                    .get(offset)
-                    .copied()
-                    .ok_or(Error::InvalidAccess { addr: address })
-            }
+            MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => self
+                .bytes_for_location(location)
+                .get(offset)
+                .copied()
+                .ok_or(Error::InvalidAccess { addr: address }),
         }
     }
 
@@ -1626,11 +1620,10 @@ mod tests {
         address_space
             .map_linear_memory_region(virtual_base, physical_base, 0x2000)
             .unwrap();
-        address_space.write32(virtual_base + 0x100, 0xCAFE_BABE).unwrap();
-        assert_eq!(
-            memory.read_u32(physical_base + 0x100).unwrap(),
-            0xCAFE_BABE
-        );
+        address_space
+            .write32(virtual_base + 0x100, 0xCAFE_BABE)
+            .unwrap();
+        assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0xCAFE_BABE);
 
         memory
             .write_u32(physical_base + 0x104, 0x1234_5678)
