@@ -18,6 +18,8 @@ use crate::gpu::{
 /// IPC command headers exposed by the `gsp::Gpu` service.
 pub const GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER: u32 = 0x000C_0000;
 pub const GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER: u32 = 0x0013_0042;
+/// Extended reply: two normal words (result and thread ID) plus one copied handle.
+pub const GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_RESPONSE_HEADER: u32 = 0x0013_0082;
 pub const GSP_IPC_UNREGISTER_INTERRUPT_RELAY_QUEUE_HEADER: u32 = 0x0014_0000;
 pub const GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER: u32 = 0x0015_0002;
 pub const GSP_IPC_ACQUIRE_RIGHT_HEADER: u32 = 0x0016_0042;
@@ -77,6 +79,52 @@ impl GspIpcResultResponse {
     /// Serializes the response into the first two TLS command-buffer words.
     pub const fn encode(self) -> [u32; 2] {
         [self.header, self.result_code]
+    }
+}
+
+/// Extended reply for RegisterInterruptRelayQueue.
+///
+/// The reply contains two normal parameters (the result code and the assigned
+/// GSP thread ID), followed by one COPY_HANDLE translation descriptor and the
+/// shared-memory handle. A zero handle is the IPC null-handle sentinel and is
+/// used by error replies so no object is transferred.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspRegisterInterruptRelayQueueResponse {
+    /// Result returned by the GSP service.
+    pub result_code: u32,
+    /// Relay/GX queue slot assigned to the client.
+    pub thread_id: u8,
+    /// Shared-memory block handle to transfer to the caller, or zero on error.
+    pub shared_memory_handle: u32,
+}
+
+impl GspRegisterInterruptRelayQueueResponse {
+    /// Builds a successful or explicitly populated RegisterInterruptRelayQueue reply.
+    pub const fn new(result_code: u32, thread_id: u8, shared_memory_handle: u32) -> Self {
+        Self {
+            result_code,
+            thread_id,
+            shared_memory_handle,
+        }
+    }
+
+    /// Builds an error reply without a thread assignment or handle transfer.
+    pub const fn error(result_code: u32) -> Self {
+        Self::new(result_code, 0, 0)
+    }
+
+    /// Serializes the response into its five TLS command-buffer words.
+    ///
+    /// Word 0 is the IPC header, words 1–2 are normal parameters, and words
+    /// 3–4 are the one-handle translation descriptor and handle value.
+    pub const fn encode(self) -> [u32; 5] {
+        [
+            GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_RESPONSE_HEADER,
+            self.result_code,
+            self.thread_id as u32,
+            GSP_IPC_ONE_HANDLE_DESCRIPTOR,
+            self.shared_memory_handle,
+        ]
     }
 }
 
@@ -969,6 +1017,44 @@ mod tests {
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
 
     const SHARED_MEMORY_BASE: u32 = 0x0020_0000;
+
+    #[test]
+    fn register_interrupt_relay_queue_response_encodes_thread_and_copied_handle() {
+        let response = GspRegisterInterruptRelayQueueResponse::new(0, 3, 0x2468);
+        assert_eq!(
+            response.encode(),
+            [
+                GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_RESPONSE_HEADER,
+                0,
+                3,
+                GSP_IPC_ONE_HANDLE_DESCRIPTOR,
+                0x2468,
+            ]
+        );
+        assert_eq!(
+            GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_RESPONSE_HEADER & 0x3F,
+            2
+        );
+        assert_eq!(
+            (GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_RESPONSE_HEADER >> 6) & 0x3F,
+            2
+        );
+    }
+
+    #[test]
+    fn register_interrupt_relay_queue_error_response_transfers_no_handle() {
+        let response = GspRegisterInterruptRelayQueueResponse::error(0xD8E0_07F7);
+        assert_eq!(
+            response.encode(),
+            [
+                GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_RESPONSE_HEADER,
+                0xD8E0_07F7,
+                0,
+                GSP_IPC_ONE_HANDLE_DESCRIPTOR,
+                0,
+            ]
+        );
+    }
 
     fn test_session() -> Arm11ProcessSession {
         let prepared = PreparedArm11Image {
