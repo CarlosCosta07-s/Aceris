@@ -10,6 +10,9 @@ use super::fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
     REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
 };
+use super::vertex_shader::{
+    PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat,
+};
 
 /// Number of 32-bit internal PICA200 registers addressable by command ID.
 pub const REGISTER_COUNT: usize = 0x400;
@@ -217,6 +220,19 @@ impl Pica200 {
     /// Returns one uploaded vertex shader instruction word.
     pub fn vertex_shader_instruction(&self, index: usize) -> Option<u32> {
         self.vertex_shader_code.get(index).copied()
+    }
+
+    /// Decodes a previously uploaded instruction using a caller-supplied format.
+    ///
+    /// This method only extracts documented bit fields. It intentionally does
+    /// not infer the instruction format from the opcode or execute the result.
+    pub fn decode_vertex_shader_instruction(
+        &self,
+        index: usize,
+        format: PicaVertexShaderInstructionFormat,
+    ) -> Option<PicaVertexShaderInstruction> {
+        self.vertex_shader_instruction(index)
+            .map(|word| PicaVertexShaderInstruction::decode(word, format))
     }
 
     /// Returns one uploaded vertex shader operand descriptor word.
@@ -603,6 +619,38 @@ mod tests {
             .unwrap();
         assert_eq!(gpu.vertex_shader_instruction(0x40), Some(0xAABB_CCDD));
         assert!(!gpu.vertex_shader_program_ready());
+    }
+
+    #[test]
+    fn pica200_decodes_uploaded_shader_words_only_with_explicit_format() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 4).unwrap();
+        let instruction = (0x03u32 << 26)
+            | (0x02u32 << 21)
+            | (0x01u32 << 12)
+            | (0x10u32 << 7)
+            | 0x21;
+        gpu.write_register(REG_VSH_CODETRANSFER_DATA0, instruction)
+            .unwrap();
+
+        assert_eq!(
+            gpu.decode_vertex_shader_instruction(4, PicaVertexShaderInstructionFormat::Format1),
+            Some(PicaVertexShaderInstruction::Format1(super::super::vertex_shader::PicaShaderFormat1 {
+                descriptor: 0x21,
+                source2: 0x10,
+                source1: 0x01,
+                source1_address_index: 0,
+                destination: 0x02,
+                opcode: 0x03,
+            }))
+        );
+        assert_eq!(
+            gpu.decode_vertex_shader_instruction(
+                5,
+                PicaVertexShaderInstructionFormat::Format1,
+            ),
+            None
+        );
     }
 
     #[test]
