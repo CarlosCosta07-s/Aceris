@@ -231,6 +231,12 @@ pub enum GspServiceError {
     RenderingRightNotOwned {
         client_id: u8,
     },
+    DuplicateClientSession {
+        client_id: u8,
+    },
+    ClientSessionUnavailable {
+        client_id: u8,
+    },
 }
 
 impl fmt::Display for GspServiceError {
@@ -253,6 +259,14 @@ pub struct GspInterruptDeliveryReport {
     pub missed_pdc0: u32,
     pub missed_pdc1: u32,
     pub error_code: u8,
+}
+
+/// Result of routing one interrupt to all registered recipients.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GspInterruptDispatchReport {
+    pub interrupt: GspInterruptId,
+    /// Deliveries are ordered by ascending GSP client ID.
+    pub deliveries: Vec<GspInterruptDeliveryReport>,
 }
 
 /// Service-side registry for the four GSP shared-memory client slots.
@@ -700,6 +714,112 @@ impl GspServiceRegistry {
             missed_pdc1: queue.missed_pdc1(),
             error_code: queue.error_code(),
         })
+    }
+
+    /// Delivers one interrupt to every eligible client session.
+    ///
+    /// The session list is keyed by the same GSP client IDs used at
+    /// registration. All recipients are prevalidated before any guest queue
+    /// is changed, so a missing session or malformed relay queue cannot leave
+    /// a partially delivered broadcast. Non-recipient sessions may be omitted.
+    pub fn deliver_interrupt_to_sessions<'a, I>(
+        &self,
+        interrupt: GspInterruptId,
+        sessions: I,
+    ) -> Result<GspInterruptDispatchReport, GspServiceError>
+    where
+        I: IntoIterator<Item = (u8, &'a mut Arm11ProcessSession)>,
+    {
+        let recipients = self.interrupt_recipients(interrupt).collect::<Vec<_>>();
+        let mut session_slots: [Option<&'a mut Arm11ProcessSession>;
+            GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize] = std::array::from_fn(|_| None);
+
+        for (client_id, session) in sessions {
+            let index = Self::client_index(client_id)?;
+            if self.clients[index].is_none() {
+                return Err(GspServiceError::ClientNotRegistered { client_id });
+            }
+            if session_slots[index].is_some() {
+                return Err(GspServiceError::DuplicateClientSession { client_id });
+            }
+            session_slots[index] = Some(session);
+        }
+
+        for client_id in recipients.iter().copied() {
+            let index = usize::from(client_id);
+            let session = session_slots[index]
+                .as_deref_mut()
+                .ok_or(GspServiceError::ClientSessionUnavailable { client_id })?;
+            self.validate_interrupt_delivery(session, client_id, interrupt)?;
+        }
+
+        let mut deliveries = Vec::with_capacity(recipients.len());
+        for client_id in recipients {
+            let index = usize::from(client_id);
+            let session = session_slots[index]
+                .as_deref_mut()
+                .ok_or(GspServiceError::ClientSessionUnavailable { client_id })?;
+            deliveries.push(self.deliver_interrupt(session, client_id, interrupt)?);
+        }
+
+        Ok(GspInterruptDispatchReport {
+            interrupt,
+            deliveries,
+        })
+    }
+
+    fn validate_interrupt_delivery(
+        &self,
+        session: &mut Arm11ProcessSession,
+        client_id: u8,
+        interrupt: GspInterruptId,
+    ) -> Result<(), GspServiceError> {
+        let index = Self::client_index(client_id)?;
+        let registration =
+            self.clients[index].ok_or(GspServiceError::ClientNotRegistered { client_id })?;
+        if !self.client_may_receive_interrupt(client_id, interrupt)? {
+            return Err(GspServiceError::RenderingRightRequired {
+                client_id,
+                interrupt,
+            });
+        }
+        if session
+            .kernel_objects
+            .event_reset_type(registration.event_handle)
+            .is_none()
+        {
+            return Err(GspServiceError::InvalidEventHandle {
+                handle: registration.event_handle,
+            });
+        }
+
+        let queue_offset = GspInterruptRelayQueue::client_queue_offset(client_id)
+            .map_err(|source| GspServiceError::InvalidRelayQueue { source })?;
+        let queue_address = registration
+            .shared_memory_base
+            .checked_add(queue_offset)
+            .ok_or(GspServiceError::AddressOverflow {
+                base: registration.shared_memory_base,
+                offset: queue_offset,
+            })?;
+        if !session
+            .address_space
+            .is_writable_range(queue_address, GSP_INTERRUPT_QUEUE_SIZE)
+        {
+            return Err(GspServiceError::SharedMemoryUnavailable {
+                address: queue_address,
+            });
+        }
+
+        let mut bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        session
+            .read_memory_bytes(queue_address, &mut bytes)
+            .map_err(|_| GspServiceError::SharedMemoryUnavailable {
+                address: queue_address,
+            })?;
+        GspInterruptRelayQueue::parse(&bytes)
+            .map_err(|source| GspServiceError::InvalidRelayQueue { source })?;
+        Ok(())
     }
 
     fn grant_next_rendering_waiter(&mut self) -> Option<u8> {
@@ -1418,6 +1538,154 @@ mod tests {
             Err(GspServiceError::RenderingRightNotOwned { client_id: 1 })
         );
         assert!(registry.owns_rendering_right(0));
+    }
+
+    #[test]
+    fn interrupt_dispatch_delivers_broadcasts_and_owner_only_events() {
+        let mut first_session = test_session();
+        let mut second_session = test_session();
+        let first_event = first_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let second_event = second_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut first_session, 0, SHARED_MEMORY_BASE, first_event)
+            .unwrap();
+        registry
+            .register_client(&mut second_session, 1, SHARED_MEMORY_BASE, second_event)
+            .unwrap();
+        assert!(registry.try_acquire_rendering_right(1).unwrap());
+
+        let broadcast = registry
+            .deliver_interrupt_to_sessions(
+                GspInterruptId::Pdc0,
+                [(0, &mut first_session), (1, &mut second_session)],
+            )
+            .unwrap();
+        assert_eq!(broadcast.interrupt, GspInterruptId::Pdc0);
+        assert_eq!(
+            broadcast
+                .deliveries
+                .iter()
+                .map(|delivery| delivery.client_id)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert!(broadcast.deliveries.iter().all(|delivery| delivery.event_signaled));
+        assert_eq!(
+            first_session.kernel_objects.event_is_signaled(first_event),
+            Some(true)
+        );
+        assert_eq!(
+            second_session.kernel_objects.event_is_signaled(second_event),
+            Some(true)
+        );
+
+        first_session.kernel_objects.clear_event(first_event).unwrap();
+        second_session.kernel_objects.clear_event(second_event).unwrap();
+        let owner_only = registry
+            .deliver_interrupt_to_sessions(GspInterruptId::Dma, [(1, &mut second_session)])
+            .unwrap();
+        assert_eq!(owner_only.deliveries.len(), 1);
+        assert_eq!(owner_only.deliveries[0].client_id, 1);
+        assert!(owner_only.deliveries[0].event_signaled);
+        assert_eq!(
+            first_session.kernel_objects.event_is_signaled(first_event),
+            Some(false)
+        );
+        assert_eq!(
+            second_session.kernel_objects.event_is_signaled(second_event),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn interrupt_dispatch_prevalidates_all_recipients_before_mutating_queues() {
+        let mut first_session = test_session();
+        let mut second_session = test_session();
+        let first_event = first_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let second_event = second_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut first_session, 0, SHARED_MEMORY_BASE, first_event)
+            .unwrap();
+        registry
+            .register_client(&mut second_session, 1, SHARED_MEMORY_BASE, second_event)
+            .unwrap();
+
+        let second_queue = GspInterruptRelayQueue::client_queue_offset(1).unwrap();
+        second_session
+            .write_memory_bytes(SHARED_MEMORY_BASE + second_queue, &[0xFF])
+            .unwrap();
+
+        assert!(matches!(
+            registry.deliver_interrupt_to_sessions(
+                GspInterruptId::Pdc1,
+                [(0, &mut first_session), (1, &mut second_session)],
+            ),
+            Err(GspServiceError::InvalidRelayQueue { .. })
+        ));
+        assert_eq!(
+            first_session.kernel_objects.event_is_signaled(first_event),
+            Some(false)
+        );
+        let mut first_queue_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        first_session
+            .read_memory_bytes(SHARED_MEMORY_BASE, &mut first_queue_bytes)
+            .unwrap();
+        let first_queue = GspInterruptRelayQueue::parse(&first_queue_bytes).unwrap();
+        assert!(first_queue.pending_interrupts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn interrupt_dispatch_rejects_missing_duplicate_and_unregistered_sessions() {
+        let mut first_session = test_session();
+        let mut second_session = test_session();
+        let first_event = first_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let second_event = second_session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut first_session, 0, SHARED_MEMORY_BASE, first_event)
+            .unwrap();
+        registry
+            .register_client(&mut second_session, 1, SHARED_MEMORY_BASE, second_event)
+            .unwrap();
+
+        assert_eq!(
+            registry.deliver_interrupt_to_sessions(GspInterruptId::Pdc0, [(0, &mut first_session)]),
+            Err(GspServiceError::ClientSessionUnavailable { client_id: 1 })
+        );
+        assert_eq!(
+            registry.deliver_interrupt_to_sessions(
+                GspInterruptId::Pdc0,
+                [(0, &mut first_session), (0, &mut second_session)],
+            ),
+            Err(GspServiceError::DuplicateClientSession { client_id: 0 })
+        );
+        assert_eq!(
+            registry.deliver_interrupt_to_sessions(
+                GspInterruptId::Pdc0,
+                [(0, &mut first_session), (2, &mut second_session)],
+            ),
+            Err(GspServiceError::ClientNotRegistered { client_id: 2 })
+        );
     }
 
     #[test]
