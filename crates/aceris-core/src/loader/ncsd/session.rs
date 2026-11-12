@@ -1481,7 +1481,10 @@ mod tests {
 
         let created = session.run_instructions(1).unwrap();
         assert_eq!(created.instructions_executed, 1);
-        assert_eq!(created.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(
+            created.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
         assert_eq!(session.core().regs[0], 0);
         let handle = session.read_memory_u32(0x0020_0000).unwrap();
         assert!(handle >= 0x100);
@@ -1497,7 +1500,10 @@ mod tests {
         assert_eq!(mapped.instructions_executed, 1);
         assert_eq!(session.core().regs[0], 0);
         let region = session.address_space().query_memory(0x0800_0000);
-        assert_eq!(region.state, crate::loader::ncsd::process::Arm11MemoryState::Shared);
+        assert_eq!(
+            region.state,
+            crate::loader::ncsd::process::Arm11MemoryState::Shared
+        );
         assert_eq!(region.permissions, 3);
         assert_eq!(session.read_memory_u32(0x0800_0000).unwrap(), 0);
 
