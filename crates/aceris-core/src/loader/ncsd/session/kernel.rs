@@ -14,6 +14,60 @@ pub const CURRENT_THREAD_HANDLE: u32 = 0xFFFF_8000;
 
 const FIRST_HANDLE: u32 = 0x100;
 
+/// Decoded type-0 IPC handle translation descriptor.
+///
+/// Type 0 transfers one or more kernel handles. Bit 4 selects MOVE instead
+/// of COPY, bit 5 requests a process-ID pseudo-handle, and bits 26-31 encode
+/// the number of handles minus one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IpcHandleTranslationDescriptor {
+    handle_count: u8,
+    move_handle: bool,
+    process_id: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpcHandleTranslationError {
+    InvalidDescriptor,
+    ProcessIdTranslationUnsupported,
+    HandleCountMismatch { expected: u8, actual: usize },
+    Kernel(KernelHandleError),
+}
+
+impl IpcHandleTranslationDescriptor {
+    /// Decodes a type-0 descriptor and rejects reserved or contradictory flags.
+    pub const fn decode(descriptor: u32) -> Result<Self, IpcHandleTranslationError> {
+        let translation_type = (descriptor >> 1) & 0x7;
+        let reserved_bits = descriptor & 0x03FF_FFC1;
+        let move_handle = descriptor & (1 << 4) != 0;
+        let process_id = descriptor & (1 << 5) != 0;
+        if translation_type != 0
+            || reserved_bits != 0
+            || (move_handle && process_id)
+        {
+            return Err(IpcHandleTranslationError::InvalidDescriptor);
+        }
+
+        Ok(Self {
+            handle_count: (((descriptor >> 26) & 0x3F) as u8) + 1,
+            move_handle,
+            process_id,
+        })
+    }
+
+    pub const fn handle_count(self) -> u8 {
+        self.handle_count
+    }
+
+    pub const fn moves_handle(self) -> bool {
+        self.move_handle
+    }
+
+    pub const fn requests_process_id(self) -> bool {
+        self.process_id
+    }
+}
+
 /// Reset behavior supported by ARM11 event objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventResetType {
