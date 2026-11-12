@@ -154,6 +154,50 @@ impl GpuPhysicalMemory {
         Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size })
     }
 
+    /// Reserves a caller-selected contiguous, page-aligned physical FCRAM range.
+    ///
+    /// This is used when ControlMemory receives a non-zero linear virtual hint.
+    /// It never relocates the request: an occupied or non-FCRAM range fails.
+    pub fn allocate_linear_fcram_at(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> Result<u32, GpuPhysicalMemoryError> {
+        if size == 0 || size as usize % PHYSICAL_PAGE_SIZE != 0 {
+            return Err(GpuPhysicalMemoryError::InvalidLinearAllocationSize { size });
+        }
+        if size > FCRAM_SIZE {
+            return Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size });
+        }
+        self.validate_range(address, size as usize)?;
+        if address < FCRAM_BASE
+            || u64::from(address) + u64::from(size)
+                > u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE)
+        {
+            return Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size });
+        }
+
+        let mut inner = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let first_page = address / PHYSICAL_PAGE_SIZE as u32;
+        let page_count = size / PHYSICAL_PAGE_SIZE as u32;
+        let end_page = first_page + page_count;
+        let materialized_conflict = inner.pages.range(first_page..end_page).next().is_some();
+        let reserved_conflict = inner.linear_allocations.iter().any(|(base, allocated_size)| {
+            let reserved_start = *base / PHYSICAL_PAGE_SIZE as u32;
+            let reserved_end = reserved_start + *allocated_size / PHYSICAL_PAGE_SIZE as u32;
+            first_page < reserved_end && end_page > reserved_start
+        });
+        if materialized_conflict || reserved_conflict {
+            return Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size });
+        }
+
+        inner.linear_allocations.insert(address, size);
+        Ok(address)
+    }
+
     /// Checks whether an exact FCRAM allocation is still reserved.
     pub fn has_linear_fcram_allocation(&self, address: u32, size: u32) -> bool {
         self.inner
@@ -323,6 +367,24 @@ mod tests {
         memory.read(allocation + 0x1000, &mut cleared).unwrap();
         assert_eq!(cleared, [0; 4]);
         assert_eq!(memory.allocate_linear_fcram(0x3000).unwrap(), allocation);
+    }
+
+    #[test]
+    fn linear_fcram_allocator_can_reserve_a_requested_physical_range() {
+        let mut memory = GpuPhysicalMemory::new();
+        let requested = FCRAM_BASE + 0x4000;
+        assert_eq!(
+            memory.allocate_linear_fcram_at(requested, 0x2000).unwrap(),
+            requested
+        );
+        assert!(matches!(
+            memory.allocate_linear_fcram_at(requested, 0x1000),
+            Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { .. })
+        ));
+        assert!(matches!(
+            memory.allocate_linear_fcram_at(FCRAM_BASE - 0x1000, 0x1000),
+            Err(GpuPhysicalMemoryError::UnmappedAddress { .. })
+        ));
     }
 
     #[test]
