@@ -847,8 +847,16 @@ impl Arm11Core {
         let len_field = self.vfp.vector_len_field();
         let stride_field = self.vfp.vector_stride_field();
 
+        // Only STRIDE encodings 00 (one register) and 11 (two registers)
+        // are defined. Validate the FPSCR configuration before scalar/vector
+        // destination selection: an invalid encoding remains unpredictable
+        // even when Fd happens to reside in bank zero.
+        if !matches!(stride_field, 0b00 | 0b11) {
+            return Err(self.vfp_undefined(word));
+        }
+
         if len_field == 0 {
-            if destination >= bank_size && stride_field != 0 {
+            if stride_field != 0 {
                 return Err(self.vfp_undefined(word));
             }
             return Ok(vec![(
@@ -856,6 +864,8 @@ impl Arm11Core {
                 sources.iter().map(|(source, _)| *source).collect(),
             )]);
         }
+
+        let stride = if stride_field == 0b00 { 1 } else { 2 };
 
         // Any destination in bank 0 forces a scalar operation, even when
         // FPSCR.LEN is nonzero. Other destinations select short-vector mode.
@@ -865,12 +875,6 @@ impl Arm11Core {
                 sources.iter().map(|(source, _)| *source).collect(),
             )]);
         }
-
-        let stride = match stride_field {
-            0b00 => 1,
-            0b11 => 2,
-            _ => return Err(self.vfp_undefined(word)),
-        };
         let length = len_field + 1;
         // A vector may wrap within its bank, but it must never reuse a
         // register. Invalid LEN/STRIDE/precision combinations are UNPREDICTABLE.
@@ -1513,12 +1517,40 @@ mod tests {
             Err(Error::UndefinedInstruction { .. })
         ));
 
-        // LEN=0 with a nonzero stride is also an unpredictable vector setup.
+        // LEN=0 with STRIDE=11 is unpredictable even when Fd is in bank 0.
         cpu.vfp_mut().fpscr = 3 << 20;
         assert!(matches!(
-            run(&mut cpu, &mut mem, &[dp(VADD, 8, 16, 1, false)]),
+            run(&mut cpu, &mut mem, &[dp(VADD, 0, 1, 2, false)]),
             Err(Error::UndefinedInstruction { .. })
         ));
+
+        // STRIDE=01 is reserved with LEN nonzero, even for scalar Fd.
+        cpu.vfp_mut().fpscr = (1 << 16) | (1 << 20);
+        assert!(matches!(
+            run(&mut cpu, &mut mem, &[dp(VADD, 0, 1, 2, false)]),
+            Err(Error::UndefinedInstruction { .. })
+        ));
+    }
+
+    #[test]
+    fn vfp_compare_and_convert_remain_scalar_with_short_vectors_enabled() {
+        let (mut cpu, mut mem) = machine();
+        // A valid vector configuration must not make VCMP or VCVT iterate.
+        cpu.vfp_mut().fpscr = (3 << 16) | (3 << 20);
+        set_f32(&mut cpu, 0, 3.0);
+        set_f32(&mut cpu, 1, 2.0);
+        run(&mut cpu, &mut mem, &[dp(VCMP, 0, 0, 1, false)]).unwrap();
+        assert_eq!(cpu.vfp().fpscr() >> 28, 0b0010);
+
+        cpu.vfp_mut().set_s(2, 42);
+        run(
+            &mut cpu,
+            &mut mem,
+            &[dp(VCVT_FROM_S32, 0, 0, 2, false)],
+        )
+        .unwrap();
+        assert_eq!(f32_of(&cpu, 0), 42.0);
+        assert_eq!(cpu.vfp().s(8), 0);
     }
 
     #[test]
