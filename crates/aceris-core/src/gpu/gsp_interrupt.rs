@@ -217,7 +217,7 @@ impl GspInterruptRelayQueue {
                     GspInterruptId::Pdc1 => &mut self.missed_pdc1,
                     _ => unreachable!(),
                 };
-                *counter = counter.saturating_add(1);
+                *counter = counter.wrapping_add(1);
                 return GspInterruptQueuePushResult::MissedPdc {
                     interrupt,
                     total: *counter,
@@ -288,6 +288,17 @@ mod tests {
             GspInterruptRelayQueue::client_queue_offset(4),
             Err(GspInterruptQueueError::InvalidClientId { client_id: 4 })
         ));
+    }
+
+    #[test]
+    fn parser_reads_exact_queue_extent_from_a_larger_shared_block() {
+        let mut shared_block = [0xCC; GSP_INTERRUPT_QUEUE_SIZE + 0x100];
+        shared_block[0] = 3;
+        shared_block[1] = 0;
+        shared_block[12 + 3] = GspInterruptId::Ppf.raw();
+        let queue = GspInterruptRelayQueue::parse(&shared_block).unwrap();
+        assert_eq!(queue.encode().len(), GSP_INTERRUPT_QUEUE_SIZE);
+        assert_eq!(queue.encode()[12 + 3], GspInterruptId::Ppf.raw());
     }
 
     #[test]
