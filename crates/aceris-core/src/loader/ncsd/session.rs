@@ -223,9 +223,8 @@ impl Arm11ProcessSession {
             return Err(crate::Error::InvalidAccess { addr: address });
         }
         for (index, byte) in bytes.iter().copied().enumerate() {
-            let offset = u32::try_from(index).map_err(|_| crate::Error::InvalidAccess {
-                addr: address,
-            })?;
+            let offset =
+                u32::try_from(index).map_err(|_| crate::Error::InvalidAccess { addr: address })?;
             let current = address
                 .checked_add(offset)
                 .ok_or(crate::Error::InvalidAccess { addr: address })?;
