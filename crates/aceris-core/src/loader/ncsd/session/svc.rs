@@ -54,6 +54,9 @@ pub const SVC_CANCEL_TIMER: u32 = 0x1C;
 /// Clear a timer's signaled state.
 pub const SVC_CLEAR_TIMER: u32 = 0x1D;
 
+/// Create an anonymous process-local shared-memory block.
+pub const SVC_CREATE_MEMORY_BLOCK: u32 = 0x1E;
+
 /// Map a process-local shared-memory block into the current address space.
 pub const SVC_MAP_MEMORY_BLOCK: u32 = 0x1F;
 
@@ -159,6 +162,7 @@ mod tests {
 
         for number in [
             SVC_CONTROL_MEMORY,
+            SVC_CREATE_MEMORY_BLOCK,
             SVC_CREATE_THREAD,
             SVC_EXIT_THREAD,
             SVC_SLEEP_THREAD,
