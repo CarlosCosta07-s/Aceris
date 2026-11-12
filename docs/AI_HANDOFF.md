@@ -329,3 +329,35 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - Dois testes cobrem COPY e MOVE em grupos type-0 separados por um descriptor type-1, e rejeição de MOVE duplicado entre grupos sem alteração das tabelas de handles.
 - A execução `43315214483` sinalizou apenas formatação Rustfmt nos asserts dos testes; `1d25d5d` aplicou o formato indicado. A CI associada ao HEAD posterior `1d25d5d` está pendente neste registro. Não considerar Clippy/testes aprovados até consultar essa execução.
 
+## Consolidação adicional da CPU ARM11 e validação da matriz (12/11/2026)
+
+### IPC — grupos de handles e buffers físicos
+
+- `5f0c0fe` — preserva o erro específico `UnsupportedTranslationParameter` quando o helper static-buffer é chamado sem qualquer descritor type-1, mas mantém a aceitação de mensagens mistas quando existe type-1. Corrige os fixtures físicos type-2/type-3 para usar o alias virtual `0x14001000`, coerente com a reserva FCRAM e a janela linear antiga.
+- `5d1b0b5` — formata a closure do mapeamento de erro conforme Rustfmt.
+- `427ed7e` — corrige a passagem do descritor IPC já pertencente ao valor, removendo dereference indevido.
+- A execução `43315819768` para `427ed7e` terminou com sucesso em Linux, Windows e macOS (`cargo fmt --all --check`, Clippy com `-D warnings` e `cargo test --workspace`) e no build Android `arm64-v8a`.
+
+### CPU A32 — MRS/MSR e CPSR
+
+- `8235d94` — rejeita `r15/PC` como origem register no MSR A32, tanto para CPSR como para SPSR; acrescenta teste de regressão.
+- `f018244` — corrige o endereço de execução do teste para o PC mapeado em zero. A execução `43316198359` concluiu com sucesso a matriz Linux, Windows, macOS e Android ARM64.
+- `00c1795` — corrige a máscara dos bits graváveis por MSR em CPSR. O modelo ARM1136 permite NZCVQ, GE[3:0] e E em todos os modos; A/I/F e M[4:0] exigem modo privilegiado; J/T não são alterados pelo MSR nesta implementação ARM1136. Acrescenta testes de User e modo privilegiado com todos os bits de origem ligados.
+- `d36a60f` — ajuste Rustfmt dos testes. A execução `43316552656` concluiu com sucesso Linux, Windows e macOS (formatação, Clippy e testes do workspace) e Android ARM64.
+- Base arquitetural independente: ARM1136JF-S Technical Reference Manual, seção 2.9.8, CPSR control; não foi consultado código-fonte de outro emulador.
+
+### CPU ARM11 — entrada IRQ/FIQ e SVC
+
+- `fd3c6e8` — entrada IRQ agora define A|I; entrada FIQ define A|I|F. Testes verificam A no IRQ, FIQ e caminho de FIQ mascarado seguido de IRQ.
+- `b5d8b31` — aplica o formato Rustfmt à asserção de máscaras. A execução `43316886226` terminou com sucesso em Linux, Windows e macOS (`fmt`, Clippy e workspace tests) e Android ARM64.
+- `8ca7d79` — adiciona testes de SVC interceptado pelo HLE (sem entrada de exceção por padrão) e de entrada SVC de hardware no vetor `0x08`, salvamento de SPSR/LR e retorno por `MOVS PC,LR`.
+- `726a256` — ajusta o formato Rustfmt das duas asserções de SVC. A execução `43317039866` terminou com sucesso em Linux, Windows e macOS (`fmt`, Clippy e workspace tests) e Android ARM64.
+- A correção IRQ/FIQ usa a regra do ARM1136 para ativar o bit A na entrada de Abort, IRQ e FIQ. O estado A anterior é restaurado via SPSR no retorno.
+
+### Estado de verificação
+
+- HEAD de código `726a256`: matriz completa aprovada no workflow `43317039866`.
+- As alterações IRQ/FIQ em `fd3c6e8` e `b5d8b31` também foram validadas no workflow `43316886226`.
+- A validação confirmada inclui Rustfmt, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS, mais `cargo ndk -t arm64-v8a build -p aceris-android --release`.
+- Isso não comprova conformidade integral ARMv6 nem execução de jogos. As próximas auditorias A32 continuam necessárias; `thumb.rs` permanece fora deste escopo para preservar o isolamento de trabalho.
+
