@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use super::Arm11ProcessSession;
+use super::ipc::{IpcMessage, IpcMessageDecodeError};
 use super::kernel::KernelHandleError;
 use crate::gpu::{
     GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId,
@@ -159,7 +160,21 @@ impl std::error::Error for GspIpcRequestError {}
 /// delivered to this service. The input slice may include unused TLS command
 /// buffer words after the parameters declared by the IPC header.
 pub fn decode_gsp_ipc_request(words: &[u32]) -> Result<GspIpcRequest, GspIpcRequestError> {
-    let header = *words.first().ok_or(GspIpcRequestError::EmptyMessage)?;
+    let message = IpcMessage::decode(words).map_err(|error| match error {
+        IpcMessageDecodeError::EmptyMessage => GspIpcRequestError::EmptyMessage,
+        IpcMessageDecodeError::TruncatedMessage {
+            header,
+            expected_words,
+            actual_words,
+        } => GspIpcRequestError::TruncatedMessage {
+            header,
+            expected_words,
+            actual_words,
+        },
+    })?;
+    let header = message.header().raw();
+    let normal = message.normal_parameters();
+    let translation = message.translation_words();
 
     match header {
         GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER => Ok(GspIpcRequest::TriggerCmdReqQueue),
@@ -167,57 +182,36 @@ pub fn decode_gsp_ipc_request(words: &[u32]) -> Result<GspIpcRequest, GspIpcRequ
             Ok(GspIpcRequest::UnregisterInterruptRelayQueue)
         }
         GSP_IPC_TRY_ACQUIRE_RIGHT_HEADER => {
-            if words.len() < 3 {
-                return Err(GspIpcRequestError::TruncatedMessage {
-                    header,
-                    expected_words: 3,
-                    actual_words: words.len(),
-                });
-            }
-            let descriptor = words[1];
+            let descriptor = translation[0];
             if descriptor != GSP_IPC_ONE_HANDLE_DESCRIPTOR {
                 return Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor });
             }
 
             Ok(GspIpcRequest::TryAcquireRight {
-                process_handle: words[2],
+                process_handle: translation[1],
             })
         }
         GSP_IPC_ACQUIRE_RIGHT_HEADER => {
-            if words.len() < 4 {
-                return Err(GspIpcRequestError::TruncatedMessage {
-                    header,
-                    expected_words: 4,
-                    actual_words: words.len(),
-                });
-            }
-            let descriptor = words[2];
+            let descriptor = translation[0];
             if descriptor != GSP_IPC_ONE_HANDLE_DESCRIPTOR {
                 return Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor });
             }
 
             Ok(GspIpcRequest::AcquireRight {
-                flags: words[1],
-                process_handle: words[3],
+                flags: normal[0],
+                process_handle: translation[1],
             })
         }
         GSP_IPC_RELEASE_RIGHT_HEADER => Ok(GspIpcRequest::ReleaseRight),
         GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER => {
-            if words.len() < 4 {
-                return Err(GspIpcRequestError::TruncatedMessage {
-                    header,
-                    expected_words: 4,
-                    actual_words: words.len(),
-                });
-            }
-            let descriptor = words[2];
+            let descriptor = translation[0];
             if descriptor != GSP_IPC_ONE_HANDLE_DESCRIPTOR {
                 return Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor });
             }
 
             Ok(GspIpcRequest::RegisterInterruptRelayQueue {
-                flags: words[1],
-                event_handle: words[3],
+                flags: normal[0],
+                event_handle: translation[1],
             })
         }
         _ => Err(GspIpcRequestError::UnsupportedCommandHeader { header }),
