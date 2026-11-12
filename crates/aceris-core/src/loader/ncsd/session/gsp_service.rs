@@ -357,12 +357,7 @@ impl GspServiceRegistry {
         shared_memory_base: u32,
         event_handle: u32,
     ) -> Result<u8, GspServiceError> {
-        self.register_next_available_client_with_flags(
-            session,
-            shared_memory_base,
-            event_handle,
-            0,
-        )
+        self.register_next_available_client_with_flags(session, shared_memory_base, event_handle, 0)
     }
 
     /// Registers in the first free slot while preserving the request's raw flags.
@@ -380,7 +375,13 @@ impl GspServiceRegistry {
             .ok_or(GspServiceError::NoFreeClientSlots)?;
         let client_id = u8::try_from(index).map_err(|_| GspServiceError::NoFreeClientSlots)?;
 
-        self.register_client_with_flags(session, client_id, shared_memory_base, event_handle, flags)?;
+        self.register_client_with_flags(
+            session,
+            client_id,
+            shared_memory_base,
+            event_handle,
+            flags,
+        )?;
         Ok(client_id)
     }
 
