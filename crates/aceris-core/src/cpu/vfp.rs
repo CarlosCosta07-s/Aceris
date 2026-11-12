@@ -96,8 +96,12 @@ impl Vfp {
         (self.fpscr >> 22) & 3
     }
 
-    fn short_vectors(&self) -> bool {
-        (self.fpscr >> 16) & 7 != 0
+    pub(super) fn vector_len_field(&self) -> usize {
+        ((self.fpscr >> 16) & 7) as usize
+    }
+
+    pub(super) fn vector_stride_field(&self) -> u32 {
+        (self.fpscr >> 20) & 3
     }
 }
 
@@ -824,6 +828,79 @@ impl Arm11Core {
         Ok(())
     }
 
+    /// Resolves VFPv2's circular register-bank semantics for one CDP.
+    ///
+    /// A destination in bank 0 selects a scalar operation. Otherwise the
+    /// destination is a vector; Fm in bank 0 is broadcast as a scalar, while
+    /// Fn (for three-register instructions) is always a vector operand.
+    fn vfp_vector_register_lanes(
+        &self,
+        word: u32,
+        prec: Prec,
+        destination: usize,
+        sources: &[(usize, bool)],
+    ) -> Result<Vec<(usize, Vec<usize>)>> {
+        let bank_size = match prec {
+            Prec::Single => 8,
+            Prec::Double => 4,
+        };
+        let len_field = self.vfp.vector_len_field();
+        let stride_field = self.vfp.vector_stride_field();
+
+        if len_field == 0 {
+            if destination >= bank_size && stride_field != 0 {
+                return Err(self.vfp_undefined(word));
+            }
+            return Ok(vec![(
+                destination,
+                sources.iter().map(|(source, _)| *source).collect(),
+            )]);
+        }
+
+        // Any destination in bank 0 forces a scalar operation, even when
+        // FPSCR.LEN is nonzero. Other destinations select short-vector mode.
+        if destination < bank_size {
+            return Ok(vec![(
+                destination,
+                sources.iter().map(|(source, _)| *source).collect(),
+            )]);
+        }
+
+        let stride = match stride_field {
+            0b00 => 1,
+            0b11 => 2,
+            _ => return Err(self.vfp_undefined(word)),
+        };
+        let length = len_field + 1;
+        // A vector may wrap within its bank, but it must never reuse a
+        // register. Invalid LEN/STRIDE/precision combinations are UNPREDICTABLE.
+        if (length - 1) * stride >= bank_size {
+            return Err(self.vfp_undefined(word));
+        }
+
+        let bank_base = |register: usize| (register / bank_size) * bank_size;
+        let bank_offset = |register: usize, iteration: usize| {
+            bank_base(register) + (register % bank_size + iteration * stride) % bank_size
+        };
+
+        let mut lanes = Vec::with_capacity(length);
+        for iteration in 0..length {
+            let destination_register = bank_offset(destination, iteration);
+            let source_registers = sources
+                .iter()
+                .map(|(source, scalar_if_bank_zero)| {
+                    if *scalar_if_bank_zero && *source < bank_size {
+                        *source
+                    } else {
+                        bank_offset(*source, iteration)
+                    }
+                })
+                .collect();
+            lanes.push((destination_register, source_registers));
+        }
+        Ok(lanes)
+    }
+
     fn vfp_data_processing(&mut self, word: u32, prec: Prec) -> Result<()> {
         self.require_enabled(word)?;
         let (p, q, r, s) = (bit(word, 23), bit(word, 21), bit(word, 20), bit(word, 6));
@@ -834,35 +911,53 @@ impl Arm11Core {
         if p && q && r {
             return self.vfp_extension(word, prec, s);
         }
-        let (d, n, m) = (d?, n?, m?);
-        if self.vfp.short_vectors() {
-            return Err(Error::Unimplemented("VFP short-vector mode"));
+        let (d, n, m) = (d?, n?, m)?;
+        let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(n, false), (m, true)])?;
+
+        // Snapshot every source and accumulator before committing any lane.
+        // This preserves vector behavior when destination and source banks overlap.
+        let inputs: Vec<_> = lanes
+            .into_iter()
+            .map(|(destination, sources)| {
+                (
+                    destination,
+                    self.vfp.read(prec, destination),
+                    self.vfp.read(prec, sources[0]),
+                    self.vfp.read(prec, sources[1]),
+                )
+            })
+            .collect();
+
+        let mut results = Vec::with_capacity(inputs.len());
+        for (destination, fd, fn_, fm) in inputs {
+            let result = match (p, q, r) {
+                (false, false, false) => {
+                    let product = self.vfp.binary(prec, BinOp::Mul, fn_, fm)?;
+                    let product = if s { negate(prec, product) } else { product };
+                    self.vfp.binary(prec, BinOp::Add, fd, product)?
+                }
+                (false, false, true) => {
+                    let product = self.vfp.binary(prec, BinOp::Mul, fn_, fm)?;
+                    let product = if s { negate(prec, product) } else { product };
+                    self.vfp.binary(prec, BinOp::Add, negate(prec, fd), product)?
+                }
+                (false, true, false) => {
+                    let product = self.vfp.binary(prec, BinOp::Mul, fn_, fm)?;
+                    if s { negate(prec, product) } else { product }
+                }
+                (false, true, true) => {
+                    let op = if s { BinOp::Sub } else { BinOp::Add };
+                    self.vfp.binary(prec, op, fn_, fm)?
+                }
+                (true, false, false) if !s => self.vfp.binary(prec, BinOp::Div, fn_, fm)?,
+                _ => return Err(self.vfp_undefined(word)),
+            };
+            results.push((destination, result));
         }
-        let vfp = &mut self.vfp;
-        let (fd, fn_, fm) = (vfp.read(prec, d), vfp.read(prec, n), vfp.read(prec, m));
-        let result = match (p, q, r) {
-            (false, false, false) => {
-                let product = vfp.binary(prec, BinOp::Mul, fn_, fm)?;
-                let product = if s { negate(prec, product) } else { product };
-                vfp.binary(prec, BinOp::Add, fd, product)?
-            }
-            (false, false, true) => {
-                let product = vfp.binary(prec, BinOp::Mul, fn_, fm)?;
-                let product = if s { negate(prec, product) } else { product };
-                vfp.binary(prec, BinOp::Add, negate(prec, fd), product)?
-            }
-            (false, true, false) => {
-                let product = vfp.binary(prec, BinOp::Mul, fn_, fm)?;
-                if s { negate(prec, product) } else { product }
-            }
-            (false, true, true) => {
-                let op = if s { BinOp::Sub } else { BinOp::Add };
-                vfp.binary(prec, op, fn_, fm)?
-            }
-            (true, false, false) if !s => vfp.binary(prec, BinOp::Div, fn_, fm)?,
-            _ => return Err(self.vfp_undefined(word)),
-        };
-        self.vfp.write(prec, d, result);
+
+        for (destination, result) in results {
+            self.vfp.write(prec, destination, result);
+        }
         Ok(())
     }
 
@@ -883,17 +978,27 @@ impl Arm11Core {
             0b0000 | 0b0001 => {
                 let d = self.vfp_reg(word, prec, vd, d_low)?;
                 let m = self.vfp_reg(word, prec, vm, m_low)?;
-                if self.vfp.short_vectors() {
-                    return Err(Error::Unimplemented("VFP short-vector mode"));
+                let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(m, true)])?;
+                let inputs: Vec<_> = lanes
+                    .into_iter()
+                    .map(|(destination, sources)| {
+                        (destination, self.vfp.read(prec, sources[0]))
+                    })
+                    .collect();
+
+                let mut results = Vec::with_capacity(inputs.len());
+                for (destination, value) in inputs {
+                    let result = match (op, flag) {
+                        (0, false) => value,
+                        (0, true) => value & !prec.sign_bit(),
+                        (1, false) => negate(prec, value),
+                        _ => self.vfp.sqrt(prec, value)?,
+                    };
+                    results.push((destination, result));
                 }
-                let value = self.vfp.read(prec, m);
-                let result = match (op, flag) {
-                    (0, false) => value,
-                    (0, true) => value & !prec.sign_bit(),
-                    (1, false) => negate(prec, value),
-                    _ => self.vfp.sqrt(prec, value)?,
-                };
-                self.vfp.write(prec, d, result);
+                for (destination, result) in results {
+                    self.vfp.write(prec, destination, result);
+                }
             }
             0b0100 | 0b0101 => {
                 let d = self.vfp_reg(word, prec, vd, d_low)?;
@@ -1306,12 +1411,114 @@ mod tests {
     }
 
     #[test]
-    fn short_vector_mode_is_refused() {
+    fn single_short_vector_add_wraps_register_banks_and_broadcasts_scalar_fm() {
+        let (mut cpu, mut mem) = machine();
+        cpu.vfp_mut().fpscr = 3 << 16; // four elements, stride one
+
+        // Fd starts at S14, Fn at S22. Both vectors wrap within their
+        // respective eight-register banks; Fm=S2 is broadcast as a scalar.
+        set_f32(&mut cpu, 22, 1.5);
+        set_f32(&mut cpu, 23, 2.5);
+        set_f32(&mut cpu, 16, 3.5);
+        set_f32(&mut cpu, 17, 4.5);
+        set_f32(&mut cpu, 2, 10.0);
+        set_f32(&mut cpu, 10, -99.0);
+
+        run(&mut cpu, &mut mem, &[dp(VADD, 14, 22, 2, false)]).unwrap();
+
+        assert_eq!(f32_of(&cpu, 14), 11.5);
+        assert_eq!(f32_of(&cpu, 15), 12.5);
+        assert_eq!(f32_of(&cpu, 8), 13.5);
+        assert_eq!(f32_of(&cpu, 9), 14.5);
+        assert_eq!(f32_of(&cpu, 10), -99.0);
+    }
+
+    #[test]
+    fn single_short_vector_add_uses_bank_zero_fn_as_a_vector() {
         let (mut cpu, mut mem) = machine();
         cpu.vfp_mut().fpscr = 3 << 16;
+        for (index, value) in [(0, 1.0), (1, 2.0), (2, 3.0), (3, 4.0)] {
+            set_f32(&mut cpu, index, value);
+        }
+        for (index, value) in [(8, 10.0), (9, 20.0), (10, 30.0), (11, 40.0)] {
+            set_f32(&mut cpu, index, value);
+        }
+
+        // With Fd outside bank 0, Fn is always a vector, even when it starts
+        // in bank 0. Fm in bank 1 is a second vector.
+        run(&mut cpu, &mut mem, &[dp(VADD, 16, 0, 8, false)]).unwrap();
+        assert_eq!(
+            [16, 17, 18, 19].map(|index| f32_of(&cpu, index)),
+            [11.0, 22.0, 33.0, 44.0]
+        );
+    }
+
+    #[test]
+    fn single_short_vector_add_honors_stride_two() {
+        let (mut cpu, mut mem) = machine();
+        cpu.vfp_mut().fpscr = (3 << 16) | (3 << 20); // four elements, stride two
+        for (index, value) in [(16, 1.0), (18, 2.0), (20, 3.0), (22, 4.0)] {
+            set_f32(&mut cpu, index, value);
+        }
+        set_f32(&mut cpu, 1, 100.0);
+
+        run(&mut cpu, &mut mem, &[dp(VADD, 8, 16, 1, false)]).unwrap();
+        assert_eq!(
+            [8, 10, 12, 14].map(|index| f32_of(&cpu, index)),
+            [101.0, 102.0, 103.0, 104.0]
+        );
+    }
+
+    #[test]
+    fn double_short_vector_add_wraps_four_register_banks() {
+        let (mut cpu, mut mem) = machine();
+        cpu.vfp_mut().fpscr = 3 << 16; // four doubles, stride one
+        for (index, value) in [(10, 1.0), (11, 2.0), (8, 3.0), (9, 4.0)] {
+            set_f64(&mut cpu, index, value);
+        }
+        set_f64(&mut cpu, 2, 10.0);
+
+        // D14..D15 wrap to D12..D13 in bank 3. Fm=D2 is scalar.
+        run(&mut cpu, &mut mem, &[dp(VADD, 14, 10, 2, true)]).unwrap();
+        assert_eq!(
+            [14, 15, 12, 13].map(|index| f64_of(&cpu, index)),
+            [11.0, 12.0, 13.0, 14.0]
+        );
+    }
+
+    #[test]
+    fn short_vector_sqrt_and_scalar_destination_selection() {
+        let (mut cpu, mut mem) = machine();
+        cpu.vfp_mut().fpscr = 1 << 16; // two vector elements
+        set_f32(&mut cpu, 8, 4.0);
+        set_f32(&mut cpu, 9, 9.0);
+        run(&mut cpu, &mut mem, &[dp(VSQRT, 16, 0, 8, false)]).unwrap();
+        assert_eq!([16, 17].map(|index| f32_of(&cpu, index)), [2.0, 3.0]);
+
+        // Bank-0 destinations select scalar operations even when LEN is nonzero.
+        set_f32(&mut cpu, 8, 7.0);
+        set_f32(&mut cpu, 16, 100.0);
+        set_f32(&mut cpu, 0, -1.0);
+        run(&mut cpu, &mut mem, &[dp(VADD, 0, 8, 16, false)]).unwrap();
+        assert_eq!(f32_of(&cpu, 0), 107.0);
+        assert_eq!(f32_of(&cpu, 1), 0.0);
+    }
+
+    #[test]
+    fn short_vector_rejects_len_stride_combinations_that_repeat_registers() {
+        let (mut cpu, mut mem) = machine();
+        // LEN=2 means three elements; stride two would repeat a D register.
+        cpu.vfp_mut().fpscr = (2 << 16) | (3 << 20);
         assert!(matches!(
-            run(&mut cpu, &mut mem, &[dp(VADD, 8, 8, 8, false)]),
-            Err(Error::Unimplemented(_))
+            run(&mut cpu, &mut mem, &[dp(VADD, 4, 8, 12, true)]),
+            Err(Error::UndefinedInstruction { .. })
+        ));
+
+        // LEN=0 with a nonzero stride is also an unpredictable vector setup.
+        cpu.vfp_mut().fpscr = 3 << 20;
+        assert!(matches!(
+            run(&mut cpu, &mut mem, &[dp(VADD, 8, 16, 1, false)]),
+            Err(Error::UndefinedInstruction { .. })
         ));
     }
 
