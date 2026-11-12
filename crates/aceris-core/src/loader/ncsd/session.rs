@@ -2189,6 +2189,48 @@ mod tests {
     }
 
     #[test]
+    fn ipc_message_translation_section_moves_memory_block_handle_array() {
+        let mut source = test_session();
+        let first = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let second = source.create_memory_block(0x1000, 1, 3).unwrap();
+        let mut destination = test_session();
+        let words = [
+            0x1234_0004, // Command 0x1234, four translation words.
+            0x0800_0010, // MOVE three handles.
+            first,
+            0,
+            second,
+        ];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+
+        let translated = destination
+            .translate_memory_block_translation_section_from_ipc(&mut source, message)
+            .unwrap();
+
+        assert_eq!(translated.len(), 3);
+        assert!(translated[0].is_some());
+        assert_eq!(translated[1], None);
+        assert!(translated[2].is_some());
+        assert_eq!(
+            source.kernel_objects.memory_block_backing(first),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert_eq!(
+            source.kernel_objects.memory_block_backing(second),
+            Err(KernelHandleError::InvalidHandle)
+        );
+
+        let empty_message = ipc::IpcMessage::decode(&[0x1234_0000]).unwrap();
+        assert_eq!(
+            destination.translate_memory_block_translation_section_from_ipc(
+                &mut source,
+                empty_message,
+            ),
+            Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
+        );
+    }
+
+    #[test]
     fn imported_memory_block_handle_rejects_non_memory_handles() {
         let mut owner = test_session();
         let event = owner
