@@ -1576,7 +1576,13 @@ impl Arm11Core {
             };
             self.write_reg(rd, value);
         } else if word & 0x0FB0_FFF0 == 0x0120_F000 {
-            // MSR CPSR|SPSR_<fields>, Rm
+            // MSR CPSR|SPSR_<fields>, Rm. PC is not a permitted source register.
+            if rm as usize == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
             let value = self.reg(rm, 8);
             self.write_status(word, value)?;
         } else if word & 0x0FB0_F000 == 0x0320_F000 {
@@ -2698,6 +2704,26 @@ mod tests {
 
         m.cpu.switch_mode(super::super::Psr::SYSTEM_MODE).unwrap();
         assert_eq!((m.cpu.regs[SP], m.cpu.regs[LR]), (0x1000, 0x1004));
+    }
+
+    #[test]
+    fn armv6_msr_rejects_pc_as_register_source_for_cpsr_and_spsr() {
+        // MSR CPSR_c,pc ; MSR SPSR_fsxc,pc.
+        for instruction in [0xE121_F00F, 0xE16F_F00F] {
+            let mut m = Machine::new(&[instruction]);
+            m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            m.cpu.regs[PC] = 0x100;
+            let before_cpsr = m.cpu.cpsr;
+            let before_spsr = Psr(0xA000_0010);
+            m.cpu.set_saved_program_status(before_spsr).unwrap();
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0x100, .. })
+            ));
+            assert_eq!(m.cpu.cpsr, before_cpsr);
+            assert_eq!(m.cpu.saved_program_status(), Some(before_spsr));
+        }
     }
 
     #[test]
