@@ -955,9 +955,9 @@ mod tests {
             section: false,
         };
 
-        tlb.insert(make_entry(0x1000, 0xA000, 7, true));
-        tlb.insert(make_entry(0x2000, 0xB000, 7, false));
-        tlb.insert(make_entry(0x3000, 0xC000, 8, false));
+        tlb.insert(make_entry(0x1000, 0xA000, 7, true), false, 0);
+        tlb.insert(make_entry(0x2000, 0xB000, 7, false), false, 0);
+        tlb.insert(make_entry(0x3000, 0xC000, 8, false), false, 0);
 
         tlb.maintain(TlbMaintenance::Asid { asid: 7 });
         assert_eq!(tlb.len(), 2);
@@ -986,18 +986,22 @@ mod tests {
     #[test]
     fn invalidate_all_clears_the_unified_tlb() {
         let mut tlb = TranslationLookasideBuffer::default();
-        tlb.insert(TlbEntry {
-            virtual_base: 0,
-            physical_base: 0,
-            address_mask: 0xFFFF_F000,
-            asid: 0,
-            global: false,
-            domain: 0,
-            ap: 3,
-            apx: false,
-            xn: false,
-            section: false,
-        });
+        tlb.insert(
+            TlbEntry {
+                virtual_base: 0,
+                physical_base: 0,
+                address_mask: 0xFFFF_F000,
+                asid: 0,
+                global: false,
+                domain: 0,
+                ap: 3,
+                apx: false,
+                xn: false,
+                section: false,
+            },
+            false,
+            0,
+        );
         tlb.maintain(TlbMaintenance::All);
         assert_eq!(tlb.len(), 0);
     }
