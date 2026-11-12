@@ -63,13 +63,16 @@ Carlos Costa autorizou explicitamente o ChatGPT a colaborar no trabalho de Claud
 - `01a682b` — integrou `GspServiceRegistry` ao `System`, com registro, remoção, aquisição/liberação de direitos, entrega de interrupções e caminho `trigger_gsp_cmd_req_queue`.
 - `1db6033` — adicionou teste de que `ProcessCommandList` é consumido, mas não submetido à GPU sem direitos de renderização.
 - `ee82e30`, `dfeface`, `6b34464` — correções de formatação e remoção de um wrapper de teste que gerava código morto no build normal.
+- `df5f652` — conecta PDC0/PDC1 ao limite de quadro após a troca do buffer LCD e reporta as entregas GSP em `SystemFrameReport`.
+- `71ced96` — adota `io::Error::other` para o mapeamento de falhas de entrega PDC, conforme Clippy.
+- `3b52e63` — acrescenta `System::register_next_gsp_client()` e esclarece os limites das APIs de fila GSP.
 
 ### APIs GSP disponíveis para integração
 
 - `GspServiceRegistry::client_registrations()`: enumera inscrições ativas em ordem crescente de ID.
 - `GspServiceRegistry::deliver_interrupt_to_session()`: entrega em uma sessão ARM11 compartilhada.
 - `GspServiceRegistry::deliver_interrupt_to_sessions()`: entrega quando cada cliente possui uma sessão própria.
-- `System::register_gsp_client[_with_flags]()` e `register_next_gsp_client_with_flags()`.
+- `System::register_gsp_client[_with_flags]()`, `register_next_gsp_client()` e `register_next_gsp_client_with_flags()`.
 - `System::unregister_gsp_client()`, `try_acquire_gsp_rendering_right()`, `acquire_gsp_rendering_right()` e `release_gsp_rendering_right()`.
 - `System::dispatch_gsp_interrupt()` e `trigger_gsp_cmd_req_queue()`.
 
@@ -81,12 +84,14 @@ Carlos Costa autorizou explicitamente o ChatGPT a colaborar no trabalho de Claud
 - O registro atual pressupõe que o bloco de 0x1000 bytes já esteja mapeado e gravável e que o event handle já exista na tabela de objetos do processo.
 - A criação/mapeamento do memory block, a tradução completa dos handles IPC e a resposta estendida de `RegisterInterruptRelayQueue` ainda não estão implementadas.
 - A fila FIFO de `AcquireRight` apenas registra a espera e o handoff. O dispatcher/scheduler ainda precisa suspender e acordar a thread IPC.
-- As famílias GX além de `ProcessCommandList` continuam pendentes. O disparo de interrupções do hardware também precisa ser conectado aos eventos reais produzidos pelo PICA200/LCD.
+- PDC0 e PDC1 agora são despachados pelo ciclo de quadro depois de `LcdController::advance_vblank()`; `SystemFrameReport::gsp_interrupt_deliveries` conta os relatórios de entrega para esses dois eventos.
+- P3D e DMA ainda não são gerados automaticamente: precisam ser conectados à conclusão real dos trabalhos PICA200/DMA, não simulados por submissão de comandos.
+- As famílias GX além de `ProcessCommandList` continuam pendentes, assim como a arbitragem de busy flags.
 - `enqueue_gsp_interrupt_for_client()` permanece como API legada de baixo nível; a rota nova `dispatch_gsp_interrupt()` usa os handles registrados.
 
 ### Verificação
 
-O commit `b976afc` passou em `cargo fmt`, Clippy e testes do workspace em Ubuntu, Windows e macOS, além do build Android ARM64. O CI da integração GSP subsequente está sendo acompanhado no workflow associado ao HEAD atual; não marque os testes dessa integração como aprovados antes de verificar a execução mais recente:
+O commit `b976afc` passou em `cargo fmt`, Clippy e testes do workspace em Ubuntu, Windows e macOS, além do build Android ARM64. Para a integração GSP/VBlank no HEAD anterior (`3b52e63`), a execução `43293773245` já confirmou Ubuntu (formatação, Clippy e testes) e Android ARM64; Windows e macOS ainda estavam concluindo os testes na última consulta. Verifique a execução mais recente antes de declarar a matriz completa:
 
-https://github.com/CarlosCosta07-s/Aceris/actions/runs/43292521840
+https://github.com/CarlosCosta07-s/Aceris/actions/runs/43293773245
 
