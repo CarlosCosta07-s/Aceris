@@ -7,7 +7,7 @@
 use std::fmt;
 
 use super::fixed_attribute::{
-    FixedVertexAttribute, FIXED_ATTRIBUTE_COUNT, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
+    FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
     REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
 };
 
@@ -273,8 +273,7 @@ impl Pica200 {
             let index_register = usize::from(REG_VSH_CODETRANSFER_INDEX);
             let index = (self.registers[index_register] & 0x0FFF) as usize;
             self.vertex_shader_code[index] = self.registers[usize::from(id)];
-            self.registers[index_register] =
-                ((index + 1) % VSH_CODE_TRANSFER_WORDS) as u32;
+            self.registers[index_register] = ((index + 1) % VSH_CODE_TRANSFER_WORDS) as u32;
             self.vertex_shader_program_ready = false;
             return;
         }
@@ -294,8 +293,7 @@ impl Pica200 {
             let index_register = usize::from(REG_VSH_OPDESCS_INDEX);
             let index = (self.registers[index_register] & 0x0FFF) as usize;
             self.vertex_shader_operand_descriptors[index] = self.registers[usize::from(id)];
-            self.registers[index_register] =
-                ((index + 1) % VSH_OPDESC_TRANSFER_WORDS) as u32;
+            self.registers[index_register] = ((index + 1) % VSH_OPDESC_TRANSFER_WORDS) as u32;
             return;
         }
 
@@ -310,7 +308,8 @@ impl Pica200 {
             let index_register = usize::from(REG_VSH_FLOATUNIFORM_INDEX);
             let index_value = self.registers[index_register];
             let float32_mode = index_value & 0x8000_0000 != 0;
-            self.pending_uniform_words.push(self.registers[usize::from(id)]);
+            self.pending_uniform_words
+                .push(self.registers[usize::from(id)]);
             let words_per_uniform = if float32_mode { 4 } else { 3 };
 
             if self.pending_uniform_words.len() == words_per_uniform {
@@ -335,8 +334,7 @@ impl Pica200 {
                 }
                 self.pending_uniform_words.clear();
                 let next_index = (index_value & 0xFF).saturating_add(1);
-                self.registers[index_register] =
-                    (index_value & 0x8000_0000) | next_index;
+                self.registers[index_register] = (index_value & 0x8000_0000) | next_index;
             }
         }
     }
