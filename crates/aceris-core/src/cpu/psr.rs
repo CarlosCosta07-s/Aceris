@@ -134,8 +134,13 @@ impl Psr {
     }
 
     /// Returns whether the current mode has privileged CPSR control.
+    ///
+    /// Reserved mode encodings are not treated as privileged. This prevents
+    /// malformed or incompletely restored contexts from gaining privileged
+    /// CPSR access merely because they are not in User mode.
     pub const fn privileged(self) -> bool {
-        self.mode() != Self::USER_MODE
+        let mode = self.mode();
+        mode == Self::SYSTEM_MODE || Self::mode_has_spsr(mode)
     }
 
     /// Changes only the CPSR data endianness bit.
@@ -238,6 +243,29 @@ mod tests {
         assert_eq!(psr.mode(), Psr::USER_MODE);
         assert!(!psr.privileged());
         assert!(!psr.big_endian());
+    }
+
+    #[test]
+    fn only_defined_non_user_modes_are_privileged() {
+        assert!(!Psr(Psr::USER_MODE).privileged());
+
+        for mode in [
+            Psr::FIQ_MODE,
+            Psr::IRQ_MODE,
+            Psr::SUPERVISOR_MODE,
+            Psr::ABORT_MODE,
+            Psr::UNDEFINED_MODE,
+            Psr::SYSTEM_MODE,
+        ] {
+            assert!(Psr(mode).privileged(), "mode 0x{mode:02X} must be privileged");
+        }
+
+        for mode in [0x00, 0x0F, 0x15, 0x16, 0x18, 0x1A, 0x1E] {
+            assert!(
+                !Psr(mode).privileged(),
+                "reserved mode 0x{mode:02X} must not be privileged"
+            );
+        }
     }
 
     #[test]

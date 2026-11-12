@@ -2732,6 +2732,19 @@ mod tests {
     }
 
     #[test]
+    fn armv6_msr_cpsr_control_write_does_not_grant_privilege_from_reserved_mode() {
+        // MSR CPSR_c,r6 must not treat an unallocated mode as privileged.
+        let mut m = Machine::new(&[0xE121_F006]);
+        m.cpu.cpsr = Psr(0x15);
+        m.cpu.regs[6] = Psr::SYSTEM_MODE;
+        let before = m.cpu.cpsr;
+
+        m.step();
+
+        assert_eq!(m.cpu.cpsr, before);
+    }
+
+    #[test]
     fn armv6_setend_changes_only_data_endianness() {
         // SETEND BE ; SETEND LE.
         let mut m = Machine::new(&[0xF101_0200, 0xF101_0000]);
