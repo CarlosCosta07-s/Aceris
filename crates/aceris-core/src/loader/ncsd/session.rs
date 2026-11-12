@@ -910,7 +910,7 @@ impl Arm11ProcessSession {
     /// the reply completes. All aliases are rolled back if any descriptor fails.
     pub fn map_temporary_buffer_translations_from_ipc(
         &mut self,
-        source: &Arm11ProcessSession,
+        source: &mut Arm11ProcessSession,
         destination_thread: ThreadId,
         message: ipc::IpcMessage<'_>,
     ) -> std::result::Result<Vec<Arm11IpcTemporaryBuffer>, IpcTemporaryBufferTranslationError> {
@@ -990,16 +990,16 @@ impl Arm11ProcessSession {
                     .address_space
                     .map_temporary_ipc_buffer(backing, page_offset, size_bytes)
                 {
-                Ok(address) => address,
-                Err(error) => {
-                    for mapping in mappings.iter().copied() {
-                        let _ = self
-                            .address_space
-                            .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                    Ok(address) => address,
+                    Err(error) => {
+                        for mapping in mappings.iter().copied() {
+                            let _ = self
+                                .address_space
+                                .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                        }
+                        return Err(IpcTemporaryBufferTranslationError::Mapping(error));
                     }
-                    return Err(IpcTemporaryBufferTranslationError::Mapping(error));
-                }
-            };
+                };
 
             if permissions & 1 != 0 {
                 let mut bytes = Vec::new();
@@ -3181,7 +3181,7 @@ mod tests {
         let message = ipc::IpcMessage::decode(&words).unwrap();
 
         let mappings = destination
-            .map_temporary_buffer_translations_from_ipc(&source, MAIN_THREAD_ID, message)
+            .map_temporary_buffer_translations_from_ipc(&mut source, MAIN_THREAD_ID, message)
             .unwrap();
         assert_eq!(mappings.len(), 1);
         assert_eq!(mappings[0].mapped_address, 0x0400_1000);
@@ -3216,7 +3216,7 @@ mod tests {
         let message = ipc::IpcMessage::decode(&words).unwrap();
 
         let mappings = destination
-            .map_temporary_buffer_translations_from_ipc(&source, MAIN_THREAD_ID, message)
+            .map_temporary_buffer_translations_from_ipc(&mut source, MAIN_THREAD_ID, message)
             .unwrap();
         let mut output = [0xFF; 4];
         destination
@@ -3248,7 +3248,7 @@ mod tests {
         let message = ipc::IpcMessage::decode(&words).unwrap();
 
         let mappings = destination
-            .map_temporary_buffer_translations_from_ipc(&source, MAIN_THREAD_ID, message)
+            .map_temporary_buffer_translations_from_ipc(&mut source, MAIN_THREAD_ID, message)
             .unwrap();
         let mut input = [0; 4];
         destination
