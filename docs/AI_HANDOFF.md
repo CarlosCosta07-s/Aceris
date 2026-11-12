@@ -197,3 +197,38 @@ Base técnica independente: [IPC Command Structure — Handle Translation](https
 **Limite importante:** esta é uma primitive de tradução host-side para um único memory block, não um dispatcher IPC geral. Não transfere eventos, threads ou outros tipos de objeto; não implementa arrays de handles; ainda não é chamada pelo caminho de envio/recepção IPC nem pelo dispatcher GSP. O GSP continua recebendo handles já traduzidos como pré-condição de sua API de serviço.
 
 Os testes foram adicionados, mas não executados nesta sessão. Verificar Rustfmt, Clippy e `cargo test --workspace` em CI antes de considerar aprovada a mudança.
+
+## Leitor comum de mensagens IPC e integração ao decoder GSP (12/11/2026)
+
+Com a autorização explícita de Carlos Costa para colaborar no trabalho de Claude, o ChatGPT publicou as seguintes alterações incrementais em `main`:
+
+- `d31f096` — adiciona `session::ipc` com `IpcCommandHeader`, `IpcMessage` e `IpcMessageDecodeError`. O leitor extrai command ID, contagem de parâmetros normais e contagem total de words da seção de tradução; valida se o TLS contém todos os words declarados; oferece slices separados para as duas seções e ignora somente o conteúdo residual após o tamanho declarado.
+- `3366a0e` — expõe o módulo IPC pela sessão ARM11.
+- `e2791da` — refatora `decode_gsp_ipc_request` para consumir a visão comum do IPC. O decoder GSP continua exigindo os cabeçalhos e descritores específicos já suportados; os parâmetros agora são obtidos das seções normais/de tradução, sem offsets absolutos no buffer TLS.
+
+### Arquivos alterados
+
+- `crates/aceris-core/src/loader/ncsd/session/ipc.rs` — novo parser comum e cinco testes unitários.
+- `crates/aceris-core/src/loader/ncsd/session.rs` — exporta `pub mod ipc`.
+- `crates/aceris-core/src/loader/ncsd/session/gsp_service.rs` — integra o decoder GSP ao parser comum.
+- `docs/ARCHITECTURE.md` — atualiza o estado e os limites da camada IPC.
+
+### Contrato do parser
+
+- Cabeçalho: command ID nos bits 16–31, número de parâmetros normais nos bits 6–11 e total de words de tradução nos bits 0–5.
+- O total declarado inclui o próprio header no cálculo de tamanho do buffer.
+- `IpcMessage` não traduz handles nem interpreta cada tipo de descriptor; apenas fornece uma visão validada e emprestada das seções.
+- Os bits 12–15 são preservados no header e expostos para validação na camada de serviço; o parser genérico não atribui semântica a eles.
+- O decoder GSP continua recusando cabeçalhos e descritores diferentes dos formatos conhecidos.
+
+### Próximas tarefas para Claude
+
+1. Reutilizar `session::ipc::IpcMessage` em novos decoders de serviços, sem duplicar a extração de contagens/offsets TLS.
+2. Não ampliar a transferência de eventos com uma simples cópia de `signaled`: as filas de espera são hoje locais à tabela/sessão. A implementação correta exige identidade de processo/thread e um caminho de despertar que alcance o scheduler da sessão destinatária.
+3. Planejar o dispatcher `svcSendSyncRequest`/`svcReplyAndReceive` junto da modelagem de portas/sessões e da associação de múltiplas sessões ARM11 no `System`; os métodos de tradução host-side existentes não equivalem a transporte IPC.
+4. Preservar os contratos GSP existentes, incluindo a resposta estendida de `RegisterInterruptRelayQueue`, o evento por cliente, o consumo de `ProcessCommandList` sem direitos e o estado FIFO de `AcquireRight`.
+
+### Verificação
+
+Cinco testes unitários foram adicionados ao novo módulo, e os testes existentes do decoder GSP continuam cobrindo os comandos suportados, mensagens truncadas, descritores inválidos e words TLS residuais. Não foi possível executar `cargo fmt`, Clippy ou `cargo test` neste ambiente por ausência de Rust/Cargo. A consulta de status combinado e de workflows para o commit `e2791da` não retornou checks nem execuções; portanto, não há aprovação de CI confirmada nesta rodada.
+
