@@ -736,7 +736,6 @@ impl Arm11ProcessSession {
         struct PendingPhysicalTable {
             destination_address: u32,
             bytes: Vec<u8>,
-            physical_address: u32,
         }
 
         let mut pending = Vec::new();
@@ -885,7 +884,6 @@ impl Arm11ProcessSession {
             pending.push(PendingPhysicalTable {
                 destination_address,
                 bytes,
-                physical_address: table_physical_address,
             });
             translated.push((word_offset, table_physical_address));
         }
