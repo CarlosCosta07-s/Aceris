@@ -2712,14 +2712,13 @@ mod tests {
         for instruction in [0xE121_F00F, 0xE16F_F00F] {
             let mut m = Machine::new(&[instruction]);
             m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
-            m.cpu.regs[PC] = 0x100;
             let before_cpsr = m.cpu.cpsr;
             let before_spsr = Psr(0xA000_0010);
             m.cpu.set_saved_program_status(before_spsr).unwrap();
 
             assert!(matches!(
                 m.cpu.step(&mut m.mem),
-                Err(Error::UndefinedInstruction { pc: 0x100, .. })
+                Err(Error::UndefinedInstruction { pc: 0, .. })
             ));
             assert_eq!(m.cpu.cpsr, before_cpsr);
             assert_eq!(m.cpu.saved_program_status(), Some(before_spsr));
