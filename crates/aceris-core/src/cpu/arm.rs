@@ -145,6 +145,50 @@ impl Arm11Core {
         ) {
             // ARMv6 signed/unsigned extend, optionally accumulating into Rn.
             return self.execute_extend_instruction(word);
+        } else if matches!(
+            word & 0x0FF0_0FF0,
+            0x06A0_0F30 | 0x06E0_0F30
+        ) {
+            // SSAT16/USAT16 saturate the two signed source halfwords independently.
+            // SSAT16 encodes sat-1 (1..=16); USAT16 encodes sat (0..=15).
+            let rd = bits(word, 15, 12) as usize;
+            let rm = bits(word, 3, 0) as usize;
+            if rd == PC || rm == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+
+            let saturation_bits = bits(word, 19, 16);
+            let signed_saturate = word & 0x0FF0_0FF0 == 0x06A0_0F30;
+            let mut result = 0u32;
+            let mut saturated = false;
+            let source = self.regs[rm];
+
+            for lane in 0..2 {
+                let value = signed_halfword(source, lane == 1);
+                let clamped = if signed_saturate {
+                    let width = saturation_bits + 1;
+                    let minimum = -(1i64 << (width - 1));
+                    let maximum = (1i64 << (width - 1)) - 1;
+                    value.clamp(minimum, maximum)
+                } else {
+                    let maximum = if saturation_bits == 0 {
+                        0
+                    } else {
+                        (1i64 << saturation_bits) - 1
+                    };
+                    value.clamp(0, maximum)
+                };
+                saturated |= clamped != value;
+                result |= u32::from(clamped as i16 as u16) << (lane * 16);
+            }
+
+            self.regs[rd] = result;
+            if saturated {
+                self.cpsr.set_q();
+            }
         } else if word & 0x0FE0_0070 == 0x06A0_0010 || word & 0x0FE0_0070 == 0x06E0_0010 {
             // SSAT/USAT: shift a signed source, saturate, and set sticky CPSR.Q
             // only when the result is clamped.
@@ -2978,6 +3022,55 @@ mod tests {
         m.step();
         assert_eq!(m.cpu.regs[0], i32::MAX as u32);
         assert!(m.cpu.cpsr.q());
+    }
+
+    #[test]
+    fn armv6_ssat16_and_usat16_saturate_each_signed_halfword_independently() {
+        // SSAT16 r0,#8,r1 ; USAT16 r2,#7,r3 ; SSAT16 r5,#16,r6.
+        let mut m = Machine::new(&[
+            0xE6A7_0F31,
+            0xE6E7_2F33,
+            0xE6AF_5F36,
+        ]);
+        m.cpu.regs[1] = 0x8000_7F01;
+        m.cpu.regs[3] = 0x00FF_0080;
+        m.cpu.regs[6] = 0x8000_7FFF;
+        m.cpu.cpsr.set_flags(true, false, true, false);
+
+        m.run(3);
+
+        assert_eq!(m.cpu.regs[0], 0xFF80_007F);
+        assert_eq!(m.cpu.regs[2], 0x007F_0000);
+        assert_eq!(m.cpu.regs[5], 0x8000_7FFF);
+        assert!(m.cpu.cpsr.q());
+        assert_eq!(m.flags(), (true, false, true, false));
+    }
+
+    #[test]
+    fn armv6_ssat16_and_usat16_preserve_q_when_no_halfword_saturates() {
+        // SSAT16 r0,#16,r1 ; USAT16 r2,#15,r3 — both lanes are in range.
+        let mut m = Machine::new(&[0xE6AF_0F31, 0xE6EF_2F33]);
+        m.cpu.regs[1] = 0x8000_7FFF;
+        m.cpu.regs[3] = 0x7FFF_0000;
+        m.cpu.cpsr.set_flags(false, true, true, false);
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[0], 0x8000_7FFF);
+        assert_eq!(m.cpu.regs[2], 0x7FFF_0000);
+        assert!(!m.cpu.cpsr.q());
+        assert_eq!(m.flags(), (false, true, true, false));
+    }
+
+    #[test]
+    fn armv6_ssat16_and_usat16_reject_pc_registers() {
+        for instruction in [0xE6A7_0F3F, 0xE6E7_FF31] {
+            let mut m = Machine::new(&[instruction]);
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, .. })
+            ));
+        }
     }
 
     #[test]
