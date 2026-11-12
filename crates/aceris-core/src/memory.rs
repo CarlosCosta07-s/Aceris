@@ -48,7 +48,6 @@ pub trait Bus {
         Ok(u32::from_le_bytes(bytes))
     }
 
-
     /// Reads a byte while applying User-mode memory permissions.
     /// Buses without privilege-aware translation may use the ordinary access.
     fn read8_unprivileged(&mut self, addr: u32) -> Result<u8> {

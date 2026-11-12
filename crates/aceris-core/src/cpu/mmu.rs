@@ -550,12 +550,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
         self.map_with_privilege(va, access, self.params.privileged)
     }
 
-    fn map_with_privilege(
-        &mut self,
-        va: u32,
-        access: Access,
-        privileged: bool,
-    ) -> Result<u32> {
+    fn map_with_privilege(&mut self, va: u32, access: Access, privileged: bool) -> Result<u32> {
         let access = if self.fetching && access == Access::Read {
             Access::Execute
         } else {
@@ -575,7 +570,8 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
         } else {
             match walk_page_tables(self.inner, &self.params, mva, access)? {
                 PageWalk::Mapped(entry) => {
-                    let result = entry.resolve_with_privilege(&self.params, mva, access, privileged);
+                    let result =
+                        entry.resolve_with_privilege(&self.params, mva, access, privileged);
                     self.tlb
                         .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
                     result
