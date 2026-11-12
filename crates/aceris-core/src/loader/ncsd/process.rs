@@ -135,8 +135,9 @@ impl fmt::Display for Arm11DynamicMemoryError {
 
 impl std::error::Error for Arm11DynamicMemoryError {}
 
-/// Shared, zero-initialized memory backing that can be mapped into several
-/// ARM11 address spaces without copying its contents.
+/// Shared page backing that can be mapped into several ARM11 address spaces
+/// without copying. Anonymous blocks start zeroed; heap-backed views retain
+/// the bytes that were already present in the source allocation.
 #[derive(Clone, Debug)]
 pub struct SharedMemoryBacking {
     bytes: Arc<Mutex<Vec<u8>>>,
@@ -627,8 +628,9 @@ impl PreparedArm11Image {
 /// A bootstrap ARM11 address space containing the prepared code segments.
 ///
 /// This bus maps text, read-only data, initialized writable data, the
-/// zero-filled BSS tail, and the main-thread stack. Shared memory, hardware
-/// registers, and privileged kernel regions are not mapped here.
+/// zero-filled BSS tail, the main-thread stack, regular heap allocations and
+/// shared-memory views. Hardware registers and privileged kernel regions are
+/// not mapped here.
 #[derive(Debug)]
 pub struct Arm11CodeAddressSpace {
     layout: Arm11ProcessLayout,
