@@ -226,7 +226,7 @@ impl SharedMemoryBacking {
 
 impl PartialEq for SharedMemoryBacking {
     fn eq(&self, other: &Self) -> bool {
-        self.shares_backing_with(other)
+        self.is_same_view_as(other)
     }
 }
 
@@ -919,7 +919,7 @@ impl Arm11CodeAddressSpace {
                 && virtual_end > u64::from(segment.address)
         });
         let overlaps_dynamic = self.dynamic_regions.iter().any(|region| {
-            let region_end = u64::from(region.address) + region.bytes.len() as u64;
+            let region_end = u64::from(region.address) + region.len() as u64;
             u64::from(virtual_base) < region_end && virtual_end > u64::from(region.address)
         });
         let overlaps_shared = self.shared_regions.iter().any(|region| {
@@ -1010,7 +1010,7 @@ impl Arm11CodeAddressSpace {
         }
 
         if self.dynamic_regions.iter().any(|region| {
-            let region_end = u64::from(region.address) + region.bytes.len() as u64;
+            let region_end = u64::from(region.address) + region.len() as u64;
             u64::from(address) < region_end && end > u64::from(region.address)
         }) || self.shared_regions.iter().any(|region| {
             region.end_address().is_some_and(|region_end| {
@@ -1117,7 +1117,7 @@ impl Arm11CodeAddressSpace {
         let Some(index) = self
             .dynamic_regions
             .iter()
-            .position(|region| region.address == address && region.bytes.len() == size as usize)
+            .position(|region| region.address == address && region.len() == size as usize)
             .filter(|_| in_heap_window)
         else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
@@ -1241,7 +1241,7 @@ impl Arm11CodeAddressSpace {
         for region in &self.dynamic_regions {
             regions.push(Arm11MemoryRegionInfo {
                 base_address: region.address,
-                size_bytes: u32::try_from(region.bytes.len())
+                size_bytes: u32::try_from(region.len())
                     .expect("dynamic mappings are limited to u32-sized regions"),
                 permissions: 3,
                 state: Arm11MemoryState::Private,
@@ -1352,7 +1352,7 @@ impl Arm11CodeAddressSpace {
                     return None;
                 }
                 let offset = u64::from(address) - u64::from(region.address);
-                (offset < region.bytes.len() as u64).then(|| {
+                (offset < region.len() as u64).then(|| {
                     usize::try_from(offset)
                         .ok()
                         .map(|offset| MemoryLocation::Dynamic { index, offset })
@@ -1425,7 +1425,7 @@ impl Arm11CodeAddressSpace {
             }
             MemoryLocation::Dynamic { index, .. } => {
                 let region = self.dynamic_regions.get(index)?;
-                Some(u64::from(region.address) + region.bytes.len() as u64)
+                Some(u64::from(region.address) + region.len() as u64)
             }
             MemoryLocation::Shared { index, .. } => self.shared_regions.get(index)?.end_address(),
             MemoryLocation::Physical { index, .. } => {
