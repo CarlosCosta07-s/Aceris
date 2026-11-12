@@ -497,9 +497,7 @@ impl Arm11ProcessSession {
         let permissions = registers[4];
 
         let result = match (operation, source_address, permissions) {
-            (operation, 0, MEMPERM_READ_WRITE)
-                if operation == (MEMOP_ALLOC | MEMOP_LINEAR) =>
-            {
+            (operation, 0, MEMPERM_READ_WRITE) if operation == (MEMOP_ALLOC | MEMOP_LINEAR) => {
                 self.allocate_linear_memory_region(address, size)
             }
             (operation, 0, MEMPERM_NONE) if operation == (MEMOP_FREE | MEMOP_LINEAR) => {
@@ -547,15 +545,11 @@ impl Arm11ProcessSession {
         }
 
         let mut memory = self.gpu_memory.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
-        let mut dma = self
-            .gpu_address_space
-            .clone()
-            .ok_or(RESULT_OUT_OF_MEMORY)?;
+        let mut dma = self.gpu_address_space.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
         let physical_base = memory
             .allocate_linear_fcram(size)
             .map_err(|_| RESULT_OUT_OF_MEMORY)?;
-        let Some(virtual_base) =
-            physical_base.checked_sub(OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET)
+        let Some(virtual_base) = physical_base.checked_sub(OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET)
         else {
             let _ = memory.free_linear_fcram(physical_base, size);
             return Err(RESULT_OUT_OF_MEMORY);
@@ -568,20 +562,18 @@ impl Arm11ProcessSession {
             return Err(RESULT_OUT_OF_MEMORY);
         }
 
-        if let Err(error) = self
-            .address_space
-            .map_linear_memory_region(virtual_base, physical_base, size)
+        if let Err(error) =
+            self.address_space
+                .map_linear_memory_region(virtual_base, physical_base, size)
         {
             let _ = memory.free_linear_fcram(physical_base, size);
             return Err(dynamic_memory_result_code(error));
         }
 
         if let Err(error) = dma.map_linear_region(virtual_base, size) {
-            let _ = self.address_space.unmap_linear_memory_region(
-                virtual_base,
-                physical_base,
-                size,
-            );
+            let _ =
+                self.address_space
+                    .unmap_linear_memory_region(virtual_base, physical_base, size);
             let _ = memory.free_linear_fcram(physical_base, size);
             return Err(match error {
                 crate::gpu::GpuAddressSpaceError::MisalignedMapping { .. } => {
@@ -1362,7 +1354,11 @@ mod tests {
         assert_eq!(session.core().regs[0], 0);
         let virtual_base = session.core().regs[1];
         assert_eq!(virtual_base, OLD_LINEAR_BASE);
-        assert!(session.address_space.is_writable_range(virtual_base, 0x2000));
+        assert!(
+            session
+                .address_space
+                .is_writable_range(virtual_base, 0x2000)
+        );
         assert_eq!(dma.mappings().len(), 1);
 
         let physical_base = virtual_base + OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET;
@@ -1399,10 +1395,7 @@ mod tests {
         assert!(dma.mappings().is_empty());
         assert!(!memory.has_linear_fcram_allocation(physical_base, 0x2000));
         assert!(!session.address_space.is_writable_range(virtual_base, 4));
-        assert_eq!(
-            memory.read_u32(physical_base + 0x100).unwrap(),
-            0
-        );
+        assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
     }
 
     #[test]
