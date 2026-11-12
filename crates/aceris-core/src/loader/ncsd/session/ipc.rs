@@ -159,7 +159,7 @@ pub fn decode_translation_section(
                     source_address: payload[0],
                 }
             }
-            5 | 6 | 7 => {
+            5..=7 => {
                 if descriptor & 1 != 0 || descriptor >> 4 == 0 {
                     return Err(IpcTranslationSectionError::InvalidDescriptor { descriptor });
                 }

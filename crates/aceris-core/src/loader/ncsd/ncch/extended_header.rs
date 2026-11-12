@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn decodes_arm11_memory_type_from_other_capabilities_descriptor() {
-        let cases = [
+        let cases: [(u32, Arm11MemoryType); 5] = [
             (0, Arm11MemoryType::Application),
             (1, Arm11MemoryType::Application),
             (2, Arm11MemoryType::System),
