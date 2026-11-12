@@ -494,12 +494,9 @@ impl Arm11ProcessSession {
             return Err(IpcStaticBufferTranslationError::NoStaticBufferParameters);
         }
 
-        let thread_info = self
-            .scheduler
-            .thread_info(destination_thread)
-            .ok_or(IpcStaticBufferTranslationError::UnknownDestinationThread(
-                destination_thread,
-            ))?;
+        let thread_info = self.scheduler.thread_info(destination_thread).ok_or(
+            IpcStaticBufferTranslationError::UnknownDestinationThread(destination_thread),
+        )?;
         if thread_info.state == ThreadState::Exited {
             return Err(IpcStaticBufferTranslationError::ExitedDestinationThread(
                 destination_thread,
@@ -569,13 +566,11 @@ impl Arm11ProcessSession {
             })?;
 
             if size_bytes > capacity {
-                return Err(
-                    IpcStaticBufferTranslationError::DestinationBufferTooSmall {
-                        buffer_index,
-                        capacity,
-                        requested: size_bytes,
-                    },
-                );
+                return Err(IpcStaticBufferTranslationError::DestinationBufferTooSmall {
+                    buffer_index,
+                    capacity,
+                    requested: size_bytes,
+                });
             }
 
             if size_bytes == 0 {
@@ -586,9 +581,8 @@ impl Arm11ProcessSession {
                 continue;
             }
 
-            let destination_range_is_writable = usize::try_from(size_bytes)
-                .ok()
-                .is_some_and(|size| {
+            let destination_range_is_writable =
+                usize::try_from(size_bytes).ok().is_some_and(|size| {
                     destination_address != 0
                         && self
                             .address_space
@@ -612,10 +606,12 @@ impl Arm11ProcessSession {
             bytes.resize(size, 0);
             source
                 .read_memory_bytes(source_address, &mut bytes)
-                .map_err(|_| IpcStaticBufferTranslationError::SourceRangeUnavailable {
-                    address: source_address,
-                    size_bytes,
-                })?;
+                .map_err(
+                    |_| IpcStaticBufferTranslationError::SourceRangeUnavailable {
+                        address: source_address,
+                        size_bytes,
+                    },
+                )?;
             pending.push(PendingStaticBufferCopy {
                 destination_address,
                 bytes,
@@ -624,11 +620,11 @@ impl Arm11ProcessSession {
 
         for copy in pending {
             self.write_memory_bytes(copy.destination_address, &copy.bytes)
-                .map_err(|_| {
-                    IpcStaticBufferTranslationError::DestinationWriteFailed {
+                .map_err(
+                    |_| IpcStaticBufferTranslationError::DestinationWriteFailed {
                         address: copy.destination_address,
-                    }
-                })?;
+                    },
+                )?;
         }
 
         Ok(())
@@ -2577,9 +2573,11 @@ mod tests {
                 MAIN_THREAD_ID,
                 message,
             ),
-            Err(IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
-                descriptor: 0x0000_010A,
-            })
+            Err(
+                IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
+                    descriptor: 0x0000_010A,
+                }
+            )
         );
     }
 
