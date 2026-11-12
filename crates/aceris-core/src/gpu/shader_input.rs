@@ -154,7 +154,8 @@ impl PicaVertexShaderInputLayout {
 
         VertexShaderInputBindings {
             attributes,
-            unresolved_fixed_attribute_mask: vertex.fixed_attribute_mask,
+            unresolved_fixed_attribute_mask: vertex.fixed_attribute_mask
+                & !vertex.resolved_fixed_attribute_mask,
         }
     }
 }
@@ -171,7 +172,7 @@ mod tests {
         NumericVertexAttribute {
             format: VertexAttributeFormat {
                 data_type: AttributeDataType::Float,
-                component_count: 1,
+                bit_width: crate::gpu::AttributeBitWidth::Bits32,
             },
             components: [value, 0.0, 0.0, 0.0],
             component_count: 1,
@@ -204,6 +205,7 @@ mod tests {
         let mut vertex = NumericVertexInput {
             attributes: [None; 12],
             fixed_attribute_mask: 1 << 2,
+            resolved_fixed_attribute_mask: 0,
         };
         vertex.attributes[0] = Some(numeric_attribute(1.0));
         vertex.attributes[1] = Some(numeric_attribute(2.0));
@@ -225,6 +227,7 @@ mod tests {
         let mut vertex = NumericVertexInput {
             attributes: [None; 12],
             fixed_attribute_mask: 0,
+            resolved_fixed_attribute_mask: 0,
         };
         vertex.attributes[0] = Some(numeric_attribute(3.0));
         vertex.attributes[1] = Some(numeric_attribute(6.0));
