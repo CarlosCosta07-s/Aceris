@@ -36,45 +36,95 @@ impl AttributeDataType {
         }
     }
 
-    /// Storage width of one scalar component in the PICA200 vertex stream.
-    pub const fn byte_width(self) -> usize {
-        match self {
-            Self::SignedByte | Self::UnsignedByte => 1,
-            Self::SignedShort => 2,
-            Self::Float => 4,
+    /// Converts a raw scalar according to the PICA200 type and bit width.
+    ///
+    /// Integer values are converted numerically, without implicit
+    /// normalization. Float24 uses the PICA200 1.7.16 encoding.
+    pub fn decode_component(
+        self,
+        bit_width: AttributeBitWidth,
+        raw_bits: u32,
+        attribute: usize,
+    ) -> Result<f32, VertexInputError> {
+        let width = bit_width.bits();
+        let mask = if width == 32 {
+            u32::MAX
+        } else {
+            (1u32 << width) - 1
+        };
+        let raw_bits = raw_bits & mask;
+        let value = match self {
+            Self::SignedByte | Self::SignedShort => {
+                let shift = 32 - u32::from(width);
+                ((raw_bits << shift) as i32 >> shift) as f32
+            }
+            Self::UnsignedByte => raw_bits as f32,
+            Self::Float => match bit_width {
+                AttributeBitWidth::Bits24 => {
+                    super::fixed_attribute::Float24::from_bits(raw_bits).to_f32()
+                }
+                AttributeBitWidth::Bits32 => f32::from_bits(raw_bits),
+                AttributeBitWidth::Bits8 | AttributeBitWidth::Bits16 => {
+                    return Err(VertexInputError::UnsupportedFloatWidth {
+                        attribute,
+                        width_bits: width,
+                    });
+                }
+            },
+        };
+        Ok(value)
+    }
+}
+
+/// Bit width of one scalar component as encoded in the format nibble.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttributeBitWidth {
+    Bits8,
+    Bits16,
+    Bits24,
+    Bits32,
+}
+
+impl AttributeBitWidth {
+    fn decode(bits: u32) -> Self {
+        match bits & 0x3 {
+            0 => Self::Bits8,
+            1 => Self::Bits16,
+            2 => Self::Bits24,
+            _ => Self::Bits32,
         }
     }
 
-    /// Converts one zero-extended raw component to the numeric shader input.
-    ///
-    /// Integer formats are converted to their numeric values; they are not
-    /// normalized to [0, 1] or [-1, 1] here.
-    pub fn decode_component(self, raw_bits: u32) -> f32 {
+    pub const fn bits(self) -> u8 {
         match self {
-            Self::SignedByte => (raw_bits as u8 as i8) as f32,
-            Self::UnsignedByte => (raw_bits as u8) as f32,
-            Self::SignedShort => (raw_bits as u16 as i16) as f32,
-            Self::Float => f32::from_bits(raw_bits),
+            Self::Bits8 => 8,
+            Self::Bits16 => 16,
+            Self::Bits24 => 24,
+            Self::Bits32 => 32,
         }
+    }
+
+    pub const fn byte_width(self) -> usize {
+        (self.bits() / 8) as usize
     }
 }
 
 /// Format of one PICA200 vertex attribute.
 ///
-/// The component-count field is encoded as count minus one in the two high
-/// bits of each four-bit format descriptor. Scalar storage width is selected
-/// independently by `data_type`.
+/// Each 4-bit descriptor stores a 2-bit scalar type and a 2-bit component
+/// width. The number of components actually supplied for an attribute is
+/// determined by how many array component selectors reference that attribute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VertexAttributeFormat {
     pub data_type: AttributeDataType,
-    pub component_count: u8,
+    pub bit_width: AttributeBitWidth,
 }
 
 impl VertexAttributeFormat {
     fn decode(field: u32) -> Self {
         Self {
             data_type: AttributeDataType::decode(field),
-            component_count: (((field >> 2) & 0x3) + 1) as u8,
+            bit_width: AttributeBitWidth::decode(field >> 2),
         }
     }
 }
@@ -109,20 +159,24 @@ impl RawVertexAttribute {
     }
 
     /// Converts the fetched integer/float bit patterns into shader-ready f32s.
-    pub fn to_numeric(&self) -> NumericVertexAttribute {
+    pub fn to_numeric(&self, attribute: usize) -> Result<NumericVertexAttribute, VertexInputError> {
         let mut components = [0.0; MAX_COMPONENTS_PER_ATTRIBUTE];
         for (index, component) in self.components[..usize::from(self.component_count)]
             .iter()
             .copied()
             .enumerate()
         {
-            components[index] = self.format.data_type.decode_component(component);
+            components[index] = self.format.data_type.decode_component(
+                self.format.bit_width,
+                component,
+                attribute,
+            )?;
         }
-        NumericVertexAttribute {
+        Ok(NumericVertexAttribute {
             format: self.format,
             components,
             component_count: self.component_count,
-        }
+        })
     }
 }
 
@@ -153,13 +207,18 @@ impl RawVertexInput {
 
 impl RawVertexInput {
     /// Converts all fetched array attributes while preserving the fixed mask.
-    pub fn to_numeric(&self) -> NumericVertexInput {
-        NumericVertexInput {
-            attributes: self
-                .attributes
-                .map(|attribute| attribute.map(|value| value.to_numeric())),
-            fixed_attribute_mask: self.fixed_attribute_mask,
+    pub fn to_numeric(&self) -> Result<NumericVertexInput, VertexInputError> {
+        let mut attributes = [None; MAX_VERTEX_ATTRIBUTES];
+        for (index, attribute) in self.attributes.iter().copied().enumerate() {
+            if let Some(attribute) = attribute {
+                attributes[index] = Some(attribute.to_numeric(index)?);
+            }
         }
+        Ok(NumericVertexInput {
+            attributes,
+            fixed_attribute_mask: self.fixed_attribute_mask,
+            resolved_fixed_attribute_mask: 0,
+        })
     }
 }
 
@@ -168,6 +227,8 @@ impl RawVertexInput {
 pub struct NumericVertexInput {
     pub attributes: [Option<NumericVertexAttribute>; MAX_VERTEX_ATTRIBUTES],
     pub fixed_attribute_mask: u16,
+    /// Fixed attributes already resolved from GPUREG_FIXEDATTRIB_DATAi.
+    pub resolved_fixed_attribute_mask: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -385,7 +446,7 @@ impl PicaVertexInputLayout {
                         });
                     }
 
-                    let width = formats[attribute].data_type.byte_width();
+                    let width = formats[attribute].bit_width.byte_width();
                     cursor = align_up(cursor, width);
                     components.push(ArrayComponent {
                         attribute: Some(code),
@@ -582,11 +643,11 @@ mod tests {
         assert_eq!(layout.attribute_count(), 12);
         assert_eq!(layout.fixed_attribute_mask(), 0x005);
         assert_eq!(layout.formats[0].data_type, AttributeDataType::SignedByte);
-        assert_eq!(layout.formats[0].component_count, 1);
+        assert_eq!(layout.formats[0].bit_width, AttributeBitWidth::Bits8);
         assert_eq!(layout.formats[8].data_type, AttributeDataType::SignedShort);
-        assert_eq!(layout.formats[8].component_count, 2);
+        assert_eq!(layout.formats[8].bit_width, AttributeBitWidth::Bits16);
         assert_eq!(layout.formats[11].data_type, AttributeDataType::Float);
-        assert_eq!(layout.formats[11].component_count, 4);
+        assert_eq!(layout.formats[11].bit_width, AttributeBitWidth::Bits24);
     }
 
     #[test]
@@ -600,7 +661,7 @@ mod tests {
 
     #[test]
     fn decodes_component_alignment_padding_and_stride() {
-        let format_low = 1 | (2 << 4);
+        let format_low = 1 | (6 << 4);
         let config1 = (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
         let layout =
