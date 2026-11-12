@@ -44,8 +44,8 @@ impl Matrix4 {
 
     fn transform(&self, position: [f32; 4]) -> [f32; 4] {
         let mut output = [0.0; 4];
-        for row in 0..4 {
-            output[row] = self.elements[row] * position[0]
+        for (row, value) in output.iter_mut().enumerate() {
+            *value = self.elements[row] * position[0]
                 + self.elements[4 + row] * position[1]
                 + self.elements[8 + row] * position[2]
                 + self.elements[12 + row] * position[3];
@@ -282,7 +282,7 @@ impl GeometryPipeline {
             }
             polygon.push(ClipVertex {
                 position,
-                color: vertex.color.map(|channel| f32::from(channel)),
+                color: vertex.color.map(f32::from),
             });
         }
 
