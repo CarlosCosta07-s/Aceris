@@ -108,7 +108,6 @@ pub struct Arm11Core {
     exclusive_reservation: Option<ExclusiveReservation>,
     banked: BankedRegisters,
     saved_status: SavedStatusRegisters,
-    active_mode: u32,
     high_vectors_enabled: bool,
     exception_big_endian: bool,
     svc_exception_entry_enabled: bool,
@@ -124,7 +123,6 @@ impl Default for Arm11Core {
             exclusive_reservation: None,
             banked: BankedRegisters::default(),
             saved_status: SavedStatusRegisters::default(),
-            active_mode: Psr::USER_MODE,
             high_vectors_enabled: false,
             exception_big_endian: false,
             svc_exception_entry_enabled: false,
@@ -150,7 +148,7 @@ impl Arm11Core {
                 word: mode,
             });
         }
-        let old_mode = self.active_mode;
+        let old_mode = self.cpsr.mode();
         if old_mode == mode {
             self.cpsr.0 = (self.cpsr.0 & !Psr::MODE_MASK) | mode;
             return Ok(());
@@ -252,13 +250,13 @@ impl Arm11Core {
 
     /// Returns the SPSR belonging to the active exception mode, if one exists.
     pub fn saved_program_status(&self) -> Option<Psr> {
-        self.saved_status.get(self.active_mode)
+        self.saved_status.get(self.cpsr.mode())
     }
 
     /// Stores the SPSR belonging to the active exception mode.
     /// User and System modes do not have an SPSR.
     pub fn set_saved_program_status(&mut self, value: Psr) -> Result<()> {
-        if !self.saved_status.set(self.active_mode, value) {
+        if !self.saved_status.set(self.cpsr.mode(), value) {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
                 word: self.cpsr.mode(),
@@ -381,6 +379,27 @@ mod tests {
         assert_eq!(cpu.saved_program_status(), Some(fiq_spsr));
         cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
         assert_eq!(cpu.saved_program_status(), None);
+    }
+
+    #[test]
+    fn cpsr_mode_is_the_single_source_of_truth_for_banks_and_spsr() {
+        let mut cpu = Arm11Core::new();
+        let supervisor_spsr = Psr(0xA000_0010);
+
+        // CPSR is public and may be restored by a context loader. Subsequent
+        // mode-sensitive operations must follow it rather than stale metadata.
+        cpu.cpsr = Psr(Psr::SUPERVISOR_MODE);
+        cpu.regs[SP] = 0x3000;
+        cpu.regs[LR] = 0x3004;
+        cpu.set_saved_program_status(supervisor_spsr).unwrap();
+
+        cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0, 0));
+        assert_eq!(cpu.saved_program_status(), None);
+
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!((cpu.regs[SP], cpu.regs[LR]), (0x3000, 0x3004));
+        assert_eq!(cpu.saved_program_status(), Some(supervisor_spsr));
     }
 
     #[test]
