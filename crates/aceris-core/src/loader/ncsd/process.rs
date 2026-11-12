@@ -11,6 +11,10 @@ use std::fmt;
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
 use crate::cpu::{Arm11Core, SP};
+use crate::gpu::{
+    FCRAM_BASE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
+    OLD_LINEAR_END,
+};
 use crate::memory::Bus;
 use aceris_common::{Error, Result as BusResult};
 
@@ -57,6 +61,12 @@ pub enum Arm11DynamicMemoryError {
     MappingNotFound { address: u32, size: u32 },
     /// The host could not reserve backing memory for the guest mapping.
     AllocationFailure(String),
+    /// Linear memory is outside the supported virtual-to-physical windows.
+    OutsideLinearMemoryRange { address: u32, size: u32 },
+    /// No shared physical-memory backing was attached to this process.
+    PhysicalMemoryUnavailable,
+    /// The exact linear mapping is not present in the process address space.
+    LinearMappingNotFound { address: u32, size: u32 },
 }
 
 impl fmt::Display for Arm11DynamicMemoryError {
@@ -95,6 +105,17 @@ impl fmt::Display for Arm11DynamicMemoryError {
                     "could not allocate application heap backing: {reason}"
                 )
             }
+            Self::OutsideLinearMemoryRange { address, size } => write!(
+                formatter,
+                "linear mapping {address:#010x}+{size:#x} is outside supported linear memory"
+            ),
+            Self::PhysicalMemoryUnavailable => {
+                formatter.write_str("process has no shared physical-memory backing")
+            }
+            Self::LinearMappingNotFound { address, size } => write!(
+                formatter,
+                "linear mapping {address:#010x}+{size:#x} does not exist"
+            ),
         }
     }
 }
@@ -107,6 +128,19 @@ struct DynamicMemoryRegion {
     bytes: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LinearMemoryRegion {
+    virtual_base: u32,
+    physical_base: u32,
+    size: u32,
+}
+
+impl LinearMemoryRegion {
+    fn virtual_end(self) -> u64 {
+        u64::from(self.virtual_base) + u64::from(self.size)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum MemoryLocation {
     Static {
@@ -116,6 +150,10 @@ enum MemoryLocation {
     Dynamic {
         index: usize,
         offset: usize,
+    },
+    Physical {
+        index: usize,
+        address: u32,
     },
 }
 
@@ -407,6 +445,9 @@ pub struct Arm11CodeAddressSpace {
     bss: Vec<u8>,
     stack: Vec<u8>,
     dynamic_regions: Vec<DynamicMemoryRegion>,
+    /// Linear CPU mappings that alias the GPU-visible physical FCRAM backing.
+    linear_regions: Vec<LinearMemoryRegion>,
+    gpu_memory: Option<GpuPhysicalMemory>,
     /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
     exclusive_versions: BTreeMap<u32, u64>,
     /// Occupancy of each 0x200-byte thread-local-storage slot.
@@ -446,6 +487,8 @@ impl Arm11CodeAddressSpace {
             bss,
             stack,
             dynamic_regions: Vec::new(),
+            linear_regions: Vec::new(),
+            gpu_memory: None,
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
         })
@@ -463,6 +506,122 @@ impl Arm11CodeAddressSpace {
     pub fn initialize_core(&self, core: &mut Arm11Core) {
         core.set_pc(self.layout.entry_point);
         core.regs[SP] = self.layout.initial_stack_pointer;
+    }
+
+    /// Attaches the shared physical backing used by linear CPU mappings and devices.
+    pub fn attach_gpu_memory(&mut self, memory: GpuPhysicalMemory) {
+        self.gpu_memory = Some(memory);
+    }
+
+    /// Maps a reserved linear-memory interval into the process address space.
+    ///
+    /// The virtual and physical bases must follow one of the documented 3DS
+    /// linear aliases. The physical range must already be reserved by the
+    /// system's FCRAM allocator, and all CPU loads/stores use that same backing.
+    pub fn map_linear_memory_region(
+        &mut self,
+        virtual_base: u32,
+        physical_base: u32,
+        size: u32,
+    ) -> std::result::Result<(), Arm11DynamicMemoryError> {
+        if size == 0
+            || virtual_base % PAGE_SIZE as u32 != 0
+            || physical_base % PAGE_SIZE as u32 != 0
+            || size % PAGE_SIZE as u32 != 0
+        {
+            return Err(Arm11DynamicMemoryError::InvalidSize(size));
+        }
+
+        let virtual_end = u64::from(virtual_base) + u64::from(size);
+        let expected_physical = if u64::from(virtual_base) >= u64::from(OLD_LINEAR_BASE)
+            && virtual_end <= OLD_LINEAR_END
+        {
+            u64::from(virtual_base) + 0x0C00_0000
+        } else if u64::from(virtual_base) >= u64::from(NEW_LINEAR_BASE)
+            && virtual_end <= NEW_LINEAR_END
+        {
+            u64::from(FCRAM_BASE) + (u64::from(virtual_base) - u64::from(NEW_LINEAR_BASE))
+        } else {
+            return Err(Arm11DynamicMemoryError::OutsideLinearMemoryRange {
+                address: virtual_base,
+                size,
+            });
+        };
+        let physical_end = u64::from(physical_base) + u64::from(size);
+        if expected_physical != u64::from(physical_base)
+            || physical_end > u64::from(FCRAM_BASE) + 0x0800_0000
+        {
+            return Err(Arm11DynamicMemoryError::OutsideLinearMemoryRange {
+                address: virtual_base,
+                size,
+            });
+        }
+
+        let memory = self
+            .gpu_memory
+            .as_ref()
+            .ok_or(Arm11DynamicMemoryError::PhysicalMemoryUnavailable)?;
+        memory
+            .validate_range(physical_base, size as usize)
+            .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
+
+        let overlaps_static = [
+            self.layout.text,
+            self.layout.read_only,
+            self.layout.data,
+            self.layout.bss,
+            self.layout.stack,
+        ]
+        .iter()
+        .any(|segment| {
+            !segment.is_empty()
+                && u64::from(virtual_base) < segment.end_address()
+                && virtual_end > u64::from(segment.address)
+        });
+        let overlaps_dynamic = self.dynamic_regions.iter().any(|region| {
+            let region_end = u64::from(region.address) + region.bytes.len() as u64;
+            u64::from(virtual_base) < region_end && virtual_end > u64::from(region.address)
+        });
+        let overlaps_linear = self.linear_regions.iter().any(|region| {
+            u64::from(virtual_base) < region.virtual_end()
+                && virtual_end > u64::from(region.virtual_base)
+        });
+        if overlaps_static || overlaps_dynamic || overlaps_linear {
+            return Err(Arm11DynamicMemoryError::OverlappingMapping);
+        }
+
+        self.linear_regions
+            .try_reserve(1)
+            .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
+        self.linear_regions.push(LinearMemoryRegion {
+            virtual_base,
+            physical_base,
+            size,
+        });
+        self.linear_regions.sort_by_key(|region| region.virtual_base);
+        Ok(())
+    }
+
+    /// Unmaps one exact linear interval without releasing its physical FCRAM.
+    pub fn unmap_linear_memory_region(
+        &mut self,
+        virtual_base: u32,
+        physical_base: u32,
+        size: u32,
+    ) -> std::result::Result<(), Arm11DynamicMemoryError> {
+        let Some(index) = self.linear_regions.iter().position(|region| {
+            region.virtual_base == virtual_base
+                && region.physical_base == physical_base
+                && region.size == size
+        }) else {
+            return Err(Arm11DynamicMemoryError::LinearMappingNotFound {
+                address: virtual_base,
+                size,
+            });
+        };
+        self.invalidate_exclusive_range(virtual_base, size as usize);
+        self.linear_regions.remove(index);
+        Ok(())
     }
 
     /// Maps one zero-initialized RW/NX region in the 3DS application heap window.
@@ -507,6 +666,9 @@ impl Arm11CodeAddressSpace {
         if self.dynamic_regions.iter().any(|region| {
             let region_end = u64::from(region.address) + region.bytes.len() as u64;
             u64::from(address) < region_end && end > u64::from(region.address)
+        }) || self.linear_regions.iter().any(|region| {
+            u64::from(address) < region.virtual_end()
+                && end > u64::from(region.virtual_base)
         }) {
             return Err(Arm11DynamicMemoryError::OverlappingMapping);
         }
@@ -703,6 +865,16 @@ impl Arm11CodeAddressSpace {
             });
         }
 
+        for region in &self.linear_regions {
+            regions.push(Arm11MemoryRegionInfo {
+                base_address: region.virtual_base,
+                size_bytes: region.size,
+                permissions: 3,
+                state: Arm11MemoryState::Private,
+                page_flags: 0,
+            });
+        }
+
         for region in &self.dynamic_regions {
             regions.push(Arm11MemoryRegionInfo {
                 base_address: region.address,
@@ -789,6 +961,21 @@ impl Arm11CodeAddressSpace {
             }
         }
 
+        if let Some((index, region)) = self
+            .linear_regions
+            .iter()
+            .enumerate()
+            .find(|(_, region)| {
+                address >= region.virtual_base && u64::from(address) < region.virtual_end()
+            })
+        {
+            let offset = address - region.virtual_base;
+            return Some(MemoryLocation::Physical {
+                index,
+                address: region.physical_base + offset,
+            });
+        }
+
         self.dynamic_regions
             .iter()
             .enumerate()
@@ -829,6 +1016,7 @@ impl Arm11CodeAddressSpace {
         match location {
             MemoryLocation::Static { kind, .. } => self.bytes_for(kind),
             MemoryLocation::Dynamic { index, .. } => &self.dynamic_regions[index].bytes,
+            MemoryLocation::Physical { .. } => unreachable!("physical locations are read directly"),
         }
     }
 
@@ -836,20 +1024,21 @@ impl Arm11CodeAddressSpace {
         match location {
             MemoryLocation::Static { kind, .. } => self.bytes_for_mut(kind),
             MemoryLocation::Dynamic { index, .. } => &mut self.dynamic_regions[index].bytes,
+            MemoryLocation::Physical { .. } => unreachable!("physical locations are written directly"),
         }
     }
 
     fn location_is_writable(&self, location: MemoryLocation) -> bool {
         match location {
             MemoryLocation::Static { kind, .. } => self.segment_is_writable(kind),
-            MemoryLocation::Dynamic { .. } => true,
+            MemoryLocation::Dynamic { .. } | MemoryLocation::Physical { .. } => true,
         }
     }
 
     fn location_is_executable(&self, location: MemoryLocation) -> bool {
         match location {
             MemoryLocation::Static { kind, .. } => self.segment_is_executable(kind),
-            MemoryLocation::Dynamic { .. } => false,
+            MemoryLocation::Dynamic { .. } | MemoryLocation::Physical { .. } => false,
         }
     }
 
@@ -868,6 +1057,9 @@ impl Arm11CodeAddressSpace {
             MemoryLocation::Dynamic { index, .. } => {
                 let region = self.dynamic_regions.get(index)?;
                 Some(u64::from(region.address) + region.bytes.len() as u64)
+            }
+            MemoryLocation::Physical { index, .. } => {
+                Some(self.linear_regions.get(index)?.virtual_end())
             }
         }
     }
@@ -915,11 +1107,26 @@ impl Arm11CodeAddressSpace {
         }
 
         for (byte, location) in bytes.iter().zip(locations) {
-            self.bytes_for_location_mut(location)[match location {
-                MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => {
-                    offset
+            match location {
+                MemoryLocation::Static { kind, offset } => {
+                    self.bytes_for_mut(kind)[offset] = *byte;
                 }
-            }] = *byte;
+                MemoryLocation::Dynamic { index, offset } => {
+                    self.dynamic_regions[index].bytes[offset] = *byte;
+                }
+                MemoryLocation::Physical {
+                    address: physical_address,
+                    ..
+                } => {
+                    let memory = self
+                        .gpu_memory
+                        .as_mut()
+                        .ok_or(Error::InvalidAccess { addr: address })?;
+                    memory
+                        .write(physical_address, &[*byte])
+                        .map_err(|_| Error::InvalidAccess { addr: address })?;
+                }
+            }
         }
 
         self.invalidate_exclusive_range(address, bytes.len());
@@ -960,15 +1167,26 @@ impl Bus for Arm11CodeAddressSpace {
         let location = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
-        let offset = match location {
-            MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => {
-                offset
+        match location {
+            MemoryLocation::Physical {
+                address: physical_address,
+                ..
+            } => {
+                let mut byte = [0u8; 1];
+                self.gpu_memory
+                    .as_ref()
+                    .ok_or(Error::InvalidAccess { addr: address })?
+                    .read(physical_address, &mut byte)
+                    .map_err(|_| Error::InvalidAccess { addr: address })?;
+                Ok(byte[0])
             }
-        };
-        self.bytes_for_location(location)
-            .get(offset)
-            .copied()
-            .ok_or(Error::InvalidAccess { addr: address })
+            MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => {
+                self.bytes_for_location(location)
+                    .get(offset)
+                    .copied()
+                    .ok_or(Error::InvalidAccess { addr: address })
+            }
+        }
     }
 
     fn write8(&mut self, address: u32, value: u8) -> BusResult<()> {
