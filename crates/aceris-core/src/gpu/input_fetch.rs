@@ -130,6 +130,35 @@ mod tests {
     }
 
     #[test]
+    fn numeric_vertex_fetch_merges_fixed_attributes_from_pica_registers() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000)
+            .unwrap();
+        gpu.write_register(
+            REG_ATTRIBBUFFERS_FORMAT_HIGH,
+            (1 << 16) | (1 << 28),
+        )
+        .unwrap();
+
+        gpu.write_register(crate::gpu::REG_FIXEDATTRIB_INDEX, 0).unwrap();
+        gpu.write_register(crate::gpu::REG_FIXEDATTRIB_DATA0, 0x4100_0040)
+            .unwrap();
+        gpu.write_register(crate::gpu::REG_FIXEDATTRIB_DATA1, 0x0000_4000)
+            .unwrap();
+        gpu.write_register(crate::gpu::REG_FIXEDATTRIB_DATA2, 0x003F_0000)
+            .unwrap();
+
+        let memory = GpuPhysicalMemory::new();
+        let vertex = gpu
+            .read_numeric_vertex_at_physical_base(&memory, FCRAM_BASE, 0)
+            .unwrap();
+
+        assert_eq!(vertex.attributes[0].unwrap().components, [1.0, 2.0, 2.0, 4.0]);
+        assert_eq!(vertex.resolved_fixed_attribute_mask, 1);
+        assert_eq!(vertex.fixed_attribute_mask, 1);
+    }
+
+    #[test]
     fn pica200_fetches_indices_using_current_index_registers() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000)
