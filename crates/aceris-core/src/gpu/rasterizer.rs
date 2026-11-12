@@ -317,8 +317,7 @@ impl SoftwareRasterizer {
                 }
 
                 let color_offset = index * 4;
-                let perspective_denominator = weight_0
-                    * f64::from(vertices[0].reciprocal_w)
+                let perspective_denominator = weight_0 * f64::from(vertices[0].reciprocal_w)
                     + weight_1 * f64::from(vertices[1].reciprocal_w)
                     + weight_2 * f64::from(vertices[2].reciprocal_w);
                 for channel in 0..4 {
