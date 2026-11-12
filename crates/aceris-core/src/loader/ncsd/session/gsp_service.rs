@@ -580,6 +580,27 @@ impl GspServiceRegistry {
             && self.rendering_client == Some(client_id)
     }
 
+    /// Returns the registered clients eligible to receive an interrupt.
+    ///
+    /// PDC0 and PDC1 are broadcast to all registered clients. All other GSP
+    /// interrupts are routed only to the client holding rendering rights.
+    /// The iterator only plans routing; the caller remains responsible for
+    /// delivering the event through each client's own process session.
+    pub fn interrupt_recipients(
+        &self,
+        interrupt: GspInterruptId,
+    ) -> impl Iterator<Item = u8> + '_ {
+        self.clients
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, registration)| {
+                let client_id = u8::try_from(index).ok()?;
+                (registration.is_some()
+                    && (interrupt.is_pdc() || self.rendering_client == Some(client_id)))
+                .then_some(client_id)
+            })
+    }
+
     /// Returns whether a client is eligible to receive a particular interrupt.
     ///
     /// PDC0 and PDC1 are broadcast to all registered clients. All other GSP
@@ -593,7 +614,7 @@ impl GspServiceRegistry {
         if self.clients[index].is_none() {
             return Err(GspServiceError::ClientNotRegistered { client_id });
         }
-        Ok(interrupt.is_pdc() || self.rendering_client == Some(client_id))
+        Ok(self.interrupt_recipients(interrupt).any(|recipient| recipient == client_id))
     }
 
     /// Appends an interrupt to the client's guest relay queue and signals its
@@ -1050,6 +1071,57 @@ mod tests {
         registry.unregister_client(1).unwrap();
         assert!(!registry.owns_rendering_right(1));
         assert!(registry.try_acquire_rendering_right(0).unwrap());
+    }
+
+    #[test]
+    fn interrupt_recipients_follow_broadcast_and_rendering_owner_rules() {
+        let mut session = test_session();
+        let events = (0..3)
+            .map(|_| {
+                session
+                    .kernel_objects
+                    .insert_event(EventResetType::Sticky)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut registry = GspServiceRegistry::new();
+        for client_id in [0u8, 2u8] {
+            registry
+                .register_client(
+                    &mut session,
+                    client_id,
+                    SHARED_MEMORY_BASE,
+                    events[usize::from(client_id / 2) * 2],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            registry
+                .interrupt_recipients(GspInterruptId::Pdc0)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        assert_eq!(
+            registry
+                .interrupt_recipients(GspInterruptId::P3d)
+                .collect::<Vec<_>>(),
+            []
+        );
+
+        assert!(registry.try_acquire_rendering_right(2).unwrap());
+        assert_eq!(
+            registry
+                .interrupt_recipients(GspInterruptId::Dma)
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        assert_eq!(
+            registry
+                .interrupt_recipients(GspInterruptId::Pdc1)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
     }
 
     #[test]
