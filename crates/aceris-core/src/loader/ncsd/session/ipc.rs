@@ -50,6 +50,127 @@ impl IpcCommandHeader {
     }
 }
 
+/// One decoded parameter from the IPC translation section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpcTranslationParameter<'a> {
+    /// A type-0 handle transfer, including its untouched handle words.
+    Handles {
+        descriptor: u32,
+        handle_count: u8,
+        move_handles: bool,
+        requests_process_id: bool,
+        handles: &'a [u32],
+    },
+    /// A type-1 static-buffer copy targeting the receiver's TLS static-buffer slot.
+    StaticBuffer {
+        descriptor: u32,
+        buffer_index: u8,
+        size_bytes: u32,
+        source_address: u32,
+    },
+    /// A type-5/6/7 temporary buffer mapping with source access permissions.
+    MappedBuffer {
+        descriptor: u32,
+        permissions: u8,
+        size_bytes: u32,
+        source_address: u32,
+    },
+}
+
+/// Errors found while walking a complete IPC translation section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpcTranslationSectionError {
+    InvalidDescriptor { descriptor: u32 },
+    UnsupportedTranslationType { descriptor: u32, translation_type: u8 },
+    TruncatedParameter {
+        descriptor: u32,
+        expected_words: usize,
+        available_words: usize,
+    },
+}
+
+/// Decodes every parameter in a translation section without touching guest memory.
+///
+/// This recognizes type 0 handles, type 1 static-buffer copies and type 5/6/7
+/// temporary buffer mappings. Types 2/3 and unknown encodings are rejected
+/// until their backing-page-table semantics are implemented.
+pub fn decode_translation_section(
+    words: &[u32],
+) -> Result<Vec<IpcTranslationParameter<'_>>, IpcTranslationSectionError> {
+    let mut parameters = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < words.len() {
+        let descriptor = words[cursor];
+        cursor += 1;
+        let translation_type = ((descriptor >> 1) & 0x7) as u8;
+
+        let payload_words = match translation_type {
+            0 => {
+                let decoded = super::kernel::IpcHandleTranslationDescriptor::decode(descriptor)
+                    .map_err(|_| IpcTranslationSectionError::InvalidDescriptor { descriptor })?;
+                usize::from(decoded.handle_count())
+            }
+            1 | 5 | 6 | 7 => 1,
+            other => {
+                return Err(IpcTranslationSectionError::UnsupportedTranslationType {
+                    descriptor,
+                    translation_type: other,
+                });
+            }
+        };
+
+        let available_words = words.len() - cursor;
+        if available_words < payload_words {
+            return Err(IpcTranslationSectionError::TruncatedParameter {
+                descriptor,
+                expected_words: payload_words,
+                available_words,
+            });
+        }
+        let payload_end = cursor + payload_words;
+        let payload = &words[cursor..payload_end];
+
+        let parameter = match translation_type {
+            0 => {
+                let decoded = super::kernel::IpcHandleTranslationDescriptor::decode(descriptor)
+                    .map_err(|_| IpcTranslationSectionError::InvalidDescriptor { descriptor })?;
+                IpcTranslationParameter::Handles {
+                    descriptor,
+                    handle_count: decoded.handle_count(),
+                    move_handles: decoded.moves_handle(),
+                    requests_process_id: decoded.requests_process_id(),
+                    handles: payload,
+                }
+            }
+            1 => {
+                // Bit 0 and bits 4-9 are reserved in the known static-buffer form.
+                if descriptor & 0x0000_03F1 != 0 {
+                    return Err(IpcTranslationSectionError::InvalidDescriptor { descriptor });
+                }
+                IpcTranslationParameter::StaticBuffer {
+                    descriptor,
+                    buffer_index: ((descriptor >> 10) & 0x0F) as u8,
+                    size_bytes: descriptor >> 14,
+                    source_address: payload[0],
+                }
+            }
+            5 | 6 | 7 => IpcTranslationParameter::MappedBuffer {
+                descriptor,
+                permissions: translation_type & 0x03,
+                size_bytes: descriptor >> 4,
+                source_address: payload[0],
+            },
+            _ => unreachable!("translation type was checked above"),
+        };
+
+        parameters.push(parameter);
+        cursor = payload_end;
+    }
+
+    Ok(parameters)
+}
+
 /// Failure to read a complete IPC message from a TLS word buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IpcMessageDecodeError {
