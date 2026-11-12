@@ -26,6 +26,8 @@ const APPLICATION_HEAP_BASE: u32 = 0x0800_0000;
 const APPLICATION_HEAP_END: u64 = 0x0E00_0000;
 /// Base of the per-thread local storage window and the size of one slot.
 const THREAD_LOCAL_STORAGE_BASE: u32 = 0x1FF8_2000;
+const IPC_TEMPORARY_BUFFER_BASE: u32 = 0x0400_0000;
+const IPC_TEMPORARY_BUFFER_END: u64 = 0x0800_0000;
 const THREAD_LOCAL_STORAGE_SLOT_SIZE: u32 = 0x200;
 const THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE: u32 = 8;
 const THREAD_LOCAL_STATIC_BUFFER_TABLE_OFFSET: u32 = 0x180;
@@ -331,6 +333,21 @@ struct LinearMemoryRegion {
 impl LinearMemoryRegion {
     fn virtual_end(self) -> u64 {
         u64::from(self.virtual_base) + u64::from(self.size)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IpcTemporaryMappingRegion {
+    alias_address: u32,
+    mapping_base: u32,
+    mapping_size: u32,
+    reservation_base: u32,
+    reservation_size: u32,
+}
+
+impl IpcTemporaryMappingRegion {
+    fn reservation_end(self) -> u64 {
+        u64::from(self.reservation_base) + u64::from(self.reservation_size)
     }
 }
 
@@ -653,6 +670,8 @@ pub struct Arm11CodeAddressSpace {
     exclusive_versions: BTreeMap<u32, u64>,
     /// Occupancy of each 0x200-byte thread-local-storage slot.
     tls_slots_in_use: Vec<bool>,
+    /// Temporary IPC aliases and their surrounding unmapped guard pages.
+    ipc_temporary_regions: Vec<IpcTemporaryMappingRegion>,
 }
 
 impl Arm11CodeAddressSpace {
@@ -695,6 +714,7 @@ impl Arm11CodeAddressSpace {
             gpu_memory: None,
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
+            ipc_temporary_regions: Vec::new(),
         })
     }
 
@@ -790,6 +810,130 @@ impl Arm11CodeAddressSpace {
         });
         self.shared_regions.sort_by_key(|region| region.address);
         Ok(())
+    }
+
+    /// Maps one IPC temporary buffer into the 0x04000000 alias window.
+    ///
+    /// The backing must be page-aligned and large enough for the source page
+    /// offset plus the logical buffer size. One unmapped guard page is reserved
+    /// before and after every alias. The returned address preserves the source
+    /// buffer's offset within its first page. Receiver permissions are always RW.
+    pub fn map_temporary_ipc_buffer(
+        &mut self,
+        backing: SharedMemoryBacking,
+        source_page_offset: u32,
+        size_bytes: u32,
+    ) -> std::result::Result<u32, Arm11DynamicMemoryError> {
+        let backing_size = backing
+            .len()
+            .and_then(|length| u32::try_from(length).ok())
+            .ok_or(Arm11DynamicMemoryError::InvalidSize(0))?;
+        if backing_size == 0
+            || u64::from(backing_size) % PAGE_SIZE != 0
+            || size_bytes == 0
+            || source_page_offset >= PAGE_SIZE as u32
+            || u64::from(source_page_offset) + u64::from(size_bytes)
+                > u64::from(backing_size)
+        {
+            return Err(Arm11DynamicMemoryError::InvalidSize(size_bytes));
+        }
+
+        let reservation_size = backing_size
+            .checked_add((PAGE_SIZE as u32) * 2)
+            .ok_or(Arm11DynamicMemoryError::AddressRangeOverflow {
+                address: IPC_TEMPORARY_BUFFER_BASE,
+                size: backing_size,
+            })?;
+        self.ipc_temporary_regions
+            .try_reserve(1)
+            .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
+
+        let mut reservation_base = IPC_TEMPORARY_BUFFER_BASE;
+        loop {
+            let reservation_end = u64::from(reservation_base) + u64::from(reservation_size);
+            if reservation_end > IPC_TEMPORARY_BUFFER_END {
+                return Err(Arm11DynamicMemoryError::AllocationFailure(
+                    "IPC temporary-buffer address window exhausted".to_string(),
+                ));
+            }
+
+            if let Some(overlap) = self.ipc_temporary_regions.iter().find(|region| {
+                u64::from(reservation_base) < region.reservation_end()
+                    && reservation_end > u64::from(region.reservation_base)
+            }) {
+                let next = overlap.reservation_end();
+                let aligned = next.checked_add(PAGE_SIZE - 1).ok_or(
+                    Arm11DynamicMemoryError::AddressRangeOverflow {
+                        address: reservation_base,
+                        size: reservation_size,
+                    },
+                )? & !(PAGE_SIZE - 1);
+                reservation_base = u32::try_from(aligned).map_err(|_| {
+                    Arm11DynamicMemoryError::AllocationFailure(
+                        "IPC temporary-buffer address window exhausted".to_string(),
+                    )
+                })?;
+                continue;
+            }
+
+            let free_region = self.query_memory(reservation_base);
+            let free_start = u64::from(free_region.base_address);
+            let free_end = free_start + u64::from(free_region.size_bytes);
+            if free_region.state == Arm11MemoryState::Free
+                && u64::from(reservation_base) >= free_start
+                && reservation_end <= free_end
+            {
+                let mapping_base = reservation_base
+                    .checked_add(PAGE_SIZE as u32)
+                    .ok_or(Arm11DynamicMemoryError::AddressRangeOverflow {
+                        address: reservation_base,
+                        size: reservation_size,
+                    })?;
+                self.map_shared_memory_region(mapping_base, backing, 3)?;
+                self.ipc_temporary_regions.push(IpcTemporaryMappingRegion {
+                    alias_address: mapping_base + source_page_offset,
+                    mapping_base,
+                    mapping_size: backing_size,
+                    reservation_base,
+                    reservation_size,
+                });
+                return Ok(mapping_base + source_page_offset);
+            }
+
+            let next = free_end.max(u64::from(reservation_base) + PAGE_SIZE);
+            let aligned = next.checked_add(PAGE_SIZE - 1).ok_or(
+                Arm11DynamicMemoryError::AddressRangeOverflow {
+                    address: reservation_base,
+                    size: reservation_size,
+                },
+            )? & !(PAGE_SIZE - 1);
+            reservation_base = u32::try_from(aligned).map_err(|_| {
+                Arm11DynamicMemoryError::AllocationFailure(
+                    "IPC temporary-buffer address window exhausted".to_string(),
+                )
+            })?;
+        }
+    }
+
+    /// Removes an IPC temporary mapping by its exact returned alias pointer.
+    pub fn unmap_temporary_ipc_buffer(
+        &mut self,
+        alias_address: u32,
+    ) -> std::result::Result<SharedMemoryBacking, Arm11DynamicMemoryError> {
+        let Some(index) = self
+            .ipc_temporary_regions
+            .iter()
+            .position(|region| region.alias_address == alias_address)
+        else {
+            return Err(Arm11DynamicMemoryError::MappingNotFound {
+                address: alias_address,
+                size: 0,
+            });
+        };
+        let region = self.ipc_temporary_regions[index];
+        let backing = self.unmap_shared_memory_region(region.mapping_base, region.mapping_size)?;
+        self.ipc_temporary_regions.remove(index);
+        Ok(backing)
     }
 
     /// Creates a zero-copy block view over a page-aligned regular-heap range.
@@ -2310,6 +2454,76 @@ mod tests {
             Err(Arm11DynamicMemoryError::OutsideLinearMemoryRange { .. })
         ));
         memory.free_linear_fcram(physical, 0x1000).unwrap();
+    }
+
+    #[test]
+    fn ipc_temporary_buffer_mappings_preserve_page_offset_and_guard_pages() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let first_backing = SharedMemoryBacking::zeroed(0x2000).unwrap();
+        let second_backing = SharedMemoryBacking::zeroed(0x1000).unwrap();
+
+        let first = address_space
+            .map_temporary_ipc_buffer(first_backing, 0x234, 0x1200)
+            .unwrap();
+        assert_eq!(first, 0x0400_1234);
+        assert_eq!(
+            address_space.query_memory(0x0400_0000).state,
+            Arm11MemoryState::Free
+        );
+        assert_eq!(
+            address_space.query_memory(0x0400_1000).state,
+            Arm11MemoryState::Shared
+        );
+        assert_eq!(
+            address_space.query_memory(0x0400_3000).state,
+            Arm11MemoryState::Free
+        );
+
+        address_space.write32(first, 0xCAFE_BABE).unwrap();
+        let second = address_space
+            .map_temporary_ipc_buffer(second_backing, 0x010, 0x100)
+            .unwrap();
+        assert_eq!(second, 0x0400_5010);
+
+        address_space.unmap_temporary_ipc_buffer(first).unwrap();
+        assert_eq!(
+            address_space.query_memory(0x0400_1000).state,
+            Arm11MemoryState::Free
+        );
+        let reused = address_space
+            .map_temporary_ipc_buffer(SharedMemoryBacking::zeroed(0x1000).unwrap(), 0x034, 0x20)
+            .unwrap();
+        assert_eq!(reused, 0x0400_1034);
+        assert_eq!(
+            address_space.unmap_temporary_ipc_buffer(0x0400_1000),
+            Err(Arm11DynamicMemoryError::MappingNotFound {
+                address: 0x0400_1000,
+                size: 0,
+            })
+        );
+        address_space.unmap_temporary_ipc_buffer(second).unwrap();
+        address_space.unmap_temporary_ipc_buffer(reused).unwrap();
+    }
+
+    #[test]
+    fn ipc_temporary_buffer_mapping_rejects_invalid_backing_extent() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        assert!(matches!(
+            address_space.map_temporary_ipc_buffer(
+                SharedMemoryBacking::zeroed(0x1000).unwrap(),
+                0xFF0,
+                0x100,
+            ),
+            Err(Arm11DynamicMemoryError::InvalidSize(_))
+        ));
+        assert!(matches!(
+            address_space.map_temporary_ipc_buffer(
+                SharedMemoryBacking::zeroed(0x1000).unwrap(),
+                0x1000,
+                0x10,
+            ),
+            Err(Arm11DynamicMemoryError::InvalidSize(_))
+        ));
     }
 
     #[test]
