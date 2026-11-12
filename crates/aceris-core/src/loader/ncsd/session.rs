@@ -235,6 +235,20 @@ impl Arm11ProcessSession {
         Ok(())
     }
 
+    /// Signals a process-local event handle from a device or HLE service.
+    ///
+    /// This uses the same reset and waiter semantics as SVC SignalEvent. It is
+    /// the host-side entry point for services such as GSP; it does not create
+    /// handles or bypass process-local event type validation.
+    pub fn signal_event_handle(
+        &mut self,
+        handle: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        let awakened = self.kernel_objects.signal_event(handle)?;
+        self.wake_synchronization_waiters(awakened);
+        Ok(())
+    }
+
     /// Returns the currently selected thread identifier.
     pub const fn current_thread_id(&self) -> Option<ThreadId> {
         self.scheduler.current_thread_id()
@@ -1078,12 +1092,10 @@ impl Arm11ProcessSession {
             .core(caller)
             .expect("current thread context exists")
             .regs[0];
-        let awakened = match self.kernel_objects.signal_event(handle) {
-            Ok(awakened) => awakened,
-            Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
-        };
-        self.wake_synchronization_waiters(awakened);
-        self.write_svc_result(caller, 0)
+        match self.signal_event_handle(handle) {
+            Ok(()) => self.write_svc_result(caller, 0),
+            Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
+        }
     }
 
     /// Handles ClearEvent using the event handle in r0.
@@ -2046,6 +2058,24 @@ mod tests {
     }
 
     #[test]
+    fn process_service_event_signal_rejects_invalid_and_non_event_handles() {
+        let mut session = test_session();
+        let mutex = session
+            .kernel_objects
+            .insert_mutex(false, MAIN_THREAD_ID)
+            .unwrap();
+
+        assert_eq!(
+            session.signal_event_handle(0xDEAD),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert_eq!(
+            session.signal_event_handle(mutex),
+            Err(KernelHandleError::WrongType)
+        );
+    }
+
+    #[test]
     fn successful_object_signal_cancels_a_pending_finite_timeout() {
         let mut session = test_session_with_program(&[0xEF00_0024]);
         let event = session
@@ -2066,8 +2096,7 @@ mod tests {
         session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1);
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
 
-        let awakened = session.kernel_objects.signal_event(event).unwrap();
-        session.wake_synchronization_waiters(awakened);
+        session.signal_event_handle(event).unwrap();
         assert_eq!(session.current_thread_id(), Some(child));
         assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
 
