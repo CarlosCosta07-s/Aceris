@@ -35,47 +35,46 @@ impl AttributeDataType {
             _ => Self::Float,
         }
     }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AttributeBitWidth {
-    Bits8,
-    Bits16,
-    Bits24,
-    Bits32,
-}
-
-impl AttributeBitWidth {
-    fn decode(bits: u32) -> Self {
-        match bits & 0x3 {
-            0 => Self::Bits8,
-            1 => Self::Bits16,
-            2 => Self::Bits24,
-            _ => Self::Bits32,
-        }
-    }
-
+    /// Storage width of one scalar component in the PICA200 vertex stream.
     pub const fn byte_width(self) -> usize {
         match self {
-            Self::Bits8 => 1,
-            Self::Bits16 => 2,
-            Self::Bits24 => 3,
-            Self::Bits32 => 4,
+            Self::SignedByte | Self::UnsignedByte => 1,
+            Self::SignedShort => 2,
+            Self::Float => 4,
+        }
+    }
+
+    /// Converts one zero-extended raw component to the numeric shader input.
+    ///
+    /// Integer formats are converted to their numeric values; they are not
+    /// normalized to [0, 1] or [-1, 1] here.
+    pub fn decode_component(self, raw_bits: u32) -> f32 {
+        match self {
+            Self::SignedByte => (raw_bits as u8 as i8) as f32,
+            Self::UnsignedByte => (raw_bits as u8) as f32,
+            Self::SignedShort => (raw_bits as u16 as i16) as f32,
+            Self::Float => f32::from_bits(raw_bits),
         }
     }
 }
 
+/// Format of one PICA200 vertex attribute.
+///
+/// The component-count field is encoded as count minus one in the two high
+/// bits of each four-bit format descriptor. Scalar storage width is selected
+/// independently by `data_type`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VertexAttributeFormat {
     pub data_type: AttributeDataType,
-    pub bit_width: AttributeBitWidth,
+    pub component_count: u8,
 }
 
 impl VertexAttributeFormat {
     fn decode(field: u32) -> Self {
         Self {
             data_type: AttributeDataType::decode(field),
-            bit_width: AttributeBitWidth::decode(field >> 2),
+            component_count: (((field >> 2) & 0x3) + 1) as u8,
         }
     }
 }
@@ -108,6 +107,31 @@ impl RawVertexAttribute {
         self.component_count += 1;
         Ok(())
     }
+
+    /// Converts the fetched integer/float bit patterns into shader-ready f32s.
+    pub fn to_numeric(&self) -> NumericVertexAttribute {
+        let mut components = [0.0; MAX_COMPONENTS_PER_ATTRIBUTE];
+        for (index, component) in self.components[..usize::from(self.component_count)]
+            .iter()
+            .copied()
+            .enumerate()
+        {
+            components[index] = self.format.data_type.decode_component(component);
+        }
+        NumericVertexAttribute {
+            format: self.format,
+            components,
+            component_count: self.component_count,
+        }
+    }
+}
+
+/// One attribute after scalar conversion, ready to be supplied to a vertex shader.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NumericVertexAttribute {
+    pub format: VertexAttributeFormat,
+    pub components: [f32; MAX_COMPONENTS_PER_ATTRIBUTE],
+    pub component_count: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,6 +149,23 @@ impl RawVertexInput {
             fixed_attribute_mask: mask,
         }
     }
+}
+
+impl RawVertexInput {
+    /// Converts all fetched array attributes while preserving the fixed mask.
+    pub fn to_numeric(&self) -> NumericVertexInput {
+        NumericVertexInput {
+            attributes: self.attributes.map(|attribute| attribute.map(|value| value.to_numeric())),
+            fixed_attribute_mask: self.fixed_attribute_mask,
+        }
+    }
+}
+
+/// All vertex-array attributes after numeric scalar conversion.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NumericVertexInput {
+    pub attributes: [Option<NumericVertexAttribute>; MAX_VERTEX_ATTRIBUTES],
+    pub fixed_attribute_mask: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,7 +326,7 @@ impl PicaVertexInputLayout {
         let fixed_attribute_mask = ((format_high >> 16) & 0x0FFF) as u16;
         let default_format = VertexAttributeFormat {
             data_type: AttributeDataType::SignedByte,
-            bit_width: AttributeBitWidth::Bits8,
+            component_count: 1,
         };
         let mut formats = [default_format; MAX_VERTEX_ATTRIBUTES];
 
@@ -342,7 +383,7 @@ impl PicaVertexInputLayout {
                         });
                     }
 
-                    let width = formats[attribute].bit_width.byte_width();
+                    let width = formats[attribute].data_type.byte_width();
                     cursor = align_up(cursor, width);
                     components.push(ArrayComponent {
                         attribute: Some(code),
@@ -539,11 +580,11 @@ mod tests {
         assert_eq!(layout.attribute_count(), 12);
         assert_eq!(layout.fixed_attribute_mask(), 0x005);
         assert_eq!(layout.formats[0].data_type, AttributeDataType::SignedByte);
-        assert_eq!(layout.formats[0].bit_width, AttributeBitWidth::Bits8);
+        assert_eq!(layout.formats[0].component_count, 1);
         assert_eq!(layout.formats[8].data_type, AttributeDataType::SignedShort);
-        assert_eq!(layout.formats[8].bit_width, AttributeBitWidth::Bits16);
+        assert_eq!(layout.formats[8].component_count, 2);
         assert_eq!(layout.formats[11].data_type, AttributeDataType::Float);
-        assert_eq!(layout.formats[11].bit_width, AttributeBitWidth::Bits32);
+        assert_eq!(layout.formats[11].component_count, 4);
     }
 
     #[test]
@@ -557,7 +598,7 @@ mod tests {
 
     #[test]
     fn decodes_component_alignment_padding_and_stride() {
-        let format_low = 1 | (6 << 4);
+        let format_low = 1 | (2 << 4);
         let config1 = (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
         let layout =
@@ -574,7 +615,7 @@ mod tests {
     fn reads_raw_unsigned_byte_and_signed_short_components_from_fcram() {
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = FCRAM_BASE + 0x1000;
-        let format_low = 1 | (6 << 4);
+        let format_low = 1 | (2 << 4);
         let config1 = (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
         let layout =
@@ -601,7 +642,7 @@ mod tests {
     fn preserves_multiple_float_component_payloads_as_raw_bits() {
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = VRAM_BASE + 0x1000;
-        let format_low = 0xF;
+        let format_low = 0xB;
         let config1 = 0;
         let config2 = (12 << 16) | (3 << 28);
         let layout =
