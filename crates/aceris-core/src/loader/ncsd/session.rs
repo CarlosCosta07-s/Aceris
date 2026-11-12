@@ -152,6 +152,15 @@ pub enum IpcPhysicalBufferTranslationError {
     DestinationWriteFailed { address: u32 },
 }
 
+/// One translated homogeneous type-0 handle group in an IPC message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Arm11IpcHandleGroup {
+    /// Offset of the type-0 descriptor within the translation section.
+    pub word_offset: usize,
+    /// Receiver-side handles corresponding to the original handle array.
+    pub handles: Vec<Option<u32>>,
+}
+
 /// A mapped type-5/6/7 buffer kept alive between an IPC request and its reply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Arm11IpcTemporaryBuffer {
@@ -495,6 +504,162 @@ impl Arm11ProcessSession {
         Ok(destination_handles)
     }
 
+    /// Translates every type-0 group in a mixed IPC translation section.
+    ///
+    /// Only memory-block handles are currently transferable. All descriptors,
+    /// source object types, counts and MOVE duplicates across the full section
+    /// are validated before the destination table is modified. Destination
+    /// handles for all groups are created before any MOVE source is closed.
+    fn translate_memory_block_handle_groups_from_ipc(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        parameters: &[ipc::IpcTranslationParameter<'_>],
+    ) -> std::result::Result<Vec<Arm11IpcHandleGroup>, kernel::IpcHandleTranslationError> {
+        let mut groups = Vec::new();
+        groups
+            .try_reserve_exact(parameters.len())
+            .map_err(|_| {
+                kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory)
+            })?;
+
+        let mut moved_source_handles = Vec::new();
+        let mut total_non_null_handles = 0usize;
+
+        for parameter in parameters {
+            let ipc::IpcTranslationParameter::Handles {
+                descriptor,
+                word_offset,
+                handles,
+                ..
+            } = parameter
+            else {
+                continue;
+            };
+            let translation = kernel::IpcHandleTranslationDescriptor::decode(*descriptor)?;
+            if translation.requests_process_id() {
+                return Err(kernel::IpcHandleTranslationError::ProcessIdTranslationUnsupported);
+            }
+            if usize::from(translation.handle_count()) != handles.len() {
+                return Err(kernel::IpcHandleTranslationError::HandleCountMismatch {
+                    expected: translation.handle_count(),
+                    actual: handles.len(),
+                });
+            }
+            total_non_null_handles = total_non_null_handles
+                .checked_add(handles.iter().filter(|handle| **handle != 0).count())
+                .ok_or(kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory))?;
+
+            for source_handle in handles.iter().copied().filter(|handle| *handle != 0) {
+                source
+                    .kernel_objects
+                    .memory_block_backing(source_handle)
+                    .map_err(kernel::IpcHandleTranslationError::Kernel)?;
+                source
+                    .kernel_objects
+                    .memory_block_permissions(source_handle)
+                    .ok_or(kernel::IpcHandleTranslationError::Kernel(
+                        KernelHandleError::WrongType,
+                    ))?;
+
+                if translation.moves_handle() {
+                    if moved_source_handles.contains(&source_handle) {
+                        return Err(kernel::IpcHandleTranslationError::DuplicateMoveHandle {
+                            handle: source_handle,
+                        });
+                    }
+                    moved_source_handles.try_reserve(1).map_err(|_| {
+                        kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory)
+                    })?;
+                    moved_source_handles.push(source_handle);
+                }
+            }
+            groups.push(Arm11IpcHandleGroup {
+                word_offset: *word_offset,
+                handles: Vec::new(),
+            });
+        }
+
+        if groups.is_empty() {
+            return Ok(groups);
+        }
+
+        let mut created_destination_handles = Vec::new();
+        created_destination_handles
+            .try_reserve_exact(total_non_null_handles)
+            .map_err(|_| {
+                kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory)
+            })?;
+
+        let mut group_index = 0usize;
+        for parameter in parameters {
+            let ipc::IpcTranslationParameter::Handles {
+                descriptor,
+                handles,
+                ..
+            } = parameter
+            else {
+                continue;
+            };
+            let mut translated_handles = Vec::new();
+            translated_handles
+                .try_reserve_exact(handles.len())
+                .map_err(|_| {
+                    for handle in created_destination_handles.iter().copied() {
+                        let _ = self.kernel_objects.close_handle(handle);
+                    }
+                    kernel::IpcHandleTranslationError::Kernel(KernelHandleError::OutOfMemory)
+                })?;
+
+            for source_handle in handles.iter().copied() {
+                if source_handle == 0 {
+                    translated_handles.push(None);
+                    continue;
+                }
+                match self.import_memory_block_handle(source, source_handle) {
+                    Ok(destination_handle) => {
+                        created_destination_handles.push(destination_handle);
+                        translated_handles.push(Some(destination_handle));
+                    }
+                    Err(error) => {
+                        for handle in created_destination_handles.iter().copied() {
+                            let _ = self.kernel_objects.close_handle(handle);
+                        }
+                        return Err(kernel::IpcHandleTranslationError::Kernel(error));
+                    }
+                }
+            }
+            groups[group_index].handles = translated_handles;
+            group_index += 1;
+
+            // The descriptor is decoded again below only when MOVE sources close.
+            let _ = descriptor;
+        }
+
+        for parameter in parameters {
+            let ipc::IpcTranslationParameter::Handles {
+                descriptor,
+                handles,
+                ..
+            } = parameter
+            else {
+                continue;
+            };
+            let translation = kernel::IpcHandleTranslationDescriptor::decode(*descriptor)?;
+            if translation.moves_handle() {
+                for source_handle in handles.iter().copied().filter(|handle| *handle != 0) {
+                    if let Err(error) = source.kernel_objects.close_handle(source_handle) {
+                        for destination_handle in created_destination_handles.iter().copied() {
+                            let _ = self.kernel_objects.close_handle(destination_handle);
+                        }
+                        return Err(kernel::IpcHandleTranslationError::Kernel(error));
+                    }
+                }
+            }
+        }
+
+        Ok(groups)
+    }
+
     /// Translates a translation section containing one type-0 descriptor and its handles.
     ///
     /// The generic IPC decoder has already bounded the section to the word count
@@ -526,10 +691,9 @@ impl Arm11ProcessSession {
     /// Applies every type-1 IPC static-buffer copy to a specific receiving thread.
     ///
     /// The receiver's 16-entry descriptor table is read from that thread's live TLS
-    /// slot. All descriptors, capacities, destination ranges and source bytes are
+    /// slot. All static-buffer capacities, destination ranges and source bytes are
     /// validated/staged before the first destination byte is changed. Other
-    /// translation families are rejected by this helper and must use their own
-    /// kernel translation paths.
+    /// translation families are left for their corresponding transport helpers.
     pub fn copy_static_buffer_translation_from_ipc(
         &mut self,
         source: &mut Arm11ProcessSession,
@@ -571,6 +735,7 @@ impl Arm11ProcessSession {
         }
 
         let mut pending = Vec::new();
+        let mut found_static_buffer = false;
         pending
             .try_reserve_exact(parameters.len())
             .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
@@ -584,16 +749,9 @@ impl Arm11ProcessSession {
                     source_address,
                     ..
                 } => (word_offset, buffer_index, size_bytes, source_address),
-                ipc::IpcTranslationParameter::Handles { descriptor, .. }
-                | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. }
-                | ipc::IpcTranslationParameter::PhysicalBufferTable { descriptor, .. } => {
-                    return Err(
-                        IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
-                            descriptor,
-                        },
-                    );
-                }
+                _ => continue,
             };
+            found_static_buffer = true;
 
             let entry_address = self
                 .address_space
@@ -670,6 +828,10 @@ impl Arm11ProcessSession {
                 destination_address,
                 bytes,
             });
+        }
+
+        if !found_static_buffer {
+            return Err(IpcStaticBufferTranslationError::NoStaticBufferParameters);
         }
 
         let mut translated = Vec::new();
