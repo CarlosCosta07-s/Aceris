@@ -1021,7 +1021,6 @@ impl Arm11CodeAddressSpace {
         }
     }
 
-
     fn location_is_writable(&self, location: MemoryLocation) -> bool {
         match location {
             MemoryLocation::Static { kind, .. } => self.segment_is_writable(kind),
