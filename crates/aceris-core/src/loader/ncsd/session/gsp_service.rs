@@ -42,6 +42,7 @@ pub enum GspServiceError {
     InvalidClientId { client_id: u8 },
     ClientAlreadyRegistered { client_id: u8 },
     ClientNotRegistered { client_id: u8 },
+    NoFreeClientSlots,
     MisalignedSharedMemoryBase { address: u32 },
     SharedMemoryUnavailable { address: u32 },
     AddressOverflow { base: u32, offset: u32 },
@@ -95,6 +96,29 @@ impl GspServiceRegistry {
         Self {
             clients: [None; GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize],
         }
+    }
+
+    /// Registers a client in the lowest available slot and returns its ID.
+    ///
+    /// This deterministic first-free policy belongs to Aceris' service layer;
+    /// the caller still owns shared-memory creation, mapping and event creation.
+    /// A failed validation leaves the registry unchanged.
+    pub fn register_next_available_client(
+        &mut self,
+        session: &mut Arm11ProcessSession,
+        shared_memory_base: u32,
+        event_handle: u32,
+    ) -> Result<u8, GspServiceError> {
+        let index = self
+            .clients
+            .iter()
+            .position(|client| client.is_none())
+            .ok_or(GspServiceError::NoFreeClientSlots)?;
+        let client_id =
+            u8::try_from(index).map_err(|_| GspServiceError::NoFreeClientSlots)?;
+
+        self.register_client(session, client_id, shared_memory_base, event_handle)?;
+        Ok(client_id)
     }
 
     /// Registers a client against existing process memory and an event handle.
@@ -338,6 +362,58 @@ mod tests {
             }
         );
         assert_eq!(registry.registered_client_count(), 0);
+    }
+
+    #[test]
+    fn automatic_registration_allocates_free_slots_and_reuses_unregistered_slots() {
+        let mut session = test_session();
+        let events = (0..5)
+            .map(|_| {
+                session
+                    .kernel_objects
+                    .insert_event(EventResetType::Sticky)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut registry = GspServiceRegistry::new();
+
+        // Invalid resources must not reserve the first slot.
+        assert_eq!(
+            registry.register_next_available_client(
+                &mut session,
+                SHARED_MEMORY_BASE,
+                u32::MAX,
+            ),
+            Err(GspServiceError::InvalidEventHandle { handle: u32::MAX })
+        );
+        assert_eq!(registry.registered_client_count(), 0);
+
+        for (expected_id, event) in events[..4].iter().copied().enumerate() {
+            assert_eq!(
+                registry
+                    .register_next_available_client(&mut session, SHARED_MEMORY_BASE, event)
+                    .unwrap(),
+                expected_id as u8
+            );
+        }
+        assert_eq!(registry.registered_client_count(), 4);
+        assert_eq!(
+            registry.register_next_available_client(
+                &mut session,
+                SHARED_MEMORY_BASE,
+                events[4],
+            ),
+            Err(GspServiceError::NoFreeClientSlots)
+        );
+
+        registry.unregister_client(1).unwrap();
+        assert_eq!(
+            registry
+                .register_next_available_client(&mut session, SHARED_MEMORY_BASE, events[4])
+                .unwrap(),
+            1
+        );
+        assert_eq!(registry.registered_client_count(), 4);
     }
 
     #[test]
