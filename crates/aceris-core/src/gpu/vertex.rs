@@ -303,6 +303,10 @@ pub enum VertexInputError {
         attribute: usize,
         count: usize,
     },
+    UnsupportedFloatWidth {
+        attribute: usize,
+        width_bits: u8,
+    },
     InvalidStride {
         array: usize,
         calculated: usize,
