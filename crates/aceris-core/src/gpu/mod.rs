@@ -31,10 +31,10 @@ pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
 pub use shader_input::{
-    PicaVertexShaderInputLayout, PicaVertexShaderInputState, VertexShaderAttributeBinding,
-    VertexShaderInputBindings, VertexShaderInputError, MAX_VERTEX_SHADER_INPUTS,
-    MAX_VERTEX_SHADER_REGISTERS, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
-    REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_INPUTBUFFER_CONFIG,
+    MAX_VERTEX_SHADER_INPUTS, MAX_VERTEX_SHADER_REGISTERS, PicaVertexShaderInputLayout,
+    PicaVertexShaderInputState, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
+    REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_INPUTBUFFER_CONFIG, VertexShaderAttributeBinding,
+    VertexShaderInputBindings, VertexShaderInputError,
 };
 pub use vertex::{
     AttributeDataType, MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE, MAX_VERTEX_ARRAYS,
