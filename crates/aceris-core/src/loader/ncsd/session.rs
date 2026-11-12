@@ -660,6 +660,27 @@ impl Arm11ProcessSession {
         Ok(groups)
     }
 
+    /// Translates every memory-block handle group in a decoded IPC message.
+    ///
+    /// Type-0 groups are transferred in their original order. Other decoded
+    /// translation families are left to their dedicated helpers. The returned
+    /// offsets identify the descriptor words to replace in the receiver's
+    /// message buffer with the translated handle values.
+    ///
+    /// All type-0 source handles and MOVE duplicates are validated before the
+    /// destination handle table is changed. All destination handles are created
+    /// before any MOVE source is closed.
+    pub fn translate_memory_block_handle_groups_from_ipc_message(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        message: ipc::IpcMessage<'_>,
+    ) -> std::result::Result<Vec<Arm11IpcHandleGroup>, kernel::IpcHandleTranslationError> {
+        let parameters = message
+            .translation_parameters()
+            .map_err(|_| kernel::IpcHandleTranslationError::InvalidDescriptor)?;
+        self.translate_memory_block_handle_groups_from_ipc(source, &parameters)
+    }
+
     /// Translates a translation section containing one type-0 descriptor and its handles.
     ///
     /// The generic IPC decoder has already bounded the section to the word count
@@ -3085,6 +3106,72 @@ mod tests {
                 .translate_memory_block_translation_section_from_ipc(&mut source, empty_message,),
             Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
         );
+    }
+
+    #[test]
+    fn ipc_message_translation_section_translates_multiple_handle_groups() {
+        let mut source = test_session();
+        let copy_source = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let move_source = source.create_memory_block(0x1000, 1, 3).unwrap();
+        let mut destination = test_session();
+
+        // COPY one handle, then a static-buffer descriptor, then MOVE one handle.
+        let words = [
+            0x1234_0006,
+            0x0000_0000,
+            copy_source,
+            0x0001_4002,
+            0x0020_0000,
+            0x0000_0010,
+            move_source,
+        ];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+
+        let groups = destination
+            .translate_memory_block_handle_groups_from_ipc_message(&mut source, message)
+            .unwrap();
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].word_offset, 0);
+        assert_eq!(groups[1].word_offset, 4);
+        assert_eq!(groups[0].handles.len(), 1);
+        assert_eq!(groups[1].handles.len(), 1);
+
+        let copied = groups[0].handles[0].unwrap();
+        let moved = groups[1].handles[0].unwrap();
+        assert!(source.kernel_objects.memory_block_backing(copy_source).is_ok());
+        assert_eq!(
+            source.kernel_objects.memory_block_backing(move_source),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert!(destination.kernel_objects.memory_block_backing(copied).is_ok());
+        assert!(destination.kernel_objects.memory_block_backing(moved).is_ok());
+    }
+
+    #[test]
+    fn ipc_message_translation_section_rejects_duplicate_moves_across_groups_atomically() {
+        let mut source = test_session();
+        let handle = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let mut destination = test_session();
+
+        let words = [
+            0x1234_0004,
+            0x0000_0010,
+            handle,
+            0x0000_0010,
+            handle,
+        ];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+
+        assert_eq!(
+            destination.translate_memory_block_handle_groups_from_ipc_message(
+                &mut source,
+                message
+            ),
+            Err(kernel::IpcHandleTranslationError::DuplicateMoveHandle { handle })
+        );
+        assert_eq!(destination.kernel_objects.handle_count(), 0);
+        assert!(source.kernel_objects.memory_block_backing(handle).is_ok());
     }
 
     #[test]
