@@ -6,7 +6,10 @@
 //! remain explicit responsibilities of the draw-command integration layer.
 
 use super::vertex::REG_ATTRIBBUFFERS_LOC;
-use super::{GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200};
+use super::{
+    GpuAddressSpaceError, GpuDmaAddressSpace, GpuPhysicalMemory, GpuPhysicalMemoryError,
+    Pica200,
+};
 
 pub const REG_INDEXBUFFER_CONFIG: u16 = 0x227;
 pub const REG_NUMVERTICES: u16 = 0x228;
@@ -147,6 +150,70 @@ impl IndexBufferLayout {
         };
         Ok(indices)
     }
+
+    /// Reads indices through one registered linear-memory DMA mapping.
+    ///
+    /// The complete index byte range must fit in one mapping; a partial or
+    /// cross-mapping read is rejected before the physical memory is accessed.
+    pub fn read_indices_via_dma(
+        self,
+        memory: &GpuPhysicalMemory,
+        address_space: &GpuDmaAddressSpace,
+        linear_virtual_base: u32,
+        first_index: u32,
+        count: usize,
+    ) -> Result<Vec<u32>, IndexBufferError> {
+        if count > MAX_INDICES_PER_READ {
+            return Err(IndexBufferError::TooManyIndices { count });
+        }
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let width = self.element_width.byte_width();
+        let first_offset = u64::from(first_index)
+            .checked_mul(width as u64)
+            .ok_or(IndexBufferError::AddressOverflow {
+                base: linear_virtual_base,
+                offset: u64::MAX,
+            })?;
+        let relative_offset = u64::from(self.byte_offset)
+            .checked_add(first_offset)
+            .ok_or(IndexBufferError::AddressOverflow {
+                base: linear_virtual_base,
+                offset: u64::MAX,
+            })?;
+        let virtual_address = u64::from(linear_virtual_base)
+            .checked_add(relative_offset)
+            .ok_or(IndexBufferError::AddressOverflow {
+                base: linear_virtual_base,
+                offset: relative_offset,
+            })?;
+        let virtual_address =
+            u32::try_from(virtual_address).map_err(|_| IndexBufferError::AddressOverflow {
+                base: linear_virtual_base,
+                offset: relative_offset,
+            })?;
+        let byte_count = count
+            .checked_mul(width)
+            .ok_or(IndexBufferError::AddressOverflow {
+                base: linear_virtual_base,
+                offset: relative_offset,
+            })?;
+        let resolved =
+            address_space.resolve_physical_range(memory, virtual_address, byte_count)?;
+
+        let mut bytes = vec![0u8; byte_count];
+        memory.read(resolved.physical_address, &mut bytes)?;
+        let indices = match self.element_width {
+            IndexElementWidth::UnsignedByte => bytes.into_iter().map(u32::from).collect(),
+            IndexElementWidth::UnsignedShort => bytes
+                .chunks_exact(2)
+                .map(|pair| u32::from(u16::from_le_bytes([pair[0], pair[1]])))
+                .collect(),
+        };
+        Ok(indices)
+    }
 }
 
 /// Failure while reading a PICA200 index buffer.
@@ -156,6 +223,7 @@ pub enum IndexBufferError {
     MissingRegister { register: u16 },
     AddressOverflow { base: u32, offset: u64 },
     PhysicalMemory(GpuPhysicalMemoryError),
+    GpuAddressSpace(GpuAddressSpaceError),
 }
 
 impl std::fmt::Display for IndexBufferError {
@@ -169,6 +237,12 @@ impl std::error::Error for IndexBufferError {}
 impl From<GpuPhysicalMemoryError> for IndexBufferError {
     fn from(error: GpuPhysicalMemoryError) -> Self {
         Self::PhysicalMemory(error)
+    }
+}
+
+impl From<GpuAddressSpaceError> for IndexBufferError {
+    fn from(error: GpuAddressSpaceError) -> Self {
+        Self::GpuAddressSpace(error)
     }
 }
 
