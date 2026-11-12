@@ -248,7 +248,10 @@ impl Pica200 {
         &self,
         index: usize,
         format: PicaVertexShaderInstructionFormat,
-    ) -> Option<(PicaVertexShaderInstruction, Option<PicaShaderOperandDescriptor>)> {
+    ) -> Option<(
+        PicaVertexShaderInstruction,
+        Option<PicaShaderOperandDescriptor>,
+    )> {
         let instruction = self.decode_vertex_shader_instruction(index, format)?;
         let descriptor = instruction
             .operand_descriptor_index()
@@ -656,7 +659,8 @@ mod tests {
         gpu.write_register(REG_VSH_OPDESCS_DATA0, descriptor_word)
             .unwrap();
 
-        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0x10).unwrap();
+        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0x10)
+            .unwrap();
         let instruction = (0x03u32 << 26) | (0x21 << 0);
         gpu.write_register(REG_VSH_CODETRANSFER_DATA0, instruction)
             .unwrap();
@@ -668,10 +672,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(
-            decoded.operand_descriptor_index(),
-            Some(0x21)
-        );
+        assert_eq!(decoded.operand_descriptor_index(), Some(0x21));
         let descriptor = descriptor.unwrap();
         assert_eq!(descriptor.destination_mask, 0xF);
         assert_eq!(descriptor.source1_component(0), Some(0));
