@@ -703,6 +703,75 @@ mod tests {
     }
 
     #[test]
+    fn vertex_shader_transfer_indices_wrap_at_their_12_bit_boundary() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0x0FFF)
+            .unwrap();
+        gpu.write_register(REG_VSH_CODETRANSFER_DATA0, 0x1111_1111)
+            .unwrap();
+        gpu.write_register(REG_VSH_CODETRANSFER_DATA0 + 1, 0x2222_2222)
+            .unwrap();
+        assert_eq!(
+            gpu.vertex_shader_instruction(VSH_CODE_TRANSFER_WORDS - 1),
+            Some(0x1111_1111)
+        );
+        assert_eq!(gpu.vertex_shader_instruction(0), Some(0x2222_2222));
+        assert_eq!(gpu.register(REG_VSH_CODETRANSFER_INDEX), Some(1));
+
+        gpu.write_register(REG_VSH_OPDESCS_INDEX, 0x0FFF).unwrap();
+        gpu.write_register(REG_VSH_OPDESCS_DATA0, 0x3333_3333)
+            .unwrap();
+        gpu.write_register(REG_VSH_OPDESCS_DATA0 + 1, 0x4444_4444)
+            .unwrap();
+        assert_eq!(
+            gpu.vertex_shader_operand_descriptor(VSH_OPDESC_TRANSFER_WORDS - 1),
+            Some(0x3333_3333)
+        );
+        assert_eq!(
+            gpu.vertex_shader_operand_descriptor(0),
+            Some(0x4444_4444)
+        );
+        assert_eq!(gpu.register(REG_VSH_OPDESCS_INDEX), Some(1));
+    }
+
+    #[test]
+    fn vertex_shader_float_uniform_index_is_bounded_to_documented_c_registers() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_INDEX, (VSH_FLOAT_UNIFORM_COUNT - 1) as u32)
+            .unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0, 4.0f32.to_bits())
+            .unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 1, 3.0f32.to_bits())
+            .unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 2, 2.0f32.to_bits())
+            .unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 3, 1.0f32.to_bits())
+            .unwrap();
+        assert_eq!(
+            gpu.vertex_shader_uniform(VSH_FLOAT_UNIFORM_COUNT - 1),
+            Some([1.0, 2.0, 3.0, 4.0])
+        );
+        assert_eq!(
+            gpu.register(REG_VSH_FLOATUNIFORM_INDEX),
+            Some(VSH_FLOAT_UNIFORM_COUNT as u32)
+        );
+
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0, 4.0f32.to_bits())
+            .unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 1, 3.0f32.to_bits())
+            .unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 2, 2.0f32.to_bits())
+            .unwrap();
+        gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0 + 3, 1.0f32.to_bits())
+            .unwrap();
+        assert_eq!(
+            gpu.vertex_shader_uniform(VSH_FLOAT_UNIFORM_COUNT),
+            None
+        );
+        assert_eq!(gpu.pending_vertex_shader_uniform_words(), 0);
+    }
+
+    #[test]
     fn reset_clears_vertex_shader_uploads_uniforms_and_transfer_state() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0).unwrap();
