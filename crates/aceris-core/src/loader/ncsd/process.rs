@@ -1294,13 +1294,14 @@ impl Arm11CodeAddressSpace {
                 return None;
             }
 
-            if let Some((previous_address, previous_size)) = chunks.last_mut() {
-                if previous_address.checked_add(*previous_size) == Some(physical_address) {
-                    *previous_size = previous_size.checked_add(chunk_size)?;
-                } else {
-                    chunks.try_reserve(1).ok()?;
-                    chunks.push((physical_address, chunk_size));
-                }
+            let extends_previous = chunks
+                .last()
+                .is_some_and(|(previous_address, previous_size)| {
+                    previous_address.checked_add(*previous_size) == Some(physical_address)
+                });
+            if extends_previous {
+                let previous = chunks.last_mut()?;
+                previous.1 = previous.1.checked_add(chunk_size)?;
             } else {
                 chunks.try_reserve(1).ok()?;
                 chunks.push((physical_address, chunk_size));

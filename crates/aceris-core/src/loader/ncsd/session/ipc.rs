@@ -118,6 +118,7 @@ pub fn decode_translation_section(
     let mut cursor = 0usize;
 
     while cursor < words.len() {
+        let descriptor_word_offset = cursor;
         let descriptor = words[cursor];
         cursor += 1;
         let translation_type = ((descriptor >> 1) & 0x7) as u8;
@@ -154,7 +155,7 @@ pub fn decode_translation_section(
                     .map_err(|_| IpcTranslationSectionError::InvalidDescriptor { descriptor })?;
                 IpcTranslationParameter::Handles {
                     descriptor,
-                    word_offset: cursor - payload_words - 1,
+                    word_offset: descriptor_word_offset,
                     handle_count: decoded.handle_count(),
                     move_handles: decoded.moves_handle(),
                     requests_process_id: decoded.requests_process_id(),
@@ -168,7 +169,7 @@ pub fn decode_translation_section(
                 }
                 IpcTranslationParameter::StaticBuffer {
                     descriptor,
-                    word_offset: cursor - payload_words - 1,
+                    word_offset: descriptor_word_offset,
                     buffer_index: ((descriptor >> 10) & 0x0F) as u8,
                     size_bytes: descriptor >> 14,
                     source_address: payload[0],
@@ -180,7 +181,7 @@ pub fn decode_translation_section(
                 }
                 IpcTranslationParameter::PhysicalBufferTable {
                     descriptor,
-                    word_offset: cursor - payload_words - 1,
+                    word_offset: descriptor_word_offset,
                     buffer_index: ((descriptor >> 4) & 0x0F) as u8,
                     size_bytes: descriptor >> 8,
                     source_address: payload[0],
@@ -193,7 +194,7 @@ pub fn decode_translation_section(
                 }
                 IpcTranslationParameter::MappedBuffer {
                     descriptor,
-                    word_offset: cursor - payload_words - 1,
+                    word_offset: descriptor_word_offset,
                     permissions: translation_type & 0x03,
                     size_bytes: descriptor >> 4,
                     source_address: payload[0],
@@ -353,6 +354,7 @@ mod tests {
         assert!(matches!(
             parameters[0],
             super::IpcTranslationParameter::Handles {
+                word_offset: 0,
                 handle_count: 2,
                 move_handles: false,
                 requests_process_id: false,
@@ -363,6 +365,7 @@ mod tests {
         assert!(matches!(
             parameters[1],
             super::IpcTranslationParameter::StaticBuffer {
+                word_offset: 3,
                 buffer_index: 3,
                 size_bytes: 0x20,
                 source_address: 0x0030_0000,
@@ -372,6 +375,7 @@ mod tests {
         assert!(matches!(
             parameters[2],
             super::IpcTranslationParameter::MappedBuffer {
+                word_offset: 5,
                 permissions: 1,
                 size_bytes: 0x1000,
                 source_address: 0x0040_0000,
@@ -381,6 +385,7 @@ mod tests {
         assert!(matches!(
             parameters[3],
             super::IpcTranslationParameter::MappedBuffer {
+                word_offset: 7,
                 permissions: 2,
                 size_bytes: 0x200,
                 source_address: 0x0050_0000,
@@ -390,6 +395,7 @@ mod tests {
         assert!(matches!(
             parameters[4],
             super::IpcTranslationParameter::MappedBuffer {
+                word_offset: 9,
                 permissions: 3,
                 size_bytes: 0x300,
                 source_address: 0x0060_0000,
