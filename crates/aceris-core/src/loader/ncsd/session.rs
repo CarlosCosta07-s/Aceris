@@ -428,12 +428,19 @@ impl Arm11ProcessSession {
         source: &mut Arm11ProcessSession,
         message: ipc::IpcMessage<'_>,
     ) -> std::result::Result<Vec<Option<u32>>, kernel::IpcHandleTranslationError> {
-        let translation_words = message.translation_words();
-        let (descriptor, source_handles) = translation_words
-            .split_first()
-            .ok_or(kernel::IpcHandleTranslationError::InvalidDescriptor)?;
+        let parameters = message
+            .translation_parameters()
+            .map_err(|_| kernel::IpcHandleTranslationError::InvalidDescriptor)?;
+        let [ipc::IpcTranslationParameter::Handles {
+            descriptor,
+            handles,
+            ..
+        }] = parameters.as_slice()
+        else {
+            return Err(kernel::IpcHandleTranslationError::InvalidDescriptor);
+        };
 
-        self.translate_memory_block_handles_from_ipc(source, *descriptor, source_handles)
+        self.translate_memory_block_handles_from_ipc(source, *descriptor, handles)
     }
 
     /// Maps a memory-block handle into this process with the requested R/W permissions.
@@ -2228,6 +2235,31 @@ mod tests {
             ),
             Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
         );
+    }
+
+    #[test]
+    fn ipc_memory_block_adapter_rejects_extra_translation_parameter_groups() {
+        let mut source = test_session();
+        let handle = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let mut destination = test_session();
+        let words = [
+            0x1234_0004, // One handle descriptor plus one static-buffer descriptor.
+            0,
+            handle,
+            0x0000_4002,
+            0x0040_0000,
+        ];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+
+        assert_eq!(
+            destination.translate_memory_block_translation_section_from_ipc(
+                &mut source,
+                message,
+            ),
+            Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
+        );
+        assert_eq!(destination.kernel_objects.handle_count(), 0);
+        assert!(source.kernel_objects.memory_block_backing(handle).is_ok());
     }
 
     #[test]
