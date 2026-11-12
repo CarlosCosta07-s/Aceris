@@ -27,8 +27,10 @@ pub use geometry::{
     Viewport,
 };
 pub use gsp_interrupt::{
-    GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_CLIENT_STRIDE, GSP_INTERRUPT_QUEUE_SIZE,
-    GspInterruptId, GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
+    GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_CLIENT_STRIDE,
+    GSP_INTERRUPT_QUEUE_FULL_ERROR, GSP_INTERRUPT_QUEUE_IGNORE_PDC,
+    GSP_INTERRUPT_QUEUE_PDC_THRESHOLD, GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId,
+    GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
 };
 pub use gsp_queue::{
     GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_CAPACITY,
