@@ -1252,6 +1252,49 @@ mod tests {
     }
 
     #[test]
+    fn directed_rounding_uses_residuals_for_multiply_divide_and_sqrt() {
+        let (mut cpu, mut mem) = machine();
+
+        let adjacent = f32::from_bits(0x3F80_0001);
+        set_f32(&mut cpu, 1, adjacent);
+        set_f32(&mut cpu, 2, adjacent);
+        cpu.vfp_mut().fpscr = 1 << 22; // toward +infinity
+        run(&mut cpu, &mut mem, &[dp(VMUL, 0, 1, 2, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0x3F80_0003);
+
+        set_f32(&mut cpu, 1, 1.0);
+        set_f32(&mut cpu, 2, 10.0);
+        cpu.vfp_mut().fpscr = 2 << 22; // toward -infinity
+        run(&mut cpu, &mut mem, &[dp(VDIV, 0, 1, 2, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0x3DCC_CCCC);
+
+        set_f32(&mut cpu, 1, 2.0);
+        cpu.vfp_mut().fpscr = 1 << 22; // sqrt(2) rounds upward
+        run(&mut cpu, &mut mem, &[dp(VSQRT, 0, 0, 1, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0x3FB5_04F4);
+    }
+
+    #[test]
+    fn inexact_underflow_and_flush_to_zero_update_fpscr_flags() {
+        let (mut cpu, mut mem) = machine();
+        set_f32(&mut cpu, 1, f32::from_bits(1));
+        set_f32(&mut cpu, 2, 0.5);
+        run(&mut cpu, &mut mem, &[dp(VMUL, 0, 1, 2, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0);
+        assert_ne!(cpu.vfp().fpscr() & FPSCR_IXC, 0);
+        assert_ne!(cpu.vfp().fpscr() & FPSCR_UFC, 0);
+
+        let (mut cpu, mut mem) = machine();
+        set_f32(&mut cpu, 1, f32::from_bits(0x0080_0000)); // minimum normal
+        set_f32(&mut cpu, 2, 0.5); // exact subnormal result
+        cpu.vfp_mut().fpscr = FPSCR_FZ;
+        run(&mut cpu, &mut mem, &[dp(VMUL, 0, 1, 2, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0);
+        assert_ne!(cpu.vfp().fpscr() & FPSCR_IXC, 0);
+        assert_ne!(cpu.vfp().fpscr() & FPSCR_UFC, 0);
+    }
+
+    #[test]
     fn fpscr_rounding_mode_controls_double_arithmetic() {
         let (mut cpu, mut mem) = machine();
         set_f64(&mut cpu, 1, 1.0);
