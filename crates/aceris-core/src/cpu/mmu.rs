@@ -43,6 +43,7 @@ pub(super) struct Params {
     pub n: u32,
     pub dacr: u32,
     pub asid: u8,
+    pub fcse_pid: u32,
     pub tlb_preserve: bool,
     pub tlb_victim: usize,
     pub privileged: bool,
@@ -395,12 +396,20 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             access
         };
 
-        let walk = if let Some(entry) = self.tlb.lookup(&self.params, va) {
-            entry.resolve(&self.params, va, access)
+        // FCSE remaps the low 32 MiB into a process-specific 32 MiB
+        // window before the address reaches the MMU and the unified TLB.
+        let mva = if va < 0x0200_0000 {
+            self.params.fcse_pid | va
         } else {
-            match walk_page_tables(self.inner, &self.params, va, access)? {
+            va
+        };
+
+        let walk = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
+            entry.resolve(&self.params, mva, access)
+        } else {
+            match walk_page_tables(self.inner, &self.params, mva, access)? {
                 PageWalk::Mapped(entry) => {
-                    let result = entry.resolve(&self.params, va, access);
+                    let result = entry.resolve(&self.params, mva, access);
                     self.tlb
                         .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
                     result
@@ -512,6 +521,7 @@ impl Arm11Core {
             n: self.cp15.ttbcr_n(),
             dacr: self.cp15.dacr(),
             asid: self.cp15.asid(),
+            fcse_pid: self.cp15.fcse_pid(),
             tlb_preserve: self.cp15.tlb_preserve(),
             tlb_victim: self.cp15.tlb_victim(),
             privileged: self.cpsr.privileged(),
@@ -615,6 +625,7 @@ mod tests {
             n: cpu.cp15.ttbcr_n(),
             dacr: cpu.cp15.dacr(),
             asid: cpu.cp15.asid(),
+            fcse_pid: cpu.cp15.fcse_pid(),
             tlb_preserve: cpu.cp15.tlb_preserve(),
             tlb_victim: cpu.cp15.tlb_victim(),
             privileged: cpu.cpsr.privileged(),
@@ -907,6 +918,39 @@ mod tests {
         cpu.step(&mut mem).unwrap();
         assert_eq!(cpu.regs[2], 1);
         assert_eq!(mem.read32(0x2_0000).unwrap(), 0xAAAA_0001);
+    }
+
+    #[test]
+    fn fcse_pid_remaps_low_virtual_addresses_before_tlb_lookup() {
+        let (cpu, mut mem) = machine();
+        let va = 0x0012_3456;
+        let mva = 0x0212_3456;
+        set_l1(
+            &mut mem,
+            mva >> 20,
+            0x0050_0000 | SECTION | SECTION_AP_RW_ALL,
+        );
+
+        let mut params = params(&cpu);
+        params.fcse_pid = 0x0200_0000;
+        let mut tlb = TranslationLookasideBuffer::default();
+        {
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert_eq!(mmu.map(va, Access::Read).unwrap(), 0x0052_3456);
+        }
+        assert_eq!(tlb.len(), 1);
+        assert_eq!(tlb.entries[0].virtual_base, mva & 0xFFF0_0000);
+
+        // A zero PID uses the unmodified VA and must not alias the process-1 entry.
+        params.fcse_pid = 0;
+        {
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert!(matches!(
+                mmu.map(va, Access::Read),
+                Err(Error::InvalidAccess { addr }) if addr == va
+            ));
+        }
+        assert_eq!(tlb.len(), 1);
     }
 
     #[test]

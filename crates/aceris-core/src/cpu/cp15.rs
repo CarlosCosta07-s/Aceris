@@ -24,6 +24,24 @@ pub(super) enum Cp15Fault {
 
 /// Main ID register value reported by the core (ARM11 MPCore family).
 pub const MIDR: u32 = 0x410F_B024;
+/// ARM11 MPCore Processor Feature Register 0 (CP15 c0,c1,0).
+pub const PFR0_MP11: u32 = 0x0000_0111;
+/// ARM11 MPCore Processor Feature Register 1 (CP15 c0,c1,1).
+pub const PFR1_MP11: u32 = 0x0000_0001;
+/// ARM11 MPCore Debug Feature Register 0 (CP15 c0,c1,2).
+pub const DFR0_MP11: u32 = 0x0000_0002;
+/// ARM11 MPCore Memory Model Feature Registers (CP15 c0,c1,4..7).
+pub const MMFR0_MP11: u32 = 0x0110_0103;
+pub const MMFR1_MP11: u32 = 0x1002_0302;
+pub const MMFR2_MP11: u32 = 0x0122_2000;
+pub const MMFR3_MP11: u32 = 0x0000_0000;
+/// ARM11 MPCore Instruction Set Attribute Registers (CP15 c0,c2,0..4).
+pub const ISAR0_MP11: u32 = 0x0010_0011;
+pub const ISAR1_MP11: u32 = 0x1200_2111;
+pub const ISAR2_MP11: u32 = 0x1122_1011;
+pub const ISAR3_MP11: u32 = 0x0110_2131;
+pub const ISAR4_MP11: u32 = 0x0000_0141;
+
 /// MP11 cache type: separate 16 KiB, four-way, 8-word-line I/D caches.
 pub const CTR_MP11: u32 = 0x1D15_2152;
 /// MP11 unified TLB type: zero instruction-lockable and eight data/unified lockable entries.
@@ -39,6 +57,7 @@ const SCTLR_V: u32 = 1 << 13;
 const SCTLR_EE: u32 = 1 << 15;
 const CPACR_WRITABLE: u32 = 0x00F0_0000;
 const TLB_LOCKDOWN_WRITABLE: u32 = 0x9C00_0000;
+const FCSE_PID_WRITABLE: u32 = 0xFE00_0000;
 
 /// CP15 register file of one core.
 #[derive(Clone, Debug)]
@@ -55,6 +74,7 @@ pub struct Cp15 {
     ifsr: u32,
     dfar: u32,
     ifar: u32,
+    fcse_pid: u32,
     context_id: u32,
     tpidrurw: u32,
     tpidruro: u32,
@@ -84,6 +104,7 @@ impl Cp15 {
             ifsr: 0,
             dfar: 0,
             ifar: 0,
+            fcse_pid: 0,
             context_id: 0,
             tpidrurw: 0,
             tpidruro: 0,
@@ -128,6 +149,11 @@ impl Cp15 {
     /// ASID from CONTEXTIDR[7:0], used for non-global TLB entries.
     pub(super) fn asid(&self) -> u8 {
         self.context_id as u8
+    }
+
+    /// FCSE PID bits [31:25]; zero maps low virtual addresses unchanged.
+    pub(super) fn fcse_pid(&self) -> u32 {
+        self.fcse_pid
     }
 
     /// CP15 c10, c0, 0 controls the TLB's eight lockdown slots.
@@ -225,6 +251,18 @@ impl Cp15 {
             (0, 0, 1) => CTR_MP11,
             (0, 0, 3) => TLBTR_MP11,
             (0, 0, 5) => 0x8000_0000 | self.core_id,
+            (0, 1, 0) => PFR0_MP11,
+            (0, 1, 1) => PFR1_MP11,
+            (0, 1, 2) => DFR0_MP11,
+            (0, 1, 4) => MMFR0_MP11,
+            (0, 1, 5) => MMFR1_MP11,
+            (0, 1, 6) => MMFR2_MP11,
+            (0, 1, 7) => MMFR3_MP11,
+            (0, 2, 0) => ISAR0_MP11,
+            (0, 2, 1) => ISAR1_MP11,
+            (0, 2, 2) => ISAR2_MP11,
+            (0, 2, 3) => ISAR3_MP11,
+            (0, 2, 4) => ISAR4_MP11,
             (1, 0, 0) => self.sctlr,
             (1, 0, 1) => self.actlr,
             (1, 0, 2) => self.cpacr,
@@ -237,6 +275,7 @@ impl Cp15 {
             (6, 0, 0) => self.dfar,
             (6, 0, 2) => self.ifar,
             (10, 0, 0) => self.tlb_lockdown,
+            (13, 0, 0) => self.fcse_pid,
             (13, 0, 1) => self.context_id,
             (13, 0, 2) => self.tpidrurw,
             (13, 0, 3) => self.tpidruro,
@@ -276,8 +315,10 @@ impl Cp15 {
             (6, 0, 0) => self.dfar = value,
             (6, 0, 2) => self.ifar = value,
             (10, 0, 0) => self.tlb_lockdown = value & TLB_LOCKDOWN_WRITABLE,
+            (13, 0, 0) => self.fcse_pid = value & FCSE_PID_WRITABLE,
             (13, 0, 1) => self.context_id = value,
             (13, 0, 2) => self.tpidrurw = value,
+            (13, 0, 3) => self.tpidruro = value,
             (13, 0, 4) => self.tpidrprw = value,
             // Cache maintenance, barriers and wait-for-interrupt: no modeled state.
             (7, 0, 4)
@@ -357,6 +398,57 @@ mod tests {
 
         assert_eq!(cp15.read(false, 0, 0, 0, 1), Err(Cp15Fault::Undefined));
         assert_eq!(cp15.read(false, 0, 0, 0, 3), Err(Cp15Fault::Undefined));
+    }
+
+    #[test]
+    fn arm11_feature_registers_report_the_documented_isa_profile() {
+        let cp15 = Cp15::default();
+        for (crm, opc2, expected) in [
+            (1, 0, PFR0_MP11),
+            (1, 1, PFR1_MP11),
+            (1, 2, DFR0_MP11),
+            (1, 4, MMFR0_MP11),
+            (1, 5, MMFR1_MP11),
+            (1, 6, MMFR2_MP11),
+            (1, 7, MMFR3_MP11),
+            (2, 0, ISAR0_MP11),
+            (2, 1, ISAR1_MP11),
+            (2, 2, ISAR2_MP11),
+            (2, 3, ISAR3_MP11),
+            (2, 4, ISAR4_MP11),
+        ] {
+            assert_eq!(cp15.read(true, 0, 0, crm, opc2), Ok(expected));
+            assert_eq!(
+                cp15.read(false, 0, 0, crm, opc2),
+                Err(Cp15Fault::Undefined)
+            );
+        }
+        assert_eq!(
+            cp15.read(true, 0, 0, 1, 3),
+            Err(Cp15Fault::Unsupported)
+        );
+    }
+
+    #[test]
+    fn fcse_pid_and_thread_id_register_access_rules_match_arm11() {
+        let mut cp15 = Cp15::default();
+        cp15.write(true, 0, 13, 0, 0, 0xA5FF_FFFF).unwrap();
+        assert_eq!(cp15.read(true, 0, 13, 0, 0), Ok(0xA400_0000));
+        assert_eq!(
+            cp15.read(false, 0, 13, 0, 0),
+            Err(Cp15Fault::Undefined)
+        );
+        assert_eq!(
+            cp15.write(false, 0, 13, 0, 0, 0),
+            Err(Cp15Fault::Undefined)
+        );
+
+        cp15.write(true, 0, 13, 0, 3, 0x1234_5678).unwrap();
+        assert_eq!(cp15.read(true, 0, 13, 0, 3), Ok(0x1234_5678));
+        assert_eq!(
+            cp15.write(false, 0, 13, 0, 3, 0),
+            Err(Cp15Fault::Undefined)
+        );
     }
 
     #[test]
