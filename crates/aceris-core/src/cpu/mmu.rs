@@ -1396,6 +1396,40 @@ mod tests {
     }
 
     #[test]
+    fn legacy_sctlr_sr_changes_only_affect_entries_after_tlb_invalidation() {
+        let (mut cpu, mut mem) = legacy_machine();
+        set_l1(&mut mem, 0x200, SECTION);
+        let va = 0x2000_0000;
+        let mut tlb = TranslationLookasideBuffer::default();
+
+        // The initial AP=00, S=0, R=0 mapping denies all access, but is cached.
+        {
+            let params = params(&cpu);
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert!(mmu.map(va, Access::Read).is_err());
+        }
+        assert_eq!(tlb.len(), 1);
+
+        // S=0, R=1 changes AP=00 to read-only for both privilege levels.
+        // ARMv6 specifies that already-cached entries retain their old S/R interpretation.
+        cpu.cp15.write(true, 0, 1, 0, 0, 1 | (1 << 9)).unwrap();
+        {
+            let params = params(&cpu);
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert!(mmu.map(va, Access::Read).is_err());
+        }
+
+        // After TLBIALL, the next page walk captures the updated S/R controls.
+        tlb.maintain(TlbMaintenance::All);
+        {
+            let params = params(&cpu);
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert_eq!(mmu.map(va, Access::Read).unwrap(), 0);
+            assert!(mmu.map(va, Access::Write).is_err());
+        }
+    }
+
+    #[test]
     fn legacy_section_uses_a_single_ap_field_for_the_entire_megabyte() {
         let (mut cpu, mut mem) = legacy_machine();
         set_l1(&mut mem, 0x200, SECTION | (0b10 << 10));
