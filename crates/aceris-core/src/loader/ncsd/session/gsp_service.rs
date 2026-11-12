@@ -614,7 +614,9 @@ impl GspServiceRegistry {
         if self.clients[index].is_none() {
             return Err(GspServiceError::ClientNotRegistered { client_id });
         }
-        Ok(self.interrupt_recipients(interrupt).any(|recipient| recipient == client_id))
+        Ok(self
+            .interrupt_recipients(interrupt)
+            .any(|recipient| recipient == client_id))
     }
 
     /// Appends an interrupt to the client's guest relay queue and signals its
