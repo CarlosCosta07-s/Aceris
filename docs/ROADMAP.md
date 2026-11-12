@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `d559ef7b14fddac6cf758613f72fa75350cf96a5`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `3cd63b8b2d5e5bba0c777cfa3631c7bcc657113e`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -17,7 +17,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Workflow do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
-- [ ] Manter README, arquitetura e roadmap sincronizados com o código, sem anunciar compatibilidade não testada
+- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `3cd63b8b2d5e5bba0c777cfa3631c7bcc657113e`, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
 
@@ -38,7 +38,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 - [x] Instruções ARM básicas de processamento de dados, desvios, transferências, blocos e multiplicações comuns
 - [x] Famílias ARMv6 de exclusivas A32: LDREX/STREX, LDREXB/STREXB, LDREXH/STREXH e LDREXD/STREXD
-- [~] Monitor exclusivo local com geração de reserva de 8 bytes em FlatMemory e no espaço de endereços do processo; a integração com todos os adaptadores de barramento, especialmente o caminho MMU, ainda precisa ser completada
+- [x] Monitor exclusivo local com granularidade de reserva de 8 bytes integrado ao caminho MMU; teste verifica LDREX/STREX por aliases virtuais distintos do mesmo endereço físico. A invalidação por escritas de DMA/dispositivos ainda depende da coerência entre agentes
 - [~] Famílias ARMv6 de mídia/DSP, saturação, operações paralelas, extensão de sinal/zero e multiplicações de meia palavra: há implementação e testes para várias famílias, mas a cobertura integral ainda não foi demonstrada
 - [~] Conjunto Thumb-1 principal com desvios, acessos, pilha, operações aritméticas/lógicas e extensões ARMv6 REV/SXT/UXT
 - [x] Thumb BKPT, CPS e SETEND implementados; BKPT é encaminhado como evento de breakpoint para a camada de processo
@@ -50,12 +50,12 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Coprocessadores e MMU
 
 - [x] Arquivo de estado CP15 com registradores de identificação, controle, CPACR, TTBR0/1, TTBCR, DACR, fault status/address, CONTEXTIDR e TPIDR*
-- [~] Operações de manutenção de cache/TLB e algumas barreiras ainda são aceitas como no-op; isso não equivale a modelagem arquitetural
+- [~] Operações de manutenção do TLB CP15 c8 estão ligadas ao TLB unificado de software; manutenção de cache, coerência entre agentes e algumas barreiras ainda não têm efeitos arquiteturais modelados
 - [~] MMU ARMv6 de descritores curtos: TTBR0/TTBR1 e TTBCR.N, seções, superseções, coarse tables, páginas grandes/pequenas, domínios, permissões AP/APX e XN
-- [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; TLB, atributos TEX, permissões de subpágina no formato antigo e faults de alinhamento ainda não estão modelados
-- [~] VFPv2 inicial: registradores S/D, FPSCR/FPEXC/FPSID, transferências ARM/VFP, loads/stores múltiplos, operações aritméticas, comparação e conversões
-- [ ] Completar semântica VFP pendente: vetores curtos, exceções habilitadas, arredondamentos adicionais, flags de precisão/underflow e instruções de transferência legadas não suportadas
-- [~] TLB unificado de software integrado ao caminho de tradução: cacheia seções, superseções, páginas grandes e pequenas; aplica ASID/global e TLBIALL/TLBIMVA/TLBIASID/TLBIMVAA; capacidade e substituição são limites internos do emulador, sem modelagem de lockdown
+- [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; atributos TEX, permissões de subpágina no formato antigo (XP=0) e faults de alinhamento ainda não estão modelados
+- [~] VFPv2 escalar: registradores S/D, FPSCR/FPEXC/FPSID, transferências ARM/VFP, loads/stores múltiplos, operações aritméticas, comparação e conversões; operações escalares agora consultam FPSCR.RMode
+- [~] Semântica VFP ainda parcial: short-vector mode (FPSCR.LEN), exceções habilitadas/trap, FLDMX/FSTMX e casos-limite de precisão/subnormal precisam de implementação e validação independente; IXC/UFC são registrados no caminho escalar comum
+- [x] TLB unificado de software integrado ao caminho real de tradução: cacheia seções, superseções, páginas grandes e pequenas; aplica ASID/global e TLBIALL/TLBIMVA/TLBIASID/TLBIMVAA. Capacidade e substituição são políticas internas simplificadas, sem alegação de equivalência ao TLB físico nem suporte a lockdown
 - [ ] Implementar caches ARM observáveis, invalidação/manutenção de caches e barreiras com efeitos coerentes entre CPU e dispositivos
 - [x] Integrar o monitor exclusivo ao caminho MMU e validar reservas perante escritas da CPU por aliases virtuais distintos do mesmo endereço físico; invalidação por outros agentes/dispositivos ainda depende da coerência de memória compartilhada
 - [ ] Executar testes de conformidade ARM11 em ARM, Thumb, CP15, VFP e exceções
@@ -72,7 +72,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Alocador de FCRAM contíguo por páginas, com reserva automática ou em endereço físico solicitado, rejeição de sobreposição, leitura inicial zerada e liberação exata que limpa as páginas reservadas
 - [~] Bus do processo mapeia aliases lineares antigos e novos diretamente para a mesma FCRAM física; leituras/escritas CPU são visíveis pelos dispositivos, QueryMemory reconhece a região como Private/RW e o unmap invalida reservas exclusivas
 - [~] Memória física atual é limitada às regiões VRAM e aos 128 MiB FCRAM do modelo original; o bloco adicional de FCRAM do New 3DS e o mapa físico completo do console ainda não existem
-- [~] Tradução virtual ARM via MMU quando SCTLR.M está habilitado; ainda sem TLB e sem integração completa de dispositivos
+- [~] Tradução virtual ARM via MMU quando SCTLR.M está habilitado, com TLB unificado de software e invalidação CP15 c8; atributos de memória, cache/coerência e barramentos de todos os dispositivos ainda não estão integrados
 - [ ] Mapa completo de memória física e barramentos mapeados para CPU, GPU, DSP, LCD, serviços e periféricos
 - [~] Regiões lineares de FCRAM acessíveis ao processo e ao DMA GPU: `ControlMemory(MEMOP_ALLOC | MEMOP_LINEAR)` e `MEMOP_FREE | MEMOP_LINEAR` reservam/liberam backing físico, honram hints não nulos nas janelas antigas e novas e registram/removem automaticamente o mapa DMA; rollback é aplicado quando uma etapa falha
 - [ ] Memória compartilhada entre processos/GSP, sincronização de agentes, semântica de cache ARM/GSP flush/invalidate e coerência observável
@@ -220,6 +220,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Bridge de fetch físico, formatos de 8/16/24/32 bits, conversão numérica, float24, armazenamento/aplicação de atributos fixos e mapeamento de entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43177475915](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43177475915), código no commit `b7c4b92cfc1356ddda9ba40ba96573c812443a56`
 - [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
+- [x] TLB ARMv6, invalidações CP15 c8, exclusivas pelo caminho MMU, arredondamento escalar VFPv2 e regressões Thumb: Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux, Windows e macOS; build Android `arm64-v8a` aprovado no workflow [43227584938](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43227584938)
+- [x] Testes adicionais de arredondamento VFP para multiplicação, divisão, raiz quadrada, underflow e flush-to-zero aprovados em Linux, Windows e macOS; build Android `arm64-v8a` aprovado no workflow [43227896584](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43227896584)
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
 - [x] Bancos de upload de vertex shader (instruções e operand descriptors), conclusão de transferência e uniforms float24/float32 passaram Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43185644119](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43185644119), código no commit `d559ef7b14fddac6cf758613f72fa75350cf96a5`; execução de shader continua pendente
@@ -248,8 +250,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 1. Implementar o serviço GSP IPC em torno do GX queue: mapping de shared memory, rendering rights, `TriggerCmdReqQueue`, relay queue/eventos e callbacks; conectar cache flush/invalidate somente quando houver um modelo de cache ARM observável.
 2. Implementar decodificadores tipados para os formatos de instrução e operand descriptors de vertex shader, priorizando formatos 1/1i/1u/1c e opcodes aritméticos básicos documentados; adicionar testes de campo e rejeitar codificações desconhecidas. O armazenamento de código/descriptors e uniforms já existe, sem executor.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
-4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
-5. Completar atributos de memória, TLB lockdown/replacement do hardware e semântica observável de manutenção de cache/barreiras ao CP15.
+4. Validar invalidação de reservas LDREX/STREX por escritas de DMA, GPU, LCD e outros agentes, além das escritas da CPU já cobertas por aliases MMU.
+5. Completar atributos de memória, políticas de replacement/lockdown compatíveis com o hardware e semântica observável de manutenção de cache/barreiras ao CP15.
 6. Expor as superfícies LCD no frontend desktop e depois Android.
 
 ## Critérios para concluir um item

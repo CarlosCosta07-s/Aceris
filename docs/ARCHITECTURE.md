@@ -3,80 +3,105 @@
 ## Visão geral
 
 ```
- frontends/desktop ─┐
-                    ├──►  aceris-core  ──►  aceris-common
- frontends/android ─┘
+frontends/desktop ─┐
+                   ├──► aceris-core ──► aceris-common
+frontends/android ─┘
 ```
 
-O núcleo (aceris-core) não conhece janelas, áudio de saída ou interface.
-Ele expõe um System que o frontend carrega com um jogo e avança quadro a quadro
-(run_frame). Cada frontend é responsável por:
+O núcleo concentra a emulação e não depende de janelas, áudio de saída ou interface gráfica. Os frontends são responsáveis por hospedar o núcleo, receber entrada, apresentar vídeo, reproduzir áudio e administrar o ciclo de vida da aplicação.
 
-- criar a superfície de vídeo e apresentar os quadros das duas telas;
-- capturar entrada (teclado, controle, toque);
-- reproduzir o áudio gerado pelo núcleo;
-- gerenciar arquivos, configurações e ciclo de vida do app.
+O fluxo de execução experimental é:
+
+```
+Frontend
+  └── System
+        ├── sessão/processo ARM11
+        │     ├── CPU A32/Thumb
+        │     ├── CP15 / MMU / TLB
+        │     ├── VFPv2
+        │     └── kernel HLE / SVC
+        ├── memória física compartilhada
+        ├── fila de comandos PICA200 / GX
+        └── LCD / scanout das telas
+```
+
+`System::run_frame_with_budget` executa um orçamento determinístico de instruções, avança o relógio virtual, processa command buffers PICA200 pendentes e faz o scanout LCD. O orçamento não é ciclo-a-ciclo e o caminho gráfico ainda não executa uma cena completa de um jogo.
 
 ## Crates
 
-| Crate | Papel |
-|-------|-------|
-| aceris-common | Tipo de erro (Error/Result), nome e versão do projeto. |
-| aceris-core | cpu (núcleo ARM11), memory (trait Bus), loader (identificação e parsing de imagens), system. |
-| aceris-desktop | Binário aceris. Hoje é só linha de comando (--selftest). |
-| aceris-android | cdylib carregada pelo app Android. Exporta aceris_version() e aceris_selftest(). |
+| Crate | Responsabilidade |
+|---|---|
+| `aceris-common` | Tipos de erro e resultado compartilhados. |
+| `aceris-core` | CPU ARM11, CP15/MMU, VFP, memória, loader, kernel inicial, GPU PICA200, LCD e sistema. |
+| `aceris-desktop` | Binário de diagnóstico e autoteste por linha de comando; ainda não é um frontend gráfico jogável. |
+| `aceris-android` | Biblioteca nativa Rust `cdylib` para Android; ainda não constitui um aplicativo Android completo. |
+| `aceris-icongen` | Ferramenta Rust interna para gerar os ícones originais do projeto. |
 
-## Estado atual do núcleo
+O produto permanece implementado em Rust e usa somente crates internos do workspace, conforme as regras do repositório.
 
-- **CPU (ARM11, estados ARM e Thumb):** interpretador com banco único de registradores
-  (modo usuário). step() busca, decodifica e executa uma instrução e devolve um
-  StepEvent (Executed ou Svc(n), que será tratado pelo kernel emulado).
-  Já implementado:
-  - processamento de dados (as 16 operações, shifter completo, flags N/Z/C/V);
-  - LDR/STR/LDRB/STRB (pré/pós-indexado, writeback, offset escalado);
-  - LDRH/STRH/LDRSB/LDRSH/LDRD/STRD, LDM/STM, SWP;
-  - MUL/MLA e multiplicações longas (UMULL/SMULL/UMLAL/SMLAL);
-  - B/BL/BX/BLX, CLZ, MRS/MSR (apenas flags) e SWI.
-  - Thumb (cpu/thumb.rs): as 19 formas clássicas, o par BL/BLX de duas
-    meias-palavras, SWI, PUSH/POP e as adições do ARMv6 REV/REV16/REVSH, SXT* e UXT*;
-    BX, BLX e LDR/POP em pc alternam entre ARM e Thumb pelo bit 0.
-  Ainda faltam: BKPT/CPS/SETEND do Thumb, modos privilegiados e registradores com
-  banco, instruções de mídia/exclusivas do ARMv6, coprocessadores e VFP.
-- **Autoteste (selftest):** programa ARM minúsculo executado pelo interpretador.
-  O desktop o expõe em aceris --selftest e o Android em aceris_selftest(),
-  provando que as duas plataformas rodam o mesmo núcleo. O programa soma em ARM,
-  chama uma rotina Thumb com BLX e volta ao ARM com BX.
-- **Memória:** trait Bus (little-endian) e FlatMemory para testes e bring-up.
-- **Loader:** identifica ELF, 3DSX, NCCH e CIA pelos bytes mágicos. Para NCSD,
-  lê o cabeçalho completo, interpreta as oito entradas da tabela de partições,
-  converte unidades de mídia para bytes e valida limites, tamanho declarado e
-  sobreposição. A validação atual é estrutural: não verifica a assinatura RSA,
-  não descriptografa partições e ainda não interpreta os cabeçalhos NCCH internos.
-- **Sistema:** System::load identifica a imagem; run_frame ainda não emula.
+## CPU ARM11
 
-## Decisões em aberto
+O núcleo usa um interpretador para estados A32 e Thumb. O estado da CPU inclui CPSR, bancos de registradores para User/System, FIQ, IRQ, Supervisor, Abort e Undefined, além de SPSR nos modos de exceção.
 
-Estas escolhas ainda não foram feitas e merecem discussão antes de serem
-implementadas:
+A implementação inclui processamento de dados, desvios, transferências de memória, operações de bloco, multiplicações, instruções ARMv6 de mídia/DSP, exclusivas, CPS, SETEND, BKPT, entrada de exceções opcional e sinais IRQ/FIQ. O suporte é amplo, mas ainda não constitui uma implementação certificada de todas as codificações ARMv6/ARMv6K.
 
-- **Janela e entrada no desktop:** winit é o candidato natural.
-- **Renderização:** wgpu cobre Vulkan, Metal, DX12 e GL/GLES no mesmo código,
-  o que ajuda a manter PC e Android juntos.
-- **Interface (menus, biblioteca de jogos, configurações):** deverá ser implementada
-  em Rust tanto no desktop quanto no Android, compartilhando a maior quantidade
-  possível de lógica e componentes próprios. A tecnologia ainda precisa ser
-  definida sem introduzir uma camada de aplicação em outra linguagem.
-- **Áudio:** cpal é uma opção multiplataforma.
-- **Estratégia de CPU:** começar com um interpretador simples e correto; considerar
-  um JIT/recompilador dinâmico só depois que a compatibilidade estiver estável.
-- **Distribuição do app Android:** definir um fluxo compatível com a regra de
-  implementação integral em Rust, sem frontend Kotlin/Java.
+As falhas de instrução não implementada ou acesso inválido são reportadas explicitamente; não devem ser interpretadas como compatibilidade.
 
-## Build para Android
+## CP15, MMU e TLB
 
-O frontend Android é um crate cdylib. O fluxo previsto é:
+O CP15 mantém os registradores de controle, TTBR0/TTBR1, TTBCR, DACR, CONTEXTIDR, registradores de fault e identificadores de thread.
 
-1. cargo ndk compila aceris-android para cada ABI (arm64-v8a primeiro).
-2. As .so são copiadas para frontends/android/app/src/main/jniLibs/.
-3. O projeto Gradle empacota o APK usando os recursos em frontends/android/res/
-   (ícones adaptativos já gerados).
+A MMU implementa descritores curtos ARMv6 com seções, superseções, coarse page tables, páginas grandes e pequenas, domínios, permissões AP/APX e XN. Faults de tradução, domínio e permissão são encaminhados aos registradores de fault CP15.
+
+O caminho de tradução usa um TLB unificado de software com correspondência por ASID e entradas globais. As operações CP15 c8 de invalidação global, por MVA+ASID, por ASID e por MVA ignorando ASID são aplicadas antes do próximo acesso da CPU.
+
+O TLB tem capacidade e política de substituição simplificadas para o emulador. Não representa o tamanho, a política de replacement nem o mecanismo de lockdown exatos do hardware. Atributos TEX, permissões de subpágina no formato XP=0, faults de alinhamento, caches ARM e coerência de manutenção entre CPU e dispositivos continuam pendentes.
+
+## VFPv2
+
+O estado VFP inclui registradores S0–S31 (com pares D), FPSCR, FPEXC e FPSID. Há transferências entre registradores ARM e VFP, loads/stores escalares e múltiplos, operações aritméticas escalares, comparação, raiz quadrada e conversões.
+
+As operações escalares consultam FPSCR.RMode e registram flags como IXC e UFC nos caminhos implementados. A implementação ainda é parcial: short-vector mode, exceções VFP habilitadas/trap, formas legadas FLDMX/FSTMX e casos extremos de precisão/subnormais precisam de trabalho e validação independente. Não se deve inferir compatibilidade integral do VFPv2 a partir dos testes existentes.
+
+## Memória e barramentos
+
+A interface `Bus` define os acessos usados pela CPU. `FlatMemory` atende testes e bring-up. O modelo físico esparso atual inclui regiões iniciais de VRAM e os 128 MiB de FCRAM do modelo original.
+
+O espaço de endereços do processo mapeia regiões de código, dados, BSS, heap, pilha e TLS. Aliases lineares de FCRAM podem compartilhar o mesmo backing físico observado pela CPU e pelo caminho DMA/GPU/LCD.
+
+Esse compartilhamento de backing não simula caches de CPU nem garante coerência de hardware. O mapa físico completo, memória compartilhada entre processos e manutenção/flush/invalidate observável ainda precisam ser implementados.
+
+## Loader e formatos
+
+O loader identifica e valida estruturalmente imagens NCSD, incluindo as partições usadas em contêineres `.3DS` e `.CCI`. Existem parsers e leitores parciais para NCCH, ExeFS, RomFS e CIA, além de rotinas de hash, AES e BLZ.
+
+A presença de parser não representa suporte completo a um título. Assinaturas, todos os caminhos criptográficos, seleção/preparação de conteúdo e execução ponta a ponta ainda precisam ser validados. O projeto não inclui jogos, firmware ou chaves.
+
+## Kernel e processos
+
+A infraestrutura atual contém contextos por thread, escalonamento cooperativo, TLS, objetos iniciais de sincronização e um conjunto parcial de SVCs. O dispatch de serviços do sistema, IPC completo, temporização precisa, interrupções de dispositivos e ciclo de vida completo de processos/handles continuam pendentes.
+
+## GPU PICA200 e LCD
+
+A GPU possui banco inicial de registradores, parser de command lists, canais de command buffer, fila GX inicial e armazenamento de transferências de código/descriptors/uniforms de vertex shader. Há fetch inicial de atributos e índices, transformação geométrica genérica, clipping e rasterizador de referência em CPU.
+
+Ainda faltam a execução real dos vertex shaders PICA200, decodificação e execução integrada de DRAWARRAYS/DRAWELEMENTS, fragment pipeline, texturas, blending, sincronização GSP/IPC e coerência de cache.
+
+O LCD possui superfícies de saída e scanout básico dos framebuffers para as telas. O resultado PICA200 ainda não está integrado a uma pipeline gráfica completa e os frontends não apresentam as duas telas em uma janela gráfica funcional.
+
+## Frontends e validação
+
+- **Desktop:** atualmente oferece diagnóstico/autoteste por linha de comando; janela gráfica, apresentação de telas, áudio, controles e biblioteca de títulos estão pendentes.
+- **Android:** o crate Rust nativo compila para `arm64-v8a`; aplicativo instalável completo, interface, ciclo de vida, entrada, áudio e testes em dispositivo real ainda estão pendentes.
+- **CI:** Rustfmt, Clippy e testes do workspace são executados para Linux, Windows e macOS; o build nativo Android ARM64 é validado em workflow separado.
+
+Comandos locais de verificação:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --locked --workspace
+```
+
+O último comando deve ser executado e registrado separadamente; não está implícito nos três anteriores.
