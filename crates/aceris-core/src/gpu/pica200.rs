@@ -673,7 +673,10 @@ mod tests {
             ))
         );
         assert_eq!(
-            gpu.decode_vertex_shader_instruction(5, PicaVertexShaderInstructionFormat::Format1,),
+            gpu.decode_vertex_shader_instruction(
+                VSH_CODE_TRANSFER_WORDS,
+                PicaVertexShaderInstructionFormat::Format1,
+            ),
             None
         );
     }
