@@ -277,6 +277,26 @@ impl Arm11ProcessSession {
         )
     }
 
+    /// Moves a shared-memory handle from another process session into this one.
+    ///
+    /// The destination receives the same backing and reversed owner/peer
+    /// permissions, then the source handle is closed. If source closure fails,
+    /// the newly created destination handle is closed to avoid a partial move.
+    /// This is limited to memory blocks; IPC descriptor decoding and transfer
+    /// of other kernel object types remain separate work.
+    pub fn move_memory_block_handle(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        source_handle: u32,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        let destination_handle = self.import_memory_block_handle(source, source_handle)?;
+        if let Err(error) = source.kernel_objects.close_handle(source_handle) {
+            let _ = self.kernel_objects.close_handle(destination_handle);
+            return Err(error);
+        }
+        Ok(destination_handle)
+    }
+
     /// Maps a memory-block handle into this process with the requested R/W permissions.
     pub fn map_memory_block(
         &mut self,
@@ -1786,6 +1806,37 @@ mod tests {
             peer.import_memory_block_handle(&owner, 0xDEAD),
             Err(KernelHandleError::InvalidHandle)
         );
+    }
+
+    #[test]
+    fn moved_memory_block_handle_closes_source_and_preserves_shared_backing() {
+        let mut owner = test_session();
+        let owner_handle = owner.create_memory_block(0x1000, 3, 1).unwrap();
+        owner
+            .map_memory_block(owner_handle, 0x0800_0000, 3, 1)
+            .unwrap();
+        owner
+            .write_memory_u32(0x0800_0000, 0xCAFE_BABE)
+            .unwrap();
+
+        let mut peer = test_session();
+        let peer_handle = peer
+            .move_memory_block_handle(&mut owner, owner_handle)
+            .unwrap();
+        assert_eq!(
+            owner.kernel_objects.memory_block_backing(owner_handle),
+            Err(KernelHandleError::InvalidHandle)
+        );
+
+        peer.map_memory_block(peer_handle, 0x0900_0000, 1, 3)
+            .unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0xCAFE_BABE);
+
+        owner
+            .write_memory_u32(0x0800_0000, 0x1234_5678)
+            .unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0x1234_5678);
+        assert!(!peer.address_space.is_writable_range(0x0900_0000, 0x1000));
     }
 
     #[test]
