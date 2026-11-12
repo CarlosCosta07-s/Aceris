@@ -715,8 +715,16 @@ mod tests {
         assert!(registry.owns_rendering_right(0));
         assert!(registry.try_acquire_rendering_right(0).unwrap());
         assert!(!registry.try_acquire_rendering_right(1).unwrap());
-        assert!(!registry.client_may_receive_interrupt(1, GspInterruptId::P3d).unwrap());
-        assert!(registry.client_may_receive_interrupt(1, GspInterruptId::Pdc1).unwrap());
+        assert!(
+            !registry
+                .client_may_receive_interrupt(1, GspInterruptId::P3d)
+                .unwrap()
+        );
+        assert!(
+            registry
+                .client_may_receive_interrupt(1, GspInterruptId::Pdc1)
+                .unwrap()
+        );
 
         assert_eq!(
             registry.deliver_interrupt(&mut session, 1, GspInterruptId::Dma),
