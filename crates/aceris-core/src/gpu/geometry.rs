@@ -6,7 +6,7 @@
 //! to be established from independent hardware documentation and tests.
 
 use super::{
-    DepthFunction, RasterizationReport, RasterVertex, RasterizerError, SoftwareRasterizer,
+    DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
@@ -134,7 +134,10 @@ impl std::fmt::Display for GeometryError {
             }
             Self::InvalidViewport => formatter.write_str("geometry viewport is invalid"),
             Self::NonFiniteVertex { index } => {
-                write!(formatter, "geometry vertex {index} contains a non-finite position")
+                write!(
+                    formatter,
+                    "geometry vertex {index} contains a non-finite position"
+                )
             }
             Self::ClippedPolygonOverflow => {
                 formatter.write_str("clipped triangle exceeded the supported vertex bound")
@@ -234,11 +237,7 @@ pub struct GeometryReport {
 }
 
 impl GeometryPipeline {
-    pub fn new(
-        transform: Matrix4,
-        viewport: Viewport,
-        depth_range: ClipDepthRange,
-    ) -> Self {
+    pub fn new(transform: Matrix4, viewport: Viewport, depth_range: ClipDepthRange) -> Self {
         Self {
             transform,
             viewport,
@@ -270,7 +269,11 @@ impl GeometryPipeline {
     ) -> Result<Vec<[RasterVertex; 3]>, GeometryError> {
         let mut polygon = Vec::with_capacity(MAX_CLIPPED_POLYGON_VERTICES);
         for (index, vertex) in vertices.iter().enumerate() {
-            if vertex.position.iter().any(|component| !component.is_finite()) {
+            if vertex
+                .position
+                .iter()
+                .any(|component| !component.is_finite())
+            {
                 return Err(GeometryError::NonFiniteVertex { index });
             }
             let position = self.transform.transform(vertex.position);
@@ -337,10 +340,7 @@ impl GeometryPipeline {
         let ndc_x = vertex.position[0] * inverse_w;
         let ndc_y = vertex.position[1] * inverse_w;
         let ndc_z = vertex.position[2] * inverse_w;
-        if !inverse_w.is_finite()
-            || !ndc_x.is_finite()
-            || !ndc_y.is_finite()
-            || !ndc_z.is_finite()
+        if !inverse_w.is_finite() || !ndc_x.is_finite() || !ndc_y.is_finite() || !ndc_z.is_finite()
         {
             return Err(GeometryError::InvalidPerspectiveDivide);
         }
