@@ -1862,6 +1862,38 @@ mod tests {
     }
 
     #[test]
+    fn non_pdc_dispatch_without_owner_returns_empty_report() {
+        let mut session = test_session();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        registry
+            .register_client(&mut session, 0, SHARED_MEMORY_BASE, event)
+            .unwrap();
+
+        let mut queue_before = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        session
+            .read_memory_bytes(SHARED_MEMORY_BASE, &mut queue_before)
+            .unwrap();
+
+        let report = registry
+            .deliver_interrupt_to_sessions(GspInterruptId::P3d, std::iter::empty())
+            .unwrap();
+        assert_eq!(report.interrupt, GspInterruptId::P3d);
+        assert!(report.deliveries.is_empty());
+        assert_eq!(registry.rendering_right_owner(), None);
+        assert_eq!(session.kernel_objects.event_is_signaled(event), Some(false));
+
+        let mut queue_after = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        session
+            .read_memory_bytes(SHARED_MEMORY_BASE, &mut queue_after)
+            .unwrap();
+        assert_eq!(queue_after, queue_before);
+    }
+
+    #[test]
     fn batch_owner_interrupt_reports_full_queue_without_signaling() {
         let mut session = test_session();
         let event = session
