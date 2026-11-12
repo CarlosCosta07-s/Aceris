@@ -809,7 +809,8 @@ mod tests {
         mem.write8(0x2_0FFF, 0x22).unwrap();
         mem.write8(0x3_0000, 0x33).unwrap();
         mem.write8(0x3_0001, 0x44).unwrap();
-        let mut bus = MmuBus::new(&mut mem, params(&cpu));
+        let mut tlb = TranslationLookasideBuffer::default();
+        let mut bus = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
         assert_eq!(bus.read32(0x2000_0FFE).unwrap(), 0x4433_2211);
         bus.write32(0x2000_0FFE, 0xDDCC_BBAA).unwrap();
         assert_eq!(bus.read16(0x2000_0FFF).unwrap(), 0xCCBB);
