@@ -2021,6 +2021,10 @@ mod tests {
             .cpu
             .switch_mode(Psr::SUPERVISOR_MODE)
             .unwrap();
+        invalid_target
+            .cpu
+            .set_saved_program_status(Psr(Psr::USER_MODE))
+            .unwrap();
         assert!(matches!(
             invalid_target.cpu.step(&mut invalid_target.mem),
             Err(Error::UndefinedInstruction { pc: 0, .. })
@@ -2031,6 +2035,10 @@ mod tests {
         unaligned.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
         unaligned.cpu.regs[SP] = 0x901;
         unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        unaligned
+            .cpu
+            .set_saved_program_status(Psr(Psr::USER_MODE))
+            .unwrap();
         assert!(matches!(
             unaligned.cpu.step(&mut unaligned.mem),
             Err(Error::InvalidAccess { addr: 0x901 })
