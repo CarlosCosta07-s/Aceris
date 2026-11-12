@@ -418,15 +418,9 @@ mod tests {
             (2, 4, ISAR4_MP11),
         ] {
             assert_eq!(cp15.read(true, 0, 0, crm, opc2), Ok(expected));
-            assert_eq!(
-                cp15.read(false, 0, 0, crm, opc2),
-                Err(Cp15Fault::Undefined)
-            );
+            assert_eq!(cp15.read(false, 0, 0, crm, opc2), Err(Cp15Fault::Undefined));
         }
-        assert_eq!(
-            cp15.read(true, 0, 0, 1, 3),
-            Err(Cp15Fault::Unsupported)
-        );
+        assert_eq!(cp15.read(true, 0, 0, 1, 3), Err(Cp15Fault::Unsupported));
     }
 
     #[test]
@@ -434,21 +428,12 @@ mod tests {
         let mut cp15 = Cp15::default();
         cp15.write(true, 0, 13, 0, 0, 0xA5FF_FFFF).unwrap();
         assert_eq!(cp15.read(true, 0, 13, 0, 0), Ok(0xA400_0000));
-        assert_eq!(
-            cp15.read(false, 0, 13, 0, 0),
-            Err(Cp15Fault::Undefined)
-        );
-        assert_eq!(
-            cp15.write(false, 0, 13, 0, 0, 0),
-            Err(Cp15Fault::Undefined)
-        );
+        assert_eq!(cp15.read(false, 0, 13, 0, 0), Err(Cp15Fault::Undefined));
+        assert_eq!(cp15.write(false, 0, 13, 0, 0, 0), Err(Cp15Fault::Undefined));
 
         cp15.write(true, 0, 13, 0, 3, 0x1234_5678).unwrap();
         assert_eq!(cp15.read(true, 0, 13, 0, 3), Ok(0x1234_5678));
-        assert_eq!(
-            cp15.write(false, 0, 13, 0, 3, 0),
-            Err(Cp15Fault::Undefined)
-        );
+        assert_eq!(cp15.write(false, 0, 13, 0, 3, 0), Err(Cp15Fault::Undefined));
     }
 
     #[test]
