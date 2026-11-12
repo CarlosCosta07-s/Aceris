@@ -16,11 +16,26 @@ pub struct RasterVertex {
     pub depth: f32,
     /// Interpolated RGBA8 vertex color.
     pub color: [u8; 4],
+    /// Reciprocal clip-space W used for perspective-correct varyings.
+    /// The direct rasterizer constructor defaults this to 1.0.
+    pub reciprocal_w: f32,
 }
 
 impl RasterVertex {
     pub const fn new(x: f32, y: f32, depth: f32, color: [u8; 4]) -> Self {
-        Self { x, y, depth, color }
+        Self {
+            x,
+            y,
+            depth,
+            color,
+            reciprocal_w: 1.0,
+        }
+    }
+
+    /// Sets reciprocal clip-space W for perspective-correct color interpolation.
+    pub const fn with_reciprocal_w(mut self, reciprocal_w: f32) -> Self {
+        self.reciprocal_w = reciprocal_w;
+        self
     }
 }
 
@@ -53,6 +68,7 @@ pub enum RasterizerError {
     InvalidClearDepth { depth: f32 },
     InvalidVertex { index: usize },
     InvalidVertexDepth { index: usize, depth: f32 },
+    InvalidReciprocalW { index: usize, value: f32 },
 }
 
 impl std::fmt::Display for RasterizerError {
@@ -78,6 +94,12 @@ impl std::fmt::Display for RasterizerError {
                 write!(
                     formatter,
                     "raster vertex {index} has depth {depth} outside 0.0..=1.0"
+                )
+            }
+            Self::InvalidReciprocalW { index, value } => {
+                write!(
+                    formatter,
+                    "raster vertex {index} has invalid reciprocal W {value}"
                 )
             }
         }
@@ -205,6 +227,12 @@ impl SoftwareRasterizer {
                     depth: vertex.depth,
                 });
             }
+            if !vertex.reciprocal_w.is_finite() || vertex.reciprocal_w <= 0.0 {
+                return Err(RasterizerError::InvalidReciprocalW {
+                    index,
+                    value: vertex.reciprocal_w,
+                });
+            }
         }
 
         let mut area = orient(vertices[0], vertices[1], vertices[2]);
@@ -289,10 +317,21 @@ impl SoftwareRasterizer {
                 }
 
                 let color_offset = index * 4;
+                let perspective_denominator = weight_0
+                    * f64::from(vertices[0].reciprocal_w)
+                    + weight_1 * f64::from(vertices[1].reciprocal_w)
+                    + weight_2 * f64::from(vertices[2].reciprocal_w);
                 for channel in 0..4 {
-                    let interpolated = weight_0 * f64::from(vertices[0].color[channel])
-                        + weight_1 * f64::from(vertices[1].color[channel])
-                        + weight_2 * f64::from(vertices[2].color[channel]);
+                    let numerator = weight_0
+                        * f64::from(vertices[0].color[channel])
+                        * f64::from(vertices[0].reciprocal_w)
+                        + weight_1
+                            * f64::from(vertices[1].color[channel])
+                            * f64::from(vertices[1].reciprocal_w)
+                        + weight_2
+                            * f64::from(vertices[2].color[channel])
+                            * f64::from(vertices[2].reciprocal_w);
+                    let interpolated = numerator / perspective_denominator;
                     self.color[color_offset + channel] =
                         interpolated.round().clamp(0.0, 255.0) as u8;
                 }
@@ -435,6 +474,46 @@ mod tests {
         assert!(farther.depth_rejected_pixels > 0);
         assert_eq!(rasterizer.color_at(0, 0), Some([0, 255, 0, 255]));
         assert_eq!(rasterizer.depth_at(0, 0), Some(0.2));
+    }
+
+    #[test]
+    fn color_interpolation_is_perspective_correct_when_reciprocal_w_differs() {
+        let mut rasterizer = SoftwareRasterizer::new(4, 4).unwrap();
+        let triangle = [
+            vertex(0.0, 0.0, 0.5, [0, 0, 0, 255]).with_reciprocal_w(1.0),
+            vertex(4.0, 0.0, 0.5, [255, 0, 0, 255]).with_reciprocal_w(0.5),
+            vertex(0.0, 4.0, 0.5, [0, 0, 0, 255]).with_reciprocal_w(0.5),
+        ];
+
+        rasterizer
+            .draw_triangle(triangle, DepthFunction::Less)
+            .unwrap();
+
+        // Pixel center (0.5, 0.5) has screen barycentrics (0.75, 0.125, 0.125).
+        // Perspective correction gives round((0.125 * 255 * 0.5) / 0.875) = 18.
+        assert_eq!(rasterizer.color_at(0, 0), Some([18, 0, 0, 255]));
+    }
+
+    #[test]
+    fn invalid_reciprocal_w_is_rejected_before_target_changes() {
+        let mut rasterizer = SoftwareRasterizer::new(2, 2).unwrap();
+        let before = rasterizer.color_buffer().to_vec();
+        let result = rasterizer.draw_triangle(
+            [
+                vertex(0.0, 0.0, 0.5, [255; 4]),
+                vertex(2.0, 0.0, 0.5, [255; 4]).with_reciprocal_w(0.0),
+                vertex(0.0, 2.0, 0.5, [255; 4]),
+            ],
+            DepthFunction::Less,
+        );
+        assert_eq!(
+            result,
+            Err(RasterizerError::InvalidReciprocalW {
+                index: 1,
+                value: 0.0
+            })
+        );
+        assert_eq!(rasterizer.color_buffer(), before);
     }
 
     #[test]
