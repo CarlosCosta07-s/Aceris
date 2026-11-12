@@ -88,9 +88,7 @@ impl PicaVertexShaderInstruction {
             Self::Format1Compare(value) => Some(value.descriptor as usize),
             Self::Format5MultiplyAdd(value) => Some(value.descriptor as usize),
             Self::Format5InvertedMultiplyAdd(value) => Some(value.descriptor as usize),
-            Self::Format2Flow(_)
-            | Self::Format3BooleanFlow(_)
-            | Self::Format4Emit(_) => None,
+            Self::Format2Flow(_) | Self::Format3BooleanFlow(_) | Self::Format4Emit(_) => None,
         }
     }
 }
@@ -327,8 +325,8 @@ mod tests {
         });
         assert_eq!(format1.operand_descriptor_index(), Some(0x55));
 
-        let format5 = PicaVertexShaderInstruction::Format5MultiplyAdd(
-            PicaShaderFormat5MultiplyAdd {
+        let format5 =
+            PicaVertexShaderInstruction::Format5MultiplyAdd(PicaShaderFormat5MultiplyAdd {
                 descriptor: 0x1B,
                 source3: 0,
                 source2: 0,
@@ -336,8 +334,7 @@ mod tests {
                 source2_address_index: 0,
                 destination: 0,
                 opcode: 0,
-            },
-        );
+            });
         assert_eq!(format5.operand_descriptor_index(), Some(0x1B));
 
         let flow = PicaVertexShaderInstruction::Format2Flow(PicaShaderFormat2Flow {
