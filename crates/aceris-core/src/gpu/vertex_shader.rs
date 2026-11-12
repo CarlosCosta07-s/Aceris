@@ -307,10 +307,10 @@ mod tests {
         let descriptor = PicaShaderOperandDescriptor::decode(word);
 
         assert_eq!(descriptor.destination_mask, 0b1010);
-        assert!(!descriptor.destination_lane_enabled(0));
-        assert!(descriptor.destination_lane_enabled(1));
-        assert!(!descriptor.destination_lane_enabled(2));
-        assert!(descriptor.destination_lane_enabled(3));
+        assert!(descriptor.destination_lane_enabled(0));
+        assert!(!descriptor.destination_lane_enabled(1));
+        assert!(descriptor.destination_lane_enabled(2));
+        assert!(!descriptor.destination_lane_enabled(3));
         assert!(descriptor.source1_negate);
         assert_eq!(descriptor.source1_selector, 0x1B);
         assert_eq!(
