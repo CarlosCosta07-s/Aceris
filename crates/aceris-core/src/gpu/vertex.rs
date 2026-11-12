@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn decodes_component_alignment_padding_and_stride() {
         let format_low = 1 | (6 << 4);
-        let config1 = 0 | (1 << 4) | (12 << 8);
+        let config1 = (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
         let layout =
             PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0x20, config1, config2)])
@@ -500,7 +500,7 @@ mod tests {
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = FCRAM_BASE + 0x1000;
         let format_low = 1 | (6 << 4);
-        let config1 = 0 | (1 << 4) | (12 << 8);
+        let config1 = (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
         let layout =
             PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0x20, config1, config2)])
