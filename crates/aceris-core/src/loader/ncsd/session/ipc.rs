@@ -155,12 +155,17 @@ pub fn decode_translation_section(
                     source_address: payload[0],
                 }
             }
-            5 | 6 | 7 => IpcTranslationParameter::MappedBuffer {
+            5 | 6 | 7 => {
+                if descriptor & 1 != 0 {
+                    return Err(IpcTranslationSectionError::InvalidDescriptor { descriptor });
+                }
+                IpcTranslationParameter::MappedBuffer {
                 descriptor,
                 permissions: translation_type & 0x03,
                 size_bytes: descriptor >> 4,
-                source_address: payload[0],
-            },
+                    source_address: payload[0],
+                }
+            }
             _ => unreachable!("translation type was checked above"),
         };
 
@@ -304,9 +309,9 @@ mod tests {
             0x0030_0000,
             0x0001_000A, // Read-only mapped buffer, 0x1000 bytes.
             0x0040_0000,
-            0x0002_000C, // Write-only mapped buffer, 0x200 bytes.
+            0x0000_200C, // Write-only mapped buffer, 0x200 bytes.
             0x0050_0000,
-            0x0003_000E, // Read/write mapped buffer, 0x300 bytes.
+            0x0000_300E, // Read/write mapped buffer, 0x300 bytes.
             0x0060_0000,
         ];
 
@@ -409,7 +414,7 @@ mod tests {
 
     #[test]
     fn message_exposes_typed_translation_parameters() {
-        let words = [0x1234_0082, 0x0000_1002, 0x0040_0000];
+        let words = [0x1234_0002, 0x0000_4002, 0x0040_0000];
         let message = IpcMessage::decode(&words).unwrap();
         assert!(matches!(
             message.translation_parameters().unwrap().as_slice(),
