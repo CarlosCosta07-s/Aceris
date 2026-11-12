@@ -553,6 +553,17 @@ enum BinOp {
     Div,
 }
 
+/// Returns -1, 0, or 1 according to the sign of a finite residual.
+fn sign_of(value: f64) -> i8 {
+    if value > 0.0 {
+        1
+    } else if value < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
 /// Negates a value without touching NaN payloads (sign-bit flip).
 fn negate(prec: Prec, bits: u64) -> u64 {
     bits ^ prec.sign_bit()
