@@ -516,6 +516,24 @@ impl GspServiceRegistry {
             .and_then(|index| self.clients[index])
     }
 
+    /// Iterates over active registrations in ascending GSP client-ID order.
+    ///
+    /// Returning the slot ID together with its process resources lets the
+    /// service dispatcher enumerate active clients without duplicating the
+    /// registry's slot layout or probing every possible ID.
+    pub fn client_registrations(
+        &self,
+    ) -> impl Iterator<Item = (u8, GspClientRegistration)> + '_ {
+        self.clients
+            .iter()
+            .enumerate()
+            .filter_map(|(index, registration)| {
+                let registration = (*registration)?;
+                let client_id = u8::try_from(index).ok()?;
+                Some((client_id, registration))
+            })
+    }
+
     /// Returns the number of currently registered GSP clients.
     pub fn registered_client_count(&self) -> usize {
         self.clients
@@ -687,15 +705,10 @@ impl GspServiceRegistry {
     /// The iterator only plans routing; the caller remains responsible for
     /// delivering the event through each client's own process session.
     pub fn interrupt_recipients(&self, interrupt: GspInterruptId) -> impl Iterator<Item = u8> + '_ {
-        self.clients
-            .iter()
-            .enumerate()
-            .filter_map(move |(index, registration)| {
-                let client_id = u8::try_from(index).ok()?;
-                (registration.is_some()
-                    && (interrupt.is_pdc() || self.rendering_client == Some(client_id)))
+        self.client_registrations().filter_map(move |(client_id, _)| {
+            (interrupt.is_pdc() || self.rendering_client == Some(client_id))
                 .then_some(client_id)
-            })
+        })
     }
 
     /// Returns whether a client is eligible to receive a particular interrupt.
@@ -1251,6 +1264,43 @@ mod tests {
             1
         );
         assert_eq!(registry.registered_client_count(), 4);
+    }
+
+    #[test]
+    fn client_registrations_iterate_active_slots_in_ascending_id_order() {
+        let mut registry = GspServiceRegistry::new();
+        registry.clients[3] = Some(GspClientRegistration {
+            shared_memory_base: 0x0040_0000,
+            event_handle: 0x24,
+            flags: 0x30,
+        });
+        registry.clients[0] = Some(GspClientRegistration {
+            shared_memory_base: 0x0020_0000,
+            event_handle: 0x18,
+            flags: 0x10,
+        });
+
+        assert_eq!(
+            registry.client_registrations().collect::<Vec<_>>(),
+            vec![
+                (
+                    0,
+                    GspClientRegistration {
+                        shared_memory_base: 0x0020_0000,
+                        event_handle: 0x18,
+                        flags: 0x10,
+                    }
+                ),
+                (
+                    3,
+                    GspClientRegistration {
+                        shared_memory_base: 0x0040_0000,
+                        event_handle: 0x24,
+                        flags: 0x30,
+                    }
+                ),
+            ]
+        );
     }
 
     #[test]
