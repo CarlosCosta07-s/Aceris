@@ -3033,7 +3033,7 @@ mod tests {
             0xE6AF_5F36,
         ]);
         m.cpu.regs[1] = 0x8000_7F01;
-        m.cpu.regs[3] = 0x00FF_0080;
+        m.cpu.regs[3] = 0x00FF_FF80;
         m.cpu.regs[6] = 0x8000_7FFF;
         m.cpu.cpsr.set_flags(true, false, true, false);
 
