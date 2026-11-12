@@ -8,7 +8,7 @@
   Um emulador de um certo console de 2 telas, escrito em Rust, para PC e Android.
 </p>
 
-> **Status: fase inicial (v0.0.1).** O projeto ainda não executa jogos. O núcleo Rust já reúne um interpretador ARM11 A32/Thumb com modos privilegiados, exceções, CP15/MMU com TLB de software, VFPv2 escalar parcial e infraestrutura inicial de memória, kernel e GPU PICA200. Os frontends de PC e Android ainda não oferecem uma experiência gráfica jogável. Veja o [roadmap](docs/ROADMAP.md) e a [arquitetura](docs/ARCHITECTURE.md).
+> **Status: fase inicial (v0.0.1).** O projeto ainda não executa jogos. O núcleo Rust já reúne um interpretador ARM11 A32/Thumb com modos privilegiados, SRS/RFE, CP15/MMU com FCSE e TLB de software com lockdown, VFPv2 escalar parcial e infraestrutura inicial de memória, kernel e GPU PICA200. Os frontends de PC e Android ainda não oferecem uma experiência gráfica jogável. Veja o [roadmap](docs/ROADMAP.md) e a [arquitetura](docs/ARCHITECTURE.md).
 
 O nome vem da **acerola**, a pequena fruta vermelha cheia de energia.
 

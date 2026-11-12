@@ -43,19 +43,19 @@ O produto permanece implementado em Rust e usa somente crates internos do worksp
 
 O núcleo usa um interpretador para estados A32 e Thumb. O estado da CPU inclui CPSR, bancos de registradores para User/System, FIQ, IRQ, Supervisor, Abort e Undefined, além de SPSR nos modos de exceção.
 
-A implementação inclui processamento de dados, desvios, transferências de memória, operações de bloco, multiplicações, instruções ARMv6 de mídia/DSP, exclusivas, CPS, SETEND, BKPT, entrada de exceções opcional e sinais IRQ/FIQ. O suporte é amplo, mas ainda não constitui uma implementação certificada de todas as codificações ARMv6/ARMv6K.
+A implementação inclui processamento de dados, desvios, transferências de memória, operações de bloco, multiplicações, instruções ARMv6 de mídia/DSP, exclusivas, CPS, SETEND, BKPT, SRS/RFE, entrada de exceções opcional e sinais IRQ/FIQ. O suporte é amplo, mas ainda não constitui uma implementação certificada de todas as codificações ARMv6/ARMv6K.
 
 As falhas de instrução não implementada ou acesso inválido são reportadas explicitamente; não devem ser interpretadas como compatibilidade.
 
 ## CP15, MMU e TLB
 
-O CP15 mantém os registradores de controle, TTBR0/TTBR1, TTBCR, DACR, CONTEXTIDR, registradores de fault e identificadores de thread.
+O CP15 mantém MIDR, CTR, TLBTR, registradores de feature ARM11 PFR/DFR/MMFR/ISAR, registradores de controle, TTBR0/TTBR1, TTBCR, DACR, FCSE PID, CONTEXTIDR, registradores de fault e identificadores de thread.
 
-A MMU implementa descritores curtos ARMv6 com seções, superseções, coarse page tables, páginas grandes e pequenas, domínios, permissões AP/APX e XN. Faults de tradução, domínio e permissão são encaminhados aos registradores de fault CP15.
+A MMU implementa descritores curtos ARMv6 com seções, superseções, coarse page tables, páginas grandes e pequenas, FCSE PID (VA abaixo de 32 MiB convertido em MVA antes da tradução), domínios, permissões AP/APX e XN. Faults de tradução, domínio e permissão são encaminhados aos registradores de fault CP15.
 
-O caminho de tradução usa um TLB unificado de software com correspondência por ASID e entradas globais. As operações CP15 c8 de invalidação global, por MVA+ASID, por ASID e por MVA ignorando ASID são aplicadas antes do próximo acesso da CPU.
+O caminho de tradução usa um TLB unificado de software com correspondência por ASID e entradas globais. O CP15 c10 controla oito slots de lockdown por P/Victim; TLBIALL preserva esses slots, enquanto invalidações seletivas aplicam suas regras próprias. As operações CP15 c8 de invalidação global, por MVA+ASID, por ASID e por MVA ignorando ASID são aplicadas antes do próximo acesso da CPU.
 
-O TLB tem capacidade e política de substituição simplificadas para o emulador. Não representa o tamanho, a política de replacement nem o mecanismo de lockdown exatos do hardware. Atributos TEX, permissões de subpágina no formato XP=0, faults de alinhamento, caches ARM e coerência de manutenção entre CPU e dispositivos continuam pendentes.
+A região normal do TLB tem 64 entradas de software com substituição round-robin; os oito slots de lockdown são separados e explícitos. A substituição normal ainda não reproduz a associatividade de duas vias nem o algoritmo do hardware. Atributos TEX, permissões de subpágina no formato XP=0, faults de alinhamento, caches ARM e coerência de manutenção entre CPU e dispositivos continuam pendentes.
 
 ## VFPv2
 
