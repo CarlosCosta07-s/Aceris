@@ -113,6 +113,7 @@ impl Arm11ProcessSession {
     pub fn from_address_space(address_space: Arm11CodeAddressSpace) -> Self {
         let mut main_core = Arm11Core::new();
         address_space.initialize_core(&mut main_core);
+        main_core.enable_vfp();
         let scheduler = Arm11ThreadScheduler::new(main_core, DEFAULT_MAIN_THREAD_PRIORITY)
             .expect("the built-in main-thread priority is valid");
 
@@ -1003,6 +1004,18 @@ mod tests {
         assert_eq!(session.core().regs[13], 0x1000_0000);
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
         assert_eq!(session.instruction_count(), 0);
+    }
+
+    #[test]
+    fn main_thread_can_execute_vfp_instructions() {
+        let mut session = test_session_with_program(&[
+            0xEE07_0A10, // VMOV s14, r0
+            0xEE37_7A07, // VADD.F32 s14, s14, s14
+            0xEF00_0042, // SVC #0x42
+        ]);
+        session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[0] = 1.5f32.to_bits();
+        session.run_instructions(16).unwrap();
+        assert_eq!(f32::from_bits(session.core().vfp().s(14)), 3.0);
     }
 
     #[test]

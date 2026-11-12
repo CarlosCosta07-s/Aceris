@@ -220,6 +220,8 @@ impl Arm11ThreadScheduler {
             .ok_or(ThreadSchedulerError::ThreadIdExhausted)?;
 
         let mut core = Arm11Core::new();
+        // The HLE kernel hands user threads a VFP the way the real kernel does.
+        core.enable_vfp();
         core.set_pc(instruction_address);
         core.regs[0] = argument;
         core.regs[13] = stack_top;
@@ -566,6 +568,15 @@ mod tests {
             scheduler.thread_info(MAIN_THREAD_ID).unwrap().state,
             ThreadState::Running
         );
+    }
+
+    #[test]
+    fn created_threads_have_the_vfp_enabled() {
+        let mut scheduler = scheduler();
+        let id = create(&mut scheduler, 0x0020_0000, 0x30);
+        let core = scheduler.core(id).unwrap();
+        assert!(core.vfp().enabled());
+        assert!(core.cp15().vfp_access_enabled());
     }
 
     #[test]
