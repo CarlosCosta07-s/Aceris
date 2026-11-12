@@ -129,7 +129,6 @@ impl Cp15 {
         self.sctlr & ((1 << 22) | (1 << 1)) != 0
     }
 
-
     /// SCTLR.XP: ARMv6 page-table format (AP[1:0] plus APX/XN, no subpages).
     pub fn extended_page_tables(&self) -> bool {
         self.sctlr & SCTLR_XP != 0

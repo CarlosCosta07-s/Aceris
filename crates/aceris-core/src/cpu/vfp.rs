@@ -939,7 +939,8 @@ impl Arm11Core {
                 (false, false, true) => {
                     let product = self.vfp.binary(prec, BinOp::Mul, fn_, fm)?;
                     let product = if s { negate(prec, product) } else { product };
-                    self.vfp.binary(prec, BinOp::Add, negate(prec, fd), product)?
+                    self.vfp
+                        .binary(prec, BinOp::Add, negate(prec, fd), product)?
                 }
                 (false, true, false) => {
                     let product = self.vfp.binary(prec, BinOp::Mul, fn_, fm)?;
@@ -981,9 +982,7 @@ impl Arm11Core {
                 let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(m, true)])?;
                 let inputs: Vec<_> = lanes
                     .into_iter()
-                    .map(|(destination, sources)| {
-                        (destination, self.vfp.read(prec, sources[0]))
-                    })
+                    .map(|(destination, sources)| (destination, self.vfp.read(prec, sources[0])))
                     .collect();
 
                 let mut results = Vec::with_capacity(inputs.len());
