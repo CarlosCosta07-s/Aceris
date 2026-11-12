@@ -56,10 +56,7 @@ impl GspIpcResultResponse {
     ///
     /// RegisterInterruptRelayQueue is excluded because its response also
     /// transfers a shared-memory handle and returns a GSP thread identifier.
-    pub const fn for_request(
-        request: GspIpcRequest,
-        result_code: u32,
-    ) -> Option<Self> {
+    pub const fn for_request(request: GspIpcRequest, result_code: u32) -> Option<Self> {
         let command_id = match request {
             GspIpcRequest::TriggerCmdReqQueue => GSP_IPC_TRIGGER_CMD_REQ_QUEUE_HEADER,
             GspIpcRequest::UnregisterInterruptRelayQueue => {
@@ -976,14 +973,8 @@ mod tests {
     #[test]
     fn gsp_ipc_result_responses_use_one_result_word_and_preserve_command_id() {
         let cases = [
-            (
-                GspIpcRequest::TriggerCmdReqQueue,
-                0x000C_0040,
-            ),
-            (
-                GspIpcRequest::UnregisterInterruptRelayQueue,
-                0x0014_0040,
-            ),
+            (GspIpcRequest::TriggerCmdReqQueue, 0x000C_0040),
+            (GspIpcRequest::UnregisterInterruptRelayQueue, 0x0014_0040),
             (
                 GspIpcRequest::TryAcquireRight {
                     process_handle: 0x1234,
@@ -997,10 +988,7 @@ mod tests {
                 },
                 0x0016_0040,
             ),
-            (
-                GspIpcRequest::ReleaseRight,
-                0x0017_0040,
-            ),
+            (GspIpcRequest::ReleaseRight, 0x0017_0040),
         ];
 
         for (request, expected_header) in cases {
@@ -1860,7 +1848,9 @@ mod tests {
                 .all(|delivery| !delivery.event_signaled)
         );
         assert_eq!(
-            missed_session.kernel_objects.event_is_signaled(missed_event),
+            missed_session
+                .kernel_objects
+                .event_is_signaled(missed_event),
             Some(false)
         );
         assert_eq!(
