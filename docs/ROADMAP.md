@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na branch `main` no commit `08e41f805334ce1a9fececd5b017a65fef49307a`.
+> Estado revisado em 12/11/2026, com base na branch `main` no commit `55014b05448153ec3f802fbe50ecda5daa8d79a8`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -14,8 +14,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Política de não incluir jogos, firmware, chaves, dumps ou conteúdo protegido no repositório
 - [x] CI configurado para Linux, Windows e macOS com Rustfmt, Clippy e testes; build Android ARM64 separado
 - [x] Workflow completo do commit `849e5a33933ea9444122f2160daf867e2d4e60d0` terminou com sucesso em 12/11/2026, incluindo a etapa Android ARM64
-- [~] Os dois commits seguintes do rasterizador (`82303fe` e `08e41f8`) já dispararam novos workflows, ainda pendentes no momento desta revisão
-- [ ] Confirmar CI verde para o HEAD atual depois das alterações do rasterizador
+- [x] Workflow do commit `55014b05448153ec3f802fbe50ecda5daa8d79a8` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [ ] Executar e registrar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` e `cargo build --locked --workspace` no mesmo estado de código
 - [ ] Manter README, arquitetura e roadmap sincronizados com o código, sem anunciar compatibilidade não testada
 
@@ -186,7 +185,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 - [x] Testes unitários para CPU, memória, loaders, processo, kernel inicial, PICA200 command lists e LCD
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
-- [~] Testes iniciais do rasterizador de referência incluídos; a execução depende da conclusão do workflow atual
+- [x] Testes iniciais do rasterizador de referência aprovados no workflow multiplataforma do commit `55014b05448153ec3f802fbe50ecda5daa8d79a8`
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
 - [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis
