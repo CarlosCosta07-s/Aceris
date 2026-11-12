@@ -1864,7 +1864,9 @@ mod tests {
             Some(false)
         );
         assert_eq!(
-            ignored_session.kernel_objects.event_is_signaled(ignored_event),
+            ignored_session
+                .kernel_objects
+                .event_is_signaled(ignored_event),
             Some(false)
         );
     }
