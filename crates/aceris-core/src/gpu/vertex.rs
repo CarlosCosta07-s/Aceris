@@ -7,8 +7,12 @@
 //! address. This module does not guess GPU register address units or implement
 //! DMA/address translation.
 
-use super::{GpuPhysicalMemory, GpuPhysicalMemoryError};
+use super::{GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200};
 
+pub const REG_ATTRIBBUFFERS_LOC: u16 = 0x200;
+pub const REG_ATTRIBBUFFERS_FORMAT_LOW: u16 = 0x201;
+pub const REG_ATTRIBBUFFERS_FORMAT_HIGH: u16 = 0x202;
+pub const REG_ATTRIBBUFFER0_OFFSET: u16 = 0x203;
 pub const MAX_VERTEX_ATTRIBUTES: usize = 12;
 pub const MAX_VERTEX_ARRAYS: usize = 12;
 pub const MAX_COMPONENTS_PER_ARRAY: usize = 12;
@@ -160,6 +164,17 @@ pub struct PicaVertexInputLayout {
     arrays: Vec<VertexArrayLayout>,
 }
 
+/// Snapshot of the vertex-input registers decoded from a PICA200 register file.
+///
+/// The base address remains the raw value from GPUREG_ATTRIBBUFFERS_LOC. It
+/// must not be treated as a host pointer or physical byte address until the
+/// GPU address translation/DMA path has been implemented.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PicaVertexInputState {
+    pub raw_base_address_register: u32,
+    pub layout: PicaVertexInputLayout,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VertexInputError {
     TooManyArrays {
@@ -204,6 +219,42 @@ impl std::error::Error for VertexInputError {}
 impl From<GpuPhysicalMemoryError> for VertexInputError {
     fn from(error: GpuPhysicalMemoryError) -> Self {
         Self::PhysicalMemory(error)
+    }
+}
+
+
+impl Pica200 {
+    /// Reads the current vertex-input register block and decodes its array layouts.
+    ///
+    /// Twelve array descriptors are read from the documented three-register
+    /// sequence beginning at GPUREG_ATTRIBBUFFER0_OFFSET. The raw base-address
+    /// register is returned unchanged so the caller must resolve it through the
+    /// physical GPU address mapping before calling read_vertex.
+    pub fn vertex_input_state(&self) -> Result<PicaVertexInputState, VertexInputError> {
+        let read_register = |register: u16| {
+            self.register(register)
+                .ok_or(VertexInputError::MissingRegister { register })
+        };
+
+        let raw_base_address_register = read_register(REG_ATTRIBBUFFERS_LOC)?;
+        let format_low = read_register(REG_ATTRIBBUFFERS_FORMAT_LOW)?;
+        let format_high = read_register(REG_ATTRIBBUFFERS_FORMAT_HIGH)?;
+        let mut arrays = Vec::with_capacity(MAX_VERTEX_ARRAYS);
+
+        for array_index in 0..MAX_VERTEX_ARRAYS {
+            let offset_register = REG_ATTRIBBUFFER0_OFFSET + (array_index as u16 * 3);
+            arrays.push((
+                read_register(offset_register)?,
+                read_register(offset_register + 1)?,
+                read_register(offset_register + 2)?,
+            ));
+        }
+
+        let layout = PicaVertexInputLayout::from_registers(format_low, format_high, &arrays)?;
+        Ok(PicaVertexInputState {
+            raw_base_address_register,
+            layout,
+        })
     }
 }
 
@@ -454,6 +505,32 @@ fn align_up(value: usize, alignment: usize) -> usize {
 mod tests {
     use super::*;
     use crate::gpu::{FCRAM_BASE, VRAM_BASE};
+
+
+    #[test]
+    fn reads_global_and_twelve_array_registers_from_pica200() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x0123_4000)
+            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1)
+            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, (1 << 28) | (1 << 16))
+            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x20)
+            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0)
+            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
+            .unwrap();
+
+        let state = gpu.vertex_input_state().unwrap();
+        assert_eq!(state.raw_base_address_register, 0x0123_4000);
+        assert_eq!(state.layout.attribute_count(), 2);
+        assert_eq!(state.layout.fixed_attribute_mask(), 1);
+        assert_eq!(state.layout.arrays().len(), 1);
+        assert_eq!(state.layout.arrays()[0].base_offset(), 0x20);
+        assert_eq!(state.layout.arrays()[0].stride_bytes(), 1);
+    }
 
     #[test]
     fn decodes_twelve_global_formats_and_fixed_attribute_mask() {
