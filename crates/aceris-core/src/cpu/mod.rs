@@ -257,7 +257,7 @@ impl Arm11Core {
         }
         self.cpsr.0 = entered_cpsr;
 
-        let vector_base = if self.high_vectors_enabled {
+        let vector_base: u32 = if self.high_vectors_enabled {
             0xFFFF_0000
         } else {
             0
