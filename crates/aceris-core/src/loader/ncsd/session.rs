@@ -18,7 +18,10 @@ use std::io::{Read, Seek};
 
 use crate::Result;
 use crate::cpu::{Arm11Core, StepEvent};
-use crate::gpu::{GpuDmaAddressSpace, GpuPhysicalMemory, OLD_LINEAR_BASE, OLD_LINEAR_END};
+use crate::gpu::{
+    FCRAM_BASE, GpuDmaAddressSpace, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END,
+    OLD_LINEAR_BASE, OLD_LINEAR_END,
+};
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
@@ -537,30 +540,43 @@ impl Arm11ProcessSession {
         if size == 0 || size % 0x1000 != 0 {
             return Err(RESULT_MISALIGNED_ADDRESS);
         }
-        if address_hint != 0 {
-            let hint_end = u64::from(address_hint) + u64::from(size);
-            if address_hint < OLD_LINEAR_BASE || hint_end > OLD_LINEAR_END {
-                return Err(RESULT_INVALID_ADDRESS);
-            }
-        }
-
         let mut memory = self.gpu_memory.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
         let mut dma = self.gpu_address_space.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
-        let physical_base = memory
-            .allocate_linear_fcram(size)
-            .map_err(|_| RESULT_OUT_OF_MEMORY)?;
-        let Some(virtual_base) = physical_base.checked_sub(OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET)
-        else {
-            let _ = memory.free_linear_fcram(physical_base, size);
-            return Err(RESULT_OUT_OF_MEMORY);
+        let requested_mapping = if address_hint == 0 {
+            None
+        } else {
+            let hint_end = u64::from(address_hint) + u64::from(size);
+            if u64::from(address_hint) >= u64::from(OLD_LINEAR_BASE)
+                && hint_end <= OLD_LINEAR_END
+            {
+                Some((
+                    address_hint,
+                    address_hint + OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET,
+                ))
+            } else if u64::from(address_hint) >= u64::from(NEW_LINEAR_BASE)
+                && hint_end <= NEW_LINEAR_END
+            {
+                Some((
+                    address_hint,
+                    FCRAM_BASE + (address_hint - NEW_LINEAR_BASE),
+                ))
+            } else {
+                return Err(RESULT_INVALID_ADDRESS);
+            }
         };
 
-        if virtual_base < OLD_LINEAR_BASE
-            || u64::from(virtual_base) + u64::from(size) > OLD_LINEAR_END
-        {
-            let _ = memory.free_linear_fcram(physical_base, size);
-            return Err(RESULT_OUT_OF_MEMORY);
-        }
+        let physical_base = match requested_mapping {
+            Some((_, requested_physical)) => memory
+                .allocate_linear_fcram_at(requested_physical, size)
+                .map_err(|_| RESULT_OUT_OF_MEMORY)?,
+            None => memory
+                .allocate_linear_fcram(size)
+                .map_err(|_| RESULT_OUT_OF_MEMORY)?,
+        };
+        let virtual_base = requested_mapping.map_or_else(
+            || physical_base - OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET,
+            |(requested_virtual, _)| requested_virtual,
+        );
 
         if let Err(error) =
             self.address_space
