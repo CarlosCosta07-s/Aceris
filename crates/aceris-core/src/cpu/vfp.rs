@@ -1543,12 +1543,7 @@ mod tests {
         assert_eq!(cpu.vfp().fpscr() >> 28, 0b0010);
 
         cpu.vfp_mut().set_s(2, 42);
-        run(
-            &mut cpu,
-            &mut mem,
-            &[dp(VCVT_FROM_S32, 0, 0, 2, false)],
-        )
-        .unwrap();
+        run(&mut cpu, &mut mem, &[dp(VCVT_FROM_S32, 0, 0, 2, false)]).unwrap();
         assert_eq!(f32_of(&cpu, 0), 42.0);
         assert_eq!(cpu.vfp().s(8), 0);
     }
