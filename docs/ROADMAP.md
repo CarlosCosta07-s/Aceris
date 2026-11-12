@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação no commit `8aedeb346014917935985cd5fe913ee9606e18cc`.
+> Estado revisado em 12/11/2026, com base na implementação no commit `b7c4b92cfc1356ddda9ba40ba96573c812443a56`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -131,14 +131,15 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Rasterizador de referência com interpolação de cor perspective-correct por reciprocal W, interpolação de profundidade e teste de depth
 - [~] O estágio geométrico e o rasterizador podem ser usados juntos por `GeometryPipeline::draw_triangle`, mas ainda são genéricos e independentes dos registradores, shaders e comandos reais do PICA200
 - [~] Snapshot do bloco de entrada de vértices diretamente do banco PICA200: base bruta 0x200, formatos globais 0x201–0x202 e doze triplets offset/config1/config2 em 0x203–0x226
-- [~] Decoder de layout: até doze atributos/arrays; cada nibble de formato decodifica tipo escalar e quantidade de 1–4 componentes; largura do escalar é 1 byte (byte/ubyte), 2 (short) ou 4 (float), com alinhamento e padding
-- [~] Leitura de atributos brutos por vértice de VRAM/FCRAM e conversão numérica para `f32`: extensão de sinal para byte/short assinados, conversão sem sinal para ubyte e `from_bits` para float32; sem normalização implícita e sem execução de shader
+- [~] Decoder de layout: até doze atributos/arrays; cada nibble decodifica tipo escalar e largura de 8/16/24/32 bits; a quantidade de componentes é contada pelas referências nos seletores dos arrays; alinhamento, padding e stride validados
+- [~] Leitura de atributos brutos por vértice de VRAM/FCRAM e conversão numérica para `f32`: extensão de sinal conforme largura, conversão de inteiros sem normalização implícita, float32 IEEE e float24 PICA 1.7.16; larguras float8/16 são rejeitadas explicitamente
 - [~] Snapshot dos registradores de índice/contagem/offset: 0x227, 0x228 e 0x22A; base e offset permanecem valores brutos de registrador
 - [~] Leitor de índices U8/U16 em little-endian, com limite defensivo e validação de faixa física; ainda não aplica vertex offset nem resolve o endereço DMA
 - [~] `Pica200::read_vertex_at_physical_base`, `read_numeric_vertex_at_physical_base` e `read_indices_at_physical_base` conectam snapshots ao fetch físico usando base já resolvida pelo chamador; não fazem tradução DMA, aplicação de vertex offset nem dispatch de draw
-- [~] Snapshot do `GPUREG_VSH_INPUTBUFFER_CONFIG` (0x2B9) e dos registradores de permutação (0x2BB/0x2BC); mapeamento explícito dos atributos numéricos para registradores de entrada `v0–v15`, sem executar o vertex shader ou resolver valores fixos
+- [~] Snapshot de `GPUREG_VSH_INPUTBUFFER_CONFIG` (0x2B9) e permutações (0x2BB/0x2BC); associação explícita dos atributos numéricos a `v0–v15`, sem execução do vertex shader
+- [~] Armazenamento dos doze atributos fixos via `GPUREG_FIXEDATTRIB_INDEX` (0x232) e `DATA0–2` (0x233–0x235), incluindo writes por command list e canal imediato 0xF
+- [~] Desempacotamento XYZW float1.7.16 (float24) e aplicação de atributos fixos selecionados pelo mask; valores fornecidos por arrays têm precedência; saída marcada como resolvida para o shader
 - [ ] Resolver `GPUREG_ATTRIBBUFFERS_LOC` e endereços de arrays/índices pelo mapa físico e pela rota DMA real antes de acessar memória
-- [ ] Converter componentes brutos para entradas numéricas do shader com a normalização, extensão de sinal e tratamento float corretos
 - [ ] Integrar o fetch de atributos/índices ao vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
 - [ ] Modelo completo de command processor, filas, sincronização, interrupções e efeitos dos registradores
@@ -200,7 +201,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
-- [x] Bridge de fetch físico, conversão escalar PICA200 e mapeamento de atributos para entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43176284651](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43176284651), código no commit `8aedeb346014917935985cd5fe913ee9606e18cc`
+- [x] Bridge de fetch físico, formatos de 8/16/24/32 bits, conversão numérica, float24, armazenamento/aplicação de atributos fixos e mapeamento de entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43177475915](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43177475915), código no commit `b7c4b92cfc1356ddda9ba40ba96573c812443a56`
 - [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
@@ -225,9 +226,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ## Próximas tarefas prioritárias
 
-1. Corrigir o bridge de command buffers e resolver a base dos arrays/índices para o mapa físico e DMA real; não tratar valores brutos dos registradores como endereços físicos.
-2. Decodificar os valores fixos dos atributos em `GPUREG_FIXEDATTRIB_DATA0–2` (float24) e combiná-los com o mask, sem sobrescrever atributos fornecidos por arrays.
-3. Implementar conversão float24, programa/uniforms e execução do vertex shader PICA200; só então conectar as saídas ao estágio geométrico e rasterizador.
+1. Resolver endereços dos arrays e índices por mapa físico/DMA e corrigir o bridge de command buffers para não tratar endereços visíveis ao processo como endereços físicos.
+2. Confirmar ABI completa de entrada do shader e implementar armazenamento/decodificação de programa, uniforms e execução do vertex shader; os atributos fixos e o mapeamento `v0–v15` já têm infraestrutura inicial.
 4. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 5. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
 6. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
