@@ -275,11 +275,16 @@ impl Arm11Core {
     fn service_pending_interrupt(&mut self) -> Result<bool> {
         let return_address = self.pc().wrapping_add(4);
         if self.fiq_line_asserted && self.cpsr.0 & Psr::F == 0 {
-            self.enter_exception(Psr::FIQ_MODE, 0x1C, return_address, Psr::I | Psr::F)?;
+            self.enter_exception(
+                Psr::FIQ_MODE,
+                0x1C,
+                return_address,
+                Psr::A | Psr::I | Psr::F,
+            )?;
             return Ok(true);
         }
         if self.irq_line_asserted && self.cpsr.0 & Psr::I == 0 {
-            self.enter_exception(Psr::IRQ_MODE, 0x18, return_address, Psr::I)?;
+            self.enter_exception(Psr::IRQ_MODE, 0x18, return_address, Psr::A | Psr::I)?;
             return Ok(true);
         }
         Ok(false)
@@ -516,6 +521,7 @@ mod tests {
         assert_eq!(cpu.regs[LR], 8);
         assert_eq!(cpu.saved_program_status(), Some(interrupted_status));
         assert_ne!(cpu.cpsr.0 & Psr::I, 0);
+        assert_ne!(cpu.cpsr.0 & Psr::A, 0);
 
         // Deassert the level before the handler returns to the interrupted PC.
         cpu.set_irq_line(false);
@@ -525,7 +531,7 @@ mod tests {
     }
 
     #[test]
-    fn fiq_has_priority_and_sets_both_interrupt_masks() {
+    fn fiq_has_priority_and_sets_all_exception_masks() {
         let mut memory = FlatMemory::new(0, 4);
         let mut cpu = Arm11Core::new();
         cpu.set_irq_line(true);
@@ -537,7 +543,7 @@ mod tests {
         assert_eq!(cpu.pc(), 0x1C);
         assert_eq!(cpu.regs[LR], 4);
         assert_eq!(cpu.saved_program_status(), Some(interrupted_status));
-        assert_eq!(cpu.cpsr.0 & (Psr::I | Psr::F), Psr::I | Psr::F);
+        assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::I | Psr::F);
     }
 
     #[test]
@@ -551,6 +557,7 @@ mod tests {
         assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
         assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
         assert_eq!(cpu.pc(), 0x18);
+        assert_ne!(cpu.cpsr.0 & Psr::A, 0);
         assert_ne!(cpu.cpsr.0 & Psr::I, 0);
         assert_ne!(cpu.cpsr.0 & Psr::F, 0);
     }
