@@ -69,5 +69,5 @@ pub use vertex_shader::{
     PicaShaderFormat1, PicaShaderFormat1Compare, PicaShaderFormat1Inverted, PicaShaderFormat1Unary,
     PicaShaderFormat2Flow, PicaShaderFormat3BooleanFlow, PicaShaderFormat4Emit,
     PicaShaderFormat5InvertedMultiplyAdd, PicaShaderFormat5MultiplyAdd,
-    PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat,
+    PicaShaderOperandDescriptor, PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat,
 };
