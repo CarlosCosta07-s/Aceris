@@ -171,8 +171,7 @@ impl GpuPhysicalMemory {
         }
         self.validate_range(address, size as usize)?;
         if address < FCRAM_BASE
-            || u64::from(address) + u64::from(size)
-                > u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE)
+            || u64::from(address) + u64::from(size) > u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE)
         {
             return Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size });
         }
@@ -185,11 +184,14 @@ impl GpuPhysicalMemory {
         let page_count = size / PHYSICAL_PAGE_SIZE as u32;
         let end_page = first_page + page_count;
         let materialized_conflict = inner.pages.range(first_page..end_page).next().is_some();
-        let reserved_conflict = inner.linear_allocations.iter().any(|(base, allocated_size)| {
-            let reserved_start = *base / PHYSICAL_PAGE_SIZE as u32;
-            let reserved_end = reserved_start + *allocated_size / PHYSICAL_PAGE_SIZE as u32;
-            first_page < reserved_end && end_page > reserved_start
-        });
+        let reserved_conflict = inner
+            .linear_allocations
+            .iter()
+            .any(|(base, allocated_size)| {
+                let reserved_start = *base / PHYSICAL_PAGE_SIZE as u32;
+                let reserved_end = reserved_start + *allocated_size / PHYSICAL_PAGE_SIZE as u32;
+                first_page < reserved_end && end_page > reserved_start
+            });
         if materialized_conflict || reserved_conflict {
             return Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size });
         }
