@@ -6,6 +6,11 @@
 
 use std::fmt;
 
+use super::fixed_attribute::{
+    FIXED_ATTRIBUTE_COUNT, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2,
+    REG_FIXEDATTRIB_INDEX,
+};
+
 /// Number of 32-bit internal PICA200 registers addressable by command ID.
 pub const REGISTER_COUNT: usize = 0x400;
 /// First documented framebuffer-state register.
@@ -124,6 +129,8 @@ pub struct PicaCommandListReport {
 #[derive(Clone, Debug)]
 pub struct Pica200 {
     registers: [u32; REGISTER_COUNT],
+    fixed_attributes: [[u32; 3]; FIXED_ATTRIBUTE_COUNT],
+    immediate_mode_attribute: [u32; 3],
     command_lists_submitted: u64,
     register_writes: u64,
 }
@@ -132,6 +139,8 @@ impl Default for Pica200 {
     fn default() -> Self {
         Self {
             registers: [0; REGISTER_COUNT],
+            fixed_attributes: [[0; 3]; FIXED_ATTRIBUTE_COUNT],
+            immediate_mode_attribute: [0; 3],
             command_lists_submitted: 0,
             register_writes: 0,
         }
@@ -151,16 +160,46 @@ impl Pica200 {
 
     /// Writes one complete internal register.
     pub fn write_register(&mut self, id: u16, value: u32) -> Result<(), PicaCommandError> {
-        let register =
-            self.registers
-                .get_mut(usize::from(id))
-                .ok_or(PicaCommandError::InvalidRegister {
-                    register: u32::from(id),
-                    parameter_index: 0,
-                })?;
+        let Some(register) = self.registers.get_mut(usize::from(id)) else {
+            return Err(PicaCommandError::InvalidRegister {
+                register: u32::from(id),
+                parameter_index: 0,
+            });
+        };
         *register = value;
+        self.apply_fixed_attribute_register_write(id);
         self.register_writes = self.register_writes.saturating_add(1);
         Ok(())
+    }
+
+    /// Returns the three packed data words for a fixed vertex attribute.
+    pub fn fixed_attribute_words(&self, index: usize) -> Option<[u32; 3]> {
+        self.fixed_attributes.get(index).copied()
+    }
+
+    /// Returns the last immediate-mode attribute payload (index register 0xF).
+    pub fn immediate_mode_attribute_words(&self) -> [u32; 3] {
+        self.immediate_mode_attribute
+    }
+
+    fn apply_fixed_attribute_register_write(&mut self, id: u16) {
+        let data_index = match id {
+            REG_FIXEDATTRIB_DATA0 => 0,
+            REG_FIXEDATTRIB_DATA1 => 1,
+            REG_FIXEDATTRIB_DATA2 => 2,
+            _ => return,
+        };
+        let selected = (self.registers[usize::from(REG_FIXEDATTRIB_INDEX)] & 0xF) as u8;
+        let value = self.registers[usize::from(id)];
+        match selected {
+            0..=11 => {
+                self.fixed_attributes[usize::from(selected)][data_index] = value;
+            }
+            0xF => {
+                self.immediate_mode_attribute[data_index] = value;
+            }
+            _ => {}
+        }
     }
 
     /// Parses and executes a PICA200 command list from little-endian words.
@@ -226,6 +265,7 @@ impl Pica200 {
                     words[cursor + 1 + parameter_index]
                 };
                 apply_byte_mask(&mut self.registers[register as usize], value, byte_mask);
+                self.apply_fixed_attribute_register_write(register as u16);
                 report.register_writes = report.register_writes.saturating_add(1);
             }
 
@@ -328,6 +368,8 @@ impl Pica200 {
 
     pub fn reset(&mut self) {
         self.registers.fill(0);
+        self.fixed_attributes.fill([0; 3]);
+        self.immediate_mode_attribute.fill(0);
         self.command_lists_submitted = 0;
         self.register_writes = 0;
     }
