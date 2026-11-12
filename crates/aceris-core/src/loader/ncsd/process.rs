@@ -12,7 +12,7 @@ use super::PreparedArm11Image;
 use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
 use crate::cpu::{Arm11Core, SP};
 use crate::gpu::{
-    FCRAM_BASE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
+    FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
     OLD_LINEAR_END,
 };
 use crate::memory::Bus;
@@ -549,7 +549,7 @@ impl Arm11CodeAddressSpace {
         };
         let physical_end = u64::from(physical_base) + u64::from(size);
         if expected_physical != u64::from(physical_base)
-            || physical_end > u64::from(FCRAM_BASE) + 0x0800_0000
+            || physical_end > u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE)
         {
             return Err(Arm11DynamicMemoryError::OutsideLinearMemoryRange {
                 address: virtual_base,
@@ -564,6 +564,12 @@ impl Arm11CodeAddressSpace {
         memory
             .validate_range(physical_base, size as usize)
             .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
+        if !memory.has_linear_fcram_allocation(physical_base, size) {
+            return Err(Arm11DynamicMemoryError::LinearMappingNotFound {
+                address: virtual_base,
+                size,
+            });
+        }
 
         let overlaps_static = [
             self.layout.text,
@@ -1020,13 +1026,6 @@ impl Arm11CodeAddressSpace {
         }
     }
 
-    fn bytes_for_location_mut(&mut self, location: MemoryLocation) -> &mut [u8] {
-        match location {
-            MemoryLocation::Static { kind, .. } => self.bytes_for_mut(kind),
-            MemoryLocation::Dynamic { index, .. } => &mut self.dynamic_regions[index].bytes,
-            MemoryLocation::Physical { .. } => unreachable!("physical locations are written directly"),
-        }
-    }
 
     fn location_is_writable(&self, location: MemoryLocation) -> bool {
         match location {
@@ -1614,6 +1613,66 @@ mod tests {
         assert!(address_space.is_writable_range(0x0010_4000, 1));
         assert!(!address_space.is_writable_range(0x0010_6000, 1));
         assert!(!address_space.is_writable_range(0x0010_3000, 0));
+    }
+
+    #[test]
+    fn linear_process_mapping_aliases_the_shared_gpu_physical_backing() {
+        let mut address_space = test_address_space();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x2000)
+            .unwrap();
+        address_space.write32(virtual_base + 0x100, 0xCAFE_BABE).unwrap();
+        assert_eq!(
+            memory.read_u32(physical_base + 0x100).unwrap(),
+            0xCAFE_BABE
+        );
+
+        memory
+            .write_u32(physical_base + 0x104, 0x1234_5678)
+            .unwrap();
+        assert_eq!(
+            address_space.read32(virtual_base + 0x104).unwrap(),
+            0x1234_5678
+        );
+        assert!(address_space.is_writable_range(virtual_base, 0x2000));
+        assert_eq!(
+            address_space.query_memory(virtual_base).state,
+            Arm11MemoryState::Private
+        );
+
+        address_space
+            .unmap_linear_memory_region(virtual_base, physical_base, 0x2000)
+            .unwrap();
+        assert!(!address_space.is_writable_range(virtual_base, 4));
+        assert_eq!(
+            address_space.read32(virtual_base),
+            Err(Error::InvalidAccess { addr: virtual_base })
+        );
+        memory.free_linear_fcram(physical_base, 0x2000).unwrap();
+    }
+
+    #[test]
+    fn linear_mapping_rejects_wrong_alias_and_unreserved_physical_range() {
+        let mut address_space = test_address_space();
+        let mut memory = GpuPhysicalMemory::new();
+        address_space.attach_gpu_memory(memory.clone());
+
+        assert!(matches!(
+            address_space.map_linear_memory_region(0x1400_0000, FCRAM_BASE, 0x1000),
+            Err(Arm11DynamicMemoryError::LinearMappingNotFound { .. })
+        ));
+
+        let physical = memory.allocate_linear_fcram(0x1000).unwrap();
+        assert!(matches!(
+            address_space.map_linear_memory_region(0x1400_0000, physical + 0x1000, 0x1000),
+            Err(Arm11DynamicMemoryError::OutsideLinearMemoryRange { .. })
+        ));
+        memory.free_linear_fcram(physical, 0x1000).unwrap();
     }
 
     #[test]
