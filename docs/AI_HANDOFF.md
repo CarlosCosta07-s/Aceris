@@ -317,6 +317,6 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - `89eb900` — `Psr::privileged()` agora reconhece como privilegiados somente FIQ, IRQ, Supervisor, Abort, Undefined e System. User e codificações de modo reservadas não recebem privilégios de controle do CPSR.
 - `psr.rs`: teste cobre cada modo privilegiado definido, User e vários valores reservados.
 - `arm.rs`: teste A32 confirma que `MSR CPSR_c,r6` não consegue trocar um modo reservado para System.
-- A alteração ficou isolada nos arquivos `crates/aceris-core/src/cpu/psr.rs` e `crates/aceris-core/src/cpu/arm.rs`; não modificou `thumb.rs) nem os módulos recentes de IPC.
+- A alteração ficou isolada nos arquivos `crates/aceris-core/src/cpu/psr.rs` e `crates/aceris-core/src/cpu/arm.rs`; não modificou `thumb.rs` nem os módulos recentes de IPC.
 - Não foi possível executar Rustfmt, Clippy ou `cargo test --workspace` neste ambiente porque Cargo/Rust não estão instalados. A consulta de checks e de Actions para `89eb900` não retornou execuções no momento do registro; os novos testes permanecem pendentes de CI.
 
