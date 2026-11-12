@@ -2886,11 +2886,7 @@ mod tests {
     #[test]
     fn arm1136_a32_nop_ignores_condition_and_hint_fields() {
         // EQ NOP with Z clear, AL NOP with a nonzero hint, and NV-encoded NOP.
-        let mut m = Machine::new(&[
-            0x0320_F0A5,
-            0xE320_F0FF,
-            0xF320_F055,
-        ]);
+        let mut m = Machine::new(&[0x0320_F0A5, 0xE320_F0FF, 0xF320_F055]);
         m.cpu.regs[0] = 0x1122_3344;
         m.cpu.regs[1] = 0x5566_7788;
         m.cpu.cpsr.set_flags(false, false, true, false);
