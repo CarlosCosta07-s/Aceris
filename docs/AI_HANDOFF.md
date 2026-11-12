@@ -251,3 +251,12 @@ Com a autorização já registrada de Carlos Costa para colaborar no trabalho de
 
 Cinco testes foram adicionados, mas não executados nesta sessão. Rust/Cargo não estão disponíveis no ambiente; verificar Rustfmt, Clippy e `cargo test --workspace` em CI antes de marcar o trabalho como aprovado.
 
+## Adapter entre mensagens IPC e arrays de memory blocks (12/11/2026)
+
+- `c70074d` — adiciona `Arm11ProcessSession::translate_memory_block_translation_section_from_ipc`. O método recebe um `IpcMessage` previamente decodificado, exige que toda a seção de tradução contenha exatamente um descritor type-0 seguido pelo array correspondente e reutiliza a validação/transferência homogênea de memory blocks.
+- `3dd9ca3` — adiciona teste que decodifica uma mensagem TLS sintética com um descritor MOVE, transfere dois memory blocks preservando uma entrada nula e confirma a rejeição de uma seção vazia.
+
+**Limite:** o adapter não processa vários grupos de descritores, buffers estáticos/mapeados, tipos de objeto heterogêneos ou handles de evento. A mensagem deve ser decodificada antes por `IpcMessage`; o método não implementa `svcSendSyncRequest` nem altera o dispatcher real.
+ 
+A verificação local continua pendente: o ambiente não disponibiliza Cargo/Rust, e os seis testes novos/alterados nesta sequência não foram executados. Verificar Rustfmt, Clippy e `cargo test --workspace` na CI antes de aprovar.
+
