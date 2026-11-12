@@ -48,7 +48,7 @@ pub const CTR_MP11: u32 = 0x1D15_2152;
 pub const TLBTR_MP11: u32 = 0x0000_0800;
 
 const SCTLR_RESET: u32 = 0x0005_0078;
-/// Writable SCTLR bits: M, A, C, Z, I, V, RR, S/R, U, EE and XP.
+/// Writable SCTLR bits modeled here: M, A, C, Z, I, V, RR, S/R, U, EE, XP and TRE.
 const SCTLR_WRITABLE: u32 = 0x10C0_FB07;
 const SCTLR_M: u32 = 1;
 const SCTLR_XP: u32 = 1 << 23;
@@ -58,7 +58,7 @@ const SCTLR_V: u32 = 1 << 13;
 const SCTLR_EE: u32 = 1 << 15;
 const CPACR_WRITABLE: u32 = 0x00F0_0000;
 const TLB_LOCKDOWN_WRITABLE: u32 = 0x9C00_0000;
-const PRIMARY_REMAP_WRITABLE: u32 = 0x000F_CFFC;
+const PRIMARY_REMAP_WRITABLE: u32 = 0x000F_CFFF;
 const NORMAL_REMAP_WRITABLE: u32 = 0xCFFF_CFFF;
 const PRIMARY_REMAP_RESET: u32 = 0x0009_8AA4;
 const NORMAL_REMAP_RESET: u32 = 0x44E0_48E0;
@@ -139,17 +139,17 @@ impl Cp15 {
     }
 
     /// SCTLR.TRE: memory-region remapping is enabled.
-    pub(super) fn memory_region_remap_enabled(&self) -> bool {
+    pub fn memory_region_remap_enabled(&self) -> bool {
         self.sctlr & SCTLR_TRE != 0
     }
 
     /// CP15 c10,c2,0 — Primary Region Remap Register (PRRR).
-    pub(super) fn primary_memory_remap(&self) -> u32 {
+    pub fn primary_memory_remap(&self) -> u32 {
         self.primary_remap
     }
 
     /// CP15 c10,c2,1 — Normal Memory Remap Register (NMRR).
-    pub(super) fn normal_memory_remap(&self) -> u32 {
+    pub fn normal_memory_remap(&self) -> u32 {
         self.normal_remap
     }
 
