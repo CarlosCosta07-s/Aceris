@@ -3139,13 +3139,28 @@ mod tests {
 
         let copied = groups[0].handles[0].unwrap();
         let moved = groups[1].handles[0].unwrap();
-        assert!(source.kernel_objects.memory_block_backing(copy_source).is_ok());
+        assert!(
+            source
+                .kernel_objects
+                .memory_block_backing(copy_source)
+                .is_ok()
+        );
         assert_eq!(
             source.kernel_objects.memory_block_backing(move_source),
             Err(KernelHandleError::InvalidHandle)
         );
-        assert!(destination.kernel_objects.memory_block_backing(copied).is_ok());
-        assert!(destination.kernel_objects.memory_block_backing(moved).is_ok());
+        assert!(
+            destination
+                .kernel_objects
+                .memory_block_backing(copied)
+                .is_ok()
+        );
+        assert!(
+            destination
+                .kernel_objects
+                .memory_block_backing(moved)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -3154,20 +3169,11 @@ mod tests {
         let handle = source.create_memory_block(0x1000, 3, 1).unwrap();
         let mut destination = test_session();
 
-        let words = [
-            0x1234_0004,
-            0x0000_0010,
-            handle,
-            0x0000_0010,
-            handle,
-        ];
+        let words = [0x1234_0004, 0x0000_0010, handle, 0x0000_0010, handle];
         let message = ipc::IpcMessage::decode(&words).unwrap();
 
         assert_eq!(
-            destination.translate_memory_block_handle_groups_from_ipc_message(
-                &mut source,
-                message
-            ),
+            destination.translate_memory_block_handle_groups_from_ipc_message(&mut source, message),
             Err(kernel::IpcHandleTranslationError::DuplicateMoveHandle { handle })
         );
         assert_eq!(destination.kernel_objects.handle_count(), 0);
