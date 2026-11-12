@@ -163,6 +163,7 @@ pub struct PicaVertexInputLayout {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VertexInputError {
     TooManyArrays { count: usize },
+    InvalidAttributeCount { count: usize },
     InvalidAttributeIndex {
         array: usize,
         attribute: usize,
@@ -210,6 +211,11 @@ impl PicaVertexInputLayout {
         }
 
         let attribute_count = (((format_high >> 28) & 0xF) + 1) as usize;
+        if attribute_count > MAX_VERTEX_ATTRIBUTES {
+            return Err(VertexInputError::InvalidAttributeCount {
+                count: attribute_count,
+            });
+        }
         let fixed_attribute_mask = ((format_high >> 16) & 0x0FFF) as u16;
         let default_format = VertexAttributeFormat {
             data_type: AttributeDataType::SignedByte,
@@ -347,6 +353,14 @@ impl PicaVertexInputLayout {
         self.fixed_attribute_mask
     }
 
+    pub fn format(&self, attribute: usize) -> Option<VertexAttributeFormat> {
+        if attribute < usize::from(self.attribute_count) {
+            Some(self.formats[attribute])
+        } else {
+            None
+        }
+    }
+
     pub fn arrays(&self) -> &[VertexArrayLayout] {
         &self.arrays
     }
@@ -445,6 +459,15 @@ mod tests {
         assert_eq!(layout.formats[8].bit_width, AttributeBitWidth::Bits16);
         assert_eq!(layout.formats[11].data_type, AttributeDataType::Float);
         assert_eq!(layout.formats[11].bit_width, AttributeBitWidth::Bits32);
+    }
+
+    #[test]
+    fn rejects_attribute_count_above_hardware_limit() {
+        let result = PicaVertexInputLayout::from_registers(0, 15 << 28, &[]);
+        assert_eq!(
+            result,
+            Err(VertexInputError::InvalidAttributeCount { count: 16 })
+        );
     }
 
     #[test]
