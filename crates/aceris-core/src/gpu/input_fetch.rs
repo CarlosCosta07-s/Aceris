@@ -5,7 +5,8 @@
 //! module deliberately does not interpret raw GPU register addresses.
 
 use super::{
-    GpuPhysicalMemory, IndexBufferError, NumericVertexInput, Pica200, RawVertexInput,
+    GpuDmaAddressSpace, GpuPhysicalMemory, IndexBufferError, NumericVertexInput, Pica200,
+    RawVertexInput,
     VertexInputError,
 };
 
@@ -46,6 +47,25 @@ impl Pica200 {
             })
     }
 
+    /// Fetches and converts a vertex through an explicitly registered linear DMA mapping.
+    pub fn read_numeric_vertex_via_dma(
+        &self,
+        memory: &GpuPhysicalMemory,
+        address_space: &GpuDmaAddressSpace,
+        linear_virtual_base: u32,
+        vertex_index: u32,
+    ) -> Result<NumericVertexInput, VertexInputError> {
+        let state = self.vertex_input_state()?;
+        state
+            .layout
+            .read_vertex_via_dma(memory, address_space, linear_virtual_base, vertex_index)
+            .and_then(|raw| raw.to_numeric())
+            .map(|mut input| {
+                self.apply_fixed_vertex_attributes(&mut input);
+                input
+            })
+    }
+
     /// Fetches raw indices using the current PICA200 index-buffer register.
     ///
     /// `resolved_physical_byte_base` must be the already-translated physical
@@ -63,6 +83,25 @@ impl Pica200 {
         state
             .index_buffer
             .read_indices(memory, resolved_physical_byte_base, first_index, count)
+    }
+
+    /// Fetches indices through an explicitly registered linear DMA mapping.
+    pub fn read_indices_via_dma(
+        &self,
+        memory: &GpuPhysicalMemory,
+        address_space: &GpuDmaAddressSpace,
+        linear_virtual_base: u32,
+        first_index: u32,
+        count: usize,
+    ) -> Result<Vec<u32>, IndexBufferError> {
+        let state = self.index_input_state()?;
+        state.index_buffer.read_indices_via_dma(
+            memory,
+            address_space,
+            linear_virtual_base,
+            first_index,
+            count,
+        )
     }
 }
 
@@ -190,6 +229,79 @@ mod tests {
                 .unwrap(),
             vec![0x1234, 0x5678]
         );
+    }
+
+    #[test]
+    fn pica200_fetches_numeric_vertex_through_registered_linear_dma_mapping() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_5000).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x80).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
+            .unwrap();
+
+        let mut memory = GpuPhysicalMemory::new();
+        memory.write(FCRAM_BASE + 0x5080, &[0xA5]).unwrap();
+        let mut address_space = GpuDmaAddressSpace::new();
+        address_space
+            .map_linear_region(0x1400_5000, 0x1000)
+            .unwrap();
+
+        let vertex = gpu
+            .read_numeric_vertex_via_dma(&memory, &address_space, 0x1400_5000, 0)
+            .unwrap();
+        assert_eq!(vertex.attributes[0].unwrap().components[0], 165.0);
+    }
+
+    #[test]
+    fn pica200_fetches_indices_through_registered_linear_dma_mapping() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_6000).unwrap();
+        gpu.write_register(REG_INDEXBUFFER_CONFIG, 0x8000_0020)
+            .unwrap();
+        gpu.write_register(REG_NUMVERTICES, 2).unwrap();
+
+        let mut memory = GpuPhysicalMemory::new();
+        memory
+            .write(FCRAM_BASE + 0x6020, &[0x34, 0x12, 0x78, 0x56])
+            .unwrap();
+        let mut address_space = GpuDmaAddressSpace::new();
+        address_space
+            .map_linear_region(0x1400_6000, 0x1000)
+            .unwrap();
+
+        assert_eq!(
+            gpu.read_indices_via_dma(&memory, &address_space, 0x1400_6000, 0, 2)
+                .unwrap(),
+            vec![0x1234, 0x5678]
+        );
+    }
+
+    #[test]
+    fn dma_vertex_fetch_rejects_components_outside_registered_mapping() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1400_7000).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0xFFC).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
+            .unwrap();
+
+        let memory = GpuPhysicalMemory::new();
+        let mut address_space = GpuDmaAddressSpace::new();
+        address_space
+            .map_linear_region(0x1400_7000, 0x1000)
+            .unwrap();
+
+        assert!(matches!(
+            gpu.read_numeric_vertex_via_dma(&memory, &address_space, 0x1400_7000, 1),
+            Err(VertexInputError::GpuAddressSpace(
+                super::super::GpuAddressSpaceError::UnmappedVirtualRange { .. }
+            ))
+        ));
     }
 
     #[test]
