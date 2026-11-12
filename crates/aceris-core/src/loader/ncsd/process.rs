@@ -10,7 +10,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use super::PreparedArm11Image;
-use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
+use super::ncch::extended_header::{Arm11MemoryType, CodeFileLayout, CodeSetInfo};
 use crate::cpu::{Arm11Core, SP};
 use crate::gpu::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
@@ -140,6 +140,8 @@ impl std::error::Error for Arm11DynamicMemoryError {}
 #[derive(Clone, Debug)]
 pub struct SharedMemoryBacking {
     bytes: Arc<Mutex<Vec<u8>>>,
+    offset: usize,
+    length: usize,
 }
 
 impl SharedMemoryBacking {
@@ -150,30 +152,71 @@ impl SharedMemoryBacking {
             .try_reserve_exact(size)
             .map_err(|error| error.to_string())?;
         bytes.resize(size, 0);
-        Ok(Self {
+        Ok(Self::from_vec(bytes))
+    }
+
+    fn from_vec(bytes: Vec<u8>) -> Self {
+        let length = bytes.len();
+        Self {
             bytes: Arc::new(Mutex::new(bytes)),
+            offset: 0,
+            length,
+        }
+    }
+
+    /// Creates a bounded view into the same allocation without copying.
+    fn view(&self, offset: usize, length: usize) -> Option<Self> {
+        let end = offset.checked_add(length)?;
+        if end > self.length {
+            return None;
+        }
+        Some(Self {
+            bytes: self.bytes.clone(),
+            offset: self.offset.checked_add(offset)?,
+            length,
         })
     }
 
-    /// Returns the current backing size, or None if its lock was poisoned.
+    /// Returns the view size, or None if its backing lock was poisoned.
     pub fn len(&self) -> Option<usize> {
-        self.bytes.lock().ok().map(|bytes| bytes.len())
+        self.bytes.lock().ok().map(|_| self.length)
     }
 
-    /// Reports whether two handles share the same backing allocation.
+    /// Reports whether two views refer to the same backing allocation.
     pub fn shares_backing_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.bytes, &other.bytes)
     }
 
+    /// Reports whether two views identify the same bytes within the allocation.
+    pub fn is_same_view_as(&self, other: &Self) -> bool {
+        self.shares_backing_with(other)
+            && self.offset == other.offset
+            && self.length == other.length
+    }
+
     fn read_byte(&self, offset: usize) -> Option<u8> {
-        self.bytes.lock().ok()?.get(offset).copied()
+        if offset >= self.length {
+            return None;
+        }
+        self.bytes
+            .lock()
+            .ok()?
+            .get(self.offset.checked_add(offset)?)
+            .copied()
     }
 
     fn write_byte(&self, offset: usize, value: u8) -> bool {
+        if offset >= self.length {
+            return false;
+        }
         let Ok(mut bytes) = self.bytes.lock() else {
             return false;
         };
-        let Some(byte) = bytes.get_mut(offset) else {
+        let Some(byte) = self
+            .offset
+            .checked_add(offset)
+            .and_then(|absolute| bytes.get_mut(absolute))
+        else {
             return false;
         };
         *byte = value;
@@ -190,9 +233,70 @@ impl PartialEq for SharedMemoryBacking {
 impl Eq for SharedMemoryBacking {}
 
 #[derive(Debug)]
+enum DynamicMemoryBacking {
+    Private(Vec<u8>),
+    Shared(SharedMemoryBacking),
+}
+
+impl DynamicMemoryBacking {
+    fn len(&self) -> usize {
+        match self {
+            Self::Private(bytes) => bytes.len(),
+            Self::Shared(backing) => backing.length,
+        }
+    }
+
+    fn read_byte(&self, offset: usize) -> Option<u8> {
+        match self {
+            Self::Private(bytes) => bytes.get(offset).copied(),
+            Self::Shared(backing) => backing.read_byte(offset),
+        }
+    }
+
+    fn write_byte(&mut self, offset: usize, value: u8) -> bool {
+        match self {
+            Self::Private(bytes) => {
+                let Some(byte) = bytes.get_mut(offset) else {
+                    return false;
+                };
+                *byte = value;
+                true
+            }
+            Self::Shared(backing) => backing.write_byte(offset, value),
+        }
+    }
+
+    /// Promotes the allocation to shareable backing and returns a bounded view.
+    fn shared_view(
+        &mut self,
+        offset: usize,
+        length: usize,
+    ) -> Option<SharedMemoryBacking> {
+        if let Self::Private(bytes) = self {
+            let bytes = std::mem::take(bytes);
+            *self = Self::Shared(SharedMemoryBacking::from_vec(bytes));
+        }
+        match self {
+            Self::Private(_) => None,
+            Self::Shared(backing) => backing.view(offset, length),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct DynamicMemoryRegion {
     address: u32,
-    bytes: Vec<u8>,
+    backing: DynamicMemoryBacking,
+}
+
+impl DynamicMemoryRegion {
+    fn len(&self) -> usize {
+        self.backing.len()
+    }
+
+    fn end_address(&self) -> u64 {
+        u64::from(self.address) + self.len() as u64
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -528,6 +632,7 @@ impl PreparedArm11Image {
 #[derive(Debug)]
 pub struct Arm11CodeAddressSpace {
     layout: Arm11ProcessLayout,
+    memory_type: Arm11MemoryType,
     text: Vec<u8>,
     read_only: Vec<u8>,
     data: Vec<u8>,
@@ -549,6 +654,7 @@ impl Arm11CodeAddressSpace {
     pub fn from_prepared(
         prepared: PreparedArm11Image,
     ) -> std::result::Result<Self, Arm11ProcessLayoutError> {
+        let memory_type = prepared.extended_header.arm11_memory_type();
         let layout = prepared.process_layout()?;
         let bss_size = usize::try_from(layout.bss.mapped_size_bytes)
             .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
@@ -571,6 +677,7 @@ impl Arm11CodeAddressSpace {
 
         Ok(Self {
             layout,
+            memory_type,
             text: prepared.text,
             read_only: prepared.read_only,
             data: prepared.data,
@@ -588,6 +695,11 @@ impl Arm11CodeAddressSpace {
     /// Returns the validated process metadata associated with this address space.
     pub const fn layout(&self) -> &Arm11ProcessLayout {
         &self.layout
+    }
+
+    /// Returns the ARM11 FCRAM region assigned to this process.
+    pub const fn memory_type(&self) -> Arm11MemoryType {
+        self.memory_type
     }
 
     /// Initializes the ARM11 core's entry PC and main-thread stack pointer.
@@ -647,7 +759,7 @@ impl Arm11CodeAddressSpace {
                 && end > u64::from(segment.address)
         });
         let overlaps_dynamic = self.dynamic_regions.iter().any(|region| {
-            let region_end = u64::from(region.address) + region.bytes.len() as u64;
+            let region_end = u64::from(region.address) + region.len() as u64;
             u64::from(address) < region_end && end > u64::from(region.address)
         });
         let overlaps_shared = self.shared_regions.iter().any(|region| {
@@ -674,6 +786,42 @@ impl Arm11CodeAddressSpace {
         Ok(())
     }
 
+    /// Creates a zero-copy block view over a page-aligned regular-heap range.
+    ///
+    /// This bootstrap only accepts a range contained within one existing
+    /// ControlMemory heap allocation. Static, TLS, shared and linear mappings
+    /// are intentionally excluded until their ownership semantics are modeled.
+    pub fn shared_memory_backing_for_heap_range(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> std::result::Result<SharedMemoryBacking, Arm11DynamicMemoryError> {
+        if address % PAGE_SIZE as u32 != 0 {
+            return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
+        }
+        if size == 0 || u64::from(size) % PAGE_SIZE != 0 {
+            return Err(Arm11DynamicMemoryError::InvalidSize(size));
+        }
+        let end = u64::from(address)
+            .checked_add(u64::from(size))
+            .ok_or(Arm11DynamicMemoryError::OutsideApplicationHeap { address, size })?;
+        if address < APPLICATION_HEAP_BASE || end > APPLICATION_HEAP_END {
+            return Err(Arm11DynamicMemoryError::OutsideApplicationHeap { address, size });
+        }
+
+        let Some(region) = self.dynamic_regions.iter_mut().find(|region| {
+            address >= region.address && end <= region.end_address()
+        }) else {
+            return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
+        };
+        let offset = usize::try_from(address - region.address)
+            .map_err(|_| Arm11DynamicMemoryError::InvalidSize(size))?;
+        region
+            .backing
+            .shared_view(offset, size as usize)
+            .ok_or(Arm11DynamicMemoryError::MappingNotFound { address, size })
+    }
+
     /// Unmaps one exact shared mapping without destroying the shared backing.
     pub fn unmap_shared_memory_region(
         &mut self,
@@ -696,7 +844,7 @@ impl Arm11CodeAddressSpace {
         self.shared_regions
             .iter()
             .find(|region| region.address == address)
-            .is_some_and(|region| region.backing.shares_backing_with(backing))
+            .is_some_and(|region| region.backing.is_same_view_as(backing))
     }
 
     /// Maps a reserved linear-memory interval into the process address space.
@@ -884,8 +1032,10 @@ impl Arm11CodeAddressSpace {
         self.dynamic_regions
             .try_reserve(1)
             .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
-        self.dynamic_regions
-            .push(DynamicMemoryRegion { address, bytes });
+        self.dynamic_regions.push(DynamicMemoryRegion {
+            address,
+            backing: DynamicMemoryBacking::Private(bytes),
+        });
         self.dynamic_regions.sort_by_key(|region| region.address);
 
         Ok(address)
@@ -916,7 +1066,7 @@ impl Arm11CodeAddressSpace {
                     })?;
                     self.dynamic_regions.push(DynamicMemoryRegion {
                         address,
-                        bytes: vec![0; PAGE_SIZE as usize],
+                        backing: DynamicMemoryBacking::Private(vec![0; PAGE_SIZE as usize]),
                     });
                     self.dynamic_regions.sort_by_key(|region| region.address);
                 }
@@ -1233,9 +1383,10 @@ impl Arm11CodeAddressSpace {
     fn bytes_for_location(&self, location: MemoryLocation) -> &[u8] {
         match location {
             MemoryLocation::Static { kind, .. } => self.bytes_for(kind),
-            MemoryLocation::Dynamic { index, .. } => &self.dynamic_regions[index].bytes,
-            MemoryLocation::Shared { .. } | MemoryLocation::Physical { .. } => {
-                unreachable!("shared and physical locations are read from their backing")
+            MemoryLocation::Dynamic { .. }
+            | MemoryLocation::Shared { .. }
+            | MemoryLocation::Physical { .. } => {
+                unreachable!("dynamic, shared and physical locations are read from their backing")
             }
         }
     }
@@ -1331,7 +1482,9 @@ impl Arm11CodeAddressSpace {
                     self.bytes_for_mut(kind)[offset] = *byte;
                 }
                 MemoryLocation::Dynamic { index, offset } => {
-                    self.dynamic_regions[index].bytes[offset] = *byte;
+                    if !self.dynamic_regions[index].backing.write_byte(offset, *byte) {
+                        return Err(Error::InvalidAccess { addr: address });
+                    }
                 }
                 MemoryLocation::Shared { index, offset } => {
                     if !self.shared_regions[index].backing.write_byte(offset, *byte) {
@@ -1392,6 +1545,10 @@ impl Bus for Arm11CodeAddressSpace {
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
         match location {
+            MemoryLocation::Dynamic { index, offset } => self.dynamic_regions[index]
+                .backing
+                .read_byte(offset)
+                .ok_or(Error::InvalidAccess { addr: address }),
             MemoryLocation::Shared { index, offset } => {
                 let region = &self.shared_regions[index];
                 if region.permissions & 1 == 0 {
@@ -1414,7 +1571,7 @@ impl Bus for Arm11CodeAddressSpace {
                     .map_err(|_| Error::InvalidAccess { addr: address })?;
                 Ok(byte[0])
             }
-            MemoryLocation::Static { offset, .. } | MemoryLocation::Dynamic { offset, .. } => self
+            MemoryLocation::Static { offset, .. } => self
                 .bytes_for_location(location)
                 .get(offset)
                 .copied()
