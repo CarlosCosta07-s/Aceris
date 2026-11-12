@@ -1,7 +1,7 @@
 //! PICA200 graphics hardware model and its software bring-up primitives.
 
-mod geometry;
 mod fixed_attribute;
+mod geometry;
 mod index;
 mod input_fetch;
 mod physical_memory;
@@ -10,6 +10,10 @@ mod rasterizer;
 mod shader_input;
 mod vertex;
 
+pub use fixed_attribute::{
+    FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, Float24, IMMEDIATE_ATTRIBUTE_INDEX,
+    REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
+};
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
     Viewport,
@@ -31,11 +35,6 @@ pub use pica200::{
 pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
-pub use fixed_attribute::{
-    FixedVertexAttribute, Float24, FIXED_ATTRIBUTE_COUNT, IMMEDIATE_ATTRIBUTE_INDEX,
-    REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2,
-    REG_FIXEDATTRIB_INDEX,
-};
 pub use shader_input::{
     MAX_VERTEX_SHADER_INPUTS, MAX_VERTEX_SHADER_REGISTERS, PicaVertexShaderInputLayout,
     PicaVertexShaderInputState, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
@@ -43,10 +42,9 @@ pub use shader_input::{
     VertexShaderInputBindings, VertexShaderInputError,
 };
 pub use vertex::{
-    AttributeBitWidth, AttributeDataType, MAX_COMPONENTS_PER_ARRAY,
-    MAX_COMPONENTS_PER_ATTRIBUTE, MAX_VERTEX_ARRAYS,
-    MAX_VERTEX_ATTRIBUTES, NumericVertexAttribute, NumericVertexInput, PicaVertexInputLayout,
-    PicaVertexInputState, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
-    REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, RawVertexAttribute, RawVertexInput,
-    VertexArrayLayout, VertexAttributeFormat, VertexInputError,
+    AttributeBitWidth, AttributeDataType, MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE,
+    MAX_VERTEX_ARRAYS, MAX_VERTEX_ATTRIBUTES, NumericVertexAttribute, NumericVertexInput,
+    PicaVertexInputLayout, PicaVertexInputState, REG_ATTRIBBUFFER0_OFFSET,
+    REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
+    RawVertexAttribute, RawVertexInput, VertexArrayLayout, VertexAttributeFormat, VertexInputError,
 };
