@@ -191,12 +191,12 @@ impl TranslationLookasideBuffer {
 
     pub(super) fn maintain(&mut self, operation: TlbMaintenance) {
         self.entries.retain(|entry| match operation {
-            TlbMaintenance::InvalidateAll => false,
-            TlbMaintenance::InvalidateMvaAsid { mva, asid } => {
+            TlbMaintenance::All => false,
+            TlbMaintenance::MvaAsid { mva, asid } => {
                 !(entry.matches_address(mva) && (entry.global || entry.asid == asid))
             }
-            TlbMaintenance::InvalidateAsid { asid } => entry.global || entry.asid != asid,
-            TlbMaintenance::InvalidateMvaAllAsids { mva } => !entry.matches_address(mva),
+            TlbMaintenance::Asid { asid } => entry.global || entry.asid != asid,
+            TlbMaintenance::MvaAllAsids { mva } => !entry.matches_address(mva),
         });
         if self.entries.len() < TLB_CAPACITY {
             self.next_victim = 0;
@@ -314,7 +314,8 @@ fn walk_page_tables<B: Bus + ?Sized>(
 }
 
 /// Performs one page-table walk without retaining the result in the TLB.
-pub(super) fn translate<B: Bus + ?Sized>(
+#[cfg(test)]
+fn translate<B: Bus + ?Sized>(
     bus: &mut B,
     params: &Params,
     va: u32,
@@ -475,10 +476,11 @@ impl Arm11Core {
             asid: self.cp15.asid(),
             privileged: self.cpsr.privileged(),
         };
-        let mut mmu = MmuBus::new(bus, params, &mut tlb);
-        let outcome = self.fetch_and_execute(&mut mmu, pc);
-        let fault = mmu.fault;
-        drop(mmu);
+        let (outcome, fault) = {
+            let mut mmu = MmuBus::new(bus, params, &mut tlb);
+            let outcome = self.fetch_and_execute(&mut mmu, pc);
+            (outcome, mmu.fault)
+        };
         self.tlb = tlb;
 
         if let Some(fault) = fault {
@@ -886,7 +888,7 @@ mod tests {
         }
 
         // An MVA from anywhere inside the section invalidates the whole entry.
-        tlb.maintain(TlbMaintenance::InvalidateMvaAsid {
+        tlb.maintain(TlbMaintenance::MvaAsid {
             mva: 0x123F_FFFF,
             asid: params.asid,
         });
@@ -916,7 +918,7 @@ mod tests {
         tlb.insert(make_entry(0x2000, 0xB000, 7, false));
         tlb.insert(make_entry(0x3000, 0xC000, 8, false));
 
-        tlb.maintain(TlbMaintenance::InvalidateAsid { asid: 7 });
+        tlb.maintain(TlbMaintenance::Asid { asid: 7 });
         assert_eq!(tlb.len(), 2);
         assert!(
             tlb.entries
@@ -929,14 +931,14 @@ mod tests {
                 .any(|entry| entry.virtual_base == 0x3000 && entry.asid == 8)
         );
 
-        tlb.maintain(TlbMaintenance::InvalidateMvaAsid {
+        tlb.maintain(TlbMaintenance::MvaAsid {
             mva: 0x1000,
             asid: 0xFF,
         });
         assert_eq!(tlb.len(), 1);
         assert_eq!(tlb.entries[0].virtual_base, 0x3000);
 
-        tlb.maintain(TlbMaintenance::InvalidateMvaAllAsids { mva: 0x3004 });
+        tlb.maintain(TlbMaintenance::MvaAllAsids { mva: 0x3004 });
         assert!(tlb.entries.is_empty());
     }
 
@@ -955,7 +957,7 @@ mod tests {
             xn: false,
             section: false,
         });
-        tlb.maintain(TlbMaintenance::InvalidateAll);
+        tlb.maintain(TlbMaintenance::All);
         assert_eq!(tlb.len(), 0);
     }
 

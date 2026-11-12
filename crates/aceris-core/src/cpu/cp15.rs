@@ -7,10 +7,10 @@
 /// TLB maintenance requested by a privileged MCR to CP15 c8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TlbMaintenance {
-    InvalidateAll,
-    InvalidateMvaAsid { mva: u32, asid: u8 },
-    InvalidateAsid { asid: u8 },
-    InvalidateMvaAllAsids { mva: u32 },
+    All,
+    MvaAsid { mva: u32, asid: u8 },
+    Asid { asid: u8 },
+    MvaAllAsids { mva: u32 },
 }
 
 /// Why a CP15 access could not complete.
@@ -269,20 +269,20 @@ impl Cp15 {
             // ARM11 MPCore has one unified TLB. c5 (instruction), c6
             // (data), and c7 (unified) therefore affect the same entries.
             (8, 5..=7, 0) => {
-                self.pending_tlb_maintenance = Some(TlbMaintenance::InvalidateAll);
+                self.pending_tlb_maintenance = Some(TlbMaintenance::All);
             }
             (8, 5..=7, 1) => {
-                self.pending_tlb_maintenance = Some(TlbMaintenance::InvalidateMvaAsid {
+                self.pending_tlb_maintenance = Some(TlbMaintenance::MvaAsid {
                     mva: value & 0xFFFF_F000,
                     asid: value as u8,
                 });
             }
             (8, 5..=7, 2) => {
                 self.pending_tlb_maintenance =
-                    Some(TlbMaintenance::InvalidateAsid { asid: value as u8 });
+                    Some(TlbMaintenance::Asid { asid: value as u8 });
             }
             (8, 5..=7, 3) => {
-                self.pending_tlb_maintenance = Some(TlbMaintenance::InvalidateMvaAllAsids {
+                self.pending_tlb_maintenance = Some(TlbMaintenance::MvaAllAsids {
                     mva: value & 0xFFFF_F000,
                 });
             }
@@ -347,13 +347,13 @@ mod tests {
         cp15.write(true, 0, 8, 5, 0, 0).unwrap();
         assert_eq!(
             cp15.take_tlb_maintenance(),
-            Some(TlbMaintenance::InvalidateAll)
+            Some(TlbMaintenance::All)
         );
 
         cp15.write(true, 0, 8, 6, 1, 0x1234_567A).unwrap();
         assert_eq!(
             cp15.take_tlb_maintenance(),
-            Some(TlbMaintenance::InvalidateMvaAsid {
+            Some(TlbMaintenance::MvaAsid {
                 mva: 0x1234_5000,
                 asid: 0x7A,
             })
@@ -362,13 +362,13 @@ mod tests {
         cp15.write(true, 0, 8, 7, 2, 0x0000_003C).unwrap();
         assert_eq!(
             cp15.take_tlb_maintenance(),
-            Some(TlbMaintenance::InvalidateAsid { asid: 0x3C })
+            Some(TlbMaintenance::Asid { asid: 0x3C })
         );
 
         cp15.write(true, 0, 8, 7, 3, 0x8765_43FE).unwrap();
         assert_eq!(
             cp15.take_tlb_maintenance(),
-            Some(TlbMaintenance::InvalidateMvaAllAsids { mva: 0x8765_4000 })
+            Some(TlbMaintenance::MvaAllAsids { mva: 0x8765_4000 })
         );
     }
 
