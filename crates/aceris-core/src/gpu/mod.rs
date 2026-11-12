@@ -12,8 +12,8 @@ mod shader_input;
 mod vertex;
 
 pub use address_space::{
-    GpuAddressSpaceError, GpuDmaAddressSpace, GpuLinearMapping, ResolvedGpuRange,
-    LINEAR_PAGE_SIZE, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE, OLD_LINEAR_END,
+    GpuAddressSpaceError, GpuDmaAddressSpace, GpuLinearMapping, LINEAR_PAGE_SIZE, NEW_LINEAR_BASE,
+    NEW_LINEAR_END, OLD_LINEAR_BASE, OLD_LINEAR_END, ResolvedGpuRange,
 };
 pub use fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, Float24, IMMEDIATE_ATTRIBUTE_INDEX,
