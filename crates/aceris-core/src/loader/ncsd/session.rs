@@ -92,6 +92,8 @@ pub enum Arm11RunStopReason {
     WaitForEvent,
     /// A guest SEV instruction retired and must be broadcast by the system scheduler.
     SendEvent,
+    /// An exception return completed and must wake other MP11 CPUs' event registers.
+    ExceptionReturn,
     /// No thread is currently eligible to execute.
     NoRunnableThread,
     /// A void SVC could not be completed by the current bootstrap.
@@ -1553,6 +1555,13 @@ impl Arm11ProcessSession {
                         stop_reason: Arm11RunStopReason::SendEvent,
                     });
                 }
+                StepEvent::ExceptionReturn => {
+                    executed = executed.saturating_add(1);
+                    return Ok(Arm11RunReport {
+                        instructions_executed: executed,
+                        stop_reason: Arm11RunStopReason::ExceptionReturn,
+                    });
+                }
                 StepEvent::Breakpoint(immediate) => {
                     executed = executed.saturating_add(1);
                     return Ok(Arm11RunReport {
@@ -2637,6 +2646,23 @@ mod tests {
             Arm11RunStopReason::InstructionBudgetExhausted
         );
         assert_eq!(session.core().regs[0], 7);
+    }
+
+    #[test]
+    fn exception_return_is_reported_to_the_mpcore_scheduler() {
+        let mut session = test_session_with_program(&[0xE1B0_F00E]);
+        let core = session.scheduler.current_core_mut().unwrap();
+        core.switch_mode(crate::cpu::Psr::SUPERVISOR_MODE).unwrap();
+        core.set_saved_program_status(crate::cpu::Psr(crate::cpu::Psr::USER_MODE))
+            .unwrap();
+        core.regs[14] = 0x0010_0040;
+
+        let report = session.run_instructions(8).unwrap();
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(report.stop_reason, Arm11RunStopReason::ExceptionReturn);
+        assert_eq!(session.core().pc(), 0x0010_0040);
+        assert_eq!(session.core().cpsr.mode(), crate::cpu::Psr::USER_MODE);
+        assert_eq!(session.instruction_count(), 1);
     }
 
     #[test]

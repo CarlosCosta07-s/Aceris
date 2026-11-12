@@ -50,6 +50,8 @@ pub enum StepEvent {
     WaitingForEvent,
     /// A core executed SEV; the system scheduler must signal the other CPU cores.
     SendEvent,
+    /// An exception return completed; the system scheduler must signal other MP11 CPUs.
+    ExceptionReturn,
     /// A BKPT instruction was encountered. The immediate is retained for a
     /// debugger or the process exception layer.
     Breakpoint(u16),
