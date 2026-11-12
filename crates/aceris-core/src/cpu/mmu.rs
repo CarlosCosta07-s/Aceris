@@ -1408,6 +1408,17 @@ mod tests {
             Walk::Mapped(0x000F_FFFF)
         );
         assert_eq!(
+            walk(&cpu, &mut mem, 0x2008_0000, Access::Write),
+            Walk::Mapped(0x0008_0000)
+        );
+
+        // AP=10 is privileged read/write and user read-only.
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2008_0000, Access::Read),
+            Walk::Mapped(0x0008_0000)
+        );
+        assert_eq!(
             status_of(walk(&cpu, &mut mem, 0x2008_0000, Access::Write)),
             0xD
         );
