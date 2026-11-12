@@ -364,16 +364,19 @@ impl Arm11Core {
     }
 
     fn step_instruction<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
-        // WFE wakes for a registered event or an unmasked IRQ/FIQ. The
-        // event register stays set after wakeup and is consumed by the next WFE.
+        // An unmasked IRQ/FIQ is a WakeUpAction and sets the event register
+        // even when the core is not currently asleep in WFE.
+        let wakeup_action = (self.irq_line_asserted && self.cpsr.0 & Psr::I == 0)
+            || (self.fiq_line_asserted && self.cpsr.0 & Psr::F == 0);
+        if wakeup_action {
+            self.event_registered = true;
+        }
+
+        // WFE wakes for a registered event. The event register stays set after
+        // wakeup and is consumed only when a WFE instruction executes again.
         if self.waiting_for_event {
-            let unmasked_interrupt = (self.irq_line_asserted && self.cpsr.0 & Psr::I == 0)
-                || (self.fiq_line_asserted && self.cpsr.0 & Psr::F == 0);
-            if self.event_registered || unmasked_interrupt {
+            if self.event_registered {
                 self.waiting_for_event = false;
-                if unmasked_interrupt {
-                    self.event_registered = true;
-                }
             } else {
                 return Ok(StepEvent::WaitingForEvent);
             }

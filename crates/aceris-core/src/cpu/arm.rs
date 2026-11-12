@@ -3035,12 +3035,22 @@ mod tests {
         m.cpu.set_irq_line(true);
         assert_eq!(m.step(), StepEvent::WaitingForEvent);
         assert_eq!(m.cpu.pc(), 4);
+        assert!(!m.cpu.event_registered);
 
         m.cpu.cpsr.0 &= !Psr::I;
         assert_eq!(m.step(), StepEvent::Executed);
         assert_eq!(m.cpu.cpsr.mode(), Psr::IRQ_MODE);
         assert!(m.cpu.event_registered);
         assert_eq!(m.cpu.pc(), 0x18);
+    }
+
+    #[test]
+    fn armv6k_unmasked_interrupt_latches_event_even_when_core_is_awake() {
+        let mut m = Machine::new(&[0xE320_F001]);
+        m.cpu.set_irq_line(true);
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::IRQ_MODE);
+        assert!(m.cpu.event_registered);
     }
 
     #[test]
