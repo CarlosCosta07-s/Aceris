@@ -532,7 +532,9 @@ mod tests {
         );
         assert_eq!(
             decode_gsp_ipc_request(&[0x0020_0040, 0, 0]),
-            Err(GspIpcRequestError::UnsupportedCommandHeader { header: 0x0020_0040 })
+            Err(GspIpcRequestError::UnsupportedCommandHeader {
+                header: 0x0020_0040
+            })
         );
     }
 
