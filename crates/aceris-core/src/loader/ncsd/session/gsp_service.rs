@@ -738,8 +738,14 @@ mod tests {
     #[test]
     fn releasing_rendering_right_from_another_client_is_rejected() {
         let mut session = test_session();
-        let first_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
-        let second_event = session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
+        let first_event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let second_event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
         let mut registry = GspServiceRegistry::new();
         registry
             .register_client(&mut session, 0, SHARED_MEMORY_BASE, first_event)
