@@ -1,6 +1,7 @@
 //! PICA200 graphics hardware model and its software bring-up primitives.
 
 mod geometry;
+mod index;
 mod physical_memory;
 mod pica200;
 mod rasterizer;
@@ -9,6 +10,9 @@ mod vertex;
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
     Viewport,
+};
+pub use index::{
+    IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
 };
 pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,
