@@ -278,8 +278,7 @@ impl Cp15 {
                 });
             }
             (8, 5..=7, 2) => {
-                self.pending_tlb_maintenance =
-                    Some(TlbMaintenance::Asid { asid: value as u8 });
+                self.pending_tlb_maintenance = Some(TlbMaintenance::Asid { asid: value as u8 });
             }
             (8, 5..=7, 3) => {
                 self.pending_tlb_maintenance = Some(TlbMaintenance::MvaAllAsids {
@@ -345,10 +344,7 @@ mod tests {
         let mut cp15 = Cp15::default();
 
         cp15.write(true, 0, 8, 5, 0, 0).unwrap();
-        assert_eq!(
-            cp15.take_tlb_maintenance(),
-            Some(TlbMaintenance::All)
-        );
+        assert_eq!(cp15.take_tlb_maintenance(), Some(TlbMaintenance::All));
 
         cp15.write(true, 0, 8, 6, 1, 0x1234_567A).unwrap();
         assert_eq!(
