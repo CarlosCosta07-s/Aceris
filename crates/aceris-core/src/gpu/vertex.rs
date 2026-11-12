@@ -393,7 +393,7 @@ impl PicaVertexInputLayout {
         let fixed_attribute_mask = ((format_high >> 16) & 0x0FFF) as u16;
         let default_format = VertexAttributeFormat {
             data_type: AttributeDataType::SignedByte,
-            component_count: 1,
+            bit_width: AttributeBitWidth::Bits8,
         };
         let mut formats = [default_format; MAX_VERTEX_ATTRIBUTES];
 
