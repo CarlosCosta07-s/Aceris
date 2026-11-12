@@ -1848,7 +1848,12 @@ impl Arm11Core {
             });
         }
         if list == 0 {
-            return Err(Error::Unimplemented("LDM/STM with an empty register list"));
+            // The architecture classifies an empty list as UNPREDICTABLE.
+            // Reject it deterministically rather than report a missing feature.
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
         }
 
         let size = 4 * list.count_ones();
@@ -3718,6 +3723,24 @@ mod tests {
             m.cpu.step(&mut m.mem),
             Err(Error::UndefinedInstruction { .. })
         ));
+    }
+
+    #[test]
+    fn empty_arm_block_transfer_lists_are_undefined() {
+        for instruction in [0xE880_0000, 0xE890_0000] {
+            let mut machine = Machine::new(&[instruction]);
+            machine.cpu.regs[0] = DATA;
+            assert!(
+                matches!(
+                    machine.cpu.step(&mut machine.mem),
+                    Err(Error::UndefinedInstruction { pc: 0, word })
+                        if word == instruction
+                ),
+                "empty ARM LDM/STM list {instruction:#010x} must be rejected as undefined"
+            );
+            assert_eq!(machine.cpu.pc(), 0);
+            assert_eq!(machine.cpu.regs[0], DATA);
+        }
     }
 
     #[test]

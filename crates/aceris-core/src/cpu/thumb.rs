@@ -270,7 +270,10 @@ impl Arm11Core {
         let rn = bits(half, 10, 8) as usize;
         let list = bits(half, 7, 0);
         if list == 0 {
-            return Err(Error::Unimplemented("LDMIA/STMIA with an empty list"));
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: half,
+            });
         }
 
         let mut addr = self.regs[rn];
@@ -432,7 +435,12 @@ impl Arm11Core {
                     });
                 }
             }
-            _ => return Err(Error::Unimplemented("Thumb miscellaneous instruction")),
+            _ => {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word: half,
+                });
+            }
         }
         Ok(StepEvent::Executed)
     }
@@ -1122,6 +1130,32 @@ mod tests {
         let mut m = Machine::new(&[0xB672]); // CPSID i.
         m.step();
         assert_eq!(m.cpu.cpsr.0 & (1 << 7), 0);
+    }
+
+    #[test]
+    fn empty_thumb_block_transfer_lists_are_undefined() {
+        for half in [0xC000, 0xC800] {
+            let mut machine = Machine::new(&[half]);
+            assert!(
+                matches!(
+                    machine.cpu.step(&mut machine.mem),
+                    Err(Error::UndefinedInstruction { pc: 0, .. })
+                ),
+                "empty Thumb LDM/STM list {half:#06x} must be rejected as undefined"
+            );
+            assert_eq!(machine.cpu.pc(), 0);
+        }
+    }
+
+    #[test]
+    fn reserved_thumb_miscellaneous_encodings_are_undefined() {
+        // BF01 is in the 16-bit hint space but is not a defined ARMv6K hint.
+        let mut machine = Machine::new(&[0xBF01]);
+        assert!(matches!(
+            machine.cpu.step(&mut machine.mem),
+            Err(Error::UndefinedInstruction { pc: 0, word: 0xBF01 })
+        ));
+        assert_eq!(machine.cpu.pc(), 0);
     }
 
     #[test]
