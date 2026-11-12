@@ -184,6 +184,7 @@ pub const GSP_SHARED_MEMORY_SIZE: usize = 0x1000;
 pub struct GspClientRegistration {
     shared_memory_base: u32,
     event_handle: u32,
+    flags: u32,
 }
 
 impl GspClientRegistration {
@@ -195,6 +196,14 @@ impl GspClientRegistration {
     /// Process-local event handle signaled after a relay event is queued.
     pub const fn event_handle(self) -> u32 {
         self.event_handle
+    }
+
+    /// Raw flags supplied when RegisterInterruptRelayQueue was called.
+    ///
+    /// Aceris preserves the value without assigning semantics that have not
+    /// yet been implemented or independently confirmed.
+    pub const fn flags(self) -> u32 {
+        self.flags
     }
 }
 
@@ -348,6 +357,22 @@ impl GspServiceRegistry {
         shared_memory_base: u32,
         event_handle: u32,
     ) -> Result<u8, GspServiceError> {
+        self.register_next_available_client_with_flags(
+            session,
+            shared_memory_base,
+            event_handle,
+            0,
+        )
+    }
+
+    /// Registers in the first free slot while preserving the request's raw flags.
+    pub fn register_next_available_client_with_flags(
+        &mut self,
+        session: &mut Arm11ProcessSession,
+        shared_memory_base: u32,
+        event_handle: u32,
+        flags: u32,
+    ) -> Result<u8, GspServiceError> {
         let index = self
             .clients
             .iter()
@@ -355,7 +380,7 @@ impl GspServiceRegistry {
             .ok_or(GspServiceError::NoFreeClientSlots)?;
         let client_id = u8::try_from(index).map_err(|_| GspServiceError::NoFreeClientSlots)?;
 
-        self.register_client(session, client_id, shared_memory_base, event_handle)?;
+        self.register_client_with_flags(session, client_id, shared_memory_base, event_handle, flags)?;
         Ok(client_id)
     }
 
@@ -369,6 +394,18 @@ impl GspServiceRegistry {
         client_id: u8,
         shared_memory_base: u32,
         event_handle: u32,
+    ) -> Result<(), GspServiceError> {
+        self.register_client_with_flags(session, client_id, shared_memory_base, event_handle, 0)
+    }
+
+    /// Registers a client and retains the uninterpreted RegisterInterruptRelayQueue flags.
+    pub fn register_client_with_flags(
+        &mut self,
+        session: &mut Arm11ProcessSession,
+        client_id: u8,
+        shared_memory_base: u32,
+        event_handle: u32,
+        flags: u32,
     ) -> Result<(), GspServiceError> {
         let index = Self::client_index(client_id)?;
         if self.clients[index].is_some() {
@@ -420,6 +457,7 @@ impl GspServiceRegistry {
         self.clients[index] = Some(GspClientRegistration {
             shared_memory_base,
             event_handle,
+            flags,
         });
         Ok(())
     }
@@ -1104,6 +1142,7 @@ mod tests {
             Some(GspClientRegistration {
                 shared_memory_base: SHARED_MEMORY_BASE,
                 event_handle: event,
+                flags: 0,
             })
         );
         assert_eq!(
@@ -1111,9 +1150,30 @@ mod tests {
             GspClientRegistration {
                 shared_memory_base: SHARED_MEMORY_BASE,
                 event_handle: event,
+                flags: 0,
             }
         );
         assert_eq!(registry.registered_client_count(), 0);
+    }
+
+    #[test]
+    fn registration_preserves_uninterpreted_ipc_flags() {
+        let mut session = test_session();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut registry = GspServiceRegistry::new();
+        let flags = 0xA5A5_0001;
+
+        registry
+            .register_client_with_flags(&mut session, 2, SHARED_MEMORY_BASE, event, flags)
+            .unwrap();
+
+        let registration = registry.client_registration(2).unwrap();
+        assert_eq!(registration.flags(), flags);
+        assert_eq!(registration.event_handle(), event);
+        assert_eq!(registration.shared_memory_base(), SHARED_MEMORY_BASE);
     }
 
     #[test]
@@ -1452,6 +1512,7 @@ mod tests {
             GspClientRegistration {
                 shared_memory_base: SHARED_MEMORY_BASE,
                 event_handle: events[0],
+                flags: 0,
             }
         );
         assert!(!unregistration.rendering_right_wait_cancelled);
