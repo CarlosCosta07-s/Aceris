@@ -4,7 +4,10 @@
 //! address/DMA mapping and pass the resulting physical byte address. This
 //! module deliberately does not interpret raw GPU register addresses.
 
-use super::{GpuPhysicalMemory, IndexBufferError, Pica200, RawVertexInput, VertexInputError};
+use super::{
+    GpuPhysicalMemory, IndexBufferError, NumericVertexInput, Pica200, RawVertexInput,
+    VertexInputError,
+};
 
 impl Pica200 {
     /// Fetches one vertex using the current PICA200 attribute-array registers.
@@ -23,6 +26,24 @@ impl Pica200 {
         state
             .layout
             .read_vertex(memory, resolved_physical_byte_base, vertex_index)
+    }
+
+    /// Fetches one vertex and converts its scalar components to numeric shader inputs.
+    ///
+    /// Integer components are sign-extended where applicable and converted to
+    /// f32 values. The conversion does not apply implicit normalization.
+    pub fn read_numeric_vertex_at_physical_base(
+        &self,
+        memory: &GpuPhysicalMemory,
+        resolved_physical_byte_base: u32,
+        vertex_index: u32,
+    ) -> Result<NumericVertexInput, VertexInputError> {
+        self.read_vertex_at_physical_base(
+            memory,
+            resolved_physical_byte_base,
+            vertex_index,
+        )
+        .map(|raw| raw.to_numeric())
     }
 
     /// Fetches raw indices using the current PICA200 index-buffer register.
@@ -81,6 +102,30 @@ mod tests {
         assert_eq!(attribute.format.data_type, AttributeDataType::UnsignedByte);
         assert_eq!(attribute.component_count, 1);
         assert_eq!(attribute.components[0], 0x7F);
+    }
+
+    #[test]
+    fn pica200_fetches_numeric_vertex_inputs() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000)
+            .unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_LOW, 1).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFERS_FORMAT_HIGH, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET, 0x80).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 1, 0).unwrap();
+        gpu.write_register(REG_ATTRIBBUFFER0_OFFSET + 2, (1 << 16) | (1 << 28))
+            .unwrap();
+
+        let mut memory = GpuPhysicalMemory::new();
+        let resolved_base = FCRAM_BASE + 0x5000;
+        memory.write(resolved_base + 0x80, &[0xFF]).unwrap();
+
+        let vertex = gpu
+            .read_numeric_vertex_at_physical_base(&memory, resolved_base, 0)
+            .unwrap();
+        let attribute = vertex.attributes[0].unwrap();
+        assert_eq!(attribute.components[0], 255.0);
+        assert_eq!(attribute.component_count, 1);
     }
 
     #[test]
