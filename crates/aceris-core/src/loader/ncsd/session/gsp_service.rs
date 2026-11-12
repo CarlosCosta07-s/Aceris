@@ -521,9 +521,7 @@ impl GspServiceRegistry {
     /// Returning the slot ID together with its process resources lets the
     /// service dispatcher enumerate active clients without duplicating the
     /// registry's slot layout or probing every possible ID.
-    pub fn client_registrations(
-        &self,
-    ) -> impl Iterator<Item = (u8, GspClientRegistration)> + '_ {
+    pub fn client_registrations(&self) -> impl Iterator<Item = (u8, GspClientRegistration)> + '_ {
         self.clients
             .iter()
             .enumerate()
@@ -705,10 +703,11 @@ impl GspServiceRegistry {
     /// The iterator only plans routing; the caller remains responsible for
     /// delivering the event through each client's own process session.
     pub fn interrupt_recipients(&self, interrupt: GspInterruptId) -> impl Iterator<Item = u8> + '_ {
-        self.client_registrations().filter_map(move |(client_id, _)| {
-            (interrupt.is_pdc() || self.rendering_client == Some(client_id))
-                .then_some(client_id)
-        })
+        self.client_registrations()
+            .filter_map(move |(client_id, _)| {
+                (interrupt.is_pdc() || self.rendering_client == Some(client_id))
+                    .then_some(client_id)
+            })
     }
 
     /// Returns whether a client is eligible to receive a particular interrupt.
