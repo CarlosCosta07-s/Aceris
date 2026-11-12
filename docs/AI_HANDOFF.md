@@ -109,8 +109,10 @@ Carlos Costa autorizou explicitamente o ChatGPT a continuar colaborando no traba
 
 ### Limites que devem ser preservados
 
-- O handler atual suporta somente `addr=0`, isto é, alocação anônima própria. `CreateMemoryBlock` sobre uma região já mapeada ainda retorna erro; não copie a região para simular compartilhamento.
-- As restrições do kernel dependentes do memory type do processo ainda não estão representadas nos metadados do Aceris. Não anunciar compatibilidade total com o SVC até esse modelo ser implementado.
+- O handler atual suporta `addr=0` somente para processos SYSTEM/BASE. Processos APPLICATION e tipos não reconhecidos recebem `0xD92007EA`; descritor ausente ou tipo zero é tratado conservadoramente como APPLICATION.
+- Com `addr` não nulo, o handler aceita somente uma faixa alinhada por página, contida em uma única alocação atual do heap regular modelado por `ControlMemory`. Segmentos estáticos, TLS, aliases shared já mapeados, memória linear e intervalos que cruzam várias alocações continuam fora do escopo.
+- O backing original do heap começa como `Vec<u8>` privada do host e é promovido para `Arc<Mutex<Vec<u8>>>` sem cópia quando um bloco é criado. Isso garante aliasing de bytes dentro do mesmo modelo de processo, mas não é ainda um alocador físico FCRAM nem uma implementação completa da coerência multi-processo.
+- As permissões suportadas são NONE=0, R=1 e RW=3; W-only=2 é inválida e deve ser rejeitada na criação e no mapeamento.
 - `MapMemoryBlock` e `UnmapMemoryBlock` continuam limitados ao mesmo processo/tabela de handles nesta etapa; tradução de handles e importação do bloco para outro processo ainda faltam.
 - O GSP registry continua recebendo um endereço de shared memory e event handle já mapeados/criados. O despacho GSP IPC, a resposta estendida de `RegisterInterruptRelayQueue` e o bloqueio/despertar de threads em `AcquireRight` seguem pendentes.
 - Não alterar a implementação de memória compartilhada existente sem revisar os commits acima e preservar os testes de alias, permissões, QueryMemory, unmap e rollback.
@@ -119,4 +121,38 @@ Carlos Costa autorizou explicitamente o ChatGPT a continuar colaborando no traba
 
 Os testes foram adicionados ao workspace, mas não foram executados localmente nesta intervenção. Confirme o workflow da branch `main` associado ao HEAD antes de marcar a mudança como aprovada:
 https://github.com/CarlosCosta07-s/Aceris/commit/da94e087ebcabd6c1ac8d19705ccd82276697949
+
+## Continuação da colaboração autorizada — memória compartilhada baseada no heap (12/11/2026)
+
+Carlos Costa renovou explicitamente a autorização para que o ChatGPT colabore com Claude. As alterações desta rodada foram feitas somente em `main`, sem abrir branch, e foram limitadas ao parser de exheader, ao backing compartilhável de heap, aos SVCs de memory block, aos testes correspondentes e à documentação.
+
+### Commits publicados
+
+- `2a67ca1` — decodifica o tipo de memória ARM11 a partir do descritor OtherCapabilities no ACI.
+- `619d165` — adiciona views com offset/length e promove alocações regulares de heap para backing compartilhável sem copiar os bytes.
+- `f5e0af4` — torna a validação de mapping sensível ao intervalo exato da view compartilhada.
+- `e465b59` — permite que a tabela de objetos crie um handle sobre um backing já compartilhável.
+- `2779df5` — implementa a rota de source-address do CreateMemoryBlock para heap regular e restringe a alocação anônima a SYSTEM/BASE.
+- `ae4a3fc` e `aa689ad` — ampliam os testes de sequência SVC, estado QueryMemory e coerência de leitura/escrita entre a origem e o alias.
+- `c66a820` — valor ausente/zero de memory type é tratado como APPLICATION por segurança.
+- `fc9922f` — valida permissões antes da alocação anônima.
+- `6b527d5`, `0546b99` e `e810673` — rejeitam W-only=2 no mapping, na criação do objeto e no SVC.
+- `be5fefb` — sincroniza o roadmap.
+- `e984f39` — correção de formatação Rustfmt e adição de `SharedMemoryBacking::is_empty` para a API de backing.
+- `44f6ede` — atualiza a arquitetura para descrever o caminho de heap compartilhado.
+
+### Semântica implementada e limites
+
+- ACI ARM11 Kernel Capabilities começa em `0x170`; o parser procura o descritor OtherCapabilities e extrai o campo de memory type.
+- Valor 1 ou ausência/zero do descritor resulta em APPLICATION; 2 em SYSTEM; 3 em BASE; valores ainda não reconhecidos permanecem como `Unknown` e são tratados como APPLICATION pelo SVC.
+- `CreateMemoryBlock(addr=0)` só permite processos SYSTEM/BASE. APPLICATION e `Unknown` retornam `0xD92007EA`.
+- `CreateMemoryBlock(addr!=0)` permite apenas um intervalo alinhado por página, totalmente contido em uma única alocação de heap regular ainda mapeada pelo caminho atual de `ControlMemory`. A view mantém offset e tamanho próprios, sem copiar o backing.
+- Não aceitar, nem simular por cópia, memória estática (.text/.rodata/.data/.bss), TLS, shared alias existente, memória linear ou um intervalo que atravesse várias alocações.
+- O heap atual é respaldado por memória host `Vec<u8>`, não por páginas físicas FCRAM reservadas. A promoção para `Arc<Mutex<Vec<u8>>>` fornece aliasing dentro do modelo atual, não sincronização física de dispositivos ou compartilhamento/transferência de handles entre processos independentes.
+- Permissões suportadas: NONE=0, R=1 e RW=3. W-only=2 não é uma permissão válida no ARM11, por isso é rejeitada.
+- A camada GSP ainda precisa importar/receber o handle no processo consumidor e executar o dispatcher IPC completo. A API de registry existente ainda começa com endereço de shared memory e handle de evento já disponíveis.
+
+### Verificação
+
+O commit `e984f399bbaad181248e86bb5c93cc320fdac282` foi publicado por Claude depois das alterações funcionais e corrigiu formatação/API de backing. A CI não pôde ser confirmada por esta integração: o status combinado consultado não retornou checks, e o ambiente de execução disponível não possui `rustc`/Cargo. Não marcar os novos testes como aprovados até a execução da CI em `main` ser verificada.
 
