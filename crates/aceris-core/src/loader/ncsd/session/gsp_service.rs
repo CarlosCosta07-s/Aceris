@@ -709,8 +709,16 @@ mod tests {
             .register_client(&mut session, 1, SHARED_MEMORY_BASE, second_event)
             .unwrap();
 
-        assert!(!registry.client_may_receive_interrupt(0, GspInterruptId::Dma).unwrap());
-        assert!(registry.client_may_receive_interrupt(0, GspInterruptId::Pdc0).unwrap());
+        assert!(
+            !registry
+                .client_may_receive_interrupt(0, GspInterruptId::Dma)
+                .unwrap()
+        );
+        assert!(
+            registry
+                .client_may_receive_interrupt(0, GspInterruptId::Pdc0)
+                .unwrap()
+        );
         assert!(registry.try_acquire_rendering_right(0).unwrap());
         assert!(registry.owns_rendering_right(0));
         assert!(registry.try_acquire_rendering_right(0).unwrap());
