@@ -240,6 +240,24 @@ impl Pica200 {
         self.vertex_shader_operand_descriptors.get(index).copied()
     }
 
+    /// Decodes an uploaded instruction and resolves its optional operand descriptor.
+    ///
+    /// This is a read-only join between the instruction stream and descriptor
+    /// table. It does not validate opcode semantics or execute the instruction.
+    pub fn decode_vertex_shader_instruction_with_descriptor(
+        &self,
+        index: usize,
+        format: PicaVertexShaderInstructionFormat,
+    ) -> Option<(PicaVertexShaderInstruction, Option<PicaShaderOperandDescriptor>)> {
+        let instruction = self.decode_vertex_shader_instruction(index, format)?;
+        let descriptor = instruction
+            .operand_descriptor_index()
+            .and_then(|descriptor_index| {
+                self.decode_vertex_shader_operand_descriptor(descriptor_index)
+            });
+        Some((instruction, descriptor))
+    }
+
     /// Decodes one uploaded operand descriptor's mask, negation and swizzles.
     pub fn decode_vertex_shader_operand_descriptor(
         &self,
@@ -628,6 +646,38 @@ mod tests {
             .unwrap();
         assert_eq!(gpu.vertex_shader_instruction(0x40), Some(0xAABB_CCDD));
         assert!(!gpu.vertex_shader_program_ready());
+    }
+
+    #[test]
+    fn pica200_joins_uploaded_instruction_with_its_operand_descriptor() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_VSH_OPDESCS_INDEX, 0x21).unwrap();
+        let descriptor_word = 0b1111u32 | (0x1B << 5) | (0x55 << 14) | (0xE4 << 23);
+        gpu.write_register(REG_VSH_OPDESCS_DATA0, descriptor_word)
+            .unwrap();
+
+        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0x10).unwrap();
+        let instruction = (0x03u32 << 26) | (0x21 << 0);
+        gpu.write_register(REG_VSH_CODETRANSFER_DATA0, instruction)
+            .unwrap();
+
+        let (decoded, descriptor) = gpu
+            .decode_vertex_shader_instruction_with_descriptor(
+                0x10,
+                PicaVertexShaderInstructionFormat::Format1,
+            )
+            .unwrap();
+
+        assert_eq!(
+            decoded.operand_descriptor_index(),
+            Some(0x21)
+        );
+        let descriptor = descriptor.unwrap();
+        assert_eq!(descriptor.destination_mask, 0xF);
+        assert_eq!(descriptor.source1_component(0), Some(0));
+        assert_eq!(descriptor.source1_component(3), Some(3));
+        assert_eq!(descriptor.source2_component(0), Some(1));
+        assert_eq!(descriptor.source3_component(0), Some(3));
     }
 
     #[test]
