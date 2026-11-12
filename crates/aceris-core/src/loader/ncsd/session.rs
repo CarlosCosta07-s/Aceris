@@ -1497,7 +1497,7 @@ mod tests {
         assert_eq!(mapped.instructions_executed, 1);
         assert_eq!(session.core().regs[0], 0);
         let region = session.address_space().query_memory(0x0800_0000);
-        assert_eq!(region.state, super::process::Arm11MemoryState::Shared);
+        assert_eq!(region.state, crate::loader::ncsd::process::Arm11MemoryState::Shared);
         assert_eq!(region.permissions, 3);
         assert_eq!(session.read_memory_u32(0x0800_0000).unwrap(), 0);
 
