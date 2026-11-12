@@ -5,8 +5,12 @@
 //! indices only; applying GPUREG_VERTEX_OFFSET and resolving the physical base
 //! remain explicit responsibilities of the draw-command integration layer.
 
-use super::{GpuPhysicalMemory, GpuPhysicalMemoryError};
+use super::{GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200};
+use super::vertex::REG_ATTRIBBUFFERS_LOC;
 
+pub const REG_INDEXBUFFER_CONFIG: u16 = 0x227;
+pub const REG_NUMVERTICES: u16 = 0x228;
+pub const REG_VERTEX_OFFSET: u16 = 0x22A;
 pub const MAX_INDICES_PER_READ: usize = 1_048_576;
 
 /// Element width selected by bit 31 of the index-buffer configuration register.
@@ -30,6 +34,34 @@ impl IndexElementWidth {
 pub struct IndexBufferLayout {
     byte_offset: u32,
     element_width: IndexElementWidth,
+}
+
+/// Snapshot of index and draw-count registers relevant to vertex submission.
+///
+/// All address/offset values remain raw register contents. This type does not
+/// resolve the GPU base address, apply the vertex offset, or dispatch a draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaIndexInputState {
+    pub raw_vertex_array_base_register: u32,
+    pub index_buffer: IndexBufferLayout,
+    pub vertex_count: u32,
+    pub raw_vertex_offset_register: u32,
+}
+
+impl Pica200 {
+    /// Captures the PICA200 index/draw-input registers without translating addresses.
+    pub fn index_input_state(&self) -> Result<PicaIndexInputState, IndexBufferError> {
+        let read_register = |register: u16| {
+            self.register(register)
+                .ok_or(IndexBufferError::MissingRegister { register })
+        };
+        Ok(PicaIndexInputState {
+            raw_vertex_array_base_register: read_register(REG_ATTRIBBUFFERS_LOC)?,
+            index_buffer: IndexBufferLayout::from_register(read_register(REG_INDEXBUFFER_CONFIG)?),
+            vertex_count: read_register(REG_NUMVERTICES)?,
+            raw_vertex_offset_register: read_register(REG_VERTEX_OFFSET)?,
+        })
+    }
 }
 
 impl IndexBufferLayout {
@@ -121,6 +153,7 @@ impl IndexBufferLayout {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IndexBufferError {
     TooManyIndices { count: usize },
+    MissingRegister { register: u16 },
     AddressOverflow { base: u32, offset: u64 },
     PhysicalMemory(GpuPhysicalMemoryError),
 }
@@ -143,6 +176,29 @@ impl From<GpuPhysicalMemoryError> for IndexBufferError {
 mod tests {
     use super::*;
     use crate::gpu::FCRAM_BASE;
+
+
+    #[test]
+    fn reads_index_and_vertex_offset_registers_from_pica200() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_ATTRIBBUFFERS_LOC, 0x1234_5000)
+            .unwrap();
+        gpu.write_register(REG_INDEXBUFFER_CONFIG, 0x8000_0020)
+            .unwrap();
+        gpu.write_register(REG_NUMVERTICES, 36).unwrap();
+        gpu.write_register(REG_VERTEX_OFFSET, 0xFFFF_FFF0)
+            .unwrap();
+
+        let state = gpu.index_input_state().unwrap();
+        assert_eq!(state.raw_vertex_array_base_register, 0x1234_5000);
+        assert_eq!(state.index_buffer.byte_offset(), 0x20);
+        assert_eq!(
+            state.index_buffer.element_width(),
+            IndexElementWidth::UnsignedShort
+        );
+        assert_eq!(state.vertex_count, 36);
+        assert_eq!(state.raw_vertex_offset_register, 0xFFFF_FFF0);
+    }
 
     #[test]
     fn decodes_index_buffer_offset_and_width() {
