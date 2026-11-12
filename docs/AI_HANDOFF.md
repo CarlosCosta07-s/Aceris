@@ -232,3 +232,22 @@ Com a autorização explícita de Carlos Costa para colaborar no trabalho de Cla
 
 Cinco testes unitários foram adicionados ao novo módulo, e os testes existentes do decoder GSP continuam cobrindo os comandos suportados, mensagens truncadas, descritores inválidos e words TLS residuais. Não foi possível executar `cargo fmt`, Clippy ou `cargo test` neste ambiente por ausência de Rust/Cargo. A consulta de status combinado e de workflows para o commit `e2791da` não retornou checks nem execuções; portanto, não há aprovação de CI confirmada nesta rodada.
 
+## Arrays de handles IPC type-0 para memory blocks (12/11/2026)
+
+Com a autorização já registrada de Carlos Costa para colaborar no trabalho de Claude, o ChatGPT ampliou a primitiva host-side de transferência de memory blocks:
+
+- `a809006` — adiciona `IpcHandleTranslationError::DuplicateMoveHandle`, que identifica explicitamente uma tentativa de mover o mesmo handle de origem mais de uma vez no mesmo array.
+- `d183f14` — adiciona `Arm11ProcessSession::translate_memory_block_handles_from_ipc`. A API valida o descritor, o tamanho do array, o suporte a ProcessId e o tipo de todos os handles não nulos antes de criar qualquer handle de destino. COPY mantém as origens; MOVE rejeita handles de origem repetidos, importa todos os destinos e somente depois fecha as origens. Entradas zero permanecem como `None`.
+- `cd6a769` — acrescenta cinco testes para COPY com nulos e permissões invertidas, MOVE de múltiplos handles, rejeição de um objeto que não é memory block sem efeitos parciais, MOVE duplicado e divergência entre contagem e array.
+
+### Limites preservados
+
+- A implementação só aceita arrays homogêneos de memory blocks. Um array que misture eventos, mutexes, threads ou outros objetos é rejeitado antes de qualquer mudança no destino.
+- COPY pode repetir o mesmo handle de origem e produz handles de destino distintos que compartilham o mesmo backing. MOVE não permite repetição do mesmo handle de origem, pois uma única posse não pode ser movida duas vezes.
+- O MOVE importa primeiro todos os destinos e depois fecha as origens. O fechamento de um memory-block handle não possui fila de espera; a validação inicial e a exclusividade mutável da sessão mantêm as origens estáveis durante a operação.
+- O método permanece host-side: não lê sozinho uma mensagem TLS, não é chamado por `svcSendSyncRequest`, não implementa objetos kernel heterogêneos nem liga sessões IPC ao GSP.
+
+### Verificação
+
+Cinco testes foram adicionados, mas não executados nesta sessão. Rust/Cargo não estão disponíveis no ambiente; verificar Rustfmt, Clippy e `cargo test --workspace` em CI antes de marcar o trabalho como aprovado.
+
