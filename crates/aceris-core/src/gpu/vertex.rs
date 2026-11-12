@@ -668,6 +668,36 @@ mod tests {
     }
 
     #[test]
+    fn converts_signed_unsigned_short_and_float_components_to_numeric_values() {
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = FCRAM_BASE + 0x8000;
+        let format_low = 0 | (1 << 4) | (2 << 8) | (3 << 12);
+        let config1 = 0x3210;
+        let config2 = (8 << 16) | (4 << 28);
+        let layout = PicaVertexInputLayout::from_registers(
+            format_low,
+            3 << 28,
+            &[(0x10, config1, config2)],
+        )
+        .unwrap();
+
+        memory
+            .write(
+                physical_base + 0x10,
+                &[0x80, 0xFF, 0x00, 0x80, 0x00, 0x00, 0x80, 0x3F],
+            )
+            .unwrap();
+
+        let raw = layout.read_vertex(&memory, physical_base, 0).unwrap();
+        let numeric = raw.to_numeric();
+
+        assert_eq!(numeric.attributes[0].unwrap().components[0], -128.0);
+        assert_eq!(numeric.attributes[1].unwrap().components[0], 255.0);
+        assert_eq!(numeric.attributes[2].unwrap().components[0], -32768.0);
+        assert_eq!(numeric.attributes[3].unwrap().components[0], 1.0);
+    }
+
+    #[test]
     fn rejects_stride_that_does_not_match_decoded_record_size() {
         let layout =
             PicaVertexInputLayout::from_registers(1, 1 << 28, &[(0, 0, (4 << 16) | (1 << 28))]);
