@@ -2,8 +2,9 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
-    GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
+    GSP_INTERRUPT_QUEUE_CLIENT_STRIDE, GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
+    GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue,
     GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue,
     GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
@@ -625,12 +626,14 @@ impl System {
                     error.to_string(),
                 ))
             })?;
-        let queue_address = shared_memory_base.checked_add(queue_offset).ok_or_else(|| {
-            Error::Io(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "GSP interrupt relay queue address overflowed the process address space",
-            ))
-        })?;
+        let queue_address = shared_memory_base
+            .checked_add(queue_offset)
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "GSP interrupt relay queue address overflowed the process address space",
+                ))
+            })?;
 
         let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
             "a prepared ARM11 process session is required for GSP interrupt delivery",
@@ -971,7 +974,9 @@ mod tests {
             let shared_block = [0u8; GSP_INTERRUPT_QUEUE_CLIENT_STRIDE as usize
                 * crate::gpu::GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize];
             assert!(stack.mapped_size_bytes as usize >= shared_block.len());
-            session.write_memory_bytes(stack.address, &shared_block).unwrap();
+            session
+                .write_memory_bytes(stack.address, &shared_block)
+                .unwrap();
             (
                 stack.address,
                 stack.address + GSP_INTERRUPT_QUEUE_CLIENT_STRIDE * 2,
@@ -1029,10 +1034,7 @@ mod tests {
         let report = system
             .enqueue_gsp_interrupt_for_client(shared_memory_base, 1, GspInterruptId::Pdc0)
             .unwrap();
-        assert_eq!(
-            report.push_result,
-            GspInterruptQueuePushResult::IgnoredPdc
-        );
+        assert_eq!(report.push_result, GspInterruptQueuePushResult::IgnoredPdc);
         assert!(!report.event_signal_required);
         assert_eq!(report.pending_interrupts, 0);
         assert_eq!(report.missed_pdc0, 0);
