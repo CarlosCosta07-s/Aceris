@@ -1153,7 +1153,10 @@ mod tests {
         let mut machine = Machine::new(&[0xBF01]);
         assert!(matches!(
             machine.cpu.step(&mut machine.mem),
-            Err(Error::UndefinedInstruction { pc: 0, word: 0xBF01 })
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xBF01
+            })
         ));
         assert_eq!(machine.cpu.pc(), 0);
     }
