@@ -586,10 +586,7 @@ impl GspServiceRegistry {
     /// interrupts are routed only to the client holding rendering rights.
     /// The iterator only plans routing; the caller remains responsible for
     /// delivering the event through each client's own process session.
-    pub fn interrupt_recipients(
-        &self,
-        interrupt: GspInterruptId,
-    ) -> impl Iterator<Item = u8> + '_ {
+    pub fn interrupt_recipients(&self, interrupt: GspInterruptId) -> impl Iterator<Item = u8> + '_ {
         self.clients
             .iter()
             .enumerate()
