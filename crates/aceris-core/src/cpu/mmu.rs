@@ -5,13 +5,17 @@
 //! (TTBR0/TTBR1 split by TTBCR.N), applies domain and access-permission checks
 //! and forwards the physical access to the underlying bus.
 //!
-//! Supported: sections, supersections, coarse page tables, large (64 KiB) and
-//! small (4 KiB) pages in the ARMv6 format (SCTLR.XP = 1: AP[1:0], APX, XN),
-//! plus a unified software TLB with ASID/global matching, eight ARM11
-//! lockdown slots, and CP15 c8 invalidation operations.
-//! Set-associative replacement remains a bounded software approximation;
-//! subpage permissions (XP = 0), memory attributes/TEX, alignment faults,
-//! and cache behavior are not yet modeled. A
+//! Supported: ARMv6 XP=1 sections/supersections and coarse-table large/small
+//! pages with AP/APX/XN; legacy XP=0 sections and coarse-table large/small
+//! pages with AP subpages and SCTLR.S/R rules; and XP=0 extended-small pages
+//! in coarse tables. FCSE PID remapping happens before TLB lookup and walking.
+//! The XP=1 L2 type 0b11 descriptor is reserved and faults. Fine page tables
+//! and tiny pages are obsolete in VMSAv6 and are not implemented.
+//!
+//! The unified software TLB supports ASID/global matching, eight ARM11
+//! lockdown slots, and CP15 c8 invalidation operations. Set-associative
+//! replacement remains a bounded software approximation; memory attributes
+//! TEX, data-alignment faults, and cache behavior are not yet modeled. A
 //! translation fault is reported as `Error::InvalidAccess` with the virtual
 //! address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
 

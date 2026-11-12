@@ -51,11 +51,11 @@ As falhas de instrução não implementada ou acesso inválido são reportadas e
 
 O CP15 mantém MIDR, CTR, TLBTR, registradores de feature ARM11 PFR/DFR/MMFR/ISAR, registradores de controle, TTBR0/TTBR1, TTBCR, DACR, FCSE PID, CONTEXTIDR, registradores de fault e identificadores de thread.
 
-A MMU implementa descritores curtos ARMv6 com seções, superseções, coarse page tables, páginas grandes e pequenas, FCSE PID (VA abaixo de 32 MiB convertido em MVA antes da tradução), domínios, permissões AP/APX e XN. Faults de tradução, domínio e permissão são encaminhados aos registradores de fault CP15.
+A MMU implementa descritores curtos ARMv6 com seções, superseções e coarse page tables. No formato XP=1, aplica AP/APX/XN em páginas grandes e pequenas e rejeita descritores L2 type 0b11 como reservados. No formato legado XP=0, aplica um AP para seções, AP0–AP3 para subpáginas de páginas grandes/pequenas, regras S/R para AP=00 e extended-small-page de 4 KiB em coarse tables. O FCSE converte VAs abaixo de 32 MiB em MVAs antes do page walk e do TLB. Faults de tradução, domínio e permissão são encaminhados aos registradores de fault CP15.
 
 O caminho de tradução usa um TLB unificado de software com correspondência por ASID e entradas globais. O CP15 c10 controla oito slots de lockdown por P/Victim; TLBIALL preserva esses slots, enquanto invalidações seletivas aplicam suas regras próprias. As operações CP15 c8 de invalidação global, por MVA+ASID, por ASID e por MVA ignorando ASID são aplicadas antes do próximo acesso da CPU.
 
-A região normal do TLB tem 64 entradas de software com substituição round-robin; os oito slots de lockdown são separados e explícitos. A substituição normal ainda não reproduz a associatividade de duas vias nem o algoritmo do hardware. Atributos TEX, permissões de subpágina no formato XP=0, faults de alinhamento, caches ARM e coerência de manutenção entre CPU e dispositivos continuam pendentes.
+A região normal do TLB tem 64 entradas de software com substituição round-robin; os oito slots de lockdown são separados e explícitos. A substituição normal ainda não reproduz a associatividade de duas vias nem o algoritmo do hardware. Fine page tables e tiny pages são obsoletas no VMSAv6 e não fazem parte do alvo; atributos TEX, faults de alinhamento para acessos de dados comuns, caches ARM e coerência de manutenção entre CPU e dispositivos continuam pendentes.
 
 ## VFPv2
 
