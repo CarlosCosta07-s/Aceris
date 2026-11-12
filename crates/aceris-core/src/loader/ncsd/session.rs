@@ -757,6 +757,7 @@ impl Arm11ProcessSession {
 
         let mut pending = Vec::new();
         let mut found_static_buffer = false;
+        let mut first_unsupported_descriptor = None;
         pending
             .try_reserve_exact(parameters.len())
             .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
@@ -770,7 +771,12 @@ impl Arm11ProcessSession {
                     source_address,
                     ..
                 } => (word_offset, buffer_index, size_bytes, source_address),
-                _ => continue,
+                ipc::IpcTranslationParameter::Handles { descriptor, .. }
+                | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. }
+                | ipc::IpcTranslationParameter::PhysicalBufferTable { descriptor, .. } => {
+                    first_unsupported_descriptor.get_or_insert(*descriptor);
+                    continue;
+                }
             };
             found_static_buffer = true;
 
@@ -852,7 +858,14 @@ impl Arm11ProcessSession {
         }
 
         if !found_static_buffer {
-            return Err(IpcStaticBufferTranslationError::NoStaticBufferParameters);
+            return Err(first_unsupported_descriptor.map_or(
+                IpcStaticBufferTranslationError::NoStaticBufferParameters,
+                |descriptor| {
+                    IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
+                        descriptor,
+                    }
+                },
+            ));
         }
 
         let mut translated = Vec::new();
@@ -3347,7 +3360,7 @@ mod tests {
             .unwrap();
         destination
             .address_space
-            .map_linear_memory_region(0x1401_0000, destination_physical_base, 0x1000)
+            .map_linear_memory_region(0x1400_1000, destination_physical_base, 0x1000)
             .unwrap();
         source
             .write_memory_bytes(0x1400_0100, &[0x5A; 0x40])
@@ -3360,7 +3373,7 @@ mod tests {
             .cp15()
             .tpidruro();
         destination
-            .write_memory_u32(tls + 0x180 + 3 * 8, 0x1401_0000)
+            .write_memory_u32(tls + 0x180 + 3 * 8, 0x1400_1000)
             .unwrap();
         destination
             .write_memory_u32(tls + 0x184 + 3 * 8, 0x1000)
@@ -3401,7 +3414,7 @@ mod tests {
             .unwrap();
         destination
             .address_space
-            .map_linear_memory_region(0x1401_0000, destination_physical_base, 0x1000)
+            .map_linear_memory_region(0x1400_1000, destination_physical_base, 0x1000)
             .unwrap();
 
         let tls = destination
@@ -3411,7 +3424,7 @@ mod tests {
             .cp15()
             .tpidruro();
         destination
-            .write_memory_u32(tls + 0x180, 0x1401_0001)
+            .write_memory_u32(tls + 0x180, 0x1400_1001)
             .unwrap();
         destination.write_memory_u32(tls + 0x184, 0x1000).unwrap();
 
@@ -3423,7 +3436,7 @@ mod tests {
                 .translate_physical_buffer_tables_from_ipc(&source, MAIN_THREAD_ID, message,),
             Err(
                 IpcPhysicalBufferTranslationError::InvalidDestinationBuffer {
-                    address: 0x1401_0001,
+                    address: 0x1400_1001,
                     capacity: 0x1000,
                 }
             )
