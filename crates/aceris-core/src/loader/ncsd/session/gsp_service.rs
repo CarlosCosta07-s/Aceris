@@ -555,10 +555,7 @@ impl GspServiceRegistry {
     ///
     /// Returns true when a pending waiter was removed. A client that owns the
     /// rendering right, or is not currently waiting, returns false.
-    pub fn cancel_rendering_right_wait(
-        &mut self,
-        client_id: u8,
-    ) -> Result<bool, GspServiceError> {
+    pub fn cancel_rendering_right_wait(&mut self, client_id: u8) -> Result<bool, GspServiceError> {
         let index = Self::client_index(client_id)?;
         if self.clients[index].is_none() {
             return Err(GspServiceError::ClientNotRegistered { client_id });
