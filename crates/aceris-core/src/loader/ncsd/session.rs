@@ -708,7 +708,7 @@ impl Arm11ProcessSession {
         for parameter in parameters {
             let (word_offset, buffer_index, size_bytes, source_address, read_only) = match parameter
             {
-                    ipc::IpcTranslationParameter::PhysicalBufferTable {
+                ipc::IpcTranslationParameter::PhysicalBufferTable {
                         word_offset,
                         buffer_index,
                         size_bytes,
