@@ -252,6 +252,31 @@ impl Arm11ProcessSession {
             .create_memory_block(size, owner_permissions, other_permissions)
     }
 
+    /// Imports a copyable shared-memory handle from another process session.
+    ///
+    /// The backing is cloned by reference, never by copying its bytes. The
+    /// owner/peer permission pair is reversed for the receiving process so
+    /// my_permissions always refers to the current holder in MapMemoryBlock.
+    /// This is the object-table primitive for IPC handle translation; it does
+    /// not decode IPC descriptors or implement MOVE_HANDLE semantics.
+    pub fn import_memory_block_handle(
+        &mut self,
+        source: &Arm11ProcessSession,
+        source_handle: u32,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        let backing = source.kernel_objects.memory_block_backing(source_handle)?;
+        let (source_owner_permissions, source_peer_permissions) = source
+            .kernel_objects
+            .memory_block_permissions(source_handle)
+            .ok_or(KernelHandleError::WrongType)?;
+
+        self.kernel_objects.create_memory_block_with_backing(
+            backing,
+            source_peer_permissions,
+            source_owner_permissions,
+        )
+    }
+
     /// Maps a memory-block handle into this process with the requested R/W permissions.
     pub fn map_memory_block(
         &mut self,
@@ -1727,6 +1752,54 @@ mod tests {
         assert_eq!(session.read_memory_u32(0x0800_0000).unwrap(), 0xA1B2_C3D4);
         session.unmap_memory_block(handle, 0x0800_0000).unwrap();
         assert!(session.read_memory_u32(0x0800_0000).is_err());
+    }
+
+    #[test]
+    fn imported_memory_block_handle_shares_backing_and_reverses_owner_permissions() {
+        let mut owner = test_session();
+        let owner_handle = owner.create_memory_block(0x1000, 3, 1).unwrap();
+        owner
+            .map_memory_block(owner_handle, 0x0800_0000, 3, 1)
+            .unwrap();
+        owner
+            .write_memory_u32(0x0800_0000, 0xCAFE_BABE)
+            .unwrap();
+
+        let mut peer = test_session();
+        let peer_handle = peer
+            .import_memory_block_handle(&owner, owner_handle)
+            .unwrap();
+        peer.map_memory_block(peer_handle, 0x0900_0000, 1, 3)
+            .unwrap();
+
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0xCAFE_BABE);
+        assert!(!peer.address_space.is_writable_range(0x0900_0000, 4));
+        assert!(peer.write_memory_u32(0x0900_0000, 0xDEAD_BEEF).is_err());
+
+        owner
+            .write_memory_u32(0x0800_0000, 0x1234_5678)
+            .unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0x1234_5678);
+
+        assert_eq!(
+            peer.import_memory_block_handle(&owner, 0xDEAD),
+            Err(KernelHandleError::InvalidHandle)
+        );
+    }
+
+    #[test]
+    fn imported_memory_block_handle_rejects_non_memory_handles() {
+        let mut owner = test_session();
+        let event = owner
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut peer = test_session();
+
+        assert_eq!(
+            peer.import_memory_block_handle(&owner, event),
+            Err(KernelHandleError::WrongType)
+        );
     }
 
     #[test]
