@@ -183,6 +183,9 @@ pub enum VertexInputError {
     InvalidAttributeCount {
         count: usize,
     },
+    MissingRegister {
+        register: u16,
+    },
     InvalidAttributeIndex {
         array: usize,
         attribute: usize,
