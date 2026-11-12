@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::{Arc, RwLock};
 
 /// ARM11 physical base of the two VRAM banks.
 pub const VRAM_BASE: u32 = 0x1800_0000;
@@ -21,6 +22,9 @@ const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
 pub enum GpuPhysicalMemoryError {
     UnmappedAddress { address: u32, length: usize },
     AddressRangeOverflow { address: u32, length: usize },
+    InvalidLinearAllocationSize { size: u32 },
+    LinearAllocationOutOfMemory { size: u32 },
+    LinearAllocationNotFound { address: u32, size: u32 },
 }
 
 impl fmt::Display for GpuPhysicalMemoryError {
@@ -34,6 +38,18 @@ impl fmt::Display for GpuPhysicalMemoryError {
                 formatter,
                 "physical range {address:#010x}..+{length:#x} overflows the 32-bit address space"
             ),
+            Self::InvalidLinearAllocationSize { size } => write!(
+                formatter,
+                "linear FCRAM allocation size {size:#x} is zero or not page-aligned"
+            ),
+            Self::LinearAllocationOutOfMemory { size } => write!(
+                formatter,
+                "no contiguous FCRAM range is available for {size:#x} bytes"
+            ),
+            Self::LinearAllocationNotFound { address, size } => write!(
+                formatter,
+                "linear FCRAM allocation {address:#010x}+{size:#x} does not exist"
+            ),
         }
     }
 }
@@ -46,11 +62,19 @@ impl std::error::Error for GpuPhysicalMemoryError {}
 /// 128 MiB of FCRAM at 0x20000000. Backing pages are allocated on first write;
 /// reading an unallocated page returns zero without reserving host memory.
 ///
-/// This is a physical-device memory model only. Virtual-to-physical process
-/// mappings and the New 3DS 128 MiB FCRAM extension are separate future work.
+/// Clones share the same physical backing so CPU linear mappings, GPU DMA and
+/// LCD scanout observe one coherent byte store. CPU cache behavior is modeled
+/// separately and is not implied by this shared backing.
+#[derive(Debug, Default)]
+struct GpuPhysicalMemoryInner {
+    pages: BTreeMap<u32, Box<[u8; PHYSICAL_PAGE_SIZE]>>,
+    /// Exact contiguous FCRAM ranges reserved for ControlMemory linear allocations.
+    linear_allocations: BTreeMap<u32, u32>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct GpuPhysicalMemory {
-    pages: BTreeMap<u32, Box<[u8; PHYSICAL_PAGE_SIZE]>>,
+    inner: Arc<RwLock<GpuPhysicalMemoryInner>>,
 }
 
 impl GpuPhysicalMemory {
@@ -60,7 +84,107 @@ impl GpuPhysicalMemory {
 
     /// Number of 4 KiB backing pages currently materialized.
     pub fn allocated_page_count(&self) -> usize {
-        self.pages.len()
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pages
+            .len()
+    }
+
+    /// Reserves a contiguous, page-aligned physical FCRAM range.
+    ///
+    /// The allocator skips both pages already materialized by other devices and
+    /// all outstanding linear reservations. The returned range reads as zero
+    /// until the process or a device writes to it.
+    pub fn allocate_linear_fcram(
+        &mut self,
+        size: u32,
+    ) -> Result<u32, GpuPhysicalMemoryError> {
+        if size == 0 || size as usize % PHYSICAL_PAGE_SIZE != 0 {
+            return Err(GpuPhysicalMemoryError::InvalidLinearAllocationSize { size });
+        }
+        if size > FCRAM_SIZE {
+            return Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size });
+        }
+
+        let mut inner = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let page_count = size / PHYSICAL_PAGE_SIZE as u32;
+        let first_page = FCRAM_BASE / PHYSICAL_PAGE_SIZE as u32;
+        let total_pages = FCRAM_SIZE / PHYSICAL_PAGE_SIZE as u32;
+        let mut candidate = 0u32;
+
+        while candidate.checked_add(page_count).is_some_and(|end| end <= total_pages) {
+            let physical_page = first_page + candidate;
+            let candidate_end = physical_page + page_count;
+            let materialized_conflict = inner
+                .pages
+                .range(physical_page..candidate_end)
+                .next()
+                .map(|(page, _)| *page);
+            let reserved_conflict = inner
+                .linear_allocations
+                .iter()
+                .find_map(|(base, allocated_size)| {
+                    let reserved_start = *base / PHYSICAL_PAGE_SIZE as u32;
+                    let reserved_end =
+                        reserved_start + *allocated_size / PHYSICAL_PAGE_SIZE as u32;
+                    (physical_page < reserved_end && candidate_end > reserved_start)
+                        .then_some(reserved_end)
+                });
+
+            if materialized_conflict.is_none() && reserved_conflict.is_none() {
+                let address = physical_page * PHYSICAL_PAGE_SIZE as u32;
+                inner.linear_allocations.insert(address, size);
+                return Ok(address);
+            }
+
+            let next_candidate_page = materialized_conflict
+                .map(|page| page + 1)
+                .into_iter()
+                .chain(reserved_conflict)
+                .max()
+                .unwrap_or(candidate + 1);
+            candidate = next_candidate_page.saturating_sub(first_page);
+        }
+
+        Err(GpuPhysicalMemoryError::LinearAllocationOutOfMemory { size })
+    }
+
+    /// Checks whether an exact FCRAM allocation is still reserved.
+    pub fn has_linear_fcram_allocation(&self, address: u32, size: u32) -> bool {
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .linear_allocations
+            .get(&address)
+            .is_some_and(|allocated_size| *allocated_size == size)
+    }
+
+    /// Releases an exact linear FCRAM reservation and clears its sparse pages.
+    pub fn free_linear_fcram(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> Result<(), GpuPhysicalMemoryError> {
+        let mut inner = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.linear_allocations.get(&address).copied() != Some(size) {
+            return Err(GpuPhysicalMemoryError::LinearAllocationNotFound { address, size });
+        }
+
+        let first_page = address / PHYSICAL_PAGE_SIZE as u32;
+        let page_count = size / PHYSICAL_PAGE_SIZE as u32;
+        let end_page = first_page.saturating_add(page_count);
+        inner
+            .pages
+            .retain(|page, _| *page < first_page || *page >= end_page);
+        inner.linear_allocations.remove(&address);
+        Ok(())
     }
 
     /// Checks that the complete range belongs to one supported physical region.
@@ -91,13 +215,17 @@ impl GpuPhysicalMemory {
     /// Reads a physical byte range. Unallocated backing pages read as zero.
     pub fn read(&self, address: u32, output: &mut [u8]) -> Result<(), GpuPhysicalMemoryError> {
         self.validate_range(address, output.len())?;
+        let inner = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut copied = 0usize;
         while copied < output.len() {
             let current = address + copied as u32;
             let page_number = current / PHYSICAL_PAGE_SIZE as u32;
             let page_offset = current as usize % PHYSICAL_PAGE_SIZE;
             let count = (PHYSICAL_PAGE_SIZE - page_offset).min(output.len() - copied);
-            if let Some(page) = self.pages.get(&page_number) {
+            if let Some(page) = inner.pages.get(&page_number) {
                 output[copied..copied + count]
                     .copy_from_slice(&page[page_offset..page_offset + count]);
             } else {
@@ -111,13 +239,17 @@ impl GpuPhysicalMemory {
     /// Writes a physical byte range, allocating only the touched pages.
     pub fn write(&mut self, address: u32, input: &[u8]) -> Result<(), GpuPhysicalMemoryError> {
         self.validate_range(address, input.len())?;
+        let mut inner = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut copied = 0usize;
         while copied < input.len() {
             let current = address + copied as u32;
             let page_number = current / PHYSICAL_PAGE_SIZE as u32;
             let page_offset = current as usize % PHYSICAL_PAGE_SIZE;
             let count = (PHYSICAL_PAGE_SIZE - page_offset).min(input.len() - copied);
-            let page = self
+            let page = inner
                 .pages
                 .entry(page_number)
                 .or_insert_with(|| Box::new([0; PHYSICAL_PAGE_SIZE]));
@@ -161,6 +293,58 @@ mod tests {
         assert_eq!(memory.read_u32(VRAM_BASE + 0x1FFC).unwrap(), 0xDEAD_BEEF);
         assert_eq!(memory.read_u32(FCRAM_BASE + 0x2000).unwrap(), 0x1234_5678);
         assert_eq!(memory.allocated_page_count(), 2);
+    }
+
+    #[test]
+    fn cloned_physical_memory_handles_share_the_same_backing() {
+        let mut writer = GpuPhysicalMemory::new();
+        let reader = writer.clone();
+        writer.write_u32(FCRAM_BASE + 0x4000, 0xCAFE_BABE).unwrap();
+        assert_eq!(reader.read_u32(FCRAM_BASE + 0x4000).unwrap(), 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn linear_fcram_allocation_is_contiguous_zeroed_and_reusable() {
+        let mut memory = GpuPhysicalMemory::new();
+        memory.write_u32(FCRAM_BASE, 0xDEAD_BEEF).unwrap();
+
+        let allocation = memory.allocate_linear_fcram(0x3000).unwrap();
+        assert_eq!(allocation, FCRAM_BASE + 0x1000);
+        let mut bytes = [0xFF; 8];
+        memory.read(allocation, &mut bytes).unwrap();
+        assert_eq!(bytes, [0; 8]);
+        assert!(memory.has_linear_fcram_allocation(allocation, 0x3000));
+        assert!(memory.allocate_linear_fcram(0x2000).is_ok());
+
+        memory.write_u32(allocation + 0x1000, 0x1234_5678).unwrap();
+        memory.free_linear_fcram(allocation, 0x3000).unwrap();
+        let mut cleared = [0xFF; 4];
+        memory.read(allocation + 0x1000, &mut cleared).unwrap();
+        assert_eq!(cleared, [0; 4]);
+        assert_eq!(
+            memory.allocate_linear_fcram(0x3000).unwrap(),
+            allocation
+        );
+    }
+
+    #[test]
+    fn linear_fcram_allocator_rejects_bad_sizes_and_exact_free_mismatches() {
+        let mut memory = GpuPhysicalMemory::new();
+        assert!(matches!(
+            memory.allocate_linear_fcram(0),
+            Err(GpuPhysicalMemoryError::InvalidLinearAllocationSize { .. })
+        ));
+        assert!(matches!(
+            memory.allocate_linear_fcram(0x1001),
+            Err(GpuPhysicalMemoryError::InvalidLinearAllocationSize { .. })
+        ));
+
+        let allocation = memory.allocate_linear_fcram(0x1000).unwrap();
+        assert!(matches!(
+            memory.free_linear_fcram(allocation, 0x2000),
+            Err(GpuPhysicalMemoryError::LinearAllocationNotFound { .. })
+        ));
+        assert!(memory.has_linear_fcram_allocation(allocation, 0x1000));
     }
 
     #[test]
