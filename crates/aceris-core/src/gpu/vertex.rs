@@ -673,7 +673,7 @@ mod tests {
     fn converts_signed_unsigned_short_and_float_components_to_numeric_values() {
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = FCRAM_BASE + 0x8000;
-        let format_low = 0 | (1 << 4) | (2 << 8) | (3 << 12);
+        let format_low = (1 << 4) | (2 << 8) | (3 << 12);
         let config1 = 0x3210;
         let config2 = (8 << 16) | (4 << 28);
         let layout =
