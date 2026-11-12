@@ -1769,6 +1769,7 @@ mod tests {
         let peer_handle = peer
             .import_memory_block_handle(&owner, owner_handle)
             .unwrap();
+        owner.kernel_objects.close_handle(owner_handle).unwrap();
         peer.map_memory_block(peer_handle, 0x0900_0000, 1, 3)
             .unwrap();
 
