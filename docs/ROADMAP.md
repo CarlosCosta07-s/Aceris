@@ -1,200 +1,224 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base no código da branch `main` no commit `8b252ac43425cbc4679732fb806b1d5a4f8b9f5c`.
+> Estado revisado em 12/11/2026, com base na branch `main` no commit `08e41f805334ce1a9fececd5b017a65fef49307a`.
 >
-> **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial/infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não significa, por si só, compatibilidade completa com o hardware ou com jogos.
+> **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
-Este roadmap descreve o estado observado no código, não metas já alcançadas. Atualize os itens somente após inspecionar a implementação e os testes correspondentes. Não marque uma funcionalidade como concluída apenas porque existe um tipo, parser, stub ou interface para ela.
+Este documento registra o estado observado no código. Não marque um item como concluído apenas porque existe um tipo, parser, stub, registrador ou interface. Cada marco exige testes e integração no caminho real de execução.
 
 ## 0. Fundação, regras e validação
 
 - [x] Workspace Rust com crates compartilhados, núcleo e frontends iniciais para desktop e Android
-- [x] Branch principal de desenvolvimento definida como `main`
+- [x] Branch principal de desenvolvimento definida como `main`; nenhuma branch de trabalho deve ser criada
 - [x] Regras de isolamento entre agentes, autoria própria e proteção de conteúdo protegido documentadas
 - [x] Política de não incluir jogos, firmware, chaves, dumps ou conteúdo protegido no repositório
-- [~] CI configurado para formatação, Clippy, testes multiplataforma e build Android
-- [ ] Restaurar o CI verde: no workflow associado ao commit de referência, `cargo fmt --all --check` falhou em Linux, Windows e macOS; Clippy e testes foram ignorados nessas três plataformas
-- [x] Build Android `arm64-v8a` concluído com sucesso no workflow associado ao commit de referência
-- [ ] Executar e registrar localmente, ou por CI, a sequência completa: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` e `cargo build --locked --workspace`
-- [ ] Manter este roadmap sincronizado com o código após cada marco relevante
+- [x] CI configurado para Linux, Windows e macOS com Rustfmt, Clippy e testes; build Android ARM64 separado
+- [x] Workflow completo do commit `849e5a33933ea9444122f2160daf867e2d4e60d0` terminou com sucesso em 12/11/2026, incluindo a etapa Android ARM64
+- [~] Os dois commits seguintes do rasterizador (`82303fe` e `08e41f8`) já dispararam novos workflows, ainda pendentes no momento desta revisão
+- [ ] Confirmar CI verde para o HEAD atual depois das alterações do rasterizador
+- [ ] Executar e registrar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` e `cargo build --locked --workspace` no mesmo estado de código
+- [ ] Manter README, arquitetura e roadmap sincronizados com o código, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
 
-### Modelo do processador e estado arquitetural
+### Estado arquitetural e exceções
 
-- [x] Execução básica de instruções ARM em modo usuário
-- [x] Registradores de estado CPSR e condições de execução
-- [x] Modos privilegiados e bancos de registradores implementados inicialmente
-- [x] Acesso MRS/MSR ao CPSR e ao SPSR, com verificações de privilégio
-- [x] Entrada inicial na exceção SVC e retorno de exceção por instruções de processamento de dados
-- [x] Retorno de exceção A32 por RFE
-- [~] Vetores, prioridades, máscaras e ciclo completo de exceções/interrupções
-- [ ] Modelo completo de exceções ARM11, incluindo IRQ, FIQ, abortos e comportamento preciso de retorno
+- [x] Interpretador A32 e Thumb com estado CPSR e avaliação das condições ARM
+- [x] Bancos de registradores para User/System, FIQ, IRQ, Supervisor, Abort e Undefined, com SPSR por modo de exceção
+- [x] Acesso MRS/MSR ao CPSR e SPSR com validação de privilégio
+- [x] Troca de modo privilegiado e instrução ARMv6 CPS
+- [x] Entrada de exceção SVC e retorno por restauração de estado
+- [x] Sinais IRQ/FIQ externos com prioridade de FIQ e respeito às máscaras CPSR
+- [x] Entrada opcional em Undefined Instruction, Prefetch Abort e Data Abort; falhas de emulação continuam sendo reportadas como erros
+- [x] Retorno de exceção A32 por instrução de processamento de dados e RFE
+- [~] Validar todas as combinações de exceção, vetores altos, endianness, máscaras, abortos durante transferências múltiplas e retornos em sequências longas
+- [ ] Integrar um controlador de interrupções e temporizadores do sistema ao modelo de IRQ/FIQ
 
 ### Instruções ARM e Thumb
 
-- [x] Conjunto ARM básico de processamento de dados, desvios e transferências
-- [x] Instruções Thumb clássicas e formas de desvio BL/BLX já cobertas pelo núcleo
-- [x] Thumb REV, extensões de sinal e zero (SXT/UXT)
-- [x] Thumb BKPT, CPS e SETEND
-- [~] Instruções ARMv6 de saturação e DSP/multiplicação: há famílias implementadas, mas ainda existem codificações não suportadas
-- [~] Instruções exclusivas A32 LDREX/STREX, LDREXB/STREXB, LDREXH/STREXH e LDREXD/STREXD
-- [~] Monitor exclusivo local e controle por geração na memória FlatMemory; suporte ainda precisa ser integrado e validado em todos os barramentos/mapeamentos
-- [ ] Completar todas as instruções ARMv6/ARMv6K exigidas pelo ARM11, após inventário de codificações ausentes
-- [ ] Completar instruções Thumb-1/Thumb-2 aplicáveis ao processador-alvo e testar interações ARM/Thumb
-- [ ] Revisar alinhamento, endianness, flags, comportamento indefinido/UNPREDICTABLE e efeitos colaterais de cada família
+- [x] Instruções ARM básicas de processamento de dados, desvios, transferências, blocos e multiplicações comuns
+- [x] Famílias ARMv6 de exclusivas A32: LDREX/STREX, LDREXB/STREXB, LDREXH/STREXH e LDREXD/STREXD
+- [~] Monitor exclusivo local com geração de reserva de 8 bytes em FlatMemory e no espaço de endereços do processo; a integração com todos os adaptadores de barramento, especialmente o caminho MMU, ainda precisa ser completada
+- [~] Famílias ARMv6 de mídia/DSP, saturação, operações paralelas, extensão de sinal/zero e multiplicações de meia palavra: há implementação e testes para várias famílias, mas a cobertura integral ainda não foi demonstrada
+- [~] Conjunto Thumb-1 principal com desvios, acessos, pilha, operações aritméticas/lógicas e extensões ARMv6 REV/SXT/UXT
+- [x] Thumb BKPT, CPS e SETEND implementados; BKPT é encaminhado como evento de breakpoint para a camada de processo
+- [ ] Inventariar codificações A32 ARMv6/ARMv6K ainda não suportadas ou decodificadas incorretamente
+- [ ] Completar e validar todas as codificações Thumb aplicáveis ao ARM11; não tratar Thumb-2 como requisito sem evidência de que a arquitetura-alvo o suporta
+- [ ] Auditar alinhamento, endianness, flags, estados UNPREDICTABLE/UNDEFINED e efeitos colaterais de todas as famílias
+- [ ] Criar testes de conformidade independentes por instrução, além dos testes unitários internos
 
-### Coprocessadores e conformidade
+### Coprocessadores e MMU
 
-- [~] CP15 com registradores de identificação, controle, tradução e falhas, além de verificações iniciais de privilégio
-- [~] Despacho inicial de instruções de coprocessador MRC/MCR
-- [ ] Implementar MMU e tradução de endereços; o CP15 atual ainda não fornece essa funcionalidade
-- [ ] Implementar TLB, manutenção de TLB/cache e barreiras com efeitos arquiteturais reais; operações atualmente aceitas como no-op não contam como implementação
-- [ ] Implementar VFP e demais recursos de coprocessador exigidos pelo ARM11
-- [ ] Criar testes de conformidade por instrução, incluindo casos positivos, limites, exceções e regressões
+- [x] Arquivo de estado CP15 com registradores de identificação, controle, CPACR, TTBR0/1, TTBCR, DACR, fault status/address, CONTEXTIDR e TPIDR*
+- [~] Operações de manutenção de cache/TLB e algumas barreiras ainda são aceitas como no-op; isso não equivale a modelagem arquitetural
+- [~] MMU ARMv6 de descritores curtos: TTBR0/TTBR1 e TTBCR.N, seções, superseções, coarse tables, páginas grandes/pequenas, domínios, permissões AP/APX e XN
+- [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; TLB, atributos TEX, permissões de subpágina no formato antigo e faults de alinhamento ainda não estão modelados
+- [~] VFPv2 inicial: registradores S/D, FPSCR/FPEXC/FPSID, transferências ARM/VFP, loads/stores múltiplos, operações aritméticas, comparação e conversões
+- [ ] Completar semântica VFP pendente: vetores curtos, exceções habilitadas, arredondamentos adicionais, flags de precisão/underflow e instruções de transferência legadas não suportadas
+- [ ] Implementar TLB, invalidação e manutenção de caches com efeitos observáveis
+- [ ] Integrar o monitor exclusivo ao caminho MMU e validar reservas perante escritas de outros agentes/dispositivos
+- [ ] Executar testes de conformidade ARM11 em ARM, Thumb, CP15, VFP e exceções
 
-## 2. Memória, barramentos e carregamento de títulos
+## 2. Memória, endereçamento e carregamento de títulos
 
-### Memória e MMU
+### Memória
 
-- [~] Barramento e memória plana com verificações de acesso e suporte inicial ao monitor exclusivo
-- [ ] Mapa de memória física do Nintendo 3DS
-- [ ] Barramentos e regiões mapeadas para CPU, GPU, DSP, LCD e periféricos
-- [ ] MMU ARM11: caminhamento de tabelas, domínios, permissões e faults
-- [ ] TLB e invalidações coerentes com CP15
-- [ ] Memória virtual por processo, regiões, alocação, proteção e compartilhamento
-- [ ] Coerência e sincronização de acessos entre CPU e dispositivos
+- [x] Trait Bus little-endian e FlatMemory para testes e bring-up, incluindo monitor exclusivo
+- [x] Espaço de endereços do processo com regiões de código, dados, BSS, pilha, heap e TLS, validação de intervalos e permissões
+- [x] TLS por thread com slots zerados na reutilização e endereço exposto pelo TPIDRURO
+- [x] Memória física esparsa inicial para 6 MiB de VRAM e 128 MiB de FCRAM do modelo original
+- [~] Memória física atual é limitada às regiões VRAM/FCRAM usadas por GPU/LCD; ainda não existe o mapa físico completo do console
+- [~] Tradução virtual ARM via MMU quando SCTLR.M está habilitado; ainda sem TLB e sem integração completa de dispositivos
+- [ ] Mapa completo de memória física e barramentos mapeados para CPU, GPU, DSP, LCD, serviços e periféricos
+- [ ] Regiões de memória compartilhada, DMA, cache/coerência e sincronização CPU-dispositivos
+- [ ] Suporte às diferenças de memória dos modelos New 3DS, quando necessário para os alvos de compatibilidade
 
-### Formatos de entrada
+### Formatos e conteúdo
 
-- [x] Parser estrutural NCSD para imagens `.3DS` e `.CCI`, com validação de entradas e limites de partições
-- [~] Parser CIA: estruturas iniciais de cabeçalho, conteúdo, TMD e tickets; integração completa de instalação/carregamento ainda pendente
-- [~] Parser NCCH e leitura de estruturas de cabeçalho
-- [~] Leitura de ExeFS e RomFS em desenvolvimento
-- [~] Rotinas próprias de SHA-256, AES-CBC/AES-CTR e descompressão BLZ presentes; integração e validação ponta a ponta pendentes
-- [ ] Validar conteúdo, versões, tamanhos, alinhamentos, regiões e erros sem confiar em metadados não verificados
-- [ ] Completar tratamento de conteúdo criptografado usando somente chaves e arquivos fornecidos legalmente pelo usuário, mantidos fora do repositório
-- [ ] Suporte robusto a partições e conteúdos múltiplos, sem assumir que reconhecer um formato equivale a executar o título
+- [x] Parser estrutural NCSD para imagens `.3DS` e `.CCI`, com tabela de até oito partições, limites e validação de sobreposição
+- [~] Parser NCCH com leitura de cabeçalho, regiões declaradas e leitores limitados por intervalo
+- [~] ExeFS: leitura das entradas, extração do código e verificação de hashes implementadas em partes; assinatura RSA e todos os cenários de crypto ainda precisam de validação ponta a ponta
+- [~] RomFS: cabeçalho IVFC, leitor de Level 3, cadeia SHA-256 e verificação de integridade presentes; descriptografia e todos os caminhos de instalação/uso ainda exigem validação integrada
+- [~] CIA: parsers de cabeçalho, seções, ticket/TMD e leitores de conteúdo presentes; fluxo completo de instalação, seleção de conteúdo e preparação de executável ainda não é um caminho de compatibilidade concluído
+- [~] Rotinas próprias de AES e SHA-256, AES-CBC/AES-CTR e descompressão BLZ presentes; a criptografia usa material fornecido explicitamente pelo usuário e não inclui chaves no repositório
+- [ ] Validar assinaturas, hashes, tamanhos, alinhamentos, regiões, múltiplos conteúdos e arquivos malformados em todas as combinações relevantes
+- [ ] Completar o caminho de conteúdo criptografado com chaves do usuário, sem descoberta, armazenamento ou distribuição de chaves pelo projeto
 
-### Primeiro carregamento executável
+### Preparação e execução de processos
 
-- [~] Estruturas iniciais de processo e sessão ARM11
-- [ ] Definir e documentar o primeiro subconjunto de homebrew suportado
-- [ ] Preparar imagem executável, segmentos, permissões, pilha, argumentos e estado inicial da CPU
-- [ ] Carregar e mapear dependências necessárias ao título
-- [ ] Executar um homebrew simples até um resultado observável, com diagnóstico de falhas
-- [ ] Testar o fluxo completo de arquivo até execução, sem depender de firmware, chaves ou jogos distribuídos pelo projeto
+- [x] Validação do layout ARM11 a partir de metadados de executável
+- [x] Mapeamento inicial de código, BSS, pilha, memória dinâmica e TLS do processo
+- [x] Sessão ARM11 preparada com contexto inicial, threads, execução de instruções e dispatch de SVCs suportados
+- [x] Testes sintéticos carregam NCSD/NCCH sem crypto, iniciam um processo de teste e executam instruções ARM
+- [~] A execução demonstrada atualmente usa fixtures sintéticas e caminhos controlados; isso não comprova inicialização de homebrew comercialmente distribuído nem de jogos
+- [ ] Definir um alvo homebrew mínimo, legalmente fornecido pelo usuário, e documentar exatamente o subconjunto de sistema necessário
+- [ ] Concluir carregamento de executáveis, argumentos, dependências, permissões, serviços e preparação do processo para esse alvo
+- [ ] Executar um homebrew real até produzir resultado observável, com logs e diagnóstico de falhas
 
-## 3. Kernel ARM11 e serviços do sistema
+## 3. Kernel ARM11 e serviços HLE
 
 ### Processos, threads e objetos
 
-- [~] Contextos independentes de threads e escalonador cooperativo
-- [~] Criação/encerramento de threads e manipulação inicial de prioridades
-- [~] Estruturas iniciais de processo, handles e objetos do kernel
-- [~] Mutexes, semáforos, eventos e timers com operações básicas
-- [~] SVCs iniciais: ControlMemory, QueryMemory, CreateThread, ExitThread, SleepThread, prioridades, mutex, semáforo, evento, timer, espera de sincronização e CloseHandle
-- [ ] Completar ABI, códigos de retorno, validações de parâmetros e permissões dos SVCs existentes
-- [ ] Implementar espera múltipla, timeout, despertar, cancelamento e escalonamento preemptivo conforme necessário
-- [ ] Completar ciclo de vida de processos, handles, sincronização e limpeza de recursos
+- [x] Contextos independentes por thread, escalonador cooperativo, criação e encerramento de threads
+- [x] Alocação e liberação de TLS por thread
+- [~] Prioridades, sleep/yield, espera com timeout e despertar existem em escopo inicial; preempção e temporização precisa ainda faltam
+- [~] Objetos de mutex, semáforo, evento e timer com operações iniciais
+- [~] SVCs com handlers iniciais: ControlMemory, QueryMemory, ExitProcess, CreateThread, ExitThread, SleepThread, Get/SetThreadPriority, GetProcessorId, mutexes, semáforos, eventos, timers, WaitSynchronization1 e CloseHandle
+- [ ] Completar ABI, códigos de retorno, validações de parâmetros, direitos de acesso e comportamento de erro de todos os SVCs presentes
+- [ ] Completar espera múltipla, timeout, cancelamento, herança de prioridade e ciclo de vida dos objetos
+- [ ] Completar ciclo de vida de processos, handles, compartilhamento e limpeza de recursos
 
 ### IPC e serviços do sistema
 
 - [ ] IPC entre processos e sessões
-- [ ] Infraestrutura de serviços do sistema e registro/descoberta de serviços
-- [ ] Serviços essenciais para inicialização e execução de homebrew
-- [ ] Serviços adicionais necessários à compatibilidade de jogos, priorizados por evidência de execução
-- [ ] Interrupções, timers globais e comunicação entre dispositivos
-- [ ] Testes de integração de kernel e SVC com programas ARM11 reais e casos sintéticos
+- [ ] Infraestrutura de registro, descoberta e despacho dos serviços do sistema
+- [ ] Serviços mínimos necessários para inicializar homebrew
+- [ ] Serviços adicionais priorizados pela evidência dos testes de compatibilidade
+- [ ] Controlador de interrupções, timers de hardware e notificações entre dispositivos
+- [ ] Testes de integração de SVC, threads e objetos com binários de teste independentes
 
-## 4. GPU PICA200, vídeo e LCD
+## 4. GPU PICA200, rasterização e LCD
 
-### GPU
+### GPU PICA200
 
-- [~] Banco inicial de registradores PICA200
-- [~] Processamento inicial de listas de comandos, canais e máscaras de escrita
-- [ ] Modelo completo de command processor, filas, sincronização e interrupções
-- [ ] Unidade de geometria e transformação de vértices
-- [ ] Processamento de atributos, uniformes e programas de shader
-- [ ] Montagem e clipping de primitivas
-- [ ] Rasterização de triângulos e linhas
-- [ ] Texturas, formatos, filtragem e mipmaps
-- [ ] Depth/stencil, blending, testes e operações de framebuffer
-- [ ] Resolução de formatos e conversões de superfície usados pelo hardware
-- [ ] Integração de acessos DMA/memória, cache e sincronização com a CPU
-- [ ] Testes gráficos determinísticos e cenas de referência próprias
+- [x] Banco inicial de 0x400 registradores PICA200
+- [x] Decodificador de command lists com parâmetros, cabeçalhos, máscaras de byte, escrita consecutiva e validação de limites
+- [x] Descritores e acknowledgement dos canais de command buffer 0 e 1
+- [~] Integração inicial no ciclo de frame: captura command buffers da memória visível ao processo e aplica as escritas aos registradores
+- [~] O bridge atual trata o endereço decodificado do command buffer como endereço visível ao processo; tradução DMA/endereçamento físico do hardware ainda precisa ser implementada
+- [~] Rasterizador de referência próprio em CPU para triângulos já transformados: interpolação de cor/profundidade, teste de profundidade e regra top-left; testes de cobertura, orientação, profundidade e entradas inválidas
+- [ ] Ligar o rasterizador ao pipeline PICA200; atualmente ele é um primitivo de bring-up e não é chamado pelo command processor nem gera frames de jogos
+- [ ] Modelo completo de command processor, filas, sincronização, interrupções e efeitos dos registradores
+- [ ] Formatos de vértice, atributos, uniformes, vertex shader e transformações
+- [ ] Clipping, montagem de primitivas e regras de culling
+- [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
+- [ ] Depth/stencil, blending, máscaras e operações completas de framebuffer
+- [ ] Integração com memória física, DMA, cache, sincronização e interrupções
+- [ ] Cenas determinísticas próprias, testes de regressão e comparação visual
 
-### LCD e apresentação
+### Vídeo e LCD
 
-- [~] Estruturas iniciais para LCD superior e inferior, buffers e leitura de framebuffer
-- [~] Infraestrutura inicial de apresentação de superfícies no núcleo/frontend Android
-- [ ] Ligar a saída do renderizador PICA200 aos framebuffers efetivamente apresentados
-- [ ] Implementar resolução, escala, orientação, layout das duas telas e proporções corretas
-- [ ] Apresentar as duas telas no desktop e Android com ciclo de vida e redimensionamento corretos
-- [ ] Validar atualização, sincronização e ausência de frames pretos/falsos positivos
+- [x] Superfícies de saída RGBA8 para LCD superior esquerdo, superior direito (estéreo) e inferior
+- [x] Modelo inicial de registradores do controlador LCD/PDC e seleção de framebuffer
+- [x] Scanout básico de framebuffers a partir da memória física para as três superfícies
+- [~] Scanout e apresentação no núcleo já são chamados pelo ciclo experimental de frame; o frontend ainda não exibe essas superfícies em uma janela gráfica funcional
+- [ ] Integrar a saída efetiva do PICA200 às áreas de framebuffer apresentadas
+- [ ] Validar resoluções, formatos, stride, escala, orientação, alternância de buffers e sincronização
+- [ ] Apresentar as duas telas no desktop e Android com redimensionamento e ciclo de vida corretos
 
-## 5. Áudio e dispositivos de entrada
+## 5. Ciclo de execução e dispositivos
 
-- [ ] Modelo de áudio e processamento DSP
-- [ ] Saída de áudio no desktop e Android
-- [ ] Entrada por teclado e gamepad
-- [ ] Mapeamento configurável de botões e analógicos
-- [ ] Touchscreen e coordenadas da tela inferior
+- [x] `System::run_frame_with_budget` executa um orçamento de instruções ARM11, avança o relógio virtual, processa command buffers pendentes, faz scanout LCD e incrementa o contador de frame
+- [~] O orçamento de instruções é determinístico, mas não é temporização ciclo-a-ciclo; o renderizador ainda não executa a pipeline gráfica PICA200
+- [ ] Integrar relógios e interrupções dos dispositivos ao escalonador e à CPU
+- [ ] Modelo de áudio e DSP
+- [ ] Saída de áudio desktop e Android
+- [ ] Entrada por teclado, gamepad, analógicos e touchscreen
 - [ ] Microfone e demais dispositivos conforme necessidade de compatibilidade
-- [ ] Sincronização de entrada, áudio, vídeo e temporização do sistema
+- [ ] Sincronizar entrada, áudio, vídeo e temporização do sistema
 
 ## 6. Frontends e experiência do usuário
 
 ### Desktop
 
-- [~] Frontend Rust inicial, atualmente voltado a diagnóstico/execução básica
+- [~] Binário Rust de diagnóstico/linha de comando e autoteste
 - [ ] Janela e superfície gráfica funcionais
-- [ ] Biblioteca de jogos e importação de arquivos `.3DS`, `.CCI` e `.CIA`
-- [ ] Configurações de vídeo, áudio, controles e caminhos de usuário
+- [ ] Biblioteca/importação de jogos para `.3DS`, `.CCI` e `.CIA`
+- [ ] Configurações de vídeo, áudio, controles, caminhos e armazenamento
 - [ ] Logs, relatórios de falha e diagnóstico de compatibilidade
-- [ ] Salvamento, carregamento e gerenciamento de arquivos de usuário
+- [ ] Save data e gerenciamento de arquivos de usuário
 
 ### Android
 
-- [~] Biblioteca Rust nativa `aceris-android` inicial
-- [ ] Aplicativo Android completo e empacotamento instalável
-- [ ] Integração de superfície, ciclo de vida, entrada e áudio
-- [ ] Biblioteca de jogos, configurações e permissões de armazenamento
-- [ ] Testes em ARM64 e dispositivos de desempenho baixo/médio
+- [~] Crate Rust `cdylib` inicial para ARM64; o workflow compila o alvo `arm64-v8a`
+- [ ] Aplicativo Android instalável, com interface implementada em Rust
+- [ ] Integração de superfície, ciclo de vida, entrada, áudio e permissões
+- [ ] Biblioteca de jogos, configurações e armazenamento
+- [ ] Testes em dispositivos ARM64 de baixo e médio desempenho
 - [ ] Diagnósticos e recuperação de falhas sem travamentos silenciosos
 
 ### Regra de implementação
 
-- [x] Implementação do produto exclusivamente em Rust, conforme as regras do projeto
-- [ ] Manter qualquer integração de plataforma estritamente como ponte/host; não deslocar lógica do emulador para Kotlin, Java, C, C++ ou outra linguagem
+- [x] A implementação do produto permanece exclusivamente em Rust
+- [ ] Toda integração de plataforma deve continuar como ponte/host, sem deslocar lógica do emulador para Kotlin, Java, C, C++ ou outra linguagem
 
 ## 7. Testes, compatibilidade e desempenho
 
-- [ ] Suíte de testes unitários por subsistema
-- [ ] Testes de integração CPU + memória + kernel + carregador
-- [ ] Testes de conformidade ARMv6/Thumb com corpus independente e legalmente utilizável
-- [ ] Testes de parser com arquivos sintéticos, truncados, inválidos e limites adversariais
+- [x] Testes unitários para CPU, memória, loaders, processo, kernel inicial, PICA200 command lists e LCD
+- [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
+- [~] Testes iniciais do rasterizador de referência incluídos; a execução depende da conclusão do workflow atual
+- [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
+- [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis
-- [ ] Testes de GPU com cenas e resultados de referência próprios
-- [ ] Testes de regressão em Linux, Windows, macOS e Android ARM64
+- [ ] Testes gráficos com cenas próprias e resultados de referência
+- [ ] Regressão em Linux, Windows, macOS e Android ARM64
 - [ ] Medir desempenho antes de otimizar; preservar precisão e compatibilidade
 - [ ] Perfilamento e otimizações de CPU, GPU, memória e renderização
 - [ ] Matriz pública de compatibilidade baseada somente em testes realmente executados
 
 ## 8. Marcos de entrega
 
-1. **M0 — Base estável:** CI verde, documentação coerente e testes reproduzíveis.
-2. **M1 — CPU utilizável:** conjunto ARMv6/Thumb necessário ao primeiro alvo, exceções e memória básica cobertos.
-3. **M2 — Primeiro homebrew:** arquivo legalmente fornecido pelo usuário carregado e executado até produzir saída observável.
-4. **M3 — Kernel funcional:** SVC, threads, memória virtual e IPC necessários ao alvo inicial.
-5. **M4 — Primeira imagem 3DS:** GPU PICA200 mínima ligada aos dois LCDs, com apresentação real.
-6. **M5 — Experiência jogável inicial:** entrada, vídeo, áudio e ciclo de execução integrados em um título de teste.
-7. **M6 — Compatibilidade ampliada:** mais serviços, recursos gráficos, testes e otimizações, sempre guiados por evidências.
+1. **M0 — Base estável:** CI verde no HEAD, documentação coerente e testes reproduzíveis.
+2. **M1 — CPU utilizável:** ARMv6/Thumb necessários ao alvo inicial, exceções, VFP e memória integrados e validados.
+3. **M2 — Primeiro homebrew:** arquivo fornecido legalmente pelo usuário preparado e executado até produzir saída observável.
+4. **M3 — Kernel funcional:** SVC, threads, memória virtual, sincronização e IPC necessários ao alvo inicial.
+5. **M4 — Primeira imagem 3DS:** vertex pipeline PICA200, rasterização e framebuffers integrados aos dois LCDs.
+6. **M5 — Experiência jogável inicial:** entrada, vídeo, áudio e ciclo de execução integrados em um alvo de teste.
+7. **M6 — Compatibilidade ampliada:** mais serviços, recursos gráficos, testes e otimizações orientados por evidências.
 
-## Critérios para marcar um marco como concluído
+## Próximas tarefas prioritárias
 
-- O código correspondente existe e está integrado ao caminho real de execução.
-- Há testes automatizados ou um procedimento manual reproduzível adequado ao recurso.
-- As verificações aplicáveis foram realmente executadas e seus resultados registrados.
-- Não há dependência de conteúdo protegido incluído no repositório.
-- A documentação descreve limitações restantes; stubs, no-ops e parsers isolados não contam como funcionalidade completa.
+1. Confirmar Rustfmt, Clippy e testes dos commits do rasterizador; corrigir qualquer regressão antes de ampliar o código.
+2. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
+3. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
+4. Corrigir o bridge de command buffers para usar o mapa físico e a tradução corretos, sem presumir que endereço virtual de processo é endereço DMA.
+5. Definir o formato de vértice e o contrato de entrada/saída da pipeline PICA200; conectar transformação, clipping e rasterizador.
+6. Expor as superfícies LCD no frontend desktop e depois Android.
+
+## Critérios para concluir um item
+
+- O código está integrado ao caminho real de execução.
+- Existem testes automatizados ou um procedimento manual reproduzível adequado ao recurso.
+- As verificações aplicáveis foram executadas e seus resultados registrados.
+- Nenhum jogo, firmware, chave ou dump protegido está incluído no repositório.
+- Stubs, no-ops, parsers isolados e fixtures sintéticas não são apresentados como compatibilidade completa.
