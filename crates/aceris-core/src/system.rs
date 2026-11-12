@@ -97,13 +97,15 @@ impl System {
         menu_info_key: [u8; AES_BLOCK_SIZE],
         content_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<ImageFormat> {
-        let mut session = Arm11ProcessSession::load_primary_ncsd(reader, menu_info_key, content_key)
-            .map_err(|error| {
-                Error::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("could not prepare the primary NCSD program: {error}"),
-                ))
-            })?;
+        let mut session =
+            Arm11ProcessSession::load_primary_ncsd(reader, menu_info_key, content_key).map_err(
+                |error| {
+                    Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("could not prepare the primary NCSD program: {error}"),
+                    ))
+                },
+            )?;
 
         self.reset_gpu_linear_memory();
         session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
