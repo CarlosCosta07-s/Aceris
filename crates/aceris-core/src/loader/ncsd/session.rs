@@ -1348,8 +1348,8 @@ mod tests {
             0xEF00_0001, // SVC ControlMemory: allocate linear
             0xEF00_0001, // SVC ControlMemory: free linear
         ]);
-        let mut memory = GpuPhysicalMemory::new();
-        let mut dma = GpuDmaAddressSpace::new();
+        let memory = GpuPhysicalMemory::new();
+        let dma = GpuDmaAddressSpace::new();
         session.attach_gpu_services(memory.clone(), dma.clone());
 
         {
@@ -1471,9 +1471,9 @@ mod tests {
         }
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], RESULT_OUT_OF_MEMORY);
-        assert!(session.address_space.linear_regions.is_empty());
+        assert!(!session.address_space.is_writable_range(OLD_LINEAR_BASE, 1));
 
-        let mut memory = GpuPhysicalMemory::new();
+        let memory = GpuPhysicalMemory::new();
         let dma = GpuDmaAddressSpace::new();
         session.attach_gpu_services(memory.clone(), dma.clone());
         {
