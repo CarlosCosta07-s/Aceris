@@ -49,14 +49,19 @@ pub const TLBTR_MP11: u32 = 0x0000_0800;
 
 const SCTLR_RESET: u32 = 0x0005_0078;
 /// Writable SCTLR bits: M, A, C, Z, I, V, RR, S/R, U, EE and XP.
-const SCTLR_WRITABLE: u32 = 0x00C0_FB07;
+const SCTLR_WRITABLE: u32 = 0x10C0_FB07;
 const SCTLR_M: u32 = 1;
 const SCTLR_XP: u32 = 1 << 23;
+const SCTLR_TRE: u32 = 1 << 28;
 const FSR_WRITE_NOT_READ: u32 = 1 << 11;
 const SCTLR_V: u32 = 1 << 13;
 const SCTLR_EE: u32 = 1 << 15;
 const CPACR_WRITABLE: u32 = 0x00F0_0000;
 const TLB_LOCKDOWN_WRITABLE: u32 = 0x9C00_0000;
+const PRIMARY_REMAP_WRITABLE: u32 = 0x000F_CFFC;
+const NORMAL_REMAP_WRITABLE: u32 = 0xCFFF_CFFF;
+const PRIMARY_REMAP_RESET: u32 = 0x0009_8AA4;
+const NORMAL_REMAP_RESET: u32 = 0x44E0_48E0;
 const FCSE_PID_WRITABLE: u32 = 0xFE00_0000;
 
 /// CP15 register file of one core.
@@ -81,6 +86,8 @@ pub struct Cp15 {
     tpidrprw: u32,
     pending_tlb_maintenance: Option<TlbMaintenance>,
     tlb_lockdown: u32,
+    primary_remap: u32,
+    normal_remap: u32,
 }
 
 impl Default for Cp15 {
@@ -111,6 +118,8 @@ impl Cp15 {
             tpidrprw: 0,
             pending_tlb_maintenance: None,
             tlb_lockdown: 0,
+            primary_remap: PRIMARY_REMAP_RESET,
+            normal_remap: NORMAL_REMAP_RESET,
         }
     }
 
@@ -127,6 +136,21 @@ impl Cp15 {
     /// SCTLR.U or SCTLR.A: ARMv6 multiword accesses check word alignment.
     pub(super) fn alignment_fault_enabled(&self) -> bool {
         self.sctlr & ((1 << 22) | (1 << 1)) != 0
+    }
+
+    /// SCTLR.TRE: memory-region remapping is enabled.
+    pub(super) fn memory_region_remap_enabled(&self) -> bool {
+        self.sctlr & SCTLR_TRE != 0
+    }
+
+    /// CP15 c10,c2,0 — Primary Region Remap Register (PRRR).
+    pub(super) fn primary_memory_remap(&self) -> u32 {
+        self.primary_remap
+    }
+
+    /// CP15 c10,c2,1 — Normal Memory Remap Register (NMRR).
+    pub(super) fn normal_memory_remap(&self) -> u32 {
+        self.normal_remap
     }
 
     /// SCTLR.XP: ARMv6 page-table format (AP[1:0] plus APX/XN, no subpages).
@@ -290,6 +314,8 @@ impl Cp15 {
             (6, 0, 0) => self.dfar,
             (6, 0, 2) => self.ifar,
             (10, 0, 0) => self.tlb_lockdown,
+            (10, 2, 0) => self.primary_remap,
+            (10, 2, 1) => self.normal_remap,
             (13, 0, 0) => self.fcse_pid,
             (13, 0, 1) => self.context_id,
             (13, 0, 2) => self.tpidrurw,
@@ -330,6 +356,8 @@ impl Cp15 {
             (6, 0, 0) => self.dfar = value,
             (6, 0, 2) => self.ifar = value,
             (10, 0, 0) => self.tlb_lockdown = value & TLB_LOCKDOWN_WRITABLE,
+            (10, 2, 0) => self.primary_remap = value & PRIMARY_REMAP_WRITABLE,
+            (10, 2, 1) => self.normal_remap = value & NORMAL_REMAP_WRITABLE,
             (13, 0, 0) => self.fcse_pid = value & FCSE_PID_WRITABLE,
             (13, 0, 1) => self.context_id = value,
             (13, 0, 2) => self.tpidrurw = value,
@@ -390,6 +418,36 @@ mod tests {
         assert!(cp15.high_vectors() && cp15.exception_big_endian());
         cp15.write(true, 0, 1, 0, 0, 0).unwrap();
         assert_eq!(cp15.sctlr(), SCTLR_RESET & !SCTLR_WRITABLE);
+    }
+
+    #[test]
+    fn sctlr_tre_is_writable_and_controls_memory_region_remapping() {
+        let mut cp15 = Cp15::default();
+        assert!(!cp15.memory_region_remap_enabled());
+
+        cp15.write(true, 0, 1, 0, 0, SCTLR_TRE).unwrap();
+        assert!(cp15.memory_region_remap_enabled());
+
+        cp15.write(true, 0, 1, 0, 0, 0).unwrap();
+        assert!(!cp15.memory_region_remap_enabled());
+    }
+
+    #[test]
+    fn memory_region_remap_registers_match_reset_masks_and_privilege() {
+        let mut cp15 = Cp15::default();
+        assert_eq!(cp15.read(true, 0, 10, 2, 0), Ok(PRIMARY_REMAP_RESET));
+        assert_eq!(cp15.read(true, 0, 10, 2, 1), Ok(NORMAL_REMAP_RESET));
+        assert_eq!(cp15.primary_memory_remap(), PRIMARY_REMAP_RESET);
+        assert_eq!(cp15.normal_memory_remap(), NORMAL_REMAP_RESET);
+
+        cp15.write(true, 0, 10, 2, 0, u32::MAX).unwrap();
+        cp15.write(true, 0, 10, 2, 1, u32::MAX).unwrap();
+        assert_eq!(cp15.read(true, 0, 10, 2, 0), Ok(PRIMARY_REMAP_WRITABLE));
+        assert_eq!(cp15.read(true, 0, 10, 2, 1), Ok(NORMAL_REMAP_WRITABLE));
+
+        assert_eq!(cp15.read(false, 0, 10, 2, 0), Err(Cp15Fault::Undefined));
+        assert_eq!(cp15.write(false, 0, 10, 2, 1, 0), Err(Cp15Fault::Undefined));
+        assert_eq!(cp15.read(true, 0, 10, 2, 2), Err(Cp15Fault::Unsupported));
     }
 
     #[test]
