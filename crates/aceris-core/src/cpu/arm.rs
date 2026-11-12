@@ -1666,6 +1666,27 @@ impl Arm11Core {
         self.write_reg(rd, value);
     }
 
+    /// Reads a User-mode register while a privileged mode is active (LDM/STM with S).
+    fn user_register(&self, index: usize) -> u32 {
+        match index {
+            8..=12 if self.cpsr.mode() == super::Psr::FIQ_MODE => {
+                self.banked.user_r8_r12[index - 8]
+            }
+            13 | 14 => self.banked.user_sp_lr[index - 13],
+            _ => self.regs[index],
+        }
+    }
+
+    fn set_user_register(&mut self, index: usize, value: u32) {
+        match index {
+            8..=12 if self.cpsr.mode() == super::Psr::FIQ_MODE => {
+                self.banked.user_r8_r12[index - 8] = value;
+            }
+            13 | 14 => self.banked.user_sp_lr[index - 13] = value,
+            _ => self.regs[index] = value,
+        }
+    }
+
     fn block_transfer<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
         let pre_index = bit(word, 24);
         let up = bit(word, 23);
@@ -1674,8 +1695,26 @@ impl Arm11Core {
         let rn = bits(word, 19, 16);
         let list = bits(word, 15, 0);
 
-        if bit(word, 22) {
-            return Err(Error::Unimplemented("LDM/STM with the S bit"));
+        let s_bit = bit(word, 22);
+        let pc_in_list = list & (1 << PC) != 0;
+        // S without a loaded PC transfers the User-mode registers; with a loaded
+        // PC (LDM only) it is an exception return that also restores the SPSR.
+        let exception_return = s_bit && load && pc_in_list;
+        let user_bank = s_bit && !exception_return;
+        let mode = self.cpsr.mode();
+        if user_bank
+            && (writeback || matches!(mode, super::Psr::USER_MODE | super::Psr::SYSTEM_MODE))
+        {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+        if exception_return && !super::Psr::mode_has_spsr(mode) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
         }
         if list == 0 {
             return Err(Error::Unimplemented("LDM/STM with an empty register list"));
@@ -1708,16 +1747,27 @@ impl Arm11Core {
             }
             for (r, value) in values.iter().enumerate().take(PC) {
                 if list & (1 << r) != 0 {
-                    self.regs[r] = *value;
+                    if user_bank {
+                        self.set_user_register(r, *value);
+                    } else {
+                        self.regs[r] = *value;
+                    }
                 }
             }
-            if list & (1 << PC) != 0 {
+            if exception_return {
+                self.exception_return(word, values[PC])?;
+            } else if pc_in_list {
                 self.branch_exchange(values[PC]);
             }
         } else {
             for r in 0..16u32 {
                 if list & (1 << r) != 0 {
-                    self.write_data_u32(bus, addr, self.reg(r, 8))?;
+                    let value = if user_bank && r != PC as u32 {
+                        self.user_register(r as usize)
+                    } else {
+                        self.reg(r, 8)
+                    };
+                    self.write_data_u32(bus, addr, value)?;
                     addr = addr.wrapping_add(4);
                 }
             }
@@ -3361,6 +3411,66 @@ mod tests {
         assert_eq!(m.step(), StepEvent::Svc(1));
         assert_eq!(m.cpu.pc(), 0xFFFF_0008);
         assert_ne!(m.cpu.cpsr.0 & (1 << 9), 0);
+    }
+
+    #[test]
+    fn ldm_stm_with_s_bit_access_the_user_bank_registers() {
+        let mut m = Machine::new(&[0xE8C0_6000, 0xE8D0_6000]);
+        m.cpu.regs[13] = 0x1111;
+        m.cpu.regs[14] = 0x2222;
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.regs[13] = 0x5555; // SVC sp stays untouched
+        m.cpu.regs[0] = DATA;
+        // STMIA r0, {sp, lr}^ stores the User registers.
+        m.step();
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0x1111);
+        assert_eq!(m.mem.read32(DATA + 4).unwrap(), 0x2222);
+        // LDMIA r0, {sp, lr}^ replaces them without touching the SVC bank.
+        m.mem.write32(DATA, 0xAAAA).unwrap();
+        m.mem.write32(DATA + 4, 0xBBBB).unwrap();
+        m.step();
+        assert_eq!(m.cpu.regs[13], 0x5555);
+        m.cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!((m.cpu.regs[13], m.cpu.regs[14]), (0xAAAA, 0xBBBB));
+    }
+
+    #[test]
+    fn ldm_with_s_bit_and_pc_returns_from_the_exception() {
+        let mut m = Machine::new(&[0xE8D0_8002]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.set_saved_program_status(Psr(0x6000_0010)).unwrap();
+        m.cpu.regs[0] = DATA;
+        m.mem.write32(DATA, 0x77).unwrap();
+        m.mem.write32(DATA + 4, 0x41).unwrap();
+        m.step();
+        assert_eq!(m.cpu.regs[1], 0x77);
+        assert_eq!(m.cpu.pc(), 0x40);
+        assert_eq!(m.cpu.cpsr, Psr(0x6000_0010));
+    }
+
+    #[test]
+    fn ldm_stm_s_bit_is_undefined_where_it_has_no_meaning() {
+        // STM^ in User mode, and STM^ with writeback in a privileged mode.
+        for (program, mode) in [
+            (0xE8C0_6000, Psr::USER_MODE),
+            (0xE8E0_6000, Psr::SUPERVISOR_MODE),
+        ] {
+            let mut m = Machine::new(&[program]);
+            m.cpu.switch_mode(mode).unwrap();
+            m.cpu.regs[0] = DATA;
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { .. })
+            ));
+        }
+        // The exception-return form needs an SPSR, so System mode rejects it.
+        let mut m = Machine::new(&[0xE8D0_8002]);
+        m.cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
+        m.cpu.regs[0] = DATA;
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { .. })
+        ));
     }
 
     #[test]
