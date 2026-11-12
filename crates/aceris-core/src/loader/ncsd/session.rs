@@ -77,6 +77,8 @@ pub enum Arm11RunStopReason {
     ProcessExited,
     /// A BKPT instruction stopped execution for a debugger or exception layer.
     Breakpoint(u16),
+    /// The current core executed CP15 WFI and is waiting for an IRQ or FIQ.
+    WaitForInterrupt,
     /// No thread is currently eligible to execute.
     NoRunnableThread,
     /// A void SVC could not be completed by the current bootstrap.
@@ -254,6 +256,26 @@ impl Arm11ProcessSession {
         self.svc_dispatcher.process_exited()
     }
 
+    /// Drives the current thread's external IRQ input.
+    ///
+    /// An asserted IRQ wakes a core in CP15 WFI even when CPSR.I masks IRQ
+    /// exception entry. In that case the guest resumes without taking IRQ.
+    pub fn set_irq_line(&mut self, asserted: bool) {
+        if let Some(core) = self.scheduler.current_core_mut() {
+            core.set_irq_line(asserted);
+        }
+    }
+
+    /// Drives the current thread's external FIQ input.
+    ///
+    /// An asserted FIQ wakes a core in CP15 WFI even when CPSR.F masks FIQ
+    /// exception entry. In that case the guest resumes without taking FIQ.
+    pub fn set_fiq_line(&mut self, asserted: bool) {
+        if let Some(core) = self.scheduler.current_core_mut() {
+            core.set_fiq_line(asserted);
+        }
+    }
+
     /// Returns the total number of successfully executed instructions.
     pub const fn instruction_count(&self) -> u64 {
         self.instruction_count
@@ -269,7 +291,9 @@ impl Arm11ProcessSession {
             .current_core_mut()
             .ok_or(crate::Error::Unimplemented("no runnable ARM11 thread"))?;
         let event = core.step(&mut self.address_space)?;
-        self.instruction_count = self.instruction_count.saturating_add(1);
+        if event != StepEvent::WaitingForInterrupt {
+            self.instruction_count = self.instruction_count.saturating_add(1);
+        }
         Ok(event)
     }
 
@@ -334,6 +358,19 @@ impl Arm11ProcessSession {
 
             match self.step()? {
                 StepEvent::Executed => executed = executed.saturating_add(1),
+                StepEvent::WaitForInterrupt => {
+                    executed = executed.saturating_add(1);
+                    return Ok(Arm11RunReport {
+                        instructions_executed: executed,
+                        stop_reason: Arm11RunStopReason::WaitForInterrupt,
+                    });
+                }
+                StepEvent::WaitingForInterrupt => {
+                    return Ok(Arm11RunReport {
+                        instructions_executed: executed,
+                        stop_reason: Arm11RunStopReason::WaitForInterrupt,
+                    });
+                }
                 StepEvent::Breakpoint(immediate) => {
                     executed = executed.saturating_add(1);
                     return Ok(Arm11RunReport {
@@ -1208,6 +1245,75 @@ mod tests {
         assert_eq!(session.core().regs[13], 0x1000_0000);
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
         assert_eq!(session.instruction_count(), 0);
+    }
+
+    #[test]
+    fn cp15_wfi_stops_guest_execution_and_a_masked_irq_wakes_it() {
+        const MCR_WFI: u32 = 0xEE07_0F90; // MCR p15,0,r0,c7,c0,4
+        const MOV_R0_7: u32 = 0xE3A0_0007;
+
+        let mut session = test_session_with_program(&[MCR_WFI, MOV_R0_7]);
+        let core = session.scheduler.current_core_mut().unwrap();
+        core.switch_mode(crate::cpu::Psr::SUPERVISOR_MODE).unwrap();
+        core.cpsr.set_interrupt_masks(0b110, true); // Mask both IRQ and FIQ.
+
+        let entered = session.run_instructions(8).unwrap();
+        assert_eq!(entered.instructions_executed, 1);
+        assert_eq!(
+            entered.stop_reason,
+            Arm11RunStopReason::WaitForInterrupt
+        );
+        assert_eq!(session.core().pc(), 0x0010_0004);
+        assert_eq!(session.instruction_count(), 1);
+
+        // Repeated scheduler runs while the input line is low consume no
+        // guest instructions and leave the PC parked after the WFI MCR.
+        let asleep = session.run_instructions(8).unwrap();
+        assert_eq!(asleep.instructions_executed, 0);
+        assert_eq!(
+            asleep.stop_reason,
+            Arm11RunStopReason::WaitForInterrupt
+        );
+        assert_eq!(session.core().pc(), 0x0010_0004);
+        assert_eq!(session.instruction_count(), 1);
+
+        // A masked interrupt still completes WFI. Since CPSR.I is set, the
+        // next instruction runs instead of entering the IRQ exception vector.
+        session.set_irq_line(true);
+        let resumed = session.run_instructions(1).unwrap();
+        assert_eq!(resumed.instructions_executed, 1);
+        assert_eq!(
+            resumed.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.core().regs[0], 7);
+        assert_eq!(session.core().pc(), 0x0010_0008);
+        assert_eq!(session.instruction_count(), 2);
+        session.set_irq_line(false);
+    }
+
+    #[test]
+    fn cp15_wfi_unmasked_irq_wakes_and_enters_the_irq_vector() {
+        const MCR_WFI: u32 = 0xEE07_0F90;
+        let mut session = test_session_with_program(&[MCR_WFI, 0xE3A0_0001]);
+        let core = session.scheduler.current_core_mut().unwrap();
+        core.switch_mode(crate::cpu::Psr::SUPERVISOR_MODE).unwrap();
+        core.cpsr.set_interrupt_masks(0b110, true);
+        core.cpsr.set_interrupt_masks(0b010, false); // IRQ unmasked, FIQ masked.
+
+        assert_eq!(
+            session.run_instructions(4).unwrap().stop_reason,
+            Arm11RunStopReason::WaitForInterrupt
+        );
+        session.set_irq_line(true);
+        let resumed = session.run_instructions(1).unwrap();
+        assert_eq!(resumed.instructions_executed, 1);
+        assert_eq!(session.core().pc(), 0x18);
+        assert_eq!(
+            session.core().cpsr.mode(),
+            crate::cpu::Psr::IRQ_MODE
+        );
+        session.set_irq_line(false);
     }
 
     #[test]

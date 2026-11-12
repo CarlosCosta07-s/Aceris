@@ -40,6 +40,10 @@ pub enum StepEvent {
     /// comment field. Hardware exception entry is optional and disabled by default
     /// so HLE service dispatch can intercept this event.
     Svc(u32),
+    /// A CP15 WFI operation retired and put the core into the wait state.
+    WaitForInterrupt,
+    /// The core remains in the WFI state; no guest instruction was executed.
+    WaitingForInterrupt,
     /// A BKPT instruction was encountered. The immediate is retained for a
     /// debugger or the process exception layer.
     Breakpoint(u16),
@@ -117,6 +121,7 @@ pub struct Arm11Core {
     svc_exception_entry_enabled: bool,
     irq_line_asserted: bool,
     fiq_line_asserted: bool,
+    waiting_for_interrupt: bool,
     cp15: Cp15,
     tlb: mmu::TranslationLookasideBuffer,
     vfp: Vfp,
@@ -338,6 +343,16 @@ impl Arm11Core {
     }
 
     fn step_instruction<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
+        // ARMv6K CP15 WFI suspends instruction execution until an IRQ or FIQ
+        // input is asserted. The wakeup condition ignores CPSR.I/F; those
+        // masks control exception acceptance, not whether WFI can complete.
+        if self.waiting_for_interrupt {
+            if !self.irq_line_asserted && !self.fiq_line_asserted {
+                return Ok(StepEvent::WaitingForInterrupt);
+            }
+            self.waiting_for_interrupt = false;
+        }
+
         if let Some(operation) = self.cp15.take_tlb_maintenance() {
             self.tlb.maintain(operation);
         }

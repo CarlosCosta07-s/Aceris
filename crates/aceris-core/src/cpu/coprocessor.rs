@@ -74,6 +74,10 @@ impl Arm11Core {
                 self.cp15.high_vectors(),
                 self.cp15.exception_big_endian(),
             );
+            if opc1 == 0 && crn == 7 && crm == 0 && opc2 == 4 {
+                self.waiting_for_interrupt = true;
+                return Ok(StepEvent::WaitForInterrupt);
+            }
         }
         Ok(StepEvent::Executed)
     }
