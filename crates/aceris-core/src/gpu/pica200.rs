@@ -634,12 +634,8 @@ mod tests {
     fn pica200_decodes_uploaded_operand_descriptor_words() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_VSH_OPDESCS_INDEX, 0x07).unwrap();
-        let descriptor_word = 0b1010u32
-            | (1 << 4)
-            | (0x1B << 5)
-            | (0x55 << 14)
-            | (1 << 22)
-            | (0xE4 << 23);
+        let descriptor_word =
+            0b1010u32 | (1 << 4) | (0x1B << 5) | (0x55 << 14) | (1 << 22) | (0xE4 << 23);
         gpu.write_register(REG_VSH_OPDESCS_DATA0, descriptor_word)
             .unwrap();
 
