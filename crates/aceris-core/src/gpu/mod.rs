@@ -6,6 +6,7 @@ mod input_fetch;
 mod physical_memory;
 mod pica200;
 mod rasterizer;
+mod shader_input;
 mod vertex;
 
 pub use geometry::{
@@ -25,6 +26,12 @@ pub use pica200::{
     REG_ATTRIBUTE_BUFFERS, REG_COLOR_OPERATION, REG_COMMAND_BUFFER_ADDRESS_0,
     REG_COMMAND_BUFFER_ADDRESS_1, REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_JUMP_1,
     REG_COMMAND_BUFFER_SIZE_0, REG_COMMAND_BUFFER_SIZE_1, REGISTER_COUNT,
+};
+pub use shader_input::{
+    PicaVertexShaderInputLayout, PicaVertexShaderInputState, VertexShaderAttributeBinding,
+    VertexShaderInputBindings, VertexShaderInputError, MAX_VERTEX_SHADER_INPUTS,
+    MAX_VERTEX_SHADER_REGISTERS, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
+    REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_INPUTBUFFER_CONFIG,
 };
 pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
