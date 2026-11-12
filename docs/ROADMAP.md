@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `e81067342fa93103b3f9d9999350a43b318bde62`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `e984f399bbaad181248e86bb5c93cc320fdac282`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -110,7 +110,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Alocação e liberação de TLS por thread
 - [~] Prioridades, sleep/yield, espera com timeout e despertar existem em escopo inicial; preempção e temporização precisa ainda faltam
 - [~] Objetos de mutex, semáforo, evento e timer com operações iniciais
-- [~] SVCs com handlers iniciais: ControlMemory, QueryMemory, CreateMemoryBlock (bloco anônimo somente para SYSTEM/BASE; addr não nulo pode compartilhar uma subfaixa de uma alocação existente do heap regular), MapMemoryBlock, UnmapMemoryBlock, QueryMemory, ExitProcess, CreateThread, ExitThread, SleepThread, Get/SetThreadPriority, GetProcessorId, mutexes, semáforos, eventos, timers, WaitSynchronization1 e CloseHandle
+- [~] SVCs com handlers iniciais: ControlMemory, QueryMemory, CreateMemoryBlock (bloco anônimo somente para SYSTEM/BASE; addr não nulo pode compartilhar uma subfaixa de uma alocação existente do heap regular; W-only é rejeitado), MapMemoryBlock, UnmapMemoryBlock, ExitProcess, CreateThread, ExitThread, SleepThread, Get/SetThreadPriority, GetProcessorId, mutexes, semáforos, eventos, timers, WaitSynchronization1 e CloseHandle
 - [ ] Completar ABI e semântica de todos os SVCs; em CreateMemoryBlock ainda faltam tipos de memória regionais completos, regiões de origem além do heap regular modelado, alias que atravesse várias alocações e integração com processos/handles distintos
 - [ ] Completar espera múltipla, timeout, cancelamento, herança de prioridade e ciclo de vida dos objetos
 - [ ] Completar ciclo de vida de processos, handles, compartilhamento e limpeza de recursos
