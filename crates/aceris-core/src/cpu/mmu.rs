@@ -90,11 +90,7 @@ fn permission_allows(apx: u32, ap: u32, privileged: bool, write: bool) -> bool {
     } else {
         user_level
     };
-    if write {
-        level == 2
-    } else {
-        level >= 1
-    }
+    if write { level == 2 } else { level >= 1 }
 }
 
 /// One cached short-descriptor translation. Entries retain their original
