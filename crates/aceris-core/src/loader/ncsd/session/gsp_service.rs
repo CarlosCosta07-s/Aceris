@@ -200,8 +200,8 @@ impl GspServiceRegistry {
         client_id: u8,
         interrupt: GspInterruptId,
     ) -> Result<GspInterruptDeliveryReport, GspServiceError> {
-        let registration = self
-            .client_registration(client_id)
+        let index = Self::client_index(client_id)?;
+        let registration = self.clients[index]
             .ok_or(GspServiceError::ClientNotRegistered { client_id })?;
         if session
             .kernel_objects
@@ -513,6 +513,16 @@ mod tests {
         assert_eq!(
             registry.register_client(&mut session, 0, SHARED_MEMORY_BASE, mutex),
             Err(GspServiceError::InvalidEventHandle { handle: mutex })
+        );
+        assert_eq!(
+            registry.register_client(&mut session, 0, SHARED_MEMORY_BASE + 0x10000, event),
+            Err(GspServiceError::SharedMemoryUnavailable {
+                address: SHARED_MEMORY_BASE + 0x10000,
+            })
+        );
+        assert_eq!(
+            registry.deliver_interrupt(&mut session, 4, GspInterruptId::Dma),
+            Err(GspServiceError::InvalidClientId { client_id: 4 })
         );
         registry
             .register_client(&mut session, 0, SHARED_MEMORY_BASE, event)
