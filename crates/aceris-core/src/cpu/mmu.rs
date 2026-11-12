@@ -163,10 +163,6 @@ impl TlbEntry {
         self.matches_address(address) && (self.global || self.asid == params.asid)
     }
 
-    fn resolve(&self, params: &Params, address: u32, access: Access) -> Walk {
-        self.resolve_with_privilege(params, address, access, params.privileged)
-    }
-
     fn resolve_with_privilege(
         &self,
         params: &Params,
@@ -517,7 +513,12 @@ fn translate<B: Bus + ?Sized>(
     access: Access,
 ) -> Result<Walk> {
     match walk_page_tables(bus, params, va, access)? {
-        PageWalk::Mapped(entry) => Ok(entry.resolve(params, va, access)),
+        PageWalk::Mapped(entry) => Ok(entry.resolve_with_privilege(
+            params,
+            va,
+            access,
+            params.privileged,
+        )),
         PageWalk::Fault(fault) => Ok(Walk::Fault(fault)),
     }
 }
