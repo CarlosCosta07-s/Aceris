@@ -860,10 +860,8 @@ impl Arm11ProcessSession {
         if !found_static_buffer {
             return Err(first_unsupported_descriptor.map_or(
                 IpcStaticBufferTranslationError::NoStaticBufferParameters,
-                |descriptor| {
-                    IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
-                        descriptor,
-                    }
+                |descriptor| IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
+                    descriptor,
                 },
             ));
         }
