@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(layout.formats[8].data_type, AttributeDataType::SignedShort);
         assert_eq!(layout.formats[8].bit_width, AttributeBitWidth::Bits16);
         assert_eq!(layout.formats[11].data_type, AttributeDataType::Float);
-        assert_eq!(layout.formats[11].bit_width, AttributeBitWidth::Bits24);
+        assert_eq!(layout.formats[11].bit_width, AttributeBitWidth::Bits32);
     }
 
     #[test]
@@ -678,7 +678,7 @@ mod tests {
     fn reads_raw_unsigned_byte_and_signed_short_components_from_fcram() {
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = FCRAM_BASE + 0x1000;
-        let format_low = 1 | (2 << 4);
+        let format_low = 1 | (6 << 4);
         let config1 = (1 << 4) | (12 << 8);
         let config2 = (8 << 16) | (3 << 28);
         let layout =
@@ -707,7 +707,7 @@ mod tests {
         let physical_base = VRAM_BASE + 0x1000;
         let format_low = 0xB;
         let config1 = 0;
-        let config2 = (12 << 16) | (3 << 28);
+        let config2 = (9 << 16) | (3 << 28);
         let layout =
             PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0, config1, config2)])
                 .unwrap();
@@ -715,9 +715,7 @@ mod tests {
         memory
             .write(
                 physical_base,
-                &[
-                    0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x40,
-                ],
+                &[0x00, 0x00, 0x3F, 0x00, 0x00, 0x40, 0x00, 0x80, 0x40],
             )
             .unwrap();
 
@@ -726,7 +724,7 @@ mod tests {
         assert_eq!(position.component_count, 3);
         assert_eq!(
             position.components[..3],
-            [1.0f32.to_bits(), 2.0f32.to_bits(), 3.0f32.to_bits()]
+            [0x003F_0000, 0x0040_0000, 0x0040_8000]
         );
     }
 
@@ -734,7 +732,7 @@ mod tests {
     fn converts_signed_unsigned_short_and_float_components_to_numeric_values() {
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = FCRAM_BASE + 0x8000;
-        let format_low = (1 << 4) | (2 << 8) | (3 << 12);
+        let format_low = (1 << 4) | (6 << 8) | (15 << 12);
         let config1 = 0x3210;
         let config2 = (8 << 16) | (4 << 28);
         let layout =
@@ -749,7 +747,7 @@ mod tests {
             .unwrap();
 
         let raw = layout.read_vertex(&memory, physical_base, 0).unwrap();
-        let numeric = raw.to_numeric();
+        let numeric = raw.to_numeric().unwrap();
 
         assert_eq!(numeric.attributes[0].unwrap().components[0], -128.0);
         assert_eq!(numeric.attributes[1].unwrap().components[0], 255.0);
