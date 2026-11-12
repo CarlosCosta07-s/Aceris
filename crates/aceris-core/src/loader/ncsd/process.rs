@@ -1801,11 +1801,26 @@ impl Arm11CodeAddressSpace {
         Ok(())
     }
 
+    /// Reservation token for `address`: CPU-side stores bump the virtual
+    /// generation, and stores by any agent to shared physical backing (DMA, GPU,
+    /// LCD, other processes' aliases) bump the physical one. The sum changes
+    /// whenever either does.
     fn exclusive_version(&self, address: u32) -> u64 {
-        self.exclusive_versions
+        let virtual_version = self
+            .exclusive_versions
             .get(&(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1)))
             .copied()
-            .unwrap_or(0)
+            .unwrap_or(0);
+        let physical_version = match (self.locate(address), self.gpu_memory.as_ref()) {
+            (
+                Some(MemoryLocation::Physical {
+                    address: physical, ..
+                }),
+                Some(memory),
+            ) => memory.exclusive_version(physical),
+            _ => 0,
+        };
+        virtual_version.wrapping_add(physical_version)
     }
 
     fn invalidate_exclusive_range(&mut self, address: u32, size: usize) {
@@ -2361,6 +2376,45 @@ mod tests {
         assert!(address_space.is_writable_range(0x0010_4000, 1));
         assert!(!address_space.is_writable_range(0x0010_6000, 1));
         assert!(!address_space.is_writable_range(0x0010_3000, 0));
+    }
+
+    #[test]
+    fn device_writes_to_linear_memory_invalidate_cpu_exclusive_reservations() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        // Undisturbed reservation succeeds.
+        let (_, token) = address_space.exclusive_read(virtual_base, 4).unwrap();
+        assert!(
+            address_space
+                .exclusive_write(virtual_base, 4, 1, Some(token))
+                .unwrap()
+        );
+
+        // A device store to the same granule (not through the CPU) breaks it.
+        let (_, token) = address_space.exclusive_read(virtual_base, 4).unwrap();
+        memory.write_u32(physical_base + 4, 0xFEED).unwrap();
+        assert!(
+            !address_space
+                .exclusive_write(virtual_base, 4, 2, Some(token))
+                .unwrap()
+        );
+        assert_eq!(address_space.read32(virtual_base).unwrap(), 1);
+
+        // A device store to a different granule leaves the reservation intact.
+        let (_, token) = address_space.exclusive_read(virtual_base, 4).unwrap();
+        memory.write_u32(physical_base + 0x20, 0xFEED).unwrap();
+        assert!(
+            address_space
+                .exclusive_write(virtual_base, 4, 3, Some(token))
+                .unwrap()
+        );
     }
 
     #[test]

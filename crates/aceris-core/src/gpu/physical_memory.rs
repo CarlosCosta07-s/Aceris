@@ -70,6 +70,9 @@ struct GpuPhysicalMemoryInner {
     pages: BTreeMap<u32, Box<[u8; PHYSICAL_PAGE_SIZE]>>,
     /// Exact contiguous FCRAM ranges reserved for ControlMemory linear allocations.
     linear_allocations: BTreeMap<u32, u32>,
+    /// Write generation per exclusive-reservation granule, bumped by every
+    /// physical write so CPU exclusive monitors observe DMA/GPU/LCD stores.
+    exclusive_versions: BTreeMap<u32, u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -303,7 +306,33 @@ impl GpuPhysicalMemory {
             page[page_offset..page_offset + count].copy_from_slice(&input[copied..copied + count]);
             copied += count;
         }
+
+        let granule = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
+        if !input.is_empty() {
+            let end = u64::from(address) + input.len() as u64;
+            let mut current = u64::from(address & !(granule - 1));
+            while current < end {
+                let version = inner.exclusive_versions.entry(current as u32).or_insert(0);
+                *version = version.wrapping_add(1);
+                current += u64::from(granule);
+            }
+        }
         Ok(())
+    }
+
+    /// Generation counter of the exclusive-reservation granule containing `address`.
+    ///
+    /// It changes whenever any agent writes to that granule through this
+    /// shared backing, which is how a CPU local monitor loses its reservation.
+    pub fn exclusive_version(&self, address: u32) -> u64 {
+        let granule = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .exclusive_versions
+            .get(&(address & !(granule - 1)))
+            .copied()
+            .unwrap_or(0)
     }
 
     pub fn read_u32(&self, address: u32) -> Result<u32, GpuPhysicalMemoryError> {
@@ -320,6 +349,27 @@ impl GpuPhysicalMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_bump_the_exclusive_version_of_every_touched_granule() {
+        let mut memory = GpuPhysicalMemory::new();
+        let base = FCRAM_BASE + 0x1000;
+        assert_eq!(memory.exclusive_version(base), 0);
+
+        memory.write(base + 6, &[1, 2, 3, 4]).unwrap(); // spans two 8-byte granules
+        assert_eq!(memory.exclusive_version(base), 1);
+        assert_eq!(memory.exclusive_version(base + 7), 1);
+        assert_eq!(memory.exclusive_version(base + 8), 1);
+        assert_eq!(memory.exclusive_version(base + 16), 0);
+
+        // A clone observes the same counters, and reads never change them.
+        let clone = memory.clone();
+        let mut byte = [0u8];
+        clone.read(base, &mut byte).unwrap();
+        assert_eq!(clone.exclusive_version(base), 1);
+        memory.write(base, &[9]).unwrap();
+        assert_eq!(clone.exclusive_version(base), 2);
+    }
 
     #[test]
     fn unallocated_physical_pages_read_as_zero_without_allocating() {

@@ -40,7 +40,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 - [x] Instruções ARM básicas de processamento de dados, desvios, transferências, blocos e multiplicações comuns
 - [x] Famílias ARMv6 de exclusivas A32: LDREX/STREX, LDREXB/STREXB, LDREXH/STREXH e LDREXD/STREXD
-- [x] Monitor exclusivo local com granularidade de reserva de 8 bytes integrado ao caminho MMU; teste verifica LDREX/STREX por aliases virtuais distintos do mesmo endereço físico. A invalidação por escritas de DMA/dispositivos ainda depende da coerência entre agentes
+- [x] Monitor exclusivo local com granularidade de reserva de 8 bytes integrado ao caminho MMU; teste verifica LDREX/STREX por aliases virtuais distintos do mesmo endereço físico. Escritas de DMA/GPU/LCD no backing físico compartilhado incrementam a geração de reserva e invalidam o monitor (mapeamentos lineares); ainda não há outros dispositivos mapeados que escrevam na memória do processo
 - [~] Famílias ARMv6 de mídia/DSP, saturação, operações paralelas, extensão de sinal/zero e multiplicações de meia palavra: há implementação e testes para várias famílias, mas a cobertura integral ainda não foi demonstrada
 - [x] A32 ARM1136 `SSAT16`/`USAT16`: saturação independente dos dois halfwords assinados, `CPSR.Q` sticky e rejeição de PC; testes aprovados no workflow [43317800061](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43317800061)
 - [x] A32 ARM1136 `NOP32`: verdadeiro no-op que ignora a condição; `YIELD` e hints reservados continuam sem efeito no perfil modelado. Testes EQ, AL e NV aprovados no workflow [43318212186](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43318212186)
@@ -64,7 +64,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Short vectors VFPv2 implementados para VADD/VSUB/VMUL/VNMUL/VDIV, VMLA/VMLS/VNMLA/VNMLS e VMOV/VABS/VNEG/VSQRT; inclui quatro bancos circulares, wrap, Fm escalar em bank 0, destino escalar em bank 0 e validação de LEN/STRIDE. Comparações/conversões permanecem escalares; traps VFP, FLDMX/FSTMX e casos extremos ainda precisam de validação/implementação
 - [x] TLB unificado de software integrado ao caminho real de tradução: cacheia seções, superseções, páginas grandes e pequenas; aplica ASID/global, oito slots de lockdown controlados por CP15 c10 e TLBIALL/TLBIMVA/TLBIASID/TLBIMVAA. A região normal ainda usa capacidade de 64 entradas e substituição round-robin simplificada, sem equivalência ao replacement set-associative físico
 - [ ] Implementar caches ARM observáveis, invalidação/manutenção de caches e barreiras com efeitos coerentes entre CPU e dispositivos
-- [x] Integrar o monitor exclusivo ao caminho MMU e validar reservas perante escritas da CPU por aliases virtuais distintos do mesmo endereço físico; invalidação por outros agentes/dispositivos ainda depende da coerência de memória compartilhada
+- [x] Integrar o monitor exclusivo ao caminho MMU e validar reservas perante escritas da CPU por aliases virtuais distintos do mesmo endereço físico; escritas de DMA/GPU/LCD no backing físico compartilhado também invalidam reservas em mapeamentos lineares (teste de processo e de memória física)
 - [ ] Executar testes de conformidade ARM11 em ARM, Thumb, CP15, VFP e exceções
 
 ## 2. Memória, endereçamento e carregamento de títulos
@@ -182,6 +182,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Scanout e apresentação no núcleo já são chamados pelo ciclo experimental de frame; o frontend ainda não exibe essas superfícies em uma janela gráfica funcional
 - [ ] Integrar a saída efetiva do PICA200 às áreas de framebuffer apresentadas
 - [ ] Validar resoluções, formatos, stride, escala, orientação, alternância de buffers e sincronização
+- [~] `aceris <JOGO> --dump-lcd <DIR>` grava as três superfícies como PNG RGBA8 (codificador próprio, sem dependências, validado com decodificadores independentes); é saída para inspeção, não uma janela
 - [ ] Apresentar as duas telas no desktop e Android com redimensionamento e ciclo de vida corretos
 
 ## 5. Ciclo de execução e dispositivos
@@ -199,7 +200,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ### Desktop
 
-- [~] Binário Rust de diagnóstico/linha de comando e autoteste
+- [~] Binário Rust de diagnóstico/linha de comando e autoteste; `--dump-lcd` exporta as telas como PNG após o quadro
 - [ ] Janela e superfície gráfica funcionais
 - [ ] Biblioteca/importação de jogos para `.3DS`, `.CCI` e `.CIA`
 - [ ] Configurações de vídeo, áudio, controles, caminhos e armazenamento
@@ -265,9 +266,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 1. Implementar o serviço GSP IPC em torno do GX queue: mapping de shared memory, rendering rights, `TriggerCmdReqQueue`, relay queue/eventos e callbacks; conectar cache flush/invalidate somente quando houver um modelo de cache ARM observável.
 2. Implementar decodificadores tipados para os formatos de instrução e operand descriptors de vertex shader, priorizando formatos 1/1i/1u/1c e opcodes aritméticos básicos documentados; adicionar testes de campo e rejeitar codificações desconhecidas. O armazenamento de código/descriptors e uniforms já existe, sem executor.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
-4. Validar invalidação de reservas LDREX/STREX por escritas de DMA, GPU, LCD e outros agentes, além das escritas da CPU já cobertas por aliases MMU.
+4. Estender a invalidação de reservas LDREX/STREX a regiões compartilhadas e a outros dispositivos que venham a escrever na memória do processo (escritas físicas de DMA/GPU/LCD em mapeamentos lineares já invalidam).
 5. Completar atributos de memória, associatividade e replacement do TLB normal, atributos TEX e semântica observável de manutenção de cache/barreiras ao CP15.
-6. Expor as superfícies LCD no frontend desktop e depois Android.
+6. Apresentar as superfícies LCD em uma janela no desktop e depois no Android (o desktop já exporta PNG com `--dump-lcd`); a janela depende de decidir como abrir janelas sem crates externos.
 
 ## Critérios para concluir um item
 
