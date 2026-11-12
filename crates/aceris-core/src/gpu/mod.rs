@@ -3,6 +3,7 @@
 mod address_space;
 mod fixed_attribute;
 mod geometry;
+mod gsp_interrupt;
 mod gsp_queue;
 mod index;
 mod input_fetch;
@@ -24,6 +25,11 @@ pub use fixed_attribute::{
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
     Viewport,
+};
+pub use gsp_interrupt::{
+    GSP_INTERRUPT_QUEUE_CLIENT_COUNT, GSP_INTERRUPT_QUEUE_CLIENT_STRIDE,
+    GSP_INTERRUPT_QUEUE_SIZE, GspInterruptId, GspInterruptQueueError,
+    GspInterruptQueuePushResult, GspInterruptRelayQueue,
 };
 pub use gsp_queue::{
     GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_CAPACITY,
