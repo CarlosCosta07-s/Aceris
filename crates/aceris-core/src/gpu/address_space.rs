@@ -7,9 +7,7 @@
 
 use std::fmt;
 
-use super::physical_memory::{
-    FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError,
-};
+use super::physical_memory::{FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError};
 
 /// Original 3DS linear-memory virtual window.
 pub const OLD_LINEAR_BASE: u32 = 0x1400_0000;
@@ -126,12 +124,12 @@ impl GpuDmaAddressSpace {
             });
         }
 
-        let virtual_end = u64::from(virtual_base)
-            .checked_add(u64::from(size))
-            .ok_or(GpuAddressSpaceError::OutsideLinearWindow {
+        let virtual_end = u64::from(virtual_base).checked_add(u64::from(size)).ok_or(
+            GpuAddressSpaceError::OutsideLinearWindow {
                 address: virtual_base,
                 size,
-            })?;
+            },
+        )?;
         let physical_base = Self::linear_physical_base(virtual_base, size)?;
 
         if self.mappings.iter().any(|mapping| {
@@ -220,12 +218,11 @@ impl GpuDmaAddressSpace {
 
         let offset = u64::from(virtual_address) - u64::from(mapping.virtual_base);
         let physical = u64::from(mapping.physical_base) + offset;
-        let physical_address = u32::try_from(physical).map_err(|_| {
-            GpuAddressSpaceError::AddressOverflow {
+        let physical_address =
+            u32::try_from(physical).map_err(|_| GpuAddressSpaceError::AddressOverflow {
                 address: virtual_address,
                 size: length,
-            }
-        })?;
+            })?;
         memory.validate_range(physical_address, length)?;
         Ok(ResolvedGpuRange {
             virtual_address,
@@ -234,10 +231,7 @@ impl GpuDmaAddressSpace {
         })
     }
 
-    fn linear_physical_base(
-        virtual_base: u32,
-        size: u32,
-    ) -> Result<u32, GpuAddressSpaceError> {
+    fn linear_physical_base(virtual_base: u32, size: u32) -> Result<u32, GpuAddressSpaceError> {
         let start = u64::from(virtual_base);
         let end = start + u64::from(size);
         let physical = if start >= u64::from(OLD_LINEAR_BASE) && end <= OLD_LINEAR_END {
@@ -257,11 +251,9 @@ impl GpuDmaAddressSpace {
                 size,
             });
         }
-        u32::try_from(physical).map_err(|_| {
-            GpuAddressSpaceError::OutsideLinearWindow {
-                address: virtual_base,
-                size,
-            }
+        u32::try_from(physical).map_err(|_| GpuAddressSpaceError::OutsideLinearWindow {
+            address: virtual_base,
+            size,
         })
     }
 }
