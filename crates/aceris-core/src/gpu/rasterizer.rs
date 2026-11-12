@@ -20,12 +20,7 @@ pub struct RasterVertex {
 
 impl RasterVertex {
     pub const fn new(x: f32, y: f32, depth: f32, color: [u8; 4]) -> Self {
-        Self {
-            x,
-            y,
-            depth,
-            color,
-        }
+        Self { x, y, depth, color }
     }
 }
 
@@ -64,17 +59,26 @@ impl std::fmt::Display for RasterizerError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidDimensions { width, height } => {
-                write!(formatter, "invalid rasterizer target dimensions {width}x{height}")
+                write!(
+                    formatter,
+                    "invalid rasterizer target dimensions {width}x{height}"
+                )
             }
             Self::AllocationFailed => formatter.write_str("could not allocate rasterizer buffers"),
             Self::InvalidClearDepth { depth } => {
                 write!(formatter, "invalid depth clear value {depth}")
             }
             Self::InvalidVertex { index } => {
-                write!(formatter, "raster vertex {index} contains a non-finite coordinate")
+                write!(
+                    formatter,
+                    "raster vertex {index} contains a non-finite coordinate"
+                )
             }
             Self::InvalidVertexDepth { index, depth } => {
-                write!(formatter, "raster vertex {index} has depth {depth} outside 0.0..=1.0")
+                write!(
+                    formatter,
+                    "raster vertex {index} has depth {depth} outside 0.0..=1.0"
+                )
             }
         }
     }
@@ -169,11 +173,7 @@ impl SoftwareRasterizer {
     }
 
     /// Clears color and depth after validating the depth value.
-    pub fn clear(
-        &mut self,
-        color: [u8; 4],
-        depth: f32,
-    ) -> Result<(), RasterizerError> {
+    pub fn clear(&mut self, color: [u8; 4], depth: f32) -> Result<(), RasterizerError> {
         if !depth.is_finite() || !(0.0..=1.0).contains(&depth) {
             return Err(RasterizerError::InvalidClearDepth { depth });
         }
@@ -279,12 +279,12 @@ impl SoftwareRasterizer {
                 let weight_2 = edge_2 / area;
                 let fragment_depth = (weight_0 * f64::from(vertices[0].depth)
                     + weight_1 * f64::from(vertices[1].depth)
-                    + weight_2 * f64::from(vertices[2].depth)) as f32;
+                    + weight_2 * f64::from(vertices[2].depth))
+                    as f32;
                 let index = y * self.width + x;
 
                 if !depth_passes(depth_function, fragment_depth, self.depth[index]) {
-                    report.depth_rejected_pixels =
-                        report.depth_rejected_pixels.saturating_add(1);
+                    report.depth_rejected_pixels = report.depth_rejected_pixels.saturating_add(1);
                     continue;
                 }
 
@@ -293,7 +293,8 @@ impl SoftwareRasterizer {
                     let interpolated = weight_0 * f64::from(vertices[0].color[channel])
                         + weight_1 * f64::from(vertices[1].color[channel])
                         + weight_2 * f64::from(vertices[2].color[channel]);
-                    self.color[color_offset + channel] = interpolated.round().clamp(0.0, 255.0) as u8;
+                    self.color[color_offset + channel] =
+                        interpolated.round().clamp(0.0, 255.0) as u8;
                 }
                 self.depth[index] = fragment_depth;
                 report.pixels_written = report.pixels_written.saturating_add(1);
@@ -377,10 +378,7 @@ mod tests {
             .draw_triangle(triangle, DepthFunction::Less)
             .unwrap();
         counter_clockwise
-            .draw_triangle(
-                [triangle[0], triangle[2], triangle[1]],
-                DepthFunction::Less,
-            )
+            .draw_triangle([triangle[0], triangle[2], triangle[1]], DepthFunction::Less)
             .unwrap();
 
         assert_eq!(clockwise.color_buffer(), counter_clockwise.color_buffer());
