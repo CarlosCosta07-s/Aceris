@@ -2030,6 +2030,146 @@ mod tests {
     }
 
     #[test]
+    fn ipc_copy_handle_array_translates_memory_blocks_and_preserves_null_entries() {
+        let mut source = test_session();
+        let first = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let second = source.create_memory_block(0x1000, 1, 3).unwrap();
+        let mut destination = test_session();
+
+        let translated = destination
+            .translate_memory_block_handles_from_ipc(
+                &mut source,
+                0x0800_0000, // COPY three handles.
+                &[first, 0, second],
+            )
+            .unwrap();
+
+        assert_eq!(translated.len(), 3);
+        let copied_first = translated[0].unwrap();
+        assert_eq!(translated[1], None);
+        let copied_second = translated[2].unwrap();
+        assert_ne!(copied_first, first);
+        assert_ne!(copied_second, second);
+        assert!(source.kernel_objects.memory_block_backing(first).is_ok());
+        assert!(source.kernel_objects.memory_block_backing(second).is_ok());
+        assert_eq!(
+            destination
+                .kernel_objects
+                .memory_block_permissions(copied_first),
+            Some((1, 3))
+        );
+        assert_eq!(
+            destination
+                .kernel_objects
+                .memory_block_permissions(copied_second),
+            Some((3, 1))
+        );
+    }
+
+    #[test]
+    fn ipc_move_handle_array_closes_all_sources_after_importing_destinations() {
+        let mut source = test_session();
+        let first = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let second = source.create_memory_block(0x1000, 1, 3).unwrap();
+        let mut destination = test_session();
+
+        let translated = destination
+            .translate_memory_block_handles_from_ipc(
+                &mut source,
+                0x0800_0010, // MOVE three handles.
+                &[first, 0, second],
+            )
+            .unwrap();
+
+        assert_eq!(translated.len(), 3);
+        let moved_first = translated[0].unwrap();
+        assert_eq!(translated[1], None);
+        let moved_second = translated[2].unwrap();
+        assert_eq!(
+            source.kernel_objects.memory_block_backing(first),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert_eq!(
+            source.kernel_objects.memory_block_backing(second),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert!(destination
+            .kernel_objects
+            .memory_block_backing(moved_first)
+            .is_ok());
+        assert!(destination
+            .kernel_objects
+            .memory_block_backing(moved_second)
+            .is_ok());
+    }
+
+    #[test]
+    fn ipc_handle_array_validates_every_source_before_creating_destination_handles() {
+        let mut source = test_session();
+        let memory_block = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let event = source
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let mut destination = test_session();
+
+        assert_eq!(
+            destination.translate_memory_block_handles_from_ipc(
+                &mut source,
+                0x0400_0000, // COPY two handles.
+                &[memory_block, event],
+            ),
+            Err(kernel::IpcHandleTranslationError::Kernel(
+                KernelHandleError::WrongType
+            ))
+        );
+        assert_eq!(destination.kernel_objects.handle_count(), 0);
+        assert!(source
+            .kernel_objects
+            .memory_block_backing(memory_block)
+            .is_ok());
+    }
+
+    #[test]
+    fn ipc_move_handle_array_rejects_duplicate_non_null_source_handles() {
+        let mut source = test_session();
+        let handle = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let mut destination = test_session();
+
+        assert_eq!(
+            destination.translate_memory_block_handles_from_ipc(
+                &mut source,
+                0x0400_0010, // MOVE two handles.
+                &[handle, handle],
+            ),
+            Err(kernel::IpcHandleTranslationError::DuplicateMoveHandle { handle })
+        );
+        assert_eq!(destination.kernel_objects.handle_count(), 0);
+        assert!(source.kernel_objects.memory_block_backing(handle).is_ok());
+    }
+
+    #[test]
+    fn ipc_handle_array_rejects_descriptor_count_mismatch() {
+        let mut source = test_session();
+        let handle = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let mut destination = test_session();
+
+        assert_eq!(
+            destination.translate_memory_block_handles_from_ipc(
+                &mut source,
+                0x0400_0000, // Descriptor declares two handles.
+                &[handle],
+            ),
+            Err(kernel::IpcHandleTranslationError::HandleCountMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        );
+        assert_eq!(destination.kernel_objects.handle_count(), 0);
+        assert!(source.kernel_objects.memory_block_backing(handle).is_ok());
+    }
+
+    #[test]
     fn imported_memory_block_handle_rejects_non_memory_handles() {
         let mut owner = test_session();
         let event = owner
