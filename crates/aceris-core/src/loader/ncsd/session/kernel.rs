@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use super::process::SharedMemoryBacking;
 use super::thread::ThreadId;
 
 /// Pseudo-handle that always identifies the calling thread.
@@ -52,6 +53,14 @@ pub enum KernelHandleError {
     InvalidDuration,
     /// A handle with blocked waiters cannot be closed by this bootstrap yet.
     WaitersPending,
+    /// A shared-memory block size is zero or not page-aligned.
+    InvalidMemoryBlockSize,
+    /// A shared-memory permission value is outside the supported R/W range.
+    InvalidMemoryPermission,
+    /// Host allocation for a shared-memory block failed.
+    OutOfMemory,
+    /// The selected address or block does not describe a valid mapping.
+    InvalidMemoryBlockMapping,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -84,12 +93,20 @@ struct KernelTimer {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+struct KernelMemoryBlock {
+    backing: SharedMemoryBacking,
+    owner_permissions: u32,
+    other_permissions: u32,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum KernelObject {
     Thread(ThreadId),
     Event(KernelEvent),
     Mutex(KernelMutex),
     Semaphore(KernelSemaphore),
     Timer(KernelTimer),
+    MemoryBlock(KernelMemoryBlock),
 }
 
 /// Process-local table mapping guest-visible handles to typed kernel objects.
@@ -113,6 +130,53 @@ impl Default for Arm11KernelObjectTable {
 }
 
 impl Arm11KernelObjectTable {
+    /// Creates a zero-initialized, page-aligned shared-memory block.
+    ///
+    /// Permission values use bit 0 for read and bit 1 for write. The shared
+    /// backing can be mapped into multiple process address spaces without copying.
+    pub fn create_memory_block(
+        &mut self,
+        size: u32,
+        owner_permissions: u32,
+        other_permissions: u32,
+    ) -> Result<u32, KernelHandleError> {
+        if size == 0 || size & 0xFFF != 0 {
+            return Err(KernelHandleError::InvalidMemoryBlockSize);
+        }
+        if owner_permissions > 3 || other_permissions > 3 {
+            return Err(KernelHandleError::InvalidMemoryPermission);
+        }
+        let backing = SharedMemoryBacking::zeroed(size as usize)
+            .map_err(|_| KernelHandleError::OutOfMemory)?;
+        self.insert(KernelObject::MemoryBlock(KernelMemoryBlock {
+            backing,
+            owner_permissions,
+            other_permissions,
+        }))
+    }
+
+    /// Retrieves the shared backing associated with a memory-block handle.
+    pub fn memory_block_backing(
+        &self,
+        handle: u32,
+    ) -> Result<SharedMemoryBacking, KernelHandleError> {
+        match self.objects.get(&handle) {
+            Some(KernelObject::MemoryBlock(block)) => Ok(block.backing.clone()),
+            Some(_) => Err(KernelHandleError::WrongType),
+            None => Err(KernelHandleError::InvalidHandle),
+        }
+    }
+
+    /// Returns the creator and peer-process permissions for a memory block.
+    pub fn memory_block_permissions(&self, handle: u32) -> Option<(u32, u32)> {
+        match self.objects.get(&handle) {
+            Some(KernelObject::MemoryBlock(block)) => {
+                Some((block.owner_permissions, block.other_permissions))
+            }
+            _ => None,
+        }
+    }
+
     /// Inserts a newly created thread and returns its guest-visible handle.
     pub fn insert_thread(&mut self, thread_id: ThreadId) -> Result<u32, KernelHandleError> {
         self.insert(KernelObject::Thread(thread_id))
@@ -282,7 +346,9 @@ impl Arm11KernelObjectTable {
                 }
                 Ok(true)
             }
-            Some(KernelObject::Thread(_)) => Err(KernelHandleError::WrongType),
+            Some(KernelObject::Thread(_)) | Some(KernelObject::MemoryBlock(_)) => {
+                Err(KernelHandleError::WrongType)
+            }
             None => Err(KernelHandleError::InvalidHandle),
         }
     }
@@ -298,7 +364,9 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Mutex(mutex)) => &mut mutex.waiters,
             Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
             Some(KernelObject::Timer(timer)) => &mut timer.waiters,
-            Some(KernelObject::Thread(_)) => return Err(KernelHandleError::WrongType),
+            Some(KernelObject::Thread(_)) | Some(KernelObject::MemoryBlock(_)) => {
+                return Err(KernelHandleError::WrongType);
+            }
             None => return Err(KernelHandleError::InvalidHandle),
         };
         if !waiters.contains(&thread) {
@@ -319,7 +387,7 @@ impl Arm11KernelObjectTable {
                 KernelObject::Mutex(mutex) => &mut mutex.waiters,
                 KernelObject::Semaphore(semaphore) => &mut semaphore.waiters,
                 KernelObject::Timer(timer) => &mut timer.waiters,
-                KernelObject::Thread(_) => continue,
+                KernelObject::Thread(_) | KernelObject::MemoryBlock(_) => continue,
             };
             let previous_len = waiters.len();
             waiters.retain(|waiter| *waiter != thread);
@@ -474,7 +542,7 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Mutex(mutex)) => !mutex.waiters.is_empty(),
             Some(KernelObject::Semaphore(semaphore)) => !semaphore.waiters.is_empty(),
             Some(KernelObject::Timer(timer)) => !timer.waiters.is_empty(),
-            Some(KernelObject::Thread(_)) => false,
+            Some(KernelObject::Thread(_) | KernelObject::MemoryBlock(_)) => false,
             None => return Err(KernelHandleError::InvalidHandle),
         };
         if has_waiters {
@@ -547,6 +615,33 @@ mod tests {
         } else {
             scheduler.create_thread(0x1000, 0, 0x2000, 0x30, 0).unwrap()
         }
+    }
+
+    #[test]
+    fn memory_blocks_validate_size_permissions_and_preserve_shared_backing() {
+        let mut table = Arm11KernelObjectTable::default();
+        let handle = table.create_memory_block(0x1000, 3, 1).unwrap();
+
+        assert_eq!(table.memory_block_permissions(handle), Some((3, 1)));
+        assert_eq!(
+            table.create_memory_block(0, 3, 1),
+            Err(KernelHandleError::InvalidMemoryBlockSize)
+        );
+        assert_eq!(
+            table.create_memory_block(0x1000, 4, 1),
+            Err(KernelHandleError::InvalidMemoryPermission)
+        );
+
+        let backing = table.memory_block_backing(handle).unwrap();
+        let mapped_reference = backing.clone();
+        assert!(backing.shares_backing_with(&mapped_reference));
+        assert_eq!(backing.len(), Some(0x1000));
+        assert_eq!(table.close_handle(handle), Ok(()));
+        assert_eq!(
+            table.memory_block_backing(handle),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert_eq!(mapped_reference.len(), Some(0x1000));
     }
 
     #[test]

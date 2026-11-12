@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{CodeFileLayout, CodeSetInfo};
@@ -67,6 +68,10 @@ pub enum Arm11DynamicMemoryError {
     PhysicalMemoryUnavailable,
     /// The exact linear mapping is not present in the process address space.
     LinearMappingNotFound { address: u32, size: u32 },
+    /// A virtual shared-memory mapping would wrap the process address space.
+    AddressRangeOverflow { address: u32, size: u32 },
+    /// A shared-memory permission value is outside the supported R/W range.
+    InvalidPermissions(u32),
 }
 
 impl fmt::Display for Arm11DynamicMemoryError {
@@ -116,16 +121,93 @@ impl fmt::Display for Arm11DynamicMemoryError {
                 formatter,
                 "linear mapping {address:#010x}+{size:#x} does not exist"
             ),
+            Self::AddressRangeOverflow { address, size } => write!(
+                formatter,
+                "shared-memory mapping {address:#010x}+{size:#x} wraps the process address space"
+            ),
+            Self::InvalidPermissions(permissions) => write!(
+                formatter,
+                "shared-memory permissions {permissions:#x} are invalid"
+            ),
         }
     }
 }
 
 impl std::error::Error for Arm11DynamicMemoryError {}
 
+/// Shared, zero-initialized memory backing that can be mapped into several
+/// ARM11 address spaces without copying its contents.
+#[derive(Clone, Debug)]
+pub struct SharedMemoryBacking {
+    bytes: Arc<Mutex<Vec<u8>>>,
+}
+
+impl SharedMemoryBacking {
+    /// Allocates a zero-filled shared backing of exactly `size` bytes.
+    pub fn zeroed(size: usize) -> std::result::Result<Self, String> {
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(size).map_err(|error| error.to_string())?;
+        bytes.resize(size, 0);
+        Ok(Self {
+            bytes: Arc::new(Mutex::new(bytes)),
+        })
+    }
+
+    /// Returns the current backing size, or None if its lock was poisoned.
+    pub fn len(&self) -> Option<usize> {
+        self.bytes.lock().ok().map(|bytes| bytes.len())
+    }
+
+    /// Reports whether two handles share the same backing allocation.
+    pub fn shares_backing_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.bytes, &other.bytes)
+    }
+
+    fn read_byte(&self, offset: usize) -> Option<u8> {
+        self.bytes.lock().ok()?.get(offset).copied()
+    }
+
+    fn write_byte(&self, offset: usize, value: u8) -> bool {
+        let Ok(mut bytes) = self.bytes.lock() else {
+            return false;
+        };
+        let Some(byte) = bytes.get_mut(offset) else {
+            return false;
+        };
+        *byte = value;
+        true
+    }
+}
+
+impl PartialEq for SharedMemoryBacking {
+    fn eq(&self, other: &Self) -> bool {
+        self.shares_backing_with(other)
+    }
+}
+
+impl Eq for SharedMemoryBacking {}
+
 #[derive(Debug)]
 struct DynamicMemoryRegion {
     address: u32,
     bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SharedMemoryRegion {
+    address: u32,
+    backing: SharedMemoryBacking,
+    permissions: u32,
+}
+
+impl SharedMemoryRegion {
+    fn size(&self) -> Option<u32> {
+        u32::try_from(self.backing.len()?).ok()
+    }
+
+    fn end_address(&self) -> Option<u64> {
+        Some(u64::from(self.address) + u64::from(self.size()?))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,6 +230,10 @@ enum MemoryLocation {
         offset: usize,
     },
     Dynamic {
+        index: usize,
+        offset: usize,
+    },
+    Shared {
         index: usize,
         offset: usize,
     },
@@ -445,6 +531,7 @@ pub struct Arm11CodeAddressSpace {
     bss: Vec<u8>,
     stack: Vec<u8>,
     dynamic_regions: Vec<DynamicMemoryRegion>,
+    shared_regions: Vec<SharedMemoryRegion>,
     /// Linear CPU mappings that alias the GPU-visible physical FCRAM backing.
     linear_regions: Vec<LinearMemoryRegion>,
     gpu_memory: Option<GpuPhysicalMemory>,
@@ -487,6 +574,7 @@ impl Arm11CodeAddressSpace {
             bss,
             stack,
             dynamic_regions: Vec::new(),
+            shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
             exclusive_versions: BTreeMap::new(),
@@ -511,6 +599,102 @@ impl Arm11CodeAddressSpace {
     /// Attaches the shared physical backing used by linear CPU mappings and devices.
     pub fn attach_gpu_memory(&mut self, memory: GpuPhysicalMemory) {
         self.gpu_memory = Some(memory);
+    }
+
+    /// Maps a shared memory block into this process at a page-aligned address.
+    ///
+    /// Bit 0 grants read access and bit 1 grants write access. All mappings
+    /// refer to the same backing allocation, so writes are visible across
+    /// address spaces that map the same block.
+    pub fn map_shared_memory_region(
+        &mut self,
+        address: u32,
+        backing: SharedMemoryBacking,
+        permissions: u32,
+    ) -> std::result::Result<(), Arm11DynamicMemoryError> {
+        if u64::from(address) % PAGE_SIZE != 0 {
+            return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
+        }
+        if permissions > 3 {
+            return Err(Arm11DynamicMemoryError::InvalidPermissions(permissions));
+        }
+        let size = backing
+            .len()
+            .and_then(|length| u32::try_from(length).ok())
+            .ok_or(Arm11DynamicMemoryError::InvalidSize(0))?;
+        if size == 0 || u64::from(size) % PAGE_SIZE != 0 {
+            return Err(Arm11DynamicMemoryError::InvalidSize(size));
+        }
+        let end = u64::from(address)
+            .checked_add(u64::from(size))
+            .filter(|end| *end <= ADDRESS_SPACE_END)
+            .ok_or(Arm11DynamicMemoryError::AddressRangeOverflow { address, size })?;
+
+        let overlaps_static = [
+            self.layout.text,
+            self.layout.read_only,
+            self.layout.data,
+            self.layout.bss,
+            self.layout.stack,
+        ]
+        .iter()
+        .any(|segment| {
+            !segment.is_empty()
+                && u64::from(address) < segment.end_address()
+                && end > u64::from(segment.address)
+        });
+        let overlaps_dynamic = self.dynamic_regions.iter().any(|region| {
+            let region_end = u64::from(region.address) + region.bytes.len() as u64;
+            u64::from(address) < region_end && end > u64::from(region.address)
+        });
+        let overlaps_shared = self.shared_regions.iter().any(|region| {
+            region.end_address().is_some_and(|region_end| {
+                u64::from(address) < region_end && end > u64::from(region.address)
+            })
+        });
+        let overlaps_linear = self.linear_regions.iter().any(|region| {
+            u64::from(address) < region.virtual_end()
+                && end > u64::from(region.virtual_base)
+        });
+        if overlaps_static || overlaps_dynamic || overlaps_shared || overlaps_linear {
+            return Err(Arm11DynamicMemoryError::OverlappingMapping);
+        }
+
+        self.shared_regions
+            .try_reserve(1)
+            .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
+        self.shared_regions.push(SharedMemoryRegion {
+            address,
+            backing,
+            permissions,
+        });
+        self.shared_regions.sort_by_key(|region| region.address);
+        Ok(())
+    }
+
+    /// Unmaps one exact shared mapping without destroying the shared backing.
+    pub fn unmap_shared_memory_region(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> std::result::Result<SharedMemoryBacking, Arm11DynamicMemoryError> {
+        let Some(index) = self
+            .shared_regions
+            .iter()
+            .position(|region| region.address == address && region.size() == Some(size))
+        else {
+            return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
+        };
+        self.invalidate_exclusive_range(address, size as usize);
+        Ok(self.shared_regions.remove(index).backing)
+    }
+
+    /// Returns whether a mapping at `address` uses the supplied shared block.
+    pub fn shared_mapping_matches(&self, address: u32, backing: &SharedMemoryBacking) -> bool {
+        self.shared_regions
+            .iter()
+            .find(|region| region.address == address)
+            .is_some_and(|region| region.backing.shares_backing_with(backing))
     }
 
     /// Maps a reserved linear-memory interval into the process address space.
@@ -881,6 +1065,18 @@ impl Arm11CodeAddressSpace {
             });
         }
 
+        for region in &self.shared_regions {
+            regions.push(Arm11MemoryRegionInfo {
+                base_address: region.address,
+                size_bytes: region
+                    .size()
+                    .expect("shared memory block sizes are immutable"),
+                permissions: region.permissions,
+                state: Arm11MemoryState::Private,
+                page_flags: 0,
+            });
+        }
+
         for region in &self.dynamic_regions {
             regions.push(Arm11MemoryRegionInfo {
                 base_address: region.address,
@@ -977,6 +1173,14 @@ impl Arm11CodeAddressSpace {
             });
         }
 
+        if let Some((index, region)) = self.shared_regions.iter().enumerate().find(|(_, region)| {
+            address >= region.address
+                && region.end_address().is_some_and(|end| u64::from(address) < end)
+        }) {
+            let offset = usize::try_from(address - region.address).ok()?;
+            return Some(MemoryLocation::Shared { index, offset });
+        }
+
         self.dynamic_regions
             .iter()
             .enumerate()
@@ -1017,7 +1221,9 @@ impl Arm11CodeAddressSpace {
         match location {
             MemoryLocation::Static { kind, .. } => self.bytes_for(kind),
             MemoryLocation::Dynamic { index, .. } => &self.dynamic_regions[index].bytes,
-            MemoryLocation::Physical { .. } => unreachable!("physical locations are read directly"),
+            MemoryLocation::Shared { .. } | MemoryLocation::Physical { .. } => {
+                unreachable!("shared and physical locations are read from their backing")
+            }
         }
     }
 
@@ -1025,13 +1231,19 @@ impl Arm11CodeAddressSpace {
         match location {
             MemoryLocation::Static { kind, .. } => self.segment_is_writable(kind),
             MemoryLocation::Dynamic { .. } | MemoryLocation::Physical { .. } => true,
+            MemoryLocation::Shared { index, .. } => self
+                .shared_regions
+                .get(index)
+                .is_some_and(|region| region.permissions & 2 != 0),
         }
     }
 
     fn location_is_executable(&self, location: MemoryLocation) -> bool {
         match location {
             MemoryLocation::Static { kind, .. } => self.segment_is_executable(kind),
-            MemoryLocation::Dynamic { .. } | MemoryLocation::Physical { .. } => false,
+            MemoryLocation::Dynamic { .. }
+            | MemoryLocation::Shared { .. }
+            | MemoryLocation::Physical { .. } => false,
         }
     }
 
@@ -1050,6 +1262,9 @@ impl Arm11CodeAddressSpace {
             MemoryLocation::Dynamic { index, .. } => {
                 let region = self.dynamic_regions.get(index)?;
                 Some(u64::from(region.address) + region.bytes.len() as u64)
+            }
+            MemoryLocation::Shared { index, .. } => {
+                self.shared_regions.get(index)?.end_address()
             }
             MemoryLocation::Physical { index, .. } => {
                 Some(self.linear_regions.get(index)?.virtual_end())
@@ -1107,6 +1322,11 @@ impl Arm11CodeAddressSpace {
                 MemoryLocation::Dynamic { index, offset } => {
                     self.dynamic_regions[index].bytes[offset] = *byte;
                 }
+                MemoryLocation::Shared { index, offset } => {
+                    if !self.shared_regions[index].backing.write_byte(offset, *byte) {
+                        return Err(Error::InvalidAccess { addr: address });
+                    }
+                }
                 MemoryLocation::Physical {
                     address: physical_address,
                     ..
@@ -1161,6 +1381,16 @@ impl Bus for Arm11CodeAddressSpace {
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
         match location {
+            MemoryLocation::Shared { index, offset } => {
+                let region = &self.shared_regions[index];
+                if region.permissions & 1 == 0 {
+                    return Err(Error::InvalidAccess { addr: address });
+                }
+                region
+                    .backing
+                    .read_byte(offset)
+                    .ok_or(Error::InvalidAccess { addr: address })
+            }
             MemoryLocation::Physical {
                 address: physical_address,
                 ..
@@ -1435,6 +1665,67 @@ mod tests {
             read_only: vec![0x22; 0x1000],
             data: vec![0x33; 0x1000],
         }
+    }
+
+    #[test]
+    fn shared_memory_blocks_alias_between_process_address_spaces() {
+        let backing = SharedMemoryBacking::zeroed(0x1000).unwrap();
+        let mut first = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut second = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        first
+            .map_shared_memory_region(0x0800_0000, backing.clone(), 3)
+            .unwrap();
+        second
+            .map_shared_memory_region(0x0900_0000, backing.clone(), 1)
+            .unwrap();
+
+        first.write32(0x0800_0000, 0x1234_5678).unwrap();
+        assert_eq!(second.read32(0x0900_0000).unwrap(), 0x1234_5678);
+        assert!(!second.is_writable_range(0x0900_0000, 4));
+        assert!(second.write32(0x0900_0000, 0xFFFF_FFFF).is_err());
+        assert_eq!(first.read32(0x0800_0000).unwrap(), 0x1234_5678);
+
+        let region = second.query_memory(0x0900_0000);
+        assert_eq!(region.base_address, 0x0900_0000);
+        assert_eq!(region.size_bytes, 0x1000);
+        assert_eq!(region.permissions, 1);
+        assert_eq!(
+            second.unmap_shared_memory_region(0x0900_0000, 0x1000),
+            Ok(backing.clone())
+        );
+        assert!(second.read32(0x0900_0000).is_err());
+        assert_eq!(first.read32(0x0800_0000).unwrap(), 0x1234_5678);
+        assert!(first.shared_mapping_matches(0x0800_0000, &backing));
+    }
+
+    #[test]
+    fn shared_memory_mapping_rejects_invalid_ranges_permissions_and_overlaps() {
+        let backing = SharedMemoryBacking::zeroed(0x1000).unwrap();
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        assert_eq!(
+            address_space.map_shared_memory_region(0x0800_0001, backing.clone(), 3),
+            Err(Arm11DynamicMemoryError::MisalignedAddress(0x0800_0001))
+        );
+        assert_eq!(
+            address_space.map_shared_memory_region(0x0800_0000, backing.clone(), 4),
+            Err(Arm11DynamicMemoryError::InvalidPermissions(4))
+        );
+        assert_eq!(
+            address_space.map_shared_memory_region(0xFFFF_F000, backing.clone(), 3),
+            Err(Arm11DynamicMemoryError::AddressRangeOverflow {
+                address: 0xFFFF_F000,
+                size: 0x1000,
+            })
+        );
+        address_space
+            .map_shared_memory_region(0x0800_0000, backing.clone(), 3)
+            .unwrap();
+        assert_eq!(
+            address_space.map_shared_memory_region(0x0800_0000, backing, 3),
+            Err(Arm11DynamicMemoryError::OverlappingMapping)
+        );
     }
 
     #[test]
