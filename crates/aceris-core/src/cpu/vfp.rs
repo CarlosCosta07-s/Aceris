@@ -911,7 +911,7 @@ impl Arm11Core {
         if p && q && r {
             return self.vfp_extension(word, prec, s);
         }
-        let (d, n, m) = (d?, n?, m)?;
+        let (d, n, m) = (d?, n?, m?);
         let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(n, false), (m, true)])?;
 
         // Snapshot every source and accumulator before committing any lane.
