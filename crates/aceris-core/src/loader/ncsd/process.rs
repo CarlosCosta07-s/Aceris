@@ -183,6 +183,11 @@ impl SharedMemoryBacking {
         self.bytes.lock().ok().map(|_| self.length)
     }
 
+    /// Returns whether the backing view is empty, or None if its lock was poisoned.
+    pub fn is_empty(&self) -> Option<bool> {
+        self.len().map(|length| length == 0)
+    }
+
     /// Reports whether two views refer to the same backing allocation.
     pub fn shares_backing_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.bytes, &other.bytes)
@@ -268,11 +273,7 @@ impl DynamicMemoryBacking {
     }
 
     /// Promotes the allocation to shareable backing and returns a bounded view.
-    fn shared_view(
-        &mut self,
-        offset: usize,
-        length: usize,
-    ) -> Option<SharedMemoryBacking> {
+    fn shared_view(&mut self, offset: usize, length: usize) -> Option<SharedMemoryBacking> {
         if let Self::Private(bytes) = self {
             let bytes = std::mem::take(bytes);
             *self = Self::Shared(SharedMemoryBacking::from_vec(bytes));
@@ -811,9 +812,11 @@ impl Arm11CodeAddressSpace {
             return Err(Arm11DynamicMemoryError::OutsideApplicationHeap { address, size });
         }
 
-        let Some(region) = self.dynamic_regions.iter_mut().find(|region| {
-            address >= region.address && end <= region.end_address()
-        }) else {
+        let Some(region) = self
+            .dynamic_regions
+            .iter_mut()
+            .find(|region| address >= region.address && end <= region.end_address())
+        else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
         let offset = usize::try_from(address - region.address)
@@ -1484,7 +1487,10 @@ impl Arm11CodeAddressSpace {
                     self.bytes_for_mut(kind)[offset] = *byte;
                 }
                 MemoryLocation::Dynamic { index, offset } => {
-                    if !self.dynamic_regions[index].backing.write_byte(offset, *byte) {
+                    if !self.dynamic_regions[index]
+                        .backing
+                        .write_byte(offset, *byte)
+                    {
                         return Err(Error::InvalidAccess { addr: address });
                     }
                 }
