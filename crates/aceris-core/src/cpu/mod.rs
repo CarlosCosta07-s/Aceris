@@ -251,8 +251,7 @@ impl Arm11Core {
         self.set_saved_program_status(previous_cpsr)?;
         self.regs[LR] = return_address;
 
-        let mut entered_cpsr =
-            previous_cpsr.0 & !(Psr::MODE_MASK | Psr::T | Psr::E);
+        let mut entered_cpsr = previous_cpsr.0 & !(Psr::MODE_MASK | Psr::T | Psr::E);
         entered_cpsr |= mode | interrupt_masks;
         if self.exception_big_endian {
             entered_cpsr |= Psr::E;
@@ -271,12 +270,7 @@ impl Arm11Core {
     /// Enters the ARMv6 Supervisor exception and preserves the previous CPSR.
     /// SVC uses vector offset 0x08 and masks IRQ on entry.
     fn enter_svc_exception(&mut self, return_address: u32) -> Result<()> {
-        self.enter_exception(
-            Psr::SUPERVISOR_MODE,
-            0x08,
-            return_address,
-            Psr::I,
-        )
+        self.enter_exception(Psr::SUPERVISOR_MODE, 0x08, return_address, Psr::I)
     }
 
     /// Accepts a pending FIQ before IRQ, provided its CPSR mask is clear.
@@ -285,12 +279,7 @@ impl Arm11Core {
     fn service_pending_interrupt(&mut self) -> Result<bool> {
         let return_address = self.pc().wrapping_add(4);
         if self.fiq_line_asserted && self.cpsr.0 & Psr::F == 0 {
-            self.enter_exception(
-                Psr::FIQ_MODE,
-                0x1C,
-                return_address,
-                Psr::I | Psr::F,
-            )?;
+            self.enter_exception(Psr::FIQ_MODE, 0x1C, return_address, Psr::I | Psr::F)?;
             return Ok(true);
         }
         if self.irq_line_asserted && self.cpsr.0 & Psr::I == 0 {

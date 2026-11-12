@@ -1850,7 +1850,10 @@ mod tests {
 
         // Invalid restored mode must not partially apply writeback.
         let mut invalid_status = Machine::new(&[0xF8BD_0A00]);
-        invalid_status.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        invalid_status
+            .cpu
+            .switch_mode(Psr::SUPERVISOR_MODE)
+            .unwrap();
         invalid_status.cpu.regs[SP] = DATA;
         invalid_status.mem.write32(DATA, 0x3456).unwrap();
         invalid_status.mem.write32(DATA + 4, 0x15).unwrap();
