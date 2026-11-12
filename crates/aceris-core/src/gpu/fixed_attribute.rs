@@ -142,6 +142,87 @@ mod tests {
     }
 
     #[test]
+    fn pica200_stores_fixed_attributes_selected_by_index_register() {
+        let mut gpu = Pica200::new();
+        let data0 = (0x0041_0000u32 << 8) | 0x40;
+        let data1 = 0x4000;
+        let data2 = 0x003F_0000;
+
+        gpu.write_register(REG_FIXEDATTRIB_INDEX, 2).unwrap();
+        gpu.write_register(REG_FIXEDATTRIB_DATA0, data0).unwrap();
+        gpu.write_register(REG_FIXEDATTRIB_DATA1, data1).unwrap();
+        gpu.write_register(REG_FIXEDATTRIB_DATA2, data2).unwrap();
+
+        assert_eq!(gpu.fixed_attribute_words(2), Some([data0, data1, data2]));
+        assert_eq!(gpu.fixed_attribute_words(1), Some([0, 0, 0]));
+        assert_eq!(
+            gpu.fixed_vertex_attribute(2).unwrap().to_numeric().components,
+            [1.0, 2.0, 2.0, 4.0]
+        );
+    }
+
+    #[test]
+    fn command_list_writes_update_the_selected_fixed_attribute() {
+        let mut gpu = Pica200::new();
+        let words = [
+            1,
+            (0xF << 16) | u32::from(REG_FIXEDATTRIB_INDEX),
+            0x4100_0040,
+            (0xF << 16) | u32::from(REG_FIXEDATTRIB_DATA0),
+            0x0000_4000,
+            (0xF << 16) | u32::from(REG_FIXEDATTRIB_DATA1),
+            0x003F_0000,
+            (0xF << 16) | u32::from(REG_FIXEDATTRIB_DATA2),
+        ];
+
+        gpu.execute_command_list(&words).unwrap();
+
+        assert_eq!(
+            gpu.fixed_attribute_words(1),
+            Some([0x4100_0040, 0x0000_4000, 0x003F_0000])
+        );
+    }
+
+    #[test]
+    fn fixed_attributes_fill_masked_inputs_but_never_override_array_values() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_FIXEDATTRIB_INDEX, 0).unwrap();
+        gpu.write_register(REG_FIXEDATTRIB_DATA0, (0x0041_0000 << 8) | 0x40)
+            .unwrap();
+        gpu.write_register(REG_FIXEDATTRIB_DATA1, 0x4000).unwrap();
+        gpu.write_register(REG_FIXEDATTRIB_DATA2, 0x003F_0000).unwrap();
+
+        let mut input = super::super::NumericVertexInput {
+            attributes: [None; 12],
+            fixed_attribute_mask: 1,
+            resolved_fixed_attribute_mask: 0,
+        };
+        gpu.apply_fixed_vertex_attributes(&mut input);
+
+        assert_eq!(input.attributes[0].unwrap().components, [1.0, 2.0, 2.0, 4.0]);
+        assert_eq!(input.resolved_fixed_attribute_mask, 1);
+
+        let array_value = NumericVertexAttribute {
+            format: VertexAttributeFormat {
+                data_type: AttributeDataType::Float,
+                bit_width: AttributeBitWidth::Bits32,
+            },
+            components: [9.0, 8.0, 7.0, 6.0],
+            component_count: 4,
+        };
+        let mut array_input = super::super::NumericVertexInput {
+            attributes: [None; 12],
+            fixed_attribute_mask: 1,
+            resolved_fixed_attribute_mask: 0,
+        };
+        array_input.attributes[0] = Some(array_value);
+        gpu.apply_fixed_vertex_attributes(&mut array_input);
+
+        assert_eq!(array_input.attributes[0], Some(array_value));
+        assert_eq!(array_input.resolved_fixed_attribute_mask, 0);
+    }
+
+    #[test]
     fn unpacks_fixed_attribute_register_words_into_xyzw() {
         let words = [
             // W = 4.0, high byte of Z = 0x40.
