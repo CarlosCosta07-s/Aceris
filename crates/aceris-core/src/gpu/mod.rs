@@ -15,5 +15,5 @@ pub use pica200::{
     REG_COMMAND_BUFFER_SIZE_0, REG_COMMAND_BUFFER_SIZE_1, REGISTER_COUNT,
 };
 pub use rasterizer::{
-    DepthFunction, RasterizationReport, RasterVertex, RasterizerError, SoftwareRasterizer,
+    DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
