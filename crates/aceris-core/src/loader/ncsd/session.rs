@@ -334,6 +334,89 @@ impl Arm11ProcessSession {
         Ok(Some(destination_handle))
     }
 
+    /// Applies a decoded IPC type-0 descriptor to an array of memory-block handles.
+    ///
+    /// The descriptor's handle count must match the supplied slice. Null handles
+    /// remain null. All non-null handles are type-checked before the destination
+    /// table is changed. MOVE rejects duplicate source handles, imports every
+    /// destination handle first, and only then closes the source handles.
+    ///
+    /// This intentionally supports arrays containing memory blocks only; a
+    /// mixed array of kernel object types is not treated as a successful transfer.
+    pub fn translate_memory_block_handles_from_ipc(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        descriptor: u32,
+        source_handles: &[u32],
+    ) -> std::result::Result<Vec<Option<u32>>, kernel::IpcHandleTranslationError> {
+        let translation = kernel::IpcHandleTranslationDescriptor::decode(descriptor)?;
+        if translation.requests_process_id() {
+            return Err(kernel::IpcHandleTranslationError::ProcessIdTranslationUnsupported);
+        }
+        if usize::from(translation.handle_count()) != source_handles.len() {
+            return Err(kernel::IpcHandleTranslationError::HandleCountMismatch {
+                expected: translation.handle_count(),
+                actual: source_handles.len(),
+            });
+        }
+
+        for (index, source_handle) in source_handles.iter().copied().enumerate() {
+            if source_handle == 0 {
+                continue;
+            }
+
+            source
+                .kernel_objects
+                .memory_block_backing(source_handle)
+                .map_err(kernel::IpcHandleTranslationError::Kernel)?;
+            source
+                .kernel_objects
+                .memory_block_permissions(source_handle)
+                .ok_or(kernel::IpcHandleTranslationError::Kernel(
+                    KernelHandleError::WrongType,
+                ))?;
+
+            if translation.moves_handle()
+                && source_handles[..index].contains(&source_handle)
+            {
+                return Err(kernel::IpcHandleTranslationError::DuplicateMoveHandle {
+                    handle: source_handle,
+                });
+            }
+        }
+
+        let mut destination_handles = Vec::with_capacity(source_handles.len());
+        for source_handle in source_handles.iter().copied() {
+            if source_handle == 0 {
+                destination_handles.push(None);
+                continue;
+            }
+
+            match self.import_memory_block_handle(source, source_handle) {
+                Ok(destination_handle) => destination_handles.push(Some(destination_handle)),
+                Err(error) => {
+                    for handle in destination_handles.iter().flatten().copied() {
+                        let _ = self.kernel_objects.close_handle(handle);
+                    }
+                    return Err(kernel::IpcHandleTranslationError::Kernel(error));
+                }
+            }
+        }
+
+        if translation.moves_handle() {
+            for source_handle in source_handles.iter().copied().filter(|handle| *handle != 0) {
+                if let Err(error) = source.kernel_objects.close_handle(source_handle) {
+                    for handle in destination_handles.iter().flatten().copied() {
+                        let _ = self.kernel_objects.close_handle(handle);
+                    }
+                    return Err(kernel::IpcHandleTranslationError::Kernel(error));
+                }
+            }
+        }
+
+        Ok(destination_handles)
+    }
+
     /// Maps a memory-block handle into this process with the requested R/W permissions.
     pub fn map_memory_block(
         &mut self,
