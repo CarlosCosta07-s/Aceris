@@ -774,7 +774,7 @@ impl Arm11ProcessSession {
                 ipc::IpcTranslationParameter::Handles { descriptor, .. }
                 | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. }
                 | ipc::IpcTranslationParameter::PhysicalBufferTable { descriptor, .. } => {
-                    first_unsupported_descriptor.get_or_insert(*descriptor);
+                    first_unsupported_descriptor.get_or_insert(descriptor);
                     continue;
                 }
             };
