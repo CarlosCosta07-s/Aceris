@@ -543,7 +543,10 @@ mod tests {
         assert_eq!(cpu.pc(), 0x1C);
         assert_eq!(cpu.regs[LR], 4);
         assert_eq!(cpu.saved_program_status(), Some(interrupted_status));
-        assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::I | Psr::F);
+        assert_eq!(
+            cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F),
+            Psr::A | Psr::I | Psr::F
+        );
     }
 
     #[test]
