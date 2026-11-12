@@ -1057,9 +1057,7 @@ impl Arm11Core {
         }
 
         match mode {
-            super::Psr::USER_MODE | super::Psr::SYSTEM_MODE => {
-                Some(self.banked.user_sp_lr[0])
-            }
+            super::Psr::USER_MODE | super::Psr::SYSTEM_MODE => Some(self.banked.user_sp_lr[0]),
             super::Psr::FIQ_MODE => Some(self.banked.fiq_r8_r14[5]),
             super::Psr::IRQ_MODE => Some(self.banked.irq_sp_lr[0]),
             super::Psr::SUPERVISOR_MODE => Some(self.banked.svc_sp_lr[0]),
@@ -1094,11 +1092,7 @@ impl Arm11Core {
     }
 
     /// Executes ARMv6 SRS using the banked SP selected by the instruction.
-    fn store_return_state<B: Bus + ?Sized>(
-        &mut self,
-        bus: &mut B,
-        word: u32,
-    ) -> Result<StepEvent> {
+    fn store_return_state<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
         let current_mode = self.cpsr.mode();
         if !super::Psr::mode_has_spsr(current_mode) {
             return Err(Error::UndefinedInstruction {
@@ -1106,9 +1100,9 @@ impl Arm11Core {
                 word,
             });
         }
-        let saved_status = self
-            .saved_program_status()
-            .ok_or(Error::Unimplemented("SRS source SPSR has not been initialized"))?;
+        let saved_status = self.saved_program_status().ok_or(Error::Unimplemented(
+            "SRS source SPSR has not been initialized",
+        ))?;
 
         let target_mode = bits(word, 4, 0);
         if !super::Psr::is_valid_mode(target_mode) {
@@ -2020,7 +2014,10 @@ mod tests {
         assert_eq!(user.cpu.pc(), 0);
 
         let mut invalid_target = Machine::new(&[0xF84D_0516]);
-        invalid_target.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        invalid_target
+            .cpu
+            .switch_mode(Psr::SUPERVISOR_MODE)
+            .unwrap();
         assert!(matches!(
             invalid_target.cpu.step(&mut invalid_target.mem),
             Err(Error::UndefinedInstruction { pc: 0, .. })
