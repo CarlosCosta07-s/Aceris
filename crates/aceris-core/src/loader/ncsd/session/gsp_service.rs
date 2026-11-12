@@ -272,7 +272,7 @@ impl GspServiceRegistry {
 mod tests {
     use super::*;
     use super::super::kernel::EventResetType;
-    use super::Arm11CodeAddressSpace;
+    use super::super::Arm11CodeAddressSpace;
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
     use crate::loader::ncsd::PreparedArm11Image;
 
@@ -405,7 +405,7 @@ mod tests {
             .unwrap();
         let mutex = session
             .kernel_objects
-            .insert_mutex(false, super::MAIN_THREAD_ID)
+            .insert_mutex(false, super::super::MAIN_THREAD_ID)
             .unwrap();
         let mut registry = GspServiceRegistry::new();
 
