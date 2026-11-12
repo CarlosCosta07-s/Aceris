@@ -96,10 +96,7 @@ impl GpuPhysicalMemory {
     /// The allocator skips both pages already materialized by other devices and
     /// all outstanding linear reservations. The returned range reads as zero
     /// until the process or a device writes to it.
-    pub fn allocate_linear_fcram(
-        &mut self,
-        size: u32,
-    ) -> Result<u32, GpuPhysicalMemoryError> {
+    pub fn allocate_linear_fcram(&mut self, size: u32) -> Result<u32, GpuPhysicalMemoryError> {
         if size == 0 || size as usize % PHYSICAL_PAGE_SIZE != 0 {
             return Err(GpuPhysicalMemoryError::InvalidLinearAllocationSize { size });
         }
@@ -116,7 +113,10 @@ impl GpuPhysicalMemory {
         let total_pages = FCRAM_SIZE / PHYSICAL_PAGE_SIZE as u32;
         let mut candidate = 0u32;
 
-        while candidate.checked_add(page_count).is_some_and(|end| end <= total_pages) {
+        while candidate
+            .checked_add(page_count)
+            .is_some_and(|end| end <= total_pages)
+        {
             let physical_page = first_page + candidate;
             let candidate_end = physical_page + page_count;
             let materialized_conflict = inner
@@ -124,16 +124,17 @@ impl GpuPhysicalMemory {
                 .range(physical_page..candidate_end)
                 .next()
                 .map(|(page, _)| *page);
-            let reserved_conflict = inner
-                .linear_allocations
-                .iter()
-                .find_map(|(base, allocated_size)| {
-                    let reserved_start = *base / PHYSICAL_PAGE_SIZE as u32;
-                    let reserved_end =
-                        reserved_start + *allocated_size / PHYSICAL_PAGE_SIZE as u32;
-                    (physical_page < reserved_end && candidate_end > reserved_start)
-                        .then_some(reserved_end)
-                });
+            let reserved_conflict =
+                inner
+                    .linear_allocations
+                    .iter()
+                    .find_map(|(base, allocated_size)| {
+                        let reserved_start = *base / PHYSICAL_PAGE_SIZE as u32;
+                        let reserved_end =
+                            reserved_start + *allocated_size / PHYSICAL_PAGE_SIZE as u32;
+                        (physical_page < reserved_end && candidate_end > reserved_start)
+                            .then_some(reserved_end)
+                    });
 
             if materialized_conflict.is_none() && reserved_conflict.is_none() {
                 let address = physical_page * PHYSICAL_PAGE_SIZE as u32;
@@ -321,10 +322,7 @@ mod tests {
         let mut cleared = [0xFF; 4];
         memory.read(allocation + 0x1000, &mut cleared).unwrap();
         assert_eq!(cleared, [0; 4]);
-        assert_eq!(
-            memory.allocate_linear_fcram(0x3000).unwrap(),
-            allocation
-        );
+        assert_eq!(memory.allocate_linear_fcram(0x3000).unwrap(), allocation);
     }
 
     #[test]
