@@ -143,6 +143,9 @@ impl Arm11KernelObjectTable {
         if size == 0 || size & 0xFFF != 0 {
             return Err(KernelHandleError::InvalidMemoryBlockSize);
         }
+        if owner_permissions > 3 || other_permissions > 3 {
+            return Err(KernelHandleError::InvalidMemoryPermission);
+        }
         let backing = SharedMemoryBacking::zeroed(size as usize)
             .map_err(|_| KernelHandleError::OutOfMemory)?;
         self.create_memory_block_with_backing(backing, owner_permissions, other_permissions)
