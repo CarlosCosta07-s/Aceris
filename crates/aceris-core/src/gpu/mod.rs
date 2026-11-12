@@ -2,6 +2,7 @@
 
 mod geometry;
 mod index;
+mod input_fetch;
 mod physical_memory;
 mod pica200;
 mod rasterizer;
