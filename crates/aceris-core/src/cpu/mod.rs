@@ -500,6 +500,47 @@ mod tests {
     }
 
     #[test]
+    fn svc_is_reported_to_hle_without_hardware_exception_entry_by_default() {
+        let mut memory = FlatMemory::new(0, 0x40);
+        memory.write32(0, 0xEF12_3456).unwrap(); // SVC #0x123456.
+        let mut cpu = Arm11Core::new();
+
+        assert_eq!(
+            cpu.step(&mut memory).unwrap(),
+            StepEvent::Svc(0x12_3456)
+        );
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
+        assert_eq!(cpu.saved_program_status(), None);
+    }
+
+    #[test]
+    fn svc_hardware_entry_saves_state_and_movs_pc_lr_returns_to_next_instruction() {
+        let mut memory = FlatMemory::new(0, 0x40);
+        memory.write32(0, 0xEF12_3456).unwrap(); // SVC #0x123456.
+        memory.write32(0x08, 0xE1B0_F00E).unwrap(); // MOVS pc,lr.
+        let mut cpu = Arm11Core::new();
+        cpu.set_svc_exception_entry_enabled(true);
+        let interrupted_status = cpu.cpsr;
+
+        assert_eq!(
+            cpu.step(&mut memory).unwrap(),
+            StepEvent::Svc(0x12_3456)
+        );
+        assert_eq!(cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+        assert_eq!(cpu.pc(), 0x08);
+        assert_eq!(cpu.regs[LR], 4);
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_status));
+        assert_ne!(cpu.cpsr.0 & Psr::I, 0);
+        assert_eq!(cpu.cpsr.0 & Psr::A, interrupted_status.0 & Psr::A);
+        assert_eq!(cpu.cpsr.0 & Psr::F, interrupted_status.0 & Psr::F);
+
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.pc(), 4);
+        assert_eq!(cpu.cpsr, interrupted_status);
+    }
+
+    #[test]
     fn irq_waits_for_unmasking_then_enters_irq_vector_and_returns() {
         let mut memory = FlatMemory::new(0, 0x40);
         memory.write32(0, 0xE1A0_0000).unwrap(); // MOV r0,r0
