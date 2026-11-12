@@ -201,7 +201,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Desktop
 
 - [~] Binário Rust de diagnóstico/linha de comando e autoteste; `--dump-lcd` exporta as telas como PNG após o quadro
-- [ ] Janela e superfície gráfica funcionais
+- [~] Janela X11 (Linux) sem crates: Xlib carregada por `dlopen` e FFI própria; `aceris <JOGO> --window [--scale N]` compõe as duas LCDs (400x480, escala inteira) e roda quadros a ~60 Hz até fechar a janela; validada sob Xvfb com captura de tela. Windows (Win32) e macOS (Cocoa) ainda não têm backend; sem entrada de teclado/toque, áudio nem redimensionamento
 - [ ] Biblioteca/importação de jogos para `.3DS`, `.CCI` e `.CIA`
 - [ ] Configurações de vídeo, áudio, controles, caminhos e armazenamento
 - [ ] Logs, relatórios de falha e diagnóstico de compatibilidade
@@ -268,7 +268,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 4. Estender a invalidação de reservas LDREX/STREX a regiões compartilhadas e a outros dispositivos que venham a escrever na memória do processo (escritas físicas de DMA/GPU/LCD em mapeamentos lineares já invalidam).
 5. Completar atributos de memória, associatividade e replacement do TLB normal, atributos TEX e semântica observável de manutenção de cache/barreiras ao CP15.
-6. Apresentar as superfícies LCD em uma janela no desktop e depois no Android (o desktop já exporta PNG com `--dump-lcd`); a janela depende de decidir como abrir janelas sem crates externos.
+6. Apresentar as superfícies LCD em uma janela no desktop e depois no Android (o desktop já exporta PNG com `--dump-lcd`); a janela X11 já existe no desktop Linux; faltam os backends Win32/Cocoa, a entrada e o Android.
 
 ## Critérios para concluir um item
 
