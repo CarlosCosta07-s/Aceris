@@ -297,6 +297,42 @@ impl Arm11ProcessSession {
         Ok(destination_handle)
     }
 
+    /// Applies a decoded IPC type-0 handle translation for one memory block.
+    ///
+    /// A zero source handle is the IPC null-handle sentinel and performs no
+    /// object transfer. COPY creates a destination handle while preserving the
+    /// source; MOVE creates the destination handle and closes the source.
+    /// Other object types and multi-handle descriptors remain unsupported.
+    pub fn translate_memory_block_handle_from_ipc(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        descriptor: u32,
+        source_handle: u32,
+    ) -> std::result::Result<Option<u32>, kernel::IpcHandleTranslationError> {
+        let translation = kernel::IpcHandleTranslationDescriptor::decode(descriptor)?;
+        if translation.requests_process_id() {
+            return Err(kernel::IpcHandleTranslationError::ProcessIdTranslationUnsupported);
+        }
+        if translation.handle_count() != 1 {
+            return Err(kernel::IpcHandleTranslationError::HandleCountMismatch {
+                expected: 1,
+                actual: usize::from(translation.handle_count()),
+            });
+        }
+        if source_handle == 0 {
+            return Ok(None);
+        }
+
+        let destination_handle = if translation.moves_handle() {
+            self.move_memory_block_handle(source, source_handle)
+        } else {
+            self.import_memory_block_handle(source, source_handle)
+        }
+        .map_err(kernel::IpcHandleTranslationError::Kernel)?;
+
+        Ok(Some(destination_handle))
+    }
+
     /// Maps a memory-block handle into this process with the requested R/W permissions.
     pub fn map_memory_block(
         &mut self,
@@ -1837,6 +1873,76 @@ mod tests {
             .unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0x1234_5678);
         assert!(!peer.address_space.is_writable_range(0x0900_0000, 0x1000));
+    }
+
+    #[test]
+    fn ipc_copy_handle_descriptor_duplicates_memory_block_without_closing_source() {
+        let mut source = test_session();
+        let source_handle = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let mut destination = test_session();
+
+        let copied = destination
+            .translate_memory_block_handle_from_ipc(&mut source, 0, source_handle)
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(copied, source_handle);
+        assert!(source.kernel_objects.memory_block_backing(source_handle).is_ok());
+        assert!(destination.kernel_objects.memory_block_backing(copied).is_ok());
+    }
+
+    #[test]
+    fn ipc_move_handle_descriptor_closes_source_and_keeps_destination() {
+        let mut source = test_session();
+        let source_handle = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let mut destination = test_session();
+
+        let moved = destination
+            .translate_memory_block_handle_from_ipc(&mut source, 0x10, source_handle)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            source.kernel_objects.memory_block_backing(source_handle),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert!(destination.kernel_objects.memory_block_backing(moved).is_ok());
+    }
+
+    #[test]
+    fn ipc_null_handle_does_not_create_or_close_an_object() {
+        let mut source = test_session();
+        let mut destination = test_session();
+
+        assert_eq!(
+            destination
+                .translate_memory_block_handle_from_ipc(&mut source, 0x10, 0)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn ipc_handle_translation_rejects_unsupported_descriptors() {
+        let mut source = test_session();
+        let handle = source.create_memory_block(0x1000, 3, 1).unwrap();
+        let mut destination = test_session();
+
+        assert_eq!(
+            destination.translate_memory_block_handle_from_ipc(&mut source, 0x20, handle),
+            Err(kernel::IpcHandleTranslationError::ProcessIdTranslationUnsupported)
+        );
+        assert_eq!(
+            destination.translate_memory_block_handle_from_ipc(&mut source, 0x0400_0000, handle),
+            Err(kernel::IpcHandleTranslationError::HandleCountMismatch {
+                expected: 1,
+                actual: 2,
+            })
+        );
+        assert_eq!(
+            destination.translate_memory_block_handle_from_ipc(&mut source, 0x11, handle),
+            Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
+        );
     }
 
     #[test]
