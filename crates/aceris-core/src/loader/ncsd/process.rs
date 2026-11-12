@@ -1132,9 +1132,8 @@ impl Arm11CodeAddressSpace {
         if !self.tls_slots_in_use.get(slot).copied().unwrap_or(false) {
             return None;
         }
-        let entry_offset = THREAD_LOCAL_STATIC_BUFFER_TABLE_OFFSET.checked_add(
-            u32::from(buffer_index) * THREAD_LOCAL_STATIC_BUFFER_DESCRIPTOR_SIZE,
-        )?;
+        let entry_offset = THREAD_LOCAL_STATIC_BUFFER_TABLE_OFFSET
+            .checked_add(u32::from(buffer_index) * THREAD_LOCAL_STATIC_BUFFER_DESCRIPTOR_SIZE)?;
         tls_address.checked_add(entry_offset)
     }
 
