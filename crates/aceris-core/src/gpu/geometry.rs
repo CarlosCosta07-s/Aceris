@@ -10,7 +10,7 @@ use super::{
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
-const MAX_CLIPPED_POLYGON_VERTICES: usize = 9;
+const MAX_CLIPPED_POLYGON_VERTICES: usize = 10;
 
 /// A 4x4 matrix stored in column-major order.
 #[derive(Clone, Copy, Debug, PartialEq)]
