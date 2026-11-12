@@ -422,3 +422,29 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 
 - Base arquitetural independente: ARM11 MPCore Processor Technical Reference Manual (ARM DDI 0360E), seções A32 de SEV/WFE e descrição dos event registers, WakeUpAction e UnMaskedWakeUpAction: https://documentation-service.arm.com/static/5e8e4457fd977155116ab118
 - Workflow [43327027270](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43327027270) concluído com sucesso: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
+
+
+## ARM11 MPCore — retorno de exceção como WakeUpAction (12/11/2026)
+
+### Implementação
+
+- O ARM11 MPCore TRM (ARM DDI 0360E, seção 2.11.12, páginas 2-47/2-48) define o retorno de exceção de outro MP11 CPU como uma `WakeUpAction` para o núcleo receptor. A mesma seção diz que o registrador de evento é setado por `WakeUpAction`, `SendEvent` de qualquer MP11 CPU ou evento externo EVNTIN.
+- `4a2eff3` iniciou a exposição do retorno como evento de CPU/sessão, mas a primeira versão alterou o resultado de `Arm11Core::step` e fez falhar quatro expectativas já existentes que esperavam `StepEvent::Executed`, incluindo o caso de handler ARM retornando ao fluxo Thumb.
+- `f42ef6c` corrigiu o contrato: `restore_status_and_branch` agora seta `exception_return_wakeup` no core e mantém o resultado direto de `Arm11Core::step`. O latch público `take_exception_return_wakeup()` é consumido uma vez pelo host scheduler.
+- `3064309` aplica o formato Rustfmt solicitado pela CI.
+- `Arm11ProcessSession::step` consulta o latch depois de cada instrução e converte a notificação em `StepEvent::ExceptionReturn`; `run_instructions` a expõe como `Arm11RunStopReason::ExceptionReturn`. Assim a camada de agendamento pode encaminhar o wake-up aos demais cores sem alterar o resultado direto da CPU nem invadir o trabalho isolado de Thumb.
+- O latch é definido no caminho comum `restore_status_and_branch`, compartilhado por MOVS-to-PC, LDM exception return e RFE.
+
+### Testes e limites
+
+- Teste de CPU confirma que um retorno A32 marca a notificação e que a leitura do latch a consome uma única vez.
+- Testes existentes de MOVS-to-PC e RFE continuam esperando `StepEvent::Executed` na API direta do core.
+- Teste da sessão confirma que o retorno é reportado como `Arm11RunStopReason::ExceptionReturn`, com PC/CPSR restaurados e contagem de instruções correta.
+- A notificação não faz broadcast SMP sozinha. Quando o modelo de múltiplos cores estiver integrado, o scheduler deverá chamar `signal_event()` nos demais núcleos ao receber `ExceptionReturn`. Hoje a sessão modela apenas o core/contexto atualmente selecionado.
+- `thumb.rs` não foi editado. O teste de handler ARM chamado a partir de Thumb continua usando o mesmo resultado de CPU `Executed`; a notificação extra fica no latch e só é traduzida pela sessão.
+- Eventos de Debug Entry continuam pendentes.
+
+### Verificação
+
+- Workflow [43329839504](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43329839504) concluído com sucesso: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
+- Referência primária: [ARM11 MPCore Processor Technical Reference Manual, ARM DDI 0360E](https://documentation-service.arm.com/static/5e8e1cd9fd977155116a4a7a), seção 2.11.12, páginas impressas 2-47 e 2-48.

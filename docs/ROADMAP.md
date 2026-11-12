@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `3f665c74d5c9fa1adc13a66bf6c51e0ebde52172`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `3064309c0f163ec5366ecf56162ef89e15654518`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -44,7 +44,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Famílias ARMv6 de mídia/DSP, saturação, operações paralelas, extensão de sinal/zero e multiplicações de meia palavra: há implementação e testes para várias famílias, mas a cobertura integral ainda não foi demonstrada
 - [x] A32 ARM1136 `SSAT16`/`USAT16`: saturação independente dos dois halfwords assinados, `CPSR.Q` sticky e rejeição de PC; testes aprovados no workflow [43317800061](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43317800061)
 - [x] A32 ARM1136 `NOP32`: verdadeiro no-op que ignora a condição; `YIELD` e hints reservados continuam sem efeito no perfil modelado. Testes EQ, AL e NV aprovados no workflow [43318212186](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43318212186)
-- [~] ARMv6K A32 `WFE`/`WFI`/`SEV`: registrador de evento, wake-up por IRQ/FIQ conforme máscaras, estado de espera e eventos de sessão implementados e testados. `SEV` é reportado como `SendEvent` e a sessão expõe entrada para evento externo; broadcast entre múltiplos núcleos e wake-up por debug ainda não estão integrados. CI [43327027270](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43327027270) aprovada em todas as plataformas.
+- [~] ARMv6K A32 `WFE`/`WFI`/`SEV`: registrador de evento, wake-up por IRQ/FIQ conforme máscaras, estado de espera e eventos de sessão implementados e testados. `SEV` é reportado como `SendEvent`; eventos externos entram por `signal_cpu_event`. Retornos de exceção A32 também levantam um latch consultável pelo host (`take_exception_return_wakeup`), convertido pela sessão em `ExceptionReturn` para que o scheduler sinalize os outros MP11 CPUs. Broadcast SMP automático e wake-up por debug ainda não estão integrados. CI [43329839504](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43329839504) aprovada em todas as plataformas.
 - [x] A32 ARMv6 `LDRT`/`LDRBT`/`STRT`/`STRBT`: o MMU reavalia permissões User por transação sem alterar CPSR nem o privilégio global; testes de acesso permitido, rejeição de página privilegiada, TLB em cache e writeback aprovados no workflow [43321797092](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43321797092)
 - [~] Conjunto Thumb-1 principal com desvios, acessos, pilha, operações aritméticas/lógicas e extensões ARMv6 REV/SXT/UXT
 - [x] Thumb BKPT, CPS e SETEND implementados; BKPT é encaminhado como evento de breakpoint para a camada de processo
