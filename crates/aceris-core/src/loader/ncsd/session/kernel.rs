@@ -42,10 +42,7 @@ impl IpcHandleTranslationDescriptor {
         let reserved_bits = descriptor & 0x03FF_FFC1;
         let move_handle = descriptor & (1 << 4) != 0;
         let process_id = descriptor & (1 << 5) != 0;
-        if translation_type != 0
-            || reserved_bits != 0
-            || (move_handle && process_id)
-        {
+        if translation_type != 0 || reserved_bits != 0 || (move_handle && process_id) {
             return Err(IpcHandleTranslationError::InvalidDescriptor);
         }
 

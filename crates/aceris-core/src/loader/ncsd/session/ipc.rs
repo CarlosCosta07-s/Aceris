@@ -45,8 +45,7 @@ impl IpcCommandHeader {
 
     /// Returns the total number of words required, including the header.
     pub const fn expected_word_count(self) -> usize {
-        1 + self.normal_parameter_count() as usize
-            + self.translation_word_count() as usize
+        1 + self.normal_parameter_count() as usize + self.translation_word_count() as usize
     }
 }
 
@@ -80,8 +79,13 @@ pub enum IpcTranslationParameter<'a> {
 /// Errors found while walking a complete IPC translation section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IpcTranslationSectionError {
-    InvalidDescriptor { descriptor: u32 },
-    UnsupportedTranslationType { descriptor: u32, translation_type: u8 },
+    InvalidDescriptor {
+        descriptor: u32,
+    },
+    UnsupportedTranslationType {
+        descriptor: u32,
+        translation_type: u8,
+    },
     TruncatedParameter {
         descriptor: u32,
         expected_words: usize,
@@ -390,10 +394,12 @@ mod tests {
         for descriptor in [0x0000_0004, 0x0000_0006] {
             assert_eq!(
                 super::decode_translation_section(&[descriptor, 0, 0]),
-                Err(super::IpcTranslationSectionError::UnsupportedTranslationType {
-                    descriptor,
-                    translation_type: ((descriptor >> 1) & 7) as u8,
-                })
+                Err(
+                    super::IpcTranslationSectionError::UnsupportedTranslationType {
+                        descriptor,
+                        translation_type: ((descriptor >> 1) & 7) as u8,
+                    }
+                )
             );
         }
     }
@@ -441,9 +447,7 @@ mod tests {
         ));
         assert_eq!(
             super::decode_translation_section(&[0x30, 0]),
-            Err(super::IpcTranslationSectionError::InvalidDescriptor {
-                descriptor: 0x30
-            })
+            Err(super::IpcTranslationSectionError::InvalidDescriptor { descriptor: 0x30 })
         );
     }
 

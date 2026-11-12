@@ -376,9 +376,7 @@ impl Arm11ProcessSession {
                     KernelHandleError::WrongType,
                 ))?;
 
-            if translation.moves_handle()
-                && source_handles[..index].contains(&source_handle)
-            {
+            if translation.moves_handle() && source_handles[..index].contains(&source_handle) {
                 return Err(kernel::IpcHandleTranslationError::DuplicateMoveHandle {
                     handle: source_handle,
                 });
@@ -431,11 +429,13 @@ impl Arm11ProcessSession {
         let parameters = message
             .translation_parameters()
             .map_err(|_| kernel::IpcHandleTranslationError::InvalidDescriptor)?;
-        let [ipc::IpcTranslationParameter::Handles {
-            descriptor,
-            handles,
-            ..
-        }] = parameters.as_slice()
+        let [
+            ipc::IpcTranslationParameter::Handles {
+                descriptor,
+                handles,
+                ..
+            },
+        ] = parameters.as_slice()
         else {
             return Err(kernel::IpcHandleTranslationError::InvalidDescriptor);
         };
@@ -1927,9 +1927,7 @@ mod tests {
         owner
             .map_memory_block(owner_handle, 0x0800_0000, 3, 1)
             .unwrap();
-        owner
-            .write_memory_u32(0x0800_0000, 0xCAFE_BABE)
-            .unwrap();
+        owner.write_memory_u32(0x0800_0000, 0xCAFE_BABE).unwrap();
 
         let mut peer = test_session();
         let peer_handle = peer
@@ -1943,9 +1941,7 @@ mod tests {
         assert!(!peer.address_space.is_writable_range(0x0900_0000, 4));
         assert!(peer.write_memory_u32(0x0900_0000, 0xDEAD_BEEF).is_err());
 
-        owner
-            .write_memory_u32(0x0800_0000, 0x1234_5678)
-            .unwrap();
+        owner.write_memory_u32(0x0800_0000, 0x1234_5678).unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0x1234_5678);
 
         assert_eq!(
@@ -1961,9 +1957,7 @@ mod tests {
         owner
             .map_memory_block(owner_handle, 0x0800_0000, 3, 1)
             .unwrap();
-        owner
-            .write_memory_u32(0x0800_0000, 0xCAFE_BABE)
-            .unwrap();
+        owner.write_memory_u32(0x0800_0000, 0xCAFE_BABE).unwrap();
 
         let mut peer = test_session();
         let peer_handle = peer
@@ -1978,9 +1972,7 @@ mod tests {
             .unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0xCAFE_BABE);
 
-        owner
-            .write_memory_u32(0x0800_0000, 0x1234_5678)
-            .unwrap();
+        owner.write_memory_u32(0x0800_0000, 0x1234_5678).unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0x1234_5678);
         assert!(!peer.address_space.is_writable_range(0x0900_0000, 0x1000));
     }
@@ -1997,8 +1989,18 @@ mod tests {
             .unwrap();
 
         assert_ne!(copied, source_handle);
-        assert!(source.kernel_objects.memory_block_backing(source_handle).is_ok());
-        assert!(destination.kernel_objects.memory_block_backing(copied).is_ok());
+        assert!(
+            source
+                .kernel_objects
+                .memory_block_backing(source_handle)
+                .is_ok()
+        );
+        assert!(
+            destination
+                .kernel_objects
+                .memory_block_backing(copied)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2016,7 +2018,12 @@ mod tests {
             source.kernel_objects.memory_block_backing(source_handle),
             Err(KernelHandleError::InvalidHandle)
         );
-        assert!(destination.kernel_objects.memory_block_backing(moved).is_ok());
+        assert!(
+            destination
+                .kernel_objects
+                .memory_block_backing(moved)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2119,14 +2126,18 @@ mod tests {
             source.kernel_objects.memory_block_backing(second),
             Err(KernelHandleError::InvalidHandle)
         );
-        assert!(destination
-            .kernel_objects
-            .memory_block_backing(moved_first)
-            .is_ok());
-        assert!(destination
-            .kernel_objects
-            .memory_block_backing(moved_second)
-            .is_ok());
+        assert!(
+            destination
+                .kernel_objects
+                .memory_block_backing(moved_first)
+                .is_ok()
+        );
+        assert!(
+            destination
+                .kernel_objects
+                .memory_block_backing(moved_second)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2150,10 +2161,12 @@ mod tests {
             ))
         );
         assert_eq!(destination.kernel_objects.handle_count(), 0);
-        assert!(source
-            .kernel_objects
-            .memory_block_backing(memory_block)
-            .is_ok());
+        assert!(
+            source
+                .kernel_objects
+                .memory_block_backing(memory_block)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2229,10 +2242,8 @@ mod tests {
 
         let empty_message = ipc::IpcMessage::decode(&[0x1234_0000]).unwrap();
         assert_eq!(
-            destination.translate_memory_block_translation_section_from_ipc(
-                &mut source,
-                empty_message,
-            ),
+            destination
+                .translate_memory_block_translation_section_from_ipc(&mut source, empty_message,),
             Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
         );
     }
@@ -2252,10 +2263,8 @@ mod tests {
         let message = ipc::IpcMessage::decode(&words).unwrap();
 
         assert_eq!(
-            destination.translate_memory_block_translation_section_from_ipc(
-                &mut source,
-                message,
-            ),
+            destination
+                .translate_memory_block_translation_section_from_ipc(&mut source, message,),
             Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
         );
         assert_eq!(destination.kernel_objects.handle_count(), 0);
