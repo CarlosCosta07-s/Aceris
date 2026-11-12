@@ -918,8 +918,7 @@ mod tests {
 
         // L2 type 0b11 is reserved with SCTLR.XP=1. It must not be
         // interpreted as the legacy extended-small-page format.
-        mem.write32(L2, 0x0004_0000 | (0b11 << 4) | 0b11)
-            .unwrap();
+        mem.write32(L2, 0x0004_0000 | (0b11 << 4) | 0b11).unwrap();
         assert_eq!(
             status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Read)),
             0x7
