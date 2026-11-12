@@ -372,7 +372,7 @@ fn walk_page_tables<B: Bus + ?Sized>(
                 let l2 = bus.read32(l2_address)?;
                 let descriptor_type = l2 & 3;
 
-                if descriptor_type == 0 || (!params.xp && descriptor_type == 3) {
+                if descriptor_type == 0 {
                     let page_fault = match fault(FaultKind::Translation, false, domain, va, access)
                     {
                         Walk::Fault(value) => value,
@@ -409,6 +409,24 @@ fn walk_page_tables<B: Bus + ?Sized>(
                             false,
                         )
                     }
+                } else if descriptor_type == 0b11 {
+                    // Backwards-compatible extended-small-page descriptor.
+                    // In a coarse table this maps one 4 KiB page and uses a
+                    // single AP field; the 1 KiB extended subpage form requires
+                    // a fine table, which is not implemented by this MMU yet.
+                    let ap = bits(l2, 5, 4) as u8;
+                    (
+                        domain,
+                        [ap; 4],
+                        0,
+                        false,
+                        false,
+                        (l2 & 0xFFFF_F000) | (va & 0xFFF),
+                        true,
+                        0xFFFF_F000,
+                        false,
+                        true,
+                    )
                 } else {
                     // Legacy large/small pages each have four independent AP fields.
                     let ap = [
@@ -1309,6 +1327,41 @@ mod tests {
         assert_eq!(
             status_of(walk(&cpu, &mut mem, 0x2000_0C00, Access::Read)),
             0xF
+        );
+    }
+
+    #[test]
+    fn legacy_extended_small_page_uses_one_ap_field_for_the_full_4kb() {
+        let (mut cpu, mut mem) = legacy_machine();
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+
+        // L2[1:0] = 0b11 is an ARMv6 extended-small-page descriptor
+        // when used by a coarse table with SCTLR.XP clear.
+        let descriptor = 0x0004_0000 | (0b10 << 4) | 0b11;
+        mem.write32(L2, descriptor).unwrap();
+
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Read),
+            Walk::Mapped(0x0004_0000)
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0FFF, Access::Write),
+            Walk::Mapped(0x0004_0FFF)
+        );
+
+        // AP=10 is privileged read/write and user read-only for the whole page.
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0400, Access::Read),
+            Walk::Mapped(0x0004_0400)
+        );
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0400, Access::Write)),
+            0xF
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_0FFF, Access::Read),
+            Walk::Mapped(0x0004_0FFF)
         );
     }
 
