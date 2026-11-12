@@ -2436,7 +2436,9 @@ mod tests {
         );
 
         memory.free_linear_fcram(physical_base, 0x2000).unwrap();
-        memory.free_linear_fcram(second_physical_base, 0x1000).unwrap();
+        memory
+            .free_linear_fcram(second_physical_base, 0x1000)
+            .unwrap();
     }
 
     #[test]
