@@ -2,9 +2,9 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GspGxCommandQueue, GspGxCommandQueueError, GspProcessCommandList,
     GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
-    GpuDmaAddressSpace, GpuPhysicalMemory, Pica200, VRAM_BASE, VRAM_SIZE,
+    GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue, GspGxCommandQueueError,
+    GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
@@ -698,29 +698,24 @@ impl System {
             }
         })?;
 
-        let physical_address = if address >= VRAM_BASE
-            && end <= u64::from(VRAM_BASE) + u64::from(VRAM_SIZE)
-        {
-            self.physical_memory
-                .validate_range(address, size_bytes as usize)
-                .map_err(|_| GspGxCommandQueueError::InvalidCommandListAddress {
-                    address,
-                    size_bytes,
-                })?;
-            address
-        } else {
-            self.gpu_address_space
-                .resolve_physical_range(
-                    &self.physical_memory,
-                    address,
-                    size_bytes as usize,
-                )
-                .map_err(|_| GspGxCommandQueueError::InvalidCommandListAddress {
-                    address,
-                    size_bytes,
-                })?
-                .physical_address
-        };
+        let physical_address =
+            if address >= VRAM_BASE && end <= u64::from(VRAM_BASE) + u64::from(VRAM_SIZE) {
+                self.physical_memory
+                    .validate_range(address, size_bytes as usize)
+                    .map_err(|_| GspGxCommandQueueError::InvalidCommandListAddress {
+                        address,
+                        size_bytes,
+                    })?;
+                address
+            } else {
+                self.gpu_address_space
+                    .resolve_physical_range(&self.physical_memory, address, size_bytes as usize)
+                    .map_err(|_| GspGxCommandQueueError::InvalidCommandListAddress {
+                        address,
+                        size_bytes,
+                    })?
+                    .physical_address
+            };
 
         self.submit_pica_command_list_from_physical_memory(physical_address, word_count)
             .map_err(|error| GspGxCommandQueueError::CommandListSubmission {
@@ -914,8 +909,7 @@ mod tests {
         let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[entry + 2] = 1; // halt after this entry
-        queue_bytes[entry + 4..entry + 8]
-            .copy_from_slice(&command_list_address.to_le_bytes());
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&command_list_address.to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&1u32.to_le_bytes());
         queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
