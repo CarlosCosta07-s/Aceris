@@ -1,0 +1,636 @@
+//! ARMv6 short-descriptor MMU: virtual-to-physical translation for the core.
+//!
+//! When SCTLR.M is set, every instruction fetch and data access made by the
+//! core goes through [`MmuBus`], which walks the two-level page tables
+//! (TTBR0/TTBR1 split by TTBCR.N), applies domain and access-permission checks
+//! and forwards the physical access to the underlying bus.
+//!
+//! Supported: sections, supersections, coarse page tables, large (64 KiB) and
+//! small (4 KiB) pages in the ARMv6 format (SCTLR.XP = 1: AP[1:0], APX, XN).
+//! Not modeled: the TLB (every access walks the tables), subpage permissions
+//! (XP = 0), memory attributes/TEX, alignment faults, and the abort exception
+//! entry itself. A fault is reported as `Error::InvalidAccess` with the
+//! virtual address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
+
+use super::arm::{bit, bits};
+use super::{ARM_INSTRUCTION_SIZE, Arm11Core, PC, StepEvent, THUMB_INSTRUCTION_SIZE};
+use crate::memory::Bus;
+use aceris_common::{Error, Result};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Access {
+    Read,
+    Write,
+    Execute,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Fault {
+    pub address: u32,
+    /// FSR status bits including the domain field (without the WnR bit).
+    pub status: u32,
+    pub access: Access,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Params {
+    pub ttbr0: u32,
+    pub ttbr1: u32,
+    pub n: u32,
+    pub dacr: u32,
+    pub privileged: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Walk {
+    Mapped(u32),
+    Fault(Fault),
+}
+
+#[derive(Clone, Copy)]
+enum FaultKind {
+    Translation,
+    Domain,
+    Permission,
+}
+
+fn fault(kind: FaultKind, section: bool, domain: u32, address: u32, access: Access) -> Walk {
+    let code = match (kind, section) {
+        (FaultKind::Translation, true) => 0x5,
+        (FaultKind::Translation, false) => 0x7,
+        (FaultKind::Domain, true) => 0x9,
+        (FaultKind::Domain, false) => 0xB,
+        (FaultKind::Permission, true) => 0xD,
+        (FaultKind::Permission, false) => 0xF,
+    };
+    Walk::Fault(Fault {
+        address,
+        status: code | (domain << 4),
+        access,
+    })
+}
+
+/// Whether (APX, AP) grants the requested access to the requesting privilege level.
+fn permission_allows(apx: u32, ap: u32, privileged: bool, write: bool) -> bool {
+    // (privileged access, user access) as 0 = none, 1 = read-only, 2 = read/write
+    let (privileged_level, user_level) = match (apx, ap) {
+        (0, 1) => (2, 0),
+        (0, 2) => (2, 1),
+        (0, 3) => (2, 2),
+        (1, 1) => (1, 0),
+        (1, 2) | (1, 3) => (1, 1),
+        _ => (0, 0),
+    };
+    let level = if privileged {
+        privileged_level
+    } else {
+        user_level
+    };
+    if write { level == 2 } else { level >= 1 }
+}
+
+/// Walks the page tables for `va`. Errors come only from the physical bus.
+pub(super) fn translate<B: Bus + ?Sized>(
+    bus: &mut B,
+    params: &Params,
+    va: u32,
+    access: Access,
+) -> Result<Walk> {
+    let n = params.n;
+    let l1_index = (va >> 20) << 2;
+    let l1_address = if n == 0 || va >> (32 - n) == 0 {
+        (params.ttbr0 & !((1u32 << (14 - n)) - 1)) | l1_index
+    } else {
+        (params.ttbr1 & !0x3FFF) | l1_index
+    };
+    let l1 = bus.read32(l1_address)?;
+
+    let (domain, ap, apx, xn, physical, section) = match l1 & 3 {
+        0b10 => {
+            let supersection = bit(l1, 18);
+            let domain = if supersection { 0 } else { bits(l1, 8, 5) };
+            let physical = if supersection {
+                (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
+            } else {
+                (l1 & 0xFFF0_0000) | (va & 0x000F_FFFF)
+            };
+            (
+                domain,
+                bits(l1, 11, 10),
+                bits(l1, 15, 15),
+                bit(l1, 4),
+                physical,
+                true,
+            )
+        }
+        0b01 => {
+            let domain = bits(l1, 8, 5);
+            let l2_address = (l1 & 0xFFFF_FC00) | (((va >> 12) & 0xFF) << 2);
+            let l2 = bus.read32(l2_address)?;
+            match l2 & 3 {
+                0b00 => return Ok(fault(FaultKind::Translation, false, domain, va, access)),
+                0b01 => (
+                    domain,
+                    bits(l2, 5, 4),
+                    bits(l2, 9, 9),
+                    bit(l2, 15),
+                    (l2 & 0xFFFF_0000) | (va & 0xFFFF),
+                    false,
+                ),
+                _ => (
+                    domain,
+                    bits(l2, 5, 4),
+                    bits(l2, 9, 9),
+                    bit(l2, 0),
+                    (l2 & 0xFFFF_F000) | (va & 0xFFF),
+                    false,
+                ),
+            }
+        }
+        _ => return Ok(fault(FaultKind::Translation, true, 0, va, access)),
+    };
+
+    match (params.dacr >> (2 * domain)) & 3 {
+        0b11 => Ok(Walk::Mapped(physical)),
+        0b01 => {
+            let allowed = permission_allows(apx, ap, params.privileged, access == Access::Write)
+                && !(access == Access::Execute && xn);
+            if allowed {
+                Ok(Walk::Mapped(physical))
+            } else {
+                Ok(fault(FaultKind::Permission, section, domain, va, access))
+            }
+        }
+        _ => Ok(fault(FaultKind::Domain, section, domain, va, access)),
+    }
+}
+
+/// A bus adapter that translates every access before forwarding it.
+pub(super) struct MmuBus<'a, B: Bus + ?Sized> {
+    inner: &'a mut B,
+    params: Params,
+    fetching: bool,
+    fault: Option<Fault>,
+}
+
+impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
+    pub(super) fn new(inner: &'a mut B, params: Params) -> Self {
+        Self {
+            inner,
+            params,
+            fetching: false,
+            fault: None,
+        }
+    }
+
+    fn map(&mut self, va: u32, access: Access) -> Result<u32> {
+        let access = if self.fetching && access == Access::Read {
+            Access::Execute
+        } else {
+            access
+        };
+        match translate(self.inner, &self.params, va, access)? {
+            Walk::Mapped(physical) => Ok(physical),
+            Walk::Fault(fault) => {
+                self.fault.get_or_insert(fault);
+                Err(Error::InvalidAccess { addr: va })
+            }
+        }
+    }
+}
+
+impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
+    fn read8(&mut self, addr: u32) -> Result<u8> {
+        let physical = self.map(addr, Access::Read)?;
+        self.inner.read8(physical)
+    }
+
+    fn write8(&mut self, addr: u32, value: u8) -> Result<()> {
+        let physical = self.map(addr, Access::Write)?;
+        self.inner.write8(physical, value)
+    }
+
+    fn read16(&mut self, addr: u32) -> Result<u16> {
+        if addr & 0xFFF <= 0xFFE {
+            let physical = self.map(addr, Access::Read)?;
+            return self.inner.read16(physical);
+        }
+        let lo = self.read8(addr)?;
+        let hi = self.read8(addr.wrapping_add(1))?;
+        Ok(u16::from_le_bytes([lo, hi]))
+    }
+
+    fn read32(&mut self, addr: u32) -> Result<u32> {
+        if addr & 0xFFF <= 0xFFC {
+            let physical = self.map(addr, Access::Read)?;
+            return self.inner.read32(physical);
+        }
+        let mut bytes = [0u8; 4];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = self.read8(addr.wrapping_add(i as u32))?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn write16(&mut self, addr: u32, value: u16) -> Result<()> {
+        if addr & 0xFFF <= 0xFFE {
+            let physical = self.map(addr, Access::Write)?;
+            return self.inner.write16(physical, value);
+        }
+        for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write8(addr.wrapping_add(i as u32), byte)?;
+        }
+        Ok(())
+    }
+
+    fn write32(&mut self, addr: u32, value: u32) -> Result<()> {
+        if addr & 0xFFF <= 0xFFC {
+            let physical = self.map(addr, Access::Write)?;
+            return self.inner.write32(physical, value);
+        }
+        for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write8(addr.wrapping_add(i as u32), byte)?;
+        }
+        Ok(())
+    }
+
+    fn exclusive_read(&mut self, addr: u32, size: usize) -> Result<(u64, u64)> {
+        let physical = self.map(addr, Access::Read)?;
+        self.inner.exclusive_read(physical, size)
+    }
+
+    fn exclusive_write(
+        &mut self,
+        addr: u32,
+        size: usize,
+        value: u64,
+        reservation: Option<u64>,
+    ) -> Result<bool> {
+        let physical = self.map(addr, Access::Write)?;
+        self.inner
+            .exclusive_write(physical, size, value, reservation)
+    }
+}
+
+impl Arm11Core {
+    /// Executes one instruction with address translation enabled.
+    pub(super) fn step_translated<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        pc: u32,
+    ) -> Result<StepEvent> {
+        if !self.cp15.extended_page_tables() {
+            return Err(Error::Unimplemented(
+                "MMU with subpage permissions (SCTLR.XP = 0)",
+            ));
+        }
+        let params = Params {
+            ttbr0: self.cp15.ttbr0(),
+            ttbr1: self.cp15.ttbr1(),
+            n: self.cp15.ttbcr_n(),
+            dacr: self.cp15.dacr(),
+            privileged: self.cpsr.privileged(),
+        };
+        let mut mmu = MmuBus::new(bus, params);
+        let outcome = self.fetch_and_execute(&mut mmu, pc);
+        if let Some(fault) = mmu.fault {
+            match fault.access {
+                Access::Execute => self.cp15.latch_prefetch_fault(fault.status, fault.address),
+                access => {
+                    self.cp15
+                        .latch_data_fault(fault.status, fault.address, access == Access::Write)
+                }
+            }
+        }
+        let (event, size) = outcome?;
+        if !self.branch_taken {
+            self.regs[PC] = pc.wrapping_add(size);
+        }
+        Ok(event)
+    }
+
+    fn fetch_and_execute<B: Bus + ?Sized>(
+        &mut self,
+        mmu: &mut MmuBus<'_, B>,
+        pc: u32,
+    ) -> Result<(StepEvent, u32)> {
+        mmu.fetching = true;
+        let thumb = self.cpsr.thumb();
+        let fetched = if thumb {
+            mmu.read16(pc).map(u32::from)
+        } else {
+            mmu.read32(pc)
+        };
+        mmu.fetching = false;
+        let instruction = fetched?;
+        if thumb {
+            Ok((
+                self.execute_thumb(mmu, instruction)?,
+                THUMB_INSTRUCTION_SIZE,
+            ))
+        } else {
+            Ok((self.execute_arm(mmu, instruction)?, ARM_INSTRUCTION_SIZE))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Psr;
+    use crate::memory::FlatMemory;
+
+    const L1: u32 = 0x4000;
+    const L2: u32 = 0x8000;
+    const MEM_SIZE: usize = 0x4_0000;
+
+    const SECTION: u32 = 0b10;
+    const SECTION_AP_RW_ALL: u32 = 0b11 << 10;
+    const SECTION_AP_PRIV_RW: u32 = 0b01 << 10;
+    const SECTION_APX: u32 = 1 << 15;
+    const SECTION_XN: u32 = 1 << 4;
+    const COARSE: u32 = 0b01;
+    const SMALL: u32 = 0b10;
+    const SMALL_AP_RW_ALL: u32 = 0b11 << 4;
+    const SMALL_APX: u32 = 1 << 9;
+
+    fn domain(d: u32) -> u32 {
+        d << 5
+    }
+
+    /// Memory with an empty L1 table and a CPU with the MMU enabled (XP=1).
+    fn machine() -> (Arm11Core, FlatMemory) {
+        let mem = FlatMemory::new(0, MEM_SIZE);
+        let mut cpu = Arm11Core::new();
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.cp15.write(true, 0, 2, 0, 0, L1).unwrap();
+        // Domain 0 = client, domain 1 = manager, domain 2 = no access.
+        cpu.cp15
+            .write(true, 0, 3, 0, 0, 0b01 | (0b11 << 2))
+            .unwrap();
+        cpu.cp15.write(true, 0, 1, 0, 0, 1 | (1 << 23)).unwrap();
+        (cpu, mem)
+    }
+
+    fn set_l1(mem: &mut FlatMemory, index: u32, descriptor: u32) {
+        mem.write32(L1 + index * 4, descriptor).unwrap();
+    }
+
+    fn params(cpu: &Arm11Core) -> Params {
+        Params {
+            ttbr0: cpu.cp15.ttbr0(),
+            ttbr1: cpu.cp15.ttbr1(),
+            n: cpu.cp15.ttbcr_n(),
+            dacr: cpu.cp15.dacr(),
+            privileged: cpu.cpsr.privileged(),
+        }
+    }
+
+    fn walk(cpu: &Arm11Core, mem: &mut FlatMemory, va: u32, access: Access) -> Walk {
+        translate(mem, &params(cpu), va, access).unwrap()
+    }
+
+    fn status_of(walk: Walk) -> u32 {
+        match walk {
+            Walk::Fault(fault) => fault.status,
+            Walk::Mapped(pa) => panic!("expected a fault, got {pa:#x}"),
+        }
+    }
+
+    #[test]
+    fn section_translation_keeps_the_offset_within_one_megabyte() {
+        let (cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x123, SECTION | SECTION_AP_RW_ALL);
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x1230_4567, Access::Read),
+            Walk::Mapped(0x0000_4567)
+        );
+        // Section base comes from the descriptor.
+        set_l1(&mut mem, 0x124, 0x0010_0000 | SECTION | SECTION_AP_RW_ALL);
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x1240_0010, Access::Read),
+            Walk::Mapped(0x0010_0010)
+        );
+    }
+
+    #[test]
+    fn supersection_translation_uses_sixteen_megabyte_granularity() {
+        let (cpu, mut mem) = machine();
+        for index in 0x300..0x310 {
+            set_l1(
+                &mut mem,
+                index,
+                0x0300_0000 | (1 << 18) | SECTION | SECTION_AP_RW_ALL,
+            );
+        }
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x3012_3456, Access::Read),
+            Walk::Mapped(0x0312_3456)
+        );
+    }
+
+    #[test]
+    fn coarse_tables_map_small_and_large_pages() {
+        let (cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        mem.write32(L2 + 4, 0x0002_0000 | SMALL | SMALL_AP_RW_ALL)
+            .unwrap();
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2000_1ABC, Access::Write),
+            Walk::Mapped(0x0002_0ABC)
+        );
+        // Large page: 64 KiB, replicated across sixteen entries.
+        let large = 0x0003_0000 | 0b01 | SMALL_AP_RW_ALL;
+        for i in 0..16 {
+            mem.write32(L2 + (16 + i) * 4, large).unwrap();
+        }
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x2001_2345, Access::Read),
+            Walk::Mapped(0x0003_2345)
+        );
+    }
+
+    #[test]
+    fn unmapped_addresses_raise_translation_faults() {
+        let (cpu, mut mem) = machine();
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x5000_0000, Access::Read)),
+            0x5
+        );
+        set_l1(&mut mem, 0x200, L2 | COARSE | domain(1));
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Read)),
+            0x7 | (1 << 4)
+        );
+    }
+
+    #[test]
+    fn domain_no_access_and_manager_override_permissions() {
+        let (cpu, mut mem) = machine();
+        // Domain 2 has no access; domain 1 is manager and ignores AP/XN.
+        set_l1(&mut mem, 1, SECTION | SECTION_AP_RW_ALL | domain(2));
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x0010_0000, Access::Read)),
+            0x9 | (2 << 4)
+        );
+        set_l1(&mut mem, 2, SECTION | SECTION_APX | SECTION_XN | domain(1));
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x0020_0000, Access::Write),
+            Walk::Mapped(0)
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x0020_0000, Access::Execute),
+            Walk::Mapped(0)
+        );
+    }
+
+    #[test]
+    fn access_permissions_distinguish_privilege_write_and_execute() {
+        let (mut cpu, mut mem) = machine();
+        set_l1(&mut mem, 1, SECTION | SECTION_AP_PRIV_RW);
+        set_l1(&mut mem, 2, SECTION | SECTION_AP_RW_ALL | SECTION_APX);
+        set_l1(&mut mem, 3, SECTION | SECTION_AP_RW_ALL | SECTION_XN);
+
+        // Privileged: RW on a privileged-only section, RO when APX is set.
+        assert!(matches!(
+            walk(&cpu, &mut mem, 0x0010_0000, Access::Write),
+            Walk::Mapped(_)
+        ));
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x0020_0000, Access::Write)),
+            0xD
+        );
+        assert!(matches!(
+            walk(&cpu, &mut mem, 0x0020_0000, Access::Read),
+            Walk::Mapped(_)
+        ));
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x0030_0000, Access::Execute)),
+            0xD
+        );
+
+        // User mode cannot touch the privileged-only section.
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x0010_0000, Access::Read)),
+            0xD
+        );
+        assert!(matches!(
+            walk(&cpu, &mut mem, 0x0030_0000, Access::Write),
+            Walk::Mapped(_)
+        ));
+    }
+
+    #[test]
+    fn small_page_apx_makes_the_page_read_only() {
+        let (cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        mem.write32(L2, 0x0002_0000 | SMALL | SMALL_AP_RW_ALL | SMALL_APX)
+            .unwrap();
+        assert!(matches!(
+            walk(&cpu, &mut mem, 0x2000_0000, Access::Read),
+            Walk::Mapped(_)
+        ));
+        assert_eq!(
+            status_of(walk(&cpu, &mut mem, 0x2000_0000, Access::Write)),
+            0xF
+        );
+    }
+
+    #[test]
+    fn ttbcr_n_routes_low_addresses_to_ttbr0_and_the_rest_to_ttbr1() {
+        let (mut cpu, mut mem) = machine();
+        // N = 1: the lower 2 GiB use TTBR0 (a 8 KiB table at 0xC000), the rest TTBR1.
+        cpu.cp15.write(true, 0, 2, 0, 2, 1).unwrap();
+        cpu.cp15.write(true, 0, 2, 0, 0, 0xC000).unwrap();
+        cpu.cp15.write(true, 0, 2, 0, 1, L1).unwrap();
+        mem.write32(0xC000 + 4, SECTION | SECTION_AP_RW_ALL)
+            .unwrap();
+        set_l1(&mut mem, 0x801, 0x0010_0000 | SECTION | SECTION_AP_RW_ALL);
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x0010_0008, Access::Read),
+            Walk::Mapped(8)
+        );
+        assert_eq!(
+            walk(&cpu, &mut mem, 0x8010_0008, Access::Read),
+            Walk::Mapped(0x0010_0008)
+        );
+    }
+
+    #[test]
+    fn cpu_runs_translated_code_and_data_accesses() {
+        let (mut cpu, mut mem) = machine();
+        // VA 0x4010_0000 -> PA 0 (code); VA 0x2000_0000 page -> PA 0x20000 (data).
+        set_l1(&mut mem, 0x401, SECTION | SECTION_AP_RW_ALL);
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        mem.write32(L2, 0x0002_0000 | SMALL | SMALL_AP_RW_ALL)
+            .unwrap();
+        mem.write32(0x2_0010, 0xCAFE_F00D).unwrap();
+        // ldr r1,[r0,#0x10] ; str r1,[r0,#0x14]
+        mem.write32(0, 0xE590_1010).unwrap();
+        mem.write32(4, 0xE580_1014).unwrap();
+        cpu.regs[0] = 0x2000_0000;
+        cpu.set_pc(0x4010_0000);
+        cpu.step(&mut mem).unwrap();
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[1], 0xCAFE_F00D);
+        assert_eq!(mem.read32(0x2_0014).unwrap(), 0xCAFE_F00D);
+        assert_eq!(cpu.pc(), 0x4010_0008);
+    }
+
+    #[test]
+    fn data_abort_latches_dfsr_and_dfar_and_reports_the_virtual_address() {
+        let (mut cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x401, SECTION | SECTION_AP_RW_ALL);
+        mem.write32(0, 0xE580_1000).unwrap(); // str r1,[r0]
+        cpu.regs[0] = 0x7000_0010;
+        cpu.set_pc(0x4010_0000);
+        assert!(matches!(
+            cpu.step(&mut mem),
+            Err(Error::InvalidAccess { addr: 0x7000_0010 })
+        ));
+        assert_eq!(cpu.cp15.dfar(), 0x7000_0010);
+        assert_eq!(cpu.cp15.dfsr(), 0x5 | (1 << 11));
+    }
+
+    #[test]
+    fn execute_never_pages_cause_prefetch_aborts() {
+        let (mut cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x401, SECTION | SECTION_AP_RW_ALL | SECTION_XN);
+        cpu.set_pc(0x4010_0000);
+        assert!(matches!(
+            cpu.step(&mut mem),
+            Err(Error::InvalidAccess { addr: 0x4010_0000 })
+        ));
+        assert_eq!(cpu.cp15.ifar(), 0x4010_0000);
+        assert_eq!(cpu.cp15.ifsr(), 0xD);
+    }
+
+    #[test]
+    fn accesses_straddling_a_page_boundary_translate_each_page() {
+        let (cpu, mut mem) = machine();
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        mem.write32(L2, 0x0002_0000 | SMALL | SMALL_AP_RW_ALL)
+            .unwrap();
+        mem.write32(L2 + 4, 0x0003_0000 | SMALL | SMALL_AP_RW_ALL)
+            .unwrap();
+        mem.write8(0x2_0FFE, 0x11).unwrap();
+        mem.write8(0x2_0FFF, 0x22).unwrap();
+        mem.write8(0x3_0000, 0x33).unwrap();
+        mem.write8(0x3_0001, 0x44).unwrap();
+        let mut bus = MmuBus::new(&mut mem, params(&cpu));
+        assert_eq!(bus.read32(0x2000_0FFE).unwrap(), 0x4433_2211);
+        bus.write32(0x2000_0FFE, 0xDDCC_BBAA).unwrap();
+        assert_eq!(bus.read16(0x2000_0FFF).unwrap(), 0xCCBB);
+        assert_eq!(mem.read8(0x3_0001).unwrap(), 0xDD);
+        assert_eq!(mem.read8(0x2_0FFE).unwrap(), 0xAA);
+    }
+
+    #[test]
+    fn subpage_permission_format_is_refused_explicitly() {
+        let (mut cpu, mut mem) = machine();
+        cpu.cp15.write(true, 0, 1, 0, 0, 1).unwrap(); // M=1, XP=0
+        cpu.set_pc(0);
+        assert!(matches!(cpu.step(&mut mem), Err(Error::Unimplemented(_))));
+    }
+}

@@ -18,8 +18,11 @@ pub(super) enum Cp15Fault {
 pub const MIDR: u32 = 0x410F_B024;
 
 const SCTLR_RESET: u32 = 0x0005_0078;
-/// Writable SCTLR bits: M, A, C, Z, I, V, RR and EE.
-const SCTLR_WRITABLE: u32 = 0x0000_F807;
+/// Writable SCTLR bits: M, A, C, Z, I, V, RR, EE and XP.
+const SCTLR_WRITABLE: u32 = 0x0080_F807;
+const SCTLR_M: u32 = 1;
+const SCTLR_XP: u32 = 1 << 23;
+const FSR_WRITE_NOT_READ: u32 = 1 << 11;
 const SCTLR_V: u32 = 1 << 13;
 const SCTLR_EE: u32 = 1 << 15;
 const CPACR_WRITABLE: u32 = 0x00F0_0000;
@@ -76,6 +79,61 @@ impl Cp15 {
     /// Raw system control register.
     pub fn sctlr(&self) -> u32 {
         self.sctlr
+    }
+
+    /// SCTLR.M: address translation is enabled.
+    pub fn mmu_enabled(&self) -> bool {
+        self.sctlr & SCTLR_M != 0
+    }
+
+    /// SCTLR.XP: ARMv6 page-table format (AP[1:0] plus APX/XN, no subpages).
+    pub fn extended_page_tables(&self) -> bool {
+        self.sctlr & SCTLR_XP != 0
+    }
+
+    pub fn ttbr0(&self) -> u32 {
+        self.ttbr0
+    }
+
+    pub fn ttbr1(&self) -> u32 {
+        self.ttbr1
+    }
+
+    /// TTBCR.N: the number of top address bits routed to TTBR0 (0-7).
+    pub fn ttbcr_n(&self) -> u32 {
+        self.ttbcr & 7
+    }
+
+    pub fn dacr(&self) -> u32 {
+        self.dacr
+    }
+
+    pub fn dfsr(&self) -> u32 {
+        self.dfsr
+    }
+
+    pub fn dfar(&self) -> u32 {
+        self.dfar
+    }
+
+    pub fn ifsr(&self) -> u32 {
+        self.ifsr
+    }
+
+    pub fn ifar(&self) -> u32 {
+        self.ifar
+    }
+
+    /// Records a data-abort cause the way the hardware latches DFSR/DFAR.
+    pub(super) fn latch_data_fault(&mut self, status: u32, address: u32, write: bool) {
+        self.dfsr = status | if write { FSR_WRITE_NOT_READ } else { 0 };
+        self.dfar = address;
+    }
+
+    /// Records a prefetch-abort cause (IFSR/IFAR).
+    pub(super) fn latch_prefetch_fault(&mut self, status: u32, address: u32) {
+        self.ifsr = status;
+        self.ifar = address;
     }
 
     /// SCTLR.V: exceptions use the high vector base 0xFFFF0000.

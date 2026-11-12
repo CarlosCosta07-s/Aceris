@@ -8,6 +8,7 @@ mod arm;
 mod condition;
 mod coprocessor;
 mod cp15;
+mod mmu;
 mod psr;
 mod shifter;
 mod thumb;
@@ -319,6 +320,10 @@ impl Arm11Core {
 
         if self.service_pending_interrupt()? {
             return Ok(StepEvent::Executed);
+        }
+
+        if self.cp15.mmu_enabled() {
+            return self.step_translated(bus, pc);
         }
 
         let (event, size) = if self.cpsr.thumb() {
