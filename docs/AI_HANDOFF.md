@@ -361,3 +361,27 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - A validação confirmada inclui Rustfmt, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS, mais `cargo ndk -t arm64-v8a build -p aceris-android --release`.
 - Isso não comprova conformidade integral ARMv6 nem execução de jogos. As próximas auditorias A32 continuam necessárias; `thumb.rs` permanece fora deste escopo para preservar o isolamento de trabalho.
 
+## ARM1136 A32 — saturação paralela e NOP verdadeiro (12/11/2026)
+
+### SSAT16 / USAT16
+
+- `8a3c3a2` — implementa `SSAT16` e `USAT16` A32, saturando os dois halfwords assinados independentemente, definindo `CPSR.Q` sticky quando qualquer lane é limitada e preservando NZCV.
+- `8319166` — ajusta o fixture de `USAT16` para testar também a saturação do halfword negativo.
+- `0a67bd6` — aplica Rustfmt aos novos caminhos e testes.
+- Três testes cobrem saturação signed/unsigned por lane, limites sem saturação, preservação de flags, Q e rejeição de PC nos operandos.
+- CI `43317800061` concluída com sucesso em Linux, Windows e macOS (Rustfmt, Clippy com `-D warnings`, `cargo test --workspace`) e Android ARM64 (build release).
+
+### NOP verdadeiro ARM1136
+
+- `462d3e8` — reconhece o encoding A32 de verdadeiro NOP antes da avaliação de condição, para que a condição seja ignorada. O campo Hint não altera o estado no perfil ARM1136JF-S r1p0.
+- `988fdb9` — aplica Rustfmt à lista de instruções do teste.
+- O teste cobre NOP com condição EQ não satisfeita, AL com Hint não nulo e NV; verifica avanço de PC sem alteração dos registradores ou CPSR.
+- CI `43318212186` concluída com sucesso em Linux, Windows e macOS (Rustfmt, Clippy com `-D warnings`, `cargo test --workspace`) e Android ARM64 (build release).
+- Referência arquitetural independente: [ARM1136JF-S/ARM1136J-S Technical Reference Manual, seção 2.10.5 — NOP True No Operation](https://documentation-service.arm.com/static/5e8e4457fd977155116ab118). O manual especifica bits 11:8 como SBZ, Hint nos bits 7:0, ausência de efeito do Hint em r1p0 e semântica independente da condição.
+- O código e os testes são originais do Aceris; nenhuma implementação de emulador de terceiros foi consultada.
+
+### Verificação consolidada
+
+- HEAD de código `988fdb9`: workflow `43318212186` aprovado em todas as plataformas.
+- A matriz confirmou Rustfmt, Clippy e testes do workspace em Linux, Windows e macOS, além do build release Android ARM64.
+- O grupo geral de DSP/mídia permanece parcial: SSAT16/USAT16 não concluem a cobertura ARMv6 integral nem substituem a auditoria das demais codificações A32.

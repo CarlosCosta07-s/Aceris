@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `17bba7258725960bafcd4f398fb56bea06e7e254`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `988fdb924a71528e585e45c9ab194a60f4af5673`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -33,6 +33,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Retorno de exceção A32 por instrução de processamento de dados e RFE
 - [x] SRS ARMv6: grava LR/SPSR em SP bancado selecionado, com os quatro modos de endereçamento, writeback, validação de modo e endianness; SP desalinhado é alinhado quando SCTLR.A/U estão claros e gera fault quando qualquer um está habilitado; testes aprovados no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
 - [~] Validar todas as combinações de exceção, vetores altos, endianness, máscaras, abortos durante transferências múltiplas e retornos em sequências longas
+- [x] Testes dedicados de SVC HLE e de entrada/retorno SVC de hardware, além de IRQ/FIQ com prioridade, máscaras A/I/F e restauração do CPSR; matriz aprovada no workflow [43318212186](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43318212186)
 - [ ] Integrar um controlador de interrupções e temporizadores de dispositivos ao modelo de IRQ/FIQ; as linhas externas são atualmente acionadas pelo host
 
 ### Instruções ARM e Thumb
@@ -41,6 +42,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Famílias ARMv6 de exclusivas A32: LDREX/STREX, LDREXB/STREXB, LDREXH/STREXH e LDREXD/STREXD
 - [x] Monitor exclusivo local com granularidade de reserva de 8 bytes integrado ao caminho MMU; teste verifica LDREX/STREX por aliases virtuais distintos do mesmo endereço físico. A invalidação por escritas de DMA/dispositivos ainda depende da coerência entre agentes
 - [~] Famílias ARMv6 de mídia/DSP, saturação, operações paralelas, extensão de sinal/zero e multiplicações de meia palavra: há implementação e testes para várias famílias, mas a cobertura integral ainda não foi demonstrada
+- [x] A32 ARM1136 `SSAT16`/`USAT16`: saturação independente dos dois halfwords assinados, `CPSR.Q` sticky e rejeição de PC; testes aprovados no workflow [43317800061](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43317800061)
+- [x] A32 ARM1136 verdadeiro `NOP`: ignora a condição e o campo Hint não produz efeito no ARM1136JF-S r1p0; teste com EQ, AL e NV aprovado no workflow [43318212186](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43318212186)
 - [~] Conjunto Thumb-1 principal com desvios, acessos, pilha, operações aritméticas/lógicas e extensões ARMv6 REV/SXT/UXT
 - [x] Thumb BKPT, CPS e SETEND implementados; BKPT é encaminhado como evento de breakpoint para a camada de processo
 - [ ] Inventariar codificações A32 ARMv6/ARMv6K ainda não suportadas ou decodificadas incorretamente
