@@ -4,9 +4,9 @@ use crate::cpu::Arm11Core;
 use crate::gpu::{
     GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
     GSP_INTERRUPT_QUEUE_CLIENT_STRIDE, GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
-    GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue,
-    GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue,
-    GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
+    GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue, GspGxCommandQueueError,
+    GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue, GspProcessCommandList,
+    Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
@@ -1024,7 +1024,9 @@ mod tests {
             let mut shared_block = [0u8; GSP_INTERRUPT_QUEUE_CLIENT_STRIDE as usize
                 * crate::gpu::GSP_INTERRUPT_QUEUE_CLIENT_COUNT as usize];
             shared_block[3] = crate::gpu::GSP_INTERRUPT_QUEUE_IGNORE_PDC;
-            session.write_memory_bytes(stack.address, &shared_block).unwrap();
+            session
+                .write_memory_bytes(stack.address, &shared_block)
+                .unwrap();
             (
                 stack.address,
                 stack.address + GSP_INTERRUPT_QUEUE_CLIENT_STRIDE,
