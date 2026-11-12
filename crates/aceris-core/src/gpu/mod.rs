@@ -58,16 +58,16 @@ pub use shader_input::{
     REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_INPUTBUFFER_CONFIG, VertexShaderAttributeBinding,
     VertexShaderInputBindings, VertexShaderInputError,
 };
-pub use vertex_shader::{
-    PicaShaderFormat1, PicaShaderFormat1Compare, PicaShaderFormat1Inverted, PicaShaderFormat1Unary,
-    PicaShaderFormat2Flow, PicaShaderFormat3BooleanFlow, PicaShaderFormat4Emit,
-    PicaShaderFormat5InvertedMultiplyAdd, PicaShaderFormat5MultiplyAdd,
-    PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat,
-};
 pub use vertex::{
     AttributeBitWidth, AttributeDataType, MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE,
     MAX_VERTEX_ARRAYS, MAX_VERTEX_ATTRIBUTES, NumericVertexAttribute, NumericVertexInput,
     PicaVertexInputLayout, PicaVertexInputState, REG_ATTRIBBUFFER0_OFFSET,
     REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
     RawVertexAttribute, RawVertexInput, VertexArrayLayout, VertexAttributeFormat, VertexInputError,
+};
+pub use vertex_shader::{
+    PicaShaderFormat1, PicaShaderFormat1Compare, PicaShaderFormat1Inverted, PicaShaderFormat1Unary,
+    PicaShaderFormat2Flow, PicaShaderFormat3BooleanFlow, PicaShaderFormat4Emit,
+    PicaShaderFormat5InvertedMultiplyAdd, PicaShaderFormat5MultiplyAdd,
+    PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat,
 };
