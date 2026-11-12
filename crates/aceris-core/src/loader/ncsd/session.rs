@@ -535,7 +535,7 @@ impl Arm11ProcessSession {
         source: &mut Arm11ProcessSession,
         destination_thread: ThreadId,
         message: ipc::IpcMessage<'_>,
-    ) -> std::result::Result<(), IpcStaticBufferTranslationError> {
+    ) -> std::result::Result<Vec<(usize, u32)>, IpcStaticBufferTranslationError> {
         let parameters = message
             .translation_parameters()
             .map_err(IpcStaticBufferTranslationError::TranslationDecode)?;
@@ -565,6 +565,7 @@ impl Arm11ProcessSession {
         }
 
         struct PendingStaticBufferCopy {
+            word_offset: usize,
             destination_address: u32,
             bytes: Vec<u8>,
         }
@@ -575,13 +576,14 @@ impl Arm11ProcessSession {
             .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
 
         for parameter in parameters {
-            let (buffer_index, size_bytes, source_address) = match parameter {
+            let (word_offset, buffer_index, size_bytes, source_address) = match parameter {
                 ipc::IpcTranslationParameter::StaticBuffer {
+                    word_offset,
                     buffer_index,
                     size_bytes,
                     source_address,
                     ..
-                } => (buffer_index, size_bytes, source_address),
+                } => (word_offset, buffer_index, size_bytes, source_address),
                 ipc::IpcTranslationParameter::Handles { descriptor, .. }
                 | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. }
                 | ipc::IpcTranslationParameter::PhysicalBufferTable { descriptor, .. } => {
@@ -625,6 +627,7 @@ impl Arm11ProcessSession {
 
             if size_bytes == 0 {
                 pending.push(PendingStaticBufferCopy {
+                    word_offset,
                     destination_address,
                     bytes: Vec::new(),
                 });
@@ -663,9 +666,18 @@ impl Arm11ProcessSession {
                     },
                 )?;
             pending.push(PendingStaticBufferCopy {
+                word_offset,
                 destination_address,
                 bytes,
             });
+        }
+
+        let mut translated = Vec::new();
+        translated
+            .try_reserve_exact(pending.len())
+            .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
+        for copy in &pending {
+            translated.push((copy.word_offset, copy.destination_address));
         }
 
         for copy in pending {
@@ -677,7 +689,7 @@ impl Arm11ProcessSession {
                 )?;
         }
 
-        Ok(())
+        Ok(translated)
     }
 
     /// Materializes type-2/3 IPC physical chunk tables in the receiver's static buffers.
@@ -740,37 +752,21 @@ impl Arm11ProcessSession {
             let (word_offset, buffer_index, size_bytes, source_address, read_only) = match parameter
             {
                 ipc::IpcTranslationParameter::PhysicalBufferTable {
-                        word_offset,
-                        buffer_index,
-                        size_bytes,
-                        source_address,
-                        read_only,
-                        ..
-                    } => (
-                        word_offset,
-                        buffer_index,
-                        size_bytes,
-                        source_address,
-                        read_only,
-                    ),
-                    other => {
-                        let descriptor = match other {
-                            ipc::IpcTranslationParameter::Handles { descriptor, .. }
-                            | ipc::IpcTranslationParameter::StaticBuffer { descriptor, .. }
-                            | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. } => {
-                                descriptor
-                            }
-                            ipc::IpcTranslationParameter::PhysicalBufferTable { .. } => {
-                                unreachable!("physical table parameters were matched above")
-                            }
-                        };
-                        return Err(
-                            IpcPhysicalBufferTranslationError::UnsupportedTranslationParameter {
-                                descriptor,
-                            },
-                        );
-                    }
-                };
+                    word_offset,
+                    buffer_index,
+                    size_bytes,
+                    source_address,
+                    read_only,
+                    ..
+                } => (
+                    word_offset,
+                    buffer_index,
+                    size_bytes,
+                    source_address,
+                    read_only,
+                ),
+                _ => continue,
+            };
 
             let entry_address = self
                 .address_space
