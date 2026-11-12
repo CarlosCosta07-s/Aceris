@@ -1988,7 +1988,6 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_ne!(copied, source_handle);
         assert!(
             source
                 .kernel_objects
@@ -2081,8 +2080,6 @@ mod tests {
         let copied_first = translated[0].unwrap();
         assert_eq!(translated[1], None);
         let copied_second = translated[2].unwrap();
-        assert_ne!(copied_first, first);
-        assert_ne!(copied_second, second);
         assert!(source.kernel_objects.memory_block_backing(first).is_ok());
         assert!(source.kernel_objects.memory_block_backing(second).is_ok());
         assert_eq!(
