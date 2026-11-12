@@ -48,6 +48,28 @@ pub trait Bus {
         Ok(u32::from_le_bytes(bytes))
     }
 
+
+    /// Reads a byte while applying User-mode memory permissions.
+    /// Buses without privilege-aware translation may use the ordinary access.
+    fn read8_unprivileged(&mut self, addr: u32) -> Result<u8> {
+        self.read8(addr)
+    }
+
+    /// Writes a byte while applying User-mode memory permissions.
+    fn write8_unprivileged(&mut self, addr: u32, value: u8) -> Result<()> {
+        self.write8(addr, value)
+    }
+
+    /// Reads a word while applying User-mode memory permissions.
+    fn read32_unprivileged(&mut self, addr: u32) -> Result<u32> {
+        self.read32(addr)
+    }
+
+    /// Writes a word while applying User-mode memory permissions.
+    fn write32_unprivileged(&mut self, addr: u32, value: u32) -> Result<()> {
+        self.write32(addr, value)
+    }
+
     fn write16(&mut self, addr: u32, value: u16) -> Result<()> {
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
             self.write8(addr.wrapping_add(i as u32), byte)?;

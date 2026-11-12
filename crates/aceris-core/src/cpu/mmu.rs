@@ -164,6 +164,16 @@ impl TlbEntry {
     }
 
     fn resolve(&self, params: &Params, address: u32, access: Access) -> Walk {
+        self.resolve_with_privilege(params, address, access, params.privileged)
+    }
+
+    fn resolve_with_privilege(
+        &self,
+        params: &Params,
+        address: u32,
+        access: Access,
+        privileged: bool,
+    ) -> Walk {
         let physical = self.physical_base | (address & !self.address_mask);
         let subpage = if self.subpage_shift == 0 {
             0
@@ -175,14 +185,14 @@ impl TlbEntry {
                 self.ap[subpage],
                 self.sctlr_s,
                 self.sctlr_r,
-                params.privileged,
+                privileged,
                 access == Access::Write,
             )
         } else {
             permission_allows(
                 u32::from(self.apx),
                 u32::from(self.ap[subpage]),
-                params.privileged,
+                privileged,
                 access == Access::Write,
             )
         };
@@ -537,6 +547,15 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
     }
 
     fn map(&mut self, va: u32, access: Access) -> Result<u32> {
+        self.map_with_privilege(va, access, self.params.privileged)
+    }
+
+    fn map_with_privilege(
+        &mut self,
+        va: u32,
+        access: Access,
+        privileged: bool,
+    ) -> Result<u32> {
         let access = if self.fetching && access == Access::Read {
             Access::Execute
         } else {
@@ -552,11 +571,11 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
         };
 
         let walk = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
-            entry.resolve(&self.params, mva, access)
+            entry.resolve_with_privilege(&self.params, mva, access, privileged)
         } else {
             match walk_page_tables(self.inner, &self.params, mva, access)? {
                 PageWalk::Mapped(entry) => {
-                    let result = entry.resolve(&self.params, mva, access);
+                    let result = entry.resolve_with_privilege(&self.params, mva, access, privileged);
                     self.tlb
                         .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
                     result
@@ -584,6 +603,39 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
     fn write8(&mut self, addr: u32, value: u8) -> Result<()> {
         let physical = self.map(addr, Access::Write)?;
         self.inner.write8(physical, value)
+    }
+
+    fn read8_unprivileged(&mut self, addr: u32) -> Result<u8> {
+        let physical = self.map_with_privilege(addr, Access::Read, false)?;
+        self.inner.read8(physical)
+    }
+
+    fn write8_unprivileged(&mut self, addr: u32, value: u8) -> Result<()> {
+        let physical = self.map_with_privilege(addr, Access::Write, false)?;
+        self.inner.write8(physical, value)
+    }
+
+    fn read32_unprivileged(&mut self, addr: u32) -> Result<u32> {
+        if addr & 0xFFF <= 0xFFC {
+            let physical = self.map_with_privilege(addr, Access::Read, false)?;
+            return self.inner.read32(physical);
+        }
+        let mut bytes = [0u8; 4];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = self.read8_unprivileged(addr.wrapping_add(index as u32))?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn write32_unprivileged(&mut self, addr: u32, value: u32) -> Result<()> {
+        if addr & 0xFFF <= 0xFFC {
+            let physical = self.map_with_privilege(addr, Access::Write, false)?;
+            return self.inner.write32(physical, value);
+        }
+        for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write8_unprivileged(addr.wrapping_add(index as u32), byte)?;
+        }
+        Ok(())
     }
 
     fn read16(&mut self, addr: u32) -> Result<u16> {
@@ -963,6 +1015,87 @@ mod tests {
             walk(&cpu, &mut mem, 0x8010_0008, Access::Read),
             Walk::Mapped(0x0010_0008)
         );
+    }
+
+    #[test]
+    fn unprivileged_bus_accesses_recheck_user_permissions_on_cached_tlb_entries() {
+        let (cpu, mut mem) = machine();
+        let address = 0x0020_0100;
+        set_l1(&mut mem, 2, SECTION | SECTION_AP_PRIV_RW);
+        mem.write32(0x100, 0xCAFE_BABE).unwrap();
+        mem.write8(0x104, 0x5A).unwrap();
+
+        let mut tlb = TranslationLookasideBuffer::default();
+        let mut bus = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
+
+        // The privileged access fills the TLB and succeeds.
+        assert_eq!(bus.read32(address).unwrap(), 0xCAFE_BABE);
+
+        // The cached descriptor must still be checked as User for translated accesses.
+        assert!(matches!(
+            bus.read32_unprivileged(address),
+            Err(Error::InvalidAccess { addr }) if addr == address
+        ));
+        assert!(matches!(
+            bus.read8_unprivileged(address + 4),
+            Err(Error::InvalidAccess { addr }) if addr == address + 4
+        ));
+        assert!(matches!(
+            bus.write32_unprivileged(address, 0x1122_3344),
+            Err(Error::InvalidAccess { addr }) if addr == address
+        ));
+        assert!(matches!(
+            bus.write8_unprivileged(address + 4, 0xAA),
+            Err(Error::InvalidAccess { addr }) if addr == address + 4
+        ));
+        assert_eq!(mem.read32(0x100).unwrap(), 0xCAFE_BABE);
+        assert_eq!(mem.read8(0x104).unwrap(), 0x5A);
+    }
+
+    #[test]
+    fn a32_ldrt_ldrbt_strt_and_strbt_use_user_memory_permissions() {
+        let (mut cpu, mut mem) = machine();
+        let data_va = 0x0020_0100;
+
+        // Code remains executable in privileged mode. Data is privileged RW only.
+        set_l1(&mut mem, 0x401, SECTION | SECTION_AP_RW_ALL);
+        set_l1(&mut mem, 0x002, SECTION | SECTION_AP_PRIV_RW);
+        mem.write32(0x100, 0xCAFE_BABE).unwrap();
+        mem.write8(0x104, 0x5A).unwrap();
+
+        // LDR r1,[r0] ; LDRT r2,[r0],#4 ; LDRBT r3,[r0],#1 ;
+        // STRT r4,[r0],#4 ; STRBT r5,[r0],#1.
+        for (offset, instruction) in [
+            (0, 0xE590_1000),
+            (4, 0xE4B0_2004),
+            (8, 0xE4F0_3001),
+            (12, 0xE4A0_4004),
+            (16, 0xE4E0_5001),
+        ] {
+            mem.write32(offset, instruction).unwrap();
+        }
+
+        cpu.regs[0] = data_va;
+        cpu.regs[4] = 0x1122_3344;
+        cpu.regs[5] = 0xAA;
+        cpu.set_pc(0x4010_0000);
+
+        // Ordinary privileged LDR succeeds on the privileged-only page.
+        cpu.step(&mut mem).unwrap();
+        assert_eq!(cpu.regs[1], 0xCAFE_BABE);
+
+        // The translation variants keep Supervisor mode but apply User AP checks.
+        for pc in [0x4010_0004, 0x4010_0008, 0x4010_000C, 0x4010_0010] {
+            cpu.set_pc(pc);
+            assert!(matches!(
+                cpu.step(&mut mem),
+                Err(Error::InvalidAccess { addr }) if addr == data_va
+            ));
+            assert_eq!(cpu.regs[0], data_va, "failed access must not write back");
+        }
+        assert_eq!(cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+        assert_eq!(mem.read32(0x100).unwrap(), 0xCAFE_BABE);
+        assert_eq!(mem.read8(0x104).unwrap(), 0x5A);
     }
 
     #[test]

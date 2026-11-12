@@ -767,6 +767,52 @@ impl Arm11Core {
         })
     }
 
+    /// Reads a word using User-mode MMU permissions without changing CPSR mode.
+    pub(super) fn read_data_u32_unprivileged<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+    ) -> Result<u32> {
+        let value = bus.read32_unprivileged(address)?;
+        Ok(if self.cpsr.big_endian() {
+            value.swap_bytes()
+        } else {
+            value
+        })
+    }
+
+    /// Reads an unaligned word using User-mode MMU permissions.
+    pub(super) fn read_data_u32_unaligned_unprivileged<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+    ) -> Result<u32> {
+        let value = self.read_data_u32_unprivileged(bus, address & !3)?;
+        let rotation = (address & 3) * 8;
+        Ok(if self.cpsr.big_endian() {
+            value.rotate_left(rotation)
+        } else {
+            value.rotate_right(rotation)
+        })
+    }
+
+    /// Writes a word using User-mode MMU permissions without changing CPSR mode.
+    pub(super) fn write_data_u32_unprivileged<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        value: u32,
+    ) -> Result<()> {
+        bus.write32_unprivileged(
+            address,
+            if self.cpsr.big_endian() {
+                value.swap_bytes()
+            } else {
+                value
+            },
+        )
+    }
+
     /// Writes a halfword using the current CPSR data endianness.
     pub(super) fn write_data_u16<B: Bus + ?Sized>(
         &self,
@@ -1729,6 +1775,21 @@ impl Arm11Core {
         let load = bit(word, 20);
         let rn = bits(word, 19, 16);
         let rd = bits(word, 15, 12);
+        // ARMv6 LDRT/LDRBT/STRT/STRBT use P=0,W=1. The address is
+        // post-indexed; only the memory transaction uses User permissions.
+        let unprivileged_access = !pre_index && bit(word, 21);
+
+        if unprivileged_access
+            && (rn as usize == PC
+                || (load && rd as usize == PC)
+                || (writeback && rn == rd)
+                || (bit(word, 25) && bits(word, 3, 0) as usize == PC))
+        {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
 
         let offset = if bit(word, 25) {
             let kind = ShiftKind::from_bits(bits(word, 6, 5));
@@ -1747,7 +1808,13 @@ impl Arm11Core {
         let addr = if pre_index { offset_addr } else { base };
 
         if load {
-            let value = if byte {
+            let value = if unprivileged_access {
+                if byte {
+                    u32::from(bus.read8_unprivileged(addr)?)
+                } else {
+                    self.read_data_u32_unaligned_unprivileged(bus, addr)?
+                }
+            } else if byte {
                 u32::from(bus.read8(addr)?)
             } else {
                 // Classic behaviour: unaligned word loads rotate the aligned word.
@@ -1764,7 +1831,13 @@ impl Arm11Core {
             }
         } else {
             let value = self.reg(rd, 8);
-            if byte {
+            if unprivileged_access {
+                if byte {
+                    bus.write8_unprivileged(addr, value as u8)?;
+                } else {
+                    self.write_data_u32_unprivileged(bus, addr & !3, value)?;
+                }
+            } else if byte {
                 bus.write8(addr, value as u8)?;
             } else {
                 self.write_data_u32(bus, addr & !3, value)?;
