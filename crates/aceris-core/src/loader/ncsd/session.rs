@@ -30,11 +30,11 @@ use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
-    SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE,
-    SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
-    SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
-    SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
-    SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION1,
+    SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MEMORY_BLOCK,
+    SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_EXIT_THREAD,
+    SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX,
+    SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
+    SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -498,6 +498,7 @@ impl Arm11ProcessSession {
         };
 
         match number {
+            SVC_CREATE_MEMORY_BLOCK => self.svc_create_memory_block(caller),
             SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
             SVC_MAP_MEMORY_BLOCK => self.svc_map_memory_block(caller),
             SVC_UNMAP_MEMORY_BLOCK => self.svc_unmap_memory_block(caller),
@@ -604,6 +605,42 @@ impl Arm11ProcessSession {
                 }
             }
         }
+    }
+
+    /// Handles CreateMemoryBlock: r0 = output handle pointer, r1 = source address,
+    /// r2 = size, r3 = this-process permissions, r4 = peer-process permissions.
+    ///
+    /// The current bootstrap supports anonymous blocks (source address zero).
+    /// Backing an existing guest mapping without copying is deferred until all
+    /// process-memory regions expose shareable backing.
+    fn svc_create_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        let output_address = registers[0];
+        let source_address = registers[1];
+        let size = registers[2];
+        let owner_permissions = registers[3];
+        let other_permissions = registers[4];
+
+        if !self.address_space.is_writable_range(output_address, 4) {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        if source_address != 0 {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        let handle = match self.create_memory_block(size, owner_permissions, other_permissions) {
+            Ok(handle) => handle,
+            Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
+        };
+        if self.address_space.write32(output_address, handle).is_err() {
+            let _ = self.kernel_objects.close_handle(handle);
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.write_svc_result(caller, 0)
     }
 
     /// Handles MapMemoryBlock: r0 = handle, r1 = address,
@@ -1424,6 +1461,90 @@ mod tests {
         session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[0] = 1.5f32.to_bits();
         session.run_instructions(16).unwrap();
         assert_eq!(f32::from_bits(session.core().vfp().s(14)), 3.0);
+    }
+
+    #[test]
+    fn create_memory_block_svc_creates_a_zeroed_block_that_can_be_mapped_and_unmapped() {
+        let mut session = test_session_with_program(&[
+            0xEF00_001E, // SVC CreateMemoryBlock
+            0xEF00_001F, // SVC MapMemoryBlock
+            0xEF00_0020, // SVC UnmapMemoryBlock
+        ]);
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = 0x0020_0000;
+            registers[1] = 0;
+            registers[2] = 0x1000;
+            registers[3] = 3;
+            registers[4] = 1;
+        }
+
+        let created = session.run_instructions(1).unwrap();
+        assert_eq!(created.instructions_executed, 1);
+        assert_eq!(created.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(session.core().regs[0], 0);
+        let handle = session.read_memory_u32(0x0020_0000).unwrap();
+        assert!(handle >= 0x100);
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = handle;
+            registers[1] = 0x0800_0000;
+            registers[2] = 3;
+            registers[3] = 1;
+        }
+        let mapped = session.run_instructions(1).unwrap();
+        assert_eq!(mapped.instructions_executed, 1);
+        assert_eq!(session.core().regs[0], 0);
+        let region = session.address_space().query_memory(0x0800_0000);
+        assert_eq!(region.state, super::process::Arm11MemoryState::Shared);
+        assert_eq!(region.permissions, 3);
+        assert_eq!(session.read_memory_u32(0x0800_0000).unwrap(), 0);
+
+        session.write_memory_u32(0x0800_0000, 0xA1B2_C3D4).unwrap();
+        assert_eq!(session.read_memory_u32(0x0800_0000).unwrap(), 0xA1B2_C3D4);
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = handle;
+            registers[1] = 0x0800_0000;
+        }
+        let unmapped = session.run_instructions(1).unwrap();
+        assert_eq!(unmapped.instructions_executed, 1);
+        assert_eq!(session.core().regs[0], 0);
+        assert!(session.read_memory_u32(0x0800_0000).is_err());
+        assert_eq!(session.kernel_objects.handle_count(), 1);
+    }
+
+    #[test]
+    fn create_memory_block_svc_rejects_unsupported_source_and_invalid_output() {
+        let mut session = test_session();
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = 0xDEAD_0000;
+            registers[1] = 0;
+            registers[2] = 0x1000;
+            registers[3] = 3;
+            registers[4] = 1;
+        }
+        assert_eq!(
+            session.svc_create_memory_block(MAIN_THREAD_ID),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
+        assert_eq!(session.kernel_objects.handle_count(), 0);
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = 0x0020_0000;
+            registers[1] = 0x0800_0000;
+            registers[2] = 0x1000;
+            registers[3] = 3;
+            registers[4] = 1;
+        }
+        session.svc_create_memory_block(MAIN_THREAD_ID);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
+        assert_eq!(session.kernel_objects.handle_count(), 0);
     }
 
     #[test]
