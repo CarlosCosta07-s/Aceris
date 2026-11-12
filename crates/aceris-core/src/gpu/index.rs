@@ -5,8 +5,8 @@
 //! indices only; applying GPUREG_VERTEX_OFFSET and resolving the physical base
 //! remain explicit responsibilities of the draw-command integration layer.
 
-use super::{GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200};
 use super::vertex::REG_ATTRIBBUFFERS_LOC;
+use super::{GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200};
 
 pub const REG_INDEXBUFFER_CONFIG: u16 = 0x227;
 pub const REG_NUMVERTICES: u16 = 0x228;
@@ -177,7 +177,6 @@ mod tests {
     use super::*;
     use crate::gpu::FCRAM_BASE;
 
-
     #[test]
     fn reads_index_and_vertex_offset_registers_from_pica200() {
         let mut gpu = Pica200::new();
@@ -186,8 +185,7 @@ mod tests {
         gpu.write_register(REG_INDEXBUFFER_CONFIG, 0x8000_0020)
             .unwrap();
         gpu.write_register(REG_NUMVERTICES, 36).unwrap();
-        gpu.write_register(REG_VERTEX_OFFSET, 0xFFFF_FFF0)
-            .unwrap();
+        gpu.write_register(REG_VERTEX_OFFSET, 0xFFFF_FFF0).unwrap();
 
         let state = gpu.index_input_state().unwrap();
         assert_eq!(state.raw_vertex_array_base_register, 0x1234_5000);
