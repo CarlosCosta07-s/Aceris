@@ -1411,8 +1411,7 @@ mod tests {
 
     #[test]
     fn control_memory_honors_the_new_linear_window_address_hint() {
-        let mut session =
-            test_session_with_program(&[0xEF00_0001, 0xEF00_0001]);
+        let mut session = test_session_with_program(&[0xEF00_0001, 0xEF00_0001]);
         let mut memory = GpuPhysicalMemory::new();
         let mut dma = GpuDmaAddressSpace::new();
         session.attach_gpu_services(memory.clone(), dma.clone());
