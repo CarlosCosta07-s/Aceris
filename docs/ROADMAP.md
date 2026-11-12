@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `e984f399bbaad181248e86bb5c93cc320fdac282`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `17bba7258725960bafcd4f398fb56bea06e7e254`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -161,7 +161,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
 - [~] Modelo inicial da fila GX e despacho síncrono de `ProcessCommandList`; RequestDMA, MemoryFill, DisplayTransfer, TextureCopy, FlushCacheRegions, estados busy e sincronização assíncrona ainda não são despachados
 - [~] Modelo da GSP Interrupt Relay Queue por cliente: bloco de 0x40 bytes com ring de 52 eventos, PDC0/PDC1 limitados a 0x20 com contadores de perdas, `ignore_pdc` e endereçamento de quatro clientes; o registro GSP e a entrega de eventos já usam shared memory mapeada e handles de evento. O kernel oferece CreateMemoryBlock anônimo para SYSTEM/BASE e criação de backing sobre heap regular já mapeado, além de Map/Unmap local; o despacho IPC de registro e a resposta estendida ainda não estão integrados
-- [ ] Implementar o dispatcher GSP IPC ponta a ponta: tradução/importação de handles entre processos, `RegisterInterruptRelayQueue` com resposta estendida e thread ID, `TriggerCmdReqQueue`, direitos de renderização e handoff que bloqueie/reative threads IPC. A criação de bloco local a partir de heap regular já existe, mas o compartilhamento/importação do handle para outro processo e as sessões ARM11 independentes continuam pendentes
+- [~] Existe uma primitiva de host `Arm11ProcessSession::import_memory_block_handle` que cria um handle em outra sessão usando o mesmo backing e invertendo as permissões owner/peer; testes cobrem leitura compartilhada, restrição de escrita e sobrevivência após fechar o handle de origem. Ainda falta o dispatcher GSP IPC ponta a ponta: tradução dos descritores COPY/MOVE_HANDLE, `RegisterInterruptRelayQueue` com resposta estendida e thread ID, `TriggerCmdReqQueue`, direitos de renderização e handoff que bloqueie/reative threads IPC. O `System` ainda não mantém nem agenda múltiplas sessões de processo ARM11.
 - [ ] Implementar comandos GX adicionais e semântica de busy/erro/async com registros GPU e devices correspondentes
 - [~] Transformação matricial e clipping genéricos implementados; clipping, montagem de primitivas, culling e convenções exatas do PICA200 ainda pendentes
 - [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
