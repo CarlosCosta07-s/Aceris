@@ -114,8 +114,7 @@ impl GspServiceRegistry {
             .iter()
             .position(|client| client.is_none())
             .ok_or(GspServiceError::NoFreeClientSlots)?;
-        let client_id =
-            u8::try_from(index).map_err(|_| GspServiceError::NoFreeClientSlots)?;
+        let client_id = u8::try_from(index).map_err(|_| GspServiceError::NoFreeClientSlots)?;
 
         self.register_client(session, client_id, shared_memory_base, event_handle)?;
         Ok(client_id)
@@ -379,11 +378,7 @@ mod tests {
 
         // Invalid resources must not reserve the first slot.
         assert_eq!(
-            registry.register_next_available_client(
-                &mut session,
-                SHARED_MEMORY_BASE,
-                u32::MAX,
-            ),
+            registry.register_next_available_client(&mut session, SHARED_MEMORY_BASE, u32::MAX,),
             Err(GspServiceError::InvalidEventHandle { handle: u32::MAX })
         );
         assert_eq!(registry.registered_client_count(), 0);
@@ -398,11 +393,7 @@ mod tests {
         }
         assert_eq!(registry.registered_client_count(), 4);
         assert_eq!(
-            registry.register_next_available_client(
-                &mut session,
-                SHARED_MEMORY_BASE,
-                events[4],
-            ),
+            registry.register_next_available_client(&mut session, SHARED_MEMORY_BASE, events[4],),
             Err(GspServiceError::NoFreeClientSlots)
         );
 
