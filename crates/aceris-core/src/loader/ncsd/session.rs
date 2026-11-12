@@ -26,7 +26,9 @@ use crate::gpu::{
 };
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::ncch::extended_header::Arm11MemoryType;
-use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
+use crate::loader::ncsd::process::{
+    Arm11CodeAddressSpace, Arm11DynamicMemoryError, SharedMemoryBacking,
+};
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
@@ -148,6 +150,35 @@ pub enum IpcPhysicalBufferTranslationError {
     SourcePermissionsInsufficient { address: u32, size_bytes: u32 },
     AllocationFailure,
     DestinationWriteFailed { address: u32 },
+}
+
+/// A mapped type-5/6/7 buffer kept alive between an IPC request and its reply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arm11IpcTemporaryBuffer {
+    /// Offset of the descriptor within the message translation section.
+    pub word_offset: usize,
+    /// Original address in the sending process.
+    pub source_address: u32,
+    /// Alias address in the receiving process, preserving the source page offset.
+    pub mapped_address: u32,
+    /// Logical buffer length, excluding page padding.
+    pub size_bytes: u32,
+    /// Source-process access flags: 1=read, 2=write, 3=read/write.
+    pub permissions: u8,
+}
+
+/// Errors while creating or completing temporary IPC buffer mappings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IpcTemporaryBufferTranslationError {
+    TranslationDecode(ipc::IpcTranslationSectionError),
+    UnknownDestinationThread(ThreadId),
+    ExitedDestinationThread(ThreadId),
+    SourceRangeUnavailable { address: u32, size_bytes: u32 },
+    SourceRangeNotWritable { address: u32, size_bytes: u32 },
+    AllocationFailure,
+    Mapping(Arm11DynamicMemoryError),
+    DestinationWriteFailed { address: u32 },
+    SourceWriteBackFailed { address: u32, size_bytes: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -873,6 +904,226 @@ impl Arm11ProcessSession {
         }
 
         Ok(translated)
+    }
+
+    /// Maps every type-5/6/7 request buffer into the receiving thread's address space.
+    ///
+    /// Type 5 copies readable input bytes into a read/write receiver alias.
+    /// Type 6 reserves a zeroed output alias and requires a writable source.
+    /// Type 7 stages readable input and verifies source write permission when
+    /// the reply completes. All aliases are rolled back if any descriptor fails.
+    pub fn map_temporary_buffer_translations_from_ipc(
+        &mut self,
+        source: &Arm11ProcessSession,
+        destination_thread: ThreadId,
+        message: ipc::IpcMessage<'_>,
+    ) -> std::result::Result<Vec<Arm11IpcTemporaryBuffer>, IpcTemporaryBufferTranslationError> {
+        let parameters = message
+            .translation_parameters()
+            .map_err(IpcTemporaryBufferTranslationError::TranslationDecode)?;
+        let thread_info = self
+            .scheduler
+            .thread_info(destination_thread)
+            .ok_or(IpcTemporaryBufferTranslationError::UnknownDestinationThread(
+                destination_thread,
+            ))?;
+        if thread_info.state == ThreadState::Exited {
+            return Err(IpcTemporaryBufferTranslationError::ExitedDestinationThread(
+                destination_thread,
+            ));
+        }
+
+        let mut mappings = Vec::new();
+        mappings
+            .try_reserve_exact(parameters.len())
+            .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
+
+        for parameter in parameters {
+            let (word_offset, permissions, size_bytes, source_address) = match parameter {
+                ipc::IpcTranslationParameter::MappedBuffer {
+                    word_offset,
+                    permissions,
+                    size_bytes,
+                    source_address,
+                    ..
+                } => (word_offset, permissions, size_bytes, source_address),
+                _ => continue,
+            };
+
+            let source_size = usize::try_from(size_bytes)
+                .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
+            if permissions & 1 != 0
+                && !source.address_space.is_readable_range(source_address, source_size)
+            {
+                for mapping in mappings.iter().copied() {
+                    let _ = self
+                        .address_space
+                        .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                }
+                return Err(IpcTemporaryBufferTranslationError::SourceRangeUnavailable {
+                    address: source_address,
+                    size_bytes,
+                });
+            }
+            if permissions == 2
+                && !source.address_space.is_writable_range(source_address, source_size)
+            {
+                for mapping in mappings.iter().copied() {
+                    let _ = self
+                        .address_space
+                        .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                }
+                return Err(IpcTemporaryBufferTranslationError::SourceRangeNotWritable {
+                    address: source_address,
+                    size_bytes,
+                });
+            }
+
+            let page_offset = source_address & 0xFFF;
+            let required_size = u64::from(page_offset) + u64::from(size_bytes);
+            let mapping_size = required_size
+                .checked_add(0xFFF)
+                .map(|size| size & !0xFFF)
+                .and_then(|size| u32::try_from(size).ok())
+                .ok_or(IpcTemporaryBufferTranslationError::AllocationFailure)?;
+            let backing = SharedMemoryBacking::zeroed(mapping_size as usize)
+                .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
+            let mapped_address = match self.address_space.map_temporary_ipc_buffer(
+                backing,
+                page_offset,
+                size_bytes,
+            ) {
+                Ok(address) => address,
+                Err(error) => {
+                    for mapping in mappings.iter().copied() {
+                        let _ = self
+                            .address_space
+                            .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                    }
+                    return Err(IpcTemporaryBufferTranslationError::Mapping(error));
+                }
+            };
+
+            if permissions & 1 != 0 {
+                let mut bytes = Vec::new();
+                if bytes.try_reserve_exact(source_size).is_err() {
+                    let _ = self
+                        .address_space
+                        .unmap_temporary_ipc_buffer(mapped_address);
+                    for mapping in mappings.iter().copied() {
+                        let _ = self
+                            .address_space
+                            .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                    }
+                    return Err(IpcTemporaryBufferTranslationError::AllocationFailure);
+                }
+                bytes.resize(source_size, 0);
+                if source
+                    .read_memory_bytes(source_address, &mut bytes)
+                    .is_err()
+                {
+                    let _ = self
+                        .address_space
+                        .unmap_temporary_ipc_buffer(mapped_address);
+                    for mapping in mappings.iter().copied() {
+                        let _ = self
+                            .address_space
+                            .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                    }
+                    return Err(IpcTemporaryBufferTranslationError::SourceRangeUnavailable {
+                        address: source_address,
+                        size_bytes,
+                    });
+                }
+                if self.write_memory_bytes(mapped_address, &bytes).is_err() {
+                    let _ = self
+                        .address_space
+                        .unmap_temporary_ipc_buffer(mapped_address);
+                    for mapping in mappings.iter().copied() {
+                        let _ = self
+                            .address_space
+                            .unmap_temporary_ipc_buffer(mapping.mapped_address);
+                    }
+                    return Err(IpcTemporaryBufferTranslationError::DestinationWriteFailed {
+                        address: mapped_address,
+                    });
+                }
+            }
+
+            mappings.push(Arm11IpcTemporaryBuffer {
+                word_offset,
+                source_address,
+                mapped_address,
+                size_bytes,
+                permissions,
+            });
+        }
+
+        Ok(mappings)
+    }
+
+    /// Completes temporary buffer transfers when the receiver sends its IPC reply.
+    ///
+    /// Writable type-6/type-7 buffers are staged first, then copied back to the
+    /// original sender. Type-5 input buffers are never copied back. Every alias
+    /// is unmapped even if validation or write-back fails.
+    pub fn complete_temporary_buffer_translations_from_ipc(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        mappings: &[Arm11IpcTemporaryBuffer],
+    ) -> std::result::Result<(), IpcTemporaryBufferTranslationError> {
+        let transfer_result = (|| {
+            let mut pending = Vec::new();
+            pending
+                .try_reserve_exact(mappings.len())
+                .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
+
+            for mapping in mappings.iter().copied() {
+                if mapping.permissions & 2 == 0 {
+                    continue;
+                }
+                let size = usize::try_from(mapping.size_bytes)
+                    .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
+                if !source
+                    .address_space
+                    .is_writable_range(mapping.source_address, size)
+                {
+                    return Err(IpcTemporaryBufferTranslationError::SourceRangeNotWritable {
+                        address: mapping.source_address,
+                        size_bytes: mapping.size_bytes,
+                    });
+                }
+                let mut bytes = Vec::new();
+                bytes
+                    .try_reserve_exact(size)
+                    .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
+                bytes.resize(size, 0);
+                self.read_memory_bytes(mapping.mapped_address, &mut bytes)
+                    .map_err(|_| IpcTemporaryBufferTranslationError::SourceRangeUnavailable {
+                        address: mapping.mapped_address,
+                        size_bytes: mapping.size_bytes,
+                    })?;
+                pending.push((mapping.source_address, mapping.size_bytes, bytes));
+            }
+
+            for (address, size_bytes, bytes) in pending {
+                source.write_memory_bytes(address, &bytes).map_err(|_| {
+                    IpcTemporaryBufferTranslationError::SourceWriteBackFailed {
+                        address,
+                        size_bytes,
+                    }
+                })?;
+            }
+            Ok(())
+        })();
+
+        for mapping in mappings.iter().copied() {
+            let _ = self
+                .address_space
+                .unmap_temporary_ipc_buffer(mapping.mapped_address);
+        }
+
+        transfer_result
     }
 
     /// Maps a memory-block handle into this process with the requested R/W permissions.
@@ -2918,6 +3169,99 @@ mod tests {
                 }
             )
         );
+    }
+
+    #[test]
+    fn ipc_type_five_maps_read_only_input_and_does_not_copy_back() {
+        let mut source = test_session();
+        source.write_memory_bytes(0x0020_0000, &[1, 2, 3, 4]).unwrap();
+        let mut destination = test_session();
+        let words = [0x1234_0002, 0x0000_004A, 0x0020_0000];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+
+        let mappings = destination
+            .map_temporary_buffer_translations_from_ipc(&source, MAIN_THREAD_ID, message)
+            .unwrap();
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].mapped_address, 0x0400_1000);
+        let mut input = [0; 4];
+        destination
+            .read_memory_bytes(mappings[0].mapped_address, &mut input)
+            .unwrap();
+        assert_eq!(input, [1, 2, 3, 4]);
+        destination
+            .write_memory_bytes(mappings[0].mapped_address, &[9, 9, 9, 9])
+            .unwrap();
+        destination
+            .complete_temporary_buffer_translations_from_ipc(&mut source, &mappings)
+            .unwrap();
+
+        let mut unchanged = [0; 4];
+        source
+            .read_memory_bytes(0x0020_0000, &mut unchanged)
+            .unwrap();
+        assert_eq!(unchanged, [1, 2, 3, 4]);
+        assert!(!destination.address_space.is_writable_range(0x0400_1000, 4));
+    }
+
+    #[test]
+    fn ipc_type_six_maps_zeroed_output_and_copies_back_on_reply() {
+        let mut source = test_session();
+        source.write_memory_bytes(0x0020_0000, &[1, 2, 3, 4]).unwrap();
+        let mut destination = test_session();
+        let words = [0x1234_0002, 0x0000_004C, 0x0020_0000];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+
+        let mappings = destination
+            .map_temporary_buffer_translations_from_ipc(&source, MAIN_THREAD_ID, message)
+            .unwrap();
+        let mut output = [0xFF; 4];
+        destination
+            .read_memory_bytes(mappings[0].mapped_address, &mut output)
+            .unwrap();
+        assert_eq!(output, [0; 4]);
+        destination
+            .write_memory_bytes(mappings[0].mapped_address, &[5, 6, 7, 8])
+            .unwrap();
+        destination
+            .complete_temporary_buffer_translations_from_ipc(&mut source, &mappings)
+            .unwrap();
+
+        let mut copied_back = [0; 4];
+        source
+            .read_memory_bytes(0x0020_0000, &mut copied_back)
+            .unwrap();
+        assert_eq!(copied_back, [5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn ipc_type_seven_stages_input_and_copies_output_back() {
+        let mut source = test_session();
+        source.write_memory_bytes(0x0020_0000, &[1, 2, 3, 4]).unwrap();
+        let mut destination = test_session();
+        let words = [0x1234_0002, 0x0000_004E, 0x0020_0000];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+
+        let mappings = destination
+            .map_temporary_buffer_translations_from_ipc(&source, MAIN_THREAD_ID, message)
+            .unwrap();
+        let mut input = [0; 4];
+        destination
+            .read_memory_bytes(mappings[0].mapped_address, &mut input)
+            .unwrap();
+        assert_eq!(input, [1, 2, 3, 4]);
+        destination
+            .write_memory_bytes(mappings[0].mapped_address, &[8, 7, 6, 5])
+            .unwrap();
+        destination
+            .complete_temporary_buffer_translations_from_ipc(&mut source, &mappings)
+            .unwrap();
+
+        let mut copied_back = [0; 4];
+        source
+            .read_memory_bytes(0x0020_0000, &mut copied_back)
+            .unwrap();
+        assert_eq!(copied_back, [8, 7, 6, 5]);
     }
 
     #[test]
