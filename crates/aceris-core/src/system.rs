@@ -1,7 +1,7 @@
 //! Top-level emulated system.
 
 use crate::cpu::Arm11Core;
-use crate::gpu::{GpuPhysicalMemory, Pica200};
+use crate::gpu::{GpuDmaAddressSpace, GpuPhysicalMemory, Pica200};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
@@ -21,6 +21,7 @@ pub struct System {
     ncsd_session: Option<Arm11ProcessSession>,
     gpu: Pica200,
     physical_memory: GpuPhysicalMemory,
+    gpu_address_space: GpuDmaAddressSpace,
     lcd: LcdController,
     display: DualScreenDisplay,
 }
@@ -244,6 +245,47 @@ impl System {
         &mut self.physical_memory
     }
 
+    /// Returns the explicitly registered process-linear to GPU-physical mappings.
+    pub const fn gpu_address_space(&self) -> &GpuDmaAddressSpace {
+        &self.gpu_address_space
+    }
+
+    /// Returns mutable access to the GPU DMA mapping table.
+    ///
+    /// Register only ranges whose guest linear-memory allocation has already
+    /// succeeded. This API does not allocate guest memory on its own.
+    pub fn gpu_address_space_mut(&mut self) -> &mut GpuDmaAddressSpace {
+        &mut self.gpu_address_space
+    }
+
+    /// Registers a confirmed original-model 3DS linear-memory allocation.
+    pub fn map_gpu_linear_region(
+        &mut self,
+        virtual_base: u32,
+        size: u32,
+    ) -> Result<crate::gpu::GpuLinearMapping> {
+        self.gpu_address_space
+            .map_linear_region(virtual_base, size)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    error.to_string(),
+                ))
+            })
+    }
+
+    /// Removes a previously registered linear-memory DMA mapping.
+    pub fn unmap_gpu_linear_region(&mut self, virtual_base: u32, size: u32) -> Result<()> {
+        self.gpu_address_space
+            .unmap_linear_region(virtual_base, size)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    error.to_string(),
+                ))
+            })
+    }
+
     pub const fn gpu(&self) -> &Pica200 {
         &self.gpu
     }
@@ -273,13 +315,27 @@ impl System {
         &mut self.display
     }
 
-    /// Reads and submits a PICA200 command list from the active ARM11 address space.
+    /// Reads and submits a PICA200 command list from physical FCRAM/VRAM.
     ///
     /// The guest address must be four-byte aligned and the requested size is
     /// bounded to prevent an untrusted process from forcing an unbounded host
     /// allocation. All words are read before the GPU parser is invoked, so an
     /// invalid guest range cannot partially modify PICA200 registers.
+    /// Compatibility wrapper for the original physical-memory submission API.
+    ///
+    /// Despite the legacy name, `address` is a physical byte address, not a
+    /// process virtual address. Use `submit_pica_command_list_from_linear_memory`
+    /// for a registered linear-memory virtual range.
     pub fn submit_pica_command_list_from_memory(
+        &mut self,
+        address: u32,
+        word_count: usize,
+    ) -> Result<crate::gpu::PicaCommandListReport> {
+        self.submit_pica_command_list_from_physical_memory(address, word_count)
+    }
+
+    /// Reads a PICA200 command list from an already translated physical address.
+    pub fn submit_pica_command_list_from_physical_memory(
         &mut self,
         address: u32,
         word_count: usize,
@@ -358,6 +414,40 @@ impl System {
         })
     }
 
+    /// Resolves a process-linear command-list address through the registered DMA map.
+    ///
+    /// The complete byte range must be inside one mapping. The translated
+    /// physical address is then submitted through the same bounded parser path.
+    pub fn submit_pica_command_list_from_linear_memory(
+        &mut self,
+        linear_virtual_address: u32,
+        word_count: usize,
+    ) -> Result<crate::gpu::PicaCommandListReport> {
+        let byte_count = word_count.checked_mul(4).ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PICA200 command-list byte count overflowed",
+            ))
+        })?;
+        let resolved = self
+            .gpu_address_space
+            .resolve_physical_range(
+                &self.physical_memory,
+                linear_virtual_address,
+                byte_count,
+            )
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    error.to_string(),
+                ))
+            })?;
+        self.submit_pica_command_list_from_physical_memory(
+            resolved.physical_address,
+            word_count,
+        )
+    }
+
     /// Processes PICA200 command buffers triggered through internal registers.
     ///
     /// The descriptor contains a physical address; command words are fetched
@@ -388,7 +478,10 @@ impl System {
 
         let mut submitted = 0u64;
         for descriptor in pending {
-            self.submit_pica_command_list_from_memory(descriptor.address, descriptor.word_count())?;
+            self.submit_pica_command_list_from_physical_memory(
+                descriptor.address,
+                descriptor.word_count(),
+            )?;
             self.gpu
                 .acknowledge_command_buffer(descriptor)
                 .map_err(|error| {
@@ -502,6 +595,51 @@ mod tests {
         assert_eq!(report.commands, 1);
         assert_eq!(report.register_writes, 1);
         assert_eq!(system.gpu().register(0x100), Some(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn submits_pica_commands_from_registered_linear_memory() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        system.map_gpu_linear_region(0x1400_2000, 0x1000).unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(FCRAM_BASE + 0x2000, 0xCAFE_BABE)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(FCRAM_BASE + 0x2004, 0x000F_0100)
+            .unwrap();
+
+        let report = system
+            .submit_pica_command_list_from_linear_memory(0x1400_2000, 2)
+            .unwrap();
+        assert_eq!(report.register_writes, 1);
+        assert_eq!(system.gpu().register(0x100), Some(0xCAFE_BABE));
+    }
+
+    #[test]
+    fn linear_command_submission_rejects_unregistered_virtual_addresses() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        assert!(system
+            .submit_pica_command_list_from_linear_memory(0x1400_2000, 2)
+            .is_err());
+        assert_eq!(system.gpu().register(0x100), Some(0));
     }
 
     #[test]
