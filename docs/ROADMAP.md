@@ -14,7 +14,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Política de não incluir jogos, firmware, chaves, dumps ou conteúdo protegido no repositório
 - [x] CI configurado para Linux, Windows e macOS com Rustfmt, Clippy e testes; build Android ARM64 separado
 - [x] Workflow completo do commit `849e5a33933ea9444122f2160daf867e2d4e60d0` terminou com sucesso em 12/11/2026, incluindo a etapa Android ARM64
-- [x] Workflow do commit `55014b05448153ec3f802fbe50ecda5daa8d79a8` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
+- [x] Workflow do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
 - [ ] Manter README, arquitetura e roadmap sincronizados com o código, sem anunciar compatibilidade não testada
@@ -126,14 +126,14 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Descritores e acknowledgement dos canais de command buffer 0 e 1
 - [~] Integração inicial no ciclo de frame: captura command buffers da memória visível ao processo e aplica as escritas aos registradores
 - [~] O bridge atual trata o endereço decodificado do command buffer como endereço visível ao processo; tradução DMA/endereçamento físico do hardware ainda precisa ser implementada
-- [~] Rasterizador de referência próprio em CPU para triângulos já transformados: interpolação de cor/profundidade, teste de profundidade e regra top-left; testes de cobertura, orientação, profundidade e entradas inválidas
+- [x] Rasterizador de referência próprio em CPU para triângulos já transformados: interpolação de cor/profundidade, teste de profundidade e regra top-left; testes de cobertura, orientação, profundidade e entradas inválidas
 - [x] Estágio geométrico de referência independente: matriz 4x4 column-major, transformação homogênea, clipping contra os seis planos canônicos, proteção de W positivo, triangulação em leque e viewport com Y descendente
 - [x] Rasterizador de referência com interpolação de cor perspective-correct por reciprocal W, interpolação de profundidade e teste de depth
 - [~] O estágio geométrico e o rasterizador podem ser usados juntos por `GeometryPipeline::draw_triangle`, mas ainda são genéricos e independentes dos registradores, shaders e comandos reais do PICA200
 - [ ] Ligar a entrada real do PICA200 ao estágio geométrico e rasterizador; ainda não há renderização de jogos nem saída gráfica derivada do command processor
 - [ ] Modelo completo de command processor, filas, sincronização, interrupções e efeitos dos registradores
-- [ ] Formatos de vértice, atributos, uniformes, vertex shader e transformações
-- [ ] Clipping, montagem de primitivas e regras de culling
+- [ ] Formato de vértice PICA200, atributos, uniformes e semântica de vertex shader, após confirmar a especificação de hardware
+- [~] Transformação matricial e clipping genéricos implementados; clipping, montagem de primitivas, culling e convenções exatas do PICA200 ainda pendentes
 - [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
 - [ ] Depth/stencil, blending, máscaras e operações completas de framebuffer
 - [ ] Integração com memória física, DMA, cache, sincronização e interrupções
@@ -189,12 +189,15 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 - [x] Testes unitários para CPU, memória, loaders, processo, kernel inicial, PICA200 command lists e LCD
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
-- [x] Testes iniciais do rasterizador de referência aprovados no workflow multiplataforma do commit `55014b05448153ec3f802fbe50ecda5daa8d79a8`
+- [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
+- [x] Regressão Rustfmt/Clippy/testes em Linux, Windows e macOS aprovada no mesmo commit
+- [~] Build Android `arm64-v8a` aprovado; testes de execução no dispositivo Android ainda pendentes
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
 - [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis
 - [ ] Testes gráficos com cenas próprias e resultados de referência
-- [ ] Regressão em Linux, Windows, macOS e Android ARM64
+- [x] CI de regressão em Linux, Windows e macOS; build cruzado Android ARM64
+- [ ] Testes de execução e ciclo de vida em dispositivo Android ARM64
 - [ ] Medir desempenho antes de otimizar; preservar precisão e compatibilidade
 - [ ] Perfilamento e otimizações de CPU, GPU, memória e renderização
 - [ ] Matriz pública de compatibilidade baseada somente em testes realmente executados
