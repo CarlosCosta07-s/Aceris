@@ -7,7 +7,10 @@
 //! address. This module does not guess GPU register address units or implement
 //! DMA/address translation.
 
-use super::{GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200};
+use super::{
+    GpuAddressSpaceError, GpuDmaAddressSpace, GpuPhysicalMemory, GpuPhysicalMemoryError,
+    Pica200,
+};
 
 pub const REG_ATTRIBBUFFERS_LOC: u16 = 0x200;
 pub const REG_ATTRIBBUFFERS_FORMAT_LOW: u16 = 0x201;
@@ -317,6 +320,7 @@ pub enum VertexInputError {
         offset: u64,
     },
     PhysicalMemory(GpuPhysicalMemoryError),
+    GpuAddressSpace(GpuAddressSpaceError),
 }
 
 impl std::fmt::Display for VertexInputError {
@@ -330,6 +334,12 @@ impl std::error::Error for VertexInputError {}
 impl From<GpuPhysicalMemoryError> for VertexInputError {
     fn from(error: GpuPhysicalMemoryError) -> Self {
         Self::PhysicalMemory(error)
+    }
+}
+
+impl From<GpuAddressSpaceError> for VertexInputError {
+    fn from(error: GpuAddressSpaceError) -> Self {
+        Self::GpuAddressSpace(error)
     }
 }
 
@@ -549,19 +559,70 @@ impl PicaVertexInputLayout {
         physical_base: u32,
         vertex_index: u32,
     ) -> Result<RawVertexInput, VertexInputError> {
+        self.read_vertex_with_resolver(physical_base, vertex_index, |absolute, width| {
+            let address = u32::try_from(absolute).map_err(|_| {
+                VertexInputError::AddressOverflow {
+                    base: physical_base,
+                    offset: u64::from(u32::MAX) + 1,
+                }
+            })?;
+            memory.validate_range(address, usize::from(width))?;
+            Ok(address)
+        }, memory)
+    }
+
+    /// Fetches one vertex through registered process-linear to GPU-physical mappings.
+    ///
+    /// Each component is translated and range-checked independently, so an
+    /// attribute cannot silently read beyond the end of a registered mapping.
+    pub fn read_vertex_via_dma(
+        &self,
+        memory: &GpuPhysicalMemory,
+        address_space: &GpuDmaAddressSpace,
+        linear_virtual_base: u32,
+        vertex_index: u32,
+    ) -> Result<RawVertexInput, VertexInputError> {
+        self.read_vertex_with_resolver(
+            linear_virtual_base,
+            vertex_index,
+            |absolute, width| {
+                let address = u32::try_from(absolute).map_err(|_| {
+                    VertexInputError::AddressOverflow {
+                        base: linear_virtual_base,
+                        offset: u64::from(u32::MAX) + 1,
+                    }
+                })?;
+                Ok(address_space
+                    .resolve_physical_range(memory, address, usize::from(width))?
+                    .physical_address)
+            },
+            memory,
+        )
+    }
+
+    fn read_vertex_with_resolver<F>(
+        &self,
+        base_address: u32,
+        vertex_index: u32,
+        mut resolve_address: F,
+        memory: &GpuPhysicalMemory,
+    ) -> Result<RawVertexInput, VertexInputError>
+    where
+        F: FnMut(u64, u8) -> Result<u32, VertexInputError>,
+    {
         let mut output = RawVertexInput::new(self.fixed_attribute_mask);
 
         for array in &self.arrays {
             let stride_offset = u64::from(vertex_index)
                 .checked_mul(u64::from(array.stride_bytes))
                 .ok_or(VertexInputError::AddressOverflow {
-                    base: physical_base,
+                    base: base_address,
                     offset: u64::MAX,
                 })?;
             let array_offset = u64::from(array.base_offset)
                 .checked_add(stride_offset)
                 .ok_or(VertexInputError::AddressOverflow {
-                    base: physical_base,
+                    base: base_address,
                     offset: u64::MAX,
                 })?;
 
@@ -572,21 +633,16 @@ impl PicaVertexInputLayout {
                 let relative_offset = array_offset
                     .checked_add(u64::from(component.byte_offset))
                     .ok_or(VertexInputError::AddressOverflow {
-                        base: physical_base,
+                        base: base_address,
                         offset: u64::MAX,
                     })?;
-                let absolute_address = u64::from(physical_base)
+                let absolute_address = u64::from(base_address)
                     .checked_add(relative_offset)
                     .ok_or(VertexInputError::AddressOverflow {
-                        base: physical_base,
+                        base: base_address,
                         offset: relative_offset,
                     })?;
-                let address = u32::try_from(absolute_address).map_err(|_| {
-                    VertexInputError::AddressOverflow {
-                        base: physical_base,
-                        offset: relative_offset,
-                    }
-                })?;
+                let address = resolve_address(absolute_address, component.byte_width)?;
 
                 let mut bytes = [0u8; 4];
                 memory.read(address, &mut bytes[..usize::from(component.byte_width)])?;
