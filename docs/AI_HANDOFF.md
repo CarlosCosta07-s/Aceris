@@ -260,3 +260,35 @@ Cinco testes foram adicionados, mas não executados nesta sessão. Rust/Cargo n�
  
 A verificação local continua pendente: o ambiente não disponibiliza Cargo/Rust, e os seis testes novos/alterados nesta sequência não foram executados. Verificar Rustfmt, Clippy e `cargo test --workspace` na CI antes de aprovar.
 
+## Decodificação tipada de descritores IPC (12/11/2026)
+
+Com a autorização de colaboração já concedida pelo mantenedor, o ChatGPT ampliou o parser de mensagens IPC e conectou a leitura tipada à transferência host-side de memory blocks:
+
+- `71e4418` — adiciona `IpcTranslationParameter`, `IpcTranslationSectionError` e `decode_translation_section` em `session::ipc`. O parser percorre todos os grupos da seção e reconhece type 0 (handles), type 1 (cópia para static buffer) e types 5/6/7 (mapeamento temporário com permissões R/W/RW). Ele somente decodifica os valores; não copia buffers, não mapeia memória e não transfere objetos.
+- `5c04344` — adiciona testes para grupos combinados de handles, static buffer e mapeamentos temporários, além de truncamento e tipos ainda não suportados.
+- `5ed5728`, `746b9f5` e `8d16cd9` — endurecem a validação de bits reservados, a contagem e o tamanho dos mapeamentos.
+- `1acea65` — o adapter `translate_memory_block_translation_section_from_ipc` agora decodifica a seção completa antes de transferir handles e exige exatamente um grupo type-0 de handles. Um segundo descritor ou tipo diferente é rejeitado antes da alteração da tabela de objetos.
+
+### Formatos que o parser reconhece
+
+- Type 0: descritor de handles, incluindo contagem, COPY/MOVE e a marca de ProcessId; os words de handle permanecem emprestados do buffer original.
+- Type 1: índice de static buffer (bits 10–13), tamanho (bits 14–31) e o word seguinte como endereço de origem.
+- Types 5/6/7: permissões de origem R/W/RW, tamanho em bytes nos bits superiores e o word seguinte como endereço de origem.
+- Types 2/3 e outros tipos ainda não implementados são recusados explicitamente; não são tratados como se fossem buffers comuns.
+- Para types 5/6/7, bit 0 reservado ligado e tamanho zero são rejeitados. Para type 1, bit 0 e bits 4–9 são rejeitados como reservados.
+- `IpcMessage::translation_parameters()` oferece a lista tipada, após a validação de extensão do próprio `IpcMessage`.
+
+Referência independente de protocolo: [IPC Command Structure — Message and Translation Descriptors](https://www.3dbrew.org/wiki/IPC_Command_Structure).
+
+### Limites e próximos passos
+
+- O parser de type 1 não consulta a tabela de static buffers do TLS+0x180 nem copia dados para o processo destinatário.
+- O parser dos types 5/6/7 não valida o intervalo de memória de origem, não cria mapeamentos temporários e não implementa os caminhos de reply.
+- Types 2/3 continuam pendentes por exigirem interpretação de tabela de endereços físicos e vínculo com o modelo de memória.
+- A transferência real continua limitada a arrays homogêneos de memory blocks; eventos, mutexes, timers, threads e objetos de sessão não são transferidos.
+- O adapter de memory blocks só aceita uma seção com um grupo type-0; várias famílias de descritor em uma mesma mensagem são reconhecidas pelo parser genérico, mas ainda não são despachadas por esse adapter.
+
+### Verificação
+
+Foram adicionados testes unitários para os tipos reconhecidos, erros de truncamento/reservados, PID e grupos adicionais. Não foi possível executar Rustfmt, Clippy ou `cargo test` porque o ambiente continua sem `cargo`, `rustc` e `rustfmt`. Não há CI confirmada para o HEAD desta rodada.
+
