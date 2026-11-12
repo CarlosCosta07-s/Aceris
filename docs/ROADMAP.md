@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `90c8e46071d83a7d98acd9bb88e40f26ecba8514`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `311798ab0bf676c39df7424b86265343f449ead4`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -17,7 +17,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Workflow do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
-- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `90c8e46071d83a7d98acd9bb88e40f26ecba8514`, sem anunciar compatibilidade não testada
+- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `311798ab0bf676c39df7424b86265343f449ead4`, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
 
@@ -225,7 +225,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Lockdown TLB c10, bit P/Victim, registradores CTR/TLBTR e regressões de invalidação: Rustfmt, Clippy e testes aprovados em Linux/Windows/macOS e build Android ARM64 no workflow [43229169229](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43229169229)
 - [x] CP15 ARM11 PFR/DFR/MMFR/ISAR, FCSE PID no caminho MMU, FCSE/TLB isolation tests e TPIDRURO write rules: Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43230750417](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43230750417)
 - [x] SRS ARMv6, incluindo modos inválidos, alinhamento condicionado por SCTLR.A/U e SP desalinhado com SPSR válido, aprovado em Linux/Windows/macOS e Android ARM64 no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
-- [x] VFPv2 short vectors: bancos circulares single/double, wrap, broadcast scalar Fm, stride 1/2, unary sqrt e LEN/STRIDE imprevisíveis rejeitados; Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux/Windows/macOS e build Android `arm64-v8a` aprovado no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
+- [x] VFPv2 short vectors: bancos circulares single/double, wrap, broadcast scalar Fm, stride 1/2, unary sqrt, rejeição de combinações LEN/STRIDE fora da tabela VFP11 e regressões para VCMP/VCVT sempre escalares; Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux/Windows/macOS e build Android `arm64-v8a` aprovado no workflow [43235400622](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43235400622)
 - [x] MMU legacy XP=0: permissões AP0–AP3 de seções/páginas, regras S/R de AP=00 e extended-small-page em coarse tables; XP=1 rejeita L2 type 0b11 reservado. Rustfmt, Clippy, testes em Linux/Windows/macOS e build Android ARM64 aprovados no workflow [43234327123](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43234327123)
 - [x] Testes adicionais de arredondamento VFP para multiplicação, divisão, raiz quadrada, underflow e flush-to-zero aprovados em Linux, Windows e macOS; build Android `arm64-v8a` aprovado no workflow [43227896584](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43227896584)
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
