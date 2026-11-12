@@ -166,6 +166,8 @@ impl GspClientRegistration {
 pub struct GspClientUnregistration {
     /// Guest memory and event resources that the caller remains responsible for releasing.
     pub registration: GspClientRegistration,
+    /// True when unregistration removed this client's pending AcquireRight wait.
+    pub rendering_right_wait_cancelled: bool,
     /// Ownership transfer that an IPC dispatcher/scheduler may need to wake.
     pub rendering_right_handoff: Option<GspRenderingRightHandoff>,
 }
@@ -394,8 +396,16 @@ impl GspServiceRegistry {
         let registration = self.clients[index]
             .take()
             .ok_or(GspServiceError::ClientNotRegistered { client_id })?;
-        self.rendering_waiters
-            .retain(|waiting_client| *waiting_client != client_id);
+        let rendering_right_wait_cancelled = if let Some(position) = self
+            .rendering_waiters
+            .iter()
+            .position(|waiting_client| *waiting_client == client_id)
+        {
+            self.rendering_waiters.remove(position);
+            true
+        } else {
+            false
+        };
 
         let rendering_right_handoff = if self.rendering_client == Some(client_id) {
             self.rendering_client = None;
@@ -410,6 +420,7 @@ impl GspServiceRegistry {
 
         Ok(GspClientUnregistration {
             registration,
+            rendering_right_wait_cancelled,
             rendering_right_handoff,
         })
     }
@@ -1249,6 +1260,7 @@ mod tests {
                 event_handle: events[0],
             }
         );
+        assert!(!unregistration.rendering_right_wait_cancelled);
         assert_eq!(
             unregistration.rendering_right_handoff,
             Some(GspRenderingRightHandoff {
@@ -1258,6 +1270,42 @@ mod tests {
         );
         assert_eq!(registry.rendering_right_owner(), Some(1));
         assert_eq!(registry.rendering_right_waiter_position(2), Some(1));
+    }
+
+    #[test]
+    fn unregistering_waiter_reports_cancelled_wait_without_handoff() {
+        let mut session = test_session();
+        let events = (0..2)
+            .map(|_| {
+                session
+                    .kernel_objects
+                    .insert_event(EventResetType::Sticky)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut registry = GspServiceRegistry::new();
+        for (client_id, event_handle) in events.iter().copied().enumerate() {
+            registry
+                .register_client(
+                    &mut session,
+                    client_id as u8,
+                    SHARED_MEMORY_BASE,
+                    event_handle,
+                )
+                .unwrap();
+        }
+
+        assert!(registry.try_acquire_rendering_right(0).unwrap());
+        assert_eq!(
+            registry.acquire_rendering_right(1).unwrap(),
+            GspRenderingRightAcquireOutcome::Waiting { position: 1 }
+        );
+
+        let unregistration = registry.unregister_client_with_handoff(1).unwrap();
+        assert!(unregistration.rendering_right_wait_cancelled);
+        assert_eq!(unregistration.rendering_right_handoff, None);
+        assert_eq!(registry.rendering_right_owner(), Some(0));
+        assert_eq!(registry.rendering_right_waiter_count(), 0);
     }
 
     #[test]
