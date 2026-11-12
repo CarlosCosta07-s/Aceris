@@ -262,6 +262,7 @@ pub enum Arm11MemoryState {
     Free = 0,
     Code = 4,
     Private = 5,
+    Shared = 6,
 }
 
 /// Result for one contiguous region returned by the ARM11 QueryMemory service.
@@ -772,11 +773,16 @@ impl Arm11CodeAddressSpace {
             let region_end = u64::from(region.address) + region.bytes.len() as u64;
             u64::from(virtual_base) < region_end && virtual_end > u64::from(region.address)
         });
+        let overlaps_shared = self.shared_regions.iter().any(|region| {
+            region.end_address().is_some_and(|region_end| {
+                u64::from(virtual_base) < region_end && virtual_end > u64::from(region.address)
+            })
+        });
         let overlaps_linear = self.linear_regions.iter().any(|region| {
             u64::from(virtual_base) < region.virtual_end()
                 && virtual_end > u64::from(region.virtual_base)
         });
-        if overlaps_static || overlaps_dynamic || overlaps_linear {
+        if overlaps_static || overlaps_dynamic || overlaps_shared || overlaps_linear {
             return Err(Arm11DynamicMemoryError::OverlappingMapping);
         }
 
@@ -857,6 +863,10 @@ impl Arm11CodeAddressSpace {
         if self.dynamic_regions.iter().any(|region| {
             let region_end = u64::from(region.address) + region.bytes.len() as u64;
             u64::from(address) < region_end && end > u64::from(region.address)
+        }) || self.shared_regions.iter().any(|region| {
+            region.end_address().is_some_and(|region_end| {
+                u64::from(address) < region_end && end > u64::from(region.address)
+            })
         }) || self.linear_regions.iter().any(|region| {
             u64::from(address) < region.virtual_end() && end > u64::from(region.virtual_base)
         }) {
@@ -1072,7 +1082,7 @@ impl Arm11CodeAddressSpace {
                     .size()
                     .expect("shared memory block sizes are immutable"),
                 permissions: region.permissions,
-                state: Arm11MemoryState::Private,
+                state: Arm11MemoryState::Shared,
                 page_flags: 0,
             });
         }
@@ -1712,11 +1722,12 @@ mod tests {
             address_space.map_shared_memory_region(0x0800_0000, backing.clone(), 4),
             Err(Arm11DynamicMemoryError::InvalidPermissions(4))
         );
+        let oversized_backing = SharedMemoryBacking::zeroed(0x2000).unwrap();
         assert_eq!(
-            address_space.map_shared_memory_region(0xFFFF_F000, backing.clone(), 3),
+            address_space.map_shared_memory_region(0xFFFF_F000, oversized_backing, 3),
             Err(Arm11DynamicMemoryError::AddressRangeOverflow {
                 address: 0xFFFF_F000,
-                size: 0x1000,
+                size: 0x2000,
             })
         );
         address_space

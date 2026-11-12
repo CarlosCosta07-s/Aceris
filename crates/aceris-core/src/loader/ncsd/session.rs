@@ -236,6 +236,62 @@ impl Arm11ProcessSession {
         Ok(())
     }
 
+    /// Creates a zero-filled, page-aligned shared-memory block in the process kernel table.
+    pub fn create_memory_block(
+        &mut self,
+        size: u32,
+        owner_permissions: u32,
+        other_permissions: u32,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects
+            .create_memory_block(size, owner_permissions, other_permissions)
+    }
+
+    /// Maps a memory-block handle into this process with the requested R/W permissions.
+    pub fn map_memory_block(
+        &mut self,
+        handle: u32,
+        address: u32,
+        my_permissions: u32,
+        other_permissions: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        let backing = self.kernel_objects.memory_block_backing(handle)?;
+        let (owner_permissions, peer_permissions) = self
+            .kernel_objects
+            .memory_block_permissions(handle)
+            .ok_or(KernelHandleError::WrongType)?;
+        if my_permissions > 3
+            || other_permissions > 3
+            || my_permissions & !owner_permissions != 0
+            || other_permissions & !peer_permissions != 0
+        {
+            return Err(KernelHandleError::InvalidMemoryPermission);
+        }
+        self.address_space
+            .map_shared_memory_region(address, backing, my_permissions)
+            .map_err(|_| KernelHandleError::InvalidMemoryBlockMapping)
+    }
+
+    /// Unmaps the exact mapping associated with a memory-block handle.
+    pub fn unmap_memory_block(
+        &mut self,
+        handle: u32,
+        address: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        let backing = self.kernel_objects.memory_block_backing(handle)?;
+        if !self.address_space.shared_mapping_matches(address, &backing) {
+            return Err(KernelHandleError::InvalidMemoryBlockMapping);
+        }
+        let size = backing
+            .len()
+            .and_then(|size| u32::try_from(size).ok())
+            .ok_or(KernelHandleError::InvalidMemoryBlockMapping)?;
+        self.address_space
+            .unmap_shared_memory_region(address, size)
+            .map_err(|_| KernelHandleError::InvalidMemoryBlockMapping)?;
+        Ok(())
+    }
+
     /// Signals a process-local event handle from a device or HLE service.
     ///
     /// This uses the same reset and waiter semantics as SVC SignalEvent. It is
@@ -1330,6 +1386,37 @@ mod tests {
         session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[0] = 1.5f32.to_bits();
         session.run_instructions(16).unwrap();
         assert_eq!(f32::from_bits(session.core().vfp().s(14)), 3.0);
+    }
+
+    #[test]
+    fn memory_block_handle_maps_aliases_and_unmaps_without_destroying_backing() {
+        let mut session = test_session();
+        let handle = session.create_memory_block(0x1000, 3, 1).unwrap();
+
+        session
+            .map_memory_block(handle, 0x0800_0000, 3, 1)
+            .unwrap();
+        session
+            .map_memory_block(handle, 0x0810_0000, 1, 1)
+            .unwrap();
+
+        session
+            .write_memory_u32(0x0800_0000, 0xA1B2_C3D4)
+            .unwrap();
+        assert_eq!(
+            session.read_memory_u32(0x0810_0000).unwrap(),
+            0xA1B2_C3D4
+        );
+        assert!(session.write_memory_u32(0x0810_0000, 0xDEAD_BEEF).is_err());
+
+        session.unmap_memory_block(handle, 0x0810_0000).unwrap();
+        assert!(session.read_memory_u32(0x0810_0000).is_err());
+        assert_eq!(
+            session.read_memory_u32(0x0800_0000).unwrap(),
+            0xA1B2_C3D4
+        );
+        session.unmap_memory_block(handle, 0x0800_0000).unwrap();
+        assert!(session.read_memory_u32(0x0800_0000).is_err());
     }
 
     #[test]
