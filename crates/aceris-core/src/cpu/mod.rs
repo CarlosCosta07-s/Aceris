@@ -505,10 +505,7 @@ mod tests {
         memory.write32(0, 0xEF12_3456).unwrap(); // SVC #0x123456.
         let mut cpu = Arm11Core::new();
 
-        assert_eq!(
-            cpu.step(&mut memory).unwrap(),
-            StepEvent::Svc(0x12_3456)
-        );
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Svc(0x12_3456));
         assert_eq!(cpu.pc(), 4);
         assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
         assert_eq!(cpu.saved_program_status(), None);
@@ -523,10 +520,7 @@ mod tests {
         cpu.set_svc_exception_entry_enabled(true);
         let interrupted_status = cpu.cpsr;
 
-        assert_eq!(
-            cpu.step(&mut memory).unwrap(),
-            StepEvent::Svc(0x12_3456)
-        );
+        assert_eq!(cpu.step(&mut memory).unwrap(), StepEvent::Svc(0x12_3456));
         assert_eq!(cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
         assert_eq!(cpu.pc(), 0x08);
         assert_eq!(cpu.regs[LR], 4);
