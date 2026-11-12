@@ -292,3 +292,13 @@ Referência independente de protocolo: [IPC Command Structure — Message and Tr
 
 Foram adicionados testes unitários para os tipos reconhecidos, erros de truncamento/reservados, PID e grupos adicionais. Não foi possível executar Rustfmt, Clippy ou `cargo test` porque o ambiente continua sem `cargo`, `rustc` e `rustfmt`. Não há CI confirmada para o HEAD desta rodada.
 
+
+
+## Cópia de static buffers IPC type-1 (12/11/2026)
+
+- Arm11CodeAddressSpace::thread_local_static_buffer_descriptor_address valida o TLS ativo da thread e resolve com segurança uma das 16 entradas de static buffer em TLS + 0x180.
+- Arm11ProcessSession::copy_static_buffer_translation_from_ipc aplica descritores type-1 para uma thread receptora explícita: lê endereço/capacidade registrados no TLS, rejeita capacidade insuficiente, valida a faixa de destino como gravável e lê os bytes da origem antes de qualquer escrita.
+- Os descritores são preparados em lote antes de tocar os destinos; um source pointer inválido em um grupo posterior não deixa os buffers anteriores parcialmente atualizados. Tipos handles e mapped-buffer são recusados por este helper e seguem caminhos separados.
+- Quatro testes cobrem cópia para o slot TLS, capacidade insuficiente sem escrita, pré-staging transacional diante de origem inválida e recusa de outro tipo de tradução.
+
+Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pelo futuro caminho de recepção/sessão. O registro dos buffers continua sendo responsabilidade do código convidado. Types 5/6/7 só são decodificados; o mapeamento temporário, limpeza de aliases e buffers físicos types 2/3 continuam pendentes. Confirme rustfmt, Clippy e cargo test --workspace via CI antes de considerar a etapa aprovada.

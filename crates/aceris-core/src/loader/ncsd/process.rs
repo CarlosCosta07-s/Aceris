@@ -28,6 +28,9 @@ const APPLICATION_HEAP_END: u64 = 0x0E00_0000;
 const THREAD_LOCAL_STORAGE_BASE: u32 = 0x1FF8_2000;
 const THREAD_LOCAL_STORAGE_SLOT_SIZE: u32 = 0x200;
 const THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE: u32 = 8;
+const THREAD_LOCAL_STATIC_BUFFER_TABLE_OFFSET: u32 = 0x180;
+const THREAD_LOCAL_STATIC_BUFFER_DESCRIPTOR_SIZE: u32 = 8;
+const THREAD_LOCAL_STATIC_BUFFER_COUNT: u8 = 16;
 /// This model supports up to 512 simultaneous threads' worth of storage.
 const THREAD_LOCAL_STORAGE_MAX_PAGES: u32 = 64;
 const MAX_BSS_MAPPING_SIZE_BYTES: usize = 256 * 1024 * 1024;
@@ -1106,6 +1109,33 @@ impl Arm11CodeAddressSpace {
         if let Some(used) = self.tls_slots_in_use.get_mut(slot) {
             *used = false;
         }
+    }
+
+    /// Returns the address of a static-buffer descriptor entry in a live TLS slot.
+    ///
+    /// The 16 IPC static-buffer entries occupy TLS offsets 0x180..0x200. A
+    /// descriptor consists of the receiver buffer address followed by its capacity.
+    /// Stale, unallocated, misaligned or out-of-range TLS addresses are rejected.
+    pub fn thread_local_static_buffer_descriptor_address(
+        &self,
+        tls_address: u32,
+        buffer_index: u8,
+    ) -> Option<u32> {
+        if buffer_index >= THREAD_LOCAL_STATIC_BUFFER_COUNT {
+            return None;
+        }
+        let offset = tls_address.checked_sub(THREAD_LOCAL_STORAGE_BASE)?;
+        if offset % THREAD_LOCAL_STORAGE_SLOT_SIZE != 0 {
+            return None;
+        }
+        let slot = usize::try_from(offset / THREAD_LOCAL_STORAGE_SLOT_SIZE).ok()?;
+        if !self.tls_slots_in_use.get(slot).copied().unwrap_or(false) {
+            return None;
+        }
+        let entry_offset = THREAD_LOCAL_STATIC_BUFFER_TABLE_OFFSET.checked_add(
+            u32::from(buffer_index) * THREAD_LOCAL_STATIC_BUFFER_DESCRIPTOR_SIZE,
+        )?;
+        tls_address.checked_add(entry_offset)
     }
 
     /// Releases one dynamic application-heap mapping by exact base and size.

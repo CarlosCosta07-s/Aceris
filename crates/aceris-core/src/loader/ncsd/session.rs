@@ -101,6 +101,37 @@ pub struct Arm11RunReport {
     pub stop_reason: Arm11RunStopReason,
 }
 
+/// Failure while applying type-1 IPC static-buffer copies to a receiving thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IpcStaticBufferTranslationError {
+    /// The message's translation section is malformed.
+    TranslationDecode(ipc::IpcTranslationSectionError),
+    /// The translation section contains no static-buffer descriptors.
+    NoStaticBufferParameters,
+    /// A non-static-buffer translation descriptor was supplied.
+    UnsupportedTranslationParameter { descriptor: u32 },
+    /// The destination thread does not belong to this process.
+    UnknownDestinationThread(ThreadId),
+    /// The destination thread has already exited.
+    ExitedDestinationThread(ThreadId),
+    /// The destination thread has no live, allocated TLS slot.
+    InvalidDestinationTls { address: u32 },
+    /// The receiver's registered slot is smaller than the requested transfer.
+    DestinationBufferTooSmall {
+        buffer_index: u8,
+        capacity: u32,
+        requested: u32,
+    },
+    /// The destination range is null, unmapped, or not writable.
+    DestinationRangeNotWritable { address: u32, size_bytes: u32 },
+    /// The sender's source range is not readable.
+    SourceRangeUnavailable { address: u32, size_bytes: u32 },
+    /// The host could not allocate storage for a staged transfer.
+    AllocationFailure,
+    /// A prevalidated destination failed while being written.
+    DestinationWriteFailed { address: u32 },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SvcRunDisposition {
     Resume,
@@ -441,6 +472,166 @@ impl Arm11ProcessSession {
         };
 
         self.translate_memory_block_handles_from_ipc(source, *descriptor, handles)
+    }
+
+    /// Applies every type-1 IPC static-buffer copy to a specific receiving thread.
+    ///
+    /// The receiver's 16-entry descriptor table is read from that thread's live TLS
+    /// slot. All descriptors, capacities, destination ranges and source bytes are
+    /// validated/staged before the first destination byte is changed. Other
+    /// translation families are rejected by this helper and must use their own
+    /// kernel translation paths.
+    pub fn copy_static_buffer_translation_from_ipc(
+        &mut self,
+        source: &mut Arm11ProcessSession,
+        destination_thread: ThreadId,
+        message: ipc::IpcMessage<'_>,
+    ) -> std::result::Result<(), IpcStaticBufferTranslationError> {
+        let parameters = message
+            .translation_parameters()
+            .map_err(IpcStaticBufferTranslationError::TranslationDecode)?;
+        if parameters.is_empty() {
+            return Err(IpcStaticBufferTranslationError::NoStaticBufferParameters);
+        }
+
+        let thread_info = self
+            .scheduler
+            .thread_info(destination_thread)
+            .ok_or(IpcStaticBufferTranslationError::UnknownDestinationThread(
+                destination_thread,
+            ))?;
+        if thread_info.state == ThreadState::Exited {
+            return Err(IpcStaticBufferTranslationError::ExitedDestinationThread(
+                destination_thread,
+            ));
+        }
+        let tls_address = self
+            .scheduler
+            .core(destination_thread)
+            .map(|core| core.cp15().tpidruro())
+            .ok_or(IpcStaticBufferTranslationError::UnknownDestinationThread(
+                destination_thread,
+            ))?;
+        if tls_address == 0 {
+            return Err(IpcStaticBufferTranslationError::InvalidDestinationTls {
+                address: tls_address,
+            });
+        }
+
+        struct PendingStaticBufferCopy {
+            destination_address: u32,
+            bytes: Vec<u8>,
+        }
+
+        let mut pending = Vec::new();
+        pending
+            .try_reserve_exact(parameters.len())
+            .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
+
+        for parameter in parameters {
+            let (descriptor, buffer_index, size_bytes, source_address) = match parameter {
+                ipc::IpcTranslationParameter::StaticBuffer {
+                    descriptor,
+                    buffer_index,
+                    size_bytes,
+                    source_address,
+                } => (descriptor, buffer_index, size_bytes, source_address),
+                ipc::IpcTranslationParameter::Handles { descriptor, .. }
+                | ipc::IpcTranslationParameter::MappedBuffer { descriptor, .. } => {
+                    return Err(
+                        IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
+                            descriptor,
+                        },
+                    );
+                }
+            };
+
+            let entry_address = self
+                .address_space
+                .thread_local_static_buffer_descriptor_address(tls_address, buffer_index)
+                .ok_or(IpcStaticBufferTranslationError::InvalidDestinationTls {
+                    address: tls_address,
+                })?;
+            let capacity_address = entry_address.checked_add(4).ok_or(
+                IpcStaticBufferTranslationError::InvalidDestinationTls {
+                    address: entry_address,
+                },
+            )?;
+            let destination_address = self.read_memory_u32(entry_address).map_err(|_| {
+                IpcStaticBufferTranslationError::InvalidDestinationTls {
+                    address: entry_address,
+                }
+            })?;
+            let capacity = self.read_memory_u32(capacity_address).map_err(|_| {
+                IpcStaticBufferTranslationError::InvalidDestinationTls {
+                    address: capacity_address,
+                }
+            })?;
+
+            if size_bytes > capacity {
+                return Err(
+                    IpcStaticBufferTranslationError::DestinationBufferTooSmall {
+                        buffer_index,
+                        capacity,
+                        requested: size_bytes,
+                    },
+                );
+            }
+
+            if size_bytes == 0 {
+                pending.push(PendingStaticBufferCopy {
+                    destination_address,
+                    bytes: Vec::new(),
+                });
+                continue;
+            }
+
+            let destination_range_is_writable = usize::try_from(size_bytes)
+                .ok()
+                .is_some_and(|size| {
+                    destination_address != 0
+                        && self
+                            .address_space
+                            .is_writable_range(destination_address, size)
+                });
+            if !destination_range_is_writable {
+                return Err(
+                    IpcStaticBufferTranslationError::DestinationRangeNotWritable {
+                        address: destination_address,
+                        size_bytes,
+                    },
+                );
+            }
+
+            let size = usize::try_from(size_bytes)
+                .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
+            let mut bytes = Vec::new();
+            bytes
+                .try_reserve_exact(size)
+                .map_err(|_| IpcStaticBufferTranslationError::AllocationFailure)?;
+            bytes.resize(size, 0);
+            source
+                .read_memory_bytes(source_address, &mut bytes)
+                .map_err(|_| IpcStaticBufferTranslationError::SourceRangeUnavailable {
+                    address: source_address,
+                    size_bytes,
+                })?;
+            pending.push(PendingStaticBufferCopy {
+                destination_address,
+                bytes,
+            });
+        }
+
+        for copy in pending {
+            self.write_memory_bytes(copy.destination_address, &copy.bytes)
+                .map_err(|_| {
+                    IpcStaticBufferTranslationError::DestinationWriteFailed {
+                        address: copy.destination_address,
+                    }
+                })?;
+        }
+
+        Ok(())
     }
 
     /// Maps a memory-block handle into this process with the requested R/W permissions.
@@ -2242,6 +2433,153 @@ mod tests {
             destination
                 .translate_memory_block_translation_section_from_ipc(&mut source, empty_message,),
             Err(kernel::IpcHandleTranslationError::InvalidDescriptor)
+        );
+    }
+
+    #[test]
+    fn ipc_static_buffer_copy_uses_receiving_thread_tls_descriptor() {
+        let mut source = test_session();
+        source
+            .write_memory_bytes(0x0020_0000, &[1, 2, 3, 4, 5])
+            .unwrap();
+        let mut destination = test_session();
+        let tls = destination
+            .scheduler
+            .core(MAIN_THREAD_ID)
+            .unwrap()
+            .cp15()
+            .tpidruro();
+        destination
+            .write_memory_bytes(0x0020_1000, &[0xAA; 8])
+            .unwrap();
+        destination
+            .write_memory_u32(tls + 0x180, 0x0020_1000)
+            .unwrap();
+        destination.write_memory_u32(tls + 0x184, 8).unwrap();
+
+        let words = [0x1234_0002, 0x0001_4002, 0x0020_0000];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+        destination
+            .copy_static_buffer_translation_from_ipc(&mut source, MAIN_THREAD_ID, message)
+            .unwrap();
+
+        let mut copied = [0; 8];
+        destination
+            .read_memory_bytes(0x0020_1000, &mut copied)
+            .unwrap();
+        assert_eq!(copied, [1, 2, 3, 4, 5, 0xAA, 0xAA, 0xAA]);
+    }
+
+    #[test]
+    fn ipc_static_buffer_copy_rejects_small_receiver_capacity_without_writing() {
+        let mut source = test_session();
+        source
+            .write_memory_bytes(0x0020_0000, &[1, 2, 3, 4, 5])
+            .unwrap();
+        let mut destination = test_session();
+        let tls = destination
+            .scheduler
+            .core(MAIN_THREAD_ID)
+            .unwrap()
+            .cp15()
+            .tpidruro();
+        destination
+            .write_memory_bytes(0x0020_1000, &[0xAA; 8])
+            .unwrap();
+        destination
+            .write_memory_u32(tls + 0x180, 0x0020_1000)
+            .unwrap();
+        destination.write_memory_u32(tls + 0x184, 4).unwrap();
+
+        let words = [0x1234_0002, 0x0001_4002, 0x0020_0000];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+        assert_eq!(
+            destination.copy_static_buffer_translation_from_ipc(
+                &mut source,
+                MAIN_THREAD_ID,
+                message,
+            ),
+            Err(IpcStaticBufferTranslationError::DestinationBufferTooSmall {
+                buffer_index: 0,
+                capacity: 4,
+                requested: 5,
+            })
+        );
+
+        let mut unchanged = [0; 8];
+        destination
+            .read_memory_bytes(0x0020_1000, &mut unchanged)
+            .unwrap();
+        assert_eq!(unchanged, [0xAA; 8]);
+    }
+
+    #[test]
+    fn ipc_static_buffer_copy_stages_all_sources_before_writing_any_destination() {
+        let mut source = test_session();
+        source
+            .write_memory_bytes(0x0020_0000, &[1, 2, 3, 4])
+            .unwrap();
+        let mut destination = test_session();
+        let tls = destination
+            .scheduler
+            .core(MAIN_THREAD_ID)
+            .unwrap()
+            .cp15()
+            .tpidruro();
+        destination
+            .write_memory_bytes(0x0020_1000, &[0xAA; 16])
+            .unwrap();
+        destination
+            .write_memory_u32(tls + 0x180, 0x0020_1000)
+            .unwrap();
+        destination.write_memory_u32(tls + 0x184, 4).unwrap();
+        destination
+            .write_memory_u32(tls + 0x188, 0x0020_1008)
+            .unwrap();
+        destination.write_memory_u32(tls + 0x18C, 4).unwrap();
+
+        let words = [
+            0x1234_0004,
+            0x0001_0002,
+            0x0020_0000,
+            0x0001_0402,
+            0x0F00_0000,
+        ];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+        assert_eq!(
+            destination.copy_static_buffer_translation_from_ipc(
+                &mut source,
+                MAIN_THREAD_ID,
+                message,
+            ),
+            Err(IpcStaticBufferTranslationError::SourceRangeUnavailable {
+                address: 0x0F00_0000,
+                size_bytes: 4,
+            })
+        );
+
+        let mut unchanged = [0; 16];
+        destination
+            .read_memory_bytes(0x0020_1000, &mut unchanged)
+            .unwrap();
+        assert_eq!(unchanged, [0xAA; 16]);
+    }
+
+    #[test]
+    fn ipc_static_buffer_copy_rejects_non_static_translation_groups() {
+        let mut source = test_session();
+        let mut destination = test_session();
+        let words = [0x1234_0002, 0x0000_010A, 0x0020_0000];
+        let message = ipc::IpcMessage::decode(&words).unwrap();
+        assert_eq!(
+            destination.copy_static_buffer_translation_from_ipc(
+                &mut source,
+                MAIN_THREAD_ID,
+                message,
+            ),
+            Err(IpcStaticBufferTranslationError::UnsupportedTranslationParameter {
+                descriptor: 0x0000_010A,
+            })
         );
     }
 
