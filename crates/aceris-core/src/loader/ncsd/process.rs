@@ -1617,7 +1617,7 @@ mod tests {
 
     #[test]
     fn linear_process_mapping_aliases_the_shared_gpu_physical_backing() {
-        let mut address_space = test_address_space();
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
         let virtual_base = physical_base - 0x0C00_0000;
