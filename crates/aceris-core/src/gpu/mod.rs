@@ -3,6 +3,7 @@
 mod physical_memory;
 mod pica200;
 mod rasterizer;
+mod geometry;
 
 pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,
@@ -16,4 +17,8 @@ pub use pica200::{
 };
 pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
+};
+pub use geometry::{
+    ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
+    Viewport,
 };
