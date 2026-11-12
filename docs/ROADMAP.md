@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `f4e90d4de40ccca132c77be4d63f0df07bcf5961`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `a7cd047b17db9e1a1441f19f540941259445770a`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -67,11 +67,15 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Espaço de endereços do processo com regiões de código, dados, BSS, pilha, heap e TLS, validação de intervalos e permissões
 - [x] TLS por thread com slots zerados na reutilização e endereço exposto pelo TPIDRURO
 - [x] Memória física esparsa inicial para 6 MiB de VRAM e 128 MiB de FCRAM do modelo original
-- [~] Memória física atual é limitada às regiões VRAM/FCRAM usadas por GPU/LCD; ainda não existe o mapa físico completo do console
+- [~] Memória física esparsa compartilhada por handles clonados: CPU, GPU DMA e LCD observam o mesmo backing VRAM/FCRAM; isto não simula caches ARM nem substitui flush/invalidate de hardware
+- [~] Alocador de FCRAM contíguo por páginas, com reserva automática ou em endereço físico solicitado, rejeição de sobreposição, leitura inicial zerada e liberação exata que limpa as páginas reservadas
+- [~] Bus do processo mapeia aliases lineares antigos e novos diretamente para a mesma FCRAM física; leituras/escritas CPU são visíveis pelos dispositivos, QueryMemory reconhece a região como Private/RW e o unmap invalida reservas exclusivas
+- [~] Memória física atual é limitada às regiões VRAM e aos 128 MiB FCRAM do modelo original; o bloco adicional de FCRAM do New 3DS e o mapa físico completo do console ainda não existem
 - [~] Tradução virtual ARM via MMU quando SCTLR.M está habilitado; ainda sem TLB e sem integração completa de dispositivos
 - [ ] Mapa completo de memória física e barramentos mapeados para CPU, GPU, DSP, LCD, serviços e periféricos
-- [ ] Regiões de memória compartilhada, DMA, cache/coerência e sincronização CPU-dispositivos
-- [ ] Suporte às diferenças de memória dos modelos New 3DS, quando necessário para os alvos de compatibilidade
+- [~] Regiões lineares de FCRAM acessíveis ao processo e ao DMA GPU: `ControlMemory(MEMOP_ALLOC | MEMOP_LINEAR)` e `MEMOP_FREE | MEMOP_LINEAR` reservam/liberam backing físico, honram hints não nulos nas janelas antigas e novas e registram/removem automaticamente o mapa DMA; rollback é aplicado quando uma etapa falha
+- [ ] Memória compartilhada entre processos/GSP, sincronização de agentes, semântica de cache ARM/GSP flush/invalidate e coerência observável
+- [ ] Suporte aos 128 MiB adicionais de FCRAM do New 3DS e demais diferenças de mapa físico entre modelos
 
 ### Formatos e conteúdo
 
@@ -125,7 +129,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Decodificador de command lists com parâmetros, cabeçalhos, máscaras de byte, escrita consecutiva e validação de limites
 - [x] Descritores e acknowledgement dos canais de command buffer 0 e 1
 - [~] Integração inicial no ciclo de frame: captura descritores dos dois canais PICA200, lê command buffers do backing físico FCRAM/VRAM e aplica as escritas aos registradores; o despacho do serviço GSP ainda não está implementado
-- [~] `GpuDmaAddressSpace` registra explicitamente regiões lineares já confirmadas pelo chamador e traduz intervalos virtuais para FCRAM físico: janela antiga `0x14000000–0x1C000000` com deslocamento `+0x0C000000`, e janela linear mais nova `0x30000000–0x38000000` relativa ao início de FCRAM; alinhamento, sobreposição, overflow e limites de cada região são validados
+- [~] `GpuDmaAddressSpace` compartilha seus registros com o processo e traduz intervalos lineares virtuais para FCRAM físico: janela antiga `0x14000000–0x1C000000` com deslocamento `+0x0C000000`, e janela nova `0x30000000–0x38000000` relativa ao início de FCRAM; intervalos são registrados automaticamente pelo `ControlMemory` e validados por alinhamento, sobreposição, overflow e limite físico
+- [~] `ControlMemory` aloca e libera linear FCRAM nos aliases antigo e novo; hints não nulos são honrados por reserva física exata, e ponteiros CPU mapeados usam o mesmo backing observado pelo DMA/GPU/LCD
+- [~] `System::submit_pica_command_list_from_linear_memory` já resolve o intervalo completo pelo mapa DMA automático e encaminha a lista ao parser PICA200; descritores internos do command buffer PICA são tratados separadamente como endereços físicos
 - [x] Rasterizador de referência próprio em CPU para triângulos já transformados: interpolação de cor/profundidade, teste de profundidade e regra top-left; testes de cobertura, orientação, profundidade e entradas inválidas
 - [x] Estágio geométrico de referência independente: matriz 4x4 column-major, transformação homogênea, clipping contra os seis planos canônicos, proteção de W positivo, triangulação em leque e viewport com Y descendente
 - [x] Rasterizador de referência com interpolação de cor perspective-correct por reciprocal W, interpolação de profundidade e teste de depth
@@ -139,7 +145,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Snapshot de `GPUREG_VSH_INPUTBUFFER_CONFIG` (0x2B9) e permutações (0x2BB/0x2BC); associação explícita dos atributos numéricos a `v0–v15`, sem execução do vertex shader
 - [~] Armazenamento dos doze atributos fixos via `GPUREG_FIXEDATTRIB_INDEX` (0x232) e `DATA0–2` (0x233–0x235), incluindo writes por command list e canal imediato 0xF
 - [~] Desempacotamento XYZW float1.7.16 (float24) e aplicação de atributos fixos selecionados pelo mask; valores fornecidos por arrays têm precedência; saída marcada como resolvida para o shader
-- [~] Infraestrutura explícita de tradução linear-virtual→FCRAM para intervalos DMA e submission de command lists; a associação dos ponteiros de CPU com alocação linear real, a codificação do base address do PICA e a coerência CPU/GPU ainda precisam ser ligadas ao caminho de execução
+- [~] Fetch de vértices e índices dispõe de rotas DMA que validam intervalos completos; o caminho DRAW real, a semântica do base address PICA, cache flush/invalidate e coerência ARM/GPU ainda não estão integrados
 - [ ] Integrar o fetch de atributos/índices ao vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
 - [ ] Modelo completo de command processor, filas, sincronização, interrupções e efeitos dos registradores
@@ -204,7 +210,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Bridge de fetch físico, formatos de 8/16/24/32 bits, conversão numérica, float24, armazenamento/aplicação de atributos fixos e mapeamento de entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43177475915](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43177475915), código no commit `b7c4b92cfc1356ddda9ba40ba96573c812443a56`
 - [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
-- [ ] Reexecutar Rustfmt, Clippy e testes multiplataforma após a implementação da camada DMA atual
+- [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
 - [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis
@@ -227,7 +233,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ## Próximas tarefas prioritárias
 
-1. Ligar `GpuDmaAddressSpace` ao `ControlMemory(MEMOP_ALLOC_LINEAR/FREE)` e à fila GSP `ProcessCommandList`, incluindo backing físico compartilhado, conversão de endereços e coerência de cache; manter distintos os endereços virtuais de CPU e os registradores físicos codificados do PICA200.
+1. Implementar a fila GSP Shared Memory (`TriggerCmdReqQueue`), começando por `ProcessCommandList`: índices/contagem/status, limites de 15 entradas, validação de alinhamento/endereço linear e envio ao parser PICA200; manter cache flush/invalidate explicitamente pendente.
 2. Confirmar ABI completa de entrada do shader e implementar armazenamento/decodificação de programa, uniforms e execução do vertex shader; os atributos fixos e o mapeamento `v0–v15` já têm infraestrutura inicial.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
