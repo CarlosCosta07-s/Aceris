@@ -1641,16 +1641,16 @@ mod tests {
             .unmap_linear_memory_region(virtual_base, physical_base, 0x2000)
             .unwrap();
         assert!(!address_space.is_writable_range(virtual_base, 4));
-        assert_eq!(
+        assert!(matches!(
             address_space.read32(virtual_base),
-            Err(Error::InvalidAccess { addr: virtual_base })
-        );
+            Err(Error::InvalidAccess { addr }) if addr == virtual_base
+        ));
         memory.free_linear_fcram(physical_base, 0x2000).unwrap();
     }
 
     #[test]
     fn linear_mapping_rejects_wrong_alias_and_unreserved_physical_range() {
-        let mut address_space = test_address_space();
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
         address_space.attach_gpu_memory(memory.clone());
 
