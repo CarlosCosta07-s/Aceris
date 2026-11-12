@@ -4,7 +4,9 @@
 //! GPUREG_FIXEDATTRIB_INDEX and GPUREG_FIXEDATTRIB_DATA0..2. The raw 24-bit
 //! components are retained alongside their numeric representation.
 
-use super::{NumericVertexAttribute, Pica200, VertexAttributeFormat, AttributeDataType, AttributeBitWidth};
+use super::{
+    AttributeBitWidth, AttributeDataType, NumericVertexAttribute, Pica200, VertexAttributeFormat,
+};
 
 pub const REG_FIXEDATTRIB_INDEX: u16 = 0x232;
 pub const REG_FIXEDATTRIB_DATA0: u16 = 0x233;
@@ -93,7 +95,9 @@ impl Pica200 {
     /// Returns the last fixed-attribute value written for an index 0..11.
     pub fn fixed_vertex_attribute(&self, index: usize) -> Option<FixedVertexAttribute> {
         let [data0, data1, data2] = self.fixed_attribute_words(index)?;
-        Some(FixedVertexAttribute::from_register_words(data0, data1, data2))
+        Some(FixedVertexAttribute::from_register_words(
+            data0, data1, data2,
+        ))
     }
 
     /// Resolves fixed inputs selected by the vertex-loader mask.
@@ -156,7 +160,10 @@ mod tests {
         assert_eq!(gpu.fixed_attribute_words(2), Some([data0, data1, data2]));
         assert_eq!(gpu.fixed_attribute_words(1), Some([0, 0, 0]));
         assert_eq!(
-            gpu.fixed_vertex_attribute(2).unwrap().to_numeric().components,
+            gpu.fixed_vertex_attribute(2)
+                .unwrap()
+                .to_numeric()
+                .components,
             [1.0, 2.0, 2.0, 4.0]
         );
     }
@@ -190,7 +197,8 @@ mod tests {
         gpu.write_register(REG_FIXEDATTRIB_DATA0, (0x0041_0000 << 8) | 0x40)
             .unwrap();
         gpu.write_register(REG_FIXEDATTRIB_DATA1, 0x4000).unwrap();
-        gpu.write_register(REG_FIXEDATTRIB_DATA2, 0x003F_0000).unwrap();
+        gpu.write_register(REG_FIXEDATTRIB_DATA2, 0x003F_0000)
+            .unwrap();
 
         let mut input = super::super::NumericVertexInput {
             attributes: [None; 12],
@@ -199,7 +207,10 @@ mod tests {
         };
         gpu.apply_fixed_vertex_attributes(&mut input);
 
-        assert_eq!(input.attributes[0].unwrap().components, [1.0, 2.0, 2.0, 4.0]);
+        assert_eq!(
+            input.attributes[0].unwrap().components,
+            [1.0, 2.0, 2.0, 4.0]
+        );
         assert_eq!(input.resolved_fixed_attribute_mask, 1);
 
         let array_value = NumericVertexAttribute {
@@ -233,12 +244,10 @@ mod tests {
             0x003F_0000,
         ];
         let value = FixedVertexAttribute::from_register_words(words[0], words[1], words[2]);
-        assert_eq!(value.raw_components().map(Float24::bits), [
-            0x003F_0000,
-            0x0040_0000,
-            0x0040_0000,
-            0x0041_0000,
-        ]);
+        assert_eq!(
+            value.raw_components().map(Float24::bits),
+            [0x003F_0000, 0x0040_0000, 0x0040_0000, 0x0041_0000,]
+        );
         assert_eq!(value.to_numeric().components, [1.0, 2.0, 2.0, 4.0]);
     }
 }
