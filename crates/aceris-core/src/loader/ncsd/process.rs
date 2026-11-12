@@ -732,7 +732,7 @@ impl Arm11CodeAddressSpace {
         if u64::from(address) % PAGE_SIZE != 0 {
             return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
         }
-        if permissions > 3 {
+        if permissions > 3 || permissions == 2 {
             return Err(Arm11DynamicMemoryError::InvalidPermissions(permissions));
         }
         let size = backing
@@ -1881,6 +1881,10 @@ mod tests {
         assert_eq!(
             address_space.map_shared_memory_region(0x0800_0000, backing.clone(), 4),
             Err(Arm11DynamicMemoryError::InvalidPermissions(4))
+        );
+        assert_eq!(
+            address_space.map_shared_memory_region(0x0800_0000, backing.clone(), 2),
+            Err(Arm11DynamicMemoryError::InvalidPermissions(2))
         );
         let oversized_backing = SharedMemoryBacking::zeroed(0x2000).unwrap();
         assert_eq!(
