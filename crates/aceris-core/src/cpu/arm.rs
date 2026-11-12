@@ -145,10 +145,7 @@ impl Arm11Core {
         ) {
             // ARMv6 signed/unsigned extend, optionally accumulating into Rn.
             return self.execute_extend_instruction(word);
-        } else if matches!(
-            word & 0x0FF0_0FF0,
-            0x06A0_0F30 | 0x06E0_0F30
-        ) {
+        } else if matches!(word & 0x0FF0_0FF0, 0x06A0_0F30 | 0x06E0_0F30) {
             // SSAT16/USAT16 saturate the two signed source halfwords independently.
             // SSAT16 encodes sat-1 (1..=16); USAT16 encodes sat (0..=15).
             let rd = bits(word, 15, 12) as usize;
@@ -3027,11 +3024,7 @@ mod tests {
     #[test]
     fn armv6_ssat16_and_usat16_saturate_each_signed_halfword_independently() {
         // SSAT16 r0,#8,r1 ; USAT16 r2,#7,r3 ; SSAT16 r5,#16,r6.
-        let mut m = Machine::new(&[
-            0xE6A7_0F31,
-            0xE6E7_2F33,
-            0xE6AF_5F36,
-        ]);
+        let mut m = Machine::new(&[0xE6A7_0F31, 0xE6E7_2F33, 0xE6AF_5F36]);
         m.cpu.regs[1] = 0x8000_7F01;
         m.cpu.regs[3] = 0x00FF_FF80;
         m.cpu.regs[6] = 0x8000_7FFF;
