@@ -832,18 +832,17 @@ impl Arm11CodeAddressSpace {
             || u64::from(backing_size) % PAGE_SIZE != 0
             || size_bytes == 0
             || source_page_offset >= PAGE_SIZE as u32
-            || u64::from(source_page_offset) + u64::from(size_bytes)
-                > u64::from(backing_size)
+            || u64::from(source_page_offset) + u64::from(size_bytes) > u64::from(backing_size)
         {
             return Err(Arm11DynamicMemoryError::InvalidSize(size_bytes));
         }
 
-        let reservation_size = backing_size
-            .checked_add((PAGE_SIZE as u32) * 2)
-            .ok_or(Arm11DynamicMemoryError::AddressRangeOverflow {
+        let reservation_size = backing_size.checked_add((PAGE_SIZE as u32) * 2).ok_or(
+            Arm11DynamicMemoryError::AddressRangeOverflow {
                 address: IPC_TEMPORARY_BUFFER_BASE,
                 size: backing_size,
-            })?;
+            },
+        )?;
         self.ipc_temporary_regions
             .try_reserve(1)
             .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
@@ -883,12 +882,12 @@ impl Arm11CodeAddressSpace {
                 && u64::from(reservation_base) >= free_start
                 && reservation_end <= free_end
             {
-                let mapping_base = reservation_base
-                    .checked_add(PAGE_SIZE as u32)
-                    .ok_or(Arm11DynamicMemoryError::AddressRangeOverflow {
+                let mapping_base = reservation_base.checked_add(PAGE_SIZE as u32).ok_or(
+                    Arm11DynamicMemoryError::AddressRangeOverflow {
                         address: reservation_base,
                         size: reservation_size,
-                    })?;
+                    },
+                )?;
                 self.map_shared_memory_region(mapping_base, backing, 3)?;
                 self.ipc_temporary_regions.push(IpcTemporaryMappingRegion {
                     alias_address: mapping_base + source_page_offset,

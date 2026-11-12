@@ -917,19 +917,16 @@ impl Arm11ProcessSession {
         let parameters = message
             .translation_parameters()
             .map_err(IpcTemporaryBufferTranslationError::TranslationDecode)?;
-        let thread_info = self
-            .scheduler
-            .thread_info(destination_thread)
-            .ok_or(IpcTemporaryBufferTranslationError::UnknownDestinationThread(
-                destination_thread,
-            ))?;
+        let thread_info = self.scheduler.thread_info(destination_thread).ok_or(
+            IpcTemporaryBufferTranslationError::UnknownDestinationThread(destination_thread),
+        )?;
         if thread_info.state == ThreadState::Exited {
             return Err(IpcTemporaryBufferTranslationError::ExitedDestinationThread(
                 destination_thread,
             ));
         }
 
-        let mut mappings = Vec::new();
+        let mut mappings: Vec<Arm11IpcTemporaryBuffer> = Vec::new();
         mappings
             .try_reserve_exact(parameters.len())
             .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
@@ -949,7 +946,9 @@ impl Arm11ProcessSession {
             let source_size = usize::try_from(size_bytes)
                 .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
             if permissions & 1 != 0
-                && !source.address_space.is_readable_range(source_address, source_size)
+                && !source
+                    .address_space
+                    .is_readable_range(source_address, source_size)
             {
                 for mapping in mappings.iter().copied() {
                     let _ = self
@@ -962,7 +961,9 @@ impl Arm11ProcessSession {
                 });
             }
             if permissions == 2
-                && !source.address_space.is_writable_range(source_address, source_size)
+                && !source
+                    .address_space
+                    .is_writable_range(source_address, source_size)
             {
                 for mapping in mappings.iter().copied() {
                     let _ = self
@@ -984,11 +985,11 @@ impl Arm11ProcessSession {
                 .ok_or(IpcTemporaryBufferTranslationError::AllocationFailure)?;
             let backing = SharedMemoryBacking::zeroed(mapping_size as usize)
                 .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
-            let mapped_address = match self.address_space.map_temporary_ipc_buffer(
-                backing,
-                page_offset,
-                size_bytes,
-            ) {
+            let mapped_address =
+                match self
+                    .address_space
+                    .map_temporary_ipc_buffer(backing, page_offset, size_bytes)
+                {
                 Ok(address) => address,
                 Err(error) => {
                     for mapping in mappings.iter().copied() {
@@ -1095,10 +1096,12 @@ impl Arm11ProcessSession {
                     .map_err(|_| IpcTemporaryBufferTranslationError::AllocationFailure)?;
                 bytes.resize(size, 0);
                 self.read_memory_bytes(mapping.mapped_address, &mut bytes)
-                    .map_err(|_| IpcTemporaryBufferTranslationError::SourceRangeUnavailable {
-                        address: mapping.mapped_address,
-                        size_bytes: mapping.size_bytes,
-                    })?;
+                    .map_err(
+                        |_| IpcTemporaryBufferTranslationError::SourceRangeUnavailable {
+                            address: mapping.mapped_address,
+                            size_bytes: mapping.size_bytes,
+                        },
+                    )?;
                 pending.push((mapping.source_address, mapping.size_bytes, bytes));
             }
 
@@ -3170,7 +3173,9 @@ mod tests {
     #[test]
     fn ipc_type_five_maps_read_only_input_and_does_not_copy_back() {
         let mut source = test_session();
-        source.write_memory_bytes(0x0020_0000, &[1, 2, 3, 4]).unwrap();
+        source
+            .write_memory_bytes(0x0020_0000, &[1, 2, 3, 4])
+            .unwrap();
         let mut destination = test_session();
         let words = [0x1234_0002, 0x0000_004A, 0x0020_0000];
         let message = ipc::IpcMessage::decode(&words).unwrap();
@@ -3203,7 +3208,9 @@ mod tests {
     #[test]
     fn ipc_type_six_maps_zeroed_output_and_copies_back_on_reply() {
         let mut source = test_session();
-        source.write_memory_bytes(0x0020_0000, &[1, 2, 3, 4]).unwrap();
+        source
+            .write_memory_bytes(0x0020_0000, &[1, 2, 3, 4])
+            .unwrap();
         let mut destination = test_session();
         let words = [0x1234_0002, 0x0000_004C, 0x0020_0000];
         let message = ipc::IpcMessage::decode(&words).unwrap();
@@ -3233,7 +3240,9 @@ mod tests {
     #[test]
     fn ipc_type_seven_stages_input_and_copies_output_back() {
         let mut source = test_session();
-        source.write_memory_bytes(0x0020_0000, &[1, 2, 3, 4]).unwrap();
+        source
+            .write_memory_bytes(0x0020_0000, &[1, 2, 3, 4])
+            .unwrap();
         let mut destination = test_session();
         let words = [0x1234_0002, 0x0000_004E, 0x0020_0000];
         let message = ipc::IpcMessage::decode(&words).unwrap();
