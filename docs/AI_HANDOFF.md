@@ -398,3 +398,27 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - A validação cobre esses quatro opcodes e os cenários testados; não significa que todos os casos UNPREDICTABLE, faults de alinhamento/endian, todas as variantes LDR/STR ou toda a arquitetura ARMv6 estejam completos.
 - Referências arquiteturais independentes: ARM1136JF-S Technical Reference Manual (ARM DDI 0211K), tabelas de instruções de transferência; ARM Architecture Reference Manual ARMv6, descrições A32 de LDRBT/STRT/STRBT. Nenhum código-fonte de outro emulador foi consultado.
 
+
+
+## ARMv6K A32 — event hints WFE/WFI/SEV (12/11/2026)
+
+### Implementação
+
+- `cd3ef7f` — separa os hints A32 `WFE`, `WFI` e `SEV` do grupo `NOP32`. Os hints com ação observável respeitam o campo de condição ARM; `NOP32`, `YIELD` e os valores reservados permanecem sem efeito arquitetural visível neste perfil.
+- `0675fe8` — acrescenta o registrador de evento ARMv6K por núcleo e a regra de wake-up: IRQ/FIQ não mascaradas geram WakeUpAction e registram o evento; WFE adormecido só retoma quando o registrador é setado; a flag permanece setada depois do wake-up e é consumida pelo próximo WFE executado.
+- `3f665c7` — integra os estados ao caminho de sessão. `WaitForEvent` interrompe o lote de instruções enquanto o núcleo aguarda; a espera repetida não aumenta a contagem de instruções. `SendEvent` chega ao chamador como `Arm11RunStopReason::SendEvent`. `Arm11ProcessSession::signal_cpu_event` e `AcerisSystem::signal_cpu_event` permitem injetar eventos externos no contexto atualmente selecionado.
+- WFI A32 utiliza o mesmo estado de espera do WFI via CP15: qualquer IRQ/FIQ desperta o núcleo mesmo que CPSR.I/F impeça a entrada da exceção. O avanço do PC ocorre quando a instrução WFI é aposentada.
+- Testes A32 em `arm.rs` cobrem WFE com evento já pendente, espera, sinalização externa, consumo tardio do latch, IRQ mascarada/não mascarada, WFI com interrupção mascarada, SEV, condições ARM e hints reservados.
+- Testes de sessão cobrem interrupção do lote e retomada após `signal_cpu_event`, contagem de instruções e propagação do stop reason `SendEvent`.
+
+### Limites explícitos
+
+- O emulador ainda não possui um agendador SMP integrado que propague automaticamente `SEV` a todas as instâncias de CPU. A instrução é exposta ao agendador externo por `SendEvent`; o broadcast real deve ser conectado quando o modelo multi-core for desenvolvido.
+- A entrada `signal_cpu_event` sinaliza o núcleo atualmente selecionado. Ainda não há API de endereçamento para sinalizar outro núcleo específico.
+- Eventos de debug/halting debug não são modelados. O comportamento aqui cobre os caminhos de evento e IRQ/FIQ testados; não representa a implementação integral da arquitetura ARMv6K.
+- Nenhum código de Thumb foi alterado; nenhuma implementação de outro emulador foi consultada.
+
+### Referência e verificação
+
+- Base arquitetural independente: ARM11 MPCore Processor Technical Reference Manual (ARM DDI 0360E), seções A32 de SEV/WFE e descrição dos event registers, WakeUpAction e UnMaskedWakeUpAction: https://documentation-service.arm.com/static/5e8e4457fd977155116ab118
+- Workflow [43327027270](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43327027270) concluído com sucesso: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.

@@ -40,7 +40,7 @@ pub enum StepEvent {
     /// comment field. Hardware exception entry is optional and disabled by default
     /// so HLE service dispatch can intercept this event.
     Svc(u32),
-    /// A CP15 WFI operation retired and put the core into the wait state.
+    /// A32 WFI or CP15 WFI retired and put the core into the wait state.
     WaitForInterrupt,
     /// The core remains in the WFI state; no guest instruction was executed.
     WaitingForInterrupt,
