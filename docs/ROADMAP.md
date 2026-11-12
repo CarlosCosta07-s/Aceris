@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação no commit `39d2ef4a4d3b44a867440ed5fa447f3eb7c91029`.
+> Estado revisado em 12/11/2026, com base na implementação no commit `8aedeb346014917935985cd5fe913ee9606e18cc`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -136,6 +136,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Snapshot dos registradores de índice/contagem/offset: 0x227, 0x228 e 0x22A; base e offset permanecem valores brutos de registrador
 - [~] Leitor de índices U8/U16 em little-endian, com limite defensivo e validação de faixa física; ainda não aplica vertex offset nem resolve o endereço DMA
 - [~] `Pica200::read_vertex_at_physical_base`, `read_numeric_vertex_at_physical_base` e `read_indices_at_physical_base` conectam snapshots ao fetch físico usando base já resolvida pelo chamador; não fazem tradução DMA, aplicação de vertex offset nem dispatch de draw
+- [~] Snapshot do `GPUREG_VSH_INPUTBUFFER_CONFIG` (0x2B9) e dos registradores de permutação (0x2BB/0x2BC); mapeamento explícito dos atributos numéricos para registradores de entrada `v0–v15`, sem executar o vertex shader ou resolver valores fixos
 - [ ] Resolver `GPUREG_ATTRIBBUFFERS_LOC` e endereços de arrays/índices pelo mapa físico e pela rota DMA real antes de acessar memória
 - [ ] Converter componentes brutos para entradas numéricas do shader com a normalização, extensão de sinal e tratamento float corretos
 - [ ] Integrar o fetch de atributos/índices ao vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
@@ -200,6 +201,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [~] Testes do bridge e da conversão escalar PICA200 (signed byte, unsigned byte, signed short e float32) adicionados no commit `39d2ef4a4d3b44a867440ed5fa447f3eb7c91029`; CI deste commit em execução
+- [~] Testes do snapshot e mapeamento de entradas do vertex shader adicionados; CI multiplataforma do commit `8aedeb346014917935985cd5fe913ee9606e18cc` em validação
 - [x] Rustfmt, Clippy e testes em Linux, Windows e macOS aprovados no commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
@@ -225,8 +227,8 @@ Este documento registra o estado observado no código. Não marque um item como 
 ## Próximas tarefas prioritárias
 
 1. Corrigir o bridge de command buffers e resolver a base dos arrays/índices para o mapa físico e DMA real; não tratar valores brutos dos registradores como endereços físicos.
-2. Integrar os atributos numéricos ao mapeamento `GPUREG_VSH_ATTRIBUTES_PERMUTATION`/`GPUREG_VSH_NUM_ATTR` e ao estágio de entrada do vertex shader.
-3. Implementar a semântica float24 do PICA200, uniforms, execução do vertex shader e transformações específicas; só então conectar clipping e rasterizador.
+2. Decodificar os valores fixos dos atributos em `GPUREG_FIXEDATTRIB_DATA0–2` (float24) e combiná-los com o mask, sem sobrescrever atributos fornecidos por arrays.
+3. Implementar conversão float24, programa/uniforms e execução do vertex shader PICA200; só então conectar as saídas ao estágio geométrico e rasterizador.
 4. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 5. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
 6. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
