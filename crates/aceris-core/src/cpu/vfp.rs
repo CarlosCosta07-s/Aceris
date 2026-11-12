@@ -6,11 +6,11 @@
 //! float<->integer).
 //!
 //! Deliberate limits, all reported as explicit errors rather than guessed:
-//! short-vector mode (FPSCR.LEN != 0), trapped floating-point exceptions,
-//! arithmetic under a rounding mode other than round-to-nearest, and the
-//! deprecated FLDMX/FSTMX forms. The IXC flag and non-flush underflow (UFC)
-//! are not tracked. Single precision is computed through `f64`, which yields
-//! correctly rounded results for + - * / and sqrt.
+//! short-vector mode (FPSCR.LEN != 0), trapped floating-point exceptions, and
+//! the deprecated FLDMX/FSTMX forms. Scalar operations honor FPSCR.RMode and
+//! accumulate IXC/UFC for inexact and tiny results. Single precision is
+//! computed through `f64`; double precision residuals use TwoSum/FMA where
+//! available, with the expected limits around extreme underflow.
 
 use super::arm::{bit, bits};
 use super::{Arm11Core, StepEvent};
@@ -170,6 +170,97 @@ impl Prec {
             Self::Double => x.to_bits(),
         }
     }
+
+    fn max_finite(self) -> f64 {
+        match self {
+            Self::Single => f64::from(f32::MAX),
+            Self::Double => f64::MAX,
+        }
+    }
+
+    fn max_finite_bits(self, negative: bool) -> u64 {
+        match self {
+            Self::Single => {
+                u64::from(0x7F7_FFFFu32 | if negative { 0x8000_0000 } else { 0 })
+            }
+            Self::Double => {
+                0x7FEF_FFFF_FFFF_FFFF | if negative { 1 << 63 } else { 0 }
+            }
+        }
+    }
+
+    fn infinity_bits(self, negative: bool) -> u64 {
+        self.exp_mask() | if negative { self.sign_bit() } else { 0 }
+    }
+
+    fn next_up(self, bits: u64) -> u64 {
+        match self {
+            Self::Single => {
+                let value = f32::from_bits(bits as u32);
+                if value.is_nan() || value == f32::INFINITY {
+                    bits
+                } else if value == 0.0 {
+                    1
+                } else if value.is_sign_negative() {
+                    bits - 1
+                } else {
+                    bits + 1
+                }
+            }
+            Self::Double => {
+                let value = f64::from_bits(bits);
+                if value.is_nan() || value == f64::INFINITY {
+                    bits
+                } else if value == 0.0 {
+                    1
+                } else if value.is_sign_negative() {
+                    bits - 1
+                } else {
+                    bits + 1
+                }
+            }
+        }
+    }
+
+    fn next_down(self, bits: u64) -> u64 {
+        match self {
+            Self::Single => {
+                let value = f32::from_bits(bits as u32);
+                if value.is_nan() || value == f32::NEG_INFINITY {
+                    bits
+                } else if value == 0.0 {
+                    u64::from(0x8000_0001u32)
+                } else if value.is_sign_negative() {
+                    bits + 1
+                } else {
+                    bits - 1
+                }
+            }
+            Self::Double => {
+                let value = f64::from_bits(bits);
+                if value.is_nan() || value == f64::NEG_INFINITY {
+                    bits
+                } else if value == 0.0 {
+                    (1 << 63) | 1
+                } else if value.is_sign_negative() {
+                    bits + 1
+                } else {
+                    bits - 1
+                }
+            }
+        }
+    }
+
+    fn overflow_result(self, negative: bool, mode: u32) -> u64 {
+        let infinity = self.infinity_bits(negative);
+        let maximum = self.max_finite_bits(negative);
+        match mode {
+            0 => infinity, // nearest
+            1 if !negative => infinity, // toward +infinity
+            2 if negative => infinity, // toward -infinity
+            _ => maximum, // toward zero or finite direction
+        }
+    }
 }
 
 /// Where an operand register lives and how it is addressed.
@@ -220,31 +311,121 @@ impl Vfp {
         Some(chosen | prec.quiet_bit())
     }
 
-    fn require_nearest(&self) -> Result<()> {
-        if self.rounding_mode() != 0 {
-            return Err(Error::Unimplemented(
-                "VFP arithmetic with a rounding mode other than round-to-nearest",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Converts a host result back to VFP bits, applying overflow, invalid-operation
-    /// and output flush-to-zero rules. `finite_inputs` enables OFC detection.
-    fn finish(&mut self, prec: Prec, finite_inputs: bool, value: f64) -> u64 {
+    /// Converts an unrounded host result to VFP precision and applies FPSCR.RMode.
+    /// `exact_relation` is the sign of (exact operation result - host nearest result).
+    fn finish(
+        &mut self,
+        prec: Prec,
+        finite_inputs: bool,
+        value: f64,
+        exact_relation: i8,
+    ) -> u64 {
         if value.is_nan() {
             self.raise(FPSCR_IOC);
             return prec.default_nan();
         }
-        let bits = prec.encode_f64(value);
-        if finite_inputs && prec.is_inf(bits) {
+
+        let mode = self.rounding_mode();
+        let nearest_bits = prec.encode_f64(value);
+        let nearest_value = prec.decode_f64(nearest_bits);
+        // When narrowing to single precision, the gap from the f64 host result
+        // to the f32 candidate dominates the much smaller f64 operation residual.
+        let relation = if value > nearest_value {
+            1
+        } else if value < nearest_value {
+            -1
+        } else {
+            exact_relation
+        };
+
+        let magnitude = value.abs();
+        let maximum = prec.max_finite();
+        let exact_magnitude_overflow = magnitude > maximum
+            || (magnitude == maximum
+                && if value.is_sign_negative() {
+                    relation < 0
+                } else {
+                    relation > 0
+                });
+        let rounded_overflow = prec.is_inf(nearest_bits);
+        let overflow = finite_inputs
+            && if mode == 0 {
+                rounded_overflow
+            } else {
+                exact_magnitude_overflow
+            };
+
+        if overflow {
             self.raise(FPSCR_OFC | FPSCR_IXC);
+            return prec.overflow_result(value.is_sign_negative(), mode);
         }
-        if self.fpscr & FPSCR_FZ != 0 && prec.is_subnormal(bits) {
-            self.raise(FPSCR_UFC);
-            return bits & prec.sign_bit();
+
+        let mut result = nearest_bits;
+        match mode {
+            1 if relation > 0 => result = prec.next_up(result),
+            2 if relation < 0 => result = prec.next_down(result),
+            3 if ((!value.is_sign_negative() && relation < 0)
+                || (value.is_sign_negative() && relation > 0)) =>
+            {
+                result = if value.is_sign_negative() {
+                    prec.next_up(result)
+                } else {
+                    prec.next_down(result)
+                };
+            }
+            _ => {}
         }
-        bits
+
+        let rounded = prec.decode_f64(result);
+        let inexact = relation != 0;
+        if inexact {
+            self.raise(FPSCR_IXC);
+            if rounded == 0.0 || prec.is_subnormal(result) {
+                self.raise(FPSCR_UFC);
+            }
+        }
+
+        if self.fpscr & FPSCR_FZ != 0 && prec.is_subnormal(result) {
+            self.raise(FPSCR_UFC | FPSCR_IXC);
+            return result & prec.sign_bit();
+        }
+        result
+    }
+
+    /// Returns the sign of the exact residual for a host operation rounded to f64.
+    fn operation_residual(op: BinOp, a: f64, b: f64, rounded: f64) -> i8 {
+        if !a.is_finite() || !b.is_finite() || !rounded.is_finite() {
+            return 0;
+        }
+
+        let residual = match op {
+            BinOp::Add | BinOp::Sub => {
+                let rhs = if op == BinOp::Add { b } else { -b };
+                // Error-free TwoSum transformation.
+                let virtual_b = rounded - a;
+                let virtual_a = rounded - virtual_b;
+                (a - virtual_a) + (rhs - virtual_b)
+            }
+            BinOp::Mul => a.mul_add(b, -rounded),
+            BinOp::Div if b != 0.0 => {
+                let remainder = (-rounded).mul_add(b, a);
+                return if b.is_sign_negative() {
+                    -sign_of(remainder)
+                } else {
+                    sign_of(remainder)
+                };
+            }
+            BinOp::Div => return 0,
+        };
+        sign_of(residual)
+    }
+
+    fn sqrt_residual(value: f64, rounded: f64) -> i8 {
+        if !value.is_finite() || !rounded.is_finite() {
+            return 0;
+        }
+        // A positive (rounded^2 - value) means the rounded root is too large.
+        -sign_of(rounded.mul_add(rounded, -value))
     }
 
     fn finite(prec: Prec, operands: &[u64]) -> bool {
@@ -254,7 +435,6 @@ impl Vfp {
     }
 
     fn binary(&mut self, prec: Prec, op: BinOp, a: u64, b: u64) -> Result<u64> {
-        self.require_nearest()?;
         let (a, b) = (self.input(prec, a), self.input(prec, b));
         if let Some(nan) = self.nan_result(prec, &[a, b]) {
             return Ok(nan);
@@ -273,17 +453,20 @@ impl Vfp {
             BinOp::Mul => x * y,
             BinOp::Div => x / y,
         };
-        Ok(self.finish(prec, finite, result))
+        let residual = Self::operation_residual(op, x, y, result);
+        Ok(self.finish(prec, finite, result, residual))
     }
 
     fn sqrt(&mut self, prec: Prec, a: u64) -> Result<u64> {
-        self.require_nearest()?;
         let a = self.input(prec, a);
         if let Some(nan) = self.nan_result(prec, &[a]) {
             return Ok(nan);
         }
+        let value = prec.decode_f64(a);
         let finite = Self::finite(prec, &[a]);
-        Ok(self.finish(prec, finite, prec.decode_f64(a).sqrt()))
+        let result = value.sqrt();
+        let residual = Self::sqrt_residual(value, result);
+        Ok(self.finish(prec, finite, result, residual))
     }
 
     fn compare(&mut self, prec: Prec, a: u64, b: u64, signal_quiet_nan: bool) {
@@ -318,7 +501,7 @@ impl Vfp {
             return converted | to.quiet_bit();
         }
         let finite = Self::finite(from, &[value]);
-        self.finish(to, finite, from.decode_f64(value))
+        self.finish(to, finite, from.decode_f64(value), 0)
     }
 
     fn float_to_int(&mut self, from: Prec, value: u64, signed: bool, round_to_zero: bool) -> u32 {
@@ -363,23 +546,12 @@ impl Vfp {
     }
 
     fn int_to_float(&mut self, to: Prec, raw: u32, signed: bool) -> Result<u64> {
-        self.require_nearest()?;
         let value = if signed {
             f64::from(raw as i32)
         } else {
             f64::from(raw)
         };
-        Ok(match to {
-            Prec::Single => {
-                let single = if signed {
-                    (raw as i32) as f32
-                } else {
-                    raw as f32
-                };
-                u64::from(single.to_bits())
-            }
-            Prec::Double => value.to_bits(),
-        })
+        Ok(self.finish(to, true, value, 0))
     }
 }
 
@@ -1054,17 +1226,39 @@ mod tests {
     }
 
     #[test]
-    fn rounding_mode_controls_float_to_integer_only() {
+    fn fpscr_rounding_mode_controls_single_arithmetic_and_exception_flags() {
         let (mut cpu, mut mem) = machine();
         set_f32(&mut cpu, 1, 2.5);
-        cpu.vfp_mut().fpscr = 1 << 22; // toward +infinity
+        cpu.vfp_mut().fpscr = 1 << 22; // toward +infinity for float-to-int
         run(&mut cpu, &mut mem, &[dp(VCVT_TO_S32, 0, 0, 1, false)]).unwrap();
         assert_eq!(cpu.vfp().s(0), 3);
-        // Arithmetic under a non-nearest mode is refused, not silently wrong.
-        assert!(matches!(
-            run(&mut cpu, &mut mem, &[dp(VADD, 0, 1, 1, false)]),
-            Err(Error::Unimplemented(_))
-        ));
+
+        set_f32(&mut cpu, 1, 1.0);
+        set_f32(&mut cpu, 2, 2.0_f32.powi(-24)); // halfway between 1.0f and next f32
+        cpu.vfp_mut().fpscr = 1 << 22;
+        run(&mut cpu, &mut mem, &[dp(VADD, 0, 1, 2, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0x3F80_0001);
+        assert_ne!(cpu.vfp().fpscr() & FPSCR_IXC, 0);
+
+        cpu.vfp_mut().fpscr = 2 << 22; // toward -infinity
+        run(&mut cpu, &mut mem, &[dp(VADD, 0, 1, 2, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0x3F80_0000);
+
+        set_f32(&mut cpu, 1, -1.0);
+        set_f32(&mut cpu, 2, -2.0_f32.powi(-24));
+        run(&mut cpu, &mut mem, &[dp(VADD, 0, 1, 2, false)]).unwrap();
+        assert_eq!(cpu.vfp().s(0), 0xBF80_0001);
+    }
+
+    #[test]
+    fn fpscr_rounding_mode_controls_double_arithmetic() {
+        let (mut cpu, mut mem) = machine();
+        set_f64(&mut cpu, 1, 1.0);
+        set_f64(&mut cpu, 2, 2.0_f64.powi(-53));
+        cpu.vfp_mut().fpscr = 1 << 22; // toward +infinity
+        run(&mut cpu, &mut mem, &[dp(VADD, 0, 1, 2, true)]).unwrap();
+        assert_eq!(cpu.vfp().d(0), 0x3FF0_0000_0000_0001);
+        assert_ne!(cpu.vfp().fpscr() & FPSCR_IXC, 0);
     }
 
     #[test]

@@ -422,8 +422,16 @@ impl Arm11Core {
                     }
                 };
             }
-            // NOP, YIELD, WFE, WFI, SEV: no architectural effect we model yet.
-            0b1111 if bits(half, 3, 0) == 0 => {}
+            // Only the 16-bit NOP hint encoding is defined for the ARMv6K
+            // Thumb profile implemented by the ARM11 core.
+            0b1111 if bits(half, 3, 0) == 0 => {
+                if bits(half, 7, 4) != 0 {
+                    return Err(Error::UndefinedInstruction {
+                        pc: self.pc(),
+                        word: half,
+                    });
+                }
+            }
             _ => return Err(Error::Unimplemented("Thumb miscellaneous instruction")),
         }
         Ok(StepEvent::Executed)
@@ -1114,6 +1122,23 @@ mod tests {
         let mut m = Machine::new(&[0xB672]); // CPSID i.
         m.step();
         assert_eq!(m.cpu.cpsr.0 & (1 << 7), 0);
+    }
+
+    #[test]
+    fn armv6k_thumb_only_accepts_the_defined_nop_hint() {
+        let mut machine = Machine::with(0xBF00, |_, _| {});
+        assert_eq!(machine.step(), StepEvent::Executed);
+    }
+
+    #[test]
+    fn armv6k_thumb_rejects_yield_wfe_wfi_and_sev_hint_encodings() {
+        for half in [0xBF10, 0xBF20, 0xBF30, 0xBF40] {
+            let mut machine = Machine::with(half, |_, _| {});
+            assert!(matches!(
+                machine.step(),
+                StepEvent::Fault(Error::UndefinedInstruction { .. })
+            ), "expected ARMv6K Thumb hint {half:#06x} to be undefined");
+        }
     }
 
     #[test]
