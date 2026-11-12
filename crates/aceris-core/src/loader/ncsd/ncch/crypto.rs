@@ -182,13 +182,13 @@ impl Aes128 {
     pub fn encrypt_block(&self, block: [u8; AES_BLOCK_SIZE]) -> [u8; AES_BLOCK_SIZE] {
         let mut state = block;
         add_round_key(&mut state, &self.round_keys[0]);
-        for round in 1..=AES_ROUNDS {
+        for (round, round_key) in self.round_keys.iter().enumerate().skip(1) {
             sub_bytes(&mut state);
             shift_rows(&mut state);
             if round != AES_ROUNDS {
                 mix_columns(&mut state);
             }
-            add_round_key(&mut state, &self.round_keys[round]);
+            add_round_key(&mut state, round_key);
         }
         state
     }
