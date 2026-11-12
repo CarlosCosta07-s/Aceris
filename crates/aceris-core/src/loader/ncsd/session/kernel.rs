@@ -31,6 +31,7 @@ pub enum IpcHandleTranslationError {
     InvalidDescriptor,
     ProcessIdTranslationUnsupported,
     HandleCountMismatch { expected: u8, actual: usize },
+    DuplicateMoveHandle { handle: u32 },
     Kernel(KernelHandleError),
 }
 
