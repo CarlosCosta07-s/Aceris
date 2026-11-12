@@ -43,13 +43,17 @@ pub enum GspIpcRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GspIpcRequestError {
     EmptyMessage,
-    UnsupportedCommandHeader { header: u32 },
+    UnsupportedCommandHeader {
+        header: u32,
+    },
     TruncatedMessage {
         header: u32,
         expected_words: usize,
         actual_words: usize,
     },
-    InvalidHandleDescriptor { descriptor: u32 },
+    InvalidHandleDescriptor {
+        descriptor: u32,
+    },
 }
 
 impl fmt::Display for GspIpcRequestError {
@@ -138,18 +142,42 @@ impl GspClientRegistration {
 /// Errors raised while registering a client or delivering a relay interrupt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GspServiceError {
-    InvalidClientId { client_id: u8 },
-    ClientAlreadyRegistered { client_id: u8 },
-    ClientNotRegistered { client_id: u8 },
+    InvalidClientId {
+        client_id: u8,
+    },
+    ClientAlreadyRegistered {
+        client_id: u8,
+    },
+    ClientNotRegistered {
+        client_id: u8,
+    },
     NoFreeClientSlots,
-    MisalignedSharedMemoryBase { address: u32 },
-    SharedMemoryUnavailable { address: u32 },
-    AddressOverflow { base: u32, offset: u32 },
-    InvalidEventHandle { handle: u32 },
-    InvalidRelayQueue { source: GspInterruptQueueError },
-    EventSignalFailed { source: KernelHandleError },
-    RenderingRightRequired { client_id: u8, interrupt: GspInterruptId },
-    RenderingRightNotOwned { client_id: u8 },
+    MisalignedSharedMemoryBase {
+        address: u32,
+    },
+    SharedMemoryUnavailable {
+        address: u32,
+    },
+    AddressOverflow {
+        base: u32,
+        offset: u32,
+    },
+    InvalidEventHandle {
+        handle: u32,
+    },
+    InvalidRelayQueue {
+        source: GspInterruptQueueError,
+    },
+    EventSignalFailed {
+        source: KernelHandleError,
+    },
+    RenderingRightRequired {
+        client_id: u8,
+        interrupt: GspInterruptId,
+    },
+    RenderingRightNotOwned {
+        client_id: u8,
+    },
 }
 
 impl fmt::Display for GspServiceError {
@@ -326,10 +354,7 @@ impl GspServiceRegistry {
     /// already held it. Returns `false` when another client owns the right.
     /// This non-blocking primitive is the basis for GSP TryAcquireRight;
     /// blocking AcquireRight needs the IPC wait/notification layer.
-    pub fn try_acquire_rendering_right(
-        &mut self,
-        client_id: u8,
-    ) -> Result<bool, GspServiceError> {
+    pub fn try_acquire_rendering_right(&mut self, client_id: u8) -> Result<bool, GspServiceError> {
         let index = Self::client_index(client_id)?;
         if self.clients[index].is_none() {
             return Err(GspServiceError::ClientNotRegistered { client_id });
@@ -560,12 +585,7 @@ mod tests {
             })
         );
         assert_eq!(
-            decode_gsp_ipc_request(&[
-                GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER,
-                0,
-                2,
-                0x1234,
-            ]),
+            decode_gsp_ipc_request(&[GSP_IPC_REGISTER_INTERRUPT_RELAY_QUEUE_HEADER, 0, 2, 0x1234,]),
             Err(GspIpcRequestError::InvalidHandleDescriptor { descriptor: 2 })
         );
         assert_eq!(
