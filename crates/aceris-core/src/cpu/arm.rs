@@ -1638,9 +1638,21 @@ impl Arm11Core {
             return Ok(());
         }
 
-        if !self.cpsr.privileged() {
-            write_mask &= 0xFF00_0000;
+        // ARM1136 permits NZCVQ, GE and E writes from every mode.
+        // A/I/F and the mode field remain privileged-only. J, T and
+        // reserved CPSR bits are not writable through MSR on this core.
+        let mut writable_cpsr_bits = super::Psr::N
+            | super::Psr::Z
+            | super::Psr::C
+            | super::Psr::V
+            | super::Psr::Q
+            | super::Psr::GE_MASK
+            | super::Psr::E;
+        if self.cpsr.privileged() {
+            writable_cpsr_bits |=
+                super::Psr::A | super::Psr::I | super::Psr::F | super::Psr::MODE_MASK;
         }
+        write_mask &= writable_cpsr_bits;
         if write_mask == 0 {
             return Ok(());
         }
@@ -2740,6 +2752,49 @@ mod tests {
             msr.cpu.step(&mut msr.mem),
             Err(Error::UndefinedInstruction { pc: 0, .. })
         ));
+    }
+
+    #[test]
+    fn armv6_user_mode_msr_can_write_nzcvq_ge_and_endianness_only() {
+        // MSR CPSR_fsxc,r1 with every source bit set. ARM1136 exposes NZCVQ,
+        // GE and E to User mode, but protects A/I/F/M and ignores J/T/reserved.
+        let mut m = Machine::new(&[0xE12F_F001]);
+        m.cpu.regs[1] = u32::MAX;
+
+        m.step();
+
+        let expected = Psr::N
+            | Psr::Z
+            | Psr::C
+            | Psr::V
+            | Psr::Q
+            | Psr::GE_MASK
+            | Psr::E
+            | Psr::USER_MODE;
+        assert_eq!(m.cpu.cpsr.0, expected);
+    }
+
+    #[test]
+    fn armv6_privileged_msr_cannot_modify_j_or_t_state_bits() {
+        // The privileged CPSR control field is writable, but J and T are not.
+        let mut m = Machine::new(&[0xE12F_F001]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.regs[1] = u32::MAX;
+
+        m.step();
+
+        let expected = Psr::N
+            | Psr::Z
+            | Psr::C
+            | Psr::V
+            | Psr::Q
+            | Psr::GE_MASK
+            | Psr::E
+            | Psr::A
+            | Psr::I
+            | Psr::F
+            | Psr::SYSTEM_MODE;
+        assert_eq!(m.cpu.cpsr.0, expected);
     }
 
     #[test]
