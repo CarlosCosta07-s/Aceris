@@ -143,11 +143,25 @@ impl Arm11KernelObjectTable {
         if size == 0 || size & 0xFFF != 0 {
             return Err(KernelHandleError::InvalidMemoryBlockSize);
         }
+        let backing = SharedMemoryBacking::zeroed(size as usize)
+            .map_err(|_| KernelHandleError::OutOfMemory)?;
+        self.create_memory_block_with_backing(backing, owner_permissions, other_permissions)
+    }
+
+    /// Creates a memory-block handle over an existing shared backing without copying.
+    pub fn create_memory_block_with_backing(
+        &mut self,
+        backing: SharedMemoryBacking,
+        owner_permissions: u32,
+        other_permissions: u32,
+    ) -> Result<u32, KernelHandleError> {
+        let size = backing.len().ok_or(KernelHandleError::OutOfMemory)?;
+        if size == 0 || size & 0xFFF != 0 {
+            return Err(KernelHandleError::InvalidMemoryBlockSize);
+        }
         if owner_permissions > 3 || other_permissions > 3 {
             return Err(KernelHandleError::InvalidMemoryPermission);
         }
-        let backing = SharedMemoryBacking::zeroed(size as usize)
-            .map_err(|_| KernelHandleError::OutOfMemory)?;
         self.insert(KernelObject::MemoryBlock(KernelMemoryBlock {
             backing,
             owner_permissions,
