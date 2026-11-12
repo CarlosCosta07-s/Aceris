@@ -335,7 +335,8 @@ impl Cp15 {
             (13, 0, 2) => self.tpidrurw = value,
             (13, 0, 3) => self.tpidruro = value,
             (13, 0, 4) => self.tpidrprw = value,
-            // Cache maintenance, barriers and wait-for-interrupt: no modeled state.
+            // WFI is surfaced by the CP15 instruction decoder as a core wait event;
+            // the remaining cache-maintenance and barrier operations have no modeled state.
             (7, 0, 4)
             | (7, 5, 0 | 1 | 2 | 4 | 6 | 7)
             | (7, 6, 0..=2)

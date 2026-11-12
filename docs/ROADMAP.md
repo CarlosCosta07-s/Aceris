@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `311798ab0bf676c39df7424b86265343f449ead4`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `8c16cdb0b4b9c26d2b90f75b5ccde6d3ba752621`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -17,7 +17,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Workflow do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
-- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `311798ab0bf676c39df7424b86265343f449ead4`, sem anunciar compatibilidade não testada
+- [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `8c16cdb0b4b9c26d2b90f75b5ccde6d3ba752621`, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
 
@@ -33,7 +33,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Retorno de exceção A32 por instrução de processamento de dados e RFE
 - [x] SRS ARMv6: grava LR/SPSR em SP bancado selecionado, com os quatro modos de endereçamento, writeback, validação de modo e endianness; SP desalinhado é alinhado quando SCTLR.A/U estão claros e gera fault quando qualquer um está habilitado; testes aprovados no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
 - [~] Validar todas as combinações de exceção, vetores altos, endianness, máscaras, abortos durante transferências múltiplas e retornos em sequências longas
-- [ ] Integrar um controlador de interrupções e temporizadores do sistema ao modelo de IRQ/FIQ
+- [ ] Integrar um controlador de interrupções e temporizadores de dispositivos ao modelo de IRQ/FIQ; as linhas externas são atualmente acionadas pelo host
 
 ### Instruções ARM e Thumb
 
@@ -51,6 +51,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Coprocessadores e MMU
 
 - [x] Arquivo de estado CP15 com MIDR, CTR, TLBTR, PFR/DFR/MMFR/ISAR do ARM11, controle, CPACR, TTBR0/1, TTBCR, DACR, fault status/address, FCSE PID, CONTEXTIDR e TPIDR*; leitura com privilégio e escrita de TPIDRURO testadas
+- [x] CP15 WFI (`MCR p15,0,Rt,c7,c0,4`) suspende o core e interrompe o orçamento de execução; IRQ/FIQ acordam WFI mesmo com CPSR.I/F mascarado, e somente uma interrupção desmascarada entra no vetor. A sessão expõe linhas IRQ/FIQ externas ao host; não substitui um controlador de interrupções de dispositivos.
 - [~] Operações de manutenção do TLB CP15 c8 estão ligadas ao TLB unificado de software; manutenção de cache, coerência entre agentes e algumas barreiras ainda não têm efeitos arquiteturais modelados
 - [~] MMU ARMv6 de descritores curtos: TTBR0/TTBR1 e TTBCR.N; seções/superseções e coarse tables; formato XP=1 com AP/APX/XN e descritores de páginas grandes/pequenas; formato legado XP=0 com AP0–AP3 por subpágina, regras AP=00/S/R e extended-small-page de 4 KiB em coarse tables; FCSE PID (VA abaixo de 32 MiB → MVA) e domínios
 - [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; descritor L2 type 0b11 gera fault no formato XP=1, e fine tables/tiny pages permanecem fora do perfil VMSAv6; atributos TEX e faults de alinhamento para acessos de dados comuns ainda não estão modelados
@@ -227,6 +228,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] SRS ARMv6, incluindo modos inválidos, alinhamento condicionado por SCTLR.A/U e SP desalinhado com SPSR válido, aprovado em Linux/Windows/macOS e Android ARM64 no workflow [43231651724](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43231651724)
 - [x] VFPv2 short vectors: bancos circulares single/double, wrap, broadcast scalar Fm, stride 1/2, unary sqrt, rejeição de combinações LEN/STRIDE fora da tabela VFP11 e regressões para VCMP/VCVT sempre escalares; Rustfmt, Clippy e `cargo test --workspace` aprovados em Linux/Windows/macOS e build Android `arm64-v8a` aprovado no workflow [43235400622](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43235400622)
 - [x] MMU legacy XP=0: permissões AP0–AP3 de seções/páginas, regras S/R de AP=00 e extended-small-page em coarse tables; XP=1 rejeita L2 type 0b11 reservado. Rustfmt, Clippy, testes em Linux/Windows/macOS e build Android ARM64 aprovados no workflow [43234327123](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43234327123)
+- [x] CP15 WFI e despertar por IRQ/FIQ: espera sem consumo de instruções, PC preservado, despertar com interrupção mascarada sem exceção e vetor IRQ quando desmascarada; Rustfmt, Clippy, testes Linux/Windows/macOS e build Android `arm64-v8a` aprovados no workflow [43236859913](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43236859913)
 - [x] Testes adicionais de arredondamento VFP para multiplicação, divisão, raiz quadrada, underflow e flush-to-zero aprovados em Linux, Windows e macOS; build Android `arm64-v8a` aprovado no workflow [43227896584](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43227896584)
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
