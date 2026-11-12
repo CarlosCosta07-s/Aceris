@@ -18,6 +18,63 @@ pub enum PicaVertexShaderInstructionFormat {
     Format5InvertedMultiplyAdd,
 }
 
+/// Decoded PICA operand descriptor used by register-operation instructions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaShaderOperandDescriptor {
+    /// Bit 3 selects x, bit 2 y, bit 1 z and bit 0 w.
+    pub destination_mask: u8,
+    pub source1_negate: bool,
+    pub source1_selector: u8,
+    pub source2_negate: bool,
+    pub source2_selector: u8,
+    pub source3_negate: bool,
+    pub source3_selector: u8,
+}
+
+impl PicaShaderOperandDescriptor {
+    /// Extracts the descriptor's swizzle for one destination lane (0=x..3=w).
+    ///
+    /// The selector stores the x lane in bits 6..7 and the w lane in bits 0..1.
+    pub const fn source_component(selector: u8, destination_lane: u8) -> Option<u8> {
+        if destination_lane > 3 {
+            return None;
+        }
+        let shift = (3 - destination_lane) * 2;
+        Some((selector >> shift) & 0x3)
+    }
+
+    pub const fn source1_component(self, destination_lane: u8) -> Option<u8> {
+        Self::source_component(self.source1_selector, destination_lane)
+    }
+
+    pub const fn source2_component(self, destination_lane: u8) -> Option<u8> {
+        Self::source_component(self.source2_selector, destination_lane)
+    }
+
+    pub const fn source3_component(self, destination_lane: u8) -> Option<u8> {
+        Self::source_component(self.source3_selector, destination_lane)
+    }
+
+    pub const fn destination_lane_enabled(self, destination_lane: u8) -> bool {
+        if destination_lane > 3 {
+            return false;
+        }
+        self.destination_mask & (1 << (3 - destination_lane)) != 0
+    }
+
+    pub const fn decode(word: u32) -> Self {
+        Self {
+            destination_mask: field(word, 0, 4) as u8,
+            source1_negate: field(word, 4, 1) != 0,
+            source1_selector: field(word, 5, 8) as u8,
+            source2_negate: field(word, 13, 1) != 0,
+            source2_selector: field(word, 14, 8) as u8,
+            source3_negate: field(word, 22, 1) != 0,
+            source3_selector: field(word, 23, 8) as u8,
+        }
+    }
+}
+
 /// Raw fields for register-operation instruction Format 1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PicaShaderFormat1 {
@@ -236,6 +293,49 @@ mod tests {
 
     const fn bits(value: u32, shift: u32) -> u32 {
         value << shift
+    }
+
+    #[test]
+    fn decodes_operand_descriptor_masks_negation_and_source_swizzles() {
+        let word = bits(0b1010, 0)
+            | bits(1, 4)
+            | bits(0x1B, 5)
+            | bits(0, 13)
+            | bits(0x55, 14)
+            | bits(1, 22)
+            | bits(0xE4, 23);
+        let descriptor = PicaShaderOperandDescriptor::decode(word);
+
+        assert_eq!(descriptor.destination_mask, 0b1010);
+        assert!(!descriptor.destination_lane_enabled(0));
+        assert!(descriptor.destination_lane_enabled(1));
+        assert!(!descriptor.destination_lane_enabled(2));
+        assert!(descriptor.destination_lane_enabled(3));
+        assert!(descriptor.source1_negate);
+        assert_eq!(descriptor.source1_selector, 0x1B);
+        assert_eq!(
+            [
+                descriptor.source1_component(0),
+                descriptor.source1_component(1),
+                descriptor.source1_component(2),
+                descriptor.source1_component(3),
+            ],
+            [Some(0), Some(1), Some(2), Some(3)]
+        );
+        assert!(!descriptor.source2_negate);
+        assert_eq!(descriptor.source2_selector, 0x55);
+        assert_eq!(
+            [
+                descriptor.source2_component(0),
+                descriptor.source2_component(1),
+                descriptor.source2_component(2),
+                descriptor.source2_component(3),
+            ],
+            [Some(1), Some(1), Some(1), Some(1)]
+        );
+        assert!(descriptor.source3_negate);
+        assert_eq!(descriptor.source3_selector, 0xE4);
+        assert_eq!(descriptor.source3_component(4), None);
     }
 
     #[test]
