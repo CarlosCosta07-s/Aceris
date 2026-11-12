@@ -413,7 +413,7 @@ mod tests {
         let mut bytes = [0xA5; GSP_INTERRUPT_QUEUE_SIZE];
         bytes[0] = 0;
         bytes[1] = 0;
-        assert!(matches!(GspInterruptRelayQueue::parse(&bytes), Ok(_)));
+        assert!(GspInterruptRelayQueue::parse(&bytes).is_ok());
         bytes[0] = GSP_INTERRUPT_QUEUE_CAPACITY as u8;
         assert!(matches!(
             GspInterruptRelayQueue::parse(&bytes),
