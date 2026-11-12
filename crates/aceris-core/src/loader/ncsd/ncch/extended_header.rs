@@ -24,6 +24,12 @@ const SYSTEM_INFO_OFFSET: usize = 0x1C0;
 const SAVE_DATA_SIZE_OFFSET: usize = SYSTEM_INFO_OFFSET;
 const JUMP_ID_OFFSET: usize = SYSTEM_INFO_OFFSET + 0x08;
 const ACCESS_CONTROL_INFO_OFFSET: usize = SYSTEM_CONTROL_INFO_SIZE;
+const ARM11_KERNEL_CAPABILITIES_OFFSET: usize = 0x170;
+const ARM11_KERNEL_CAPABILITIES_SIZE: usize = 0x80;
+const OTHER_CAPABILITIES_DESCRIPTOR_MASK: u32 = 0xFF00_0000;
+const OTHER_CAPABILITIES_DESCRIPTOR: u32 = 0xFF00_0000;
+const MEMORY_TYPE_MASK: u32 = 0x0000_0F00;
+const MEMORY_TYPE_SHIFT: u32 = 8;
 
 /// One ARM11 code-set descriptor from the System Control Info.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -63,6 +69,19 @@ pub struct CodeFileLayout {
     pub data_memory_size_bytes: usize,
     /// Total expected decompressed ExeFS code-file length.
     pub total_size_bytes: usize,
+}
+
+/// ARM11 FCRAM memory region assigned to a process by its kernel capabilities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arm11MemoryType {
+    /// Application memory region (games and ordinary applications).
+    Application,
+    /// System memory region (system applications).
+    System,
+    /// Base memory region (system modules).
+    Base,
+    /// A memory type value not yet modeled by Aceris.
+    Unknown(u8),
 }
 
 /// Parsed System Control Info and raw Access Control Info from an NCCH exheader.
@@ -188,6 +207,38 @@ impl NcchExtendedHeader {
     /// Returns true when the extended header requests ExeFS/.code decompression.
     pub const fn compresses_exefs_code(&self) -> bool {
         self.flags & 0x01 != 0
+    }
+
+    /// Returns the ARM11 process memory region from the OtherCapabilities descriptor.
+    ///
+    /// ACI stores 32-bit ARM11 kernel capability descriptors at offset 0x170.
+    /// If no OtherCapabilities descriptor is present, the conservative default
+    /// is APPLICATION. Unknown encoded values are preserved instead of guessed.
+    pub fn arm11_memory_type(&self) -> Arm11MemoryType {
+        let descriptors = &self.access_control_info[ARM11_KERNEL_CAPABILITIES_OFFSET
+            ..ARM11_KERNEL_CAPABILITIES_OFFSET + ARM11_KERNEL_CAPABILITIES_SIZE];
+        for descriptor in descriptors.chunks_exact(4) {
+            let descriptor = u32::from_le_bytes(
+                descriptor
+                    .try_into()
+                    .expect("kernel capability descriptor is exactly four bytes"),
+            );
+            if descriptor & OTHER_CAPABILITIES_DESCRIPTOR_MASK
+                != OTHER_CAPABILITIES_DESCRIPTOR
+            {
+                continue;
+            }
+
+            let value = ((descriptor & MEMORY_TYPE_MASK) >> MEMORY_TYPE_SHIFT) as u8;
+            return match value {
+                1 => Arm11MemoryType::Application,
+                2 => Arm11MemoryType::System,
+                3 => Arm11MemoryType::Base,
+                other => Arm11MemoryType::Unknown(other),
+            };
+        }
+
+        Arm11MemoryType::Application
     }
 
     /// Returns true when the title is marked as an SD application.
@@ -339,6 +390,41 @@ mod tests {
                 total_size_bytes: 0x4000,
             })
         );
+    }
+
+    #[test]
+    fn decodes_arm11_memory_type_from_other_capabilities_descriptor() {
+        let cases = [
+            (1, Arm11MemoryType::Application),
+            (2, Arm11MemoryType::System),
+            (3, Arm11MemoryType::Base),
+            (7, Arm11MemoryType::Unknown(7)),
+        ];
+
+        for (encoded, expected) in cases {
+            let mut data = valid_extended_header();
+            let descriptor = OTHER_CAPABILITIES_DESCRIPTOR | (u32::from(encoded) << MEMORY_TYPE_SHIFT);
+            write_u32(
+                &mut data,
+                ACCESS_CONTROL_INFO_OFFSET + ARM11_KERNEL_CAPABILITIES_OFFSET,
+                descriptor,
+            );
+            let header = NcchExtendedHeader::parse(&data).unwrap();
+            assert_eq!(header.arm11_memory_type(), expected);
+        }
+    }
+
+    #[test]
+    fn missing_memory_type_descriptor_defaults_to_application() {
+        let mut data = valid_extended_header();
+        data[ACCESS_CONTROL_INFO_OFFSET
+            + ARM11_KERNEL_CAPABILITIES_OFFSET
+            ..ACCESS_CONTROL_INFO_OFFSET
+                + ARM11_KERNEL_CAPABILITIES_OFFSET
+                + ARM11_KERNEL_CAPABILITIES_SIZE]
+            .fill(0);
+        let header = NcchExtendedHeader::parse(&data).unwrap();
+        assert_eq!(header.arm11_memory_type(), Arm11MemoryType::Application);
     }
 
     #[test]
