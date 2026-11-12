@@ -1,9 +1,17 @@
 //! CP15 system control coprocessor state for the ARM11 core.
 //!
-//! Only register storage and access rules live here. The core does not
-//! implement an MMU or caches: translation and cache-maintenance operations are
-//! accepted (so guest kernels can run) but have no architectural effect, and
-//! the stored translation-table registers are only readable back.
+//! CP15 owns system-control state and queues TLB-maintenance operations for the
+//! ARMv6 MMU. Cache maintenance and some barriers still have no modeled memory
+//! effect and remain explicit limitations.
+
+/// TLB maintenance requested by a privileged MCR to CP15 c8.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TlbMaintenance {
+    InvalidateAll,
+    InvalidateMvaAsid { mva: u32, asid: u8 },
+    InvalidateAsid { asid: u8 },
+    InvalidateMvaAllAsids { mva: u32 },
+}
 
 /// Why a CP15 access could not complete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +54,7 @@ pub struct Cp15 {
     tpidrurw: u32,
     tpidruro: u32,
     tpidrprw: u32,
+    pending_tlb_maintenance: Option<TlbMaintenance>,
 }
 
 impl Default for Cp15 {
@@ -73,6 +82,7 @@ impl Cp15 {
             tpidrurw: 0,
             tpidruro: 0,
             tpidrprw: 0,
+            pending_tlb_maintenance: None,
         }
     }
 
@@ -107,6 +117,17 @@ impl Cp15 {
     pub fn dacr(&self) -> u32 {
         self.dacr
     }
+
+    /// ASID from CONTEXTIDR[7:0], used for non-global TLB entries.
+    pub(super) fn asid(&self) -> u8 {
+        self.context_id as u8
+    }
+
+    /// Takes the pending maintenance command after the issuing instruction.
+    pub(super) fn take_tlb_maintenance(&mut self) -> Option<TlbMaintenance> {
+        self.pending_tlb_maintenance.take()
+    }
+
 
     pub fn dfsr(&self) -> u32 {
         self.dfsr
@@ -246,8 +267,26 @@ impl Cp15 {
             | (7, 7, 0)
             | (7, 10, 0 | 1 | 2 | 4 | 5)
             | (7, 14, 0..=2) => {}
-            // TLB maintenance: nothing is cached.
-            (8, 5..=7, 0..=2) => {}
+            // ARM11 MPCore has one unified TLB. c5 (instruction), c6
+            // (data), and c7 (unified) therefore affect the same entries.
+            (8, 5..=7, 0) => {
+                self.pending_tlb_maintenance = Some(TlbMaintenance::InvalidateAll);
+            }
+            (8, 5..=7, 1) => {
+                self.pending_tlb_maintenance = Some(TlbMaintenance::InvalidateMvaAsid {
+                    mva: value & 0xFFFF_F000,
+                    asid: value as u8,
+                });
+            }
+            (8, 5..=7, 2) => {
+                self.pending_tlb_maintenance =
+                    Some(TlbMaintenance::InvalidateAsid { asid: value as u8 });
+            }
+            (8, 5..=7, 3) => {
+                self.pending_tlb_maintenance = Some(TlbMaintenance::InvalidateMvaAllAsids {
+                    mva: value & 0xFFFF_F000,
+                });
+            }
             _ => return Err(Cp15Fault::Unsupported),
         }
         Ok(())
@@ -300,6 +339,43 @@ mod tests {
         assert_eq!(cp15.read(true, 0, 2, 0, 0), Ok(0x1234_5000));
         assert_eq!(cp15.read(true, 0, 3, 0, 0), Ok(0x55));
         assert!(cp15.vfp_access_enabled());
+    }
+
+    #[test]
+    fn tlb_maintenance_operations_decode_all_arm11_forms() {
+        let mut cp15 = Cp15::default();
+
+        cp15.write(true, 0, 8, 5, 0, 0).unwrap();
+        assert_eq!(cp15.take_tlb_maintenance(), Some(TlbMaintenance::InvalidateAll));
+
+        cp15.write(true, 0, 8, 6, 1, 0x1234_567A).unwrap();
+        assert_eq!(
+            cp15.take_tlb_maintenance(),
+            Some(TlbMaintenance::InvalidateMvaAsid {
+                mva: 0x1234_5000,
+                asid: 0x7A,
+            })
+        );
+
+        cp15.write(true, 0, 8, 7, 2, 0x0000_003C).unwrap();
+        assert_eq!(
+            cp15.take_tlb_maintenance(),
+            Some(TlbMaintenance::InvalidateAsid { asid: 0x3C })
+        );
+
+        cp15.write(true, 0, 8, 7, 3, 0x8765_43FE).unwrap();
+        assert_eq!(
+            cp15.take_tlb_maintenance(),
+            Some(TlbMaintenance::InvalidateMvaAllAsids { mva: 0x8765_4000 })
+        );
+    }
+
+    #[test]
+    fn tlb_maintenance_is_privileged_and_reserved_encodings_are_not_ignored() {
+        let mut cp15 = Cp15::default();
+        assert_eq!(cp15.write(false, 0, 8, 7, 0, 0), Err(Cp15Fault::Undefined));
+        assert_eq!(cp15.write(true, 0, 8, 4, 0, 0), Err(Cp15Fault::Unsupported));
+        assert_eq!(cp15.write(true, 0, 8, 7, 4, 0), Err(Cp15Fault::Unsupported));
     }
 
     #[test]

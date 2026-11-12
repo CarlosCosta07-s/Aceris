@@ -6,13 +6,16 @@
 //! and forwards the physical access to the underlying bus.
 //!
 //! Supported: sections, supersections, coarse page tables, large (64 KiB) and
-//! small (4 KiB) pages in the ARMv6 format (SCTLR.XP = 1: AP[1:0], APX, XN).
-//! Not modeled: the TLB (every access walks the tables), subpage permissions
-//! (XP = 0), memory attributes/TEX, alignment faults, and the abort exception
-//! entry itself. A fault is reported as `Error::InvalidAccess` with the
-//! virtual address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
+//! small (4 KiB) pages in the ARMv6 format (SCTLR.XP = 1: AP[1:0], APX, XN),
+//! plus a bounded unified software TLB with ASID/global matching and ARM11
+//! CP15 c8 invalidation operations.
+//! Not modeled: hardware-exact TLB replacement/lockdown, subpage permissions
+//! (XP = 0), memory attributes/TEX, alignment faults, and cache behavior. A
+//! translation fault is reported as `Error::InvalidAccess` with the virtual
+//! address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
 
 use super::arm::{bit, bits};
+use super::cp15::TlbMaintenance;
 use super::{ARM_INSTRUCTION_SIZE, Arm11Core, PC, StepEvent, THUMB_INSTRUCTION_SIZE};
 use crate::memory::Bus;
 use aceris_common::{Error, Result};
@@ -38,6 +41,7 @@ pub(super) struct Params {
     pub ttbr1: u32,
     pub n: u32,
     pub dacr: u32,
+    pub asid: u8,
     pub privileged: bool,
 }
 
@@ -47,55 +51,137 @@ pub(super) enum Walk {
     Fault(Fault),
 }
 
-#[derive(Clone, Copy)]
-enum FaultKind {
-    Translation,
-    Domain,
-    Permission,
+/// One cached short-descriptor translation. Entries retain their original
+/// mapping size so MVA invalidation removes a complete section/large page,
+/// rather than only an arbitrary 4 KiB subpage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TlbEntry {
+    virtual_base: u32,
+    physical_base: u32,
+    address_mask: u32,
+    asid: u8,
+    global: bool,
+    domain: u8,
+    ap: u8,
+    apx: bool,
+    xn: bool,
+    section: bool,
 }
 
-fn fault(kind: FaultKind, section: bool, domain: u32, address: u32, access: Access) -> Walk {
-    let code = match (kind, section) {
-        (FaultKind::Translation, true) => 0x5,
-        (FaultKind::Translation, false) => 0x7,
-        (FaultKind::Domain, true) => 0x9,
-        (FaultKind::Domain, false) => 0xB,
-        (FaultKind::Permission, true) => 0xD,
-        (FaultKind::Permission, false) => 0xF,
-    };
-    Walk::Fault(Fault {
-        address,
-        status: code | (domain << 4),
-        access,
-    })
+impl TlbEntry {
+    fn matches_address(&self, address: u32) -> bool {
+        address & self.address_mask == self.virtual_base
+    }
+
+    fn matches_context(&self, params: &Params, address: u32) -> bool {
+        self.matches_address(address) && (self.global || self.asid == params.asid)
+    }
+
+    fn resolve(&self, params: &Params, address: u32, access: Access) -> Walk {
+        let physical = self.physical_base | (address & !self.address_mask);
+        match (params.dacr >> (2 * u32::from(self.domain))) & 3 {
+            0b11 => Walk::Mapped(physical),
+            0b01 => {
+                let allowed = permission_allows(
+                    u32::from(self.apx),
+                    u32::from(self.ap),
+                    params.privileged,
+                    access == Access::Write,
+                ) && !(access == Access::Execute && self.xn);
+                if allowed {
+                    Walk::Mapped(physical)
+                } else {
+                    fault(
+                        FaultKind::Permission,
+                        self.section,
+                        u32::from(self.domain),
+                        address,
+                        access,
+                    )
+                }
+            }
+            _ => fault(
+                FaultKind::Domain,
+                self.section,
+                u32::from(self.domain),
+                address,
+                access,
+            ),
+        }
+    }
 }
 
-/// Whether (APX, AP) grants the requested access to the requesting privilege level.
-fn permission_allows(apx: u32, ap: u32, privileged: bool, write: bool) -> bool {
-    // (privileged access, user access) as 0 = none, 1 = read-only, 2 = read/write
-    let (privileged_level, user_level) = match (apx, ap) {
-        (0, 1) => (2, 0),
-        (0, 2) => (2, 1),
-        (0, 3) => (2, 2),
-        (1, 1) => (1, 0),
-        (1, 2) | (1, 3) => (1, 1),
-        _ => (0, 0),
-    };
-    let level = if privileged {
-        privileged_level
-    } else {
-        user_level
-    };
-    if write { level == 2 } else { level >= 1 }
+const TLB_CAPACITY: usize = 64;
+
+/// Bounded unified software TLB. Capacity and replacement are implementation
+/// details; architectural matching and CP15 invalidations are modeled explicitly.
+#[derive(Clone, Debug, Default)]
+pub(super) struct TranslationLookasideBuffer {
+    entries: Vec<TlbEntry>,
+    next_victim: usize,
 }
 
-/// Walks the page tables for `va`. Errors come only from the physical bus.
-pub(super) fn translate<B: Bus + ?Sized>(
+impl TranslationLookasideBuffer {
+    fn lookup(&self, params: &Params, address: u32) -> Option<TlbEntry> {
+        self.entries
+            .iter()
+            .rev()
+            .copied()
+            .find(|entry| entry.matches_context(params, address))
+    }
+
+    fn insert(&mut self, entry: TlbEntry) {
+        self.entries.retain(|existing| {
+            existing.virtual_base != entry.virtual_base
+                || existing.address_mask != entry.address_mask
+                || existing.global != entry.global
+                || (!entry.global && existing.asid != entry.asid)
+        });
+
+        if self.entries.len() < TLB_CAPACITY {
+            self.entries.push(entry);
+            return;
+        }
+
+        self.next_victim %= TLB_CAPACITY;
+        self.entries[self.next_victim] = entry;
+        self.next_victim = (self.next_victim + 1) % TLB_CAPACITY;
+    }
+
+    pub(super) fn maintain(&mut self, operation: TlbMaintenance) {
+        self.entries.retain(|entry| match operation {
+            TlbMaintenance::InvalidateAll => false,
+            TlbMaintenance::InvalidateMvaAsid { mva, asid } => {
+                !(entry.matches_address(mva) && (entry.global || entry.asid == asid))
+            }
+            TlbMaintenance::InvalidateAsid { asid } => entry.global || entry.asid != asid,
+            TlbMaintenance::InvalidateMvaAllAsids { mva } => !entry.matches_address(mva),
+        });
+        if self.entries.len() < TLB_CAPACITY {
+            self.next_victim = 0;
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PageWalk {
+    Mapped(TlbEntry),
+    Fault(Fault),
+}
+
+/// Walks the ARMv6 short-descriptor tables and returns attributes retained by
+/// the TLB. Translation faults are not cached.
+fn walk_page_tables<B: Bus + ?Sized>(
     bus: &mut B,
     params: &Params,
     va: u32,
     access: Access,
-) -> Result<Walk> {
+) -> Result<PageWalk> {
     let n = params.n;
     let l1_index = (va >> 20) << 2;
     let l1_address = if n == 0 || va >> (32 - n) == 0 {
@@ -105,21 +191,23 @@ pub(super) fn translate<B: Bus + ?Sized>(
     };
     let l1 = bus.read32(l1_address)?;
 
-    let (domain, ap, apx, xn, physical, section) = match l1 & 3 {
+    let (domain, ap, apx, xn, physical, global, address_mask, section) = match l1 & 3 {
         0b10 => {
             let supersection = bit(l1, 18);
-            let domain = if supersection { 0 } else { bits(l1, 8, 5) };
+            let address_mask = if supersection { 0xFF00_0000 } else { 0xFFF0_0000 };
             let physical = if supersection {
                 (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
             } else {
                 (l1 & 0xFFF0_0000) | (va & 0x000F_FFFF)
             };
             (
-                domain,
+                if supersection { 0 } else { bits(l1, 8, 5) },
                 bits(l1, 11, 10),
                 bits(l1, 15, 15),
                 bit(l1, 4),
                 physical,
+                !bit(l1, 17),
+                address_mask,
                 true,
             )
         }
@@ -128,13 +216,27 @@ pub(super) fn translate<B: Bus + ?Sized>(
             let l2_address = (l1 & 0xFFFF_FC00) | (((va >> 12) & 0xFF) << 2);
             let l2 = bus.read32(l2_address)?;
             match l2 & 3 {
-                0b00 => return Ok(fault(FaultKind::Translation, false, domain, va, access)),
+                0b00 => {
+                    let fault = match fault(
+                        FaultKind::Translation,
+                        false,
+                        domain,
+                        va,
+                        access,
+                    ) {
+                        Walk::Fault(value) => value,
+                        Walk::Mapped(_) => unreachable!(),
+                    };
+                    return Ok(PageWalk::Fault(fault));
+                }
                 0b01 => (
                     domain,
                     bits(l2, 5, 4),
                     bits(l2, 9, 9),
                     bit(l2, 15),
                     (l2 & 0xFFFF_0000) | (va & 0xFFFF),
+                    !bit(l2, 11),
+                    0xFFFF_0000,
                     false,
                 ),
                 _ => (
@@ -143,40 +245,66 @@ pub(super) fn translate<B: Bus + ?Sized>(
                     bits(l2, 9, 9),
                     bit(l2, 0),
                     (l2 & 0xFFFF_F000) | (va & 0xFFF),
+                    !bit(l2, 11),
+                    0xFFFF_F000,
                     false,
                 ),
             }
         }
-        _ => return Ok(fault(FaultKind::Translation, true, 0, va, access)),
+        _ => {
+            let fault = match fault(FaultKind::Translation, true, 0, va, access) {
+                Walk::Fault(value) => value,
+                Walk::Mapped(_) => unreachable!(),
+            };
+            return Ok(PageWalk::Fault(fault));
+        }
     };
 
-    match (params.dacr >> (2 * domain)) & 3 {
-        0b11 => Ok(Walk::Mapped(physical)),
-        0b01 => {
-            let allowed = permission_allows(apx, ap, params.privileged, access == Access::Write)
-                && !(access == Access::Execute && xn);
-            if allowed {
-                Ok(Walk::Mapped(physical))
-            } else {
-                Ok(fault(FaultKind::Permission, section, domain, va, access))
-            }
-        }
-        _ => Ok(fault(FaultKind::Domain, section, domain, va, access)),
+    Ok(PageWalk::Mapped(TlbEntry {
+        virtual_base: va & address_mask,
+        physical_base: physical & address_mask,
+        address_mask,
+        asid: params.asid,
+        global,
+        domain: domain as u8,
+        ap: ap as u8,
+        apx: apx != 0,
+        xn,
+        section,
+    }))
+}
+
+/// Performs one page-table walk without retaining the result in the TLB.
+pub(super) fn translate<B: Bus + ?Sized>(
+    bus: &mut B,
+    params: &Params,
+    va: u32,
+    access: Access,
+) -> Result<Walk> {
+    match walk_page_tables(bus, params, va, access)? {
+        PageWalk::Mapped(entry) => Ok(entry.resolve(params, va, access)),
+        PageWalk::Fault(fault) => Ok(Walk::Fault(fault)),
     }
 }
 
 /// A bus adapter that translates every access before forwarding it.
 pub(super) struct MmuBus<'a, B: Bus + ?Sized> {
     inner: &'a mut B,
+    tlb: &'a mut TranslationLookasideBuffer,
     params: Params,
     fetching: bool,
     fault: Option<Fault>,
 }
 
 impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
-    pub(super) fn new(inner: &'a mut B, params: Params) -> Self {
+    pub(super) fn new(
+        inner: &'a mut B,
+        params: Params,
+        tlb: &'a mut TranslationLookasideBuffer,
+    ) -> Self {
         Self {
             inner,
+            tlb,
             params,
             fetching: false,
             fault: None,
@@ -189,7 +317,21 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
         } else {
             access
         };
-        match translate(self.inner, &self.params, va, access)? {
+
+        let walk = if let Some(entry) = self.tlb.lookup(&self.params, va) {
+            entry.resolve(&self.params, va, access)
+        } else {
+            match walk_page_tables(self.inner, &self.params, va, access)? {
+                PageWalk::Mapped(entry) => {
+                    let result = entry.resolve(&self.params, va, access);
+                    self.tlb.insert(entry);
+                    result
+                }
+                PageWalk::Fault(fault) => Walk::Fault(fault),
+            }
+        };
+
+        match walk {
             Walk::Mapped(physical) => Ok(physical),
             Walk::Fault(fault) => {
                 self.fault.get_or_insert(fault);
@@ -284,16 +426,29 @@ impl Arm11Core {
                 "MMU with subpage permissions (SCTLR.XP = 0)",
             ));
         }
+        // Apply CP15 c8 maintenance before the next guest access. An MCR
+        // therefore affects subsequent data accesses and instruction fetches.
+        let maintenance = self.cp15.take_tlb_maintenance();
+        let mut tlb = std::mem::take(&mut self.tlb);
+        if let Some(operation) = maintenance {
+            tlb.maintain(operation);
+        }
+
         let params = Params {
             ttbr0: self.cp15.ttbr0(),
             ttbr1: self.cp15.ttbr1(),
             n: self.cp15.ttbcr_n(),
             dacr: self.cp15.dacr(),
+            asid: self.cp15.asid(),
             privileged: self.cpsr.privileged(),
         };
-        let mut mmu = MmuBus::new(bus, params);
+        let mut mmu = MmuBus::new(bus, params, &mut tlb);
         let outcome = self.fetch_and_execute(&mut mmu, pc);
-        if let Some(fault) = mmu.fault {
+        let fault = mmu.fault;
+        drop(mmu);
+        self.tlb = tlb;
+
+        if let Some(fault) = fault {
             self.fault_latched = true;
             self.prefetch_fault = fault.access == Access::Execute;
             match fault.access {
@@ -384,6 +539,7 @@ mod tests {
             ttbr1: cpu.cp15.ttbr1(),
             n: cpu.cp15.ttbcr_n(),
             dacr: cpu.cp15.dacr(),
+            asid: cpu.cp15.asid(),
             privileged: cpu.cpsr.privileged(),
         }
     }
@@ -673,6 +829,121 @@ mod tests {
         cpu.step(&mut mem).unwrap();
         assert_eq!(cpu.regs[2], 1);
         assert_eq!(mem.read32(0x2_0000).unwrap(), 0xAAAA_0001);
+    }
+
+    #[test]
+    fn unified_tlb_keeps_a_section_mapping_until_mva_asid_invalidation() {
+        let (cpu, mut mem) = machine();
+        let va = 0x1230_4567;
+        set_l1(&mut mem, 0x123, SECTION | SECTION_AP_RW_ALL);
+
+        let mut tlb = TranslationLookasideBuffer::default();
+        let params = params(&cpu);
+        {
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert_eq!(mmu.map(va, Access::Read).unwrap(), 0x0000_4567);
+        }
+        assert_eq!(tlb.len(), 1);
+
+        set_l1(&mut mem, 0x123, 0x0010_0000 | SECTION | SECTION_AP_RW_ALL);
+        {
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert_eq!(mmu.map(va, Access::Read).unwrap(), 0x0000_4567);
+        }
+
+        // An MVA from anywhere inside the section invalidates the whole entry.
+        tlb.maintain(TlbMaintenance::InvalidateMvaAsid {
+            mva: 0x123F_FFFF,
+            asid: params.asid,
+        });
+        {
+            let mut mmu = MmuBus::new(&mut mem, params, &mut tlb);
+            assert_eq!(mmu.map(va, Access::Read).unwrap(), 0x0010_4567);
+        }
+    }
+
+    #[test]
+    fn asid_invalidation_preserves_global_entries_and_mva_only_ignores_asid() {
+        let mut tlb = TranslationLookasideBuffer::default();
+        let make_entry = |virtual_base, physical_base, asid, global| TlbEntry {
+            virtual_base,
+            physical_base,
+            address_mask: 0xFFFF_F000,
+            asid,
+            global,
+            domain: 0,
+            ap: 3,
+            apx: false,
+            xn: false,
+            section: false,
+        };
+
+        tlb.insert(make_entry(0x1000, 0xA000, 7, true));
+        tlb.insert(make_entry(0x2000, 0xB000, 7, false));
+        tlb.insert(make_entry(0x3000, 0xC000, 8, false));
+
+        tlb.maintain(TlbMaintenance::InvalidateAsid { asid: 7 });
+        assert_eq!(tlb.len(), 2);
+        assert!(tlb.entries.iter().any(|entry| entry.virtual_base == 0x1000 && entry.global));
+        assert!(tlb.entries.iter().any(|entry| entry.virtual_base == 0x3000 && entry.asid == 8));
+
+        tlb.maintain(TlbMaintenance::InvalidateMvaAsid {
+            mva: 0x1000,
+            asid: 0xFF,
+        });
+        assert_eq!(tlb.len(), 1);
+        assert_eq!(tlb.entries[0].virtual_base, 0x3000);
+
+        tlb.maintain(TlbMaintenance::InvalidateMvaAllAsids { mva: 0x3004 });
+        assert!(tlb.entries.is_empty());
+    }
+
+    #[test]
+    fn invalidate_all_clears_the_unified_tlb() {
+        let mut tlb = TranslationLookasideBuffer::default();
+        tlb.insert(TlbEntry {
+            virtual_base: 0,
+            physical_base: 0,
+            address_mask: 0xFFFF_F000,
+            asid: 0,
+            global: false,
+            domain: 0,
+            ap: 3,
+            apx: false,
+            xn: false,
+            section: false,
+        });
+        tlb.maintain(TlbMaintenance::InvalidateAll);
+        assert_eq!(tlb.len(), 0);
+    }
+
+    #[test]
+    fn guest_mcr_tlbi_invalidates_cached_translation_before_the_next_fetch() {
+        let mut mem = FlatMemory::new(0, 0x20_0000);
+        let mut cpu = Arm11Core::new();
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.cp15.write(true, 0, 2, 0, 0, L1).unwrap();
+        cpu.cp15.write(true, 0, 3, 0, 0, 0b01).unwrap();
+        cpu.cp15.write(true, 0, 1, 0, 0, 1 | (1 << 23)).unwrap();
+
+        let va = 0x1230_0000;
+        set_l1(&mut mem, 0x123, SECTION | SECTION_AP_RW_ALL);
+        mem.write32(0x0000_0000, 0xE1A0_0000).unwrap(); // nop
+        mem.write32(0x0000_0004, 0xEE08_1F37).unwrap(); // mcr p15,0,r1,c8,c7,1
+        mem.write32(0x0010_0004, 0xE3A0_0003).unwrap(); // Must not run before MCR.
+        mem.write32(0x0010_0008, 0xE3A0_0002).unwrap(); // mov r0,#2
+        mem.write32(0x0000_0008, 0xE3A0_0001).unwrap(); // Stale mapping would produce #1.
+
+        cpu.regs[1] = va; // MVA with ASID 0.
+        cpu.set_pc(va);
+        cpu.step(&mut mem).unwrap(); // Fills the section translation.
+        set_l1(&mut mem, 0x123, 0x0010_0000 | SECTION | SECTION_AP_RW_ALL);
+
+        cpu.step(&mut mem).unwrap(); // Fetches old cached MCR and queues TLBI.
+        assert_eq!(cpu.regs[0], 0, "the remapped instruction must not run yet");
+
+        cpu.step(&mut mem).unwrap(); // Applies TLBI, then fetches from the new section base.
+        assert_eq!(cpu.regs[0], 2);
     }
 
     #[test]

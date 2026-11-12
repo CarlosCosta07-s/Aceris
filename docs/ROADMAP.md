@@ -55,8 +55,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; TLB, atributos TEX, permissões de subpágina no formato antigo e faults de alinhamento ainda não estão modelados
 - [~] VFPv2 inicial: registradores S/D, FPSCR/FPEXC/FPSID, transferências ARM/VFP, loads/stores múltiplos, operações aritméticas, comparação e conversões
 - [ ] Completar semântica VFP pendente: vetores curtos, exceções habilitadas, arredondamentos adicionais, flags de precisão/underflow e instruções de transferência legadas não suportadas
-- [ ] Implementar TLB, invalidação e manutenção de caches com efeitos observáveis
-- [ ] Integrar o monitor exclusivo ao caminho MMU e validar reservas perante escritas de outros agentes/dispositivos
+- [~] TLB unificado de software integrado ao caminho de tradução: cacheia seções, superseções, páginas grandes e pequenas; aplica ASID/global e TLBIALL/TLBIMVA/TLBIASID/TLBIMVAA; capacidade e substituição são limites internos do emulador, sem modelagem de lockdown
+- [ ] Implementar caches ARM observáveis, invalidação/manutenção de caches e barreiras com efeitos coerentes entre CPU e dispositivos
+- [x] Integrar o monitor exclusivo ao caminho MMU e validar reservas perante escritas da CPU por aliases virtuais distintos do mesmo endereço físico; invalidação por outros agentes/dispositivos ainda depende da coerência de memória compartilhada
 - [ ] Executar testes de conformidade ARM11 em ARM, Thumb, CP15, VFP e exceções
 
 ## 2. Memória, endereçamento e carregamento de títulos
@@ -248,7 +249,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 2. Implementar decodificadores tipados para os formatos de instrução e operand descriptors de vertex shader, priorizando formatos 1/1i/1u/1c e opcodes aritméticos básicos documentados; adicionar testes de campo e rejeitar codificações desconhecidas. O armazenamento de código/descriptors e uniforms já existe, sem executor.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 4. Completar o encaminhamento de LDREX/STREX pelo barramento MMU e validar invalidação de reservas entre agentes.
-5. Adicionar TLB e semântica real de manutenção de cache/barreiras ao CP15.
+5. Completar atributos de memória, TLB lockdown/replacement do hardware e semântica observável de manutenção de cache/barreiras ao CP15.
 6. Expor as superfícies LCD no frontend desktop e depois Android.
 
 ## Critérios para concluir um item

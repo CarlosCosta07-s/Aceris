@@ -2,7 +2,7 @@
 //!
 //! Current scope: an interpreter for ARM (A32) and classic Thumb instruction
 //! sets with banked ARMv6 exception-mode registers and per-mode SPSR storage.
-//! CP15 and VFPv2 state live in `cp15` and `vfp`; the MMU remains a separate milestone.
+//! CP15, VFPv2, and ARMv6 short-descriptor MMU state live in dedicated modules.
 
 mod arm;
 mod condition;
@@ -118,6 +118,7 @@ pub struct Arm11Core {
     irq_line_asserted: bool,
     fiq_line_asserted: bool,
     cp15: Cp15,
+    tlb: mmu::TranslationLookasideBuffer,
     vfp: Vfp,
     fault_exception_entry_enabled: bool,
     /// Set while one step runs: the fault being reported came from the fetch.
