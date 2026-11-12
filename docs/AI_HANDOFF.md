@@ -385,3 +385,16 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - HEAD de código `988fdb9`: workflow `43318212186` aprovado em todas as plataformas.
 - A matriz confirmou Rustfmt, Clippy e testes do workspace em Linux, Windows e macOS, além do build release Android ARM64.
 - O grupo geral de DSP/mídia permanece parcial: SSAT16/USAT16 não concluem a cobertura ARMv6 integral nem substituem a auditoria das demais codificações A32.
+
+## ARMv6 A32 — transferências com privilégio User (12/11/2026)
+
+- `4fdeac6` — adiciona ao trait `Bus` operações explícitas `read8_unprivileged`, `write8_unprivileged`, `read32_unprivileged` e `write32_unprivileged`. Buses genéricos mantêm comportamento padrão; o barramento MMU aplica as permissões solicitadas.
+- `4fdeac6` — implementa os caminhos A32 `LDRT`, `LDRBT`, `STRT` e `STRBT` (P=0/W=1). O endereço efetivo é o endereço base original; writeback é pós-indexado e só ocorre após a transação ser concluída.
+- O modo atual do processador não é trocado para User. Somente a resolução daquela transação no MMU/TLB recebe `privileged=false`; os acessos normais continuam usando `Params.privileged`.
+- O TLB não é ignorado nem invalidado: uma entrada já preenchida é resolvida novamente com o privilégio da transação, inclusive para leitura/escrita e para acessos por byte. O domínio continua sendo avaliado pela regra normal.
+- `4fdeac6` inclui dois testes: revalidação User de permissões em entradas TLB já em cache e execução integrada das quatro instruções numa página somente privilegiada, que deve gerar falha sem writeback nem alteração de memória.
+- `3ada228` acrescenta o caminho positivo: as quatro instruções completam quando as permissões User permitem acesso, comprovando dados carregados/armazenados, writeback pós-indexado e permanência em Supervisor.
+- CI `43321797092` concluída com sucesso em Linux, Windows e macOS (`cargo fmt --all --check`, Clippy com `-D warnings`, `cargo test --workspace`) e Android ARM64 (`cargo ndk -t arm64-v8a build -p aceris-android --release`).
+- A validação cobre esses quatro opcodes e os cenários testados; não significa que todos os casos UNPREDICTABLE, faults de alinhamento/endian, todas as variantes LDR/STR ou toda a arquitetura ARMv6 estejam completos.
+- Referências arquiteturais independentes: ARM1136JF-S Technical Reference Manual (ARM DDI 0211K), tabelas de instruções de transferência; ARM Architecture Reference Manual ARMv6, descrições A32 de LDRBT/STRT/STRBT. Nenhum código-fonte de outro emulador foi consultado.
+
