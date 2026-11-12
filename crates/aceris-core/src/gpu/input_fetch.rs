@@ -51,13 +51,15 @@ impl Pica200 {
         &self,
         memory: &GpuPhysicalMemory,
         address_space: &GpuDmaAddressSpace,
-        linear_virtual_base: u32,
         vertex_index: u32,
     ) -> Result<NumericVertexInput, VertexInputError> {
         let state = self.vertex_input_state()?;
-        state
-            .layout
-            .read_vertex_via_dma(memory, address_space, linear_virtual_base, vertex_index)
+        state.layout.read_vertex_via_dma(
+            memory,
+            address_space,
+            state.raw_base_address_register,
+            vertex_index,
+        )
             .and_then(|raw| raw.to_numeric())
             .map(|mut input| {
                 self.apply_fixed_vertex_attributes(&mut input);
@@ -89,7 +91,6 @@ impl Pica200 {
         &self,
         memory: &GpuPhysicalMemory,
         address_space: &GpuDmaAddressSpace,
-        linear_virtual_base: u32,
         first_index: u32,
         count: usize,
     ) -> Result<Vec<u32>, IndexBufferError> {
@@ -97,7 +98,7 @@ impl Pica200 {
         state.index_buffer.read_indices_via_dma(
             memory,
             address_space,
-            linear_virtual_base,
+            state.raw_vertex_array_base_register,
             first_index,
             count,
         )
@@ -251,7 +252,7 @@ mod tests {
             .unwrap();
 
         let vertex = gpu
-            .read_numeric_vertex_via_dma(&memory, &address_space, 0x1400_5000, 0)
+            .read_numeric_vertex_via_dma(&memory, &address_space, 0)
             .unwrap();
         assert_eq!(vertex.attributes[0].unwrap().components[0], 165.0);
     }
@@ -275,7 +276,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            gpu.read_indices_via_dma(&memory, &address_space, 0x1400_6000, 0, 2)
+            gpu.read_indices_via_dma(&memory, &address_space, 0, 2)
                 .unwrap(),
             vec![0x1234, 0x5678]
         );
@@ -300,7 +301,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            gpu.read_numeric_vertex_via_dma(&memory, &address_space, 0x1400_7000, 1),
+            gpu.read_numeric_vertex_via_dma(&memory, &address_space, 1),
             Err(VertexInputError::GpuAddressSpace(
                 super::super::GpuAddressSpaceError::UnmappedVirtualRange { .. }
             ))
