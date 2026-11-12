@@ -231,7 +231,7 @@ impl NcchExtendedHeader {
 
             let value = ((descriptor & MEMORY_TYPE_MASK) >> MEMORY_TYPE_SHIFT) as u8;
             return match value {
-                1 => Arm11MemoryType::Application,
+                0 | 1 => Arm11MemoryType::Application,
                 2 => Arm11MemoryType::System,
                 3 => Arm11MemoryType::Base,
                 other => Arm11MemoryType::Unknown(other),
@@ -395,6 +395,7 @@ mod tests {
     #[test]
     fn decodes_arm11_memory_type_from_other_capabilities_descriptor() {
         let cases = [
+            (0, Arm11MemoryType::Application),
             (1, Arm11MemoryType::Application),
             (2, Arm11MemoryType::System),
             (3, Arm11MemoryType::Base),
