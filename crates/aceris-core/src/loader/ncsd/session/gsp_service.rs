@@ -396,16 +396,11 @@ impl GspServiceRegistry {
         let registration = self.clients[index]
             .take()
             .ok_or(GspServiceError::ClientNotRegistered { client_id })?;
-        let rendering_right_wait_cancelled = if let Some(position) = self
-            .rendering_waiters
-            .iter()
-            .position(|waiting_client| *waiting_client == client_id)
-        {
-            self.rendering_waiters.remove(position);
-            true
-        } else {
-            false
-        };
+        let waiter_count_before = self.rendering_waiters.len();
+        self.rendering_waiters
+            .retain(|waiting_client| *waiting_client != client_id);
+        let rendering_right_wait_cancelled =
+            self.rendering_waiters.len() != waiter_count_before;
 
         let rendering_right_handoff = if self.rendering_client == Some(client_id) {
             self.rendering_client = None;
