@@ -3,12 +3,18 @@
 use super::arm::{bit, bits};
 use super::cp15::Cp15Fault;
 use super::{Arm11Core, StepEvent};
+use crate::memory::Bus;
 use aceris_common::{Error, Result};
 
 impl Arm11Core {
     /// Routes an already condition-checked coprocessor instruction.
-    pub(super) fn execute_coprocessor(&mut self, word: u32) -> Result<StepEvent> {
+    pub(super) fn execute_coprocessor<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+    ) -> Result<StepEvent> {
         match bits(word, 11, 8) {
+            10 | 11 => self.execute_vfp(bus, word),
             15 => self.execute_cp15(word),
             _ => Err(Error::Unimplemented("coprocessor instructions")),
         }

@@ -93,6 +93,11 @@ impl Cp15 {
         (self.cpacr >> 20) & 0xF == 0xF
     }
 
+    /// Grants full cp10/cp11 access, as a kernel does before running VFP code.
+    pub fn grant_vfp_access(&mut self) {
+        self.cpacr |= CPACR_WRITABLE;
+    }
+
     pub fn tpidruro(&self) -> u32 {
         self.tpidruro
     }

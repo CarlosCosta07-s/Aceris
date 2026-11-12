@@ -92,14 +92,14 @@ impl Arm11Core {
                 self.branch_with_link(word);
                 Ok(StepEvent::Executed)
             }
-            0b110 => self.execute_coprocessor(word),
+            0b110 => self.execute_coprocessor(bus, word),
             _ if bit(word, 24) => {
                 if self.svc_exception_entry_enabled {
                     self.enter_svc_exception(self.pc().wrapping_add(4))?;
                 }
                 Ok(StepEvent::Svc(bits(word, 23, 0)))
             }
-            _ => self.execute_coprocessor(word),
+            _ => self.execute_coprocessor(bus, word),
         }
     }
 

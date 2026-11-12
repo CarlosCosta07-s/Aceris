@@ -2,7 +2,7 @@
 //!
 //! Current scope: an interpreter for ARM (A32) and classic Thumb instruction
 //! sets with banked ARMv6 exception-mode registers and per-mode SPSR storage.
-//! CP15 register state lives in `cp15`; MMU and VFP remain separate milestones.
+//! CP15 and VFPv2 state live in `cp15` and `vfp`; the MMU remains a separate milestone.
 
 mod arm;
 mod condition;
@@ -11,10 +11,12 @@ mod cp15;
 mod psr;
 mod shifter;
 mod thumb;
+mod vfp;
 
 pub use condition::Condition;
 pub use cp15::Cp15;
 pub use psr::Psr;
+pub use vfp::Vfp;
 
 use crate::memory::Bus;
 use aceris_common::{Error, Result};
@@ -114,6 +116,7 @@ pub struct Arm11Core {
     irq_line_asserted: bool,
     fiq_line_asserted: bool,
     cp15: Cp15,
+    vfp: Vfp,
 }
 
 impl Arm11Core {
