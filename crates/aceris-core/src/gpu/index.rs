@@ -73,12 +73,12 @@ impl IndexBufferLayout {
         }
 
         let width = self.element_width.byte_width();
-        let first_offset = u64::from(first_index)
-            .checked_mul(width as u64)
-            .ok_or(IndexBufferError::AddressOverflow {
+        let first_offset = u64::from(first_index).checked_mul(width as u64).ok_or(
+            IndexBufferError::AddressOverflow {
                 base: physical_base,
                 offset: u64::MAX,
-            })?;
+            },
+        )?;
         let relative_offset = u64::from(self.byte_offset)
             .checked_add(first_offset)
             .ok_or(IndexBufferError::AddressOverflow {
@@ -91,16 +91,17 @@ impl IndexBufferLayout {
                 base: physical_base,
                 offset: relative_offset,
             })?;
-        let address = u32::try_from(absolute_address).map_err(|_| {
-            IndexBufferError::AddressOverflow {
+        let address =
+            u32::try_from(absolute_address).map_err(|_| IndexBufferError::AddressOverflow {
                 base: physical_base,
                 offset: relative_offset,
-            }
-        })?;
-        let byte_count = count.checked_mul(width).ok_or(IndexBufferError::AddressOverflow {
-            base: physical_base,
-            offset: relative_offset,
-        })?;
+            })?;
+        let byte_count = count
+            .checked_mul(width)
+            .ok_or(IndexBufferError::AddressOverflow {
+                base: physical_base,
+                offset: relative_offset,
+            })?;
 
         let mut bytes = vec![0u8; byte_count];
         memory.read(address, &mut bytes)?;
@@ -158,9 +159,7 @@ mod tests {
     fn reads_unsigned_byte_indices_and_applies_first_index_as_byte_offset() {
         let mut memory = GpuPhysicalMemory::new();
         let base = FCRAM_BASE + 0x1000;
-        memory
-            .write(base + 0x20, &[0, 2, 7, 11, 13, 0])
-            .unwrap();
+        memory.write(base + 0x20, &[0, 2, 7, 11, 13, 0]).unwrap();
 
         let layout = IndexBufferLayout::from_register(0x20);
         assert_eq!(
@@ -191,7 +190,10 @@ mod tests {
     fn empty_index_range_does_not_read_memory() {
         let memory = GpuPhysicalMemory::new();
         let layout = IndexBufferLayout::from_register(0x20);
-        assert_eq!(layout.read_indices(&memory, 0, 0, 0).unwrap(), Vec::<u32>::new());
+        assert_eq!(
+            layout.read_indices(&memory, 0, 0, 0).unwrap(),
+            Vec::<u32>::new()
+        );
     }
 
     #[test]
