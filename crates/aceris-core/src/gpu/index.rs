@@ -7,8 +7,7 @@
 
 use super::vertex::REG_ATTRIBBUFFERS_LOC;
 use super::{
-    GpuAddressSpaceError, GpuDmaAddressSpace, GpuPhysicalMemory, GpuPhysicalMemoryError,
-    Pica200,
+    GpuAddressSpaceError, GpuDmaAddressSpace, GpuPhysicalMemory, GpuPhysicalMemoryError, Pica200,
 };
 
 pub const REG_INDEXBUFFER_CONFIG: u16 = 0x227;
@@ -171,12 +170,12 @@ impl IndexBufferLayout {
         }
 
         let width = self.element_width.byte_width();
-        let first_offset = u64::from(first_index)
-            .checked_mul(width as u64)
-            .ok_or(IndexBufferError::AddressOverflow {
+        let first_offset = u64::from(first_index).checked_mul(width as u64).ok_or(
+            IndexBufferError::AddressOverflow {
                 base: linear_virtual_base,
                 offset: u64::MAX,
-            })?;
+            },
+        )?;
         let relative_offset = u64::from(self.byte_offset)
             .checked_add(first_offset)
             .ok_or(IndexBufferError::AddressOverflow {
@@ -200,8 +199,7 @@ impl IndexBufferLayout {
                 base: linear_virtual_base,
                 offset: relative_offset,
             })?;
-        let resolved =
-            address_space.resolve_physical_range(memory, virtual_address, byte_count)?;
+        let resolved = address_space.resolve_physical_range(memory, virtual_address, byte_count)?;
 
         let mut bytes = vec![0u8; byte_count];
         memory.read(resolved.physical_address, &mut bytes)?;
