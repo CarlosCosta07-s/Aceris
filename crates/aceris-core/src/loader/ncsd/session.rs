@@ -531,7 +531,11 @@ impl Arm11ProcessSession {
         SvcRunDisposition::Resume
     }
 
-    fn allocate_linear_memory_region(&mut self, address_hint: u32, size: u32) -> Result<u32, u32> {
+    fn allocate_linear_memory_region(
+        &mut self,
+        address_hint: u32,
+        size: u32,
+    ) -> std::result::Result<u32, u32> {
         if size == 0 || size % 0x1000 != 0 {
             return Err(RESULT_MISALIGNED_ADDRESS);
         }
@@ -593,7 +597,11 @@ impl Arm11ProcessSession {
         Ok(virtual_base)
     }
 
-    fn free_linear_memory_region(&mut self, virtual_base: u32, size: u32) -> Result<u32, u32> {
+    fn free_linear_memory_region(
+        &mut self,
+        virtual_base: u32,
+        size: u32,
+    ) -> std::result::Result<u32, u32> {
         if size == 0 || size % 0x1000 != 0 {
             return Err(RESULT_MISALIGNED_ADDRESS);
         }
