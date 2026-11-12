@@ -401,7 +401,8 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             match walk_page_tables(self.inner, &self.params, va, access)? {
                 PageWalk::Mapped(entry) => {
                     let result = entry.resolve(&self.params, va, access);
-                    self.tlb.insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
+                    self.tlb
+                        .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
                     result
                 }
                 PageWalk::Fault(fault) => Walk::Fault(fault),

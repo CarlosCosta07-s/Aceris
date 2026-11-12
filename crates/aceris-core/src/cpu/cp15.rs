@@ -135,7 +135,6 @@ impl Cp15 {
         ((self.tlb_lockdown >> 26) & 7) as usize
     }
 
-
     /// Takes the pending maintenance command after the issuing instruction.
     pub(super) fn take_tlb_maintenance(&mut self) -> Option<TlbMaintenance> {
         self.pending_tlb_maintenance.take()
@@ -403,14 +402,8 @@ mod tests {
         cp15.write(true, 0, 10, 0, 0, 6 << 26).unwrap();
         assert!(!cp15.tlb_preserve());
         assert_eq!(cp15.tlb_victim(), 6);
-        assert_eq!(
-            cp15.write(false, 0, 10, 0, 0, 0),
-            Err(Cp15Fault::Undefined)
-        );
-        assert_eq!(
-            cp15.read(false, 0, 10, 0, 0),
-            Err(Cp15Fault::Undefined)
-        );
+        assert_eq!(cp15.write(false, 0, 10, 0, 0, 0), Err(Cp15Fault::Undefined));
+        assert_eq!(cp15.read(false, 0, 10, 0, 0), Err(Cp15Fault::Undefined));
     }
 
     #[test]
