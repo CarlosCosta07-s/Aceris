@@ -25,6 +25,7 @@ use crate::gpu::{
 };
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::process::{Arm11CodeAddressSpace, Arm11DynamicMemoryError};
+use crate::loader::ncsd::ncch::extended_header::Arm11MemoryType;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
@@ -54,6 +55,9 @@ pub const RESULT_INVALID_ADDRESS: u32 = 0xE0E0_1BF5;
 
 /// Nintendo 3DS result: kernel application-memory allocation failed.
 pub const RESULT_OUT_OF_MEMORY: u32 = 0xD860_07F3;
+
+/// Nintendo 3DS result: anonymous shared memory is forbidden for APPLICATION processes.
+pub const RESULT_MEMORY_BLOCK_NOT_ALLOWED: u32 = 0xD920_07EA;
 
 const MEMOP_FREE: u32 = 1;
 const MEMOP_ALLOC: u32 = 3;
@@ -610,9 +614,10 @@ impl Arm11ProcessSession {
     /// Handles CreateMemoryBlock: r0 = output handle pointer, r1 = source address,
     /// r2 = size, r3 = this-process permissions, r4 = peer-process permissions.
     ///
-    /// The current bootstrap supports anonymous blocks (source address zero).
-    /// Backing an existing guest mapping without copying is deferred until all
-    /// process-memory regions expose shareable backing.
+    /// Anonymous allocation is restricted to SYSTEM/BASE processes. A non-zero
+    /// source must be a page-aligned range inside one mapped regular-heap
+    /// allocation; its backing is shared without copying. Static, TLS, shared
+    /// alias and linear-memory source ranges remain unsupported.
     fn svc_create_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
             .scheduler
@@ -628,13 +633,34 @@ impl Arm11ProcessSession {
         if !self.address_space.is_writable_range(output_address, 4) {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
-        if source_address != 0 {
-            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
-        }
 
-        let handle = match self.create_memory_block(size, owner_permissions, other_permissions) {
+        let handle = if source_address == 0 {
+            if !matches!(
+                self.address_space.memory_type(),
+                Arm11MemoryType::System | Arm11MemoryType::Base
+            ) {
+                return self.write_svc_result(caller, RESULT_MEMORY_BLOCK_NOT_ALLOWED);
+            }
+            self.create_memory_block(size, owner_permissions, other_permissions)
+                .map_err(kernel_handle_result_code)
+        } else {
+            let backing = match self
+                .address_space
+                .shared_memory_backing_for_heap_range(source_address, size)
+            {
+                Ok(backing) => backing,
+                Err(error) => {
+                    return self.write_svc_result(caller, dynamic_memory_result_code(error));
+                }
+            };
+            self.kernel_objects
+                .create_memory_block_with_backing(backing, owner_permissions, other_permissions)
+                .map_err(kernel_handle_result_code)
+        };
+
+        let handle = match handle {
             Ok(handle) => handle,
-            Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
+            Err(result) => return self.write_svc_result(caller, result),
         };
         if self.address_space.write32(output_address, handle).is_err() {
             let _ = self.kernel_objects.close_handle(handle);
@@ -1328,10 +1354,20 @@ mod tests {
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
 
     fn test_session_with_program_and_data(instructions: &[(usize, u32)]) -> Arm11ProcessSession {
+        test_session_with_program_and_data_and_memory_type(instructions, 1)
+    }
+
+    fn test_session_with_program_and_data_and_memory_type(
+        instructions: &[(usize, u32)],
+        memory_type: u8,
+    ) -> Arm11ProcessSession {
         let mut text = vec![0u8; 0x1000];
         for (offset, instruction) in instructions.iter().copied() {
             text[offset..offset + 4].copy_from_slice(&instruction.to_le_bytes());
         }
+        let mut access_control_info = [0; 0x200];
+        let other_capabilities = 0xFF00_0000 | (u32::from(memory_type) << 8);
+        access_control_info[0x170..0x174].copy_from_slice(&other_capabilities.to_le_bytes());
 
         let prepared = PreparedArm11Image {
             extended_header: NcchExtendedHeader {
@@ -1354,7 +1390,7 @@ mod tests {
                 dependencies: [0; 48],
                 save_data_size_bytes: 0,
                 jump_id: 0,
-                access_control_info: [0; 0x200],
+                access_control_info,
             },
             text,
             read_only: Vec::new(),
@@ -1465,11 +1501,14 @@ mod tests {
 
     #[test]
     fn create_memory_block_svc_creates_a_zeroed_block_that_can_be_mapped_and_unmapped() {
-        let mut session = test_session_with_program(&[
-            0xEF00_001E, // SVC CreateMemoryBlock
-            0xEF00_001F, // SVC MapMemoryBlock
-            0xEF00_0020, // SVC UnmapMemoryBlock
-        ]);
+        let mut session = test_session_with_program_and_data_and_memory_type(
+            &[
+                (0, 0xEF00_001E), // SVC CreateMemoryBlock
+                (4, 0xEF00_001F), // SVC MapMemoryBlock
+                (8, 0xEF00_0020), // SVC UnmapMemoryBlock
+            ],
+            2, // SYSTEM memory permits anonymous shared-memory allocation.
+        );
         {
             let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
             registers[0] = 0x0020_0000;
@@ -1543,7 +1582,66 @@ mod tests {
         {
             let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
             registers[0] = 0x0020_0000;
-            registers[1] = 0x0800_0000;
+            registers[1] = 0;
+            registers[2] = 0x1000;
+            registers[3] = 3;
+            registers[4] = 1;
+        }
+        session.svc_create_memory_block(MAIN_THREAD_ID);
+        assert_eq!(session.core().regs[0], RESULT_MEMORY_BLOCK_NOT_ALLOWED);
+        assert_eq!(session.kernel_objects.handle_count(), 0);
+    }
+
+    #[test]
+    fn create_memory_block_svc_shares_existing_regular_heap_pages_without_copying() {
+        let mut session = test_session_with_program(&[0xEF00_001E]);
+        session
+            .address_space
+            .allocate_application_heap_region(0x0800_0000, 0x2000)
+            .unwrap();
+        session.write_memory_u32(0x0800_1000, 0x1122_3344).unwrap();
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = 0x0020_0000;
+            registers[1] = 0x0800_1000;
+            registers[2] = 0x1000;
+            registers[3] = 3;
+            registers[4] = 1;
+        }
+        let report = session.run_instructions(1).unwrap();
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(session.core().regs[0], 0);
+        let handle = session.read_memory_u32(0x0020_0000).unwrap();
+
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = handle;
+            registers[1] = 0x0900_0000;
+            registers[2] = 3;
+            registers[3] = 1;
+        }
+        session
+            .scheduler
+            .core_mut(MAIN_THREAD_ID)
+            .unwrap()
+            .set_pc(0x0010_0004);
+        let mapped = session.run_instructions(1).unwrap();
+        assert_eq!(mapped.instructions_executed, 1);
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.read_memory_u32(0x0900_0000).unwrap(), 0x1122_3344);
+
+        session.write_memory_u32(0x0900_0000, 0xAABB_CCDD).unwrap();
+        assert_eq!(session.read_memory_u32(0x0800_1000).unwrap(), 0xAABB_CCDD);
+    }
+
+    #[test]
+    fn create_memory_block_svc_rejects_non_heap_source_ranges() {
+        let mut session = test_session_with_program(&[0xEF00_001E]);
+        {
+            let registers = &mut session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs;
+            registers[0] = 0x0020_0000;
+            registers[1] = 0x0010_0000;
             registers[2] = 0x1000;
             registers[3] = 3;
             registers[4] = 1;
