@@ -257,7 +257,10 @@ mod tests {
             Psr::UNDEFINED_MODE,
             Psr::SYSTEM_MODE,
         ] {
-            assert!(Psr(mode).privileged(), "mode 0x{mode:02X} must be privileged");
+            assert!(
+                Psr(mode).privileged(),
+                "mode 0x{mode:02X} must be privileged"
+            );
         }
 
         for mode in [0x00, 0x0F, 0x15, 0x16, 0x18, 0x1A, 0x1E] {
