@@ -320,3 +320,12 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - A alteração ficou isolada nos arquivos `crates/aceris-core/src/cpu/psr.rs` e `crates/aceris-core/src/cpu/arm.rs`; não modificou `thumb.rs` nem os módulos recentes de IPC.
 - Não foi possível executar Rustfmt, Clippy ou `cargo test --workspace` neste ambiente porque Cargo/Rust não estão instalados. A consulta de checks e de Actions para `89eb900` não retornou execuções no momento do registro; os novos testes permanecem pendentes de CI.
 
+## API pública para grupos type-0 de handles IPC (12/11/2026)
+
+- `563fc5f` — adiciona `Arm11ProcessSession::translate_memory_block_handle_groups_from_ipc_message`, entrada pública que recebe um `IpcMessage` já decodificado e traduz todos os grupos type-0 que contenham arrays homogêneos de memory blocks.
+- A API retorna `Arm11IpcHandleGroup` em ordem de mensagem, preservando `word_offset` e os handles correspondentes no processo destinatário. O chamador continua responsável por substituir os words de handles na cópia receptora da mensagem.
+- Grupos de outras famílias (static buffers, mapped buffers e tabelas físicas) são decodificados estruturalmente, mas ficam para os helpers específicos. Isso não é ainda um dispatcher IPC geral nem o caminho de `svcSendSyncRequest`.
+- A validação de handles de origem, contagens e duplicatas MOVE ocorre antes de criar handles de destino; os destinos de todos os grupos são criados antes de fechar qualquer origem MOVE.
+- Dois testes cobrem COPY e MOVE em grupos type-0 separados por um descriptor type-1, e rejeição de MOVE duplicado entre grupos sem alteração das tabelas de handles.
+- A execução `43315214483` sinalizou apenas formatação Rustfmt nos asserts dos testes; `1d25d5d` aplicou o formato indicado. A CI associada ao HEAD posterior `1d25d5d` está pendente neste registro. Não considerar Clippy/testes aprovados até consultar essa execução.
+
