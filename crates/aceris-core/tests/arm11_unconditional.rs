@@ -64,3 +64,18 @@ fn unsupported_non_cp15_unconditional_coprocessor_forms_remain_explicit_limits()
         );
     }
 }
+
+#[test]
+fn cps_rejects_nonzero_fixed_bit_before_user_mode_no_op() {
+    // CPS #16 with reserved fixed bit 16 set. Validation must happen even
+    // in User mode, where a correctly encoded CPS instruction has no effect.
+    const INVALID_CPS: u32 = 0xF103_0010;
+    let (cpu, result) = execute(INVALID_CPS);
+
+    assert!(matches!(
+        result,
+        Err(Error::UndefinedInstruction { pc: 0, word: INVALID_CPS })
+    ));
+    assert_eq!(cpu.pc(), 0);
+    assert_eq!(cpu.cpsr.mode(), aceris_core::cpu::Psr::USER_MODE);
+}
