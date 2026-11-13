@@ -73,6 +73,8 @@ vetorial produz o SVG, os PNGs, o `.ico` do Windows e os ícones adaptativos do 
 cargo run --release -p aceris-icongen
 ```
 
+Paleta, regras de uso e pendências: [`docs/IDENTIDADE_VISUAL.md`](docs/IDENTIDADE_VISUAL.md).
+
 
 ## Licença
 

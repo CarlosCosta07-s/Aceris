@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Paleta Aceris; espelha crates/aceris-common/src/brand.rs. -->
+<resources>
+    <color name="aceris_background">#2A1240</color>
+    <color name="aceris_purple_light">#4A1D5E</color>
+    <color name="aceris_purple_dark">#1A0B2E</color>
+    <color name="aceris_accent_red">#E5173F</color>
+    <color name="aceris_accent_green">#3E8E3A</color>
+    <color name="aceris_text">#F5EEF8</color>
+</resources>
