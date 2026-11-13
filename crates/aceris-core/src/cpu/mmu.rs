@@ -1338,6 +1338,163 @@ mod tests {
         assert!(mmu.is_normal_memory(normal_va + 1, true, true).unwrap());
     }
 
+    const UNALIGNED_DATA_VA: u32 = 0x0010_0801;
+    const UNALIGNED_DATA_PA: u32 = 0x0000_0801;
+    const SCTLR_M_XP_U: u32 = 1 | (1 << 23) | (1 << 22);
+
+    fn a32_unaligned_machine(
+        instruction: u32,
+        data_descriptor: u32,
+        sctlr: u32,
+    ) -> (Arm11Core, FlatMemory) {
+        let (mut cpu, mut mem) = machine();
+        // Instructions execute from a Normal section. The data section maps
+        // VA 0x0010_0000 to the same physical 1 MiB window for compact tests.
+        set_l1(
+            &mut mem,
+            0,
+            SECTION | SECTION_AP_RW_ALL | (1 << 12),
+        );
+        set_l1(&mut mem, 1, data_descriptor);
+        mem.write32(0, instruction).unwrap();
+        cpu.cp15.write(true, 0, 1, 0, 0, sctlr).unwrap();
+        cpu.regs[1] = UNALIGNED_DATA_VA;
+        (cpu, mem)
+    }
+
+    #[test]
+    fn translated_a32_unaligned_word_and_halfword_accesses_work_on_normal_memory() {
+        let normal = SECTION | SECTION_AP_RW_ALL | (1 << 12);
+
+        for big_endian in [false, true] {
+            let mut load_word = a32_unaligned_machine(0xE591_0000, normal, SCTLR_M_XP_U).0;
+            let mut load_word_mem = a32_unaligned_machine(0xE591_0000, normal, SCTLR_M_XP_U).1;
+            load_word.cpsr.set_big_endian(big_endian);
+            load_word_mem
+                .write32(UNALIGNED_DATA_PA, 0x4433_2211)
+                .unwrap();
+            load_word.step(&mut load_word_mem).unwrap();
+            assert_eq!(
+                load_word.regs[0],
+                if big_endian { 0x1122_3344 } else { 0x4433_2211 }
+            );
+
+            let (mut store_word, mut store_word_mem) =
+                a32_unaligned_machine(0xE581_0000, normal, SCTLR_M_XP_U);
+            store_word.cpsr.set_big_endian(big_endian);
+            store_word.regs[0] = 0xA1B2_C3D4;
+            store_word.step(&mut store_word_mem).unwrap();
+            let expected_word = if big_endian {
+                [0xA1, 0xB2, 0xC3, 0xD4]
+            } else {
+                [0xD4, 0xC3, 0xB2, 0xA1]
+            };
+            for (offset, expected) in expected_word.into_iter().enumerate() {
+                assert_eq!(
+                    store_word_mem
+                        .read8(UNALIGNED_DATA_PA + offset as u32)
+                        .unwrap(),
+                    expected
+                );
+            }
+
+            let (mut load_halfword, mut load_halfword_mem) =
+                a32_unaligned_machine(0xE1D1_00B0, normal, SCTLR_M_XP_U);
+            load_halfword.cpsr.set_big_endian(big_endian);
+            load_halfword_mem
+                .write16(UNALIGNED_DATA_PA, 0x3412)
+                .unwrap();
+            load_halfword.step(&mut load_halfword_mem).unwrap();
+            assert_eq!(
+                load_halfword.regs[0],
+                if big_endian { 0x1234 } else { 0x3412 }
+            );
+
+            let (mut store_halfword, mut store_halfword_mem) =
+                a32_unaligned_machine(0xE1C1_00B0, normal, SCTLR_M_XP_U);
+            store_halfword.cpsr.set_big_endian(big_endian);
+            store_halfword.regs[0] = 0xA1B2;
+            store_halfword.step(&mut store_halfword_mem).unwrap();
+            let expected_halfword = if big_endian { [0xA1, 0xB2] } else { [0xB2, 0xA1] };
+            for (offset, expected) in expected_halfword.into_iter().enumerate() {
+                assert_eq!(
+                    store_halfword_mem
+                        .read8(UNALIGNED_DATA_PA + offset as u32)
+                        .unwrap(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn translated_a32_unaligned_word_and_halfword_accesses_reject_device_and_ordered_memory() {
+        let device = SECTION | SECTION_AP_RW_ALL | (1 << 2);
+        let strongly_ordered = SECTION | SECTION_AP_RW_ALL;
+        let instructions = [
+            0xE591_0000, // LDR r0,[r1]
+            0xE581_0000, // STR r0,[r1]
+            0xE1D1_00B0, // LDRH r0,[r1]
+            0xE1C1_00B0, // STRH r0,[r1]
+        ];
+
+        for descriptor in [device, strongly_ordered] {
+            for instruction in instructions {
+                let (mut cpu, mut mem) =
+                    a32_unaligned_machine(instruction, descriptor, SCTLR_M_XP_U);
+                cpu.regs[0] = 0xA1B2_C3D4;
+                mem.write32(UNALIGNED_DATA_PA - 1, 0x1122_3344).unwrap();
+                let before_first = mem.read32(UNALIGNED_DATA_PA - 1).unwrap();
+                let before_second = mem.read32(UNALIGNED_DATA_PA + 3).unwrap();
+
+                assert!(matches!(
+                    cpu.step(&mut mem),
+                    Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+                ));
+                assert_eq!(cpu.regs[0], 0xA1B2_C3D4);
+                assert_eq!(cpu.regs[1], UNALIGNED_DATA_VA);
+                assert_eq!(cpu.pc(), 0);
+                assert_eq!(mem.read32(UNALIGNED_DATA_PA - 1).unwrap(), before_first);
+                assert_eq!(mem.read32(UNALIGNED_DATA_PA + 3).unwrap(), before_second);
+            }
+        }
+    }
+
+    #[test]
+    fn translated_alignment_fault_precedes_device_memory_unpredictability() {
+        let device = SECTION | SECTION_AP_RW_ALL | (1 << 2);
+        let (mut cpu, mut mem) =
+            a32_unaligned_machine(0xE591_0000, device, SCTLR_M_XP_U | (1 << 1));
+        cpu.regs[0] = 0xA1B2_C3D4;
+
+        assert!(matches!(
+            cpu.step(&mut mem),
+            Err(Error::InvalidAccess { addr }) if addr == UNALIGNED_DATA_VA
+        ));
+        assert_eq!(cpu.regs[0], 0xA1B2_C3D4);
+        assert_eq!(cpu.pc(), 0);
+    }
+
+    #[test]
+    fn translated_legacy_swp_rejects_unaligned_device_memory_before_modifying_state() {
+        let device = SECTION | SECTION_AP_RW_ALL | (1 << 2);
+        let sctlr = 1 | (1 << 23);
+        let (mut cpu, mut mem) = a32_unaligned_machine(0xE101_0092, device, sctlr);
+        cpu.regs[0] = 0xCAFE_BABE;
+        cpu.regs[2] = 0x1122_3344;
+        mem.write32(UNALIGNED_DATA_PA - 1, 0xDDCC_BBAA).unwrap();
+        let before = mem.read32(UNALIGNED_DATA_PA - 1).unwrap();
+
+        assert!(matches!(
+            cpu.step(&mut mem),
+            Err(Error::UndefinedInstruction { pc: 0, word: 0xE101_0092 })
+        ));
+        assert_eq!(cpu.regs[0], 0xCAFE_BABE);
+        assert_eq!(cpu.regs[2], 0x1122_3344);
+        assert_eq!(cpu.regs[1], UNALIGNED_DATA_VA);
+        assert_eq!(mem.read32(UNALIGNED_DATA_PA - 1).unwrap(), before);
+    }
+
     #[test]
     fn va_to_pa_populates_par_with_physical_page_and_resolved_attributes() {
         let (mut cpu, mut mem) = machine();
