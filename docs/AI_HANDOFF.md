@@ -700,3 +700,15 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - A suíte Thumb contém agora 89 declarações `#[test]`. Essas alterações são testes de regressão; não mudam o caminho de execução de produção.
 - CI do commit `e050387d05e82bfd50da818695bf0dd7cec4dcc2`: workflow `43360946115` concluído com sucesso. Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` aprovados em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
 - Não foi criada branch, não foram adicionadas dependências e nenhuma implementação de emulador de terceiros foi consultada.
+
+## Thumb — limites dos offsets de branch e sinalização (13/11/2026)
+
+- `0219151` — adiciona testes para os limites positivo e negativo de branches condicionais e incondicionais, além de limites de deslocamento nos pares `BL` e `BLX`.
+- `8ba97df` — corrige os fixtures condicionais para usar `BNE`, condição satisfeita no estado inicial de teste (`Z=0`).
+- A primeira execução da CI identificou que o fixture de `BL` usava `0xF7FF`, que é prefixo e não sufixo. `3e54357` corrige-o para `0xFFFF`, codificação de sufixo `BL` com imediato baixo máximo.
+- `conditional_and_unconditional_branch_offsets_sign_extend_at_limits` verifica `BNE` com offsets `+254` e `-256`, e `B` com offsets `+2046` e `-2048`, todos com a instrução iniciando em endereço 2.
+- `bl_and_blx_pair_offsets_sign_extend_at_architectural_limits` verifica o limite positivo do par `BL` e o limite negativo do par `BLX`, incluindo preparo de LR, retorno e alinhamento do destino ARM.
+- O módulo Thumb contém agora 91 declarações `#[test]`. Não houve alteração do caminho de execução de produção neste conjunto; são testes de regressão.
+- CI final: workflow `43361987199` concluído com sucesso. Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` aprovados em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado. A execução anterior `43361873343` falhou apenas pelo fixture de sufixo incorreto, corrigido em `3e54357`.
+- Referência independente: ARM Architecture Reference Manual, ARM DDI 0100I, seção A7.1.17 (BL, BLX), que descreve o par de instruções e o cálculo dos offsets; A7.1.17 também especifica alinhamento de palavra para o destino BLX.
+- Não foram criadas branches, adicionadas dependências ou consultadas implementações de outros emuladores.
