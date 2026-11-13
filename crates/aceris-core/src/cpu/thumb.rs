@@ -1294,7 +1294,7 @@ mod tests {
             (0xC006, DATA + 1, DATA + 1),       // STMIA r0!,{r1,r2}
             (0xC806, DATA + 1, DATA + 1),       // LDMIA r0!,{r1,r2}
             (0xB403, DATA + 0x11, DATA + 0x09), // PUSH {r0,r1}: fault at new SP.
-            (0xBC03, DATA + 1, DATA + 1),         // POP {r0,r1}: fault at original SP.
+            (0xBC03, DATA + 1, DATA + 1),       // POP {r0,r1}: fault at original SP.
         ];
 
         for alignment_bit in [1 << 22, 1 << 1] {
