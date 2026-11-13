@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 13/11/2026, com base no código validado até o commit `7be452a404886612975bca1441182a6b4eefaab3`.
+> Estado revisado em 13/11/2026, com base no código validado até o commit `0b852d06374b750559713382f4b1a2628487da9d`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -132,6 +132,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [ ] IPC genérico entre processos/sessões independentes, gestão de múltiplos processos ARM11, tradução efetiva dos tipos restantes de buffers/handles e ciclo completo de portas, sessões e objetos de kernel.
 - [ ] Implementar e validar os serviços adicionais necessários ao boot de homebrew, guiados por logs reais de execução; `srv:` e `gsp::Gpu` são apenas o primeiro subconjunto.
 - [ ] Controlador de interrupções de dispositivos, timers de hardware e integração de IRQ/eventos ao escalonador e à sincronização do sistema.
+
 ## 4. GPU PICA200, rasterização e LCD
 
 ### GPU PICA200
@@ -231,7 +232,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Testes unitários para CPU, memória, loaders, processo, kernel inicial, PICA200 command lists e LCD
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas; teste real com uma imagem fornecida pelo usuário ainda pendente
 - [~] Testes ABI Android para leitura de PC/CPSR e recuperação da mensagem original de erro; validação de carga/execução em dispositivo ainda pendente
-- [x] IPC `srv:`/`gsp::Gpu`, registro de cliente, fila GX, `ProcessCommandList`, `MemoryFill`, interrupções PSC e handoff FIFO: `rustfmt`, Clippy e 928 testes aprovados no Linux; Windows, macOS e Android ARM64 também aprovados no workflow [43426673012](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43426673012), código até o commit `7be452a404886612975bca1441182a6b4eefaab3`.
+- [x] IPC `srv:`/`gsp::Gpu`, registro de cliente, fila GX, `ProcessCommandList` e `MemoryFill`: testes guest-side incluem dois buffers juntos com `PSC0`, buffer 1 isolado com `PSC1`, preenchimento 16/24/32 bits, relay queue e event handle. `rustfmt`, Clippy e 928 testes aprovados em Linux/macOS; Windows e Android ARM64 também aprovados na matriz [43427558631](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43427558631), código até o commit `0b852d06374b750559713382f4b1a2628487da9d`.
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Bridge de fetch físico, formatos de 8/16/24/32 bits, conversão numérica, float24, armazenamento/aplicação de atributos fixos e mapeamento de entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43177475915](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43177475915), código no commit `b7c4b92cfc1356ddda9ba40ba96573c812443a56`
