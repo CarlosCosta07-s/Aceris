@@ -1606,8 +1606,15 @@ impl Arm11Core {
         let rm = bits(word, 3, 0);
         let addr = self.reg(rn, 8);
         let new_value = self.reg(rm, 8);
+        let byte = bit(word, 22);
 
-        let old = if bit(word, 22) {
+        // SWP is always word-aligned in ARMv6, independent of SCTLR.U/A.
+        // SWPB transfers a byte and therefore has no alignment restriction.
+        if !byte && addr & 3 != 0 {
+            return Err(Error::InvalidAccess { addr });
+        }
+
+        let old = if byte {
             let old = u32::from(bus.read8(addr)?);
             bus.write8(addr, new_value as u8)?;
             old
@@ -3084,6 +3091,39 @@ mod tests {
             m.cpu.step(&mut m.mem),
             Err(Error::UndefinedInstruction { pc: 0, .. })
         ));
+    }
+
+    #[test]
+    fn swp_word_requires_alignment_independent_of_sctlr_u_and_a() {
+        for sctlr in [0, 1 << 22, 1 << 1, (1 << 22) | (1 << 1)] {
+            let mut m = Machine::new(&[0xE101_0092]); // SWP r0,r2,[r1]
+            m.cpu.regs[0] = 0xCAFE_BABE;
+            m.cpu.regs[1] = DATA + 1;
+            m.cpu.regs[2] = 0x1122_3344;
+            m.cpu.cp15_mut().write(true, 0, 1, 0, 0, sctlr).unwrap();
+            m.mem.write32(DATA, 0xDEAD_BEEF).unwrap();
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::InvalidAccess { addr }) if addr == DATA + 1
+            ));
+            assert_eq!(m.cpu.regs[0], 0xCAFE_BABE);
+            assert_eq!(m.mem.read32(DATA).unwrap(), 0xDEAD_BEEF);
+        }
+    }
+
+    #[test]
+    fn swpb_allows_unaligned_byte_addresses_even_when_alignment_check_is_enabled() {
+        let mut m = Machine::new(&[0xE141_0092]); // SWPB r0,r2,[r1]
+        m.cpu.regs[0] = 0xCAFE_BABE;
+        m.cpu.regs[1] = DATA + 1;
+        m.cpu.regs[2] = 0x1122_33CC;
+        m.cpu.cp15_mut().write(true, 0, 1, 0, 0, 1 << 1).unwrap();
+        m.mem.write8(DATA + 1, 0xA5).unwrap();
+
+        m.step();
+        assert_eq!(m.cpu.regs[0], 0xA5);
+        assert_eq!(m.mem.read8(DATA + 1).unwrap(), 0xCC);
     }
 
     #[test]
