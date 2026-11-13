@@ -1109,6 +1109,20 @@ mod tests {
     }
 
     #[test]
+    fn bl_pair_sign_extends_negative_high_offset() {
+        // A high immediate of -1 contributes -4096 to the paired branch target.
+        let mut m = Machine::new(&[0xF7FF, 0xF800]);
+
+        m.step();
+        assert_eq!(m.cpu.regs[LR], 0xFFFF_F004);
+        m.step();
+
+        assert_eq!(m.cpu.pc(), 0xFFFF_F004);
+        assert_eq!(m.cpu.regs[LR], 5);
+        assert!(m.cpu.cpsr.thumb());
+    }
+
+    #[test]
     fn blx_pair_switches_to_arm() {
         let mut m = Machine::new(&[0xF000, 0xE800]);
         m.step();
@@ -1143,7 +1157,10 @@ mod tests {
 
         assert!(matches!(
             m.cpu.step(&mut m.mem),
-            Err(Error::UndefinedInstruction { pc: 0, word: 0x4700 })
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0x4700
+            })
         ));
         assert_eq!(m.cpu.pc(), 0);
         assert!(m.cpu.cpsr.thumb());
@@ -1176,7 +1193,10 @@ mod tests {
 
         assert!(matches!(
             m.cpu.step(&mut m.mem),
-            Err(Error::UndefinedInstruction { pc: 2, word: 0xE801 })
+            Err(Error::UndefinedInstruction {
+                pc: 2,
+                word: 0xE801
+            })
         ));
         assert_eq!(m.cpu.pc(), 2);
         assert_eq!(m.cpu.regs[LR], staged_lr);
