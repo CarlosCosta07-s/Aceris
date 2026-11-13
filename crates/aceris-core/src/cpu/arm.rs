@@ -2001,6 +2001,25 @@ impl Arm11Core {
             word,
         };
 
+        // LDRD/STRD are not covered by U=1 unaligned single-word support.
+        // They require word alignment with U=1, but doubleword alignment in
+        // the legacy U=0 configuration.
+        let pair_transfer = matches!(
+            (load, bits(word, 6, 5)),
+            (false, 0b10 | 0b11)
+        );
+        if pair_transfer {
+            let sctlr = self.cp15.sctlr();
+            let unaligned_support = sctlr & (1 << 22) != 0;
+            let required_alignment_mask = if unaligned_support { 3 } else { 7 };
+            if addr & required_alignment_mask != 0 {
+                if unaligned_support || sctlr & (1 << 1) != 0 {
+                    return Err(Error::InvalidAccess { addr });
+                }
+                return Err(undefined);
+            }
+        }
+
         // ARMv6 U=1 permits unaligned single-halfword accesses. In legacy
         // U=0 mode they are UNPREDICTABLE; SCTLR.A forces an alignment fault
         // in either mode. Byte loads such as LDRSB have no alignment check.
@@ -2964,6 +2983,100 @@ mod tests {
         m.run(1);
         assert_eq!(m.mem.read32(DATA + 8).unwrap(), 0xDEAD_BEEF);
         assert_eq!(m.mem.read32(DATA + 12).unwrap(), 0x1234_5678);
+    }
+
+    #[test]
+    fn armv6_ldrd_strd_in_u_mode_require_word_alignment() {
+        for big_endian in [false, true] {
+            let mut load = Machine::new(&[0xE1C1_40D0]); // LDRD r4,[r1]
+            load.cpu.regs[1] = DATA + 4;
+            load.cpu.cpsr.set_big_endian(big_endian);
+            load.cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            load.mem.write32(DATA + 4, 0x1122_3344).unwrap();
+            load.mem.write32(DATA + 8, 0x5566_7788).unwrap();
+            load.step();
+            assert_eq!(
+                (load.cpu.regs[4], load.cpu.regs[5]),
+                if big_endian {
+                    (0x4433_2211, 0x8877_6655)
+                } else {
+                    (0x1122_3344, 0x5566_7788)
+                }
+            );
+
+            let mut store = Machine::new(&[0xE1C1_40F0]); // STRD r4,[r1]
+            store.cpu.regs[1] = DATA + 4;
+            store.cpu.regs[4] = 0x1122_3344;
+            store.cpu.regs[5] = 0x5566_7788;
+            store.cpu.cpsr.set_big_endian(big_endian);
+            store
+                .cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            store.step();
+            assert_eq!(
+                store.mem.read32(DATA + 4).unwrap(),
+                if big_endian { 0x4433_2211 } else { 0x1122_3344 }
+            );
+            assert_eq!(
+                store.mem.read32(DATA + 8).unwrap(),
+                if big_endian { 0x8877_6655 } else { 0x5566_7788 }
+            );
+        }
+
+        for instruction in [0xE1C1_40D0, 0xE1C1_40F0] {
+            let mut m = Machine::new(&[instruction]);
+            m.cpu.regs[1] = DATA + 1;
+            m.cpu.regs[4] = 0xAABB_CCDD;
+            m.cpu.regs[5] = 0x1122_3344;
+            m.cp15_mut().write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+            m.mem.write32(DATA, 0xDEAD_BEEF).unwrap();
+            m.mem.write32(DATA + 4, 0xCAFE_BABE).unwrap();
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::InvalidAccess { addr }) if addr == DATA + 1
+            ));
+            assert_eq!(m.cpu.regs[4], 0xAABB_CCDD);
+            assert_eq!(m.cpu.regs[5], 0x1122_3344);
+            assert_eq!(m.mem.read32(DATA).unwrap(), 0xDEAD_BEEF);
+            assert_eq!(m.mem.read32(DATA + 4).unwrap(), 0xCAFE_BABE);
+        }
+    }
+
+    #[test]
+    fn legacy_ldrd_strd_require_doubleword_alignment() {
+        for instruction in [0xE1C1_40D0, 0xE1C1_40F0] {
+            let mut legacy = Machine::new(&[instruction]);
+            legacy.cpu.regs[1] = DATA + 4;
+            legacy.cpu.regs[4] = 0xAABB_CCDD;
+            legacy.cpu.regs[5] = 0x1122_3344;
+            legacy.mem.write32(DATA + 4, 0xDEAD_BEEF).unwrap();
+            legacy.mem.write32(DATA + 8, 0xCAFE_BABE).unwrap();
+            assert!(matches!(
+                legacy.cpu.step(&mut legacy.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+            ));
+            assert_eq!(legacy.cpu.regs[4], 0xAABB_CCDD);
+            assert_eq!(legacy.cpu.regs[5], 0x1122_3344);
+            assert_eq!(legacy.mem.read32(DATA + 4).unwrap(), 0xDEAD_BEEF);
+            assert_eq!(legacy.mem.read32(DATA + 8).unwrap(), 0xCAFE_BABE);
+
+            let mut strict = Machine::new(&[instruction]);
+            strict.cpu.regs[1] = DATA + 4;
+            strict
+                .cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 1)
+                .unwrap();
+            assert!(matches!(
+                strict.cpu.step(&mut strict.mem),
+                Err(Error::InvalidAccess { addr }) if addr == DATA + 4
+            ));
+        }
     }
 
     #[test]
