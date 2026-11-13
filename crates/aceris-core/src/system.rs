@@ -1955,6 +1955,7 @@ mod tests {
                     0xEF00_0032, // GSP TryAcquireRight
                     0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
+                    0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill)
                     0xEF00_0032, // GSP ReleaseRight
                     0xEF00_0032, // GSP UnregisterInterruptRelayQueue
                 ])),
