@@ -2118,14 +2118,7 @@ impl Arm11Core {
             if sctlr & (1 << 22) == 0 {
                 return Err(undefined);
             }
-            self.require_normal_unaligned_range(
-                bus,
-                addr,
-                2,
-                !load,
-                self.cpsr.privileged(),
-                word,
-            )?;
+            self.require_normal_unaligned_range(bus, addr, 2, !load, self.cpsr.privileged(), word)?;
         }
 
         match (load, bits(word, 6, 5)) {
