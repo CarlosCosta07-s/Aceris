@@ -48,7 +48,7 @@ fn swpb_exchanges_only_the_addressed_byte() {
 #[test]
 fn swp_and_swpb_reject_pc_and_base_aliases_without_side_effects() {
     // SWP r0,r2,[pc] ; SWP pc,r2,[r1] ; SWP r0,pc,[r1] ;
-    // SWP r1,r2,[r1] ; SWP r0,r1,[r1] ; SWPB r3,r4,[pc].
+    // SWP r1,r2,[r1] ; SWP r0,r1,[r1] ; SWPB r3,pc,[r5].
     for instruction in [
         0xE10F_0092,
         0xE101_F092,
