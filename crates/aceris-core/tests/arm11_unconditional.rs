@@ -38,6 +38,22 @@ fn reserved_unconditional_encodings_are_undefined_without_side_effects() {
 }
 
 #[test]
+fn pld_rejects_pc_as_register_offset_but_keeps_pc_relative_literal_form() {
+    let invalid = 0xF751_F00F; // PLD [r1, -pc]
+    let (cpu, result) = execute(invalid);
+    assert!(matches!(
+        result,
+        Err(Error::UndefinedInstruction { pc: 0, word }) if word == invalid
+    ));
+    assert_eq!(cpu.pc(), 0);
+
+    let literal = 0xF5DF_F020; // PLD [pc, #32]
+    let (cpu, result) = execute(literal);
+    assert!(result.is_ok());
+    assert_eq!(cpu.pc(), 4);
+}
+
+#[test]
 fn unsupported_non_cp15_unconditional_coprocessor_forms_remain_explicit_limits() {
     // CP14 debug coprocessor instructions are not implemented by this core.
     for instruction in [0xFE00_0E00, 0xFC00_0E00, 0xFC81_2E00, 0xFCA1_2E00] {
