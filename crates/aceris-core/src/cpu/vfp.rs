@@ -36,8 +36,8 @@ const FPSCR_OFE: u32 = 1 << 10;
 const FPSCR_UFE: u32 = 1 << 11;
 const FPSCR_IXE: u32 = 1 << 12;
 const FPSCR_IDE: u32 = 1 << 15;
-const FPSCR_SUPPORTED_TRAP_ENABLES: u32 = FPSCR_IOE | FPSCR_DZE;
-const FPSCR_UNSUPPORTED_TRAP_ENABLES: u32 = FPSCR_OFE | FPSCR_UFE | FPSCR_IXE | FPSCR_IDE;
+const FPSCR_SUPPORTED_TRAP_ENABLES: u32 = FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_UFE;
+const FPSCR_UNSUPPORTED_TRAP_ENABLES: u32 = FPSCR_IXE | FPSCR_IDE;
 const FPSCR_EXCEPTION_STATUS: u32 = FPSCR_IOC | FPSCR_DZC | FPSCR_OFC | FPSCR_UFC | FPSCR_IXC;
 const FPEXC_EXCEPTION_STATUS: u32 = FPEXC_INV | FPEXC_UFC | FPEXC_OFC | FPEXC_IOC;
 const FPSCR_DN: u32 = 1 << 25;
@@ -158,7 +158,9 @@ impl Vfp {
     }
 
     fn has_enabled_traps(&self) -> bool {
-        self.fpscr & FPSCR_SUPPORTED_TRAP_ENABLES != 0
+        let enabled = self.fpscr & FPSCR_SUPPORTED_TRAP_ENABLES;
+        enabled & (FPSCR_IOE | FPSCR_DZE | FPSCR_OFE) != 0
+            || (enabled & FPSCR_UFE != 0 && self.fpscr & FPSCR_FZ == 0)
     }
 
     fn clear_exception_status(&mut self) {
@@ -180,7 +182,9 @@ impl Vfp {
         if self.fpscr & FPSCR_OFE != 0 {
             enabled |= FPSCR_OFC;
         }
-        if self.fpscr & FPSCR_UFE != 0 {
+        // VFP11 ignores UFE in flush-to-zero mode: tiny results are
+        // flushed and UFC is recorded, but no exception bounce is taken.
+        if self.fpscr & FPSCR_UFE != 0 && self.fpscr & FPSCR_FZ == 0 {
             enabled |= FPSCR_UFC;
         }
         if self.fpscr & FPSCR_IXE != 0 {
@@ -298,6 +302,13 @@ impl Prec {
         match self {
             Self::Single => f64::from(f32::MAX),
             Self::Double => f64::MAX,
+        }
+    }
+
+    fn min_normal(self) -> f64 {
+        match self {
+            Self::Single => f64::from(f32::MIN_POSITIVE),
+            Self::Double => f64::MIN_POSITIVE,
         }
     }
 
@@ -493,14 +504,23 @@ impl Vfp {
         let inexact = relation != 0;
         if inexact {
             self.raise(FPSCR_IXC);
-            if rounded == 0.0 || prec.is_subnormal(result) {
-                self.raise(FPSCR_UFC);
-            }
         }
 
-        if self.fpscr & FPSCR_FZ != 0 && prec.is_subnormal(result) {
-            self.raise(FPSCR_UFC | FPSCR_IXC);
-            return result & prec.sign_bit();
+        // In full-compliance VFP11 mode, underflow is confirmed after
+        // rounding and does not require an inexact result.
+        let tiny_after_rounding =
+            value != 0.0 && rounded.abs() < prec.min_normal();
+        if tiny_after_rounding {
+            self.raise(FPSCR_UFC);
+        }
+
+        // Flush-to-zero detects underflow before rounding. The VFP11 returns
+        // positive zero and ignores UFE (no asynchronous bounce) in this mode.
+        let tiny_before_rounding =
+            value.is_finite() && value != 0.0 && magnitude < prec.min_normal();
+        if self.fpscr & FPSCR_FZ != 0 && tiny_before_rounding {
+            self.raise(FPSCR_UFC);
+            return 0;
         }
         result
     }
