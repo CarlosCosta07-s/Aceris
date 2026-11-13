@@ -1577,7 +1577,7 @@ mod tests {
             0xF84D_0500 | (1 << 23) | (1 << 21) | Psr::IRQ_MODE;
         let (mut cpu, mut mem) = a32_unaligned_machine(instruction, normal, sctlr);
 
-        cpu.regs[super::super::super::LR] = 0x1122_3344;
+        cpu.regs[crate::cpu::LR] = 0x1122_3344;
         cpu.switch_mode(Psr::IRQ_MODE).unwrap();
         cpu.regs[crate::cpu::SP] = UNALIGNED_DATA_VA;
         cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
@@ -1608,7 +1608,7 @@ mod tests {
 
         for descriptor in descriptors {
             let (mut cpu, mut mem) = a32_unaligned_machine(instruction, descriptor, sctlr);
-            cpu.regs[super::super::super::LR] = 0x1122_3344;
+            cpu.regs[crate::cpu::LR] = 0x1122_3344;
             cpu.switch_mode(Psr::IRQ_MODE).unwrap();
             cpu.regs[crate::cpu::SP] = UNALIGNED_DATA_VA;
             cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
