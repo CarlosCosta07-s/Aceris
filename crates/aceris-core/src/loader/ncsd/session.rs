@@ -1419,6 +1419,12 @@ impl Arm11ProcessSession {
         {
             return Err(KernelHandleError::InvalidMemoryPermission);
         }
+        // The GSP HLE endpoint maps its returned shared block before replying.
+        // Accept the guest's subsequent MapMemoryBlock call only when it names
+        // that exact backing at the exact address; all conflicting mappings fail.
+        if self.address_space.shared_mapping_matches(address, &backing) {
+            return Ok(());
+        }
         self.address_space
             .map_shared_memory_region(address, backing, my_permissions)
             .map_err(|_| KernelHandleError::InvalidMemoryBlockMapping)
