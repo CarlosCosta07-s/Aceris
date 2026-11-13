@@ -598,7 +598,11 @@ fn assert_undefined_atomically(instruction: u32) {
     assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
     assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
     assert_eq!(cpu.pc(), 0, "{instruction:#010x}");
-    assert_eq!(memory.read32(4).unwrap(), data_before, "{instruction:#010x}");
+    assert_eq!(
+        memory.read32(4).unwrap(),
+        data_before,
+        "{instruction:#010x}"
+    );
 }
 
 #[test]
