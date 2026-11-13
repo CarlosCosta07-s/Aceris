@@ -21,8 +21,8 @@ fn reserved_unconditional_encodings_are_undefined_without_side_effects() {
         0xFE10_0F10, // MRC2 p15, 0, r0, c0, c0, 0.
         0xFE00_0F00, // CDP2 p15, 0, c0, c0, c0, 0.
         0xFC00_0F00, // STC2/LDC2 p15 space.
-        0xFC80_00F0, // MCRR2 p15, 0, r0, r0, c0.
-        0xFCA0_00F0, // MRRC2 p15, 0, r0, r0, c0.
+        0xFC81_2F00, // MCRR2 p15, 0, r2, r1, c0.
+        0xFCA1_2F00, // MRRC2 p15, 0, r2, r1, c0.
     ] {
         let (cpu, result) = execute(instruction);
         assert!(
@@ -40,7 +40,7 @@ fn reserved_unconditional_encodings_are_undefined_without_side_effects() {
 #[test]
 fn unsupported_non_cp15_unconditional_coprocessor_forms_remain_explicit_limits() {
     // CP14 debug coprocessor instructions are not implemented by this core.
-    for instruction in [0xFE00_0E00, 0xFC00_0E00, 0xFC80_00E0, 0xFCA0_00E0] {
+    for instruction in [0xFE00_0E00, 0xFC00_0E00, 0xFC81_2E00, 0xFCA1_2E00] {
         let (_, result) = execute(instruction);
         assert!(
             matches!(result, Err(Error::Unimplemented(_))),
