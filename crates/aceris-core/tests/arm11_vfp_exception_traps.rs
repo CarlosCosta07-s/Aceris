@@ -15,9 +15,7 @@ const VMRS_R6_FPINST: u32 = 0xEEF9_6A10;
 fn machine(program: &[u32]) -> (Arm11Core, FlatMemory) {
     let mut memory = FlatMemory::new(0, 0x100);
     for (index, instruction) in program.iter().enumerate() {
-        memory
-            .write32(index as u32 * 4, *instruction)
-            .unwrap();
+        memory.write32(index as u32 * 4, *instruction).unwrap();
     }
 
     let mut cpu = Arm11Core::new();
@@ -47,8 +45,16 @@ fn enabled_divide_by_zero_records_fpinst_and_bounces_the_next_vfp_operation() {
     cpu.step(&mut memory).unwrap(); // VDIV completes with an asynchronous bounce pending.
 
     assert_eq!(cpu.pc(), 8);
-    assert_eq!(cpu.vfp().s(0), 0xDEAD_BEEF, "trapped destination is unchanged");
-    assert_eq!(cpu.vfp().fpscr() & (1 << 1), 0, "DZC is left for support code");
+    assert_eq!(
+        cpu.vfp().s(0),
+        0xDEAD_BEEF,
+        "trapped destination is unchanged"
+    );
+    assert_eq!(
+        cpu.vfp().fpscr() & (1 << 1),
+        0,
+        "DZC is left for support code"
+    );
     assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
     assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
 
@@ -91,7 +97,11 @@ fn enabled_invalid_operation_sets_fpexc_ioc_without_committing_the_result() {
     assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0);
     assert_ne!(cpu.vfp().fpexc() & 1, 0, "FPEXC.IOC is set");
     assert_eq!(cpu.vfp().fpinst(), VSQRT_S0_S1);
-    assert_eq!(cpu.vfp().fpscr() & 1, 0, "FPSCR.IOC is left for support code");
+    assert_eq!(
+        cpu.vfp().fpscr() & 1,
+        0,
+        "FPSCR.IOC is left for support code"
+    );
 }
 
 #[test]
