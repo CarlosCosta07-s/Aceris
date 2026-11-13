@@ -1789,6 +1789,43 @@ mod tests {
         system.release_gsp_rendering_right(1).unwrap();
     }
     #[test]
+    fn service_manager_rejects_lookup_before_client_registration() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(1)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let service_manager = system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .create_service_manager_session()
+            .unwrap();
+
+        let response_buffer = write_tls_ipc_request(
+            &mut system,
+            service_manager,
+            &[0x0005_0100, 0x3A70_7367, 0x7570_473A, 8, 0],
+        );
+        run_one_ipc_svc(&mut system);
+
+        assert_eq!(
+            read_tls_ipc_response(&mut system, response_buffer, 2),
+            vec![0x0005_0040, RESULT_INVALID_HANDLE]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .service_manager_client_registered(service_manager),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn service_manager_connects_gsp_and_registers_shared_relay_memory() {
         let mut system = System::new();
         system
