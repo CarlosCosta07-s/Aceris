@@ -509,3 +509,74 @@ fn arm_compare_and_test_accept_pc_as_rn_with_pc_plus_eight() {
     assert_eq!(flags(&cpu), (false, false, true, true));
     assert_eq!(cpu.pc(), base + 4);
 }
+#[test]
+fn arm_immediate_arithmetic_uses_pc_plus_eight_as_rn_across_opcodes() {
+    const BASES: [u32; 7] = [
+        0,
+        0x0000_1000,
+        0x7FFF_FFE0,
+        0x7FFF_FFFF,
+        0x8000_0000,
+        0xFFFF_FFF0,
+        0x1234_5678,
+    ];
+    const IMMEDIATES: [(u32, u32); 6] = [
+        (0, 0x00),
+        (0, 0x01),
+        (1, 0x80),
+        (4, 0xFF),
+        (7, 0x80),
+        (12, 0x01),
+    ];
+    let ops = [
+        Op::Add,
+        Op::Adc,
+        Op::Sub,
+        Op::Sbc,
+        Op::Rsb,
+        Op::Rsc,
+        Op::Cmp,
+        Op::Cmn,
+    ];
+
+    for op in ops {
+        let compare = matches!(op, Op::Cmp | Op::Cmn);
+        for base in BASES {
+            let pc_operand = base.wrapping_add(8);
+            for (rotate, imm8) in IMMEDIATES {
+                let operand = imm8.rotate_right(rotate * 2);
+                let word = arm_immediate_instruction(op, rotate, imm8) | (15 << 16);
+
+                for carry_in in [false, true] {
+                    for overflow_in in [false, true] {
+                        let mut memory = FlatMemory::new(base, 4);
+                        memory.write32(base, word).unwrap();
+
+                        let mut cpu = cpu_with(pc_operand, 0, carry_in, overflow_in);
+                        cpu.regs[0] = 0xA5A5_5A5A;
+                        cpu.regs[2] = 0x5A5A_A5A5;
+                        cpu.set_pc(base);
+                        cpu.step(&mut memory).unwrap();
+
+                        let (expected, carry, overflow) =
+                            reference(op, pc_operand, operand, carry_in);
+                        assert_eq!(
+                            flags(&cpu),
+                            (expected >> 31 != 0, expected == 0, carry, overflow),
+                            "{word:#010x} base={base:#010x} pc_operand={pc_operand:#010x} operand={operand:#010x} carry_in={carry_in}"
+                        );
+                        if compare {
+                            assert_eq!(cpu.regs[0], 0xA5A5_5A5A, "{word:#010x}");
+                        } else {
+                            assert_eq!(
+                                cpu.regs[2], expected,
+                                "{word:#010x} base={base:#010x} operand={operand:#010x}"
+                            );
+                        }
+                        assert_eq!(cpu.pc(), base.wrapping_add(4), "{word:#010x}");
+                    }
+                }
+            }
+        }
+    }
+}
