@@ -2,8 +2,8 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
-    GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
+    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
     GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue, GspGxCommandQueueError,
     GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue, GspProcessCommandList,
     Pica200, VRAM_BASE, VRAM_SIZE,
@@ -1628,7 +1628,8 @@ impl System {
 mod tests {
     use super::*;
     use crate::gpu::{
-        FCRAM_BASE, GSP_INTERRUPT_QUEUE_CLIENT_STRIDE, GSP_INTERRUPT_QUEUE_IGNORE_PDC,
+        FCRAM_BASE, GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_INTERRUPT_QUEUE_CLIENT_STRIDE,
+        GSP_INTERRUPT_QUEUE_IGNORE_PDC,
         REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_SIZE_0,
     };
     use crate::loader::ncsd::session::Arm11RunStopReason;
