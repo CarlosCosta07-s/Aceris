@@ -2004,10 +2004,7 @@ impl Arm11Core {
         // LDRD/STRD are not covered by U=1 unaligned single-word support.
         // They require word alignment with U=1, but doubleword alignment in
         // the legacy U=0 configuration.
-        let pair_transfer = matches!(
-            (load, bits(word, 6, 5)),
-            (false, 0b10 | 0b11)
-        );
+        let pair_transfer = matches!((load, bits(word, 6, 5)), (false, 0b10 | 0b11));
         if pair_transfer {
             let sctlr = self.cp15.sctlr();
             let unaligned_support = sctlr & (1 << 22) != 0;
