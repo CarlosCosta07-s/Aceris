@@ -820,11 +820,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         Some(
             self.translate_for_pa_register(virtual_address, access, privileged)
                 .map(|translation| match translation {
-                PaTranslation::Mapped {
-                    physical_address,
-                    attributes,
-                } => attributes.to_pa_register(physical_address),
-                PaTranslation::Fault(fault) => ((fault.status & 0xF) << 1) | 1,
+                    PaTranslation::Mapped {
+                        physical_address,
+                        attributes,
+                    } => attributes.to_pa_register(physical_address),
+                    PaTranslation::Fault(fault) => ((fault.status & 0xF) << 1) | 1,
                 }),
         )
     }
