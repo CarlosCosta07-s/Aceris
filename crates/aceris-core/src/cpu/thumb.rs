@@ -1178,9 +1178,8 @@ mod tests {
                     set_unaligned_word_base(cpu, form);
                     cpu.cpsr.set_big_endian(big_endian);
                     cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
-                    for (offset, byte) in [0xAA, 0x11, 0x22, 0x33, 0x44, 0xBB]
-                        .into_iter()
-                        .enumerate()
+                    for (offset, byte) in
+                        [0xAA, 0x11, 0x22, 0x33, 0x44, 0xBB].into_iter().enumerate()
                     {
                         mem.write8(DATA + offset as u32, byte).unwrap();
                     }
@@ -1258,6 +1257,30 @@ mod tests {
                 "{half:#06x}"
             );
         }
+    }
+
+    #[test]
+    fn thumb_unaligned_word_fault_enters_data_abort_and_latches_address() {
+        let mut m = Machine::with(0x6808, |cpu, mem| {
+            cpu.regs[0] = 0xDEAD_BEEF;
+            cpu.regs[1] = DATA + 1;
+            cpu.cp15.write(true, 0, 1, 0, 0, 1 << 1).unwrap();
+            cpu.set_fault_exception_entry_enabled(true);
+            mem.write32(DATA, 0x1122_3344).unwrap();
+        });
+        let interrupted_status = m.cpu.cpsr;
+
+        assert_eq!(m.cpu.step(&mut m.mem).unwrap(), StepEvent::Executed);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::ABORT_MODE);
+        assert!(!m.cpu.cpsr.thumb());
+        assert_eq!(m.cpu.pc(), 0x10);
+        assert_eq!(m.cpu.regs[LR], 8);
+        assert_eq!(m.cpu.saved_program_status(), Some(interrupted_status));
+        assert_eq!(m.cpu.cp15.dfar(), DATA + 1);
+        assert_eq!(m.cpu.cp15.dfsr(), 0x8);
+        assert_eq!(m.cpu.regs[0], 0xDEAD_BEEF);
+        assert_eq!(m.cpu.regs[1], DATA + 1);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0x1122_3344);
     }
 
     #[test]
