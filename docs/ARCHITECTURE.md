@@ -39,6 +39,8 @@ Frontend
 
 O produto permanece implementado em Rust e usa somente crates internos do workspace, conforme as regras do repositório.
 
+Para o primeiro bring-up de uma imagem real, desktop e Android usam o mesmo contrato do núcleo: ambos chamam `System::load_ncsd_no_crypto_file` para preparar o processo ARM11 de contêineres NCSD sem criptografia, incluindo arquivos `.3ds` e `.cci`. O desktop registra PC, CPSR e o motivo de parada do primeiro quadro; o ABI Android expõe PC/CPSR e permite recuperar a mensagem original de falhas de carregamento ou execução. Imagens criptografadas continuam exigindo chaves fornecidas explicitamente pelo host; o Aceris não as procura nem as armazena.
+
 ## CPU ARM11
 
 O núcleo usa um interpretador para estados A32 e Thumb. O estado da CPU inclui CPSR, bancos de registradores para User/System, FIQ, IRQ, Supervisor, Abort e Undefined, além de SPSR nos modos de exceção.
