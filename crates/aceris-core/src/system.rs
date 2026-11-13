@@ -626,14 +626,11 @@ impl System {
         .encode();
 
         let mut woke_any = false;
-        loop {
-            let Some(index) = self
-                .pending_gsp_acquires
-                .iter()
-                .position(|pending| pending.client_id == client_id)
-            else {
-                break;
-            };
+        while let Some(index) = self
+            .pending_gsp_acquires
+            .iter()
+            .position(|pending| pending.client_id == client_id)
+        {
             let pending = self.pending_gsp_acquires[index];
             let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
                 "ARM11 process session is unavailable while completing GSP AcquireRight",
