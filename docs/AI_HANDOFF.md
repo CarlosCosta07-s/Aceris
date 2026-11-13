@@ -634,3 +634,15 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - Somado aos dois testes de acesso simples de palavra desalinhada em LE/BE, o módulo contém agora 73 declarações `#[test]`. Isso é contagem estática, não execução aprovada.
 - Workflow `43346740894` foi iniciado para o commit `c4d875a`; aguardar resultado. Os workflows anteriores não alcançaram Clippy ou `cargo test --workspace` devido à formatação/compilação pendente em `mmu.rs`. Não declarar os testes aprovados antes de a CI executá-los.
 - O trabalho de código permaneceu restrito a `crates/aceris-core/src/cpu/thumb.rs`; nenhum arquivo MMU de outra frente foi alterado.
+
+
+### Thumb — alinhamento de PUSH/POP e validação CI (13/11/2026)
+
+- Commit de código: `d0725535089ea2e77e77fd69653482034e686257` — aplica as regras de alinhamento de transferências multiword também a `PUSH` e `POP`.
+- No caminho legado (`SCTLR.U=0`, `SCTLR.A=0`), `PUSH` calcula o SP decrementado original, acessa as palavras a partir de `Align(newSP)` e mantém o writeback no SP não arredondado. `POP` inicia as leituras em `Align(SP)` e soma o tamanho da lista ao SP original no writeback.
+- Quando SCTLR.U ou SCTLR.A está habilitado, `PUSH` rejeita o novo SP desalinhado e `POP` rejeita o SP desalinhado com `Error::InvalidAccess` antes de acessar memória ou alterar registradores.
+- Foram acrescentados dois testes: round-trip PUSH/POP desalinhado em LE/BE; e faults atômicos para os dois opcodes, com SCTLR.U e SCTLR.A testados separadamente. O módulo agora contém 75 declarações `#[test]`; essa contagem não significa execução aprovada.
+- Referência arquitetural: ARM Architecture Reference Manual ARM DDI 0100I, A2.8.2 / Tabela A2-10, páginas A2-40/A2-41; regras multiword também cobrem os aliases de pilha `PUSH`/`POP`. Link: https://documentation-service.arm.com/static/5f8dacc8f86e16515cdb865a
+- O workflow `43346891107` confirmou que o formato de `thumb.rs` foi corrigido: os logs de Ubuntu/macOS/Windows apontaram somente `mmu.rs:371`, sem diferenças em Thumb. Android continuou falhando na compilação do MMU.
+- O workflow `43346990325` (HEAD `d072553`) terminou com falha nos quatro jobs: Windows/Linux/macOS falharam somente em `cargo fmt --all --check` por `mmu.rs:371`; Android ARM64 repetiu os erros de TLB (`TLB_CAPACITY` ausente em 349, `matches_context` em `Option<TlbEntry>` em 397 e incompatibilidade Option/TlbEntry em 399). Clippy e `cargo test --workspace` foram ignorados; nenhum dos 75 testes Thumb foi executado nesta matriz.
+- O código desta etapa permaneceu limitado a `crates/aceris-core/src/cpu/thumb.rs`. Nenhum arquivo MMU de outra frente foi alterado. A validação end-to-end de Data Abort/DFAR/DFSR e o caminho de alinhamento `U=1` para transferências simples continuam pendentes.
