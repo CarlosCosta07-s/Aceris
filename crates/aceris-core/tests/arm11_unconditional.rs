@@ -93,7 +93,10 @@ fn cps_mode_change_and_interrupt_mask_operations_preserve_unselected_state() {
     cpu.cpsr = Psr(Psr::SUPERVISOR_MODE | Psr::N | Psr::C | Psr::A | Psr::F);
     cpu.step(&mut memory).unwrap();
     assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
-    assert_eq!(cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V), Psr::N | Psr::C);
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V),
+        Psr::N | Psr::C
+    );
     assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::F);
     assert_eq!(cpu.pc(), 4);
 
@@ -105,7 +108,10 @@ fn cps_mode_change_and_interrupt_mask_operations_preserve_unselected_state() {
     cpu.cpsr = Psr(Psr::SUPERVISOR_MODE | Psr::A | Psr::F);
     cpu.step(&mut memory).unwrap();
     assert_eq!(cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
-    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::I | Psr::F);
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F),
+        Psr::A | Psr::I | Psr::F
+    );
 
     // CPSIE i clears only I; A/F and the current exception mode are untouched.
     let mut memory = FlatMemory::new(0, 4);
