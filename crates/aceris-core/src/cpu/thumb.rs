@@ -243,8 +243,7 @@ impl Arm11Core {
             }
             0b110 => self.regs[rt] = u32::from(bus.read8(addr)?),
             _ => {
-                self.regs[rt] =
-                    i32::from(self.read_armv6_halfword(bus, addr, half)? as i16) as u32;
+                self.regs[rt] = i32::from(self.read_armv6_halfword(bus, addr, half)? as i16) as u32;
             }
         }
         Ok(())
@@ -1411,7 +1410,11 @@ mod tests {
                     cpu.cpsr.set_big_endian(big_endian);
                     cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
                     mem.write8(DATA, 0xAA).unwrap();
-                    let bytes = if big_endian { [0x81, 0x23] } else { [0x23, 0x81] };
+                    let bytes = if big_endian {
+                        [0x81, 0x23]
+                    } else {
+                        [0x23, 0x81]
+                    };
                     mem.write8(DATA + 1, bytes[0]).unwrap();
                     mem.write8(DATA + 2, bytes[1]).unwrap();
                     mem.write8(DATA + 3, 0xBB).unwrap();
@@ -1426,7 +1429,11 @@ mod tests {
                 cpu.regs[2] = 0;
                 cpu.cpsr.set_big_endian(big_endian);
                 cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
-                let bytes = if big_endian { [0x81, 0x23] } else { [0x23, 0x81] };
+                let bytes = if big_endian {
+                    [0x81, 0x23]
+                } else {
+                    [0x23, 0x81]
+                };
                 mem.write8(DATA + 1, bytes[0]).unwrap();
                 mem.write8(DATA + 2, bytes[1]).unwrap();
             });
@@ -1446,7 +1453,11 @@ mod tests {
                     mem.write8(DATA + 3, 0xBB).unwrap();
                 });
                 m.step();
-                let expected = if big_endian { [0xA1, 0xB2] } else { [0xB2, 0xA1] };
+                let expected = if big_endian {
+                    [0xA1, 0xB2]
+                } else {
+                    [0xB2, 0xA1]
+                };
                 assert_eq!(m.mem.read8(DATA).unwrap(), 0xAA);
                 assert_eq!(m.mem.read8(DATA + 1).unwrap(), expected[0]);
                 assert_eq!(m.mem.read8(DATA + 2).unwrap(), expected[1]);
@@ -1466,7 +1477,10 @@ mod tests {
                 mem.write8(DATA + 2, 0x12).unwrap();
             });
             let old_regs = legacy.cpu.regs;
-            let old_mem = [legacy.mem.read8(DATA + 1).unwrap(), legacy.mem.read8(DATA + 2).unwrap()];
+            let old_mem = [
+                legacy.mem.read8(DATA + 1).unwrap(),
+                legacy.mem.read8(DATA + 2).unwrap(),
+            ];
             assert!(matches!(
                 legacy.cpu.step(&mut legacy.mem),
                 Err(Error::UndefinedInstruction { pc: 0, word }) if word == u32::from(half)
