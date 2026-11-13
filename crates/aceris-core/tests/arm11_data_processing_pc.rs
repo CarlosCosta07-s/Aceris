@@ -73,7 +73,10 @@ fn movs_pc_without_active_spsr_is_rejected_without_side_effects() {
 
     assert!(matches!(
         cpu.step(&mut memory),
-        Err(Error::UndefinedInstruction { pc: 0, word: MOVS_PC_R0 })
+        Err(Error::UndefinedInstruction {
+            pc: 0,
+            word: MOVS_PC_R0
+        })
     ));
     assert_eq!(cpu.regs, registers_before);
     assert_eq!(cpu.cpsr, status_before);
