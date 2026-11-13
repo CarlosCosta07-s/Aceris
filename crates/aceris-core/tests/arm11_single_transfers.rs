@@ -18,6 +18,7 @@ fn machine(instruction: u32) -> (Arm11Core, FlatMemory) {
     cpu.regs[0] = 0xAABB_CCDD;
     cpu.regs[1] = DATA;
     cpu.regs[2] = 0x0102_0304;
+    cpu.regs[5] = DATA + 0x20;
     (cpu, memory)
 }
 
@@ -94,6 +95,35 @@ fn pc_relative_literal_halfword_load_without_writeback_remains_valid() {
     assert_eq!(cpu.regs[0], 0xABCD);
     assert_eq!(cpu.pc(), 4);
     assert_eq!(cpu.regs[1], DATA);
+}
+
+#[test]
+fn doubleword_transfers_reject_writeback_aliases_and_overlapping_offsets() {
+    // LDRD r4,r5,[r1,r4] ; LDRD r4,r5,[r1,r5] ;
+    // STRD r4,r5,[r1,r4] ; STRD r4,r5,[r1,r5] ;
+    // LDRD r4,r5,[r5,#4]! ; STRD r4,r5,[r5,#4]!.
+    for instruction in [
+        0xE181_40D4,
+        0xE181_40D5,
+        0xE181_40F4,
+        0xE181_40F5,
+        0xE1E5_40D4,
+        0xE1E5_40F4,
+        0xE0E1_40D0,
+    ] {
+        assert_undefined_without_side_effects(instruction);
+    }
+}
+
+#[test]
+fn doubleword_load_without_writeback_allows_base_to_alias_second_destination() {
+    let instruction = 0xE1C5_40D0; // LDRD r4,r5,[r5]
+    let (mut cpu, mut memory) = machine(instruction);
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[4], INITIAL_WORD);
+    assert_eq!(cpu.regs[5], 0x5566_7788);
+    assert_eq!(cpu.pc(), 4);
 }
 
 #[test]
