@@ -381,6 +381,20 @@ impl Arm11ProcessSession {
         self.kernel_objects.insert_service_manager_session()
     }
 
+    /// Marks this process as registered with the service manager on this session.
+    pub fn register_service_manager_client(
+        &mut self,
+        handle: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        self.kernel_objects.register_service_manager_client(handle)
+    }
+
+    /// Reports whether this service-manager session completed RegisterClient.
+    pub fn service_manager_client_registered(&self, handle: u32) -> Option<bool> {
+        self.kernel_objects
+            .service_manager_client_registered(handle)
+    }
+
     /// Creates a `gsp::Gpu` client endpoint in this process.
     pub fn create_gsp_gpu_session(&mut self) -> std::result::Result<u32, KernelHandleError> {
         self.kernel_objects.insert_gsp_gpu_session()
@@ -4900,7 +4914,9 @@ mod tests {
         let handle = session.read_memory_u32(0x0020_0000).unwrap();
         assert!(matches!(
             session.service_session_kind(handle),
-            Some(ServiceSessionKind::ServiceManager)
+            Some(ServiceSessionKind::ServiceManager {
+                client_registered: false,
+            })
         ));
     }
 
