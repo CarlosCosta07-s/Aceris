@@ -222,7 +222,7 @@ impl Arm11Core {
             if saturated {
                 self.cpsr.set_q();
             }
-        } else if word & 0x0FE0_0070 == 0x06A0_0010 || word & 0x0FE0_0070 == 0x06E0_0010 {
+        } else if word & 0x0FE0_0030 == 0x06A0_0010 || word & 0x0FE0_0030 == 0x06E0_0010 {
             // SSAT/USAT: shift a signed source, saturate, and set sticky CPSR.Q
             // only when the result is clamped.
             let rd = bits(word, 15, 12) as usize;
@@ -247,7 +247,7 @@ impl Arm11Core {
             };
             let signed_value = i64::from(shifted as i32);
             let saturation_bits = bits(word, 20, 16);
-            let signed_saturate = word & 0x0FE0_0070 == 0x06A0_0010;
+            let signed_saturate = word & 0x0FE0_0030 == 0x06A0_0010;
 
             let (result, saturated) = if signed_saturate {
                 let width = saturation_bits + 1;
