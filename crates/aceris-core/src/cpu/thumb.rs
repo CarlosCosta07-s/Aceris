@@ -176,6 +176,14 @@ impl Arm11Core {
             });
         }
 
+        // CMP (3) permits PC as Rm, but not as its first operand Rn.
+        if op == 1 && rd as usize == PC {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: half,
+            });
+        }
+
         let a = self.reg(rd, PC_OFFSET);
         let b = self.reg(rs, PC_OFFSET);
 
@@ -806,6 +814,60 @@ mod tests {
         let mut m = Machine::with(0x4640, |cpu, _| cpu.regs[8] = 0x55);
         m.step();
         assert_eq!(m.cpu.regs[0], 0x55);
+    }
+
+    #[test]
+    fn cmp_with_pc_as_first_operand_is_undefined_without_side_effects() {
+        // CMP PC,R0 encodes the UNPREDICTABLE Rn = R15 form.
+        let mut m = Machine::with(0x4587, |cpu, _| {
+            cpu.regs[0] = 0x1234_5678;
+            cpu.cpsr.set_flags(true, true, false, true);
+        });
+        let old_regs = m.cpu.regs;
+        let old_cpsr = m.cpu.cpsr;
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0x4587
+            })
+        ));
+        assert_eq!(m.cpu.regs, old_regs);
+        assert_eq!(m.cpu.cpsr, old_cpsr);
+        assert_eq!(m.cpu.pc(), 0);
+    }
+
+    #[test]
+    fn bx_pc_at_word_aligned_instruction_branches_to_next_word() {
+        // BX PC reads address + 4; at address 0 this is a valid ARM target.
+        let mut m = Machine::with(0x4778, |_, _| {});
+        m.step();
+
+        assert_eq!(m.cpu.pc(), 4);
+        assert!(!m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn bx_pc_at_halfword_aligned_instruction_rejects_unpredictable_target() {
+        // At address 2, BX PC reads 6 (bits[1:0] == 0b10).
+        let mut m = Machine::with(0x4778, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0x4778).unwrap();
+        });
+        let old_cpsr = m.cpu.cpsr;
+        let old_lr = m.cpu.regs[LR];
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction {
+                pc: 2,
+                word: 0x4778
+            })
+        ));
+        assert_eq!(m.cpu.pc(), 2);
+        assert_eq!(m.cpu.cpsr, old_cpsr);
+        assert_eq!(m.cpu.regs[LR], old_lr);
     }
 
     #[test]
