@@ -2136,6 +2136,70 @@ mod tests {
         assert_eq!(queue_header[2] & 0x01, 0);
         assert_eq!(queue_header[3] & 0x01, 0);
 
+        // GX MemoryFill writes both VRAM buffers through TriggerCmdReqQueue.
+        let fill_start_0 = VRAM_BASE + 0x2000;
+        let fill_end_0 = fill_start_0 + 0x10;
+        let fill_start_1 = 0x1F00_2020;
+        let fill_end_1 = fill_start_1 + 0x18;
+        let mut fill_queue = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        fill_queue[0] = 2;
+        fill_queue[1] = 1;
+        let fill_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 2 * 0x20;
+        fill_queue[fill_entry] = GSP_GX_COMMAND_MEMORY_FILL;
+        for (index, value) in [
+            fill_start_0,
+            0x1122_3344,
+            fill_end_0,
+            fill_start_1,
+            0x00A1_B2C3,
+            fill_end_1,
+            0x0101_0201,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let offset = fill_entry + 4 + index * 4;
+            fill_queue[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(queue_address, &fill_queue)
+            .unwrap();
+
+        let fill_trigger_buffer =
+            write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, fill_trigger_buffer, 2),
+            vec![0x000C_0040, 0]
+        );
+        let mut fill_0_bytes = [0u8; 16];
+        system
+            .physical_memory()
+            .read(fill_start_0, &mut fill_0_bytes)
+            .unwrap();
+        assert_eq!(
+            fill_0_bytes,
+            [
+                0x44, 0x33, 0x22, 0x11, 0x44, 0x33, 0x22, 0x11, 0x44, 0x33, 0x22, 0x11,
+                0x44, 0x33, 0x22, 0x11,
+            ]
+        );
+        let mut fill_1_bytes = [0u8; 24];
+        system
+            .physical_memory()
+            .read(VRAM_BASE + 0x2020, &mut fill_1_bytes)
+            .unwrap();
+        assert_eq!(
+            fill_1_bytes,
+            [
+                0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1,
+                0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1,
+            ]
+        );
+
         // ReleaseRight must travel through the same guest IPC path.
         let release_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0017_0000]);
         run_one_ipc_svc(&mut system);
