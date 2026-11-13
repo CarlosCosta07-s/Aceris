@@ -4804,4 +4804,50 @@ mod tests {
         assert_eq!(session.core().pc(), pc);
         assert_eq!(session.instruction_count(), 0);
     }
+
+    #[test]
+    fn connect_to_port_svc_creates_the_service_manager_handle() {
+        let mut session = test_session_with_program(&[0xEF00_002D]);
+        session.write_memory_bytes(0x0020_1000, b"srv:").unwrap();
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x0020_0000;
+            core.regs[1] = 0x0020_1000;
+        }
+
+        let report = session.run_instructions(1).unwrap();
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(report.instructions_executed, 1);
+        let handle = session.read_memory_u32(0x0020_0000).unwrap();
+        assert!(matches!(
+            session.service_session_kind(handle),
+            Some(ServiceSessionKind::ServiceManager)
+        ));
+    }
+
+    #[test]
+    fn send_sync_request_svc_yields_to_the_system_ipc_dispatcher() {
+        let mut session = test_session_with_program(&[0xEF00_0032]);
+        let service_handle = session.create_gsp_gpu_session().unwrap();
+        session.scheduler.current_core_mut().unwrap().regs[0] = service_handle;
+
+        let report = session.run_instructions(1).unwrap();
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::IpcRequest
+        );
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(
+            session.service_session_kind(service_handle),
+            Some(ServiceSessionKind::GspGpu {
+                client_id: None,
+                shared_memory_handle: None,
+                event_handle: None,
+                flags: 0,
+            })
+        );
+    }
 }
