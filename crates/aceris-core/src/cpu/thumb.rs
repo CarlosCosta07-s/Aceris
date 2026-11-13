@@ -1288,8 +1288,8 @@ mod tests {
         let cases = [
             (0xC006, DATA + 1, DATA + 1),       // STMIA r0!,{r1,r2}
             (0xC806, DATA + 1, DATA + 1),       // LDMIA r0!,{r1,r2}
-            (0xB403, DATA + 0x81, DATA + 0x79), // PUSH {r0,r1}: fault at new SP.
-            (0xBC03, DATA + 1, DATA + 1),       // POP {r0,r1}: fault at original SP.
+            (0xB403, DATA + 0x11, DATA + 0x09), // PUSH {r0,r1}: fault at new SP.
+            (0xBC03, DATA + 1, DATA + 1),         // POP {r0,r1}: fault at original SP.
         ];
 
         for alignment_bit in [1 << 22, 1 << 1] {
@@ -1311,6 +1311,8 @@ mod tests {
                     m.mem.read32(DATA).unwrap(),
                     m.mem.read32(DATA + 4).unwrap(),
                     m.mem.read32(DATA + 8).unwrap(),
+                    m.mem.read32(DATA + 12).unwrap(),
+                    m.mem.read32(DATA + 16).unwrap(),
                 ];
 
                 assert_eq!(
@@ -1326,9 +1328,15 @@ mod tests {
                 assert_eq!(m.cpu.cp15.dfar(), fault_address);
                 assert_eq!(m.cpu.cp15.dfsr(), 0x8);
                 assert_eq!(m.cpu.regs[..13], original_regs[..13]);
-                assert_eq!(m.mem.read32(DATA).unwrap(), original_memory[0]);
-                assert_eq!(m.mem.read32(DATA + 4).unwrap(), original_memory[1]);
-                assert_eq!(m.mem.read32(DATA + 8).unwrap(), original_memory[2]);
+                m.cpu.switch_mode(Psr::USER_MODE).unwrap();
+                assert_eq!(m.cpu.regs[SP], base, "{half:#06x}");
+                for (offset, expected) in original_memory.into_iter().enumerate() {
+                    assert_eq!(
+                        m.mem.read32(DATA + offset as u32 * 4).unwrap(),
+                        expected,
+                        "{half:#06x}, memory word {offset}"
+                    );
+                }
             }
         }
     }
