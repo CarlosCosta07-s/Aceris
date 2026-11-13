@@ -31,7 +31,7 @@ use crate::loader::ncsd::process::{
 };
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::memory::Bus;
-use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError};
+use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError, ServiceSessionKind};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
     SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MEMORY_BLOCK,
@@ -335,6 +335,72 @@ impl Arm11ProcessSession {
             self.address_space.write8(current, byte)?;
         }
         Ok(())
+    }
+
+    /// Returns the current thread's TLS base, as exposed by CP15 TPIDRURO.
+    pub fn current_tls_address(&self) -> Option<u32> {
+        let thread = self.scheduler.current_thread_id()?;
+        self.scheduler.core(thread).map(|core| core.cp15().tpidruro())
+    }
+
+    /// Copies the active thread's ARM11 register bank for a host-side SVC bridge.
+    pub fn current_registers(&self) -> Option<[u32; 16]> {
+        self.scheduler.current_core().map(|core| core.regs)
+    }
+
+    /// Updates one register in the currently running thread.
+    pub fn set_current_register(&mut self, index: usize, value: u32) -> bool {
+        let Some(core) = self.scheduler.current_core_mut() else {
+            return false;
+        };
+        let Some(register) = core.regs.get_mut(index) else {
+            return false;
+        };
+        *register = value;
+        true
+    }
+
+    /// Creates the `srv:` service-manager endpoint in this process.
+    pub fn create_service_manager_session(
+        &mut self,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.insert_service_manager_session()
+    }
+
+    /// Creates a `gsp::Gpu` client endpoint in this process.
+    pub fn create_gsp_gpu_session(&mut self) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.insert_gsp_gpu_session()
+    }
+
+    /// Returns service-session metadata for a guest-visible handle.
+    pub fn service_session_kind(&self, handle: u32) -> Option<ServiceSessionKind> {
+        self.kernel_objects.service_session(handle)
+    }
+
+    /// Stores the GSP registration associated with one service session.
+    pub fn set_gsp_session_registration(
+        &mut self,
+        handle: u32,
+        client_id: Option<u8>,
+        shared_memory_handle: Option<u32>,
+        event_handle: Option<u32>,
+        flags: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        self.kernel_objects.set_gsp_session_registration(
+            handle,
+            client_id,
+            shared_memory_handle,
+            event_handle,
+            flags,
+        )
+    }
+
+    /// Closes a process-local handle through the kernel object table.
+    pub fn close_handle(
+        &mut self,
+        handle: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        self.kernel_objects.close_handle(handle)
     }
 
     /// Creates a zero-filled, page-aligned shared-memory block in the process kernel table.
@@ -1622,7 +1688,7 @@ impl Arm11ProcessSession {
         match number {
             SVC_CREATE_MEMORY_BLOCK => self.svc_create_memory_block(caller),
             SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
-            SVC_MAP_MEMORY_BLOCK => self.svc_map_memory_block(caller),
+
             SVC_UNMAP_MEMORY_BLOCK => self.svc_unmap_memory_block(caller),
             SVC_QUERY_MEMORY => self.svc_query_memory(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
@@ -1638,7 +1704,7 @@ impl Arm11ProcessSession {
             SVC_CREATE_EVENT => self.svc_create_event(caller),
             SVC_SIGNAL_EVENT => self.svc_signal_event(caller),
             SVC_CLEAR_EVENT => self.svc_clear_event(caller),
-            SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
+
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
                 Ok(None) => SvcRunDisposition::NoRunnableThread,
