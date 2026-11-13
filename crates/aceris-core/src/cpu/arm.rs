@@ -2189,27 +2189,11 @@ impl Arm11Core {
             }
         }
 
-        // ARMv6 U=1 permits unaligned single-halfword accesses. In legacy
-        // U=0 mode they are UNPREDICTABLE; SCTLR.A forces an alignment fault
-        // in either mode. Byte loads such as LDRSB have no alignment check.
-        let halfword_access = matches!(
-            (load, bits(word, 6, 5)),
-            (true, 0b01 | 0b11) | (false, 0b01)
-        );
-        if halfword_access && addr & 1 != 0 {
-            let sctlr = self.cp15.sctlr();
-            if sctlr & (1 << 1) != 0 {
-                return Err(Error::InvalidAccess { addr });
-            }
-            if sctlr & (1 << 22) == 0 {
-                return Err(undefined);
-            }
-            self.require_normal_unaligned_range(bus, addr, 2, !load, self.cpsr.privileged(), word)?;
-        }
+        // Single-halfword accesses use the common ARMv6 U/A path shared with Thumb.
 
         match (load, bits(word, 6, 5)) {
             (true, 0b01) => {
-                let value = u32::from(self.read_data_u16(bus, addr)?);
+                let value = u32::from(self.read_armv6_halfword(bus, addr, word)?);
                 self.finish_load(rn, rd, writeback, offset_addr, value);
             }
             (true, 0b10) => {
@@ -2217,12 +2201,12 @@ impl Arm11Core {
                 self.finish_load(rn, rd, writeback, offset_addr, value);
             }
             (true, 0b11) => {
-                let value = i32::from(self.read_data_u16(bus, addr)? as i16) as u32;
+                let value = i32::from(self.read_armv6_halfword(bus, addr, word)? as i16) as u32;
                 self.finish_load(rn, rd, writeback, offset_addr, value);
             }
             (false, 0b01) => {
                 let value = self.reg(rd, 8) as u16;
-                self.write_data_u16(bus, addr, value)?;
+                self.write_armv6_halfword(bus, addr, value, word)?;
                 if writeback {
                     self.set_base(rn, offset_addr);
                 }
