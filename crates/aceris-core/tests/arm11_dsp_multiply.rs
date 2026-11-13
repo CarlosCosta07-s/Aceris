@@ -419,9 +419,8 @@ fn umaal_matches_independent_two_word_accumulator_reference() {
         for &rhs in &VALUES {
             for &acc_low in &VALUES {
                 for &acc_high in &VALUES {
-                    let expected = u64::from(lhs) * u64::from(rhs)
-                        + u64::from(acc_low)
-                        + u64::from(acc_high);
+                    let expected =
+                        u64::from(lhs) * u64::from(rhs) + u64::from(acc_low) + u64::from(acc_high);
                     let cpu = machine(
                         INSTRUCTION,
                         &[(0, acc_low), (1, acc_high), (2, lhs), (3, rhs)],
