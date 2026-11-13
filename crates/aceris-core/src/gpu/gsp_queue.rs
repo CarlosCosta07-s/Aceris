@@ -398,6 +398,52 @@ mod tests {
     }
 
     #[test]
+    fn decodes_both_memory_fill_buffers_and_width_controls() {
+        let mut bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        bytes[1] = 1;
+        write_command(
+            &mut bytes,
+            0,
+            GSP_GX_COMMAND_MEMORY_FILL,
+            false,
+            false,
+            [
+                0x1800_1000,
+                0x1122_3344,
+                0x1800_1010,
+                0x1F00_2000,
+                0x00A1_B2C3,
+                0x1F00_2018,
+                0x0101_0201,
+            ],
+        );
+
+        let queue = GspGxCommandQueue::parse(&bytes).unwrap();
+        let fill = queue.next_command().unwrap().memory_fill().unwrap();
+        assert_eq!(
+            fill.buffers[0],
+            GspMemoryFillBuffer {
+                start_address: 0x1800_1000,
+                fill_value: 0x1122_3344,
+                end_address: 0x1800_1010,
+                control: 0x0201,
+            }
+        );
+        assert!(fill.buffers[0].is_triggered());
+        assert_eq!(fill.buffers[0].element_width_bytes(), Some(4));
+        assert_eq!(
+            fill.buffers[1],
+            GspMemoryFillBuffer {
+                start_address: 0x1F00_2000,
+                fill_value: 0x00A1_B2C3,
+                end_address: 0x1F00_2018,
+                control: 0x0101,
+            }
+        );
+        assert_eq!(fill.buffers[1].element_width_bytes(), Some(3));
+    }
+
+    #[test]
     fn ring_parser_wraps_across_the_final_slot() {
         let mut bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
         bytes[0] = 14;
