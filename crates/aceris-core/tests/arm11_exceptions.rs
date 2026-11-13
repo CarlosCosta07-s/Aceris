@@ -45,7 +45,10 @@ fn fiq_has_priority_over_irq_and_banks_the_exception_state() {
     assert_eq!(cpu.pc(), 0x1C);
     assert_eq!(cpu.regs[14], 4);
     assert_eq!(cpu.saved_program_status(), Some(interrupted));
-    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::I | Psr::F);
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F),
+        Psr::A | Psr::I | Psr::F
+    );
 }
 
 #[test]
