@@ -1470,7 +1470,10 @@ mod tests {
     }
 
     fn write_tls_ipc_request(system: &mut System, session_handle: u32, words: &[u32]) -> u32 {
-        let session = system.ncsd_session.as_mut().expect("test process is loaded");
+        let session = system
+            .ncsd_session
+            .as_mut()
+            .expect("test process is loaded");
         let tls = session.current_tls_address().expect("main thread has TLS");
         let buffer = tls + ARM11_TLS_IPC_BUFFER_OFFSET;
         for (index, word) in words.iter().copied().enumerate() {
