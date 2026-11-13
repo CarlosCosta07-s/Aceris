@@ -154,7 +154,7 @@ struct KernelMemoryBlock {
 /// HLE service endpoint attached to a process-local session handle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServiceSessionKind {
-    ServiceManager,
+    ServiceManager { client_registered: bool },
     GspGpu {
         client_id: Option<u8>,
         shared_memory_handle: Option<u32>,
@@ -270,8 +270,37 @@ impl Arm11KernelObjectTable {
     /// Creates a process-local service-manager client session.
     pub fn insert_service_manager_session(&mut self) -> Result<u32, KernelHandleError> {
         self.insert(KernelObject::ServiceSession(
-            ServiceSessionKind::ServiceManager,
+            ServiceSessionKind::ServiceManager {
+                client_registered: false,
+            },
         ))
+    }
+
+    /// Marks a service-manager client session as registered with srv:.
+    pub fn register_service_manager_client(
+        &mut self,
+        handle: u32,
+    ) -> Result<(), KernelHandleError> {
+        match self.objects.get_mut(&handle) {
+            Some(KernelObject::ServiceSession(ServiceSessionKind::ServiceManager {
+                client_registered,
+            })) => {
+                *client_registered = true;
+                Ok(())
+            }
+            Some(_) => Err(KernelHandleError::WrongType),
+            None => Err(KernelHandleError::InvalidHandle),
+        }
+    }
+
+    /// Reports whether a service-manager session completed RegisterClient.
+    pub fn service_manager_client_registered(&self, handle: u32) -> Option<bool> {
+        match self.objects.get(&handle) {
+            Some(KernelObject::ServiceSession(ServiceSessionKind::ServiceManager {
+                client_registered,
+            })) => Some(*client_registered),
+            _ => None,
+        }
     }
 
     /// Creates a process-local GSP GPU client session.
