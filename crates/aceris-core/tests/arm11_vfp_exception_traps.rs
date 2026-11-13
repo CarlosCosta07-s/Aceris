@@ -347,16 +347,15 @@ fn input_subnormal_without_fz_or_ide_is_processed_and_sets_idc() {
 
 #[test]
 fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
-    for mask in [1 << 12] {
-        let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
-        cpu.regs[0] = mask;
-        let previous = cpu.vfp().fpscr();
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
+    let mask = 1 << 12; // FPSCR.IXE remains unsupported.
+    cpu.regs[0] = mask;
+    let previous = cpu.vfp().fpscr();
 
-        assert!(
-            matches!(cpu.step(&mut memory), Err(Error::Unimplemented(_))),
-            "FPSCR trap mask {mask:#010x}"
-        );
-        assert_eq!(cpu.vfp().fpscr(), previous);
-        assert_eq!(cpu.pc(), 0);
-    }
+    assert!(
+        matches!(cpu.step(&mut memory), Err(Error::Unimplemented(_))),
+        "FPSCR trap mask {mask:#010x}"
+    );
+    assert_eq!(cpu.vfp().fpscr(), previous);
+    assert_eq!(cpu.pc(), 0);
 }
