@@ -755,3 +755,10 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - Referência arquitetural independente: ARM Architecture Reference Manual ARM DDI 0100I, seção A4.1.3 (ADD, página A4-6), que usa explicitamente `ADD Rd, PC, #offset` para gerar endereços PC-relativos e define PC como endereço da instrução + 8: https://www.scs.stanford.edu/~zyedidia/docs/arm/armv6.pdf
 - Workflow [43510706670](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43510706670) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
 - Apenas testes externos em `crates/aceris-core/tests/arm11_arithmetic_flags.rs` foram alterados nesta etapa; nenhuma implementação de produção ou código Thumb foi modificado.
+
+## A32 — PC como primeiro operando em CMP e TST (13/11/2026)
+
+- `335b36a` — amplia a cobertura de `PC` em `Rn` para `CMP PC,#8` e `TST PC,#8`. O caso CMP verifica o resultado de comparação com PC+8 e flags aritméticos, sem gravar registrador de destino. O caso TST confirma o valor de PC+8 no AND lógico, a preservação de V e do carry existente quando a rotação do imediato é zero, também sem writeback.
+- Referência arquitetural independente: ARM Architecture Reference Manual ARM DDI 0100I, seção A4.1.15 (CMP) e A4.1.117 (TST); PC é o primeiro operando `Rn` e o comportamento de leitura do registrador é o PC da instrução + 8 quando aplicável: https://www.scs.stanford.edu/~zyedidia/docs/arm/armv6.pdf
+- Workflow [43511129705](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43511129705) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
+- Apenas testes externos em `crates/aceris-core/tests/arm11_arithmetic_flags.rs` foram alterados; nenhuma implementação de produção ou código Thumb foi modificado.
