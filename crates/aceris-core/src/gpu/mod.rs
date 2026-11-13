@@ -37,8 +37,8 @@ pub use gsp_queue::{
     GSP_GX_COMMAND_QUEUE_CAPACITY, GSP_GX_COMMAND_QUEUE_CLIENT_COUNT,
     GSP_GX_COMMAND_QUEUE_CLIENT_STRIDE, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
     GSP_GX_COMMAND_QUEUE_OFFSET, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
-    GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill,
-    GspMemoryFillBuffer, GspProcessCommandList,
+    GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer,
+    GspProcessCommandList,
 };
 pub use index::{
     IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
