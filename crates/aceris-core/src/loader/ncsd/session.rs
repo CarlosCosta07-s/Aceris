@@ -1477,6 +1477,59 @@ impl Arm11ProcessSession {
         self.scheduler.current_thread_id()
     }
 
+    /// Suspends the current ARM11 thread while an IPC request waits on a service.
+    pub fn wait_current_thread_for_ipc(
+        &mut self,
+    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+        self.scheduler.wait_current()
+    }
+
+    /// Re-queues a thread whose asynchronous IPC reply has been written to TLS.
+    pub fn wake_thread_for_ipc(
+        &mut self,
+        thread: ThreadId,
+    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+        self.scheduler.wake_thread(thread)
+    }
+
+    /// Writes an IPC reply to a specific thread's TLS and sets its SVC result.
+    ///
+    /// The thread must still own a valid TLS mapping. The scheduler wake is a
+    /// separate operation so callers can write a complete reply before it runs.
+    pub fn write_ipc_response_to_thread(
+        &mut self,
+        thread: ThreadId,
+        words: &[u32],
+    ) -> Result<()> {
+        let tls_address = self
+            .scheduler
+            .core(thread)
+            .map(|core| core.cp15().tpidruro())
+            .filter(|address| *address != 0)
+            .ok_or(crate::Error::InvalidAccess { addr: 0 })?;
+        let buffer_address = tls_address
+            .checked_add(0x80)
+            .ok_or(crate::Error::InvalidAccess { addr: tls_address })?;
+        let byte_count = words
+            .len()
+            .checked_mul(4)
+            .ok_or(crate::Error::InvalidAccess { addr: buffer_address })?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(byte_count)
+            .map_err(|_| crate::Error::Io(std::io::Error::other("IPC reply allocation failed")))?;
+        for word in words {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        self.write_memory_bytes(buffer_address, &bytes)?;
+        let core = self
+            .scheduler
+            .core_mut(thread)
+            .ok_or(crate::Error::InvalidAccess { addr: tls_address })?;
+        core.regs[0] = 0;
+        Ok(())
+    }
+
     /// Resolves a guest-visible thread handle to its internal scheduler identifier.
     pub fn thread_id_for_handle(&self, handle: u32) -> Option<ThreadId> {
         let current = self.current_thread_id().unwrap_or(MAIN_THREAD_ID);
