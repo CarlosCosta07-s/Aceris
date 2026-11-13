@@ -94,3 +94,54 @@ fn data_abort_latches_the_external_fault_address_and_status() {
     assert_eq!(cpu.cp15().dfar(), 0x1000);
     assert_eq!(cpu.cp15().dfsr(), 0x8);
 }
+#[test]
+fn data_abort_handler_return_restores_cpsr_and_retries_the_faulting_instruction() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write32(0, 0xE591_0000).unwrap(); // LDR r0, [r1]
+    memory.write32(0x10, 0xE25E_F008).unwrap(); // SUBS pc, lr, #8
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_fault_exception_entry_enabled(true);
+    cpu.regs[0] = 0x1234_5678;
+    cpu.regs[1] = 0x1000;
+    cpu.cpsr.set_flags(true, false, true, false);
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 8);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().dfar(), 0x1000);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert_eq!(cpu.pc(), 0);
+    assert_eq!(cpu.saved_program_status(), None);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+}
+
+#[test]
+fn prefetch_abort_handler_return_restores_cpsr_and_retries_the_fetch_address() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write32(0x0C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_fault_exception_entry_enabled(true);
+    cpu.set_pc(0x1000);
+    cpu.cpsr.set_flags(false, true, false, true);
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert_eq!(cpu.pc(), 0x0C);
+    assert_eq!(cpu.regs[14], 0x1004);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().ifar(), 0x1000);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert_eq!(cpu.pc(), 0x1000);
+    assert_eq!(cpu.saved_program_status(), None);
+}
