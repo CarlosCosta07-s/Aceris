@@ -1367,8 +1367,8 @@ mod tests {
         let normal = SECTION | SECTION_AP_RW_ALL | (1 << 12);
 
         for big_endian in [false, true] {
-            let mut load_word = a32_unaligned_machine(0xE591_0000, normal, SCTLR_M_XP_U).0;
-            let mut load_word_mem = a32_unaligned_machine(0xE591_0000, normal, SCTLR_M_XP_U).1;
+            let (mut load_word, mut load_word_mem) =
+                a32_unaligned_machine(0xE591_0000, normal, SCTLR_M_XP_U);
             load_word.cpsr.set_big_endian(big_endian);
             load_word_mem
                 .write32(UNALIGNED_DATA_PA, 0x4433_2211)
