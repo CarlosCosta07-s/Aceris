@@ -1,8 +1,8 @@
 //! Independent integration tests for A32 LDM/STM base-register constraints.
 
+use aceris_core::Error;
 use aceris_core::cpu::Arm11Core;
 use aceris_core::memory::{Bus, FlatMemory};
-use aceris_core::Error;
 
 const DATA: u32 = 0x400;
 
@@ -40,7 +40,11 @@ fn a32_ldm_stm_reject_pc_as_the_base_register_before_any_side_effect() {
             Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
         ));
         assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
-        assert_eq!(memory.read32(8).unwrap(), pc_base_word, "{instruction:#010x}");
+        assert_eq!(
+            memory.read32(8).unwrap(),
+            pc_base_word,
+            "{instruction:#010x}"
+        );
         assert_eq!(
             (
                 memory.read32(DATA).unwrap(),
