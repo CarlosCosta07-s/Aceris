@@ -6,7 +6,10 @@
 mod window;
 
 use aceris_common::{NAME, VERSION};
-use aceris_core::{System, video::DualScreenDisplay};
+use aceris_core::{
+    System,
+    video::{DualScreenDisplay, intro},
+};
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
@@ -19,7 +22,8 @@ fn print_usage() {
     println!("{NAME} {VERSION}");
     println!();
     println!("USAGE:");
-    println!("    aceris <GAME> [--dump-lcd <DIR>] [--window [--scale <N>]]");
+    println!("    aceris <GAME> [--dump-lcd <DIR>] [--window [--scale <N>] [--skip-intro]]");
+    println!("    aceris --dump-intro <DIR>");
     println!("    aceris --selftest");
     println!();
     println!("OPTIONS:");
@@ -32,6 +36,9 @@ fn print_usage() {
     println!("        --window     Show both LCDs in a window and run frames until it is");
     println!("                     closed (Linux/X11 only for now)");
     println!("        --scale <N>  Integer window scale factor, 1-4 (default 2)");
+    println!("        --skip-intro Do not play the start-up animation before the game");
+    println!("        --dump-intro <DIR>");
+    println!("                     Write key frames of the start-up animation as PNGs");
 }
 
 fn selftest() -> ExitCode {
@@ -60,14 +67,55 @@ fn dump_lcd(display: &DualScreenDisplay, dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Frames of the start-up animation written by `--dump-intro`.
+const INTRO_DUMP_FRAMES: [u32; 8] = [0, 20, 36, 50, 70, 90, 115, 149];
+
+/// Writes key frames of the start-up animation as PNG files into `dir`.
+fn dump_intro(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let (width, height) = (window::CANVAS_WIDTH, window::CANVAS_HEIGHT);
+    for frame in INTRO_DUMP_FRAMES {
+        let rgba = intro::render_frame(frame, width, height);
+        let png = aceris_core::video::png::encode_rgba8(width, height, &rgba)
+            .ok_or_else(|| io::Error::other("could not encode PNG"))?;
+        fs::write(dir.join(format!("intro_{frame:03}.png")), png)?;
+    }
+    Ok(())
+}
+
+/// Plays the start-up animation; returns `Ok(false)` if the window was closed.
+fn play_intro(window: &mut window::Window, scale: usize) -> Result<bool, String> {
+    let frame_time = Duration::from_micros(1_000_000 / u64::from(intro::FPS));
+    for frame in 0..intro::FRAME_COUNT {
+        let started = Instant::now();
+        for event in window.poll_events() {
+            if event == window::WindowEvent::CloseRequested {
+                return Ok(false);
+            }
+        }
+        let rgba = intro::render_frame(frame, window::CANVAS_WIDTH, window::CANVAS_HEIGHT);
+        let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
+        window
+            .present(&bgrx)
+            .map_err(|err| format!("could not draw the frame: {err}"))?;
+        if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
+            thread::sleep(rest);
+        }
+    }
+    Ok(true)
+}
+
 /// Runs frames at roughly 60 Hz in a window until it is closed.
-fn run_windowed(system: &mut System, scale: usize) -> Result<(), String> {
+fn run_windowed(system: &mut System, scale: usize, skip_intro: bool) -> Result<(), String> {
     let mut window = window::Window::open(
         &format!("{NAME} {VERSION}"),
         window::CANVAS_WIDTH * scale,
         window::CANVAS_HEIGHT * scale,
     )
     .map_err(|err| format!("could not open a window: {err}"))?;
+    if !skip_intro && !play_intro(&mut window, scale)? {
+        return Ok(());
+    }
     let frame_time = Duration::from_micros(16_667);
     loop {
         let started = Instant::now();
@@ -97,7 +145,7 @@ fn run(options: RunOptions) -> ExitCode {
     }
 
     if options.window {
-        if let Err(message) = run_windowed(&mut system, options.scale) {
+        if let Err(message) = run_windowed(&mut system, options.scale, options.skip_intro) {
             eprintln!("error: {message}");
             return ExitCode::FAILURE;
         }
@@ -127,6 +175,7 @@ struct RunOptions {
     dump_lcd: Option<PathBuf>,
     window: bool,
     scale: usize,
+    skip_intro: bool,
 }
 
 /// Parses `<GAME> [--dump-lcd <DIR>] [--window] [--scale <N>]` in any order.
@@ -135,6 +184,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let mut dump_lcd = None;
     let mut window = false;
     let mut scale = 2;
+    let mut skip_intro = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -145,6 +195,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
                 dump_lcd = Some(PathBuf::from(dir));
             }
             "--window" => window = true,
+            "--skip-intro" => skip_intro = true,
             "--scale" => {
                 let value = iter
                     .next()
@@ -163,6 +214,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
         dump_lcd,
         window,
         scale,
+        skip_intro,
     })
 }
 
@@ -178,6 +230,22 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("--selftest") => selftest(),
+        Some("--dump-intro") => match args.as_slice() {
+            [_, dir] => match dump_intro(Path::new(dir)) {
+                Ok(()) => {
+                    println!("Intro frames written to {dir}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("error: could not write intro frames to {dir}: {err}");
+                    ExitCode::FAILURE
+                }
+            },
+            _ => {
+                eprintln!("error: --dump-intro requires exactly one directory");
+                ExitCode::FAILURE
+            }
+        },
         Some(_) => match parse_run_args(&args) {
             Ok(options) => run(options),
             Err(message) => {
@@ -206,6 +274,7 @@ mod tests {
             dump_lcd: dump.map(PathBuf::from),
             window,
             scale,
+            skip_intro: false,
         }
     }
 
@@ -228,6 +297,24 @@ mod tests {
             parse_run_args(&strings(&["--scale", "3", "--window", "game.3ds"])).unwrap(),
             options("game.3ds", None, true, 3)
         );
+    }
+
+    #[test]
+    fn skip_intro_flag_is_parsed() {
+        let parsed = parse_run_args(&strings(&["g.3ds", "--window", "--skip-intro"])).unwrap();
+        assert!(parsed.skip_intro && parsed.window);
+        assert!(!parse_run_args(&strings(&["g.3ds"])).unwrap().skip_intro);
+    }
+
+    #[test]
+    fn dump_intro_writes_valid_png_frames() {
+        let dir = env::temp_dir().join(format!("aceris-intro-test-{}", std::process::id()));
+        dump_intro(&dir).unwrap();
+        for frame in INTRO_DUMP_FRAMES {
+            let png = fs::read(dir.join(format!("intro_{frame:03}.png"))).unwrap();
+            assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        }
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

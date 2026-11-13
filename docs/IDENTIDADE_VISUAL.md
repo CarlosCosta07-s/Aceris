@@ -34,6 +34,15 @@ continuam presentes no SVG do ícone e no fundo do ícone adaptativo.
 - Android: `frontends/android/res/mipmap-*` (ícone adaptativo, fundo `#2A1240`).
 - Regenerar tudo: `cargo run --release -p aceris-icongen`.
 
+## Abertura animada
+`aceris_core::video::intro` gera a abertura (2,5 s a 60 FPS, 150 quadros) como função pura
+do número do quadro, então PC e Android veem exatamente a mesma sequência:
+queda da acerola, dois quicadas com achatamento, brilho diagonal, nome "ACERIS" letra a letra
+e fade para preto. Feita só com a paleta acima, sem recursos de terceiros.
+- PC: toca antes do jogo em `--window`; `--skip-intro` pula; `--dump-intro <DIR>` grava quadros-chave em PNG.
+- Android: a UI futura deve chamar `render_frame` e `rgba_to_scaled_bgrx`/RGBA direto.
+- Áudio da abertura: pendente (ainda não há backend de áudio).
+
 ## Pendências
 - Ícone na janela X11 (`_NET_WM_ICON`) e backends Win32/Cocoa.
 - Tela inicial/splash e tema da interface Android (a UI ainda não existe).
