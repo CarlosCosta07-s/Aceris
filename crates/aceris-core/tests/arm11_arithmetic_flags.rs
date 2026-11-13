@@ -377,3 +377,76 @@ fn arm_immediate_arithmetic_matches_reference_for_rotated_operands_and_carry_inp
         }
     }
 }
+fn arm_immediate_logical_instruction(opcode: u32, rotate: u32, immediate: u32) -> u32 {
+    let compare = matches!(opcode, 0x8 | 0x9);
+    let rd = if compare { 0 } else { 2 };
+    0xE200_0000 | (opcode << 21) | (1 << 20) | (rd << 12) | (rotate << 8) | immediate
+}
+
+#[test]
+fn arm_immediate_logical_flags_match_rotated_shifter_carry_reference() {
+    const IMMEDIATES: [(u32, u32); 9] = [
+        (0, 0x00),
+        (0, 0x81),
+        (1, 0x80),
+        (2, 0x01),
+        (4, 0xFF),
+        (7, 0x80),
+        (8, 0x00),
+        (12, 0x01),
+        (15, 0x80),
+    ];
+    // AND, EOR, TST, TEQ, ORR, MOV, BIC and MVN.
+    const OPCODES: [u32; 8] = [0x0, 0x1, 0x8, 0x9, 0xC, 0xD, 0xE, 0xF];
+
+    for opcode in OPCODES {
+        let compare = matches!(opcode, 0x8 | 0x9);
+        for &a in &GRID {
+            for (rotate, imm8) in IMMEDIATES {
+                let operand = imm8.rotate_right(rotate * 2);
+                let result = match opcode {
+                    0x0 | 0x8 => a & operand,
+                    0x1 | 0x9 => a ^ operand,
+                    0xC => a | operand,
+                    0xD => operand,
+                    0xE => a & !operand,
+                    0xF => !operand,
+                    _ => unreachable!(),
+                };
+                let expected_carry = if rotate == 0 {
+                    None
+                } else {
+                    Some(operand >> 31 != 0)
+                };
+
+                for carry_in in [false, true] {
+                    for overflow_in in [false, true] {
+                        let instruction =
+                            arm_immediate_logical_instruction(opcode, rotate, imm8);
+                        let mut memory = FlatMemory::new(0, 4);
+                        memory.write32(0, instruction).unwrap();
+
+                        let mut cpu = cpu_with(a, 0, carry_in, overflow_in);
+                        cpu.set_pc(0);
+                        cpu.step(&mut memory).unwrap();
+
+                        let carry = expected_carry.unwrap_or(carry_in);
+                        assert_eq!(
+                            flags(&cpu),
+                            (result >> 31 != 0, result == 0, carry, overflow_in),
+                            "{instruction:#010x} a={a:#010x} operand={operand:#010x} carry_in={carry_in} overflow_in={overflow_in}"
+                        );
+                        if compare {
+                            assert_eq!(cpu.regs[0], a, "{instruction:#010x}");
+                        } else {
+                            assert_eq!(
+                                cpu.regs[2], result,
+                                "{instruction:#010x} a={a:#010x} operand={operand:#010x}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
