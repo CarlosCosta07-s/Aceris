@@ -740,3 +740,11 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - `0ed0a2b` — corrige a formatação de uma chamada auxiliar. Workflow [43506136687](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43506136687) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux/Windows/macOS; build release Android `arm64-v8a` aprovado.
 - Referência independente: ARM Architecture Reference Manual ARM DDI 0100I, instruções A32 de processamento de dados e cálculo do carry de Operand2. O teste usa a codificação pública `ROR(imm8, 2*rotate)` e uma referência aritmética própria; nenhuma implementação de emulador de terceiros foi consultada.
 - As alterações de código desta etapa ficaram limitadas a `crates/aceris-core/tests/arm11_arithmetic_flags.rs`; não houve mudança no caminho de produção.
+
+## A32 — validação do campo SBZ de MOV/MVN (13/11/2026)
+
+- `4e9c14f` — valida `Rn[19:16] == 0` para `MOV` e `MVN`, cujo campo é SBZ na codificação A32. A rejeição ocorre antes da avaliação do Operand2 e antes de qualquer alteração de estado.
+- O teste externo `mov_and_mvn_reject_nonzero_rn_sbz_fields_atomically` cobre oito codificações: MOV/MVN com imediato rotacionado, shift imediato, shift controlado por registrador e campo reservado igual a PC. Cada caso exige `UndefinedInstruction` e preservação dos registradores, CPSR, PC e memória sentinela.
+- `a0818ae` — corrige a formatação indicada por Rustfmt. Workflow [43510347568](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43510347568) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` aprovados em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
+- Referência arquitetural independente: ARM Architecture Reference Manual ARM DDI 0100I, seção A4.1.35 (MOV, A4-68) e A4.1.41 (MVN, A4-82), que identificam o campo `Rn` como SBZ. Não foi consultado código-fonte de emuladores de terceiros.
+- A implementação alterada ficou limitada a `crates/aceris-core/src/cpu/arm.rs`; a regressão externa foi adicionada em `crates/aceris-core/tests/arm11_miscellaneous.rs`. Thumb não foi alterado.
