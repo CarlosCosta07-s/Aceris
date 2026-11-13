@@ -1334,19 +1334,31 @@ mod tests {
                 cpu.cpsr.set_big_endian(big_endian);
                 mem.write32(
                     DATA,
-                    if big_endian { first.swap_bytes() } else { first },
+                    if big_endian {
+                        first.swap_bytes()
+                    } else {
+                        first
+                    },
                 )
                 .unwrap();
                 mem.write32(
                     DATA + 4,
-                    if big_endian { second.swap_bytes() } else { second },
+                    if big_endian {
+                        second.swap_bytes()
+                    } else {
+                        second
+                    },
                 )
                 .unwrap();
             });
             load.step();
 
             assert_eq!((load.cpu.regs[1], load.cpu.regs[2]), (first, second));
-            assert_eq!(load.cpu.regs[0], DATA + 9, "LDMIA writeback must use original base");
+            assert_eq!(
+                load.cpu.regs[0],
+                DATA + 9,
+                "LDMIA writeback must use original base"
+            );
 
             let mut store = Machine::with(0xC006, |cpu, _| {
                 cpu.regs[0] = DATA + 1;
@@ -1358,11 +1370,19 @@ mod tests {
 
             assert_eq!(
                 store.mem.read32(DATA).unwrap(),
-                if big_endian { first.swap_bytes() } else { first }
+                if big_endian {
+                    first.swap_bytes()
+                } else {
+                    first
+                }
             );
             assert_eq!(
                 store.mem.read32(DATA + 4).unwrap(),
-                if big_endian { second.swap_bytes() } else { second }
+                if big_endian {
+                    second.swap_bytes()
+                } else {
+                    second
+                }
             );
             assert_eq!(
                 store.cpu.regs[0],
@@ -1380,9 +1400,7 @@ mod tests {
                     cpu.regs[0] = DATA + 1;
                     cpu.regs[1] = 0x1122_3344;
                     cpu.regs[2] = 0x5566_7788;
-                    cpu.cp15
-                        .write(true, 0, 1, 0, 0, control_bit)
-                        .unwrap();
+                    cpu.cp15.write(true, 0, 1, 0, 0, control_bit).unwrap();
                     mem.write32(DATA, 0xCAFE_BABE).unwrap();
                     mem.write32(DATA + 4, 0xDEAD_BEEF).unwrap();
                 });
