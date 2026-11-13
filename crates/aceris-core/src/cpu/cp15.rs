@@ -363,6 +363,7 @@ impl Cp15 {
             (5, 0, 1) => self.ifsr = value,
             (6, 0, 0) => self.dfar = value,
             (6, 0, 2) => self.ifar = value,
+            (7, 4, 0) => self.pa_register = value,
             (10, 0, 0) => self.tlb_lockdown = value & TLB_LOCKDOWN_WRITABLE,
             (10, 2, 0) => self.primary_remap = value & PRIMARY_REMAP_WRITABLE,
             (10, 2, 1) => self.normal_remap = value & NORMAL_REMAP_WRITABLE,
@@ -407,6 +408,15 @@ impl Cp15 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pa_register_is_readable_and_writable_only_in_privileged_mode() {
+        let mut cp15 = Cp15::default();
+        cp15.write(true, 0, 7, 4, 0, 0x1234_51B0).unwrap();
+        assert_eq!(cp15.read(true, 0, 7, 4, 0), Ok(0x1234_51B0));
+        assert_eq!(cp15.write(false, 0, 7, 4, 0, 0), Err(Cp15Fault::Undefined));
+        assert_eq!(cp15.read(false, 0, 7, 4, 0), Err(Cp15Fault::Undefined));
+    }
 
     #[test]
     fn reset_state_matches_documented_profile() {

@@ -1301,6 +1301,79 @@ mod tests {
     }
 
     #[test]
+    fn remap_register_changes_take_effect_for_cached_entries_after_tlbi() {
+        let (mut cpu, mut mem) = machine();
+        let va = 0x2000_0000;
+        set_l1(
+            &mut mem,
+            0x200,
+            SECTION | SECTION_AP_RW_ALL | (4 << 12) | (1 << 16) | (1 << 3) | (1 << 2),
+        );
+
+        let mut tlb = TranslationLookasideBuffer::default();
+        let initial = {
+            let mut mmu = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
+            mmu.translate_for_pa_register(va, Access::Read, true).unwrap()
+        };
+        assert!(matches!(
+            initial,
+            PaTranslation::Mapped {
+                attributes: MemoryAttributes {
+                    memory_type: MemoryType::Normal,
+                    inner: 3,
+                    outer: 0,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        // Reclassify the descriptor's {TEX[0], C, B}=011 region as Device,
+        // but an existing TLB entry retains the attributes captured on walk.
+        cpu.cp15
+            .write(true, 0, 10, 2, 0, (1 << 17) | (1 << 6))
+            .unwrap();
+        cpu.cp15
+            .write(true, 0, 1, 0, 0, 1 | (1 << 23) | (1 << 28))
+            .unwrap();
+
+        let before_invalidation = {
+            let mut mmu = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
+            mmu.translate_for_pa_register(va, Access::Read, true).unwrap()
+        };
+        assert!(matches!(
+            before_invalidation,
+            PaTranslation::Mapped {
+                attributes: MemoryAttributes {
+                    memory_type: MemoryType::Normal,
+                    inner: 3,
+                    outer: 0,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        tlb.maintain(TlbMaintenance::All);
+        let after_invalidation = {
+            let mut mmu = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
+            mmu.translate_for_pa_register(va, Access::Read, true).unwrap()
+        };
+        assert!(matches!(
+            after_invalidation,
+            PaTranslation::Mapped {
+                attributes: MemoryAttributes {
+                    memory_type: MemoryType::Device,
+                    shareable: true,
+                    inner: 0,
+                    outer: 0,
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn va_to_pa_is_flat_mapped_when_the_mmu_is_disabled() {
         let mut cpu = Arm11Core::new();
         cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
