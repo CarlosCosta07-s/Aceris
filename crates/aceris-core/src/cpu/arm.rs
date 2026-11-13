@@ -1714,12 +1714,7 @@ impl Arm11Core {
 
         // SWP/SWPB do not permit PC in any operand. The base register
         // must also differ from both transfer registers; Rd == Rm is valid.
-        if rn as usize == PC
-            || rd as usize == PC
-            || rm as usize == PC
-            || rn == rd
-            || rn == rm
-        {
+        if rn as usize == PC || rd as usize == PC || rm as usize == PC || rn == rd || rn == rm {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
                 word,
