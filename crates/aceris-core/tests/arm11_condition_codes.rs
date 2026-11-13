@@ -59,18 +59,18 @@ fn all_a32_conditions_match_every_nzcv_combination() {
 
             assert_eq!(
                 cpu.regs[2],
-                if expected_to_execute { 0x5A } else { INITIAL_R2 },
+                if expected_to_execute {
+                    0x5A
+                } else {
+                    INITIAL_R2
+                },
                 "condition={condition:#x} NZCV={n}{z}{c}{v}"
             );
             assert_eq!(
                 cpu.cpsr, status_before,
                 "condition={condition:#x} NZCV={n}{z}{c}{v}"
             );
-            assert_eq!(
-                cpu.pc(),
-                4,
-                "condition={condition:#x} NZCV={n}{z}{c}{v}"
-            );
+            assert_eq!(cpu.pc(), 4, "condition={condition:#x} NZCV={n}{z}{c}{v}");
         }
     }
 }
@@ -134,7 +134,10 @@ fn unconditional_condition_code_is_not_part_of_the_conditional_table() {
 
     assert!(matches!(
         cpu.step(&mut memory),
-        Err(Error::UndefinedInstruction { pc: 0, word: 0xF100_0000 })
+        Err(Error::UndefinedInstruction {
+            pc: 0,
+            word: 0xF100_0000
+        })
     ));
     assert_eq!(cpu.pc(), 0);
 }
