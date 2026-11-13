@@ -508,8 +508,7 @@ impl Vfp {
 
         // In full-compliance VFP11 mode, underflow is confirmed after
         // rounding and does not require an inexact result.
-        let tiny_after_rounding =
-            value != 0.0 && rounded.abs() < prec.min_normal();
+        let tiny_after_rounding = value != 0.0 && rounded.abs() < prec.min_normal();
         if tiny_after_rounding {
             self.raise(FPSCR_UFC);
         }
