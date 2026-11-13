@@ -269,7 +269,9 @@ impl Arm11KernelObjectTable {
 
     /// Creates a process-local service-manager client session.
     pub fn insert_service_manager_session(&mut self) -> Result<u32, KernelHandleError> {
-        self.insert(KernelObject::ServiceSession(ServiceSessionKind::ServiceManager))
+        self.insert(KernelObject::ServiceSession(
+            ServiceSessionKind::ServiceManager,
+        ))
     }
 
     /// Creates a process-local GSP GPU client session.
@@ -686,7 +688,11 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Mutex(mutex)) => !mutex.waiters.is_empty(),
             Some(KernelObject::Semaphore(semaphore)) => !semaphore.waiters.is_empty(),
             Some(KernelObject::Timer(timer)) => !timer.waiters.is_empty(),
-            Some(KernelObject::Thread(_) | KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_)) => false,
+            Some(
+                KernelObject::Thread(_)
+                | KernelObject::MemoryBlock(_)
+                | KernelObject::ServiceSession(_),
+            ) => false,
             None => return Err(KernelHandleError::InvalidHandle),
         };
         if has_waiters {
