@@ -21,7 +21,10 @@ fn bx_pc_uses_the_architectural_pc_operand_and_remains_valid_in_armv6() {
     assert_eq!(cpu.pc(), 8);
     assert!(!cpu.cpsr.thumb());
     assert_eq!(cpu.regs[14], lr_before);
-    assert_eq!(cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V), flags_before);
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V),
+        flags_before
+    );
 }
 
 #[test]
