@@ -1,9 +1,10 @@
 //! Process-side GSP client registration and interrupt delivery.
 //!
-//! The registry is owned by the service layer, not by the guest process. It
-//! connects a registered client slot to a process-mapped GSP shared-memory
-//! block and a process-local kernel event handle. Shared-memory creation,
-//! mapping and IPC command dispatch remain responsibilities of later layers.
+//! The registry is owned by the shared system layer, not by the guest process.
+//! It connects registered client slots to process-mapped GSP shared memory and
+//! process-local event handles. The System dispatcher exposes the initial
+//! guest srv:/gsp::Gpu IPC path and performs the associated resource/scheduler
+//! operations; this module models request data, registration and rights state.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -613,10 +614,11 @@ impl GspServiceRegistry {
 
     /// Queues a blocking AcquireRight request using FIFO ordering.
     ///
-    /// The IPC caller must suspend its request when this returns Waiting.
-    /// ReleaseRight or owner unregistration transfers ownership to the oldest
-    /// still-registered waiter. This method models the queue state; it does
-    /// not suspend or wake an IPC thread by itself.
+    /// The system IPC dispatcher suspends the calling ARM11 thread when this
+    /// returns Waiting. ReleaseRight or owner unregistration transfers
+    /// ownership to the oldest still-registered waiter; the dispatcher then
+    /// writes that thread's TLS reply and makes it runnable. This registry
+    /// method models only the client-side FIFO state.
     pub fn acquire_rendering_right(
         &mut self,
         client_id: u8,
@@ -668,9 +670,9 @@ impl GspServiceRegistry {
 
     /// Releases rendering rights and reports the client that received them.
     ///
-    /// The returned client ID is the FIFO successor that an eventual IPC
-    /// dispatcher/scheduler must wake. This registry still does not suspend or
-    /// resume guest threads itself.
+    /// The returned client ID is the FIFO successor. The system dispatcher
+    /// uses that ID to complete pending TLS replies and wake the corresponding
+    /// ARM11 threads; this registry itself does not manipulate the scheduler.
     pub fn release_rendering_right_with_handoff(
         &mut self,
         client_id: u8,
