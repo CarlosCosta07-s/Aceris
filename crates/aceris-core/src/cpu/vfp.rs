@@ -1764,12 +1764,26 @@ mod tests {
         assert_eq!(cpu.vfp().s(8), 100);
         assert_eq!(cpu.vfp().s(11), 103);
 
-        // Odd word count in a double transfer is the unsupported FLDMX form.
-        assert!(matches!(
-            run(&mut cpu, &mut mem, &[0xEC92_4B03]),
-            Err(Error::Unimplemented(_))
-        ));
-        // Zero registers is unpredictable and rejected.
+        // FSTMX DB stores one D register using the legacy odd word count.
+        // FLDMX IA reloads it and restores SP; the address displacement keeps
+        // the extra format word even though only two data words are transferred.
+        let stack_top = DATA + 0x100;
+        cpu.regs[13] = stack_top;
+        cpu.vfp_mut().set_s(4, 0x1122_3344);
+        cpu.vfp_mut().set_s(5, 0x5566_7788);
+        run(&mut cpu, &mut mem, &[0xED2D_2B03]).unwrap(); // FSTMX r13!, {d2}
+        assert_eq!(cpu.regs[13], stack_top - 12);
+        assert_eq!(mem.read32(stack_top - 12).unwrap(), 0x1122_3344);
+        assert_eq!(mem.read32(stack_top - 8).unwrap(), 0x5566_7788);
+
+        cpu.vfp_mut().set_s(4, 0);
+        cpu.vfp_mut().set_s(5, 0);
+        run(&mut cpu, &mut mem, &[0xECBD_2B03]).unwrap(); // FLDMX r13!, {d2}
+        assert_eq!(cpu.regs[13], stack_top);
+        assert_eq!(cpu.vfp().s(4), 0x1122_3344);
+        assert_eq!(cpu.vfp().s(5), 0x5566_7788);
+
+        // A zero-register transfer is unpredictable and rejected.
         assert!(matches!(
             run(&mut cpu, &mut mem, &[0xEC92_4A00]),
             Err(Error::UndefinedInstruction { .. })
