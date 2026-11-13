@@ -309,3 +309,76 @@ fn thumb_mul_and_logical_ops_keep_c_and_v() {
         assert_eq!(flags(&cpu), (true, false, c, v));
     }
 }
+fn arm_immediate_instruction(op: Op, rotate: u32, immediate: u32) -> u32 {
+    let compare = matches!(op, Op::Cmp | Op::Cmn);
+    let rd = if compare { 0 } else { 2 };
+    0xE200_0000
+        | (arm_opcode(op) << 21)
+        | (1 << 20)
+        | (rd << 12)
+        | (rotate << 8)
+        | immediate
+}
+
+#[test]
+fn arm_immediate_arithmetic_matches_reference_for_rotated_operands_and_carry_inputs() {
+    // A32 Operand2 is ROR(Imm8, 2 * rotate). Include rotated zero values:
+    // arithmetic instructions must report the ALU carry, not shifter carry.
+    const IMMEDIATES: [(u32, u32); 9] = [
+        (0, 0x00),
+        (0, 0x01),
+        (0, 0xFF),
+        (1, 0x80),
+        (3, 0xA5),
+        (4, 0xFF),
+        (7, 0x80),
+        (8, 0x00),
+        (12, 0x01),
+    ];
+    let ops = [
+        Op::Add,
+        Op::Adc,
+        Op::Sub,
+        Op::Sbc,
+        Op::Rsb,
+        Op::Rsc,
+        Op::Cmp,
+        Op::Cmn,
+    ];
+
+    for op in ops {
+        let compare = matches!(op, Op::Cmp | Op::Cmn);
+        for &a in &GRID {
+            for (rotate, imm8) in IMMEDIATES {
+                let operand = imm8.rotate_right(rotate * 2);
+                for carry_in in [false, true] {
+                    for overflow_in in [false, true] {
+                        let word = arm_immediate_instruction(op, rotate, imm8);
+                        let mut memory = FlatMemory::new(0, 4);
+                        memory.write32(0, word).unwrap();
+
+                        let mut cpu = cpu_with(a, 0, carry_in, overflow_in);
+                        cpu.set_pc(0);
+                        cpu.step(&mut memory).unwrap();
+
+                        let (value, carry, overflow) = reference(op, a, operand, carry_in);
+                        let expected_n = value >> 31 != 0;
+                        assert_eq!(
+                            flags(&cpu),
+                            (expected_n, value == 0, carry, overflow),
+                            "{word:#010x} a={a:#010x} operand={operand:#010x} carry_in={carry_in} overflow_in={overflow_in}"
+                        );
+                        if compare {
+                            assert_eq!(cpu.regs[0], a, "{word:#010x}");
+                        } else {
+                            assert_eq!(
+                                cpu.regs[2], value,
+                                "{word:#010x} a={a:#010x} operand={operand:#010x}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
