@@ -2264,7 +2264,7 @@ mod tests {
         let fill_entry_1_only = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 3 * 0x20;
         fill_queue_1_only[fill_entry_1_only] = GSP_GX_COMMAND_MEMORY_FILL;
         for (index, value) in [
-            0,
+            0u32,
             0,
             0,
             fill_start_1_only,
