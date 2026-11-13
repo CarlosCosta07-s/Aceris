@@ -622,3 +622,15 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - Clippy e `cargo test --workspace` foram ignorados nos três sistemas desktop porque Rustfmt falhou primeiro. Os 71 testes Thumb ainda não foram executados pela CI; os novos testes de alinhamento não estão validados por execução.
 - O MMU permanece intocado nesta intervenção. A CI não pode validar o Thumb até a frente responsável resolver esses erros e a formatação em `mmu.rs`.
 - Nenhuma alteração foi feita fora de `thumb.rs` na parte de código, nenhuma dependência foi adicionada e nenhum código de emulador de terceiros foi consultado.
+
+
+### Thumb — alinhamento das transferências multiword e SCTLR.U/A (13/11/2026)
+
+- Commit de código: `c4d875aa57e6b84e472c4fa9a8418a89923e6000`.
+- Corrige `thumb_block_transfer`: no modelo ARMv6 legado (`U=0,A=0)), LDMIA/STMIA iniciam as transações em `Word[Align(Addr)]`, mas calculam o writeback a partir do valor original de `Rn`, preservando os bits baixos no valor escrito de volta.
+- Quando `SCTLR.U` ou `SCTLR.A` está ativo, uma base LDMIA/STMIA desalinhada retorna `Error::InvalidAccess` antes de qualquer alteração em registradores ou memória. A regra reutiliza `Cp15::alignment_fault_enabled()`, já existente e usada no caminho SRS A32. A integração final desse erro como Data Abort e o estado completo de DFAR/DFSR continuam dependentes da validação de faults do core/MMU.
+- Um novo teste exercita LDMIA e STMIA com `Rn=DATA+1`, nos dois endians; verifica leitura/escrita iniciando em Align(Addr), writeback em `original_base + 8` e fault atômico para SCTLR.U e SCTLR.A separadamente.
+- Referência: ARM Architecture Reference Manual, ARM DDI 0100I, A2.8.2, Tabela A2-10, páginas A2-40 e A2-41. `U=0,A=0` determina `Word[Align(Addr)]` para Multi-word; com `U=1,A=0`, multiword desalinhado gera Alignment Fault. Link: https://documentation-service.arm.com/static/5f8dacc8f86e16515cdb865a
+- Somado aos dois testes de acesso simples de palavra desalinhada em LE/BE, o módulo contém agora 73 declarações `#[test]`. Isso é contagem estática, não execução aprovada.
+- Workflow `43346740894` foi iniciado para o commit `c4d875a`; aguardar resultado. Os workflows anteriores não alcançaram Clippy ou `cargo test --workspace` devido à formatação/compilação pendente em `mmu.rs`. Não declarar os testes aprovados antes de a CI executá-los.
+- O trabalho de código permaneceu restrito a `crates/aceris-core/src/cpu/thumb.rs`; nenhum arquivo MMU de outra frente foi alterado.
