@@ -370,6 +370,16 @@ impl Arm11Core {
             }
         }
 
+        // POP {pc} interworks through BX semantics. A word-aligned ARM
+        // target is required; bits[1:0] == 0b10 is architecturally
+        // UNPREDICTABLE and must not be silently rounded down.
+        if list & (1 << PC) != 0 && values[PC] & 3 == 2 {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: half,
+            });
+        }
+
         self.regs[SP] = addr;
         for (r, value) in values.iter().enumerate().take(PC) {
             if list & (1 << r) != 0 {
@@ -1067,6 +1077,25 @@ mod tests {
         m.step();
         assert_eq!(m.cpu.pc(), 0x40);
         assert!(!m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn pop_pc_rejects_halfword_aligned_arm_target_without_mutating_state() {
+        let mut m = Machine::new(&[0xBD00]); // POP {pc}
+        m.cpu.regs[SP] = DATA;
+        m.mem.write32(DATA, 0x42).unwrap();
+        let old_cpsr = m.cpu.cpsr;
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xBD00
+            })
+        ));
+        assert_eq!(m.cpu.pc(), 0);
+        assert_eq!(m.cpu.regs[SP], DATA);
+        assert_eq!(m.cpu.cpsr, old_cpsr);
     }
 
     #[test]
