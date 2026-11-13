@@ -608,3 +608,13 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - O job Android ARM64 falhou ao compilar o mesmo `mmu.rs`: `TLB_CAPACITY` não encontrado (linha 349), `matches_context` chamado em `&Option<TlbEntry>` (linha 397) e incompatibilidade de tipo entre `Option<TlbEntry>` e `TlbEntry` (linha 399).
 - Clippy e `cargo test --workspace` foram ignorados porque Rustfmt falhou primeiro. Portanto, os 69 testes declarados ainda não foram validados pela CI. O MMU permanece sem alterações; é necessário corrigir seu bloqueio antes da validação integral.
 - Nenhum outro arquivo de código, dependência ou implementação de terceiros foi incluído nesta alteração.
+
+
+### Testes Thumb — acesso desalinhado de palavra no modelo legado (13/11/2026)
+
+- Commit de código: `6b256700e7b1c25a8df84a2daf6c7644fe9661b9` — acrescenta dois testes que exercitam loads/stores Thumb de palavra desalinhados por imediato e por registrador, em little-endian e big-endian.
+- No caminho legado ARMv6 (`U=0`, `A=0)), o word load lê `Word[Align(Addr)]` e rotaciona o dado conforme `Addr[1:0]`; o word store escreve em `Word[Align(Addr)]`. Os testes cobrem as codificações T1 `LDR/STR` de offset imediato e offset por registrador.
+- Referência independente: ARM Architecture Reference Manual, ARM DDI 0100I, seção A2.8.2 e Tabela A2-10, páginas A2-39 a A2-41. A tabela distingue o comportamento legado `U=0,A=0` do modo ARMv6 de acessos desalinhados `U=1,A=0`. Link: https://documentation-service.arm.com/static/5f8dacc8f86e16515cdb865a
+- O caminho de dados Thumb atual ainda utiliza a leitura com rotação clássica e o alinhamento explícito dos stores; estes testes não implementam nem atestam `U=1`. A seleção completa entre legacy/U=1, faults de alinhamento e atributos de memória depende da integração comum CPU/CP15/MMU e continua pendente no roadmap.
+- O módulo possui agora 71 declarações `#[test]`; isso é contagem estática. O workflow `43346423350` foi disparado para o commit de código. Aguardando verificação do resultado; não declarar os testes executados/aprovados até Clippy e `cargo test --workspace` rodarem.
+- Nenhuma alteração foi feita fora de `thumb.rs` na parte de código, nenhuma dependência foi adicionada e nenhum código de emulador de terceiros foi consultado.
