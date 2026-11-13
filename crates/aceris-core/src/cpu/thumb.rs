@@ -841,6 +841,50 @@ mod tests {
     }
 
     #[test]
+    fn high_register_data_processing_accepts_sp_operands() {
+        let original_flags = (true, false, true, true);
+
+        // MOV r8,sp accepts SP as the high-register source and preserves flags.
+        let mut mov = Machine::with(0x46E8, |cpu, _| {
+            cpu.regs[SP] = 0xA5A5_5A5A;
+            cpu.cpsr.set_flags(
+                original_flags.0,
+                original_flags.1,
+                original_flags.2,
+                original_flags.3,
+            );
+        });
+        mov.step();
+        assert_eq!(mov.cpu.regs[8], 0xA5A5_5A5A);
+        assert_eq!(mov.flags(), original_flags);
+
+        // ADD r8,sp also leaves the condition flags unchanged.
+        let mut add = Machine::with(0x44E8, |cpu, _| {
+            cpu.regs[8] = 7;
+            cpu.regs[SP] = 9;
+            cpu.cpsr.set_flags(
+                original_flags.0,
+                original_flags.1,
+                original_flags.2,
+                original_flags.3,
+            );
+        });
+        add.step();
+        assert_eq!(add.cpu.regs[8], 16);
+        assert_eq!(add.flags(), original_flags);
+
+        // CMP r8,sp accepts SP as Rm and updates only the condition flags.
+        let mut cmp = Machine::with(0x45E8, |cpu, _| {
+            cpu.regs[8] = 9;
+            cpu.regs[SP] = 9;
+        });
+        cmp.step();
+        assert_eq!(cmp.cpu.regs[8], 9);
+        assert_eq!(cmp.cpu.regs[SP], 9);
+        assert_eq!(cmp.flags(), (false, true, true, false));
+    }
+
+    #[test]
     fn cmp_with_pc_as_first_operand_is_undefined_without_side_effects() {
         // CMP PC,R0 encodes the UNPREDICTABLE Rn = R15 form.
         let mut m = Machine::with(0x4587, |cpu, _| {
@@ -1012,6 +1056,22 @@ mod tests {
         assert_eq!(m.cpu.regs[LR], 3);
         assert_eq!(m.cpu.pc(), 0x40);
         assert!(!m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn bx_and_blx_accept_sp_as_target_register() {
+        // BX sp uses bit zero to retain Thumb state.
+        let mut bx = Machine::with(0x4768, |cpu, _| cpu.regs[SP] = 0x101);
+        bx.step();
+        assert_eq!(bx.cpu.pc(), 0x100);
+        assert!(bx.cpu.cpsr.thumb());
+
+        // BLX sp links the Thumb return address and enters ARM state.
+        let mut blx = Machine::with(0x47E8, |cpu, _| cpu.regs[SP] = 0x200);
+        blx.step();
+        assert_eq!(blx.cpu.regs[LR], 3);
+        assert_eq!(blx.cpu.pc(), 0x200);
+        assert!(!blx.cpu.cpsr.thumb());
     }
 
     // ----- loads and stores -------------------------------------------------
