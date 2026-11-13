@@ -1089,11 +1089,7 @@ impl Arm11Core {
         if !bit(word, 25) && bit(word, 4) {
             let rs = bits(word, 11, 8);
             let rm = bits(word, 3, 0);
-            if rn == PC as u32
-                || rd == PC as u32
-                || rs == PC as u32
-                || rm == PC as u32
-            {
+            if rn == PC as u32 || rd == PC as u32 || rs == PC as u32 || rm == PC as u32 {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
                     word,
