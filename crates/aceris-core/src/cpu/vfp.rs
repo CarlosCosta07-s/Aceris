@@ -518,7 +518,7 @@ impl Vfp {
         let tiny_before_rounding =
             value.is_finite() && value != 0.0 && magnitude < prec.min_normal();
         if self.fpscr & FPSCR_FZ != 0 && tiny_before_rounding {
-            self.raise(FPSCR_UFC);
+            self.raise(FPSCR_UFC | FPSCR_IXC);
             return 0;
         }
         result
