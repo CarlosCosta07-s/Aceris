@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `877efa1170cf5f37efce620c5f78bf4c71d53821`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `b73d1aa3f9e1fac61c196c0b999b2daaa796081d`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
