@@ -2267,8 +2267,13 @@ impl Arm11Core {
                 || (!pre_index && bit(word, 21))
                 || (writeback && rn == pair_second)
                 || (register_offset && doubleword_load && (rm == rd || rm == pair_second)));
+        // PC-relative literal forms are available only for loads with
+        // immediate offsets (including LDRD). PC is not a general halfword
+        // transfer base and cannot be used for stores or register offsets.
+        let pc_literal_allowed = !register_offset && !writeback && (load || doubleword_load);
         let invalid_operands = rd as usize == PC
-            || (writeback && (rn as usize == PC || rn == rd))
+            || (rn as usize == PC && !pc_literal_allowed)
+            || (writeback && rn == rd)
             || (register_offset && rm as usize == PC)
             || invalid_pair;
         if invalid_operands {
