@@ -2026,6 +2026,37 @@ mod tests {
     }
 
     #[test]
+    fn conditional_and_unconditional_branch_offsets_sign_extend_at_limits() {
+        let mut conditional_positive = Machine::with(0xD07F, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xD07F).unwrap();
+        });
+        conditional_positive.step();
+        assert_eq!(conditional_positive.cpu.pc(), 260);
+
+        let mut conditional_negative = Machine::with(0xD080, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xD080).unwrap();
+        });
+        conditional_negative.step();
+        assert_eq!(conditional_negative.cpu.pc(), 0xFFFF_FF06);
+
+        let mut unconditional_positive = Machine::with(0xE3FF, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xE3FF).unwrap();
+        });
+        unconditional_positive.step();
+        assert_eq!(unconditional_positive.cpu.pc(), 2052);
+
+        let mut unconditional_negative = Machine::with(0xE400, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xE400).unwrap();
+        });
+        unconditional_negative.step();
+        assert_eq!(unconditional_negative.cpu.pc(), 0xFFFF_F806);
+    }
+
+    #[test]
     fn bkpt_reports_its_immediate_and_retires_without_mutating_cpu_state() {
         let mut m = Machine::with(0xBEA5, |cpu, _| {
             cpu.regs[0] = 0x1234_5678;
@@ -2156,6 +2187,33 @@ mod tests {
         assert_eq!(m.cpu.pc(), 4);
         assert_eq!(m.cpu.regs[14], 5);
         assert!(!m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn bl_and_blx_pair_offsets_sign_extend_at_architectural_limits() {
+        let mut bl_positive = Machine::with(0xF3FF, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xF3FF).unwrap();
+            mem.write16(4, 0xF7FF).unwrap();
+        });
+        bl_positive.step();
+        assert_eq!(bl_positive.cpu.regs[LR], 0x003F_F006);
+        bl_positive.step();
+        assert_eq!(bl_positive.cpu.pc(), 0x0040_0004);
+        assert_eq!(bl_positive.cpu.regs[LR], 7);
+        assert!(bl_positive.cpu.cpsr.thumb());
+
+        let mut blx_negative = Machine::with(0xF400, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xF400).unwrap();
+            mem.write16(4, 0xE800).unwrap();
+        });
+        blx_negative.step();
+        assert_eq!(blx_negative.cpu.regs[LR], 0xFFC0_0006);
+        blx_negative.step();
+        assert_eq!(blx_negative.cpu.pc(), 0xFFC0_0004);
+        assert_eq!(blx_negative.cpu.regs[LR], 7);
+        assert!(!blx_negative.cpu.cpsr.thumb());
     }
 
     #[test]
