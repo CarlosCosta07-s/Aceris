@@ -1855,24 +1855,24 @@ mod tests {
             .ncsd_session
             .as_mut()
             .unwrap()
-            .write_memory_bytes(0x0020_1000, b"srv:")
+            .write_memory_bytes(0x0010_2000, b"srv:")
             .unwrap();
         system
             .ncsd_session
             .as_mut()
             .unwrap()
-            .set_current_register(0, 0x0020_0000);
+            .set_current_register(0, 0x0010_2010);
         system
             .ncsd_session
             .as_mut()
             .unwrap()
-            .set_current_register(1, 0x0020_1000);
+            .set_current_register(1, 0x0010_2000);
         run_one_ipc_svc(&mut system);
         let service_manager = system
             .ncsd_session
             .as_mut()
             .unwrap()
-            .read_memory_u32(0x0020_0000)
+            .read_memory_u32(0x0010_2010)
             .unwrap();
         assert!(matches!(
             system
