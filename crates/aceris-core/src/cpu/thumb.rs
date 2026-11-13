@@ -604,6 +604,19 @@ mod tests {
         assert_eq!(m.cpu.regs[1], u32::MAX);
         assert_eq!(m.flags(), (true, false, true, false));
     }
+    
+    #[test]
+    fn zero_immediate_lsr_and_asr_each_shift_by_32() {
+        let mut lsr = Machine::with(0x0801, |cpu, _| cpu.regs[0] = 0x8000_0001);
+        lsr.step();
+        assert_eq!(lsr.cpu.regs[1], 0);
+        assert_eq!(lsr.flags(), (false, true, true, false));
+
+        let mut asr = Machine::with(0x1001, |cpu, _| cpu.regs[0] = 0x8000_0001);
+        asr.step();
+        assert_eq!(asr.cpu.regs[1], u32::MAX);
+        assert_eq!(asr.flags(), (true, false, true, false));
+    }
 
     #[test]
     fn lsl_zero_copies_the_register_and_keeps_carry() {
@@ -691,6 +704,24 @@ mod tests {
         let carry = Psr::from_flags(false, false, true, false);
         assert_eq!(alu(0x4148, 1, 2, carry).cpu.regs[0], 4);
         assert_eq!(alu(0x4148, 1, 2, Psr::default()).cpu.regs[0], 3);
+    }
+    
+    #[test]
+    fn sbc_uses_the_inverse_borrow_carry_semantics() {
+        let carry = Psr::from_flags(false, false, true, false);
+        assert_eq!(alu(0x4188, 5, 2, carry).cpu.regs[0], 3);
+        assert_eq!(alu(0x4188, 5, 2, Psr::default()).cpu.regs[0], 2);
+    }
+
+    #[test]
+    fn register_controlled_asr_sign_extends_and_sets_carry() {
+        let m = alu(0x4108, 0x8000_0000, 4, Psr::default());
+        assert_eq!(m.cpu.regs[0], 0xF800_0000);
+        assert_eq!(m.flags(), (true, false, false, false));
+
+        let m = alu(0x4108, 0x8000_0001, 32, Psr::default());
+        assert_eq!(m.cpu.regs[0], u32::MAX);
+        assert_eq!(m.flags(), (true, false, true, false));
     }
 
     #[test]
@@ -918,6 +949,22 @@ mod tests {
         m.step();
 
         assert_eq!(m.cpu.regs[2], 0x1122_3344);
+    }
+    
+    #[test]
+    fn setend_big_endian_is_used_by_thumb_halfword_and_signed_loads() {
+        let mut m = Machine::new(&[0xB658, 0x8008, 0x880A, 0x5F8B]);
+        m.cpu.regs[0] = 0x1234_8001;
+        m.cpu.regs[1] = DATA;
+        m.cpu.regs[6] = 0;
+
+        m.step(); // SETEND BE.
+        m.step(); // STRH r0,[r1].
+        assert_eq!(m.mem.read16(DATA).unwrap(), 0x0180);
+        m.step(); // LDRH r2,[r1].
+        assert_eq!(m.cpu.regs[2], 0x8001);
+        m.step(); // LDRSH r3,[r1,r6].
+        assert_eq!(m.cpu.regs[3], 0xFFFF_8001);
     }
 
     #[test]
