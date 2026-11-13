@@ -395,6 +395,11 @@ impl Arm11ProcessSession {
             .service_manager_client_registered(handle)
     }
 
+    /// Reports the current signal state of a process-local event handle.
+    pub fn event_handle_is_signaled(&self, handle: u32) -> Option<bool> {
+        self.kernel_objects.event_is_signaled(handle)
+    }
+
     /// Creates a `gsp::Gpu` client endpoint in this process.
     pub fn create_gsp_gpu_session(&mut self) -> std::result::Result<u32, KernelHandleError> {
         self.kernel_objects.insert_gsp_gpu_session()
