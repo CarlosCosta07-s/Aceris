@@ -128,3 +128,21 @@ fn cps_mode_change_and_interrupt_mask_operations_preserve_unselected_state() {
     assert_eq!(cpu.cpsr, status_before);
     assert_eq!(cpu.pc(), 4);
 }
+
+#[test]
+fn pld_register_offset_accepts_immediate_shift_but_rejects_reserved_bit_four() {
+    // LSL #3 with Rm=r2 is valid; the shift amount and type occupy bits 11:5.
+    let valid = 0xF7D1_F182;
+    let (cpu, result) = execute(valid);
+    assert!(result.is_ok());
+    assert_eq!(cpu.pc(), 4);
+
+    // Register-controlled shift form (bit[4]=1) is not an Addressing Mode 2 offset.
+    let invalid = 0xF7D1_F192;
+    let (cpu, result) = execute(invalid);
+    assert!(matches!(
+        result,
+        Err(Error::UndefinedInstruction { pc: 0, word }) if word == invalid
+    ));
+    assert_eq!(cpu.pc(), 0);
+}
