@@ -520,3 +520,12 @@ Os testes foram adicionados ao arquivo Thumb. Esta intervenção não dispõe de
 - ARM Architecture Reference Manual, ARM DDI 0406C.d, tabelas de instruções Thumb de 16 bits e seção de diferenças ARMv6/ARMv6K; usar a documentação oficial para auditar cada codificação, sem consultar código-fonte de outros emuladores.
 - ARM Architecture Reference Manual, descrições T1 de PUSH/POP: listas vazias são classificadas como UNPREDICTABLE. O Aceris rejeita esses casos deterministamente e não afirma que a arquitetura os classifique como UNDEFINED.
 - Nenhuma dependência externa foi adicionada e nenhum outro emulador foi consultado.
+
+
+### Continuação da auditoria Thumb — BLX e CI (12/11/2026)
+
+- `b73d1aa3f9e1fac61c196c0b999b2daaa796081d` — alinha a formatação do novo teste CPY com Rustfmt e acrescenta `BLX Rm` com destino bit 0 limpo, verificando a mudança Thumb→ARM, o alinhamento de PC e o LR de retorno.
+- A CI anterior (`43342433229`, HEAD `2e4c301`) falhou antes de executar todos os testes: Rustfmt apontou formatação pendente em `thumb.rs` (corrigida pelo commit acima) e também em `cpu/mmu.rs`; o job Android falhou na compilação do mesmo `cpu/mmu.rs`.
+- Erros de compilação reportados no Android, todos em `crates/aceris-core/src/cpu/mmu.rs`: `TLB_CAPACITY` não encontrado na linha 349; método `matches_context` chamado em `&Option<TlbEntry>` na linha 397; e incompatibilidade `Option<TlbEntry>`/ `TlbEntry` na linha 399. A falha de formatação em `mmu.rs:371` também pertence à alteração do TLB.
+- Esses erros não estão em `thumb.rs`; não foram alterados nesta tarefa para respeitar o isolamento entre agentes. A correção do MMU exige autorização específica do mantenedor ou intervenção do agente responsável por essa área.
+- Após `b73d1aa`, o workflow `43342586393` foi iniciado para a nova HEAD. Seu resultado ainda deve ser verificado; até então, os testes Thumb não podem ser declarados aprovados.
