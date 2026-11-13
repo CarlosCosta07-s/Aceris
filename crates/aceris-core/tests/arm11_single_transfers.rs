@@ -100,18 +100,34 @@ fn pc_relative_literal_halfword_load_without_writeback_remains_valid() {
 #[test]
 fn doubleword_transfers_reject_writeback_aliases_and_overlapping_offsets() {
     // LDRD r4,r5,[r1,r4] ; LDRD r4,r5,[r1,r5] ;
-    // STRD r4,r5,[r1,r4] ; STRD r4,r5,[r1,r5] ;
     // LDRD r4,r5,[r5,#4]! ; STRD r4,r5,[r5,#4]!.
+    // The final form uses reserved P=0,W=1.
     for instruction in [
         0xE181_40D4,
         0xE181_40D5,
-        0xE181_40F4,
-        0xE181_40F5,
         0xE1E5_40D4,
         0xE1E5_40F4,
         0xE0E1_40D0,
     ] {
         assert_undefined_without_side_effects(instruction);
+    }
+}
+
+#[test]
+fn strd_register_offset_allows_rm_to_alias_either_transfer_source() {
+    // STRD r4,r5,[r1,r4] and STRD r4,r5,[r1,r5].
+    for (instruction, first, second) in [
+        (0xE181_40F4, 8, 0x5566_7788),
+        (0xE181_40F5, 0x1122_3344, 8),
+    ] {
+        let (mut cpu, mut memory) = machine(instruction);
+        cpu.regs[4] = first;
+        cpu.regs[5] = second;
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(memory.read32(DATA + 8).unwrap(), first);
+        assert_eq!(memory.read32(DATA + 12).unwrap(), second);
+        assert_eq!(cpu.regs[1], DATA);
     }
 }
 
