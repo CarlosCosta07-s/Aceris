@@ -748,3 +748,10 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - `a0818ae` — corrige a formatação indicada por Rustfmt. Workflow [43510347568](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43510347568) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` aprovados em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
 - Referência arquitetural independente: ARM Architecture Reference Manual ARM DDI 0100I, seção A4.1.35 (MOV, A4-68) e A4.1.41 (MVN, A4-82), que identificam o campo `Rn` como SBZ. Não foi consultado código-fonte de emuladores de terceiros.
 - A implementação alterada ficou limitada a `crates/aceris-core/src/cpu/arm.rs`; a regressão externa foi adicionada em `crates/aceris-core/tests/arm11_miscellaneous.rs`. Thumb não foi alterado.
+
+## A32 — PC como primeiro operando de processamento de dados (13/11/2026)
+
+- `961352b` — adiciona o teste externo `arm_add_uses_instruction_address_plus_eight_when_pc_is_rn`. `ADD r2, pc, #4` confirma o valor do PC como endereço da instrução + 8 e preserva NZCV quando S=0. `ADDS r2, pc, #0x80` usa um PC próximo de `INT32_MAX`, confirma o resultado `0x80000008` e verifica `N=1`, `C=0`, `V=1`.
+- Referência arquitetural independente: ARM Architecture Reference Manual ARM DDI 0100I, seção A4.1.3 (ADD, página A4-6), que usa explicitamente `ADD Rd, PC, #offset` para gerar endereços PC-relativos e define PC como endereço da instrução + 8: https://www.scs.stanford.edu/~zyedidia/docs/arm/armv6.pdf
+- Workflow [43510706670](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43510706670) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
+- Apenas testes externos em `crates/aceris-core/tests/arm11_arithmetic_flags.rs` foram alterados nesta etapa; nenhuma implementação de produção ou código Thumb foi modificado.
