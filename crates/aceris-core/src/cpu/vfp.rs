@@ -6,10 +6,13 @@
 //! and VCVT (float<->float and float<->integer).
 //!
 //! A verified subset of VFP11 short-vector arithmetic and unary operations is
-//! supported. The legacy FLDMX/FSTMX double context-transfer forms with odd
-//! word counts are also implemented. Remaining limits include trapped
-//! floating-point exceptions, scalar-only comparisons/conversions, and extreme
-//! precision/subnormal cases. Scalar operations honor FPSCR.RMode and
+//! supported. FPEXC's defined context fields and privileged FPINST/FPINST2
+//! storage are modeled (FPINST has its defined reset value; FPINST2 uses a
+//! deterministic zero for its architecturally UNPREDICTABLE reset). The legacy
+//! FLDMX/FSTMX double context-transfer forms with odd word counts are also
+//! implemented. Remaining limits include hardware-generated exception bounce,
+//! scalar-only comparisons/conversions, and extreme precision/subnormal cases.
+//! Scalar operations honor FPSCR.RMode and
 //! accumulate IXC/UFC for inexact and tiny results. Single precision is
 //! computed through `f64`; double precision residuals use TwoSum/FMA where
 //! available.
