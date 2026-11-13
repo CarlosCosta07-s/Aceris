@@ -1710,9 +1710,24 @@ impl Arm11Core {
         let rn = bits(word, 19, 16);
         let rd = bits(word, 15, 12);
         let rm = bits(word, 3, 0);
+        let byte = bit(word, 22);
+
+        // SWP/SWPB do not permit PC in any operand. The base register
+        // must also differ from both transfer registers; Rd == Rm is valid.
+        if rn as usize == PC
+            || rd as usize == PC
+            || rm as usize == PC
+            || rn == rd
+            || rn == rm
+        {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
         let addr = self.reg(rn, 8);
         let new_value = self.reg(rm, 8);
-        let byte = bit(word, 22);
 
         // SWPB is a byte access. SWP is a WLoad+WStore in legacy mode
         // (U=0), but becomes a word-sized synchronization access when U=1.
