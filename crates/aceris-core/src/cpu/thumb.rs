@@ -604,7 +604,7 @@ mod tests {
         assert_eq!(m.cpu.regs[1], u32::MAX);
         assert_eq!(m.flags(), (true, false, true, false));
     }
-    
+
     #[test]
     fn zero_immediate_lsr_and_asr_each_shift_by_32() {
         let mut lsr = Machine::with(0x0801, |cpu, _| cpu.regs[0] = 0x8000_0001);
@@ -705,7 +705,7 @@ mod tests {
         assert_eq!(alu(0x4148, 1, 2, carry).cpu.regs[0], 4);
         assert_eq!(alu(0x4148, 1, 2, Psr::default()).cpu.regs[0], 3);
     }
-    
+
     #[test]
     fn sbc_uses_the_inverse_borrow_carry_semantics() {
         let carry = Psr::from_flags(false, false, true, false);
@@ -950,7 +950,7 @@ mod tests {
 
         assert_eq!(m.cpu.regs[2], 0x1122_3344);
     }
-    
+
     #[test]
     fn setend_big_endian_is_used_by_thumb_halfword_and_signed_loads() {
         let mut m = Machine::new(&[0xB658, 0x8008, 0x880A, 0x5F8B]);
