@@ -2259,13 +2259,16 @@ impl Arm11Core {
         let register_offset = !bit(word, 22);
         let rm = bits(word, 3, 0);
         let pair_transfer = matches!((load, bits(word, 6, 5)), (false, 0b10 | 0b11));
+        let doubleword_load = pair_transfer && bits(word, 6, 5) == 0b10;
         let pair_second = rd + 1;
         let invalid_pair = pair_transfer
             && (rd % 2 != 0
                 || rd >= 14
                 || (!pre_index && bit(word, 21))
                 || (writeback && rn == pair_second)
-                || (register_offset && (rm == rd || rm == pair_second)));
+                || (register_offset
+                    && doubleword_load
+                    && (rm == rd || rm == pair_second)));
         let invalid_operands = rd as usize == PC
             || (writeback && (rn as usize == PC || rn == rd))
             || (register_offset && rm as usize == PC)
