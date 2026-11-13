@@ -448,3 +448,30 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 
 - Workflow [43329839504](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43329839504) concluído com sucesso: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
 - Referência primária: [ARM11 MPCore Processor Technical Reference Manual, ARM DDI 0360E](https://documentation-service.arm.com/static/5e8e1cd9fd977155116a4a7a), seção 2.11.12, páginas impressas 2-47 e 2-48.
+
+
+## Continuação a partir das contribuições recentes de Claude — 12/11/2026
+
+### Trabalho de Claude preservado no `main`
+
+- `ed153e3` — acrescenta `ScreenSurface::to_png()` e o codificador PNG RGBA8 sem dependência externa. O comando `aceris <JOGO> --dump-lcd <DIR>` exporta `top_left.png`, `top_right.png` e `bottom.png`. Workflow `43331314353`: Linux, Windows, macOS e build Android ARM64 aprovados.
+- `c9cd08f` — acrescenta gerações de exclusividade no backing de memória física, com granularidade de reserva de 8 bytes. Escritas de dispositivos que tocam a mesma granula invalidam reservas LDREX/STREX; o caminho de memória linear da sessão combina a geração virtual com a física. Workflow `43331633910`: matriz desktop e Android ARM64 aprovada.
+- `2af7b1b` — acrescenta janela desktop X11 carregando Xlib dinamicamente por FFI Rust, sem crate ou dependência de compilação externa. `--window [--scale N]` compõe a superfície superior esquerda e a LCD inferior; X11/Linux apenas. Win32/Cocoa, Android window surface, entrada, áudio e redimensionamento continuam pendentes. Workflow `43332199817`: Linux, Windows, macOS e Android ARM64 aprovados. A CI valida compilação e testes, não substitui teste manual em todas as plataformas.
+- Essas implementações foram revisadas sem reescrever os arquivos de vídeo, memória física ou janela. A saída PNG contém as três superfícies; a janela monoscópica escolhe a imagem superior esquerda e não apresenta a imagem superior direita em paralelo.
+
+### CP15 — registradores de remapeamento de memória
+
+- `9fb463b` — adiciona armazenamento e acesso CP15 aos registradores `PRRR` (`c10,c2,0`) e `NMRR` (`c10,c2,1`), valores de reset, máscaras dos campos e controle `SCTLR.TRE` (bit 28). Acesso fica restrito a modos privilegiados.
+- A primeira execução de CI `43333251319` falhou em Linux/macOS/Windows porque os acessores preparatórios estavam declarados como privados ao módulo e não eram usados ainda pela MMU. Android concluiu. Não considerar esse commit validado.
+- `b2dedee` corrige a máscara de escrita do `PRRR` para preservar também [1:0], expõe os acessores necessários para a próxima etapa da MMU e mantém testes de reset, máscaras, privilégio e `SCTLR.TRE`.
+- Workflow `43333329655` para `b2dedee` passou em Linux, Windows e macOS (Rustfmt, Clippy com `-D warnings`, testes do workspace) e no build release Android `arm64-v8a`.
+- Limite deliberado: `PRRR`/`NMRR` e `SCTLR.TRE` já têm estado CP15 correto, mas ainda não são consumidos pelo caminho de tradução. Não declarar os atributos de memória da MMU concluídos, nem implementar `PAR` como se os atributos estivessem disponíveis.
+
+### Próxima etapa técnica
+
+1. Preservar em `TlbEntry` os atributos brutos de descritores XP=1 e XP=0: TEX, C, B e S, respeitando os formatos de seção/superseção, large/small page e extended-small-page.
+2. Aplicar a conversão do tipo primário e os atributos internos/externos de `PRRR`/`NMRR` somente quando `SCTLR.TRE` estiver habilitado, conforme o ARM11 MPCore TRM.
+3. Somente depois integrar `MCR p15,0,Rn,c7,c8,{0..3}` e `MRC p15,0,Rd,c7,c4,0` para consulta VA→PA/PAR, considerando privilégio, ASID, TLB, faults e sem introduzir valores de atributo fictícios.
+4. Continuar em `main`, sem editar `crates/aceris-core/src/cpu/thumb.rs`, sem alterar os arquivos recém-entregues por Claude sem necessidade e sem adicionar dependências externas.
+
+Referência primária independente: ARM11 MPCore Processor Technical Reference Manual, ARM DDI 0360F, seções CP15 c10 Memory Region Remap Registers e formato do Physical Address Register. Documentação pública do processador é permitida; código interno de outros emuladores não foi usado.

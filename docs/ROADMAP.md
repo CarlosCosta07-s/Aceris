@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `3064309c0f163ec5366ecf56162ef89e15654518`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `b2dedee16aaf69230f7b5811cdfc340f04844f7e`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -56,6 +56,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Coprocessadores e MMU
 
 - [x] Arquivo de estado CP15 com MIDR, CTR, TLBTR, PFR/DFR/MMFR/ISAR do ARM11, controle, CPACR, TTBR0/1, TTBCR, DACR, fault status/address, FCSE PID, CONTEXTIDR e TPIDR*; leitura com privilégio e escrita de TPIDRURO testadas
+- [~] CP15 `PRRR` (`c10,c2,0`), `NMRR` (`c10,c2,1`) e `SCTLR.TRE` agora têm estado, valores de reset, máscaras de campos e regras de privilégio testados; a MMU ainda não aplica esse remapeamento aos atributos TEX/C/B/S dos descritores.
 - [x] CP15 WFI (`MCR p15,0,Rt,c7,c0,4`) suspende o core e interrompe o orçamento de execução; IRQ/FIQ acordam WFI mesmo com CPSR.I/F mascarado, e somente uma interrupção desmascarada entra no vetor. A sessão expõe linhas IRQ/FIQ externas ao host; não substitui um controlador de interrupções de dispositivos.
 - [~] Operações de manutenção do TLB CP15 c8 estão ligadas ao TLB unificado de software; manutenção de cache, coerência entre agentes e algumas barreiras ainda não têm efeitos arquiteturais modelados
 - [~] MMU ARMv6 de descritores curtos: TTBR0/TTBR1 e TTBCR.N; seções/superseções e coarse tables; formato XP=1 com AP/APX/XN e descritores de páginas grandes/pequenas; formato legado XP=0 com AP0–AP3 por subpágina, regras AP=00/S/R e extended-small-page de 4 KiB em coarse tables; FCSE PID (VA abaixo de 32 MiB → MVA) e domínios
