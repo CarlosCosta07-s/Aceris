@@ -69,6 +69,14 @@ pub trait Bus {
         self.write32(addr, value)
     }
 
+    /// Reports whether one byte belongs to Normal memory for the requested
+    /// access and privilege level. Buses without virtual-memory attributes
+    /// model their backing store as Normal memory by default.
+    fn is_normal_memory(&mut self, addr: u32, write: bool, privileged: bool) -> Result<bool> {
+        let _ = (addr, write, privileged);
+        Ok(true)
+    }
+
     /// Allows an MMU bus adapter to perform the CP15 VA-to-PA permission probe
     /// against the same TLB and page tables used by the current instruction.
     ///
