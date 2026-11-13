@@ -34,9 +34,9 @@ use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError, ServiceSessionKind};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
-    SVC_CLOSE_HANDLE, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MEMORY_BLOCK,
+    SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MEMORY_BLOCK,
     SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_EXIT_THREAD,
-    SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX,
+    SVC_GET_THREAD_PRIORITY, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX,
     SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
     SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION1,
 };
@@ -1402,12 +1402,15 @@ impl Arm11ProcessSession {
             .kernel_objects
             .memory_block_permissions(handle)
             .ok_or(KernelHandleError::WrongType)?;
+        // 0x1000_0000 is the kernel's DONTCARE value for peer permissions.
+        // It leaves the block's stored peer permission unchanged.
+        let peer_is_dontcare = other_permissions == 0x1000_0000;
         if my_permissions > 3
-            || other_permissions > 3
+            || (!peer_is_dontcare && other_permissions > 3)
             || my_permissions == 2
             || other_permissions == 2
             || my_permissions & !owner_permissions != 0
-            || other_permissions & !peer_permissions != 0
+            || (!peer_is_dontcare && other_permissions & !peer_permissions != 0)
         {
             return Err(KernelHandleError::InvalidMemoryPermission);
         }
@@ -1855,19 +1858,6 @@ impl Arm11ProcessSession {
 
     /// Handles MapMemoryBlock: r0 = handle, r1 = address,
     /// r2 = this-process permissions, r3 = peer-process permissions.
-    fn svc_map_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self
-            .scheduler
-            .core(caller)
-            .expect("caller context exists")
-            .regs;
-        let result = self
-            .map_memory_block(registers[0], registers[1], registers[2], registers[3])
-            .map(|()| 0)
-            .unwrap_or_else(kernel_handle_result_code);
-        self.write_svc_result(caller, result)
-    }
-
     /// Handles UnmapMemoryBlock: r0 = handle, r1 = mapping base address.
     fn svc_unmap_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
@@ -2450,20 +2440,6 @@ impl Arm11ProcessSession {
     }
 
     /// Handles CloseHandle using the process-local object handle in r0.
-    fn svc_close_handle(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let handle = self
-            .scheduler
-            .core(caller)
-            .expect("current thread context exists")
-            .regs[0];
-        let result = self
-            .kernel_objects
-            .close_handle(handle)
-            .map(|()| 0)
-            .unwrap_or_else(kernel_handle_result_code);
-        self.write_svc_result(caller, result)
-    }
-
     fn write_svc_result(&mut self, caller: ThreadId, result: u32) -> SvcRunDisposition {
         self.scheduler
             .core_mut(caller)
