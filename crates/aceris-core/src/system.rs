@@ -817,7 +817,10 @@ impl System {
                         match self.gsp_service.unregister_client_with_handoff(client_id) {
                             Ok(unregistration) => {
                                 if unregistration.rendering_right_wait_cancelled {
-                                    self.wake_pending_gsp_acquire(client_id, RESULT_INVALID_HANDLE)?;
+                                    self.wake_pending_gsp_acquire(
+                                        client_id,
+                                        RESULT_INVALID_HANDLE,
+                                    )?;
                                 }
                                 if let Some(next_owner) = unregistration
                                     .rendering_right_handoff
