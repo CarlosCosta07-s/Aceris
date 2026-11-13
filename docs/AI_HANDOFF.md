@@ -492,3 +492,31 @@ Referência primária independente: ARM11 MPCore Processor Technical Reference M
 - O mesmo commit acrescenta teste guest-side que define FCSE PID, busca a instrução na janela MVA do processo e consulta uma VA baixa; o PAR precisa apontar para o mapeamento físico do MVA resultante.
 - `26d3bad` — aplica Rustfmt às duas regressões. Workflow `43338851227` aprovado: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
 - Os testes não completam a conformidade ARM11: fault status adicional do PAR, fine tables/tiny pages, associatividade/replacement real do TLB e efeitos de caches/IMB/barreiras continuam pendentes.
+
+## Continuação do interpretador Thumb — validação de codificações ARMv6/ARMv6K (12/11/2026)
+
+Carlos Costa solicitou continuar diretamente o trabalho anterior do interpretador Thumb. A intervenção ficou limitada a `crates/aceris-core/src/cpu/thumb.rs` e à documentação correspondente, preservando o restante trabalho existente.
+
+### Alterações desta rodada
+
+- O Thumb rejeita agora a família de codificações `BFxx` no perfil ARMv6/ARMv6K. O NOP de 16 bits é uma adição ARMv6T2; os hints YIELD/WFE/WFI/SEV pertencem a arquitetura posterior. O código não deve aceitar essas codificações apenas como no-op.
+- As instruções `PUSH` e `POP` rejeitam listas de registradores vazias com `Error::UndefinedInstruction`, seguindo a política determinística de não executar casos arquiteturalmente UNPREDICTABLE.
+- Acrescentado teste do alias ARMv6 `CPY`/MOV entre registradores baixos, preservando flags.
+- Acrescentado teste de integração que executa SETEND BE, STR e LDR, verificando byte order no caminho de memória Thumb.
+- Substituído o teste que chamava `BF00` de NOP válido por uma regressão que confirma sua rejeição. O teste de operação sem efeito usa agora `MOV r8,r8` (`0x46C0`), sem depender do hint NOP ARMv6T2.
+- Roadmap atualizado para refletir o estado real e manter Thumb como parcialmente validado.
+
+### Commits
+
+- `877efa1170cf5f37efce620c5f78bf4c71d53821` — correções do interpretador e novos testes.
+- O commit de documentação do roadmap foi publicado logo após a alteração de código.
+
+### Verificação
+
+Os testes foram adicionados ao arquivo Thumb. Esta intervenção não dispõe de `rustc`/Cargo local; não declare os testes como executados até verificar a CI em `main`. A matriz configurada precisa aprovar Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux/Windows/macOS, além do build Android ARM64.
+
+### Referências arquiteturais independentes
+
+- ARM Architecture Reference Manual, ARM DDI 0406C.d, tabelas de instruções Thumb de 16 bits e seção de diferenças ARMv6/ARMv6K; usar a documentação oficial para auditar cada codificação, sem consultar código-fonte de outros emuladores.
+- ARM Architecture Reference Manual, descrições T1 de PUSH/POP: listas vazias são classificadas como UNPREDICTABLE. O Aceris rejeita esses casos deterministamente e não afirma que a arquitetura os classifique como UNDEFINED.
+- Nenhuma dependência externa foi adicionada e nenhum outro emulador foi consultado.
