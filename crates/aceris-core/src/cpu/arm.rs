@@ -2266,9 +2266,7 @@ impl Arm11Core {
                 || rd >= 14
                 || (!pre_index && bit(word, 21))
                 || (writeback && rn == pair_second)
-                || (register_offset
-                    && doubleword_load
-                    && (rm == rd || rm == pair_second)));
+                || (register_offset && doubleword_load && (rm == rd || rm == pair_second)));
         let invalid_operands = rd as usize == PC
             || (writeback && (rn as usize == PC || rn == rd))
             || (register_offset && rm as usize == PC)
