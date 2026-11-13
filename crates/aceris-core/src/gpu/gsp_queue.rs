@@ -1,9 +1,9 @@
 //! GSP GX shared-memory command queue decoding.
 //!
 //! This module models the documented queue header and the 15-entry ring.
-//! The system dispatcher consumes ProcessCommandList entries through the
-//! guest TriggerCmdReqQueue path. Other GX command families, busy arbitration,
-//! cache maintenance and device-side effects remain incomplete.
+//! The system dispatcher consumes ProcessCommandList and MemoryFill entries
+//! through the guest TriggerCmdReqQueue path. Other GX command families,
+//! busy arbitration and cache maintenance remain incomplete.
 
 use std::fmt;
 
@@ -23,6 +23,8 @@ pub const GSP_GX_COMMAND_ENTRY_SIZE: usize = 0x20;
 pub const GSP_GX_COMMAND_QUEUE_CAPACITY: u8 = 15;
 /// GX command ID for ProcessCommandList.
 pub const GSP_GX_COMMAND_PROCESS_COMMAND_LIST: u8 = 0x01;
+/// GX command ID for MemoryFill.
+pub const GSP_GX_COMMAND_MEMORY_FILL: u8 = 0x02;
 /// GSP result for an invalid GPU-visible address.
 pub const GSP_INVALID_ADDRESS_RESULT: u32 = 0xE0E0_2BF5;
 
@@ -82,6 +84,29 @@ impl GspGxCommand {
             flush_buffer: self.arguments[6] != 0,
         })
     }
+
+    /// MemoryFill's two start/value/end triples and packed control halfwords.
+    pub const fn memory_fill(self) -> Option<GspMemoryFill> {
+        if self.command_id != GSP_GX_COMMAND_MEMORY_FILL {
+            return None;
+        }
+        Some(GspMemoryFill {
+            buffers: [
+                GspMemoryFillBuffer {
+                    start_address: self.arguments[0],
+                    fill_value: self.arguments[1],
+                    end_address: self.arguments[2],
+                    control: self.arguments[6] as u16,
+                },
+                GspMemoryFillBuffer {
+                    start_address: self.arguments[3],
+                    fill_value: self.arguments[4],
+                    end_address: self.arguments[5],
+                    control: (self.arguments[6] >> 16) as u16,
+                },
+            ],
+        })
+    }
 }
 
 /// Decoded arguments for GX command ID 0x01.
@@ -91,6 +116,37 @@ pub struct GspProcessCommandList {
     pub buffer_size_bytes: u32,
     pub update_gas_blend: bool,
     pub flush_buffer: bool,
+}
+
+/// One of the two optional buffers written by a GX MemoryFill command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspMemoryFillBuffer {
+    pub start_address: u32,
+    pub fill_value: u32,
+    pub end_address: u32,
+    pub control: u16,
+}
+
+impl GspMemoryFillBuffer {
+    /// Bit 0 requests a fill; bits 8-9 select 16-, 24- or 32-bit elements.
+    pub const fn is_triggered(self) -> bool {
+        self.control & 1 != 0
+    }
+
+    pub const fn element_width_bytes(self) -> Option<usize> {
+        match (self.control >> 8) & 3 {
+            0 => Some(2),
+            1 | 3 => Some(3),
+            2 => Some(4),
+            _ => None,
+        }
+    }
+}
+
+/// Decoded arguments for GX command ID 0x02.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspMemoryFill {
+    pub buffers: [GspMemoryFillBuffer; 2],
 }
 
 /// Queue decoding or state-transition error.
@@ -118,6 +174,13 @@ pub enum GspGxCommandQueueError {
     },
     InvalidCommandListSize {
         size_bytes: u32,
+    },
+    InvalidMemoryFillRange {
+        start_address: u32,
+        end_address: u32,
+    },
+    UnsupportedMemoryFillWidth {
+        control: u16,
     },
     CommandListTooLarge {
         size_bytes: u32,
