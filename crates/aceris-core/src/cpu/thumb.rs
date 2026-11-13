@@ -1505,7 +1505,7 @@ mod tests {
             m.cpu.step(&mut m.mem),
             Err(Error::UndefinedInstruction {
                 pc: 0,
-                word: 0xC406
+                word: 0xC206
             })
         ));
         assert_eq!(m.cpu.pc(), 0);
