@@ -475,21 +475,8 @@ fn smlad_family_reads_sources_and_accumulator_before_aliased_destination_write()
     for subtract in [false, true] {
         for exchange in [false, true] {
             for (rd, ra, rs, rm) in aliases {
-                let instruction = dual_multiply(
-                    0xE700_0010,
-                    rd,
-                    ra,
-                    rs,
-                    rm,
-                    subtract,
-                    exchange,
-                );
-                let initial = [
-                    0x8000_7FFF,
-                    0xFFFF_0001,
-                    0x7FFF_FFFF,
-                    0x1357_9BDF,
-                ];
+                let instruction = dual_multiply(0xE700_0010, rd, ra, rs, rm, subtract, exchange);
+                let initial = [0x8000_7FFF, 0xFFFF_0001, 0x7FFF_FFFF, 0x1357_9BDF];
                 let lhs = initial[rm];
                 let rhs = initial[rs];
                 let rhs_low = if exchange {
@@ -524,8 +511,7 @@ fn smlad_family_reads_sources_and_accumulator_before_aliased_destination_write()
                         q_before,
                     );
                     assert_eq!(
-                        cpu.regs[rd],
-                        wide as u32,
+                        cpu.regs[rd], wide as u32,
                         "rd={rd} ra={ra} rs={rs} rm={rm} subtract={subtract} exchange={exchange}"
                     );
                     assert_eq!(
@@ -567,15 +553,15 @@ fn smlald_family_snapshots_source_registers_that_overlap_the_accumulator_pair() 
             };
             let first = signed_half(initial_hi, false) * rhs_low;
             let second = signed_half(initial_hi, true) * rhs_high;
-            let products = if subtract { first - second } else { first + second };
+            let products = if subtract {
+                first - second
+            } else {
+                first + second
+            };
             let accumulator = (u64::from(initial_hi) << 32) | u64::from(initial_lo);
             let expected = accumulator.wrapping_add(products as u64);
 
-            let cpu = machine(
-                instruction,
-                &[(4, initial_hi), (5, initial_lo)],
-                true,
-            );
+            let cpu = machine(instruction, &[(4, initial_hi), (5, initial_lo)], true);
             assert_eq!(cpu.regs[5], expected as u32);
             assert_eq!(cpu.regs[4], (expected >> 32) as u32);
             assert!(cpu.cpsr.q());
