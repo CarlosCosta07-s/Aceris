@@ -175,7 +175,7 @@ impl DescriptorMemoryAttributes {
             (1, 0) => (MemoryType::Normal, self.shareable, 0, 0),
             (1, 3) => (MemoryType::Normal, self.shareable, 1, 1),
             (2, 0) => (MemoryType::Device, false, 0, 0),
-            (4..=7, policy) => (MemoryType::Normal, self.shareable, policy, self.tex & 3)
+            (4..=7, policy) => (MemoryType::Normal, self.shareable, policy, self.tex & 3),
             _ => (MemoryType::Reserved, false, 0, 0),
         };
         MemoryAttributes {
@@ -962,9 +962,9 @@ impl Arm11Core {
             privileged: self.cpsr.privileged(),
         };
 
-        let translation = if self.cp15.mmu_enabled() {
+        let translation_result = if self.cp15.mmu_enabled() {
             let mut mmu = MmuBus::new(bus, params, &mut tlb);
-            mmu.translate_for_pa_register(virtual_address, access, privileged_access)?
+            mmu.translate_for_pa_register(virtual_address, access, privileged_access)
         } else {
             // With translation disabled, data accesses use a flat address map.
             // The default data-side type is Strongly Ordered before TEX remap.
@@ -984,7 +984,9 @@ impl Arm11Core {
                 attributes,
             }
         };
+        // Restore the CPU's TLB even when the page-table bus itself fails.
         self.tlb = tlb;
+        let translation = translation_result?;
 
         let pa_register = match translation {
             PaTranslation::Mapped {
@@ -1277,6 +1279,31 @@ mod tests {
         cpu.translate_va_to_pa_register(&mut mem, va, Access::Write, false)
             .unwrap();
         assert_eq!(cpu.cp15.read(true, 0, 7, 4, 0), Ok(0x1B));
+    }
+
+    #[test]
+    fn guest_mcr_va_to_pa_uses_the_active_translated_mmu_bus() {
+        let (mut cpu, mut mem) = machine();
+        let target_va = 0x1234_5678;
+
+        // Map instruction VA 0 to PA 0 and the target VA to a different PA section.
+        set_l1(&mut mem, 0, SECTION | SECTION_AP_RW_ALL);
+        set_l1(
+            &mut mem,
+            0x123,
+            0x0120_0000
+                | SECTION
+                | SECTION_AP_RW_ALL
+                | (4 << 12)
+                | (1 << 16)
+                | (1 << 3)
+                | (1 << 2),
+        );
+        mem.write32(0, 0xEE07_0F18).unwrap(); // MCR p15,0,r0,c7,c8,0
+        cpu.regs[0] = target_va;
+
+        assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.cp15.read(true, 0, 7, 4, 0), Ok(0x0124_51B0));
     }
 
     #[test]
