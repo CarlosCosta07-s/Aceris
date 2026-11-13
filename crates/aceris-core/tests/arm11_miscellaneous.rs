@@ -26,14 +26,21 @@ fn reserved_compare_space_encodings_are_undefined_without_side_effects() {
         let status_before = cpu.cpsr;
         let data_before = memory.read32(0x20).unwrap();
 
-        assert!(matches!(
-            cpu.step(&mut memory),
-            Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
-        ), "{instruction:#010x}");
+        assert!(
+            matches!(
+                cpu.step(&mut memory),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+            ),
+            "{instruction:#010x}"
+        );
         assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
         assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
         assert_eq!(cpu.pc(), 0, "{instruction:#010x}");
-        assert_eq!(memory.read32(0x20).unwrap(), data_before, "{instruction:#010x}");
+        assert_eq!(
+            memory.read32(0x20).unwrap(),
+            data_before,
+            "{instruction:#010x}"
+        );
         assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
     }
 }
