@@ -3342,13 +3342,13 @@ mod tests {
                 m.cpu.regs[0] = DATA + 1;
                 m.cpu.regs[1] = 0x1122_3344;
                 m.cpu.regs[2] = 0x5566_7788;
-                m.cpu.cp15_mut().write(true, 0, 1, 0, 0, alignment_bit).unwrap();
+                m.cpu
+                    .cp15_mut()
+                    .write(true, 0, 1, 0, 0, alignment_bit)
+                    .unwrap();
                 m.mem.write32(DATA, 0xAABB_CCDD).unwrap();
                 m.mem.write32(DATA + 4, 0x1234_5678).unwrap();
-                let before = (
-                    m.mem.read32(DATA).unwrap(),
-                    m.mem.read32(DATA + 4).unwrap(),
-                );
+                let before = (m.mem.read32(DATA).unwrap(), m.mem.read32(DATA + 4).unwrap());
 
                 assert!(matches!(
                     m.cpu.step(&mut m.mem),
