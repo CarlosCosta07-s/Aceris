@@ -287,6 +287,16 @@ impl Arm11Core {
             });
         }
 
+        // With writeback, STMIA may include Rn only when Rn is the
+        // lowest-numbered register in the list. Other forms have no
+        // architecturally reliable stored value for the base register.
+        if !load && list & (1 << rn) != 0 && list & ((1 << rn) - 1) != 0 {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: half,
+            });
+        }
+
         let mut addr = self.regs[rn];
         let new_base = addr.wrapping_add(4 * list.count_ones());
 
@@ -1104,6 +1114,29 @@ mod tests {
         load.step();
         assert_eq!(load.cpu.regs[0], DATA + 0x100);
         assert_eq!(load.cpu.regs[1], 0x5566_7788);
+    }
+
+    #[test]
+    fn stmia_rejects_writeback_base_that_is_not_lowest_in_register_list() {
+        // STMIA r2!,{r1,r2} has no architecturally reliable stored value for R2.
+        let mut m = Machine::with(0xC406, |cpu, mem| {
+            cpu.regs[1] = 0x1122_3344;
+            cpu.regs[2] = DATA;
+            mem.write32(DATA, 0xCAFE_BABE).unwrap();
+            mem.write32(DATA + 4, 0xDEAD_BEEF).unwrap();
+        });
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xC406
+            })
+        ));
+        assert_eq!(m.cpu.pc(), 0);
+        assert_eq!(m.cpu.regs[2], DATA);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0xCAFE_BABE);
+        assert_eq!(m.mem.read32(DATA + 4).unwrap(), 0xDEAD_BEEF);
     }
 
     // ----- branches ---------------------------------------------------------
