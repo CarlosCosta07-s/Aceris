@@ -739,6 +739,26 @@ mod tests {
         assert_eq!(m.cpu.regs[0], 3);
         assert_eq!(m.flags(), (true, false, false, false));
     }
+    
+    #[test]
+    fn cmn_sets_addition_flags_without_writing_destination() {
+        let m = alu(0x42C8, 0x7FFF_FFFF, 1, Psr::default()); // CMN r0,r1.
+        assert_eq!(m.cpu.regs[0], 0x7FFF_FFFF);
+        assert_eq!(m.flags(), (true, false, false, true));
+    }
+
+    #[test]
+    fn cmp_supports_high_register_operands() {
+        let mut m = Machine::with(0x4580, |cpu, _| {
+            cpu.regs[8] = 3;
+            cpu.regs[0] = 5;
+        }); // CMP r8,r0.
+        m.step();
+
+        assert_eq!(m.cpu.regs[8], 3);
+        assert_eq!(m.cpu.regs[0], 5);
+        assert_eq!(m.flags(), (true, false, false, false));
+    }
 
     // ----- hi registers and BX ----------------------------------------------
 
@@ -1061,6 +1081,29 @@ mod tests {
         m.step();
         assert_eq!((m.cpu.regs[1], m.cpu.regs[2]), (7, 8));
         assert_eq!(m.cpu.regs[0], DATA + 8);
+    }
+    
+    #[test]
+    fn multiple_transfers_preserve_architectural_base_register_rules() {
+        // STMIA r0!,{r0,r1}: when Rn is the lowest register, its old value is stored.
+        let mut store = Machine::with(0xC003, |cpu, _| {
+            cpu.regs[0] = DATA;
+            cpu.regs[1] = 0x1122_3344;
+        });
+        store.step();
+        assert_eq!(store.mem.read32(DATA).unwrap(), DATA);
+        assert_eq!(store.mem.read32(DATA + 4).unwrap(), 0x1122_3344);
+        assert_eq!(store.cpu.regs[0], DATA + 8);
+
+        // LDMIA r0!,{r0,r1}: the loaded base value wins and writeback is suppressed.
+        let mut load = Machine::with(0xC803, |cpu, mem| {
+            cpu.regs[0] = DATA;
+            mem.write32(DATA, DATA + 0x100).unwrap();
+            mem.write32(DATA + 4, 0x5566_7788).unwrap();
+        });
+        load.step();
+        assert_eq!(load.cpu.regs[0], DATA + 0x100);
+        assert_eq!(load.cpu.regs[1], 0x5566_7788);
     }
 
     // ----- branches ---------------------------------------------------------
