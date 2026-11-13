@@ -400,6 +400,14 @@ impl Arm11ProcessSession {
         self.kernel_objects.event_is_signaled(handle)
     }
 
+    /// Clears a process-local event handle from a device or HLE service.
+    pub fn clear_event_handle(
+        &mut self,
+        handle: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        self.kernel_objects.clear_event(handle)
+    }
+
     /// Creates a `gsp::Gpu` client endpoint in this process.
     pub fn create_gsp_gpu_session(&mut self) -> std::result::Result<u32, KernelHandleError> {
         self.kernel_objects.insert_gsp_gpu_session()
