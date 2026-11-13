@@ -84,6 +84,22 @@ fn enabled_divide_by_zero_records_fpinst_and_bounces_the_next_vfp_operation() {
 }
 
 #[test]
+fn bounced_fpenable_instruction_is_rewritten_to_al_condition() {
+    const VDIV_EQ_S0_S1_S2: u32 = 0x0E80_0A81;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VDIV_EQ_S0_S1_S2]);
+    cpu.regs[0] = 1 << 9; // FPSCR.DZE
+    cpu.cpsr.0 |= Psr::Z;
+    cpu.vfp_mut().set_s(1, 1.0f32.to_bits());
+    cpu.vfp_mut().set_s(2, 0.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap(); // VMSR FPSCR
+    cpu.step(&mut memory).unwrap(); // Conditional VDIV executes and bounces.
+
+    assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0);
+}
+
+#[test]
 fn enabled_invalid_operation_sets_fpexc_ioc_without_committing_the_result() {
     let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VSQRT_S0_S1]);
     cpu.regs[0] = 1 << 8; // FPSCR.IOE
@@ -120,15 +136,17 @@ fn divide_by_zero_trap_enable_does_not_bounce_a_finite_division() {
 }
 
 #[test]
-fn input_denormal_trap_enable_remains_an_explicit_unimplemented_limit() {
-    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
-    cpu.regs[0] = 1 << 15; // FPSCR.IDE is not implemented by the scalar bounce model.
-    let previous = cpu.vfp().fpscr();
+fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
+    for mask in [1 << 15, 1 << 12, 1 << 11, 1 << 10] {
+        let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
+        cpu.regs[0] = mask;
+        let previous = cpu.vfp().fpscr();
 
-    assert!(matches!(
-        cpu.step(&mut memory),
-        Err(Error::Unimplemented(_))
-    ));
-    assert_eq!(cpu.vfp().fpscr(), previous);
-    assert_eq!(cpu.pc(), 0);
+        assert!(matches!(
+            cpu.step(&mut memory),
+            Err(Error::Unimplemented(_))
+        ), "FPSCR trap mask {mask:#010x}");
+        assert_eq!(cpu.vfp().fpscr(), previous);
+        assert_eq!(cpu.pc(), 0);
+    }
 }
