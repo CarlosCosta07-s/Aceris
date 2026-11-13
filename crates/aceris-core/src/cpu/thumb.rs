@@ -1104,6 +1104,33 @@ mod tests {
     }
 
     #[test]
+    fn pc_relative_load_aligns_pc_when_instruction_is_halfword_aligned() {
+        let mut m = Machine::with(0x4801, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0x4801).unwrap();
+            mem.write32(8, 0xCAFE_BABE).unwrap();
+        });
+        m.step();
+
+        // Align(PC + 4, 4) is 4 at instruction address 2; imm8<<2 adds 4.
+        assert_eq!(m.cpu.regs[0], 0xCAFE_BABE);
+        assert_eq!(m.cpu.pc(), 4);
+    }
+
+    #[test]
+    fn adr_aligns_pc_when_instruction_is_halfword_aligned() {
+        let mut m = Machine::with(0xA001, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xA001).unwrap();
+        });
+        m.step();
+
+        // ADR r0,[PC,#4] uses Align(PC + 4, 4), yielding address 8.
+        assert_eq!(m.cpu.regs[0], 8);
+        assert_eq!(m.cpu.pc(), 4);
+    }
+
+    #[test]
     fn register_offset_loads() {
         let mut m = data_machine(0x5888); // LDR r0,[r1,r2]
         m.step();
