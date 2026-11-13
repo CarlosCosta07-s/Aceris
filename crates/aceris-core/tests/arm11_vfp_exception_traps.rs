@@ -276,6 +276,76 @@ fn double_underflow_below_host_f64_range_flushes_to_positive_zero_with_fz() {
 }
 
 #[test]
+fn input_subnormal_with_ide_bounces_and_preserves_registers_when_fz_is_clear() {
+    const VMUL_S0_S1_S2: u32 = 0xEE20_0A81;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VMUL_S0_S1_S2]);
+    cpu.regs[0] = 1 << 15; // FPSCR.IDE
+    cpu.vfp_mut().set_s(0, 0xDEAD_BEEF);
+    cpu.vfp_mut().set_s(1, (-f32::from_bits(1)).to_bits());
+    cpu.vfp_mut().set_s(2, 2.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), 0xDEAD_BEEF);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
+    assert_ne!(cpu.vfp().fpscr() & (1 << 7), 0, "FPSCR.IDC is set");
+    assert_eq!(cpu.vfp().fpexc() & ((1 << 7) | (1 << 3) | (1 << 2) | 1), 0);
+    assert_eq!(cpu.vfp().fpinst(), VMUL_S0_S1_S2);
+}
+
+#[test]
+fn input_subnormal_with_ide_bounces_in_flush_to_zero_mode() {
+    const VMUL_S0_S1_S2: u32 = 0xEE20_0A81;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VMUL_S0_S1_S2]);
+    cpu.regs[0] = (1 << 15) | (1 << 24); // FPSCR.IDE | FPSCR.FZ
+    cpu.vfp_mut().set_s(0, 0xCAFE_BABE);
+    cpu.vfp_mut().set_s(1, (-f32::from_bits(1)).to_bits());
+    cpu.vfp_mut().set_s(2, 2.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), 0xCAFE_BABE);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0);
+    assert_ne!(cpu.vfp().fpscr() & (1 << 7), 0);
+    assert_eq!(cpu.vfp().fpinst(), VMUL_S0_S1_S2);
+}
+
+#[test]
+fn flush_to_zero_replaces_negative_subnormal_input_with_positive_zero() {
+    const VMUL_S0_S1_S2: u32 = 0xEE20_0A81;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VMUL_S0_S1_S2]);
+    cpu.regs[0] = 1 << 24; // FPSCR.FZ; IDE is clear.
+    cpu.vfp_mut().set_s(0, 0x1234_5678);
+    cpu.vfp_mut().set_s(1, (-f32::from_bits(1)).to_bits());
+    cpu.vfp_mut().set_s(2, 2.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), 0, "the input is flushed to positive zero");
+    assert_eq!(cpu.vfp().fpexc() & (1 << 31), 0, "IDE is disabled");
+    assert_ne!(cpu.vfp().fpscr() & (1 << 7), 0, "FPSCR.IDC is set");
+}
+
+#[test]
+fn input_subnormal_without_fz_or_ide_is_processed_and_sets_idc() {
+    const VMUL_S0_S1_S2: u32 = 0xEE20_0A81;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VMUL_S0_S1_S2]);
+    cpu.regs[0] = 0; // Both FZ and IDE are clear.
+    cpu.vfp_mut().set_s(1, (-f32::from_bits(1)).to_bits());
+    cpu.vfp_mut().set_s(2, 2.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), (-f32::from_bits(2)).to_bits());
+    assert_eq!(cpu.vfp().fpexc() & (1 << 31), 0);
+    assert_ne!(cpu.vfp().fpscr() & (1 << 7), 0, "FPSCR.IDC is sticky");
+}
+
+#[test]
 fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
     for mask in [1 << 15, 1 << 12] {
         let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
