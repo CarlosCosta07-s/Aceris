@@ -711,15 +711,16 @@ impl Arm11Core {
     fn vfp_system_register(&mut self, word: u32, to_core: bool, rt: u32) -> Result<()> {
         let reg = bits(word, 19, 16);
         let privileged = self.cpsr.privileged();
+        let enabled = self.vfp.enabled();
         if to_core {
             let value = match reg {
-                0 => FPSID,
+                0 if enabled || privileged => FPSID,
                 1 => {
                     self.require_enabled(word)?;
                     self.vfp.fpscr
                 }
-                6 => MVFR1,
-                7 => MVFR0,
+                6 if enabled || privileged => MVFR1,
+                7 if enabled || privileged => MVFR0,
                 8 if privileged => self.vfp.fpexc,
                 _ => return Err(self.vfp_undefined(word)),
             };
@@ -743,10 +744,9 @@ impl Arm11Core {
         }
         let value = self.regs[rt as usize];
         match reg {
-            // FPSID and MVFR0/MVFR1 are read-only. The VFP11 ignores writes
-            // to these identification registers; this model has no pipeline
-            // serialization state to expose for an FPSID write.
-            0 | 6 | 7 => {}
+            // The VFP11 exposes identification registers to User mode only
+            // when FPEXC.EN is set. Writes are ignored because they are RO.
+            0 | 6 | 7 if enabled || privileged => {}
             1 => {
                 self.require_enabled(word)?;
                 if value & FPSCR_TRAP_ENABLES != 0 {
@@ -1623,6 +1623,80 @@ mod tests {
         cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
         run(&mut cpu, &mut mem, &[0xEEF8_4A10]).unwrap();
         assert_eq!(cpu.regs[4], FPEXC_EN);
+    }
+
+    #[test]
+    fn vfp_identification_register_access_obeys_fpexc_and_privilege() {
+        let mut cpu = Arm11Core::new();
+        let mut mem = FlatMemory::new(0, 0x1000);
+        cpu.cp15_mut().grant_vfp_access();
+
+        // With FPEXC.EN clear, FPSID and MVFR0/1 require a privileged mode.
+        for instruction in [
+            0xEEF0_3A10, // VMRS r3, FPSID
+            0xEEF7_5A10, // VMRS r5, MVFR0
+            0xEEF6_6A10, // VMRS r6, MVFR1
+            0xEEE0_1A10, // VMSR FPSID, r1
+            0xEEE7_1A10, // VMSR MVFR0, r1
+            0xEEE6_1A10, // VMSR MVFR1, r1
+        ] {
+            assert!(matches!(
+                run(&mut cpu, &mut mem, &[instruction]),
+                Err(Error::UndefinedInstruction { .. })
+            ), "User mode, FPEXC.EN=0: {instruction:#010x}");
+        }
+
+        // Privileged mode may inspect identification registers while disabled.
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.regs[1] = 0xDEAD_BEEF;
+        run(
+            &mut cpu,
+            &mut mem,
+            &[
+                0xEEF0_3A10,
+                0xEEF7_5A10,
+                0xEEF6_6A10,
+                0xEEE0_1A10,
+                0xEEE7_1A10,
+                0xEEE6_1A10,
+                0xEEF0_7A10,
+                0xEEF7_8A10,
+                0xEEF6_9A10,
+            ],
+        )
+        .unwrap();
+        assert_eq!(cpu.regs[3], FPSID);
+        assert_eq!(cpu.regs[5], MVFR0);
+        assert_eq!(cpu.regs[6], MVFR1);
+        assert_eq!(cpu.regs[7], FPSID);
+        assert_eq!(cpu.regs[8], MVFR0);
+        assert_eq!(cpu.regs[9], MVFR1);
+
+        // FPSCR remains inaccessible while FPEXC.EN is clear, even in SVC.
+        assert!(matches!(
+            run(&mut cpu, &mut mem, &[0xEEF1_2A10]),
+            Err(Error::UndefinedInstruction { .. })
+        ));
+
+        // Once enabled, the identification registers are accessible in User mode.
+        cpu.switch_mode(Psr::USER_MODE).unwrap();
+        cpu.vfp_mut().set_enabled(true);
+        run(
+            &mut cpu,
+            &mut mem,
+            &[
+                0xEEF0_3A10,
+                0xEEF7_5A10,
+                0xEEF6_6A10,
+                0xEEE0_1A10,
+                0xEEE7_1A10,
+                0xEEE6_1A10,
+            ],
+        )
+        .unwrap();
+        assert_eq!(cpu.regs[3], FPSID);
+        assert_eq!(cpu.regs[5], MVFR0);
+        assert_eq!(cpu.regs[6], MVFR1);
     }
 
     #[test]
