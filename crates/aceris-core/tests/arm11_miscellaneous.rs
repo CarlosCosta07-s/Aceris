@@ -89,6 +89,10 @@ fn mov_and_mvn_reject_nonzero_rn_sbz_fields_atomically() {
         assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
         assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
         assert_eq!(cpu.pc(), 0, "{instruction:#010x}");
-        assert_eq!(memory.read32(0x20).unwrap(), data_before, "{instruction:#010x}");
+        assert_eq!(
+            memory.read32(0x20).unwrap(),
+            data_before,
+            "{instruction:#010x}"
+        );
     }
 }
