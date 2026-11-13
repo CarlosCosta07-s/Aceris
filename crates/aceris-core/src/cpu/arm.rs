@@ -1878,7 +1878,10 @@ impl Arm11Core {
             let value = bits(word, 7, 0).rotate_right(bits(word, 11, 8) * 2);
             self.write_status(word, value)?;
         } else {
-            return Err(Error::Unimplemented("miscellaneous instruction"));
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
         }
         Ok(StepEvent::Executed)
     }
