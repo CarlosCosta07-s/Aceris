@@ -2285,8 +2285,7 @@ mod tests {
             .write_memory_bytes(queue_address, &fill_queue_1_only)
             .unwrap();
 
-        let fill_1_only_trigger =
-            write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
+        let fill_1_only_trigger = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, fill_1_only_trigger, 2),
@@ -2300,8 +2299,8 @@ mod tests {
         assert_eq!(
             fill_1_only_bytes,
             [
-                0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB,
-                0xCD, 0xAB, 0xCD, 0xAB,
+                0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB,
+                0xCD, 0xAB,
             ]
         );
         system
