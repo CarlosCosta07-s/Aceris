@@ -210,6 +210,9 @@ fn exception_modes_preserve_their_banked_registers_and_independent_spsrs() {
         }
 
         execute(&mut cpu, 0xE14F_1000).unwrap(); // MRS r1, SPSR
-        assert_eq!(cpu.regs[1], expected_spsr[index].0, "SPSR bank for mode {mode:#x}");
+        assert_eq!(
+            cpu.regs[1], expected_spsr[index].0,
+            "SPSR bank for mode {mode:#x}"
+        );
     }
 }
