@@ -377,6 +377,14 @@ impl Arm11ProcessSession {
         self.kernel_objects.insert_gsp_gpu_session()
     }
 
+    /// Creates an event handle for a process-local service or device client.
+    pub fn create_event_handle(
+        &mut self,
+        reset_type: EventResetType,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.insert_event(reset_type)
+    }
+
     /// Returns service-session metadata for a guest-visible handle.
     pub fn service_session_kind(&self, handle: u32) -> Option<ServiceSessionKind> {
         self.kernel_objects.service_session(handle)
