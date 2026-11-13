@@ -579,7 +579,9 @@ impl System {
         })?;
         let pending_before = self.pending_gsp_acquires.len();
         let response_words = match service_kind {
-            ServiceSessionKind::ServiceManager => self.dispatch_service_manager_request(message)?,
+            ServiceSessionKind::ServiceManager { .. } => {
+                self.dispatch_service_manager_request(service_handle, message)?
+            }
             ServiceSessionKind::GspGpu {
                 client_id,
                 shared_memory_handle,
@@ -659,7 +661,11 @@ impl System {
         Ok(woke_any)
     }
 
-    fn dispatch_service_manager_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+    fn dispatch_service_manager_request(
+        &mut self,
+        service_handle: u32,
+        message: IpcMessage<'_>,
+    ) -> Result<Vec<u32>> {
         const SRV_REGISTER_CLIENT_HEADER: u32 = 0x0001_0002;
         const SRV_GET_SERVICE_HANDLE_HEADER: u32 = 0x0005_0100;
 
@@ -670,11 +676,26 @@ impl System {
                 if translation.len() != 2 || translation[0] != 0x20 {
                     return Ok(vec![0x0001_0040, RESULT_INVALID_ENUM]);
                 }
-                // The kernel-supplied process ID is not yet modelled. The
-                // current single-process bootstrap accepts registration.
-                Ok(vec![0x0001_0040, 0])
+                // The kernel-supplied process ID is not yet modelled; retain
+                // the registration state on this process-local srv: session.
+                let result = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                    .register_service_manager_client(service_handle)
+                    .map(|()| 0)
+                    .unwrap_or(RESULT_INVALID_HANDLE);
+                Ok(vec![0x0001_0040, result])
             }
             SRV_GET_SERVICE_HANDLE_HEADER => {
+                let registered = self
+                    .ncsd_session
+                    .as_ref()
+                    .and_then(|session| session.service_manager_client_registered(service_handle))
+                    .unwrap_or(false);
+                if !registered {
+                    return Ok(vec![0x0005_0040, RESULT_INVALID_HANDLE]);
+                }
                 let parameters = message.normal_parameters();
                 if parameters.len() != 4 || !message.translation_words().is_empty() {
                     return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
