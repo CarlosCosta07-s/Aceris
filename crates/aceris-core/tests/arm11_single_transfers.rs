@@ -76,6 +76,27 @@ fn byte_and_halfword_stores_reject_pc_as_the_transfer_register() {
 }
 
 #[test]
+fn halfword_transfers_reject_pc_offsets_and_invalid_writeback_bases() {
+    // LDRH r0,[r1,pc] ; LDRH r0,[pc,#0]! ; LDRH r1,[r1,#0]!.
+    for instruction in [0xE191_00BF, 0xE1FF_00B0, 0xE1F1_10B0] {
+        assert_undefined_without_side_effects(instruction);
+    }
+}
+
+#[test]
+fn pc_relative_literal_halfword_load_without_writeback_remains_valid() {
+    let instruction = 0xE1DF_00B0; // LDRH r0,[pc,#0]
+    let (mut cpu, mut memory) = machine(instruction);
+    memory.write16(8, 0xABCD).unwrap();
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[0], 0xABCD);
+    assert_eq!(cpu.pc(), 4);
+    assert_eq!(cpu.regs[1], DATA);
+}
+
+#[test]
 fn pc_relative_literal_word_load_without_writeback_remains_valid() {
     let instruction = 0xE59F_0000; // LDR r0,[pc,#0]
     let (mut cpu, mut memory) = machine(instruction);
