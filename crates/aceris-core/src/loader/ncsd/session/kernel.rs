@@ -154,7 +154,9 @@ struct KernelMemoryBlock {
 /// HLE service endpoint attached to a process-local session handle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServiceSessionKind {
-    ServiceManager { client_registered: bool },
+    ServiceManager {
+        client_registered: bool,
+    },
     GspGpu {
         client_id: Option<u8>,
         shared_memory_handle: Option<u32>,
