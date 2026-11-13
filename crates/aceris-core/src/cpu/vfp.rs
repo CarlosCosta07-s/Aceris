@@ -586,7 +586,7 @@ impl Vfp {
             BinOp::Div => x / y,
         };
         // Double-precision operations can underflow in the host f64 before
-        // the formatter sees a nonzero tiny value. For multiplication/division,
+        // the final rounding stage sees a nonzero tiny value. For multiplication/division,
         // finite nonzero operands cannot have an exact zero result.
         let underflowed_to_host_zero = finite
             && result == 0.0
