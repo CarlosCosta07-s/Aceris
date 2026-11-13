@@ -1284,6 +1284,56 @@ mod tests {
     }
 
     #[test]
+    fn thumb_unaligned_multiple_and_stack_transfers_enter_data_abort() {
+        let cases = [
+            (0xC006, DATA + 1, DATA + 1),       // STMIA r0!,{r1,r2}
+            (0xC806, DATA + 1, DATA + 1),       // LDMIA r0!,{r1,r2}
+            (0xB403, DATA + 0x81, DATA + 0x79), // PUSH {r0,r1}: fault at new SP.
+            (0xBC03, DATA + 1, DATA + 1),       // POP {r0,r1}: fault at original SP.
+        ];
+
+        for alignment_bit in [1 << 22, 1 << 1] {
+            for (half, base, fault_address) in cases {
+                let mut m = Machine::with(half, |cpu, mem| {
+                    cpu.regs[0] = base;
+                    cpu.regs[1] = 0x1122_3344;
+                    cpu.regs[2] = 0x5566_7788;
+                    cpu.regs[SP] = base;
+                    cpu.cp15.write(true, 0, 1, 0, 0, alignment_bit).unwrap();
+                    cpu.set_fault_exception_entry_enabled(true);
+                    mem.write32(DATA, 0xCAFE_BABE).unwrap();
+                    mem.write32(DATA + 4, 0xDEAD_BEEF).unwrap();
+                    mem.write32(DATA + 8, 0xA5A5_5A5A).unwrap();
+                });
+                let interrupted_status = m.cpu.cpsr;
+                let original_regs = m.cpu.regs;
+                let original_memory = [
+                    m.mem.read32(DATA).unwrap(),
+                    m.mem.read32(DATA + 4).unwrap(),
+                    m.mem.read32(DATA + 8).unwrap(),
+                ];
+
+                assert_eq!(
+                    m.cpu.step(&mut m.mem).unwrap(),
+                    StepEvent::Executed,
+                    "{half:#06x}, SCTLR bit {alignment_bit:#x}"
+                );
+                assert_eq!(m.cpu.cpsr.mode(), Psr::ABORT_MODE);
+                assert!(!m.cpu.cpsr.thumb());
+                assert_eq!(m.cpu.pc(), 0x10);
+                assert_eq!(m.cpu.regs[LR], 8);
+                assert_eq!(m.cpu.saved_program_status(), Some(interrupted_status));
+                assert_eq!(m.cpu.cp15.dfar(), fault_address);
+                assert_eq!(m.cpu.cp15.dfsr(), 0x8);
+                assert_eq!(m.cpu.regs[..13], original_regs[..13]);
+                assert_eq!(m.mem.read32(DATA).unwrap(), original_memory[0]);
+                assert_eq!(m.mem.read32(DATA + 4).unwrap(), original_memory[1]);
+                assert_eq!(m.mem.read32(DATA + 8).unwrap(), original_memory[2]);
+            }
+        }
+    }
+
+    #[test]
     fn sp_relative_store_and_load() {
         let mut m = Machine::with(0x9002, |cpu, _| {
             // STR r0,[sp,#8]
