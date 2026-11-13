@@ -2468,6 +2468,17 @@ impl Arm11Core {
                 word,
             });
         }
+        if exception_return {
+            let saved_status = self
+                .saved_program_status()
+                .ok_or(Error::Unimplemented("SPSR has not been initialized"))?;
+            if !super::Psr::is_valid_mode(saved_status.mode()) {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+        }
         if list == 0 {
             // The architecture classifies an empty list as UNPREDICTABLE.
             // Reject it deterministically rather than report a missing feature.
