@@ -535,8 +535,7 @@ fn walk_page_tables<B: Bus + ?Sized>(
             // It is an extended-small-page descriptor only in the
             // backwards-compatible XP=0 format handled below.
             if descriptor_type == 0 || (params.xp && descriptor_type == 0b11) {
-                let page_fault = match fault(FaultKind::Translation, false, domain, va, access)
-                {
+                let page_fault = match fault(FaultKind::Translation, false, domain, va, access) {
                     Walk::Fault(value) => value,
                     Walk::Mapped(_) => unreachable!(),
                 };
@@ -818,15 +817,16 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         privileged: bool,
     ) -> Option<Result<u32>> {
         let access = if write { Access::Write } else { Access::Read };
-        Some(self.translate_for_pa_register(virtual_address, access, privileged).map(
-            |translation| match translation {
+        Some(
+            self.translate_for_pa_register(virtual_address, access, privileged)
+                .map(|translation| match translation {
                 PaTranslation::Mapped {
                     physical_address,
                     attributes,
                 } => attributes.to_pa_register(physical_address),
                 PaTranslation::Fault(fault) => ((fault.status & 0xF) << 1) | 1,
-            },
-        ))
+                }),
+        )
     }
 
     fn read8(&mut self, addr: u32) -> Result<u8> {
@@ -979,10 +979,10 @@ impl Arm11Core {
             } else {
                 MemoryAttributes::strongly_ordered()
             };
-            PaTranslation::Mapped {
+            Ok(PaTranslation::Mapped {
                 physical_address: virtual_address,
                 attributes,
-            }
+            })
         };
         // Restore the CPU's TLB even when the page-table bus itself fails.
         self.tlb = tlb;
@@ -1291,13 +1291,7 @@ mod tests {
         set_l1(
             &mut mem,
             0x123,
-            0x0120_0000
-                | SECTION
-                | SECTION_AP_RW_ALL
-                | (4 << 12)
-                | (1 << 16)
-                | (1 << 3)
-                | (1 << 2),
+            0x0120_0000 | SECTION | SECTION_AP_RW_ALL | (4 << 12) | (1 << 16) | (1 << 3) | (1 << 2),
         );
         mem.write32(0, 0xEE07_0F18).unwrap(); // MCR p15,0,r0,c7,c8,0
         cpu.regs[0] = target_va;

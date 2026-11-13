@@ -84,12 +84,7 @@ impl Arm11Core {
                 ) {
                     Some(result) => result?,
                     None => {
-                        self.translate_va_to_pa_register(
-                            bus,
-                            virtual_address,
-                            access,
-                            opc2 < 2,
-                        )?;
+                        self.translate_va_to_pa_register(bus, virtual_address, access, opc2 < 2)?;
                         return Ok(StepEvent::Executed);
                     }
                 };
