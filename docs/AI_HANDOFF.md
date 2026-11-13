@@ -529,3 +529,11 @@ Os testes foram adicionados ao arquivo Thumb. Esta intervenção não dispõe de
 - Erros de compilação reportados no Android, todos em `crates/aceris-core/src/cpu/mmu.rs`: `TLB_CAPACITY` não encontrado na linha 349; método `matches_context` chamado em `&Option<TlbEntry>` na linha 397; e incompatibilidade `Option<TlbEntry>`/ `TlbEntry` na linha 399. A falha de formatação em `mmu.rs:371` também pertence à alteração do TLB.
 - Esses erros não estão em `thumb.rs`; não foram alterados nesta tarefa para respeitar o isolamento entre agentes. A correção do MMU exige autorização específica do mantenedor ou intervenção do agente responsável por essa área.
 - Após `b73d1aa`, o workflow `43342586393` foi iniciado para a nova HEAD. Seu resultado ainda deve ser verificado; até então, os testes Thumb não podem ser declarados aprovados.
+
+
+### Resultado verificado da CI para a correção Thumb — workflow 43342586393
+
+- A etapa `cargo fmt --all --check` já não reporta diferenças em `cpu/thumb.rs`; a única diferença apontada por Ubuntu e macOS permanece em `crates/aceris-core/src/cpu/mmu.rs:371`, no formato de `TLB_PAGE_SHIFTS.map(...)`.
+- O job Android falhou antes de chegar à validação Thumb por erros de compilação no TLB em `cpu/mmu.rs`: constante `TLB_CAPACITY` ausente, chamada `matches_context` em `Option<TlbEntry>` e retorno com tipo `Option<TlbEntry>` onde se esperava `TlbEntry`.
+- O job Windows ainda estava em execução na consulta. Os jobs Linux/macOS e Android não chegaram a Clippy ou `cargo test`; portanto, nenhum teste do interpretador Thumb foi validado por essa execução.
+- A área MMU permanece sem alterações nesta tarefa. O próximo agente responsável pelo TLB deve corrigir a implementação e o formato em `mmu.rs`; depois disso, reexecutar a matriz inteira para validar também os novos testes Thumb.
