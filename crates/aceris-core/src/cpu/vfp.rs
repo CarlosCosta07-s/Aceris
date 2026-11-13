@@ -19,6 +19,10 @@ use aceris_common::{Error, Result};
 
 /// VFP system ID reported by the core (VFP11).
 pub const FPSID: u32 = 0x4101_20B5;
+/// VFP11 feature register 0: full VFP11 feature set described by ARM DDI 0274H.
+pub const MVFR0: u32 = 0x1111_1111;
+/// VFP11 feature register 1: no additional optional features in this profile.
+pub const MVFR1: u32 = 0x0000_0000;
 
 const FPSCR_WRITABLE: u32 = 0xF3F7_9F9F;
 const FPSCR_TRAP_ENABLES: u32 = 0x0000_9F00;
@@ -713,6 +717,8 @@ impl Arm11Core {
                     self.require_enabled(word)?;
                     self.vfp.fpscr
                 }
+                6 => MVFR1,
+                7 => MVFR0,
                 8 if privileged => self.vfp.fpexc,
                 _ => return Err(self.vfp_undefined(word)),
             };
@@ -736,6 +742,10 @@ impl Arm11Core {
         }
         let value = self.regs[rt as usize];
         match reg {
+            // FPSID and MVFR0/MVFR1 are read-only. The VFP11 ignores writes
+            // to these identification registers; this model has no pipeline
+            // serialization state to expose for an FPSID write.
+            0 | 6 | 7 => {}
             1 => {
                 self.require_enabled(word)?;
                 if value & FPSCR_TRAP_ENABLES != 0 {
@@ -1578,6 +1588,24 @@ mod tests {
         run(&mut cpu, &mut mem, &[0xEEE1_1A10, 0xEEF1_2A10, 0xEEF0_3A10]).unwrap();
         assert_eq!(cpu.regs[2], 0x0300_0000);
         assert_eq!(cpu.regs[3], FPSID);
+
+        // VFP11 feature IDs are readable in User mode when the coprocessor
+        // is accessible. Writes to identification registers are ignored.
+        cpu.regs[1] = 0xDEAD_BEEF;
+        run(
+            &mut cpu,
+            &mut mem,
+            &[
+                0xEEF7_5A10, // vmrs r5, MVFR0
+                0xEEF6_6A10, // vmrs r6, MVFR1
+                0xEEE0_1A10, // vmsr FPSID, r1 (read-only)
+                0xEEE7_1A10, // vmsr MVFR0, r1 (read-only)
+                0xEEE6_1A10, // vmsr MVFR1, r1 (read-only)
+            ],
+        )
+        .unwrap();
+        assert_eq!(cpu.regs[5], MVFR0);
+        assert_eq!(cpu.regs[6], MVFR1);
 
         // Trapped exceptions are not modeled and must not be silently accepted.
         cpu.regs[1] = 1 << 8;
