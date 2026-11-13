@@ -35,12 +35,11 @@ use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError, ServiceS
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
     SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
-    SVC_CREATE_MEMORY_BLOCK,
-    SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_EXIT_THREAD,
-    SVC_GET_THREAD_PRIORITY, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX,
-    SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
-    SVC_SEND_SYNC_REQUEST, SVC_SLEEP_THREAD, SVC_MAP_MEMORY_BLOCK, SVC_UNMAP_MEMORY_BLOCK,
-    SVC_WAIT_SYNCHRONIZATION1,
+    SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
+    SVC_CREATE_TIMER, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK,
+    SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST,
+    SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
+    SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -345,7 +344,9 @@ impl Arm11ProcessSession {
     /// Returns the current thread's TLS base, as exposed by CP15 TPIDRURO.
     pub fn current_tls_address(&self) -> Option<u32> {
         let thread = self.scheduler.current_thread_id()?;
-        self.scheduler.core(thread).map(|core| core.cp15().tpidruro())
+        self.scheduler
+            .core(thread)
+            .map(|core| core.cp15().tpidruro())
     }
 
     /// Copies the active thread's ARM11 register bank for a host-side SVC bridge.
@@ -409,10 +410,7 @@ impl Arm11ProcessSession {
     }
 
     /// Closes a process-local handle through the kernel object table.
-    pub fn close_handle(
-        &mut self,
-        handle: u32,
-    ) -> std::result::Result<(), KernelHandleError> {
+    pub fn close_handle(&mut self, handle: u32) -> std::result::Result<(), KernelHandleError> {
         self.kernel_objects.close_handle(handle)
     }
 
@@ -1496,11 +1494,7 @@ impl Arm11ProcessSession {
     ///
     /// The thread must still own a valid TLS mapping. The scheduler wake is a
     /// separate operation so callers can write a complete reply before it runs.
-    pub fn write_ipc_response_to_thread(
-        &mut self,
-        thread: ThreadId,
-        words: &[u32],
-    ) -> Result<()> {
+    pub fn write_ipc_response_to_thread(&mut self, thread: ThreadId, words: &[u32]) -> Result<()> {
         let tls_address = self
             .scheduler
             .core(thread)
@@ -1513,7 +1507,9 @@ impl Arm11ProcessSession {
         let byte_count = words
             .len()
             .checked_mul(4)
-            .ok_or(crate::Error::InvalidAccess { addr: buffer_address })?;
+            .ok_or(crate::Error::InvalidAccess {
+                addr: buffer_address,
+            })?;
         let mut bytes = Vec::new();
         bytes
             .try_reserve_exact(byte_count)
@@ -1940,7 +1936,11 @@ impl Arm11ProcessSession {
     /// Handles ConnectToPort: r0 = output handle pointer, r1 = four-byte port name.
     /// The current bootstrap provides the service-manager port only.
     fn svc_connect_to_port(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         let output_address = registers[0];
         let name_address = registers[1];
         if !self.address_space.is_writable_range(output_address, 4) {
@@ -1948,7 +1948,10 @@ impl Arm11ProcessSession {
         }
 
         let mut port_name = [0u8; 4];
-        if self.read_memory_bytes(name_address, &mut port_name).is_err() {
+        if self
+            .read_memory_bytes(name_address, &mut port_name)
+            .is_err()
+        {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
         if &port_name != b"srv:" {
@@ -1968,7 +1971,11 @@ impl Arm11ProcessSession {
 
     /// Defers the request to the system-level service dispatcher.
     fn svc_send_sync_request(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let handle = self.scheduler.core(caller).expect("caller context exists").regs[0];
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs[0];
         if self.kernel_objects.service_session(handle).is_none() {
             return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
         }
@@ -1978,7 +1985,11 @@ impl Arm11ProcessSession {
     /// Handles MapMemoryBlock: r0 = handle, r1 = address,
     /// r2 = this-process permissions, r3 = peer-process permissions.
     fn svc_map_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         let result = self
             .map_memory_block(registers[0], registers[1], registers[2], registers[3])
             .map(|()| 0)
@@ -2569,7 +2580,11 @@ impl Arm11ProcessSession {
 
     /// Handles CloseHandle using the process-local object handle in r0.
     fn svc_close_handle(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let handle = self.scheduler.core(caller).expect("current thread context exists").regs[0];
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs[0];
         let result = self
             .kernel_objects
             .close_handle(handle)
@@ -4888,10 +4903,7 @@ mod tests {
         session.scheduler.current_core_mut().unwrap().regs[0] = service_handle;
 
         let report = session.run_instructions(1).unwrap();
-        assert_eq!(
-            report.stop_reason,
-            Arm11RunStopReason::IpcRequest
-        );
+        assert_eq!(report.stop_reason, Arm11RunStopReason::IpcRequest);
         assert_eq!(report.instructions_executed, 1);
         assert_eq!(
             session.service_session_kind(service_handle),
