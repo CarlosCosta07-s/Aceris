@@ -586,3 +586,13 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - As transferências multi-register continuam dependentes de validação integrada de faults/alinhamento e da semântica do bus/MMU; não se deve afirmar conformidade completa só pelos testes sintéticos locais.
 - CI para `e6b54ac` (`43343866363`) falhou antes de executar Clippy/testes: Rustfmt reportou somente a diferença antiga em `cpu/mmu.rs:371`; Android falhou na compilação de `cpu/mmu.rs` com `TLB_CAPACITY` não encontrado, `matches_context` em `Option<TlbEntry>` e incompatibilidade Option/TlbEntry. O log não reportou diferença de formatação em `cpu/thumb.rs`.
 - O MMU não foi modificado nesta tarefa. O bloqueio exige intervenção autorizada no arquivo do TLB antes de executar a matriz completa.
+
+
+### Continuação Thumb — PC em registradores altos e confirmação da CI (13/11/2026)
+
+- `4e726f2f9b7b9f4e083c8add24051bd1c735e425` — atualiza os comentários do módulo para refletir o perfil real do ARMv6 Thumb e acrescenta `high_register_pc_operands_read_current_instruction_plus_four`. O teste executa MOV, ADD e CMP usando PC como operando com instrução no endereço 2 e confirma leitura PC=6, preservando bit[1] nas formas de registradores altos.
+- O módulo `crates/aceris-core/src/cpu/thumb.rs` possui agora 66 declarações `#[test]`. A quantidade é contagem do código, não testes executados com êxito.
+- Workflow `43344492372` (commit `4e726f2`) confirma que `cargo fmt --all --check` não reportou diferenças em `cpu/thumb.rs`; a única diferença reportada continua em `crates/aceris-core/src/cpu/mmu.rs:371`. Os jobs Clippy/testes são ignorados porque Rustfmt falha antes.
+- O build Android ARM64 continua falhando ao compilar `cpu/mmu.rs`: `TLB_CAPACITY` não encontrado em 349; método `matches_context` chamado em `&Option<TlbEntry>` em 397; incompatibilidade entre `Option<TlbEntry>` e `TlbEntry` em 399.
+- A CI, portanto, ainda não executou `cargo test --workspace` para validar estes 66 testes. Não declarar o interpretador concluído nem testes aprovados até que o MMU compile e a matriz seja concluída.
+- Nenhum arquivo do MMU ou de outra frente foi alterado nesta continuação.
