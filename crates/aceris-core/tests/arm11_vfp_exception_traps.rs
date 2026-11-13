@@ -136,8 +136,60 @@ fn divide_by_zero_trap_enable_does_not_bounce_a_finite_division() {
 }
 
 #[test]
+fn overflow_enable_bounces_and_preserves_the_scalar_destination() {
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VDIV_S0_S1_S2]);
+    cpu.regs[0] = 1 << 10; // FPSCR.OFE
+    cpu.vfp_mut().set_s(0, 0xDEAD_BEEF);
+    cpu.vfp_mut().set_s(1, f32::MAX.to_bits());
+    cpu.vfp_mut().set_s(2, 0.5f32.to_bits());
+
+    cpu.step(&mut memory).unwrap(); // Enable overflow exceptions.
+    cpu.step(&mut memory).unwrap(); // Scalar division overflows and bounces.
+
+    assert_eq!(cpu.vfp().s(0), 0xDEAD_BEEF);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
+    assert_ne!(cpu.vfp().fpexc() & (1 << 2), 0, "FPEXC.OFC is set");
+    assert_eq!(cpu.vfp().fpscr() & (1 << 2), 0, "support code owns FPSCR.OFC");
+    assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
+}
+
+#[test]
+fn underflow_enable_bounces_even_when_the_tiny_result_is_exact() {
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VDIV_S0_S1_S2]);
+    cpu.regs[0] = 1 << 11; // FPSCR.UFE
+    cpu.vfp_mut().set_s(0, 0xCAFE_BABE);
+    cpu.vfp_mut().set_s(1, f32::MIN_POSITIVE.to_bits());
+    cpu.vfp_mut().set_s(2, 2.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap(); // Enable underflow exceptions.
+    cpu.step(&mut memory).unwrap(); // Exact subnormal result still underflows.
+
+    assert_eq!(cpu.vfp().s(0), 0xCAFE_BABE);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
+    assert_ne!(cpu.vfp().fpexc() & (1 << 3), 0, "FPEXC.UFC is set");
+    assert_eq!(cpu.vfp().fpscr() & (1 << 3), 0, "support code owns FPSCR.UFC");
+    assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
+}
+
+#[test]
+fn flush_to_zero_ignores_underflow_trap_and_returns_positive_zero() {
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VDIV_S0_S1_S2]);
+    cpu.regs[0] = (1 << 11) | (1 << 24); // FPSCR.UFE | FPSCR.FZ
+    cpu.vfp_mut().set_s(1, (-f32::MIN_POSITIVE).to_bits());
+    cpu.vfp_mut().set_s(2, 2.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), 0, "FZ flushes to positive zero");
+    assert_eq!(cpu.vfp().fpexc() & (1 << 31), 0, "UFE is ignored in FZ mode");
+    assert_ne!(cpu.vfp().fpscr() & (1 << 3), 0, "FPSCR.UFC is set");
+    assert_eq!(cpu.vfp().fpinst(), 0xEE00_0A00);
+}
+
+#[test]
 fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
-    for mask in [1 << 15, 1 << 12, 1 << 11, 1 << 10] {
+    for mask in [1 << 15, 1 << 12] {
         let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
         cpu.regs[0] = mask;
         let previous = cpu.vfp().fpscr();
