@@ -1509,7 +1509,9 @@ mod tests {
             (
                 session.create_service_manager_session().unwrap(),
                 session
-                    .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                    .create_event_handle(
+                        crate::loader::ncsd::session::kernel::EventResetType::OneShot,
+                    )
                     .unwrap(),
             )
         };
