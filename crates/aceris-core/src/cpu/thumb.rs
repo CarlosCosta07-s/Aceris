@@ -1943,6 +1943,29 @@ mod tests {
     }
 
     #[test]
+    fn bkpt_reports_its_immediate_and_retires_without_mutating_cpu_state() {
+        let mut m = Machine::with(0xBEA5, |cpu, _| {
+            cpu.regs[0] = 0x1234_5678;
+            cpu.regs[LR] = 0x8765_4321;
+            cpu.cpsr.set_flags(true, false, true, true);
+        });
+        let old_regs = m.cpu.regs;
+        let old_flags = m.flags();
+        let old_mode = m.cpu.cpsr.mode();
+
+        assert_eq!(m.step(), StepEvent::Breakpoint(0xA5));
+        assert_eq!(&m.cpu.regs[..PC], &old_regs[..PC]);
+        assert_eq!(m.flags(), old_flags);
+        assert_eq!(m.cpu.cpsr.mode(), old_mode);
+        assert_eq!(m.cpu.pc(), 2);
+
+        // The entire imm8 field is surfaced to the debugger.
+        let mut max_immediate = Machine::with(0xBEFF, |_, _| {});
+        assert_eq!(max_immediate.step(), StepEvent::Breakpoint(0xFF));
+        assert_eq!(max_immediate.cpu.pc(), 2);
+    }
+
+    #[test]
     fn swi_is_intercepted_for_hle_dispatch_in_thumb_mode_by_default() {
         let mut m = Machine::new(&[0xDF21]);
         assert_eq!(m.step(), StepEvent::Svc(0x21));
