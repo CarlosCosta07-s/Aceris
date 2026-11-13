@@ -142,10 +142,10 @@ fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
         cpu.regs[0] = mask;
         let previous = cpu.vfp().fpscr();
 
-        assert!(matches!(
-            cpu.step(&mut memory),
-            Err(Error::Unimplemented(_))
-        ), "FPSCR trap mask {mask:#010x}");
+        assert!(
+            matches!(cpu.step(&mut memory), Err(Error::Unimplemented(_))),
+            "FPSCR trap mask {mask:#010x}"
+        );
         assert_eq!(cpu.vfp().fpscr(), previous);
         assert_eq!(cpu.pc(), 0);
     }
