@@ -1395,40 +1395,75 @@ impl Arm11Core {
             return self.unsigned_multiply_accumulate_accumulate_long(word);
         }
         if bits(word, 27, 22) == 0 {
-            self.multiply(word);
+            self.multiply(word)?;
         } else if bits(word, 27, 23) == 0b00001 {
-            self.multiply_long(word);
+            self.multiply_long(word)?;
         } else if bits(word, 27, 23) == 0b00010 && bits(word, 21, 20) == 0 {
             self.swap(bus, word)?;
         } else {
-            return Err(Error::Unimplemented("exclusive load/store"));
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
         }
         Ok(StepEvent::Executed)
     }
 
-    fn multiply(&mut self, word: u32) {
+    fn multiply(&mut self, word: u32) -> Result<()> {
         let rd = bits(word, 19, 16);
         let rn = bits(word, 15, 12);
         let rs = bits(word, 11, 8);
         let rm = bits(word, 3, 0);
+        let accumulate = bit(word, 21);
 
+        // MUL reserves Rn as SBZ. MLA uses Rn as its accumulator.
+        // Both forms prohibit R15 in every architecturally used register.
+        if rd as usize == PC
+            || rs as usize == PC
+            || rm as usize == PC
+            || (accumulate && rn as usize == PC)
+            || (!accumulate && rn != 0)
+        {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
+        // Read every source before writeback; ARMv6 permits Rd == Rm.
         let mut result = self.reg(rm, 8).wrapping_mul(self.reg(rs, 8));
-        if bit(word, 21) {
+        if accumulate {
             result = result.wrapping_add(self.reg(rn, 8));
         }
         self.write_reg(rd, result);
         if bit(word, 20) {
             self.set_nz(result);
         }
+        Ok(())
     }
 
-    fn multiply_long(&mut self, word: u32) {
+    fn multiply_long(&mut self, word: u32) -> Result<()> {
         let signed = bit(word, 22);
         let accumulate = bit(word, 21);
         let rd_hi = bits(word, 19, 16);
         let rd_lo = bits(word, 15, 12);
         let rs = bits(word, 11, 8);
         let rm = bits(word, 3, 0);
+
+        // R15 is not valid in any long-multiply register, and the two
+        // destination registers must be distinct. Source/destination
+        // overlap is permitted in ARMv6 because operands are read first.
+        if rd_hi as usize == PC
+            || rd_lo as usize == PC
+            || rs as usize == PC
+            || rm as usize == PC
+            || rd_hi == rd_lo
+        {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
 
         let (a, b) = (self.reg(rm, 8), self.reg(rs, 8));
         let mut result = if signed {
@@ -1447,6 +1482,7 @@ impl Arm11Core {
             let (c, v) = (self.cpsr.c(), self.cpsr.v());
             self.cpsr.set_flags(result >> 63 != 0, result == 0, c, v);
         }
+        Ok(())
     }
 
     /// Executes UMAAL, which adds two independent 32-bit accumulators
@@ -4778,6 +4814,90 @@ mod tests {
         m.run(2);
         assert_eq!((m.cpu.regs[0], m.cpu.regs[1]), (0xFFFF_FFFE, 1));
         assert_eq!((m.cpu.regs[4], m.cpu.regs[5]), (0xFFFF_FFFE, 0xFFFF_FFFF));
+    }
+
+    #[test]
+    fn multiply_and_long_multiply_reject_unpredictable_registers() {
+        let encode_short = |accumulate: bool, rd: u32, rn: u32, rs: u32, rm: u32| {
+            0xE000_0090
+                | if accumulate { 1 << 21 } else { 0 }
+                | (rd << 16)
+                | (rn << 12)
+                | (rs << 8)
+                | rm
+        };
+
+        // MUL: Rn is SBZ; Rd, Rs and Rm cannot be PC.
+        // MLA: each of Rd, Rn, Rs and Rm must be a general-purpose register.
+        for (accumulate, rd, rn, rs, rm) in [
+            (false, 15, 0, 2, 1),
+            (false, 0, 0, 15, 1),
+            (false, 0, 0, 2, 15),
+            (false, 0, 1, 2, 1),
+            (true, 15, 3, 2, 1),
+            (true, 0, 15, 2, 1),
+            (true, 0, 3, 15, 1),
+            (true, 0, 3, 2, 15),
+        ] {
+            let word = encode_short(accumulate, rd, rn, rs, rm);
+            let mut m = Machine::new(&[word]);
+            let before_regs = m.cpu.regs;
+            let before_cpsr = m.cpu.cpsr;
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, .. })
+            ));
+            assert_eq!(m.cpu.regs, before_regs);
+            assert_eq!(m.cpu.cpsr, before_cpsr);
+        }
+
+        let encode_long =
+            |signed: bool, accumulate: bool, rd_hi: u32, rd_lo: u32, rs: u32, rm: u32| {
+                0xE080_0090
+                    | if signed { 1 << 22 } else { 0 }
+                    | if accumulate { 1 << 21 } else { 0 }
+                    | (rd_hi << 16)
+                    | (rd_lo << 12)
+                    | (rs << 8)
+                    | rm
+            };
+
+        // UMULL/UMLAL/SMULL/SMLAL reject PC operands and aliased destinations.
+        for (signed, accumulate, rd_hi, rd_lo, rs, rm) in [
+            (false, false, 0, 0, 3, 2),
+            (false, false, 15, 0, 3, 2),
+            (false, false, 1, 15, 3, 2),
+            (false, false, 1, 0, 15, 2),
+            (false, false, 1, 0, 3, 15),
+            (true, true, 1, 0, 15, 2),
+        ] {
+            let word = encode_long(signed, accumulate, rd_hi, rd_lo, rs, rm);
+            let mut m = Machine::new(&[word]);
+            let before_regs = m.cpu.regs;
+            let before_cpsr = m.cpu.cpsr;
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, .. })
+            ));
+            assert_eq!(m.cpu.regs, before_regs);
+            assert_eq!(m.cpu.cpsr, before_cpsr);
+        }
+    }
+
+    #[test]
+    fn armv6_multiply_allows_destination_source_overlap() {
+        // ARMv6 permits Rd == Rm for MUL and RdLo == Rm for UMULL.
+        let mut m = Machine::new(&[0xE001_0291, 0xE082_0390]);
+        m.cpu.regs[1] = 6;
+        m.cpu.regs[2] = 7;
+        m.cpu.regs[0] = u32::MAX;
+        m.cpu.regs[3] = 2;
+
+        m.run(2);
+
+        assert_eq!(m.cpu.regs[1], 42);
+        assert_eq!(m.cpu.regs[0], 0xFFFF_FFFE);
+        assert_eq!(m.cpu.regs[2], 1);
     }
 
     #[test]

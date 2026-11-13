@@ -39,6 +39,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Instruções ARM e Thumb
 
 - [x] Instruções ARM básicas de processamento de dados, desvios, transferências, blocos e multiplicações comuns
+- [x] A32 `MUL`/`MLA` e `UMULL`/`UMLAL`/`SMULL`/`SMLAL`: validação de `r15`, campo SBZ de `MUL` e distinção entre `RdHi`/`RdLo`; aliases entre fonte e destino permitidos no ARMv6 preservados por leitura prévia dos operandos, com testes de regressão
 - [x] Famílias ARMv6 de exclusivas A32: LDREX/STREX, LDREXB/STREXB, LDREXH/STREXH e LDREXD/STREXD
 - [x] Monitor exclusivo local com granularidade de reserva de 8 bytes integrado ao caminho MMU; teste verifica LDREX/STREX por aliases virtuais distintos do mesmo endereço físico. Escritas de DMA/GPU/LCD no backing físico compartilhado incrementam a geração de reserva e invalidam o monitor (mapeamentos lineares); ainda não há outros dispositivos mapeados que escrevam na memória do processo
 - [~] Famílias ARMv6 de mídia/DSP, saturação, operações paralelas, extensão de sinal/zero e multiplicações de meia palavra: há implementação e testes para várias famílias, mas a cobertura integral ainda não foi demonstrada
