@@ -2892,7 +2892,11 @@ mod tests {
             store.mem.write32(DATA, 0x3322_11AA).unwrap();
             store.step();
 
-            let expected = if big_endian { [0xA1, 0xB2] } else { [0xB2, 0xA1] };
+            let expected = if big_endian {
+                [0xA1, 0xB2]
+            } else {
+                [0xB2, 0xA1]
+            };
             assert_eq!(store.mem.read8(DATA).unwrap(), 0xAA);
             assert_eq!(store.mem.read8(DATA + 1).unwrap(), expected[0]);
             assert_eq!(store.mem.read8(DATA + 2).unwrap(), expected[1]);
@@ -2908,7 +2912,10 @@ mod tests {
         load.mem.write32(DATA, 0x4433_2211).unwrap();
         assert!(matches!(
             load.cpu.step(&mut load.mem),
-            Err(Error::UndefinedInstruction { pc: 0, word: 0xE1F1_00B2 })
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xE1F1_00B2
+            })
         ));
         assert_eq!(load.cpu.regs[0], 0xCAFE_BABE);
         assert_eq!(load.cpu.regs[1], DATA + 1);
@@ -2920,7 +2927,10 @@ mod tests {
         store.mem.write32(DATA, 0x4433_2211).unwrap();
         assert!(matches!(
             store.cpu.step(&mut store.mem),
-            Err(Error::UndefinedInstruction { pc: 0, word: 0xE1E1_00B2 })
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xE1E1_00B2
+            })
         ));
         assert_eq!(store.cpu.regs[1], DATA + 1);
         assert_eq!(store.mem.read32(DATA).unwrap(), 0x4433_2211);
