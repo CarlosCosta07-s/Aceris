@@ -30,7 +30,17 @@ pub const MVFR0: u32 = 0x1111_1111;
 pub const MVFR1: u32 = 0x0000_0000;
 
 const FPSCR_WRITABLE: u32 = 0xF3F7_9F9F;
-const FPSCR_TRAP_ENABLES: u32 = 0x0000_9F00;
+const FPSCR_IOE: u32 = 1 << 8;
+const FPSCR_DZE: u32 = 1 << 9;
+const FPSCR_OFE: u32 = 1 << 10;
+const FPSCR_UFE: u32 = 1 << 11;
+const FPSCR_IXE: u32 = 1 << 12;
+const FPSCR_IDE: u32 = 1 << 15;
+const FPSCR_SUPPORTED_TRAP_ENABLES: u32 =
+    FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_UFE | FPSCR_IXE;
+const FPSCR_EXCEPTION_STATUS: u32 =
+    FPSCR_IOC | FPSCR_DZC | FPSCR_OFC | FPSCR_UFC | FPSCR_IXC;
+const FPEXC_EXCEPTION_STATUS: u32 = FPEXC_INV | FPEXC_UFC | FPEXC_OFC | FPEXC_IOC;
 const FPSCR_DN: u32 = 1 << 25;
 const FPSCR_FZ: u32 = 1 << 24;
 const FPSCR_IOC: u32 = 1 << 0;
@@ -146,6 +156,58 @@ impl Vfp {
 
     fn raise(&mut self, flags: u32) {
         self.fpscr |= flags;
+    }
+
+    fn has_enabled_traps(&self) -> bool {
+        self.fpscr & FPSCR_SUPPORTED_TRAP_ENABLES != 0
+    }
+
+    fn clear_exception_status(&mut self) {
+        self.fpscr &= !FPSCR_EXCEPTION_STATUS;
+    }
+
+    fn exception_status(&self) -> u32 {
+        self.fpscr & FPSCR_EXCEPTION_STATUS
+    }
+
+    fn trapped_exception_status(&self, raised: u32) -> u32 {
+        let mut enabled = 0;
+        if self.fpscr & FPSCR_IOE != 0 {
+            enabled |= FPSCR_IOC;
+        }
+        if self.fpscr & FPSCR_DZE != 0 {
+            enabled |= FPSCR_DZC;
+        }
+        if self.fpscr & FPSCR_OFE != 0 {
+            enabled |= FPSCR_OFC;
+        }
+        if self.fpscr & FPSCR_UFE != 0 {
+            enabled |= FPSCR_UFC;
+        }
+        if self.fpscr & FPSCR_IXE != 0 {
+            enabled |= FPSCR_IXC;
+        }
+        raised & enabled
+    }
+
+    fn merge_exception_status(&mut self, previous_fpscr: u32, raised: u32) {
+        self.fpscr =
+            (self.fpscr & !FPSCR_EXCEPTION_STATUS) | (previous_fpscr & FPSCR_EXCEPTION_STATUS) | raised;
+    }
+
+    fn record_exception_bounce(&mut self, instruction: u32, status: u32) {
+        self.fpinst = instruction;
+        self.fpexc &= !(FPEXC_EXCEPTION_STATUS | FPEXC_FP2V | FPEXC_VECITR);
+        self.fpexc |= FPEXC_EX;
+        if status & FPSCR_IOC != 0 {
+            self.fpexc |= FPEXC_IOC;
+        }
+        if status & FPSCR_OFC != 0 {
+            self.fpexc |= FPEXC_OFC;
+        }
+        if status & FPSCR_UFC != 0 {
+            self.fpexc |= FPEXC_UFC;
+        }
     }
 
     fn rounding_mode(&self) -> u32 {
@@ -663,20 +725,53 @@ impl Arm11Core {
         if !self.cp15.vfp_access_enabled() {
             return Err(self.vfp_undefined(word));
         }
+
+        let top = bits(word, 27, 24);
+        let system_register = top == 0b1110
+            && bit(word, 4)
+            && bits(word, 23, 21) == 0b111
+            && bits(word, 19, 16) == 8;
+        // VFP11 permits the exception handler to inspect and clear FPEXC.EX.
+        // Other VFP operations bounce through Undefined until support code
+        // has acknowledged the pending exception.
+        if self.vfp.fpexc & FPEXC_EX != 0 && !system_register {
+            return Err(self.vfp_undefined(word));
+        }
+
+        let before = self.vfp.clone();
+        let track_exceptions = top == 0b1110 && !bit(word, 4) && self.vfp.has_enabled_traps();
+        if track_exceptions {
+            self.vfp.clear_exception_status();
+        }
+
         let prec = if bits(word, 11, 8) == 11 {
             Prec::Double
         } else {
             Prec::Single
         };
-        let top = bits(word, 27, 24);
-        if bits(word, 27, 21) == 0b110_0010 {
-            self.vfp_two_register_transfer(word, prec)?;
+        let result = if bits(word, 27, 21) == 0b110_0010 {
+            self.vfp_two_register_transfer(word, prec)
         } else if top == 0b1110 && bit(word, 4) {
-            self.vfp_register_transfer(word, prec)?;
+            self.vfp_register_transfer(word, prec)
         } else if top == 0b1110 {
-            self.vfp_data_processing(word, prec)?;
+            self.vfp_data_processing(word, prec)
         } else {
-            self.vfp_load_store(bus, word, prec)?;
+            self.vfp_load_store(bus, word, prec)
+        };
+        if let Err(error) = result {
+            self.vfp = before;
+            return Err(error);
+        }
+
+        if track_exceptions {
+            let raised = self.vfp.exception_status();
+            let trapped = self.vfp.trapped_exception_status(raised);
+            if trapped != 0 {
+                self.vfp = before;
+                self.vfp.record_exception_bounce(word, trapped);
+            } else {
+                self.vfp.merge_exception_status(before.fpscr, raised);
+            }
         }
         Ok(StepEvent::Executed)
     }
@@ -802,8 +897,10 @@ impl Arm11Core {
             0 | 6 | 7 if enabled || privileged => {}
             1 => {
                 self.require_enabled(word)?;
-                if value & FPSCR_TRAP_ENABLES != 0 {
-                    return Err(Error::Unimplemented("trapped VFP exceptions"));
+                if value & FPSCR_IDE != 0 {
+                    return Err(Error::Unimplemented(
+                        "VFP input-denormal exception bounce",
+                    ));
                 }
                 self.vfp.fpscr = value & FPSCR_WRITABLE;
             }
@@ -978,6 +1075,11 @@ impl Arm11Core {
         }
         let (d, n, m) = (d?, n?, m?);
         let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(n, false), (m, true)])?;
+        if lanes.len() > 1 && self.vfp.has_enabled_traps() {
+            return Err(Error::Unimplemented(
+                "VFP short-vector exception bounce",
+            ));
+        }
 
         // Snapshot every source and accumulator before committing any lane.
         // This preserves vector behavior when destination and source banks overlap.
@@ -1045,6 +1147,11 @@ impl Arm11Core {
                 let d = self.vfp_reg(word, prec, vd, d_low)?;
                 let m = self.vfp_reg(word, prec, vm, m_low)?;
                 let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(m, true)])?;
+                if lanes.len() > 1 && self.vfp.has_enabled_traps() {
+                    return Err(Error::Unimplemented(
+                        "VFP short-vector exception bounce",
+                    ));
+                }
                 let inputs: Vec<_> = lanes
                     .into_iter()
                     .map(|(destination, sources)| (destination, self.vfp.read(prec, sources[0])))
