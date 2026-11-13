@@ -1,8 +1,9 @@
 //! GSP GX shared-memory command queue decoding.
 //!
 //! This module models the documented queue header and the 15-entry ring.
-//! Service IPC, rendering-right acquisition, hardware busy flags, interrupt
-//! relay queues and ARM cache maintenance are handled by later system layers.
+//! The system dispatcher consumes ProcessCommandList entries through the
+//! guest TriggerCmdReqQueue path. Other GX command families, busy arbitration,
+//! cache maintenance and device-side effects remain incomplete.
 
 use std::fmt;
 
