@@ -933,7 +933,15 @@ impl Arm11Core {
         }
         // PLD is an architecturally optional data-prefetch hint and has no
         // visible effect on this interpreter's functional memory model.
+        // Its register offset (when present) must not be PC; PC-relative
+        // immediate literals remain valid.
         if word & 0xFD70_F000 == 0xF550_F000 {
+            if bit(word, 25) && bits(word, 3, 0) as usize == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
             return Ok(StepEvent::Executed);
         }
         // CPS switches the active mode bank and/or updates selected A/I/F masks.
