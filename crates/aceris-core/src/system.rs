@@ -1469,6 +1469,115 @@ mod tests {
         assert!(matches!(system.run_frame(), Err(Error::NoImageLoaded)));
     }
 
+    fn write_tls_ipc_request(system: &mut System, session_handle: u32, words: &[u32]) -> u32 {
+        let session = system.ncsd_session.as_mut().expect("test process is loaded");
+        let tls = session.current_tls_address().expect("main thread has TLS");
+        let buffer = tls + ARM11_TLS_IPC_BUFFER_OFFSET;
+        for (index, word) in words.iter().copied().enumerate() {
+            session
+                .write_memory_u32(buffer + u32::try_from(index * 4).unwrap(), word)
+                .unwrap();
+        }
+        assert!(session.set_current_register(0, session_handle));
+        buffer
+    }
+
+    fn read_tls_ipc_response(system: &mut System, buffer: u32, word_count: usize) -> Vec<u32> {
+        let session = system.ncsd_session.as_mut().expect("test process is loaded");
+        (0..word_count)
+            .map(|index| {
+                session
+                    .read_memory_u32(buffer + u32::try_from(index * 4).unwrap())
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn service_manager_connects_gsp_and_registers_shared_relay_memory() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (service_manager, event_handle) = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            (
+                session.create_service_manager_session().unwrap(),
+                session
+                    .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                    .unwrap(),
+            )
+        };
+
+        // srv:GetServiceHandle("gsp::Gpu", 8, 0)
+        let srv_buffer = write_tls_ipc_request(
+            &mut system,
+            service_manager,
+            &[0x0005_0100, 0x3A70_7367, 0x7550_473A, 8, 0],
+        );
+        system.dispatch_pending_ipc_request().unwrap();
+        let srv_response = read_tls_ipc_response(&mut system, srv_buffer, 4);
+        assert_eq!(srv_response[0], 0x0005_0042);
+        assert_eq!(srv_response[1], 0);
+        assert_eq!(srv_response[2], 0); // COPY_HANDLE descriptor
+        let gsp_handle = srv_response[3];
+        assert_ne!(gsp_handle, 0);
+        assert!(matches!(
+            system.ncsd_session().unwrap().service_session_kind(gsp_handle),
+            Some(ServiceSessionKind::GspGpu {
+                client_id: None,
+                ..
+            })
+        ));
+
+        // gsp::Gpu:RegisterInterruptRelayQueue(flags=0, event_handle)
+        let register_buffer = write_tls_ipc_request(
+            &mut system,
+            gsp_handle,
+            &[0x0013_0042, 0, 0, event_handle],
+        );
+        system.dispatch_pending_ipc_request().unwrap();
+        let register_response = read_tls_ipc_response(&mut system, register_buffer, 5);
+        assert_eq!(register_response[0], 0x0013_0082);
+        assert_eq!(register_response[1], 0);
+        assert_eq!(register_response[2], 0); // First free GSP client slot
+        assert_eq!(register_response[3], 0); // COPY_HANDLE descriptor
+        let shared_memory_handle = register_response[4];
+        assert_ne!(shared_memory_handle, 0);
+        assert_eq!(system.gsp_service_registry().registered_client_count(), 1);
+
+        // The guest's MapMemoryBlock call after the IPC response is idempotent
+        // for this exact block/address, but does not accept another mapping.
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
+            .unwrap();
+
+        // Unregister releases the queue mapping and memory handle.
+        let unregister_buffer =
+            write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
+        system.dispatch_pending_ipc_request().unwrap();
+        let unregister_response = read_tls_ipc_response(&mut system, unregister_buffer, 2);
+        assert_eq!(unregister_response, vec![0x0014_0040, 0]);
+        assert_eq!(system.gsp_service_registry().registered_client_count(), 0);
+        assert!(matches!(
+            system.ncsd_session().unwrap().service_session_kind(gsp_handle),
+            Some(ServiceSessionKind::GspGpu {
+                client_id: None,
+                shared_memory_handle: None,
+                event_handle: None,
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn submits_pica_commands_from_guest_memory_into_register_file() {
         let mut system = System::new();
