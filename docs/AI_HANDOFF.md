@@ -721,3 +721,13 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - Referência arquitetural independente: ARM Instruction Set Reference Guide, entradas C2.114 (`SMLAD`) e C2.119 (`SMLALD`), que definem a operação e as restrições de registradores. A referência inclui um exemplo de SMLAD com `Rd == Ra`; para SMLALD exige `RdHi != RdLo` e proíbe PC como operando: https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab
 - Workflow [43504486197](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43504486197) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
 - O trabalho de código permaneceu restrito a `crates/aceris-core/tests/arm11_dsp_multiply.rs`. Não foram adicionadas dependências nem consultadas implementações de outros emuladores.
+
+## A32 — rejeição atômica de codificações DSP inválidas (13/11/2026)
+
+- `c6143b9` — adiciona `dsp_multiply_rejects_pc_reserved_fields_and_invalid_destination_pairs_atomically`, cobrindo 36 codificações inválidas das famílias `SMLAxy`, `SMULxy`, `SMLALxy`, `SMLAWy`, `SMULWy`, `SMLAD/SMLSD`, `SMLALD/SMLSLD` e `SMMUL/SMMLA/SMMLS`.
+- A matriz inclui `PC` em posições proibidas, campos reservados não zerados, par `RdHi/RdLo` repetido, bit reservado de operações duplas, divergência entre os bits de classe `SMMUL/SMMLA/SMMLS` e `Ra=PC` na forma de subtração `SMMLS`.
+- Cada caso verifica `UndefinedInstruction` e atomicidade: registradores, CPSR, PC e dado sentinela na memória permanecem inalterados.
+- `2781068` — aplica a formatação Rustfmt solicitada. `cd04938` — substitui o loop indexado por `iter_mut().enumerate()` para satisfazer `clippy::needless_range_loop`; nenhum aviso foi suprimido.
+- Referência arquitetural independente: ARM Instruction Set Reference Guide, entradas `SMULxy`, `SMLAxy`, `SMLALD` e `SMMLS`, que descrevem operandos e restrições de registradores; o código usa apenas essa documentação técnica, não implementações de emuladores: https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab
+- Workflow [43505124581](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43505124581) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
+- O trabalho de código permaneceu restrito a `crates/aceris-core/tests/arm11_dsp_multiply.rs`. Nenhuma dependência foi adicionada e nenhum código-fonte de emulador de terceiros foi consultado.
