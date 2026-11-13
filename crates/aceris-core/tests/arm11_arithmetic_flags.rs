@@ -836,8 +836,7 @@ fn arm_shifted_register_logical_uses_pc_plus_eight_as_rn() {
                             let mut memory = FlatMemory::new(base, 4);
                             memory.write32(base, instruction).unwrap();
 
-                            let mut cpu =
-                                cpu_with(pc_operand, value, carry_in, overflow_in);
+                            let mut cpu = cpu_with(pc_operand, value, carry_in, overflow_in);
                             cpu.regs[0] = 0xA5A5_5A5A;
                             cpu.regs[2] = 0x5A5A_A5A5;
                             cpu.set_pc(base);
