@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 13/11/2026, com base na implementação de código até o commit `32fa96d3299be5bde6e319a81dacdcbc1cc5ce78`.
+> Estado revisado em 13/11/2026, com base na implementação de código até o commit `120f2d21d077fc4181c28f01ba1699e4c8d39720`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -202,31 +202,34 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ### Desktop
 
-- [~] Binário Rust de diagnóstico/linha de comando e autoteste; `--dump-lcd` exporta as telas como PNG após o quadro
+- [~] Binário Rust de diagnóstico/linha de comando e autoteste; `--dump-lcd` exporta as telas como PNG após o quadro. A carga de `.3DS`/`.CCI` sem criptografia agora prepara o processo ARM11 pelo mesmo método do Android; o primeiro quadro registra instruções, motivo de parada, PC/CPSR e atividade GPU/LCD.
 - [~] Janela X11 (Linux) sem crates: Xlib carregada por `dlopen` e FFI própria; `aceris <JOGO> --window [--scale N]` compõe as duas LCDs (400x480, escala inteira) e roda quadros a ~60 Hz até fechar a janela; validada sob Xvfb com captura de tela. Windows (Win32) e macOS (Cocoa) ainda não têm backend; sem entrada de teclado/toque, áudio nem redimensionamento
 - [ ] Biblioteca/importação de jogos para `.3DS`, `.CCI` e `.CIA`
 - [ ] Configurações de vídeo, áudio, controles, caminhos e armazenamento
-- [ ] Logs, relatórios de falha e diagnóstico de compatibilidade
+- [~] Diagnóstico inicial no CLI: mensagens de erro do loader e resumo da primeira execução; logs contínuos, relatórios persistentes e diagnóstico de compatibilidade continuam pendentes.
 - [ ] Save data e gerenciamento de arquivos de usuário
 
 ### Android
 
-- [~] Crate Rust `cdylib` inicial para ARM64; o workflow compila o alvo `arm64-v8a`
+- [~] Crate Rust `cdylib` para ARM64; mantém o carregamento NCSD sem criptografia compartilhado com o desktop. O ABI expõe PC/CPSR e permite consultar a mensagem completa de falhas de load/frame; o workflow compila `arm64-v8a`.
 - [ ] Aplicativo Android instalável, com interface implementada em Rust
 - [ ] Integração de superfície, ciclo de vida, entrada, áudio e permissões
 - [ ] Biblioteca de jogos, configurações e armazenamento
 - [ ] Testes em dispositivos ARM64 de baixo e médio desempenho
-- [ ] Diagnósticos e recuperação de falhas sem travamentos silenciosos
+- [~] Diagnóstico básico via ABI para consultar falhas de carregamento/execução e estado PC/CPSR; integração visual desses dados no host Android e recuperação completa continuam pendentes.
 
 ### Regra de implementação
 
 - [x] A implementação do produto permanece exclusivamente em Rust
+- [x] Desktop e Android chamam o mesmo `aceris-core` e usam o contrato comum `System::load_ncsd_no_crypto_file` para preparar NCSD sem criptografia (`.3DS`/`.CCI`)
+- [ ] Cada novo marco funcional deve avançar PC e Android em paralelo; nenhum marco é considerado concluído até a validação correspondente nas duas plataformas
 - [ ] Toda integração de plataforma deve continuar como ponte/host, sem deslocar lógica do emulador para Kotlin, Java, C, C++ ou outra linguagem
 
 ## 7. Testes, compatibilidade e desempenho
 
 - [x] Testes unitários para CPU, memória, loaders, processo, kernel inicial, PICA200 command lists e LCD
-- [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas
+- [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas; teste real com uma imagem fornecida pelo usuário ainda pendente
+- [~] Testes ABI Android para leitura de PC/CPSR e recuperação da mensagem original de erro; validação de carga/execução em dispositivo ainda pendente
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Bridge de fetch físico, formatos de 8/16/24/32 bits, conversão numérica, float24, armazenamento/aplicação de atributos fixos e mapeamento de entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43177475915](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43177475915), código no commit `b7c4b92cfc1356ddda9ba40ba96573c812443a56`
