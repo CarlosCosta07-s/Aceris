@@ -1619,6 +1619,92 @@ mod tests {
             .collect()
     }
 
+
+    #[test]
+    fn acquire_right_blocks_and_resumes_after_rendering_handoff() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (memory_handle, event_zero, event_one, gsp_handle) = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let memory_handle = session.create_memory_block(0x1000, 3, 3).unwrap();
+            session
+                .map_memory_block(memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
+                .unwrap();
+            let event_zero = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            let event_one = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            let gsp_handle = session.create_gsp_gpu_session().unwrap();
+            (memory_handle, event_zero, event_one, gsp_handle)
+        };
+
+        // Two synthetic clients share the same process-mapped GSP block.
+        system
+            .register_gsp_client(0, GSP_SHARED_MEMORY_BASE, event_zero)
+            .unwrap();
+        system
+            .register_gsp_client(1, GSP_SHARED_MEMORY_BASE, event_one)
+            .unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .set_gsp_session_registration(
+                gsp_handle,
+                Some(1),
+                Some(memory_handle),
+                Some(event_one),
+                0,
+            )
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        // Client 1 issues AcquireRight while client 0 owns the rendering token.
+        let request_buffer = write_tls_ipc_request(
+            &mut system,
+            gsp_handle,
+            &[0x0016_0042, 0, 0, 0],
+        );
+        assert!(system.dispatch_pending_ipc_request().unwrap());
+        assert_eq!(
+            system.ncsd_session().unwrap().current_thread_id(),
+            None
+        );
+        assert_eq!(
+            system.pending_gsp_acquires,
+            vec![PendingGspAcquire {
+                client_id: 1,
+                thread_id: crate::loader::ncsd::session::MAIN_THREAD_ID,
+            }]
+        );
+
+        // Releasing client 0 transfers ownership and completes the saved TLS reply.
+        let handoff = system.release_gsp_rendering_right(0).unwrap();
+        assert_eq!(handoff.next_owner, Some(1));
+        let session = system.ncsd_session.as_ref().unwrap();
+        assert_eq!(
+            session.current_thread_id(),
+            Some(crate::loader::ncsd::session::MAIN_THREAD_ID)
+        );
+        assert_eq!(session.core().regs[0], 0);
+        assert!(system.gsp_service_registry().owns_rendering_right(1));
+        assert_eq!(
+            read_tls_ipc_response(&mut system, request_buffer, 2),
+            vec![0x0016_0040, 0]
+        );
+        assert!(system.pending_gsp_acquires.is_empty());
+
+        system.release_gsp_rendering_right(1).unwrap();
+    }
     #[test]
     fn service_manager_connects_gsp_and_registers_shared_relay_memory() {
         let mut system = System::new();
