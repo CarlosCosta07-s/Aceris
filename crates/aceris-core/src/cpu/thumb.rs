@@ -365,10 +365,14 @@ impl Arm11Core {
                 word: half,
             });
         }
-        let new_sp = self.regs[SP].wrapping_sub(4 * list.count_ones());
+        let original_sp = self.regs[SP];
+        let new_sp = original_sp.wrapping_sub(4 * list.count_ones());
+        if new_sp & 3 != 0 && self.cp15.alignment_fault_enabled() {
+            return Err(Error::InvalidAccess { addr: new_sp });
+        }
 
         let regs = self.regs;
-        let mut addr = new_sp;
+        let mut addr = new_sp & !3;
         for (r, value) in regs.iter().enumerate() {
             if list & (1 << r) != 0 {
                 self.write_data_u32(bus, addr, *value)?;
@@ -388,7 +392,12 @@ impl Arm11Core {
             });
         }
 
-        let mut addr = self.regs[SP];
+        let original_sp = self.regs[SP];
+        if original_sp & 3 != 0 && self.cp15.alignment_fault_enabled() {
+            return Err(Error::InvalidAccess { addr: original_sp });
+        }
+        let mut addr = original_sp & !3;
+        let new_sp = original_sp.wrapping_add(4 * list.count_ones());
         let mut values = [0u32; 16];
         for (r, value) in values.iter_mut().enumerate() {
             if list & (1 << r) != 0 {
@@ -407,7 +416,7 @@ impl Arm11Core {
             });
         }
 
-        self.regs[SP] = addr;
+        self.regs[SP] = new_sp;
         for (r, value) in values.iter().enumerate().take(PC) {
             if list & (1 << r) != 0 {
                 self.regs[r] = *value;
@@ -1207,6 +1216,68 @@ mod tests {
         assert_eq!(m.cpu.regs[13], 0x110);
         m.step();
         assert_eq!(m.cpu.regs[13], 0x100);
+    }
+
+    #[test]
+    fn legacy_unaligned_thumb_push_pop_align_memory_and_preserve_sp() {
+        for big_endian in [false, true] {
+            let mut m = Machine::new(&[0xB403, 0xBC03]);
+            m.cpu.regs[SP] = DATA + 0x81;
+            m.cpu.regs[0] = 0x1122_3344;
+            m.cpu.regs[1] = 0x5566_7788;
+            m.cpu.cpsr.set_big_endian(big_endian);
+
+            m.step(); // PUSH {r0,r1}
+            assert_eq!(m.cpu.regs[SP], DATA + 0x79);
+            assert_eq!(
+                m.mem.read32(DATA + 0x78).unwrap(),
+                if big_endian { 0x4433_2211 } else { 0x1122_3344 }
+            );
+            assert_eq!(
+                m.mem.read32(DATA + 0x7C).unwrap(),
+                if big_endian { 0x8877_6655 } else { 0x5566_7788 }
+            );
+
+            m.cpu.regs[0] = 0;
+            m.cpu.regs[1] = 0;
+            m.step(); // POP {r0,r1}
+            assert_eq!(m.cpu.regs[0], 0x1122_3344);
+            assert_eq!(m.cpu.regs[1], 0x5566_7788);
+            assert_eq!(m.cpu.regs[SP], DATA + 0x81);
+        }
+    }
+
+    #[test]
+    fn thumb_push_pop_fault_on_unaligned_stack_when_sctlr_requires_alignment() {
+        for control_bit in [1 << 22, 1 << 1] {
+            for half in [0xB403, 0xBC03] {
+                let mut m = Machine::with(half, |cpu, mem| {
+                    cpu.regs[SP] = DATA + 0x81;
+                    cpu.regs[0] = 0x1122_3344;
+                    cpu.regs[1] = 0x5566_7788;
+                    cpu.cp15.write(true, 0, 1, 0, 0, control_bit).unwrap();
+                    mem.write32(DATA + 0x78, 0xCAFE_BABE).unwrap();
+                    mem.write32(DATA + 0x7C, 0xDEAD_BEEF).unwrap();
+                });
+                let old_regs = m.cpu.regs;
+                let old_first = m.mem.read32(DATA + 0x78).unwrap();
+                let old_second = m.mem.read32(DATA + 0x7C).unwrap();
+                let expected_address = if half == 0xB403 {
+                    DATA + 0x79
+                } else {
+                    DATA + 0x81
+                };
+
+                assert!(matches!(
+                    m.cpu.step(&mut m.mem),
+                    Err(Error::InvalidAccess { addr }) if addr == expected_address
+                ));
+                assert_eq!(m.cpu.regs, old_regs);
+                assert_eq!(m.cpu.pc(), 0);
+                assert_eq!(m.mem.read32(DATA + 0x78).unwrap(), old_first);
+                assert_eq!(m.mem.read32(DATA + 0x7C).unwrap(), old_second);
+            }
+        }
     }
 
     #[test]
