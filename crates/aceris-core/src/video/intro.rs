@@ -13,6 +13,9 @@ pub const FPS: u32 = 60;
 /// Total number of frames (2.5 seconds).
 pub const FRAME_COUNT: u32 = 150;
 
+/// Frame with the finished logo, held on screen while waiting for a game.
+pub const LOGO_FRAME: u32 = 120;
+
 const DROP_END: f32 = 34.0;
 const BOUNCE_1_END: f32 = 52.0;
 const BOUNCE_2_END: f32 = 64.0;

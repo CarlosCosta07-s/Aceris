@@ -39,7 +39,7 @@ continuam presentes no SVG do ícone e no fundo do ícone adaptativo.
 do número do quadro, então PC e Android veem exatamente a mesma sequência:
 queda da acerola, dois quicadas com achatamento, brilho diagonal, nome "ACERIS" letra a letra
 e fade para preto. Feita só com a paleta acima, sem recursos de terceiros.
-- PC: toca antes do jogo em `--window`; `--skip-intro` pula; `--dump-intro <DIR>` grava quadros-chave em PNG.
+- PC: toca assim que o emulador abre (`aceris` sem argumentos ou `--window`), antes de carregar o jogo; sem jogo, o logo fica na tela esperando; `--skip-intro` pula; `--dump-intro <DIR>` grava quadros-chave em PNG.
 - Android: a UI futura deve chamar `render_frame` e `rgba_to_scaled_bgrx`/RGBA direto.
 - Áudio da abertura: pendente (ainda não há backend de áudio).
 

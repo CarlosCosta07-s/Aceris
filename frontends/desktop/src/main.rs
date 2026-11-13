@@ -22,7 +22,7 @@ fn print_usage() {
     println!("{NAME} {VERSION}");
     println!();
     println!("USAGE:");
-    println!("    aceris <GAME> [--dump-lcd <DIR>] [--window [--scale <N>] [--skip-intro]]");
+    println!("    aceris [GAME] [--dump-lcd <DIR>] [--window [--scale <N>] [--skip-intro]]");
     println!("    aceris --dump-intro <DIR>");
     println!("    aceris --selftest");
     println!();
@@ -36,7 +36,7 @@ fn print_usage() {
     println!("        --window     Show both LCDs in a window and run frames until it is");
     println!("                     closed (Linux/X11 only for now)");
     println!("        --scale <N>  Integer window scale factor, 1-4 (default 2)");
-    println!("        --skip-intro Do not play the start-up animation before the game");
+    println!("        --skip-intro Do not play the start-up animation when the emulator opens");
     println!("        --dump-intro <DIR>");
     println!("                     Write key frames of the start-up animation as PNGs");
 }
@@ -105,8 +105,15 @@ fn play_intro(window: &mut window::Window, scale: usize) -> Result<bool, String>
     Ok(true)
 }
 
-/// Runs frames at roughly 60 Hz in a window until it is closed.
-fn run_windowed(system: &mut System, scale: usize, skip_intro: bool) -> Result<(), String> {
+/// Opens the window, plays the start-up animation as soon as the emulator
+/// launches, then loads `game` (if any) and runs frames until the window is
+/// closed. Without a game, the logo stays on screen waiting for one.
+fn run_windowed(
+    system: &mut System,
+    game: Option<&Path>,
+    scale: usize,
+    skip_intro: bool,
+) -> Result<(), String> {
     let mut window = window::Window::open(
         &format!("{NAME} {VERSION}"),
         window::CANVAS_WIDTH * scale,
@@ -117,6 +124,12 @@ fn run_windowed(system: &mut System, scale: usize, skip_intro: bool) -> Result<(
         return Ok(());
     }
     let frame_time = Duration::from_micros(16_667);
+    let Some(game) = game else {
+        return idle_on_logo(&mut window, scale, frame_time);
+    };
+    system
+        .load(game)
+        .map_err(|err| format!("could not load {}: {err}", game.display()))?;
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
@@ -136,22 +149,53 @@ fn run_windowed(system: &mut System, scale: usize, skip_intro: bool) -> Result<(
     }
 }
 
+/// Shows the finished logo until the window is closed (no game loaded yet).
+fn idle_on_logo(
+    window: &mut window::Window,
+    scale: usize,
+    frame_time: Duration,
+) -> Result<(), String> {
+    let rgba = intro::render_frame(
+        intro::LOGO_FRAME,
+        window::CANVAS_WIDTH,
+        window::CANVAS_HEIGHT,
+    );
+    let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
+    loop {
+        for event in window.poll_events() {
+            if event == window::WindowEvent::CloseRequested {
+                return Ok(());
+            }
+        }
+        window
+            .present(&bgrx)
+            .map_err(|err| format!("could not draw the frame: {err}"))?;
+        thread::sleep(frame_time);
+    }
+}
+
 fn run(options: RunOptions) -> ExitCode {
     let mut system = System::new();
 
-    if let Err(err) = system.load(&options.game) {
-        eprintln!("error: could not load {}: {err}", options.game.display());
-        return ExitCode::FAILURE;
-    }
-
     if options.window {
-        if let Err(message) = run_windowed(&mut system, options.scale, options.skip_intro) {
+        if let Err(message) = run_windowed(
+            &mut system,
+            options.game.as_deref(),
+            options.scale,
+            options.skip_intro,
+        ) {
             eprintln!("error: {message}");
             return ExitCode::FAILURE;
         }
-    } else if let Err(err) = system.run_frame() {
-        eprintln!("error: emulation stopped: {err}");
-        return ExitCode::FAILURE;
+    } else if let Some(game) = &options.game {
+        if let Err(err) = system.load(game) {
+            eprintln!("error: could not load {}: {err}", game.display());
+            return ExitCode::FAILURE;
+        }
+        if let Err(err) = system.run_frame() {
+            eprintln!("error: emulation stopped: {err}");
+            return ExitCode::FAILURE;
+        }
     }
 
     if let Some(dir) = options.dump_lcd {
@@ -171,7 +215,8 @@ fn run(options: RunOptions) -> ExitCode {
 /// Options for running a game.
 #[derive(Debug, PartialEq, Eq)]
 struct RunOptions {
-    game: PathBuf,
+    /// Optional only in window mode, where the emulator waits on the logo.
+    game: Option<PathBuf>,
     dump_lcd: Option<PathBuf>,
     window: bool,
     scale: usize,
@@ -210,7 +255,11 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
         }
     }
     Ok(RunOptions {
-        game: game.ok_or_else(|| "missing game path".to_string())?,
+        game: match game {
+            Some(game) => Some(game),
+            None if window => None,
+            None => return Err("missing game path".to_string()),
+        },
         dump_lcd,
         window,
         scale,
@@ -253,10 +302,14 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        None => {
-            print_usage();
-            ExitCode::FAILURE
-        }
+        // Launching without arguments opens the window and plays the intro.
+        None => run(RunOptions {
+            game: None,
+            dump_lcd: None,
+            window: true,
+            scale: 2,
+            skip_intro: false,
+        }),
     }
 }
 
@@ -270,7 +323,7 @@ mod tests {
 
     fn options(game: &str, dump: Option<&str>, window: bool, scale: usize) -> RunOptions {
         RunOptions {
-            game: PathBuf::from(game),
+            game: Some(PathBuf::from(game)),
             dump_lcd: dump.map(PathBuf::from),
             window,
             scale,
@@ -297,6 +350,13 @@ mod tests {
             parse_run_args(&strings(&["--scale", "3", "--window", "game.3ds"])).unwrap(),
             options("game.3ds", None, true, 3)
         );
+    }
+
+    #[test]
+    fn window_mode_allows_launching_without_a_game() {
+        let parsed = parse_run_args(&strings(&["--window"])).unwrap();
+        assert!(parsed.window && parsed.game.is_none());
+        assert!(parse_run_args(&strings(&["--skip-intro"])).is_err());
     }
 
     #[test]
