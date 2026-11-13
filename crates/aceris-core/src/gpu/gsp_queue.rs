@@ -251,10 +251,9 @@ impl GspGxCommandQueue {
         }
     }
 
-    /// Clears the halt/error state following a guest-side queue reset/trigger.
+    /// Clears the halt latch when the guest triggers the GX command queue.
     ///
-    /// TriggerCmdReqQueue IPC is not modeled here; this method only expresses
-    /// the shared-header transition for a future service dispatcher.
+    /// The error bit and last result are retained for guest-side diagnostics.
     pub fn reset_halt_for_trigger(&mut self) {
         self.status &= !GSP_QUEUE_STATUS_HALTED;
         self.flags &= !GSP_QUEUE_FLAG_HALT_UNTIL_TRIGGER;
