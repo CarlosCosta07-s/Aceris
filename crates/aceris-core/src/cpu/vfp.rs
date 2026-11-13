@@ -44,14 +44,8 @@ const FPEXC_INV: u32 = 1 << 7;
 const FPEXC_UFC: u32 = 1 << 3;
 const FPEXC_OFC: u32 = 1 << 2;
 const FPEXC_IOC: u32 = 1 << 0;
-const FPEXC_WRITABLE: u32 = FPEXC_EX
-    | FPEXC_EN
-    | FPEXC_FP2V
-    | FPEXC_VECITR
-    | FPEXC_INV
-    | FPEXC_UFC
-    | FPEXC_OFC
-    | FPEXC_IOC;
+const FPEXC_WRITABLE: u32 =
+    FPEXC_EX | FPEXC_EN | FPEXC_FP2V | FPEXC_VECITR | FPEXC_INV | FPEXC_UFC | FPEXC_OFC | FPEXC_IOC;
 const FPINST_RESET: u32 = 0xEE00_0A00;
 
 /// VFP register state of one core.
