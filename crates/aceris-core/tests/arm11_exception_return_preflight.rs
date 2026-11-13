@@ -51,7 +51,10 @@ fn ldm_exception_return_rejects_invalid_saved_mode_before_commit() {
 
     assert!(matches!(
         cpu.step(&mut memory),
-        Err(Error::UndefinedInstruction { pc: 0, word: LDMIA_R4_WB_R0_PC_S })
+        Err(Error::UndefinedInstruction {
+            pc: 0,
+            word: LDMIA_R4_WB_R0_PC_S
+        })
     ));
 
     assert_eq!(cpu.regs, registers_before);
