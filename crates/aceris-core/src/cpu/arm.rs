@@ -1608,10 +1608,30 @@ impl Arm11Core {
         let new_value = self.reg(rm, 8);
         let byte = bit(word, 22);
 
-        // SWP is always word-aligned in ARMv6, independent of SCTLR.U/A.
-        // SWPB transfers a byte and therefore has no alignment restriction.
+        // SWPB is a byte access. SWP is a WLoad+WStore in legacy mode
+        // (U=0), but becomes a word-sized synchronization access when U=1.
         if !byte && addr & 3 != 0 {
-            return Err(Error::InvalidAccess { addr });
+            let sctlr = self.cp15.sctlr();
+            if sctlr & ((1 << 22) | (1 << 1)) != 0 {
+                return Err(Error::InvalidAccess { addr });
+            }
+            let aligned = addr & !3;
+            self.require_normal_unaligned_range(
+                bus,
+                aligned,
+                4,
+                false,
+                self.cpsr.privileged(),
+                word,
+            )?;
+            self.require_normal_unaligned_range(
+                bus,
+                aligned,
+                4,
+                true,
+                self.cpsr.privileged(),
+                word,
+            )?;
         }
 
         let old = if byte {
@@ -1807,6 +1827,31 @@ impl Arm11Core {
 
     // ----- loads and stores -------------------------------------------------
 
+    /// Rejects an unaligned access whose translated bytes are not all Normal memory.
+    ///
+    /// ARMv6 marks an otherwise-normal unaligned access to Device or
+    /// Strongly-ordered memory as UNPREDICTABLE. Query every byte so an access
+    /// crossing a page boundary cannot silently mix memory types.
+    fn require_normal_unaligned_range<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        size: usize,
+        write: bool,
+        privileged: bool,
+        word: u32,
+    ) -> Result<()> {
+        for offset in 0..size {
+            if !bus.is_normal_memory(address.wrapping_add(offset as u32), write, privileged)? {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Reads an A32 single-word transfer using the current ARMv6 U/A alignment model.
     ///
     /// With U=0,A=0 the legacy aligned-word rotation is retained. With U=1,A=0,
@@ -1817,6 +1862,7 @@ impl Arm11Core {
         bus: &mut B,
         address: u32,
         unprivileged: bool,
+        word: u32,
     ) -> Result<u32> {
         let unaligned = address & 3 != 0;
         let sctlr = self.cp15.sctlr();
@@ -1825,6 +1871,22 @@ impl Arm11Core {
 
         if unaligned && alignment_check {
             return Err(Error::InvalidAccess { addr: address });
+        }
+
+        if unaligned {
+            let attribute_address = if unaligned_support {
+                address
+            } else {
+                address & !3
+            };
+            self.require_normal_unaligned_range(
+                bus,
+                attribute_address,
+                4,
+                false,
+                !unprivileged,
+                word,
+            )?;
         }
 
         if unaligned && unaligned_support {
@@ -1858,6 +1920,7 @@ impl Arm11Core {
         address: u32,
         value: u32,
         unprivileged: bool,
+        word: u32,
     ) -> Result<()> {
         let unaligned = address & 3 != 0;
         let sctlr = self.cp15.sctlr();
@@ -1866,6 +1929,22 @@ impl Arm11Core {
 
         if unaligned && alignment_check {
             return Err(Error::InvalidAccess { addr: address });
+        }
+
+        if unaligned {
+            let attribute_address = if unaligned_support {
+                address
+            } else {
+                address & !3
+            };
+            self.require_normal_unaligned_range(
+                bus,
+                attribute_address,
+                4,
+                true,
+                !unprivileged,
+                word,
+            )?;
         }
 
         if unaligned && unaligned_support {
@@ -1951,7 +2030,7 @@ impl Arm11Core {
                     u32::from(bus.read8(addr)?)
                 }
             } else {
-                self.read_armv6_single_word(bus, addr, unprivileged_access)?
+                self.read_armv6_single_word(bus, addr, unprivileged_access, word)?
             };
             if writeback {
                 self.set_base(rn, offset_addr);
@@ -1971,7 +2050,7 @@ impl Arm11Core {
                     bus.write8(addr, value as u8)?;
                 }
             } else {
-                self.write_armv6_single_word(bus, addr, value, unprivileged_access)?;
+                self.write_armv6_single_word(bus, addr, value, unprivileged_access, word)?;
             }
             if writeback {
                 self.set_base(rn, offset_addr);
@@ -2039,6 +2118,14 @@ impl Arm11Core {
             if sctlr & (1 << 22) == 0 {
                 return Err(undefined);
             }
+            self.require_normal_unaligned_range(
+                bus,
+                addr,
+                2,
+                !load,
+                self.cpsr.privileged(),
+                word,
+            )?;
         }
 
         match (load, bits(word, 6, 5)) {
@@ -3094,8 +3181,21 @@ mod tests {
     }
 
     #[test]
-    fn swp_word_requires_alignment_independent_of_sctlr_u_and_a() {
-        for sctlr in [0, 1 << 22, 1 << 1, (1 << 22) | (1 << 1)] {
+    fn swp_word_uses_legacy_rotation_and_aligned_store_when_u_and_a_are_clear() {
+        let mut m = Machine::new(&[0xE101_0092]); // SWP r0,r2,[r1]
+        m.cpu.regs[1] = DATA + 1;
+        m.cpu.regs[2] = 0x1122_3344;
+        m.mem.write32(DATA, 0xDDCC_BBAA).unwrap();
+
+        m.step();
+
+        assert_eq!(m.cpu.regs[0], 0xAADD_CCBB);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0x1122_3344);
+    }
+
+    #[test]
+    fn swp_word_faults_when_u_or_a_requires_word_alignment() {
+        for sctlr in [1 << 22, 1 << 1, (1 << 22) | (1 << 1)] {
             let mut m = Machine::new(&[0xE101_0092]); // SWP r0,r2,[r1]
             m.cpu.regs[0] = 0xCAFE_BABE;
             m.cpu.regs[1] = DATA + 1;
