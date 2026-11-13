@@ -2,11 +2,10 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
-    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
-    GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue, GspGxCommandQueueError,
-    GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue, GspProcessCommandList,
-    Pica200, VRAM_BASE, VRAM_SIZE,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
+    GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue,
+    GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue,
+    GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::gsp_service::{
@@ -1952,8 +1951,7 @@ mod tests {
             .unwrap();
 
         // Acquire rendering rights through the guest GSP IPC request.
-        let acquire_buffer =
-            write_tls_ipc_request(&mut system, gsp_handle, &[0x0015_0002, 0, 0]);
+        let acquire_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0015_0002, 0, 0]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, acquire_buffer, 2),
