@@ -452,6 +452,13 @@ mod tests {
         let handle = aceris_system_create();
         assert!(!handle.is_null());
 
+        let mut cpu_state = AcerisCpuState::default();
+        // SAFETY: handle is live and cpu_state is writable.
+        assert_eq!(
+            unsafe { aceris_system_get_cpu_state(handle, &mut cpu_state) },
+            ACERIS_STATUS_OK
+        );
+
         for (screen, expected_width, expected_height) in [
             (0, 400, 240),
             (1, 400, 240),
