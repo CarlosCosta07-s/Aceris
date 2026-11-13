@@ -70,10 +70,7 @@ impl Operation {
     }
 
     fn exchanges(self) -> bool {
-        matches!(
-            self,
-            Self::AddSubtractExchange | Self::SubtractAddExchange
-        )
+        matches!(self, Self::AddSubtractExchange | Self::SubtractAddExchange)
     }
 }
 
@@ -85,11 +82,7 @@ fn operations(width: u32) -> &'static [Operation] {
         Operation::SubtractAddExchange,
         Operation::Subtract,
     ];
-    if width == 8 {
-        &BYTE
-    } else {
-        &HALFWORD
-    }
+    if width == 8 { &BYTE } else { &HALFWORD }
 }
 
 fn signed_lane(value: u32, width: u32) -> i64 {
@@ -151,10 +144,7 @@ fn reference(
             Arithmetic::UnsignedModulo => {
                 if add {
                     let value = u64::from(a) + u64::from(b);
-                    (
-                        value as u32 & lane_mask,
-                        Some(value > u64::from(lane_mask)),
-                    )
+                    (value as u32 & lane_mask, Some(value > u64::from(lane_mask)))
                 } else {
                     (a.wrapping_sub(b) & lane_mask, Some(a >= b))
                 }
@@ -169,12 +159,7 @@ fn reference(
                 (value.clamp(signed_min, signed_max) as u32 & lane_mask, None)
             }
             Arithmetic::UnsignedSaturating => {
-                let value = i64::from(a)
-                    + if add {
-                        i64::from(b)
-                    } else {
-                        -i64::from(b)
-                    };
+                let value = i64::from(a) + if add { i64::from(b) } else { -i64::from(b) };
                 (
                     value.clamp(0, i64::from(lane_mask)) as u32 & lane_mask,
                     None,
@@ -190,12 +175,7 @@ fn reference(
                 ((value >> 1) as u32 & lane_mask, None)
             }
             Arithmetic::UnsignedHalving => {
-                let value = i64::from(a)
-                    + if add {
-                        i64::from(b)
-                    } else {
-                        -i64::from(b)
-                    };
+                let value = i64::from(a) + if add { i64::from(b) } else { -i64::from(b) };
                 ((value >> 1) as u32 & lane_mask, None)
             }
         };
@@ -276,21 +256,9 @@ fn all_36_parallel_arithmetic_encodings_match_the_independent_lane_model() {
                     for &rhs in values {
                         for ge_before in [0b0000, 0b0101, 0b1010, 0b1111] {
                             for q_before in [false, true] {
-                                let (expected, expected_ge) = reference(
-                                    arithmetic,
-                                    width,
-                                    *operation,
-                                    lhs,
-                                    rhs,
-                                    ge_before,
-                                );
-                                let cpu = execute(
-                                    instruction,
-                                    lhs,
-                                    rhs,
-                                    ge_before,
-                                    q_before,
-                                );
+                                let (expected, expected_ge) =
+                                    reference(arithmetic, width, *operation, lhs, rhs, ge_before);
+                                let cpu = execute(instruction, lhs, rhs, ge_before, q_before);
                                 let context = format!(
                                     "{arithmetic:?}/{width}/{operation:?} lhs={lhs:#010x} rhs={rhs:#010x} GE={ge_before:04b} Q={q_before}"
                                 );
