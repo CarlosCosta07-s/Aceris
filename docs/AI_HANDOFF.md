@@ -731,3 +731,12 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - Referência arquitetural independente: ARM Instruction Set Reference Guide, entradas `SMULxy`, `SMLAxy`, `SMLALD` e `SMMLS`, que descrevem operandos e restrições de registradores; o código usa apenas essa documentação técnica, não implementações de emuladores: https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab
 - Workflow [43505124581](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43505124581) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
 - O trabalho de código permaneceu restrito a `crates/aceris-core/tests/arm11_dsp_multiply.rs`. Nenhuma dependência foi adicionada e nenhum código-fonte de emulador de terceiros foi consultado.
+
+## A32 — validação de aritmética e lógica com Operand2 imediato rotacionado (13/11/2026)
+
+- `93343df` — acrescenta uma matriz diferencial para ADD/ADC/SUB/SBC/RSB/RSC/CMP/CMN A32 com Operand2 imediato rotacionado. O teste usa nove pares `rotate/imm8`, a grade de operandos-limite já existente e todas as combinações de C de entrada e V inicial. O modelo independente calcula resultado, carry (incluindo not-borrow) e overflow.
+- `bacf990` — ajusta a forma de `arm_immediate_instruction` conforme Rustfmt. CI [43505804950](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43505804950) aprovada nas quatro plataformas.
+- `71deb47` — acrescenta matriz para AND/EOR/TST/TEQ/ORR/MOV/BIC/MVN imediato. Verifica o carry produzido pelo rotate do shifter quando a rotação é diferente de zero, preservação do carry corrente quando rotate=0, preservação de V e ausência de gravação em Rd para TST/TEQ.
+- `0ed0a2b` — corrige a formatação de uma chamada auxiliar. Workflow [43506136687](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43506136687) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux/Windows/macOS; build release Android `arm64-v8a` aprovado.
+- Referência independente: ARM Architecture Reference Manual ARM DDI 0100I, instruções A32 de processamento de dados e cálculo do carry de Operand2. O teste usa a codificação pública `ROR(imm8, 2*rotate)` e uma referência aritmética própria; nenhuma implementação de emulador de terceiros foi consultada.
+- As alterações de código desta etapa ficaram limitadas a `crates/aceris-core/tests/arm11_arithmetic_flags.rs`; não houve mudança no caminho de produção.
