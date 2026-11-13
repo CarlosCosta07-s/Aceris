@@ -725,9 +725,7 @@ fn reference_operand_shift(
             ((value as i32) >> amount) as u32,
             value & (1 << (amount - 1)) != 0,
         ),
-        (OperandShift::Ror, 0) => {
-            ((u32::from(carry_in) << 31) | (value >> 1), value & 1 != 0)
-        }
+        (OperandShift::Ror, 0) => ((u32::from(carry_in) << 31) | (value >> 1), value & 1 != 0),
         (OperandShift::Ror, 1..=31) => {
             let result = value.rotate_right(amount);
             (result, result >> 31 != 0)
@@ -778,8 +776,7 @@ fn arm_shifted_register_arithmetic_uses_pc_plus_eight_as_rn() {
                             let mut memory = FlatMemory::new(base, 4);
                             memory.write32(base, instruction).unwrap();
 
-                            let mut cpu =
-                                cpu_with(pc_operand, value, carry_in, overflow_in);
+                            let mut cpu = cpu_with(pc_operand, value, carry_in, overflow_in);
                             cpu.regs[0] = 0xA5A5_5A5A;
                             cpu.regs[2] = 0x5A5A_A5A5;
                             cpu.set_pc(base);
@@ -848,12 +845,7 @@ fn arm_shifted_register_logical_uses_pc_plus_eight_as_rn() {
 
                             assert_eq!(
                                 flags(&cpu),
-                                (
-                                    expected >> 31 != 0,
-                                    expected == 0,
-                                    carry_out,
-                                    overflow_in
-                                ),
+                                (expected >> 31 != 0, expected == 0, carry_out, overflow_in),
                                 "{instruction:#010x} base={base:#010x} value={value:#010x} operand={operand:#010x} carry_in={carry_in}"
                             );
                             if compare {
