@@ -1714,6 +1714,8 @@ impl Arm11Core {
 
         // SWP/SWPB do not permit PC in any operand. The base register
         // must also differ from both transfer registers; Rd == Rm is valid.
+        // ARM11 MPCore SCTLR[10] is Reserved/SBZ (DDI 0360F), so this
+        // ARMv6K profile does not use the later ARMv7 SCTLR.SW enable gate.
         if rn as usize == PC || rd as usize == PC || rm as usize == PC || rn == rd || rn == rm {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),

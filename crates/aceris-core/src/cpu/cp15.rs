@@ -49,6 +49,8 @@ pub const TLBTR_MP11: u32 = 0x0000_0800;
 
 const SCTLR_RESET: u32 = 0x0005_0078;
 /// Writable SCTLR bits modeled here: M, A, C, Z, I, V, RR, S/R, U, EE, XP and TRE.
+/// ARM11 MPCore DDI 0360F marks bit 10 Reserved/SBZ; do not apply the later
+/// ARMv7 Multiprocessing Extensions SWP/SWPB enable-bit semantics here.
 const SCTLR_WRITABLE: u32 = 0x10C0_FB07;
 const SCTLR_M: u32 = 1;
 const SCTLR_XP: u32 = 1 << 23;
