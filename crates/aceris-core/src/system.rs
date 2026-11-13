@@ -8,7 +8,7 @@ use crate::gpu::{
     GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
-use crate::loader::ncsd::session::Arm11RunStopReason;
+use crate::loader::ncsd::session::{Arm11RunStopReason, ThreadId};
 use crate::loader::ncsd::session::ipc::{IpcCommandHeader, IpcMessage};
 use crate::loader::ncsd::session::kernel::ServiceSessionKind;
 use crate::loader::ncsd::session::gsp_service::{
@@ -30,6 +30,12 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingGspAcquire {
+    client_id: u8,
+    thread_id: ThreadId,
+}
+
 /// The emulated console. Front-ends create one of these, load a game and then
 /// drive it one frame at a time.
 #[derive(Debug, Default)]
@@ -38,6 +44,7 @@ pub struct System {
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
+    pending_gsp_acquires: Vec<PendingGspAcquire>,
     gpu: Pica200,
     physical_memory: GpuPhysicalMemory,
     gpu_address_space: GpuDmaAddressSpace,
@@ -153,6 +160,7 @@ impl System {
         self.image = Some(format);
         self.ncsd_session = None;
         self.gsp_service = GspServiceRegistry::new();
+        self.pending_gsp_acquires.clear();
         self.cpu = Arm11Core::new();
         Ok(format)
     }
@@ -205,6 +213,7 @@ impl System {
         self.image = Some(ImageFormat::Ncsd);
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
+        self.pending_gsp_acquires.clear();
         Ok(ImageFormat::Ncsd)
     }
 
@@ -462,7 +471,10 @@ impl System {
                 break;
             }
 
-            self.dispatch_pending_ipc_request()?;
+            if self.dispatch_pending_ipc_request()? {
+                stop_reason = Arm11RunStopReason::InstructionBudgetExhausted;
+                continue;
+            }
             stop_reason = Arm11RunStopReason::InstructionBudgetExhausted;
         }
 
@@ -480,7 +492,7 @@ impl System {
     ///
     /// Requests and replies use the current thread's TLS command buffer. A
     /// service call is handled synchronously before ARM11 execution resumes.
-    fn dispatch_pending_ipc_request(&mut self) -> Result<()> {
+    fn dispatch_pending_ipc_request(&mut self) -> Result<bool> {
         let (service_handle, tls_address, request_words, service_kind) = {
             let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
                 "an NCSD ARM11 process session has not been prepared",
@@ -528,6 +540,7 @@ impl System {
                 format!("invalid ARM11 IPC request: {error:?}"),
             ))
         })?;
+        let pending_before = self.pending_gsp_acquires.len();
         let response_words = match service_kind {
             ServiceSessionKind::ServiceManager => {
                 self.dispatch_service_manager_request(message)?
@@ -546,6 +559,9 @@ impl System {
                 message,
             )?,
         };
+        if self.pending_gsp_acquires.len() > pending_before {
+            return Ok(true);
+        }
 
         if response_words.len() > ARM11_IPC_BUFFER_WORDS {
             return Err(Error::Io(io::Error::new(
@@ -565,7 +581,38 @@ impl System {
         ))?;
         session.write_memory_bytes(request_address, &response_bytes)?;
         session.set_current_register(0, 0);
-        Ok(())
+        Ok(false)
+    }
+
+    /// Completes the queued IPC request of the next GSP rendering-right owner.
+    fn wake_pending_gsp_acquire(&mut self, client_id: u8, result_code: u32) -> Result<bool> {
+        let Some(index) = self
+            .pending_gsp_acquires
+            .iter()
+            .position(|pending| pending.client_id == client_id)
+        else {
+            return Ok(false);
+        };
+        let pending = self.pending_gsp_acquires[index];
+        let response = GspIpcResultResponse::for_request(
+            GspIpcRequest::AcquireRight {
+                flags: 0,
+                process_handle: 0,
+            },
+            result_code,
+        )
+        .expect("AcquireRight has a simple reply")
+        .encode();
+
+        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+            "ARM11 process session is unavailable while completing GSP AcquireRight",
+        ))?;
+        session.write_ipc_response_to_thread(pending.thread_id, &response)?;
+        session
+            .wake_thread_for_ipc(pending.thread_id)
+            .map_err(|error| Error::Io(io::Error::other(error.to_string())))?;
+        self.pending_gsp_acquires.remove(index);
+        Ok(true)
     }
 
     fn dispatch_service_manager_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
@@ -785,15 +832,50 @@ impl System {
                 process_handle: _,
             } => {
                 let result = match client_id {
-                    Some(client_id) => {
-                        match self.gsp_service.try_acquire_rendering_right(client_id) {
-                            Ok(true) => 0,
-                            // Waiting-thread suspension and ownership handoff are
-                            // deliberately not faked by this first IPC milestone.
-                            Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
-                            Err(error) => gsp_service_result_code(error),
+                    Some(client_id) => match self.gsp_service.acquire_rendering_right(client_id) {
+                        Ok(GspRenderingRightAcquireOutcome::Acquired) => 0,
+                        Ok(GspRenderingRightAcquireOutcome::AlreadyWaiting { .. }) => {
+                            RESULT_GSP_RENDERING_RIGHT_BUSY
                         }
-                    }
+                        Ok(GspRenderingRightAcquireOutcome::Waiting { .. }) => {
+                            if self
+                                .pending_gsp_acquires
+                                .iter()
+                                .any(|pending| pending.client_id == client_id)
+                            {
+                                let _ = self.gsp_service.cancel_rendering_right_wait(client_id);
+                                RESULT_GSP_RENDERING_RIGHT_BUSY
+                            } else {
+                                let session = self.ncsd_session.as_mut().ok_or(
+                                    Error::Unimplemented("ARM11 process session is unavailable"),
+                                )?;
+                                let Some(thread_id) = session.current_thread_id() else {
+                                    let _ = self.gsp_service.cancel_rendering_right_wait(client_id);
+                                    return Ok(GspIpcResultResponse::for_request(
+                                        request,
+                                        RESULT_INVALID_HANDLE,
+                                    )
+                                    .expect("AcquireRight has a simple reply")
+                                    .encode()
+                                    .to_vec());
+                                };
+                                match session.wait_current_thread_for_ipc() {
+                                    Ok(_) => {
+                                        self.pending_gsp_acquires.push(PendingGspAcquire {
+                                            client_id,
+                                            thread_id,
+                                        });
+                                        return Ok(Vec::new());
+                                    }
+                                    Err(_) => {
+                                        let _ = self.gsp_service.cancel_rendering_right_wait(client_id);
+                                        RESULT_INVALID_HANDLE
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => gsp_service_result_code(error),
+                    },
                     None => RESULT_INVALID_HANDLE,
                 };
                 Ok(GspIpcResultResponse::for_request(request, result)
@@ -803,11 +885,18 @@ impl System {
             }
             GspIpcRequest::ReleaseRight => {
                 let result = match client_id {
-                    Some(client_id) => self
+                    Some(client_id) => match self
                         .gsp_service
                         .release_rendering_right_with_handoff(client_id)
-                        .map(|_| 0)
-                        .unwrap_or_else(gsp_service_result_code),
+                    {
+                        Ok(handoff) => {
+                            if let Some(next_owner) = handoff.next_owner {
+                                self.wake_pending_gsp_acquire(next_owner, 0)?;
+                            }
+                            0
+                        }
+                        Err(error) => gsp_service_result_code(error),
+                    },
                     None => RESULT_INVALID_HANDLE,
                 };
                 Ok(GspIpcResultResponse::for_request(request, result)
