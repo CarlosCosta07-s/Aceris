@@ -575,8 +575,8 @@ fn assert_undefined_atomically(instruction: u32) {
     memory.write32(4, 0xA5A5_5A5A).unwrap();
 
     let mut cpu = Arm11Core::new();
-    for register in 0..15 {
-        cpu.regs[register] = 0x1020_3040 ^ ((register as u32) * 0x0101_0101);
+    for (register, slot) in cpu.regs.iter_mut().enumerate().take(15) {
+        *slot = 0x1020_3040 ^ ((register as u32) * 0x0101_0101);
     }
     cpu.set_pc(0);
     cpu.cpsr.set_flags(true, false, true, true);
