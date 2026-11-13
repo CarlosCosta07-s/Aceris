@@ -1377,6 +1377,57 @@ mod tests {
     }
 
     #[test]
+    fn guest_va_to_pa_checks_all_four_privileged_and_user_access_forms() {
+        let target_va = 0x1234_5678;
+        let expected_pa = 0x0124_5100;
+
+        for (opc2, expected_par) in [
+            (0, expected_pa), // privileged read
+            (1, expected_pa), // privileged write
+            (2, 0x1B),         // User read denied by AP=01
+            (3, 0x1B),         // User write denied by AP=01
+        ] {
+            let (mut cpu, mut mem) = machine();
+            set_l1(&mut mem, 0, SECTION | SECTION_AP_RW_ALL);
+            set_l1(
+                &mut mem,
+                0x123,
+                0x0120_0000 | SECTION | SECTION_AP_PRIV_RW,
+            );
+            mem.write32(0, 0xEE07_0F18 | (opc2 << 5)).unwrap();
+            mem.write32(4, 0xEE17_1F14).unwrap(); // MRC p15,0,r1,c7,c4,0
+            cpu.regs[0] = target_va;
+
+            assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
+            assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
+            assert_eq!(cpu.regs[1], expected_par, "op2={opc2}");
+        }
+    }
+
+    #[test]
+    fn guest_va_to_pa_applies_fcse_to_the_true_low_virtual_address() {
+        let (mut cpu, mut mem) = machine();
+        let fcse_pid = 0x0400_0000;
+        let target_va = 0x0012_3456;
+        set_l1(&mut mem, 0x040, SECTION | SECTION_AP_RW_ALL);
+        set_l1(
+            &mut mem,
+            0x041,
+            0x0240_0000 | SECTION | SECTION_AP_RW_ALL,
+        );
+        cpu.cp15
+            .write(true, 0, 13, 0, 0, fcse_pid)
+            .unwrap();
+        mem.write32(0, 0xEE07_0F18).unwrap(); // MCR p15,0,r0,c7,c8,0
+        mem.write32(4, 0xEE17_1F14).unwrap(); // MRC p15,0,r1,c7,c4,0
+        cpu.regs[0] = target_va;
+
+        assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.regs[1], 0x0242_3100);
+    }
+
+    #[test]
     fn va_to_pa_is_flat_mapped_when_the_mmu_is_disabled() {
         let mut cpu = Arm11Core::new();
         cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
