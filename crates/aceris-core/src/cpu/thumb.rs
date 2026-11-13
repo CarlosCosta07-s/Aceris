@@ -1398,8 +1398,8 @@ mod tests {
     #[test]
     fn legacy_unaligned_thumb_multiple_transfers_align_memory_and_preserve_base_writeback() {
         for big_endian in [false, true] {
-            let first = 0x1122_3344;
-            let second = 0x5566_7788;
+            let first: u32 = 0x1122_3344;
+            let second: u32 = 0x5566_7788;
             let mut load = Machine::with(0xC806, |cpu, mem| {
                 cpu.regs[0] = DATA + 1;
                 cpu.cpsr.set_big_endian(big_endian);
