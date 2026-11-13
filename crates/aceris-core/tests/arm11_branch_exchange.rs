@@ -47,3 +47,46 @@ fn blx_pc_is_rejected_before_link_or_branch_side_effects() {
     assert_eq!(cpu.cpsr, status_before);
     assert_eq!(cpu.pc(), 0);
 }
+
+#[test]
+fn bxj_uses_the_armv6_trivial_jazelle_fallback_and_interworks_to_thumb() {
+    let instruction = 0xE12F_FF20; // BXJ r0
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write32(0, instruction).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.regs[0] = 0x21;
+    cpu.regs[14] = 0x1234_5678;
+    cpu.cpsr.set_flags(true, false, true, true);
+    let flags_before = cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V);
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.pc(), 0x20);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.regs[14], 0x1234_5678);
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V),
+        flags_before
+    );
+}
+
+#[test]
+fn bxj_pc_falls_back_to_the_same_pc_relative_arm_branch_as_bx_pc() {
+    let instruction = 0xE12F_FF2F; // BXJ pc
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write32(0, instruction).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.cpsr.set_flags(false, true, true, false);
+    let flags_before = cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V);
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.pc(), 8);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V),
+        flags_before
+    );
+}
