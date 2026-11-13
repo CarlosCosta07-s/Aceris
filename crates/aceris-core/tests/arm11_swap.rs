@@ -62,14 +62,21 @@ fn swp_and_swpb_reject_pc_and_base_aliases_without_side_effects() {
         let status_before = cpu.cpsr;
         let memory_before = memory.read32(DATA).unwrap();
 
-        assert!(matches!(
-            cpu.step(&mut memory),
-            Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
-        ), "{instruction:#010x}");
+        assert!(
+            matches!(
+                cpu.step(&mut memory),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+            ),
+            "{instruction:#010x}"
+        );
 
         assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
         assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
-        assert_eq!(memory.read32(DATA).unwrap(), memory_before, "{instruction:#010x}");
+        assert_eq!(
+            memory.read32(DATA).unwrap(),
+            memory_before,
+            "{instruction:#010x}"
+        );
     }
 }
 
