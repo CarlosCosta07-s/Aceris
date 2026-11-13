@@ -1,8 +1,8 @@
 //! Independent integration tests for ARM CPSR/SPSR instruction behaviour.
 
+use aceris_core::Error;
 use aceris_core::cpu::{Arm11Core, Psr};
 use aceris_core::memory::{Bus, FlatMemory};
-use aceris_core::Error;
 
 fn execute(cpu: &mut Arm11Core, word: u32) -> aceris_core::Result<()> {
     let mut memory = FlatMemory::new(0, 4);
@@ -17,7 +17,10 @@ fn mrs_reads_the_active_cpsr_and_exception_mode_spsr() {
     let mut cpu = Arm11Core::new();
     cpu.cpsr = Psr(Psr::USER_MODE | Psr::N | Psr::C | Psr::E);
     execute(&mut cpu, 0xE10F_2000).unwrap(); // MRS r2, CPSR
-    assert_eq!(cpu.regs[2], Psr(Psr::USER_MODE | Psr::N | Psr::C | Psr::E).0);
+    assert_eq!(
+        cpu.regs[2],
+        Psr(Psr::USER_MODE | Psr::N | Psr::C | Psr::E).0
+    );
 
     cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
     let saved = Psr(Psr::SYSTEM_MODE | Psr::N | Psr::V | Psr::T | Psr::I);
@@ -32,14 +35,8 @@ fn user_msr_changes_only_unprivileged_status_fields() {
     cpu.regs[1] = u32::MAX;
     execute(&mut cpu, 0xE12F_F001).unwrap(); // MSR CPSR_fsxc, r1
 
-    let expected = Psr::USER_MODE
-        | Psr::N
-        | Psr::Z
-        | Psr::C
-        | Psr::V
-        | Psr::Q
-        | Psr::GE_MASK
-        | Psr::E;
+    let expected =
+        Psr::USER_MODE | Psr::N | Psr::Z | Psr::C | Psr::V | Psr::Q | Psr::GE_MASK | Psr::E;
     assert_eq!(cpu.cpsr.0, expected);
 }
 
