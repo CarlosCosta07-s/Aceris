@@ -152,3 +152,12 @@ fn pld_register_offset_accepts_immediate_shift_but_rejects_reserved_bit_four() {
     ));
     assert_eq!(cpu.pc(), 0);
 }
+
+#[test]
+fn pld_register_offset_allows_pc_as_base_register() {
+    // In the offset forms, PC is permitted as Rn and supplies instruction address + 8.
+    const PLD_PC_BASE_RM_R2_LSL_3: u32 = 0xF7DF_F182;
+    let (cpu, result) = execute(PLD_PC_BASE_RM_R2_LSL_3);
+    assert!(result.is_ok());
+    assert_eq!(cpu.pc(), 4);
+}
