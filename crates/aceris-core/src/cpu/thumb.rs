@@ -1950,13 +1950,11 @@ mod tests {
             cpu.cpsr.set_flags(true, false, true, true);
         });
         let old_regs = m.cpu.regs;
-        let old_flags = m.flags();
-        let old_mode = m.cpu.cpsr.mode();
+        let old_cpsr = m.cpu.cpsr;
 
         assert_eq!(m.step(), StepEvent::Breakpoint(0xA5));
         assert_eq!(&m.cpu.regs[..PC], &old_regs[..PC]);
-        assert_eq!(m.flags(), old_flags);
-        assert_eq!(m.cpu.cpsr.mode(), old_mode);
+        assert_eq!(m.cpu.cpsr, old_cpsr);
         assert_eq!(m.cpu.pc(), 2);
 
         // The entire imm8 field is surfaced to the debugger.
