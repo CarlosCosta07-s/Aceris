@@ -1955,7 +1955,8 @@ mod tests {
                     0xEF00_0032, // GSP TryAcquireRight
                     0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
-                    0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill)
+                    0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill, both buffers)
+                    0xEF00_0032, // GSP TriggerCmdReqQueue (buffer 1 only / PSC1)
                     0xEF00_0032, // GSP ReleaseRight
                     0xEF00_0032, // GSP UnregisterInterruptRelayQueue
                 ])),
@@ -2230,6 +2231,89 @@ mod tests {
         assert_eq!(
             relay_queue.pending_interrupts().unwrap(),
             vec![GspInterruptId::Psc0]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(true)
+        );
+
+        // Buffer 1 alone uses the PSC1 fill unit and the 16-bit fill mode.
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .clear_event_handle(event_handle)
+            .unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(
+                GSP_SHARED_MEMORY_BASE,
+                &GspInterruptRelayQueue::new().encode(),
+            )
+            .unwrap();
+        let fill_start_1_only = 0x1F00_2040;
+        let fill_end_1_only = fill_start_1_only + 0x10;
+        let mut fill_queue_1_only = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        fill_queue_1_only[0] = 3;
+        fill_queue_1_only[1] = 1;
+        let fill_entry_1_only = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 3 * 0x20;
+        fill_queue_1_only[fill_entry_1_only] = GSP_GX_COMMAND_MEMORY_FILL;
+        for (index, value) in [
+            0,
+            0,
+            0,
+            fill_start_1_only,
+            0x0000_ABCD,
+            fill_end_1_only,
+            0x0001_0000,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let offset = fill_entry_1_only + 4 + index * 4;
+            fill_queue_1_only[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(queue_address, &fill_queue_1_only)
+            .unwrap();
+
+        let fill_1_only_trigger =
+            write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, fill_1_only_trigger, 2),
+            vec![0x000C_0040, 0]
+        );
+        let mut fill_1_only_bytes = [0u8; 16];
+        system
+            .physical_memory()
+            .read(VRAM_BASE + 0x2040, &mut fill_1_only_bytes)
+            .unwrap();
+        assert_eq!(
+            fill_1_only_bytes,
+            [
+                0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB, 0xCD, 0xAB,
+                0xCD, 0xAB, 0xCD, 0xAB,
+            ]
+        );
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(GSP_SHARED_MEMORY_BASE, &mut relay_queue_bytes)
+            .unwrap();
+        let relay_queue_1_only = GspInterruptRelayQueue::parse(&relay_queue_bytes).unwrap();
+        assert_eq!(
+            relay_queue_1_only.pending_interrupts().unwrap(),
+            vec![GspInterruptId::Psc1]
         );
         assert_eq!(
             system
