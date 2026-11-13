@@ -108,7 +108,7 @@ fn encode(arithmetic: Arithmetic, width: u32, operation: Operation) -> u32 {
         | (arithmetic.encoding() << 20)
         | (1 << 16)
         | (2 << 12)
-        | (u32::from(width == 8) << 7)
+        | (if width == 8 { 1 << 7 } else { 0 })
         | (operation.encoding() << 5)
         | 3
 }
