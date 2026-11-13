@@ -1928,11 +1928,7 @@ impl Arm11Core {
 
         // An unaligned word load into PC is UNPREDICTABLE when it would
         // otherwise complete normally. Alignment checking remains a fault.
-        if load
-            && !byte
-            && rd as usize == PC
-            && addr & 3 != 0
-            && self.cp15.sctlr() & (1 << 1) == 0
+        if load && !byte && rd as usize == PC && addr & 3 != 0 && self.cp15.sctlr() & (1 << 1) == 0
         {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
@@ -2812,14 +2808,14 @@ mod tests {
     fn armv6_unaligned_ldr_pc_is_rejected_without_alignment_check() {
         let mut m = Machine::new(&[0xE591_F000]); // LDR pc,[r1]
         m.cpu.regs[1] = DATA + 1;
-        m.cpu
-            .cp15_mut()
-            .write(true, 0, 1, 0, 0, 1 << 22)
-            .unwrap();
+        m.cpu.cp15_mut().write(true, 0, 1, 0, 0, 1 << 22).unwrap();
 
         assert!(matches!(
             m.cpu.step(&mut m.mem),
-            Err(Error::UndefinedInstruction { pc: 0, word: 0xE591_F000 })
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xE591_F000
+            })
         ));
         assert_eq!(m.cpu.pc(), 0);
     }
