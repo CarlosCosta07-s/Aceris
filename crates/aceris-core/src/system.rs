@@ -1282,11 +1282,10 @@ impl System {
     /// Reads, dispatches and writes back one client's GSP GX shared-memory queue.
     ///
     /// The caller supplies the registered 0x1000-byte shared-memory base and
-    /// the client slot (0..4). Only ProcessCommandList is implemented so far.
-    /// It is submitted to PICA200 only when this client owns rendering rights;
-    /// without rights the queue entry is consumed as a no-op. TriggerCmdReqQueue
-    /// itself does not require rendering rights. Other GX command families,
-    /// busy arbitration and the guest IPC/scheduler dispatcher remain pending.
+    /// the client slot (0..4). Each trigger clears the queue halt latch before
+    /// processing. Only ProcessCommandList is implemented so far; it is
+    /// submitted to PICA200 only when this client owns rendering rights.
+    /// Other GX command families and busy arbitration remain pending.
     pub fn process_gsp_gx_command_queue(
         &mut self,
         shared_memory_base: u32,
@@ -1321,6 +1320,7 @@ impl System {
                 format!("invalid GSP GX command queue: {error}"),
             ))
         })?;
+        queue.reset_halt_for_trigger();
         let client_has_rendering_right = self.gsp_service.owns_rendering_right(client_id);
         let report =
             self.dispatch_gsp_gx_command_queue_with_right(&mut queue, client_has_rendering_right);
@@ -1835,7 +1835,8 @@ mod tests {
                     0xEF00_0032, // srv:RegisterClient
                     0xEF00_0032, // srv:GetServiceHandle
                     0xEF00_0032, // GSP RegisterInterruptRelayQueue
-                    0xEF00_0032, // GSP TriggerCmdReqQueue
+                    0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
+                    0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
                     0xEF00_0032, // GSP UnregisterInterruptRelayQueue
                 ])),
                 [0; AES_BLOCK_SIZE],
@@ -1946,11 +1947,89 @@ mod tests {
             .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
             .unwrap();
 
-        // TriggerCmdReqQueue must reach the registered client's empty GX ring.
+        // Give client 0 the rendering token so ProcessCommandList is submitted.
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        // Two commands are queued. The first halts after execution; the second
+        // must remain pending until a second TriggerCmdReqQueue IPC arrives.
+        let first_command_address = VRAM_BASE + 0x1000;
+        let second_command_address = VRAM_BASE + 0x1010;
+        system
+            .physical_memory_mut()
+            .write_u32(first_command_address, 0xDEAD_BEEF)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(first_command_address + 4, 0x000F_0100)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(second_command_address, 0xCAFE_BABE)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(second_command_address + 4, 0x000F_0101)
+            .unwrap();
+
+        let queue_address =
+            GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
+        let mut gx_queue = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        gx_queue[1] = 2;
+        for (slot, command_address, stop_after) in [
+            (0usize, first_command_address, true),
+            (1usize, second_command_address, false),
+        ] {
+            let entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + slot * 0x20;
+            gx_queue[entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
+            gx_queue[entry + 2] = u8::from(stop_after);
+            gx_queue[entry + 4..entry + 8].copy_from_slice(&command_address.to_le_bytes());
+            gx_queue[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
+        }
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(queue_address, &gx_queue)
+            .unwrap();
+
+        // First trigger submits register 0x100 and leaves one command halted.
         let trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
         run_one_ipc_svc(&mut system);
-        let trigger_response = read_tls_ipc_response(&mut system, trigger_buffer, 2);
-        assert_eq!(trigger_response, vec![0x000C_0040, 0]);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, trigger_buffer, 2),
+            vec![0x000C_0040, 0]
+        );
+        assert_eq!(system.gpu().register(0x100), Some(0xDEAD_BEEF));
+        let mut queue_header = [0u8; GSP_GX_COMMAND_QUEUE_HEADER_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(queue_address, &mut queue_header)
+            .unwrap();
+        assert_eq!(queue_header[0], 1);
+        assert_eq!(queue_header[1], 1);
+        assert_ne!(queue_header[2] & 0x01, 0);
+        assert_ne!(queue_header[3] & 0x01, 0);
+
+        // Second trigger clears the halt latch and submits the remaining command.
+        let trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, trigger_buffer, 2),
+            vec![0x000C_0040, 0]
+        );
+        assert_eq!(system.gpu().register(0x101), Some(0xCAFE_BABE));
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(queue_address, &mut queue_header)
+            .unwrap();
+        assert_eq!(queue_header[0], 2);
+        assert_eq!(queue_header[1], 0);
+        assert_eq!(queue_header[2] & 0x01, 0);
+        assert_eq!(queue_header[3] & 0x01, 0);
 
         // Unregister releases the queue mapping and memory handle.
         let unregister_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
