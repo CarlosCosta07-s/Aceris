@@ -1800,6 +1800,92 @@ impl Arm11Core {
 
     // ----- loads and stores -------------------------------------------------
 
+    /// Reads an A32 single-word transfer using the current ARMv6 U/A alignment model.
+    ///
+    /// With U=0,A=0 the legacy aligned-word rotation is retained. With U=1,A=0,
+    /// an unaligned normal-memory access is assembled from the exact byte addresses
+    /// in the current CPSR endianness. A=1 always faults on an unaligned word.
+    fn read_armv6_single_word<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        unprivileged: bool,
+    ) -> Result<u32> {
+        let unaligned = address & 3 != 0;
+        let sctlr = self.cp15.sctlr();
+        let unaligned_support = sctlr & (1 << 22) != 0;
+        let alignment_check = sctlr & (1 << 1) != 0;
+
+        if unaligned && alignment_check {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+
+        if unaligned && unaligned_support {
+            let mut bytes = [0u8; 4];
+            for (offset, byte) in bytes.iter_mut().enumerate() {
+                let current = address.wrapping_add(offset as u32);
+                *byte = if unprivileged {
+                    bus.read8_unprivileged(current)?
+                } else {
+                    bus.read8(current)?
+                };
+            }
+            return Ok(if self.cpsr.big_endian() {
+                u32::from_be_bytes(bytes)
+            } else {
+                u32::from_le_bytes(bytes)
+            });
+        }
+
+        if unprivileged {
+            self.read_data_u32_unaligned_unprivileged(bus, address)
+        } else {
+            self.read_data_u32_unaligned(bus, address)
+        }
+    }
+
+    /// Writes an A32 single-word transfer using the current ARMv6 U/A alignment model.
+    fn write_armv6_single_word<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        value: u32,
+        unprivileged: bool,
+    ) -> Result<()> {
+        let unaligned = address & 3 != 0;
+        let sctlr = self.cp15.sctlr();
+        let unaligned_support = sctlr & (1 << 22) != 0;
+        let alignment_check = sctlr & (1 << 1) != 0;
+
+        if unaligned && alignment_check {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+
+        if unaligned && unaligned_support {
+            let bytes = if self.cpsr.big_endian() {
+                value.to_be_bytes()
+            } else {
+                value.to_le_bytes()
+            };
+            for (offset, byte) in bytes.into_iter().enumerate() {
+                let current = address.wrapping_add(offset as u32);
+                if unprivileged {
+                    bus.write8_unprivileged(current, byte)?;
+                } else {
+                    bus.write8(current, byte)?;
+                }
+            }
+            return Ok(());
+        }
+
+        let aligned_address = if unaligned { address & !3 } else { address };
+        if unprivileged {
+            self.write_data_u32_unprivileged(bus, aligned_address, value)
+        } else {
+            self.write_data_u32(bus, aligned_address, value)
+        }
+    }
+
     fn single_transfer<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
         let pre_index = bit(word, 24);
         let up = bit(word, 23);
@@ -1840,18 +1926,29 @@ impl Arm11Core {
         };
         let addr = if pre_index { offset_addr } else { base };
 
+        // An unaligned word load into PC is UNPREDICTABLE when it would
+        // otherwise complete normally. Alignment checking remains a fault.
+        if load
+            && !byte
+            && rd as usize == PC
+            && addr & 3 != 0
+            && self.cp15.sctlr() & (1 << 1) == 0
+        {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
         if load {
-            let value = if unprivileged_access {
-                if byte {
+            let value = if byte {
+                if unprivileged_access {
                     u32::from(bus.read8_unprivileged(addr)?)
                 } else {
-                    self.read_data_u32_unaligned_unprivileged(bus, addr)?
+                    u32::from(bus.read8(addr)?)
                 }
-            } else if byte {
-                u32::from(bus.read8(addr)?)
             } else {
-                // Classic behaviour: unaligned word loads rotate the aligned word.
-                self.read_data_u32_unaligned(bus, addr)?
+                self.read_armv6_single_word(bus, addr, unprivileged_access)?
             };
             if writeback {
                 self.set_base(rn, offset_addr);
@@ -1864,16 +1961,14 @@ impl Arm11Core {
             }
         } else {
             let value = self.reg(rd, 8);
-            if unprivileged_access {
-                if byte {
+            if byte {
+                if unprivileged_access {
                     bus.write8_unprivileged(addr, value as u8)?;
                 } else {
-                    self.write_data_u32_unprivileged(bus, addr & !3, value)?;
+                    bus.write8(addr, value as u8)?;
                 }
-            } else if byte {
-                bus.write8(addr, value as u8)?;
             } else {
-                self.write_data_u32(bus, addr & !3, value)?;
+                self.write_armv6_single_word(bus, addr, value, unprivileged_access)?;
             }
             if writeback {
                 self.set_base(rn, offset_addr);
@@ -2604,6 +2699,129 @@ mod tests {
         m.cpu.regs[1] = DATA + 1;
         m.step();
         assert_eq!(m.cpu.regs[0], 0xAADD_CCBB);
+    }
+
+    #[test]
+    fn armv6_unaligned_word_loads_and_stores_follow_u_a_model() {
+        for big_endian in [false, true] {
+            let mut load = machine_with_data(&[0xE591_0000]); // LDR r0,[r1]
+            load.mem.write32(DATA, 0x3322_11AA).unwrap();
+            load.mem.write32(DATA + 4, 0x8877_6644).unwrap();
+            load.cpu.regs[1] = DATA + 1;
+            load.cpu.cpsr.set_big_endian(big_endian);
+            load.cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            load.step();
+            assert_eq!(
+                load.cpu.regs[0],
+                if big_endian { 0x1122_3344 } else { 0x4433_2211 }
+            );
+
+            let mut store = Machine::new(&[0xE581_0000]); // STR r0,[r1]
+            store.cpu.regs[0] = 0xA1B2_C3D4;
+            store.cpu.regs[1] = DATA + 1;
+            store.cpu.cpsr.set_big_endian(big_endian);
+            store
+                .cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            store.mem.write32(DATA, 0x3322_11AA).unwrap();
+            store.mem.write32(DATA + 4, 0x8877_6644).unwrap();
+            store.step();
+
+            let expected = if big_endian {
+                [0xA1, 0xB2, 0xC3, 0xD4]
+            } else {
+                [0xD4, 0xC3, 0xB2, 0xA1]
+            };
+            assert_eq!(store.mem.read8(DATA).unwrap(), 0xAA);
+            for (offset, byte) in expected.into_iter().enumerate() {
+                assert_eq!(store.mem.read8(DATA + 1 + offset as u32).unwrap(), byte);
+            }
+            assert_eq!(store.mem.read8(DATA + 5).unwrap(), 0x66);
+        }
+    }
+
+    #[test]
+    fn armv6_unaligned_ldrt_and_strt_use_user_byte_accesses_when_u_enabled() {
+        for big_endian in [false, true] {
+            let mut load = machine_with_data(&[0xE4B1_0000]); // LDRT r0,[r1],#0
+            load.mem.write32(DATA, 0x3322_11AA).unwrap();
+            load.mem.write32(DATA + 4, 0x8877_6644).unwrap();
+            load.cpu.regs[1] = DATA + 1;
+            load.cpu.cpsr.set_big_endian(big_endian);
+            load.cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            load.step();
+            assert_eq!(
+                load.cpu.regs[0],
+                if big_endian { 0x1122_3344 } else { 0x4433_2211 }
+            );
+
+            let mut store = Machine::new(&[0xE4A1_0000]); // STRT r0,[r1],#0
+            store.cpu.regs[0] = 0xA1B2_C3D4;
+            store.cpu.regs[1] = DATA + 1;
+            store.cpu.cpsr.set_big_endian(big_endian);
+            store
+                .cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            store.mem.write32(DATA, 0x3322_11AA).unwrap();
+            store.mem.write32(DATA + 4, 0x8877_6644).unwrap();
+            store.step();
+
+            let expected = if big_endian {
+                [0xA1, 0xB2, 0xC3, 0xD4]
+            } else {
+                [0xD4, 0xC3, 0xB2, 0xA1]
+            };
+            for (offset, byte) in expected.into_iter().enumerate() {
+                assert_eq!(store.mem.read8(DATA + 1 + offset as u32).unwrap(), byte);
+            }
+            assert_eq!(store.cpu.regs[1], DATA + 1);
+        }
+    }
+
+    #[test]
+    fn armv6_alignment_check_faults_unaligned_strt_before_writeback_or_memory() {
+        let mut m = Machine::new(&[0xE4A1_0004]); // STRT r0,[r1],#4
+        m.cpu.regs[0] = 0xA1B2_C3D4;
+        m.cpu.regs[1] = DATA + 1;
+        m.cpu
+            .cp15_mut()
+            .write(true, 0, 1, 0, 0, (1 << 22) | (1 << 1))
+            .unwrap();
+        m.mem.write32(DATA, 0x4433_2211).unwrap();
+        let before = m.mem.read32(DATA).unwrap();
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::InvalidAccess { addr }) if addr == DATA + 1
+        ));
+        assert_eq!(m.cpu.regs[1], DATA + 1);
+        assert_eq!(m.mem.read32(DATA).unwrap(), before);
+    }
+
+    #[test]
+    fn armv6_unaligned_ldr_pc_is_rejected_without_alignment_check() {
+        let mut m = Machine::new(&[0xE591_F000]); // LDR pc,[r1]
+        m.cpu.regs[1] = DATA + 1;
+        m.cpu
+            .cp15_mut()
+            .write(true, 0, 1, 0, 0, 1 << 22)
+            .unwrap();
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, word: 0xE591_F000 })
+        ));
+        assert_eq!(m.cpu.pc(), 0);
     }
 
     #[test]
