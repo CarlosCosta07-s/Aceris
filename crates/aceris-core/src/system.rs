@@ -1574,7 +1574,10 @@ mod tests {
         assert_eq!(unregister_response, vec![0x0014_0040, 0]);
         assert_eq!(system.gsp_service_registry().registered_client_count(), 0);
         assert!(matches!(
-            system.ncsd_session().unwrap().service_session_kind(gsp_handle),
+            system
+                .ncsd_session()
+                .unwrap()
+                .service_session_kind(gsp_handle),
             Some(ServiceSessionKind::GspGpu {
                 client_id: None,
                 shared_memory_handle: None,
