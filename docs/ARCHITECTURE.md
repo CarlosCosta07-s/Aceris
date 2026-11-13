@@ -63,7 +63,7 @@ A região normal do TLB tem 64 entradas de software com substituição round-rob
 
 ## VFPv2
 
-O estado VFP inclui registradores S0–S31 (com pares D), FPSCR, FPEXC e FPSID. Há transferências entre registradores ARM e VFP, loads/stores escalares e múltiplos, operações aritméticas escalares, comparação, raiz quadrada e conversões.
+O estado VFP inclui registradores S0–S31 (com pares D), FPSCR, FPEXC, FPSID e os registradores de identificação de recursos VFP11 MVFR0/MVFR1. Estes últimos são somente-leitura e refletem o perfil VFP11 modelado. Há transferências entre registradores ARM e VFP, loads/stores escalares e múltiplos, operações aritméticas escalares, comparação, raiz quadrada e conversões.
 
 As operações escalares consultam FPSCR.RMode e registram flags como IXC e UFC nos caminhos implementados. Um subconjunto de short vectors também está integrado: operações aritméticas de três operandos (VMLA/VMLS/VNMLA/VNMLS/VMUL/VNMUL/VADD/VSUB/VDIV) e operações de dois operandos (VMOV/VABS/VNEG/VSQRT) percorrem os quatro bancos circulares, aplicam wrap, suportam Fm escalar em bank 0 e respeitam a seleção escalar quando Fd está em bank 0. Combinações LEN/STRIDE fora da tabela do VFP11 são rejeitadas como imprevisíveis antes da seleção escalar/vetorial; comparações, conversões inteiras e conversões de precisão permanecem escalares independentemente do LEN/STRIDE. A implementação ainda é parcial: exceções VFP habilitadas/trap, formas legadas FLDMX/FSTMX e casos extremos de precisão/subnormais precisam de trabalho e validação independente. Não se deve inferir compatibilidade integral do VFPv2 a partir dos testes existentes.
 

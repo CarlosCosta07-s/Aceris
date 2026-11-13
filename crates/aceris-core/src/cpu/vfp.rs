@@ -1,16 +1,17 @@
 //! VFPv2 floating-point coprocessor (cp10 single precision, cp11 double precision).
 //!
-//! Supported: the register bank, FPSCR/FPEXC/FPSID, core<->VFP transfers,
-//! VLDR/VSTR/VLDM/VSTM/VPUSH/VPOP, scalar arithmetic (VMLA family, VMUL, VADD,
-//! VSUB, VDIV, VSQRT), VABS/VNEG/VMOV, VCMP/VCMPE and VCVT (float<->float and
-//! float<->integer).
+//! Supported: the register bank, FPSCR/FPEXC/FPSID/MVFR0/MVFR1,
+//! core<->VFP transfers, VLDR/VSTR/VLDM/VSTM/VPUSH/VPOP, scalar arithmetic
+//! (VMLA family, VMUL, VADD, VSUB, VDIV, VSQRT), VABS/VNEG/VMOV, VCMP/VCMPE
+//! and VCVT (float<->float and float<->integer).
 //!
-//! Deliberate limits, all reported as explicit errors rather than guessed:
-//! short-vector mode (FPSCR.LEN != 0), trapped floating-point exceptions, and
-//! the deprecated FLDMX/FSTMX forms. Scalar operations honor FPSCR.RMode and
+//! A verified subset of VFP11 short-vector arithmetic and unary operations is
+//! supported. Remaining limits include trapped floating-point exceptions,
+//! deprecated FLDMX/FSTMX forms, scalar-only comparisons/conversions, and
+//! extreme precision/subnormal cases. Scalar operations honor FPSCR.RMode and
 //! accumulate IXC/UFC for inexact and tiny results. Single precision is
 //! computed through `f64`; double precision residuals use TwoSum/FMA where
-//! available, with the expected limits around extreme underflow.
+//! available.
 
 use super::arm::{bit, bits};
 use super::{Arm11Core, StepEvent};
