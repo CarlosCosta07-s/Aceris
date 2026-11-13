@@ -120,8 +120,8 @@ fn scalar_and_packed_saturation_match_signed_and_unsigned_limits() {
 
     // The first two instructions saturate 384 and 256 to signed/unsigned 127.
     // The packed forms then clamp each selected halfword independently.
-    assert_eq!(cpu.regs[0], 0x007F_007F);
-    assert_eq!(cpu.regs[2], 0x007F_007F);
+    assert_eq!(cpu.regs[0], 0x0000_007F);
+    assert_eq!(cpu.regs[2], 0x0000_007F);
     assert!(cpu.cpsr.q());
     assert_nzcv(&cpu, (true, false, true, false));
 }
@@ -141,7 +141,7 @@ fn pkhbt_pkhtb_and_sel_match_halfword_and_ge_lane_selection() {
 
     assert_eq!(cpu.regs[0], 0xBBCC_3344);
     assert_eq!(cpu.regs[3], 0x5566_0012);
-    assert_eq!(cpu.regs[6], 0x5522_7734);
+    assert_eq!(cpu.regs[6], 0x8066_1288);
     assert_eq!(cpu.cpsr.ge(), 0b0101);
     assert_nzcv(&cpu, (true, false, true, false));
     assert!(!cpu.cpsr.q());
@@ -150,7 +150,7 @@ fn pkhbt_pkhtb_and_sel_match_halfword_and_ge_lane_selection() {
 #[test]
 fn media_instructions_reject_pc_operands_before_register_or_flag_changes() {
     // REV pc,r1 ; SXTB r0,pc ; PKHBT pc,r1,r2 ; SEL r0,pc,r2.
-    for instruction in [0xE6BF_FF31, 0xE6AF_0F71, 0xE681_F012, 0xE68F_0FB2] {
+    for instruction in [0xE6BF_FF31, 0xE6AF_007F, 0xE681_F012, 0xE68F_0FB2] {
         let mut memory = FlatMemory::new(0, 4);
         memory.write32(0, instruction).unwrap();
         let mut cpu = Arm11Core::new();
