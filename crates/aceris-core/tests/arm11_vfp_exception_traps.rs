@@ -200,6 +200,40 @@ fn flush_to_zero_ignores_underflow_trap_and_returns_positive_zero() {
 }
 
 #[test]
+fn flush_to_zero_detects_tininess_before_rounding() {
+    const VMUL_S0_S1_S2: u32 = 0xEE20_0A81;
+    let program = [VMSR_FPSCR_R0, VMUL_S0_S1_S2];
+
+    // min_normal * (1 - 2^-24) lies just below the minimum normal value,
+    // exactly halfway between min-normal and the largest subnormal. RN-even
+    // rounds it to min-normal when FZ is clear; VFP11 FZ detects tininess
+    // before rounding and flushes it to positive zero.
+    let (mut flushed, mut flushed_memory) = machine(&program);
+    flushed.regs[0] = (1 << 11) | (1 << 24); // FPSCR.UFE | FPSCR.FZ
+    flushed.vfp_mut().set_s(1, f32::MIN_POSITIVE.to_bits());
+    flushed.vfp_mut().set_s(2, 0x3F7F_FFFF); // largest f32 below 1.0
+    flushed.step(&mut flushed_memory).unwrap();
+    flushed.step(&mut flushed_memory).unwrap();
+
+    assert_eq!(flushed.vfp().s(0), 0, "FZ flushes the pre-rounding tiny result");
+    assert_eq!(flushed.vfp().fpexc() & (1 << 31), 0, "UFE is ignored with FZ");
+    assert_ne!(flushed.vfp().fpscr() & (1 << 3), 0, "FPSCR.UFC is set");
+
+    // Without FZ the same exact result rounds up to min-normal. Tininess is
+    // tested after rounding, so UFC remains clear and no bounce occurs.
+    let (mut rounded, mut rounded_memory) = machine(&program);
+    rounded.regs[0] = 1 << 11; // FPSCR.UFE
+    rounded.vfp_mut().set_s(1, f32::MIN_POSITIVE.to_bits());
+    rounded.vfp_mut().set_s(2, 0x3F7F_FFFF);
+    rounded.step(&mut rounded_memory).unwrap();
+    rounded.step(&mut rounded_memory).unwrap();
+
+    assert_eq!(rounded.vfp().s(0), f32::MIN_POSITIVE.to_bits());
+    assert_eq!(rounded.vfp().fpexc() & (1 << 31), 0);
+    assert_eq!(rounded.vfp().fpscr() & (1 << 3), 0);
+}
+
+#[test]
 fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
     for mask in [1 << 15, 1 << 12] {
         let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
