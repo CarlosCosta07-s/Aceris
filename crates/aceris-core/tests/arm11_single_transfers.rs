@@ -135,6 +135,7 @@ fn strd_register_offset_allows_rm_to_alias_either_transfer_source() {
 fn doubleword_load_without_writeback_allows_base_to_alias_second_destination() {
     let instruction = 0xE1C5_40D0; // LDRD r4,r5,[r5]
     let (mut cpu, mut memory) = machine(instruction);
+    cpu.regs[5] = DATA;
     cpu.step(&mut memory).unwrap();
 
     assert_eq!(cpu.regs[4], INITIAL_WORD);
