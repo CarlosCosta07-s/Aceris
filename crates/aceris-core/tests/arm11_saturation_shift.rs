@@ -79,12 +79,7 @@ fn encode_saturation(
     arithmetic: bool,
 ) -> u32 {
     let opcode = if signed { 0xE6A0_0010 } else { 0xE6E0_0010 };
-    opcode
-        | (saturation << 16)
-        | (rd << 12)
-        | (shift << 7)
-        | (u32::from(arithmetic) << 6)
-        | rm
+    opcode | (saturation << 16) | (rd << 12) | (shift << 7) | (u32::from(arithmetic) << 6) | rm
 }
 
 fn reference_shift(source: u32, encoded_shift: u32, arithmetic: bool) -> i64 {
@@ -98,11 +93,7 @@ fn reference_shift(source: u32, encoded_shift: u32, arithmetic: bool) -> i64 {
         encoded_shift
     };
     if amount == 32 {
-        if source & 0x8000_0000 != 0 {
-            -1
-        } else {
-            0
-        }
+        if source & 0x8000_0000 != 0 { -1 } else { 0 }
     } else {
         i64::from((source as i32) >> amount)
     }
