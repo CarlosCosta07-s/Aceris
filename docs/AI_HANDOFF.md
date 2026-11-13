@@ -646,3 +646,29 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - O workflow `43346891107` confirmou que o formato de `thumb.rs` foi corrigido: os logs de Ubuntu/macOS/Windows apontaram somente `mmu.rs:371`, sem diferenças em Thumb. Android continuou falhando na compilação do MMU.
 - O workflow `43346990325` (HEAD `d072553`) terminou com falha nos quatro jobs: Windows/Linux/macOS falharam somente em `cargo fmt --all --check` por `mmu.rs:371`; Android ARM64 repetiu os erros de TLB (`TLB_CAPACITY` ausente em 349, `matches_context` em `Option<TlbEntry>` em 397 e incompatibilidade Option/TlbEntry em 399). Clippy e `cargo test --workspace` foram ignorados; nenhum dos 75 testes Thumb foi executado nesta matriz.
 - O código desta etapa permaneceu limitado a `crates/aceris-core/src/cpu/thumb.rs`. Nenhum arquivo MMU de outra frente foi alterado. A validação end-to-end de Data Abort/DFAR/DFSR e o caminho de alinhamento `U=1` para transferências simples continuam pendentes.
+
+
+## Thumb ARMv6 — integração U/A de meia palavra e faults multiword (13/11/2026)
+
+### Continuação e commits
+
+- `5d0d17b` — acrescenta teste integrado para `LDMIA`, `STMIA`, `PUSH` e `POP` com `SCTLR.U` e `SCTLR.A` habilitados separadamente. Cada caso percorre o tratamento real da exceção e verifica vetor Data Abort, LR, SPSR, DFAR/DFSR e ausência de alterações parciais em estado/memória.
+- `501f24a` — fortalece a regressão: a região de memória comparada agora inclui os endereços efetivamente usados por `PUSH`, e o teste troca de volta para User mode para confirmar que o SP do processo foi preservado depois da entrada em Abort.
+- `70f1648` — adiciona `read_armv6_halfword` e `write_armv6_halfword` ao núcleo ARM11 e passa a usá-los nos formatos Thumb T1 de `LDRH`, `LDRSH` e `STRH`, tanto por offset de registrador quanto por imediato.
+- `d7e2ed3` — aplica as correções solicitadas pelo Rustfmt às novas regressões e aos caminhos Thumb.
+
+### Semântica aplicada
+
+- `SCTLR.U=1`, `SCTLR.A=0`: `LDRH`, `LDRSH` e `STRH` podem acessar meia palavra ímpar como `Halfword[Addr]`, preservando o endianness corrente e exigindo atributo de memória Normal para o caminho desalinhado.
+- `SCTLR.U=0`, `SCTLR.A=0`: meia palavra ímpar é arquiteturalmente `UNPREDICTABLE`; o Aceris a rejeita deterministamente sem efeitos colaterais, usando o erro interno de instrução inválida. Isso não afirma que o caso seja arquiteturalmente `UNDEFINED`.
+- `SCTLR.A=1`: acesso de meia palavra ímpar retorna fault de alinhamento antes de alterar destino ou memória. Com a entrada de faults habilitada, a sessão entra em Data Abort e registra DFAR/DFSR.
+- Loads/stores simples de palavra continuam usando o helper ARMv6 compartilhado que seleciona rotação/alinhamento legado (`U=0`) ou os bytes exatos (`U=1`) em LE/BE. Multiword (`LDMIA`/`STMIA`/`PUSH`/`POP`) permanece word-aligned quando U ou A exige alinhamento.
+- A suíte de Thumb contém agora 82 declarações `#[test]`. A CI do HEAD `d7e2ed3` executou Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS, além do build release Android `arm64-v8a`; workflow `43357433947` concluído com sucesso.
+- Referência arquitetural independente: ARM Architecture Reference Manual, ARM DDI 0100I, seção A2.8.2, Tabela A2-10, páginas A2-39 a A2-41. A tabela descreve `Halfword[Addr]` para meia palavra com U=1/A=0, `UNPREDICTABLE` para meia palavra ímpar com U=0/A=0 e Alignment Fault com A=1: https://documentation-service.arm.com/static/5f8dacc8f86e16515cdb865a
+- Nenhum código-fonte de outro emulador foi consultado e nenhuma dependência externa foi adicionada.
+
+### Próximos limites
+
+- A implementação Thumb continua parcial: a matriz de instruções ARMv6/ARMv6K precisa de auditoria independente por encoding, efeitos colaterais, comportamento PC e todas as condições UNPREDICTABLE/UNDEFINED.
+- A verificação atual não comprova execução de jogos nem substitui testes de conformidade independentes do interpretador.
+- Não reabrir as correções anteriores de alinhamento, exceto diante de regressão reproduzível ou nova evidência arquitetural.
