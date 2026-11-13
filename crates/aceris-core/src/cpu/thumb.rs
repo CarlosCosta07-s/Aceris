@@ -15,8 +15,13 @@ use aceris_common::{Error, Result};
 const PC_OFFSET: u32 = 4;
 
 /// Word load with the classic unaligned-rotate behaviour.
-fn load_word<B: Bus + ?Sized>(core: &Arm11Core, bus: &mut B, addr: u32) -> Result<u32> {
-    core.read_data_u32_unaligned(bus, addr)
+fn load_word<B: Bus + ?Sized>(
+    core: &Arm11Core,
+    bus: &mut B,
+    addr: u32,
+    instruction: u32,
+) -> Result<u32> {
+    core.read_armv6_single_word(bus, addr, false, instruction)
 }
 
 impl Arm11Core {
@@ -228,11 +233,11 @@ impl Arm11Core {
         let addr = self.regs[rn].wrapping_add(self.regs[rm]);
 
         match bits(half, 11, 9) {
-            0b000 => self.write_data_u32(bus, addr & !3, self.regs[rt])?,
+            0b000 => self.write_armv6_single_word(bus, addr, self.regs[rt], false, half)?,
             0b001 => self.write_data_u16(bus, addr, self.regs[rt] as u16)?,
             0b010 => bus.write8(addr, self.regs[rt] as u8)?,
             0b011 => self.regs[rt] = i32::from(bus.read8(addr)? as i8) as u32,
-            0b100 => self.regs[rt] = load_word(self, bus, addr)?,
+            0b100 => self.regs[rt] = load_word(self, bus, addr, half)?,
             0b101 => self.regs[rt] = u32::from(self.read_data_u16(bus, addr)?),
             0b110 => self.regs[rt] = u32::from(bus.read8(addr)?),
             _ => self.regs[rt] = i32::from(self.read_data_u16(bus, addr)? as i16) as u32,
@@ -252,12 +257,12 @@ impl Arm11Core {
             self.regs[rt] = if byte {
                 u32::from(bus.read8(addr)?)
             } else {
-                load_word(self, bus, addr)?
+                load_word(self, bus, addr, half)?
             };
         } else if byte {
             bus.write8(addr, self.regs[rt] as u8)?;
         } else {
-            self.write_data_u32(bus, addr & !3, self.regs[rt])?;
+            self.write_armv6_single_word(bus, addr, self.regs[rt], false, half)?;
         }
         Ok(())
     }
@@ -280,9 +285,9 @@ impl Arm11Core {
         let addr = self.regs[SP].wrapping_add(bits(half, 7, 0) * 4);
 
         if bit(half, 11) {
-            self.regs[rt] = load_word(self, bus, addr)?;
+            self.regs[rt] = load_word(self, bus, addr, half)?;
         } else {
-            self.write_data_u32(bus, addr & !3, self.regs[rt])?;
+            self.write_armv6_single_word(bus, addr, self.regs[rt], false, half)?;
         }
         Ok(())
     }
@@ -1141,6 +1146,116 @@ mod tests {
                 m.mem.read32(DATA).unwrap(),
                 0xDDCC_BBAA,
                 "STR {store:#06x} must preserve big-endian Word[Align(Addr)]"
+            );
+        }
+    }
+
+    fn set_unaligned_word_base(cpu: &mut Arm11Core, form: u8) {
+        match form {
+            0 => {
+                cpu.regs[1] = DATA;
+                cpu.regs[2] = 1;
+            }
+            1 => cpu.regs[1] = DATA + 1,
+            2 => cpu.regs[SP] = DATA + 1,
+            _ => unreachable!("test fixture form"),
+        }
+    }
+
+    #[test]
+    fn thumb_single_word_transfers_honor_sctlr_u_for_all_word_addressing_forms() {
+        // Register-offset, immediate-offset and SP-relative T1 word transfers
+        // all use the same ARMv6 U/A behavior as the A32 single-transfer path.
+        let forms = [
+            (0x5888, 0x5088, 0), // LDR/STR r0,[r1,r2], with r2=1.
+            (0x6808, 0x6008, 1), // LDR/STR r0,[r1,#0], with r1 unaligned.
+            (0x9800, 0x9000, 2), // LDR/STR r0,[sp,#0], with SP unaligned.
+        ];
+
+        for big_endian in [false, true] {
+            for &(load_half, store_half, form) in &forms {
+                let mut load = Machine::with(load_half, |cpu, mem| {
+                    set_unaligned_word_base(cpu, form);
+                    cpu.cpsr.set_big_endian(big_endian);
+                    cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+                    for (offset, byte) in [0xAA, 0x11, 0x22, 0x33, 0x44, 0xBB]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        mem.write8(DATA + offset as u32, byte).unwrap();
+                    }
+                });
+                load.step();
+                assert_eq!(
+                    load.cpu.regs[0],
+                    if big_endian { 0x1122_3344 } else { 0x4433_2211 },
+                    "LDR {load_half:#06x}, BE={big_endian}"
+                );
+
+                let mut store = Machine::with(store_half, |cpu, mem| {
+                    set_unaligned_word_base(cpu, form);
+                    cpu.regs[0] = 0xA1B2_C3D4;
+                    cpu.cpsr.set_big_endian(big_endian);
+                    cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+                    for (offset, byte) in [0xAA, 0, 0, 0, 0, 0xBB].into_iter().enumerate() {
+                        mem.write8(DATA + offset as u32, byte).unwrap();
+                    }
+                });
+                store.step();
+
+                let expected = if big_endian {
+                    [0xA1, 0xB2, 0xC3, 0xD4]
+                } else {
+                    [0xD4, 0xC3, 0xB2, 0xA1]
+                };
+                assert_eq!(store.mem.read8(DATA).unwrap(), 0xAA);
+                for (offset, byte) in expected.into_iter().enumerate() {
+                    assert_eq!(
+                        store.mem.read8(DATA + 1 + offset as u32).unwrap(),
+                        byte,
+                        "STR {store_half:#06x}, BE={big_endian}, byte={offset}"
+                    );
+                }
+                assert_eq!(store.mem.read8(DATA + 5).unwrap(), 0xBB);
+            }
+        }
+    }
+
+    #[test]
+    fn thumb_single_word_transfers_fault_atomically_when_sctlr_a_is_enabled() {
+        let instructions = [
+            (0x5888, 0), // LDR r0,[r1,r2].
+            (0x5088, 0), // STR r0,[r1,r2].
+            (0x6808, 1), // LDR r0,[r1,#0].
+            (0x6008, 1), // STR r0,[r1,#0].
+            (0x9800, 2), // LDR r0,[sp,#0].
+            (0x9000, 2), // STR r0,[sp,#0].
+        ];
+
+        for (half, form) in instructions {
+            let mut machine = Machine::with(half, |cpu, mem| {
+                set_unaligned_word_base(cpu, form);
+                cpu.regs[0] = 0xA1B2_C3D4;
+                cpu.cp15.write(true, 0, 1, 0, 0, 1 << 1).unwrap();
+                mem.write32(DATA, 0x1122_3344).unwrap();
+                mem.write32(DATA + 4, 0x5566_7788).unwrap();
+            });
+            let old_regs = machine.cpu.regs;
+            let old_cpsr = machine.cpu.cpsr;
+            let old_first = machine.mem.read32(DATA).unwrap();
+            let old_second = machine.mem.read32(DATA + 4).unwrap();
+
+            assert!(matches!(
+                machine.cpu.step(&mut machine.mem),
+                Err(Error::InvalidAccess { addr }) if addr == DATA + 1
+            ));
+            assert_eq!(machine.cpu.regs, old_regs, "{half:#06x}");
+            assert_eq!(machine.cpu.cpsr, old_cpsr, "{half:#06x}");
+            assert_eq!(machine.mem.read32(DATA).unwrap(), old_first, "{half:#06x}");
+            assert_eq!(
+                machine.mem.read32(DATA + 4).unwrap(),
+                old_second,
+                "{half:#06x}"
             );
         }
     }

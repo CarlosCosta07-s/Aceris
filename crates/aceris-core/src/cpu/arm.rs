@@ -1878,7 +1878,7 @@ impl Arm11Core {
     /// With U=0,A=0 the legacy aligned-word rotation is retained. With U=1,A=0,
     /// an unaligned normal-memory access is assembled from the exact byte addresses
     /// in the current CPSR endianness. A=1 always faults on an unaligned word.
-    fn read_armv6_single_word<B: Bus + ?Sized>(
+    pub(super) fn read_armv6_single_word<B: Bus + ?Sized>(
         &self,
         bus: &mut B,
         address: u32,
@@ -1935,7 +1935,7 @@ impl Arm11Core {
     }
 
     /// Writes an A32 single-word transfer using the current ARMv6 U/A alignment model.
-    fn write_armv6_single_word<B: Bus + ?Sized>(
+    pub(super) fn write_armv6_single_word<B: Bus + ?Sized>(
         &self,
         bus: &mut B,
         address: u32,
