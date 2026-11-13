@@ -1560,6 +1560,12 @@ mod tests {
             .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
             .unwrap();
 
+        // TriggerCmdReqQueue must reach the registered client's empty GX ring.
+        let trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
+        system.dispatch_pending_ipc_request().unwrap();
+        let trigger_response = read_tls_ipc_response(&mut system, trigger_buffer, 2);
+        assert_eq!(trigger_response, vec![0x000C_0040, 0]);
+
         // Unregister releases the queue mapping and memory handle.
         let unregister_buffer =
             write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
