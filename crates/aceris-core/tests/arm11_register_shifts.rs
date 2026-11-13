@@ -105,15 +105,10 @@ fn arm_register_shifts_match_independent_reference_at_boundaries() {
             for amount in AMOUNTS {
                 for carry_in in [false, true] {
                     for overflow_in in [false, true] {
-                        let (expected, carry_out) =
-                            reference_shift(kind, value, amount, carry_in);
+                        let (expected, carry_out) = reference_shift(kind, value, amount, carry_in);
                         let cpu = execute_shift(kind, value, amount, carry_in, overflow_in);
-                        let expected_flags = (
-                            expected >> 31 != 0,
-                            expected == 0,
-                            carry_out,
-                            overflow_in,
-                        );
+                        let expected_flags =
+                            (expected >> 31 != 0, expected == 0, carry_out, overflow_in);
 
                         assert_eq!(
                             cpu.regs[4], expected,
