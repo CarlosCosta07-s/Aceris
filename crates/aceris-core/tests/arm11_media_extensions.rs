@@ -6,9 +6,7 @@ use aceris_core::memory::{Bus, FlatMemory};
 fn execute(program: &[u32], setup: impl FnOnce(&mut Arm11Core)) -> Arm11Core {
     let mut memory = FlatMemory::new(0, program.len() * 4 + 4);
     for (index, instruction) in program.iter().enumerate() {
-        memory
-            .write32(index as u32 * 4, *instruction)
-            .unwrap();
+        memory.write32(index as u32 * 4, *instruction).unwrap();
     }
 
     let mut cpu = Arm11Core::new();
@@ -33,14 +31,11 @@ fn rotate_right(value: u32, rotation: u32) -> u32 {
 
 #[test]
 fn rev_rev16_and_revsh_match_byte_order_reference_without_flag_changes() {
-    let cpu = execute(
-        &[0xE6BF_0F31, 0xE6BF_2FB3, 0xE6FF_4FB5],
-        |cpu| {
-            cpu.regs[1] = 0x1234_5678;
-            cpu.regs[3] = 0x1234_5678;
-            cpu.regs[5] = 0x0000_80FE;
-        },
-    );
+    let cpu = execute(&[0xE6BF_0F31, 0xE6BF_2FB3, 0xE6FF_4FB5], |cpu| {
+        cpu.regs[1] = 0x1234_5678;
+        cpu.regs[3] = 0x1234_5678;
+        cpu.regs[5] = 0x0000_80FE;
+    });
 
     assert_eq!(cpu.regs[0], 0x7856_3412);
     assert_eq!(cpu.regs[2], 0x3412_7856);
@@ -73,7 +68,10 @@ fn signed_and_unsigned_extensions_apply_rotation_and_correct_lane_signs() {
     let rotated = rotate_right(0x80FE_1234, 3);
     let expected_low = (rotated & 0xFF) as u8 as i8 as i16 as u16;
     let expected_high = ((rotated >> 16) & 0xFF) as u8 as i8 as i16 as u16;
-    assert_eq!(cpu.regs[6], (u32::from(expected_high) << 16) | u32::from(expected_low));
+    assert_eq!(
+        cpu.regs[6],
+        (u32::from(expected_high) << 16) | u32::from(expected_low)
+    );
     assert_eq!(
         cpu.regs[7],
         (((rotated >> 16) & 0xFF) << 16) | (rotated & 0xFF)
@@ -128,16 +126,13 @@ fn scalar_and_packed_saturation_match_signed_and_unsigned_limits() {
 
 #[test]
 fn pkhbt_pkhtb_and_sel_match_halfword_and_ge_lane_selection() {
-    let cpu = execute(
-        &[0xE681_0412, 0xE684_3455, 0xE684_6FB5],
-        |cpu| {
-            cpu.regs[1] = 0x1122_3344;
-            cpu.regs[2] = 0xAABB_CCDD;
-            cpu.regs[4] = 0x5566_7788;
-            cpu.regs[5] = 0x8000_1234;
-            cpu.cpsr.set_ge(0b0101);
-        },
-    );
+    let cpu = execute(&[0xE681_0412, 0xE684_3455, 0xE684_6FB5], |cpu| {
+        cpu.regs[1] = 0x1122_3344;
+        cpu.regs[2] = 0xAABB_CCDD;
+        cpu.regs[4] = 0x5566_7788;
+        cpu.regs[5] = 0x8000_1234;
+        cpu.cpsr.set_ge(0b0101);
+    });
 
     assert_eq!(cpu.regs[0], 0xBBCC_3344);
     assert_eq!(cpu.regs[3], 0x5566_0012);
