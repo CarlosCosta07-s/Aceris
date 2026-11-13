@@ -2176,6 +2176,12 @@ impl Arm11Core {
             } else {
                 self.read_armv6_single_word(bus, addr, unprivileged_access, word)?
             };
+            if rd as usize == PC && value & 3 == 2 {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
             if writeback {
                 self.set_base(rn, offset_addr);
             }
@@ -2230,6 +2236,12 @@ impl Arm11Core {
             pc: self.pc(),
             word,
         };
+
+        // Halfword and signed-byte loads do not permit PC as Rt. The word
+        // LDR path is handled separately because it supports interworking.
+        if load && rd as usize == PC {
+            return Err(undefined);
+        }
 
         // LDRD/STRD are not covered by U=1 unaligned single-word support.
         // They require word alignment with U=1, but doubleword alignment in
@@ -2426,6 +2438,14 @@ impl Arm11Core {
                     *value = self.read_data_u32(bus, addr)?;
                     addr = addr.wrapping_add(4);
                 }
+            }
+            // A normal LDM interworks when loading PC, but an A32 target
+            // aligned only to a halfword (low bits 10) is UNPREDICTABLE.
+            if pc_in_list && !exception_return && values[PC] & 3 == 2 {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
             }
             if writeback {
                 self.set_base(rn, new_base);
