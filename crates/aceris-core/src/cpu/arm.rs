@@ -961,7 +961,8 @@ impl Arm11Core {
                     && (!change_mode || valid_mode)
                     && (change_mode || mode == 0)
             };
-            if !valid_encoding {
+            // Bit 16 is fixed at zero in the ARMv6 CPS encoding.
+            if bit(word, 16) || !valid_encoding {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
                     word,
