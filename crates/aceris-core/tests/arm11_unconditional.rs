@@ -82,3 +82,49 @@ fn cps_rejects_nonzero_fixed_bit_before_user_mode_no_op() {
     assert_eq!(cpu.pc(), 0);
     assert_eq!(cpu.cpsr.mode(), aceris_core::cpu::Psr::USER_MODE);
 }
+
+#[test]
+fn cps_mode_change_and_interrupt_mask_operations_preserve_unselected_state() {
+    // CPS #IRQ switches the mode but leaves every A/I/F mask and NZCV flag intact.
+    let mut memory = FlatMemory::new(0, 4);
+    memory.write32(0, 0xF102_0012).unwrap();
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(0);
+    cpu.cpsr = Psr(Psr::SUPERVISOR_MODE | Psr::N | Psr::C | Psr::A | Psr::F);
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
+    assert_eq!(cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V), Psr::N | Psr::C);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::F);
+    assert_eq!(cpu.pc(), 4);
+
+    // CPSID i sets only I; the previously-set A/F masks remain set.
+    let mut memory = FlatMemory::new(0, 4);
+    memory.write32(0, 0xF10C_0080).unwrap();
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(0);
+    cpu.cpsr = Psr(Psr::SUPERVISOR_MODE | Psr::A | Psr::F);
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::I | Psr::F);
+
+    // CPSIE i clears only I; A/F and the current exception mode are untouched.
+    let mut memory = FlatMemory::new(0, 4);
+    memory.write32(0, 0xF108_0080).unwrap();
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(0);
+    cpu.cpsr = Psr(Psr::IRQ_MODE | Psr::A | Psr::I | Psr::F);
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F), Psr::A | Psr::F);
+
+    // Correctly encoded CPS is a no-op in User mode.
+    let mut memory = FlatMemory::new(0, 4);
+    memory.write32(0, 0xF10C_0080).unwrap();
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(0);
+    cpu.cpsr = Psr(Psr::USER_MODE | Psr::N | Psr::V);
+    let status_before = cpu.cpsr;
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, status_before);
+    assert_eq!(cpu.pc(), 4);
+}
