@@ -1777,7 +1777,13 @@ impl Arm11Core {
             let target = self.reg(rm, 8);
             self.branch_exchange(target);
         } else if word & 0x0FFF_FFF0 == 0x012F_FF30 {
-            // BLX Rm
+            // BLX Rm does not permit PC as its source register in ARMv6.
+            if rm as usize == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
             let target = self.reg(rm, 8);
             self.regs[LR] = self.pc().wrapping_add(4);
             self.branch_exchange(target);
