@@ -1619,7 +1619,6 @@ mod tests {
             .collect()
     }
 
-
     #[test]
     fn acquire_right_blocks_and_resumes_after_rendering_handoff() {
         let mut system = System::new();
