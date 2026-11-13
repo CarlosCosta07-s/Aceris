@@ -21,7 +21,7 @@ fn ssat_asr_one_is_decoded_and_saturates_the_arithmetic_result() {
         0xE6A7_00D1, // SSAT r0, #8, r1, ASR #1.
         1,
         0x8000_0000,
-        0x5000_0000,
+        0xB000_0000,
     );
 
     assert_eq!(cpu.regs[0], 0xFFFF_FF80);
