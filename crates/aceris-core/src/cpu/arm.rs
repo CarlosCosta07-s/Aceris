@@ -2176,7 +2176,7 @@ impl Arm11Core {
             } else {
                 self.read_armv6_single_word(bus, addr, unprivileged_access, word)?
             };
-            if rd as usize == PC && value & 3 == 2 {
+            if rd as usize == PC && (byte || value & 3 == 2) {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
                     word,
