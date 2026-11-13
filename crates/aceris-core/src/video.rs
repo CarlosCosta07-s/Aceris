@@ -4,8 +4,10 @@
 //! output. The bottom LCD has one buffer. Frontends consume tightly packed
 //! RGBA8 surfaces; the core does not depend on a windowing system.
 
+pub mod font;
 pub mod intro;
 mod lcd;
+pub mod library;
 pub mod png;
 pub use lcd::{
     LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport, PDC_CONTROL,

@@ -41,6 +41,11 @@ queda da acerola, dois quicadas com achatamento, brilho diagonal, nome "ACERIS" 
 e fade para preto. Feita só com a paleta acima, sem recursos de terceiros.
 - PC: toca assim que o emulador abre (`aceris` sem argumentos ou `--window`), antes de carregar o jogo; sem jogo, o logo fica na tela esperando; `--skip-intro` pula; `--dump-intro <DIR>` grava quadros-chave em PNG.
 - Android: a UI futura deve chamar `render_frame` e `rgba_to_scaled_bgrx`/RGBA direto.
+- Fluxo no PC: abrir o ícone → abertura → **biblioteca** (lista de jogos `.3ds`/`.cci` da pasta
+  `--games`, `$ACERIS_GAMES` ou `~/Aceris/Games`). Setas/PgUp/PgDn/roda do mouse navegam, Enter ou
+  segundo clique jogam, Esc volta à biblioteca durante o jogo (e sai dela). Telas em
+  `aceris_core::video::library` (reutilizável no Android).
+- Atalho de Linux: `packaging/linux/aceris.desktop` (`Exec=aceris --window`).
 - Áudio da abertura: pendente (ainda não há backend de áudio).
 
 ## Pendências

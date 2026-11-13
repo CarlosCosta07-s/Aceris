@@ -8,7 +8,10 @@ mod window;
 use aceris_common::{NAME, VERSION};
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
-    video::{DualScreenDisplay, intro},
+    video::{
+        DualScreenDisplay, intro,
+        library::{ClickResult, Library, VISIBLE_ROWS, scan_games},
+    },
 };
 use std::{
     env, fs, io,
@@ -22,7 +25,9 @@ fn print_usage() {
     println!("{NAME} {VERSION}");
     println!();
     println!("USAGE:");
-    println!("    aceris [GAME] [--dump-lcd <DIR>] [--window [--scale <N>] [--skip-intro]]");
+    println!(
+        "    aceris [GAME] [--dump-lcd <DIR>] [--window [--scale <N>] [--skip-intro] [--games <DIR>]]"
+    );
     println!("    aceris --dump-intro <DIR>");
     println!("    aceris --selftest");
     println!();
@@ -36,6 +41,9 @@ fn print_usage() {
     println!("        --window     Show both LCDs in a window and run frames until it is");
     println!("                     closed (Linux/X11 only for now)");
     println!("        --scale <N>  Integer window scale factor, 1-4 (default 2)");
+    println!("        --games <DIR>");
+    println!("                     Folder with .3ds/.cci games for the library (default:");
+    println!("                     $ACERIS_GAMES or ~/Aceris/Games)");
     println!("        --skip-intro Do not play the start-up animation when the emulator opens");
     println!("        --dump-intro <DIR>");
     println!("                     Write key frames of the start-up animation as PNGs");
@@ -140,12 +148,32 @@ fn play_intro(window: &mut window::Window, scale: usize) -> Result<bool, String>
     Ok(true)
 }
 
-/// Opens the window, plays the start-up animation as soon as the emulator
-/// launches, then loads `game` (if any) and runs frames until the window is
-/// closed. Without a game, the logo stays on screen waiting for one.
+/// How a stretch of emulation or browsing ended.
+enum Flow {
+    Quit,
+    BackToLibrary,
+}
+
+/// Default folder scanned for games: `$ACERIS_GAMES`, else `~/Aceris/Games`.
+fn default_games_dir() -> PathBuf {
+    if let Some(dir) = env::var_os("ACERIS_GAMES") {
+        return PathBuf::from(dir);
+    }
+    let home = env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    home.join("Aceris").join("Games")
+}
+
+/// Window-mode session: the window opens and the animation plays as soon as the
+/// emulator launches, then the game library is shown. Picking a game loads and
+/// runs it; Esc returns to the library, and closing the window quits. A game
+/// named on the command line skips the library for its first launch.
 fn run_windowed(
     system: &mut System,
     game: Option<&Path>,
+    games_dir: &Path,
     scale: usize,
     skip_intro: bool,
 ) -> Result<(), String> {
@@ -158,16 +186,90 @@ fn run_windowed(
     if !skip_intro && !play_intro(&mut window, scale)? {
         return Ok(());
     }
+    let mut library = Library::new(scan_games(games_dir), games_dir.display().to_string());
+    let mut next = game.map(Path::to_path_buf);
+    loop {
+        let path = match next.take() {
+            Some(path) => path,
+            None => match browse_library(&mut window, &mut library, scale)? {
+                Some(path) => path,
+                None => return Ok(()),
+            },
+        };
+        if let Err(message) = load_game(system, &path) {
+            if game == Some(path.as_path()) && library.entries().is_empty() {
+                return Err(message);
+            }
+            library.set_status(message);
+            continue;
+        }
+        match emulate(system, &mut window, scale) {
+            Ok(Flow::Quit) => return Ok(()),
+            Ok(Flow::BackToLibrary) => {}
+            // A failing game returns to the library instead of closing the emulator.
+            Err(message) => library.set_status(message),
+        }
+    }
+}
+
+/// Shows the library until a game is chosen; `None` means the window closed.
+fn browse_library(
+    window: &mut window::Window,
+    library: &mut Library,
+    scale: usize,
+) -> Result<Option<PathBuf>, String> {
     let frame_time = Duration::from_micros(16_667);
-    let Some(game) = game else {
-        return idle_on_logo(&mut window, scale, frame_time);
-    };
-    load_game(system, game)?;
+    let mut dirty = true;
+    loop {
+        for event in window.poll_events() {
+            let mut activate = false;
+            match event {
+                window::WindowEvent::CloseRequested => return Ok(None),
+                window::WindowEvent::Redraw => {}
+                window::WindowEvent::Key(window::Key::Escape) => return Ok(None),
+                window::WindowEvent::Key(window::Key::Up) => library.move_selection(-1),
+                window::WindowEvent::Key(window::Key::Down) => library.move_selection(1),
+                window::WindowEvent::Key(window::Key::PageUp) => {
+                    library.move_selection(-(VISIBLE_ROWS as i32))
+                }
+                window::WindowEvent::Key(window::Key::PageDown) => {
+                    library.move_selection(VISIBLE_ROWS as i32)
+                }
+                window::WindowEvent::Key(window::Key::Enter) => activate = true,
+                window::WindowEvent::Scroll(rows) => library.move_selection(rows * 3),
+                window::WindowEvent::Click { x, y } => {
+                    let (x, y) = (x / scale as i32, y / scale as i32);
+                    activate = library.click(x, y) == ClickResult::Activated;
+                }
+            }
+            dirty = true;
+            if activate {
+                if let Some(entry) = library.selected_entry() {
+                    return Ok(Some(entry.path.clone()));
+                }
+            }
+        }
+        if dirty {
+            let bgrx = intro::rgba_to_scaled_bgrx(&library.render(), window::CANVAS_WIDTH, scale);
+            window
+                .present(&bgrx)
+                .map_err(|err| format!("could not draw the frame: {err}"))?;
+            dirty = false;
+        }
+        thread::sleep(frame_time);
+    }
+}
+
+/// Runs frames at roughly 60 Hz until the window closes or Esc is pressed.
+fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Result<Flow, String> {
+    let frame_time = Duration::from_micros(16_667);
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
-            if event == window::WindowEvent::CloseRequested {
-                return Ok(());
+            match event {
+                window::WindowEvent::CloseRequested => return Ok(Flow::Quit),
+                window::WindowEvent::Key(window::Key::Escape) => return Ok(Flow::BackToLibrary),
+                _ => {}
             }
         }
         run_frame_with_diagnostics(system)?;
@@ -180,31 +282,6 @@ fn run_windowed(
     }
 }
 
-/// Shows the finished logo until the window is closed (no game loaded yet).
-fn idle_on_logo(
-    window: &mut window::Window,
-    scale: usize,
-    frame_time: Duration,
-) -> Result<(), String> {
-    let rgba = intro::render_frame(
-        intro::LOGO_FRAME,
-        window::CANVAS_WIDTH,
-        window::CANVAS_HEIGHT,
-    );
-    let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
-    loop {
-        for event in window.poll_events() {
-            if event == window::WindowEvent::CloseRequested {
-                return Ok(());
-            }
-        }
-        window
-            .present(&bgrx)
-            .map_err(|err| format!("could not draw the frame: {err}"))?;
-        thread::sleep(frame_time);
-    }
-}
-
 fn run(options: RunOptions) -> ExitCode {
     let mut system = System::new();
 
@@ -212,6 +289,7 @@ fn run(options: RunOptions) -> ExitCode {
         if let Err(message) = run_windowed(
             &mut system,
             options.game.as_deref(),
+            &options.games_dir.clone().unwrap_or_else(default_games_dir),
             options.scale,
             options.skip_intro,
         ) {
@@ -252,6 +330,7 @@ struct RunOptions {
     window: bool,
     scale: usize,
     skip_intro: bool,
+    games_dir: Option<PathBuf>,
 }
 
 /// Parses `<GAME> [--dump-lcd <DIR>] [--window] [--scale <N>]` in any order.
@@ -261,6 +340,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let mut window = false;
     let mut scale = 2;
     let mut skip_intro = false;
+    let mut games_dir = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -272,6 +352,12 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
             }
             "--window" => window = true,
             "--skip-intro" => skip_intro = true,
+            "--games" => {
+                let dir = iter
+                    .next()
+                    .ok_or_else(|| "--games requires a directory".to_string())?;
+                games_dir = Some(PathBuf::from(dir));
+            }
             "--scale" => {
                 let value = iter
                     .next()
@@ -295,6 +381,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
         window,
         scale,
         skip_intro,
+        games_dir,
     })
 }
 
@@ -340,6 +427,7 @@ fn main() -> ExitCode {
             window: true,
             scale: 2,
             skip_intro: false,
+            games_dir: None,
         }),
     }
 }
@@ -359,6 +447,7 @@ mod tests {
             window,
             scale,
             skip_intro: false,
+            games_dir: None,
         }
     }
 
@@ -388,6 +477,13 @@ mod tests {
         let parsed = parse_run_args(&strings(&["--window"])).unwrap();
         assert!(parsed.window && parsed.game.is_none());
         assert!(parse_run_args(&strings(&["--skip-intro"])).is_err());
+    }
+
+    #[test]
+    fn games_directory_flag_is_parsed() {
+        let parsed = parse_run_args(&strings(&["--window", "--games", "/g"])).unwrap();
+        assert_eq!(parsed.games_dir, Some(PathBuf::from("/g")));
+        assert!(parse_run_args(&strings(&["--window", "--games"])).is_err());
     }
 
     #[test]

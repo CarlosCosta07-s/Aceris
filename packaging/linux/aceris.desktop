@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Aceris
+Comment=Emulador de Nintendo 3DS
+Exec=aceris --window
+Icon=aceris
+Terminal=false
+Categories=Game;Emulator;

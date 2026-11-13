@@ -57,6 +57,24 @@ pub enum WindowEvent {
     CloseRequested,
     /// Part of the window was exposed and should be redrawn.
     Redraw,
+    /// A navigation key was pressed.
+    Key(Key),
+    /// The primary mouse button was pressed at window pixel coordinates.
+    Click { x: i32, y: i32 },
+    /// The mouse wheel moved: negative is up (towards the list start).
+    Scroll(i32),
+}
+
+/// Keys the front-end reacts to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub enum Key {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Enter,
+    Escape,
 }
 
 /// Composes both LCDs into a BGRX canvas scaled by `scale` (nearest neighbor).

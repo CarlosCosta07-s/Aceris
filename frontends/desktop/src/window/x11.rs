@@ -5,7 +5,7 @@
 //! from [`Window::open`]. Only 24/32-bit TrueColor visuals with the usual
 //! 0xFF0000/0x00FF00/0x0000FF masks are supported.
 
-use super::{WindowError, WindowEvent};
+use super::{Key, WindowError, WindowEvent};
 use std::ffi::{CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::ptr::{self, NonNull};
 
@@ -19,8 +19,11 @@ unsafe extern "C" {
 const RTLD_NOW: c_int = 2;
 const ZPIXMAP: c_int = 2;
 const KEY_PRESS_MASK: c_long = 1 << 0;
+const BUTTON_PRESS_MASK: c_long = 1 << 2;
 const EXPOSURE_MASK: c_long = 1 << 15;
 const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
+const EVENT_KEY_PRESS: c_int = 2;
+const EVENT_BUTTON_PRESS: c_int = 4;
 const EVENT_EXPOSE: c_int = 12;
 const EVENT_CLIENT_MESSAGE: c_int = 33;
 
@@ -87,6 +90,7 @@ struct Xlib {
     pending: unsafe extern "C" fn(*mut Display) -> c_int,
     next_event: unsafe extern "C" fn(*mut Display, *mut u64) -> c_int,
     flush: unsafe extern "C" fn(*mut Display) -> c_int,
+    keycode_to_keysym: unsafe extern "C" fn(*mut Display, u8, c_int) -> c_ulong,
 }
 
 fn load(library: *mut c_void, name: &str) -> Result<*mut c_void, WindowError> {
@@ -150,6 +154,7 @@ impl Xlib {
             pending: symbol!("XPending"),
             next_event: symbol!("XNextEvent"),
             flush: symbol!("XFlush"),
+            keycode_to_keysym: symbol!("XKeycodeToKeysym"),
         })
     }
 }
@@ -228,7 +233,7 @@ impl Window {
             (xlib.select_input)(
                 d,
                 window,
-                KEY_PRESS_MASK | EXPOSURE_MASK | STRUCTURE_NOTIFY_MASK,
+                KEY_PRESS_MASK | BUTTON_PRESS_MASK | EXPOSURE_MASK | STRUCTURE_NOTIFY_MASK,
             );
             let protocol = CString::new("WM_DELETE_WINDOW").expect("no NUL");
             let mut delete_atom = (xlib.intern_atom)(d, protocol.as_ptr(), 0);
@@ -327,11 +332,44 @@ impl Window {
                         events.push(WindowEvent::CloseRequested);
                     }
                     EVENT_EXPOSE => events.push(WindowEvent::Redraw),
+                    EVENT_KEY_PRESS => {
+                        // XKeyEvent: keycode is the high half of the word at byte 80.
+                        let keycode = (buffer[10] >> 32) as u8;
+                        let keysym =
+                            (self.xlib.keycode_to_keysym)(self.display.as_ptr(), keycode, 0);
+                        if let Some(key) = key_from_keysym(keysym) {
+                            events.push(WindowEvent::Key(key));
+                        }
+                    }
+                    EVENT_BUTTON_PRESS => {
+                        // XButtonEvent: x/y at bytes 64/68, button at byte 84.
+                        let x = buffer[8] as u32 as i32;
+                        let y = (buffer[8] >> 32) as u32 as i32;
+                        match (buffer[10] >> 32) as u32 {
+                            1 => events.push(WindowEvent::Click { x, y }),
+                            4 => events.push(WindowEvent::Scroll(-1)),
+                            5 => events.push(WindowEvent::Scroll(1)),
+                            _ => {}
+                        }
+                    }
                     _ => {}
                 }
             }
         }
         events
+    }
+}
+
+/// Maps an X keysym to a front-end key (arrows, paging, Return, Escape).
+fn key_from_keysym(keysym: c_ulong) -> Option<Key> {
+    match keysym {
+        0xFF52 => Some(Key::Up),
+        0xFF54 => Some(Key::Down),
+        0xFF55 => Some(Key::PageUp),
+        0xFF56 => Some(Key::PageDown),
+        0xFF0D | 0xFF8D => Some(Key::Enter),
+        0xFF1B => Some(Key::Escape),
+        _ => None,
     }
 }
 
@@ -360,6 +398,14 @@ impl Drop for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keysyms_map_to_navigation_keys() {
+        assert_eq!(key_from_keysym(0xFF52), Some(Key::Up));
+        assert_eq!(key_from_keysym(0xFF8D), Some(Key::Enter));
+        assert_eq!(key_from_keysym(0xFF1B), Some(Key::Escape));
+        assert_eq!(key_from_keysym(c_ulong::from(b'a')), None);
+    }
 
     /// Opens a window if an X server is reachable; `None` means skip (headless CI).
     fn open_or_skip(width: usize, height: usize) -> Option<Window> {
