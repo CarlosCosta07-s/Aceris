@@ -345,32 +345,61 @@ impl TlbEntry {
     }
 }
 
-const TLB_CAPACITY: usize = 64;
+const TLB_WAYS: usize = 2;
+const TLB_SET_COUNT: usize = TLB_CAPACITY / TLB_WAYS;
+const TLB_PAGE_SHIFTS: [u32; 4] = [12, 16, 20, 24];
 
-/// Bounded unified software TLB. Capacity and replacement are implementation
-/// details; architectural matching and CP15 invalidations are modeled explicitly.
+/// Bounded unified software TLB. The ARM11 MPCore TRM specifies a 64-entry,
+/// two-way main TLB plus eight fully-associative lockable entries.
+///
+/// The TRM does not publish the set-index hash or a victim algorithm. Aceris
+/// deterministically indexes each mapping by its region number (MVA / region
+/// size) modulo 32 and uses round-robin replacement within that set. This
+/// models the documented capacity/associativity without claiming undocumented
+/// hardware timing or victim-selection behavior.
 #[derive(Clone, Debug, Default)]
 pub(super) struct TranslationLookasideBuffer {
-    entries: Vec<TlbEntry>,
+    sets: [[Option<TlbEntry>; TLB_WAYS]; TLB_SET_COUNT],
     lockdown_entries: [Option<TlbEntry>; 8],
-    next_victim: usize,
+    next_victim: [usize; TLB_SET_COUNT],
 }
 
 impl TranslationLookasideBuffer {
+    fn set_index_for_entry(entry: &TlbEntry) -> usize {
+        let page_shift = entry.address_mask.trailing_zeros();
+        ((entry.virtual_base >> page_shift) as usize) & (TLB_SET_COUNT - 1)
+    }
+
+    fn set_indices_for_address(address: u32) -> [usize; TLB_PAGE_SHIFTS.len()] {
+        TLB_PAGE_SHIFTS.map(|shift| {
+            ((address >> shift) as usize) & (TLB_SET_COUNT - 1)
+        })
+    }
+
     fn lookup(&self, params: &Params, address: u32) -> Option<TlbEntry> {
-        self.lockdown_entries
+        if let Some(entry) = self
+            .lockdown_entries
             .iter()
             .rev()
             .flatten()
             .copied()
             .find(|entry| entry.matches_context(params, address))
-            .or_else(|| {
-                self.entries
-                    .iter()
-                    .rev()
-                    .copied()
-                    .find(|entry| entry.matches_context(params, address))
-            })
+        {
+            return Some(entry);
+        }
+
+        for set_index in Self::set_indices_for_address(address) {
+            if let Some(entry) = self.sets[set_index]
+                .iter()
+                .rev()
+                .flatten()
+                .copied()
+                .find(|entry| entry.matches_context(params, address))
+            {
+                return Some(entry);
+            }
+        }
+        None
     }
 
     fn insert(&mut self, entry: TlbEntry, preserve: bool, victim: usize) {
@@ -380,32 +409,50 @@ impl TranslationLookasideBuffer {
                 && (entry.global || existing.global || existing.asid == entry.asid)
         };
 
+        // A page-table walk must not leave a stale duplicate in another set
+        // when the same mapping is reloaded under the current ASID/global rules.
+        for set in &mut self.sets {
+            for slot in set {
+                if slot.is_some_and(|existing| same_mapping(&existing)) {
+                    *slot = None;
+                }
+            }
+        }
+
         if preserve {
-            self.entries.retain(|existing| !same_mapping(existing));
             self.lockdown_entries[victim % self.lockdown_entries.len()] = Some(entry);
             return;
         }
 
-        self.entries.retain(|existing| !same_mapping(existing));
-        if self.entries.len() < TLB_CAPACITY {
-            self.entries.push(entry);
-            return;
-        }
-
-        self.next_victim %= TLB_CAPACITY;
-        self.entries[self.next_victim] = entry;
-        self.next_victim = (self.next_victim + 1) % TLB_CAPACITY;
+        let set_index = Self::set_index_for_entry(&entry);
+        let start_way = self.next_victim[set_index] % TLB_WAYS;
+        let way = (0..TLB_WAYS)
+            .map(|offset| (start_way + offset) % TLB_WAYS)
+            .find(|&way| self.sets[set_index][way].is_none())
+            .unwrap_or(start_way);
+        self.sets[set_index][way] = Some(entry);
+        self.next_victim[set_index] = (way + 1) % TLB_WAYS;
     }
 
     pub(super) fn maintain(&mut self, operation: TlbMaintenance) {
-        self.entries.retain(|entry| match operation {
-            TlbMaintenance::All => false,
-            TlbMaintenance::MvaAsid { mva, asid } => {
-                !(entry.matches_address(mva) && (entry.global || entry.asid == asid))
+        for set in &mut self.sets {
+            for entry in set {
+                let Some(cached) = entry else {
+                    continue;
+                };
+                let invalidate = match operation {
+                    TlbMaintenance::All => true,
+                    TlbMaintenance::MvaAsid { mva, asid } => {
+                        cached.matches_address(mva) && (cached.global || cached.asid == asid)
+                    }
+                    TlbMaintenance::Asid { asid } => !cached.global && cached.asid == asid,
+                    TlbMaintenance::MvaAllAsids { mva } => cached.matches_address(mva),
+                };
+                if invalidate {
+                    *entry = None;
+                }
             }
-            TlbMaintenance::Asid { asid } => entry.global || entry.asid != asid,
-            TlbMaintenance::MvaAllAsids { mva } => !entry.matches_address(mva),
-        });
+        }
 
         for entry in &mut self.lockdown_entries {
             let Some(cached) = entry else {
@@ -423,15 +470,16 @@ impl TranslationLookasideBuffer {
                 *entry = None;
             }
         }
+    }
 
-        if self.entries.len() < TLB_CAPACITY {
-            self.next_victim = 0;
-        }
+    #[cfg(test)]
+    fn normal_entries(&self) -> impl Iterator<Item = &TlbEntry> {
+        self.sets.iter().flat_map(|set| set.iter().flatten())
     }
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.entries.len() + self.lockdown_entries.iter().flatten().count()
+        self.normal_entries().count() + self.lockdown_entries.iter().flatten().count()
     }
 }
 
@@ -1863,7 +1911,10 @@ mod tests {
             assert_eq!(mmu.map(va, Access::Read).unwrap(), 0x0052_3456);
         }
         assert_eq!(tlb.len(), 1);
-        assert_eq!(tlb.entries[0].virtual_base, mva & 0xFFF0_0000);
+        assert_eq!(
+            tlb.normal_entries().next().unwrap().virtual_base,
+            mva & 0xFFF0_0000
+        );
 
         // A zero PID uses the unmodified VA and must not alias the process-1 entry.
         params.fcse_pid = 0;
@@ -1909,6 +1960,55 @@ mod tests {
     }
 
     #[test]
+    fn normal_tlb_uses_two_ways_per_region_set() {
+        let (cpu, _) = machine();
+        let params = params(&cpu);
+        let mut tlb = TranslationLookasideBuffer::default();
+        let make_entry = |virtual_base, physical_base| TlbEntry {
+            virtual_base,
+            physical_base,
+            address_mask: 0xFFFF_F000,
+            asid: 0,
+            global: true,
+            domain: 0,
+            ap: [3; 4],
+            subpage_shift: 0,
+            legacy: false,
+            sctlr_s: false,
+            sctlr_r: false,
+            apx: false,
+            xn: false,
+            section: false,
+            memory_attributes: MemoryAttributes::strongly_ordered(),
+        };
+
+        // These three 4 KiB mappings have the same region-number modulo 32,
+        // so they contend for the same two-way set.
+        tlb.insert(make_entry(0x0000_1000, 0x0001_1000), false, 0);
+        tlb.insert(make_entry(0x0002_1000, 0x0002_1000), false, 0);
+        // A mapping in another set is not displaced by that set's conflict.
+        tlb.insert(make_entry(0x0000_3000, 0x0003_3000), false, 0);
+        assert_eq!(tlb.len(), 3);
+
+        tlb.insert(make_entry(0x0004_1000, 0x0004_1000), false, 0);
+        assert_eq!(tlb.len(), 3);
+
+        assert!(tlb.lookup(&params, 0x0000_1000).is_none());
+        assert_eq!(
+            tlb.lookup(&params, 0x0002_1000).unwrap().physical_base,
+            0x0002_1000
+        );
+        assert_eq!(
+            tlb.lookup(&params, 0x0004_1000).unwrap().physical_base,
+            0x0004_1000
+        );
+        assert_eq!(
+            tlb.lookup(&params, 0x0000_3000).unwrap().physical_base,
+            0x0003_3000
+        );
+    }
+
+    #[test]
     fn asid_invalidation_preserves_global_entries_and_mva_only_ignores_asid() {
         let mut tlb = TranslationLookasideBuffer::default();
         let make_entry = |virtual_base, physical_base, asid, global| TlbEntry {
@@ -1936,13 +2036,11 @@ mod tests {
         tlb.maintain(TlbMaintenance::Asid { asid: 7 });
         assert_eq!(tlb.len(), 2);
         assert!(
-            tlb.entries
-                .iter()
+            tlb.normal_entries()
                 .any(|entry| entry.virtual_base == 0x1000 && entry.global)
         );
         assert!(
-            tlb.entries
-                .iter()
+            tlb.normal_entries()
                 .any(|entry| entry.virtual_base == 0x3000 && entry.asid == 8)
         );
 
@@ -1951,10 +2049,10 @@ mod tests {
             asid: 0xFF,
         });
         assert_eq!(tlb.len(), 1);
-        assert_eq!(tlb.entries[0].virtual_base, 0x3000);
+        assert_eq!(tlb.normal_entries().next().unwrap().virtual_base, 0x3000);
 
         tlb.maintain(TlbMaintenance::MvaAllAsids { mva: 0x3004 });
-        assert!(tlb.entries.is_empty());
+        assert_eq!(tlb.normal_entries().count(), 0);
     }
 
     #[test]
