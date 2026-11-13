@@ -372,8 +372,7 @@ impl TranslationLookasideBuffer {
     }
 
     fn set_indices_for_address(address: u32) -> [usize; TLB_PAGE_SHIFTS.len()] {
-        TLB_PAGE_SHIFTS
-            .map(|shift| ((address >> shift) as usize) & (TLB_SET_COUNT - 1))
+        TLB_PAGE_SHIFTS.map(|shift| ((address >> shift) as usize) & (TLB_SET_COUNT - 1))
     }
 
     fn lookup(&self, params: &Params, address: u32) -> Option<TlbEntry> {
