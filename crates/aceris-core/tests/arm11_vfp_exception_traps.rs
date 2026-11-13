@@ -346,16 +346,54 @@ fn input_subnormal_without_fz_or_ide_is_processed_and_sets_idc() {
 }
 
 #[test]
-fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
-    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
-    let mask = 1 << 12; // FPSCR.IXE remains unsupported.
-    cpu.regs[0] = mask;
-    let previous = cpu.vfp().fpscr();
+fn inexact_enable_bounces_only_when_the_scalar_result_is_inexact() {
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VDIV_S0_S1_S2]);
+    cpu.regs[0] = 1 << 12; // FPSCR.IXE
+    cpu.vfp_mut().set_s(0, 0xDEAD_BEEF);
+    cpu.vfp_mut().set_s(1, 1.0f32.to_bits());
+    cpu.vfp_mut().set_s(2, 3.0f32.to_bits());
 
-    assert!(
-        matches!(cpu.step(&mut memory), Err(Error::Unimplemented(_))),
-        "FPSCR trap mask {mask:#010x}"
-    );
-    assert_eq!(cpu.vfp().fpscr(), previous);
-    assert_eq!(cpu.pc(), 0);
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), 0xDEAD_BEEF);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
+    assert_ne!(cpu.vfp().fpscr() & (1 << 4), 0, "FPSCR.IXC is set");
+    assert_eq!(cpu.vfp().fpexc() & ((1 << 7) | (1 << 3) | (1 << 2) | 1), 0);
+    assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
+}
+
+#[test]
+fn inexact_enable_does_not_bounce_an_exact_scalar_result() {
+    const VMUL_S0_S1_S2: u32 = 0xEE20_0A81;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VMUL_S0_S1_S2]);
+    cpu.regs[0] = 1 << 12; // FPSCR.IXE
+    cpu.vfp_mut().set_s(0, 0xDEAD_BEEF);
+    cpu.vfp_mut().set_s(1, 2.0f32.to_bits());
+    cpu.vfp_mut().set_s(2, 2.0f32.to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), 4.0f32.to_bits());
+    assert_eq!(cpu.vfp().fpexc() & (1 << 31), 0);
+    assert_eq!(cpu.vfp().fpscr() & (1 << 4), 0);
+}
+
+#[test]
+fn overflow_has_priority_over_inexact_when_both_enables_are_set() {
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VDIV_S0_S1_S2]);
+    cpu.regs[0] = (1 << 12) | (1 << 10); // FPSCR.IXE | FPSCR.OFE
+    cpu.vfp_mut().set_s(0, 0xDEAD_BEEF);
+    cpu.vfp_mut().set_s(1, f32::MAX.to_bits());
+    cpu.vfp_mut().set_s(2, 0.5f32.to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().s(0), 0xDEAD_BEEF);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
+    assert_ne!(cpu.vfp().fpexc() & (1 << 2), 0, "FPEXC.OFC is set");
+    assert_eq!(cpu.vfp().fpscr() & (1 << 4), 0, "IXE is lower priority");
+    assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
 }
