@@ -2194,7 +2194,7 @@ mod tests {
         let mut bl_positive = Machine::with(0xF3FF, |cpu, mem| {
             cpu.set_pc(2);
             mem.write16(2, 0xF3FF).unwrap();
-            mem.write16(4, 0xF7FF).unwrap();
+            mem.write16(4, 0xFFFF).unwrap();
         });
         bl_positive.step();
         assert_eq!(bl_positive.cpu.regs[LR], 0x003F_F006);
