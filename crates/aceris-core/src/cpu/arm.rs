@@ -993,7 +993,9 @@ impl Arm11Core {
                     word,
                 });
             }
-            return Err(Error::Unimplemented("unconditional coprocessor instruction"));
+            return Err(Error::Unimplemented(
+                "unconditional coprocessor instruction",
+            ));
         }
         if unconditional_class != 0b101 {
             return Err(Error::UndefinedInstruction {
