@@ -462,3 +462,124 @@ fn umaal_rejects_overlapping_destination_registers_without_side_effects() {
     assert_eq!(cpu.cpsr, status_before);
     assert_eq!(cpu.pc(), 0);
 }
+#[test]
+fn smlad_family_reads_sources_and_accumulator_before_aliased_destination_write() {
+    // Rd may alias Rm, Rs, or Ra. The expected result is always calculated
+    // from the pre-instruction register values.
+    let aliases = [
+        (0usize, 2usize, 1usize, 0usize), // Rd = Rm
+        (1usize, 2usize, 1usize, 0usize), // Rd = Rs
+        (2usize, 2usize, 1usize, 0usize), // Rd = Ra
+    ];
+
+    for subtract in [false, true] {
+        for exchange in [false, true] {
+            for (rd, ra, rs, rm) in aliases {
+                let instruction = dual_multiply(
+                    0xE700_0010,
+                    rd,
+                    ra,
+                    rs,
+                    rm,
+                    subtract,
+                    exchange,
+                );
+                let initial = [
+                    0x8000_7FFF,
+                    0xFFFF_0001,
+                    0x7FFF_FFFF,
+                    0x1357_9BDF,
+                ];
+                let lhs = initial[rm];
+                let rhs = initial[rs];
+                let rhs_low = if exchange {
+                    signed_half(rhs, true)
+                } else {
+                    signed_half(rhs, false)
+                };
+                let rhs_high = if exchange {
+                    signed_half(rhs, false)
+                } else {
+                    signed_half(rhs, true)
+                };
+                let low_product = signed_half(lhs, false) * rhs_low;
+                let high_product = signed_half(lhs, true) * rhs_high;
+                let products = if subtract {
+                    low_product - high_product
+                } else {
+                    low_product + high_product
+                };
+                let wide = products + i64::from(initial[ra] as i32);
+                let expected_q = wide < i64::from(i32::MIN) || wide > i64::from(i32::MAX);
+
+                for q_before in [false, true] {
+                    let cpu = machine(
+                        instruction,
+                        &[
+                            (0, initial[0]),
+                            (1, initial[1]),
+                            (2, initial[2]),
+                            (3, initial[3]),
+                        ],
+                        q_before,
+                    );
+                    assert_eq!(
+                        cpu.regs[rd],
+                        wide as u32,
+                        "rd={rd} ra={ra} rs={rs} rm={rm} subtract={subtract} exchange={exchange}"
+                    );
+                    assert_eq!(
+                        cpu.cpsr.q(),
+                        q_before || expected_q,
+                        "rd={rd} ra={ra} rs={rs} rm={rm} subtract={subtract} exchange={exchange}"
+                    );
+                    assert_nzcv_preserved(&cpu);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn smlald_family_snapshots_source_registers_that_overlap_the_accumulator_pair() {
+    for subtract in [false, true] {
+        for exchange in [false, true] {
+            let instruction = dual_multiply(
+                0xE740_0010,
+                4, // RdHi aliases Rm.
+                5, // RdLo aliases Rs.
+                5,
+                4,
+                subtract,
+                exchange,
+            );
+            let initial_hi = 0x8000_7FFF;
+            let initial_lo = 0xFFFF_0001;
+            let rhs_low = if exchange {
+                signed_half(initial_lo, true)
+            } else {
+                signed_half(initial_lo, false)
+            };
+            let rhs_high = if exchange {
+                signed_half(initial_lo, false)
+            } else {
+                signed_half(initial_lo, true)
+            };
+            let first = signed_half(initial_hi, false) * rhs_low;
+            let second = signed_half(initial_hi, true) * rhs_high;
+            let products = if subtract { first - second } else { first + second };
+            let accumulator = (u64::from(initial_hi) << 32) | u64::from(initial_lo);
+            let expected = accumulator.wrapping_add(products as u64);
+
+            let cpu = machine(
+                instruction,
+                &[(4, initial_hi), (5, initial_lo)],
+                true,
+            );
+            assert_eq!(cpu.regs[5], expected as u32);
+            assert_eq!(cpu.regs[4], (expected >> 32) as u32);
+            assert!(cpu.cpsr.q());
+            assert_nzcv_preserved(&cpu);
+        }
+    }
+}
