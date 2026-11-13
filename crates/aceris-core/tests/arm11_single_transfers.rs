@@ -30,10 +30,13 @@ fn assert_undefined_without_side_effects(instruction: u32) {
         memory.read32(DATA + 4).unwrap(),
     );
 
-    assert!(matches!(
-        cpu.step(&mut memory),
-        Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
-    ), "{instruction:#010x}");
+    assert!(
+        matches!(
+            cpu.step(&mut memory),
+            Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+        ),
+        "{instruction:#010x}"
+    );
 
     assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
     assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
