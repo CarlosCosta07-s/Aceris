@@ -479,3 +479,33 @@ fn arm_add_uses_instruction_address_plus_eight_when_pc_is_rn() {
     assert_eq!(flags(&cpu), (true, false, false, true));
     assert_eq!(cpu.pc(), base + 4);
 }
+#[test]
+fn arm_compare_and_test_accept_pc_as_rn_with_pc_plus_eight() {
+    // CMP pc, #8: the first operand is the instruction address plus eight.
+    let base = 0x8000_0000;
+    let mut memory = FlatMemory::new(base, 4);
+    memory.write32(base, 0xE35F_0008).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(base);
+    cpu.cpsr.set_flags(false, false, false, false);
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[0], 0);
+    assert_eq!(flags(&cpu), (true, false, true, false));
+    assert_eq!(cpu.pc(), base + 4);
+
+    // TST pc, #8 uses the same PC+8 value and preserves V and rotate-zero C.
+    let base = 0x0000_1000;
+    let mut memory = FlatMemory::new(base, 4);
+    memory.write32(base, 0xE31F_0008).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(base);
+    cpu.cpsr.set_flags(false, false, true, true);
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[0], 0);
+    assert_eq!(flags(&cpu), (false, false, true, true));
+    assert_eq!(cpu.pc(), base + 4);
+}
