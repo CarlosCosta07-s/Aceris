@@ -449,3 +449,33 @@ fn arm_immediate_logical_flags_match_rotated_shifter_carry_reference() {
         }
     }
 }
+#[test]
+fn arm_add_uses_instruction_address_plus_eight_when_pc_is_rn() {
+    // ADD r2, pc, #4: PC is the address of the instruction plus eight.
+    let base = 0x8000_0000;
+    let mut memory = FlatMemory::new(base, 4);
+    memory.write32(base, 0xE28F_2004).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(base);
+    cpu.cpsr.set_flags(true, false, true, false);
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[2], base.wrapping_add(8 + 4));
+    assert_eq!(flags(&cpu), (true, false, true, false));
+    assert_eq!(cpu.pc(), base + 4);
+
+    // ADDS r2, pc, #0x80 crosses INT32_MAX using PC+8 as Rn.
+    let base = 0x7FFF_FF80;
+    let mut memory = FlatMemory::new(base, 4);
+    memory.write32(base, 0xE29F_2080).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(base);
+    cpu.cpsr.set_flags(false, false, false, false);
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[2], 0x8000_0008);
+    assert_eq!(flags(&cpu), (true, false, false, true));
+    assert_eq!(cpu.pc(), base + 4);
+}
