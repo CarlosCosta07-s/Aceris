@@ -14,8 +14,9 @@
 //!
 //! The unified software TLB supports ASID/global matching, eight ARM11
 //! lockdown slots, and CP15 c8 invalidation operations. Set-associative
-//! replacement remains a bounded software approximation; memory attributes
-//! TEX, data-alignment faults, and cache behavior are not yet modeled. A
+//! replacement remains a bounded software approximation. Resolved TEX/C/B/S
+//! memory attributes are retained in TLB entries and exposed to the CPU for
+//! ARMv6 unaligned-access eligibility; cache behavior is not yet modeled. A
 //! translation fault is reported as `Error::InvalidAccess` with the virtual
 //! address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
 
@@ -770,9 +771,15 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
 
     fn map(&mut self, va: u32, access: Access) -> Result<u32> {
         self.map_with_privilege(va, access, self.params.privileged)
+            .map(|(physical, _)| physical)
     }
 
-    fn map_with_privilege(&mut self, va: u32, access: Access, privileged: bool) -> Result<u32> {
+    fn map_with_privilege(
+        &mut self,
+        va: u32,
+        access: Access,
+        privileged: bool,
+    ) -> Result<(u32, MemoryAttributes)> {
         let access = if self.fetching && access == Access::Read {
             Access::Execute
         } else {
@@ -787,24 +794,28 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             va
         };
 
-        let walk = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
-            entry.resolve_with_privilege(&self.params, mva, access, privileged)
+        let (page_walk, cached) = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
+            (PageWalk::Mapped(entry), true)
         } else {
-            match walk_page_tables(self.inner, &self.params, mva, access)? {
-                PageWalk::Mapped(entry) => {
-                    let result =
-                        entry.resolve_with_privilege(&self.params, mva, access, privileged);
-                    self.tlb
-                        .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
-                    result
-                }
-                PageWalk::Fault(fault) => Walk::Fault(fault),
-            }
+            (walk_page_tables(self.inner, &self.params, mva, access)?, false)
         };
 
-        match walk {
-            Walk::Mapped(physical) => Ok(physical),
-            Walk::Fault(fault) => {
+        match page_walk {
+            PageWalk::Mapped(entry) => {
+                let result = entry.resolve_with_privilege(&self.params, mva, access, privileged);
+                if !cached {
+                    self.tlb
+                        .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
+                }
+                match result {
+                    Walk::Mapped(physical) => Ok((physical, entry.memory_attributes)),
+                    Walk::Fault(fault) => {
+                        self.fault.get_or_insert(fault);
+                        Err(Error::InvalidAccess { addr: va })
+                    }
+                }
+            }
+            PageWalk::Fault(fault) => {
                 self.fault.get_or_insert(fault);
                 Err(Error::InvalidAccess { addr: va })
             }
@@ -855,6 +866,12 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
 }
 
 impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
+    fn is_normal_memory(&mut self, addr: u32, write: bool, privileged: bool) -> Result<bool> {
+        let access = if write { Access::Write } else { Access::Read };
+        let (_, attributes) = self.map_with_privilege(addr, access, privileged)?;
+        Ok(attributes.memory_type == MemoryType::Normal)
+    }
+
     fn translate_va_to_pa_for_par(
         &mut self,
         virtual_address: u32,
@@ -1292,6 +1309,30 @@ mod tests {
                 outer: 3,
             }
         );
+    }
+
+    #[test]
+    fn mmu_bus_reports_normal_device_and_strongly_ordered_attributes() {
+        let (cpu, mut mem) = machine();
+        let device_va = 0x0010_0000;
+        let ordered_va = 0x0020_0000;
+        let normal_va = 0x0030_0000;
+
+        // TEX=0,C=0,B=1 resolves to Device.
+        set_l1(&mut mem, 1, SECTION | SECTION_AP_RW_ALL | (1 << 2));
+        // TEX=0,C=0,B=0 resolves to Strongly-ordered.
+        set_l1(&mut mem, 2, SECTION | SECTION_AP_RW_ALL);
+        // TEX=1,C=0,B=0 resolves to Normal.
+        set_l1(&mut mem, 3, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+
+        let mut tlb = TranslationLookasideBuffer::default();
+        let mut mmu = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
+
+        assert!(!mmu.is_normal_memory(device_va + 1, false, true).unwrap());
+        assert!(!mmu.is_normal_memory(device_va + 1, true, true).unwrap());
+        assert!(!mmu.is_normal_memory(ordered_va + 1, false, true).unwrap());
+        assert!(mmu.is_normal_memory(normal_va + 1, false, true).unwrap());
+        assert!(mmu.is_normal_memory(normal_va + 1, true, true).unwrap());
     }
 
     #[test]
