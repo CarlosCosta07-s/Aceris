@@ -36,15 +36,47 @@ const FPSCR_OFC: u32 = 1 << 2;
 const FPSCR_UFC: u32 = 1 << 3;
 const FPSCR_IXC: u32 = 1 << 4;
 const FPSCR_IDC: u32 = 1 << 7;
+const FPEXC_EX: u32 = 1 << 31;
 const FPEXC_EN: u32 = 1 << 30;
+const FPEXC_FP2V: u32 = 1 << 28;
+const FPEXC_VECITR: u32 = 0x7 << 8;
+const FPEXC_INV: u32 = 1 << 7;
+const FPEXC_UFC: u32 = 1 << 3;
+const FPEXC_OFC: u32 = 1 << 2;
+const FPEXC_IOC: u32 = 1 << 0;
+const FPEXC_WRITABLE: u32 = FPEXC_EX
+    | FPEXC_EN
+    | FPEXC_FP2V
+    | FPEXC_VECITR
+    | FPEXC_INV
+    | FPEXC_UFC
+    | FPEXC_OFC
+    | FPEXC_IOC;
+const FPINST_RESET: u32 = 0xEE00_0A00;
 
 /// VFP register state of one core.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Vfp {
     /// S0-S31; Dn is the pair (S(2n) low, S(2n+1) high).
     s: [u32; 32],
     fpscr: u32,
     fpexc: u32,
+    fpinst: u32,
+    /// FPINST2 has an architecturally UNPREDICTABLE reset value. The emulator
+    /// uses zero as its deterministic initial value until software writes it.
+    fpinst2: u32,
+}
+
+impl Default for Vfp {
+    fn default() -> Self {
+        Self {
+            s: [0; 32],
+            fpscr: 0,
+            fpexc: 0,
+            fpinst: FPINST_RESET,
+            fpinst2: 0,
+        }
+    }
 }
 
 impl Vfp {
@@ -75,6 +107,27 @@ impl Vfp {
 
     pub fn fpexc(&self) -> u32 {
         self.fpexc
+    }
+
+    /// Writes the architecturally defined FPEXC fields; SBZ bits remain zero.
+    pub fn set_fpexc(&mut self, value: u32) {
+        self.fpexc = value & FPEXC_WRITABLE;
+    }
+
+    pub fn fpinst(&self) -> u32 {
+        self.fpinst
+    }
+
+    pub fn set_fpinst(&mut self, value: u32) {
+        self.fpinst = value;
+    }
+
+    pub fn fpinst2(&self) -> u32 {
+        self.fpinst2
+    }
+
+    pub fn set_fpinst2(&mut self, value: u32) {
+        self.fpinst2 = value;
     }
 
     /// FPEXC.EN: when clear, VFP data instructions are undefined.
@@ -722,7 +775,9 @@ impl Arm11Core {
                 }
                 6 if enabled || privileged => MVFR1,
                 7 if enabled || privileged => MVFR0,
-                8 if privileged => self.vfp.fpexc,
+                8 if privileged => self.vfp.fpexc(),
+                9 if privileged => self.vfp.fpinst(),
+                10 if privileged => self.vfp.fpinst2(),
                 _ => return Err(self.vfp_undefined(word)),
             };
             if rt == 15 {
@@ -755,7 +810,9 @@ impl Arm11Core {
                 }
                 self.vfp.fpscr = value & FPSCR_WRITABLE;
             }
-            8 if privileged => self.vfp.fpexc = value & FPEXC_EN,
+            8 if privileged => self.vfp.set_fpexc(value),
+            9 if privileged => self.vfp.set_fpinst(value),
+            10 if privileged => self.vfp.set_fpinst2(value),
             _ => return Err(self.vfp_undefined(word)),
         }
         Ok(())
