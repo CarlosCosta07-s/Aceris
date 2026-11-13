@@ -1528,7 +1528,10 @@ mod tests {
         let gsp_handle = srv_response[3];
         assert_ne!(gsp_handle, 0);
         assert!(matches!(
-            system.ncsd_session().unwrap().service_session_kind(gsp_handle),
+            system
+                .ncsd_session()
+                .unwrap()
+                .service_session_kind(gsp_handle),
             Some(ServiceSessionKind::GspGpu {
                 client_id: None,
                 ..
@@ -1536,11 +1539,8 @@ mod tests {
         ));
 
         // gsp::Gpu:RegisterInterruptRelayQueue(flags=0, event_handle)
-        let register_buffer = write_tls_ipc_request(
-            &mut system,
-            gsp_handle,
-            &[0x0013_0042, 0, 0, event_handle],
-        );
+        let register_buffer =
+            write_tls_ipc_request(&mut system, gsp_handle, &[0x0013_0042, 0, 0, event_handle]);
         system.dispatch_pending_ipc_request().unwrap();
         let register_response = read_tls_ipc_response(&mut system, register_buffer, 5);
         assert_eq!(register_response[0], 0x0013_0082);
@@ -1567,8 +1567,7 @@ mod tests {
         assert_eq!(trigger_response, vec![0x000C_0040, 0]);
 
         // Unregister releases the queue mapping and memory handle.
-        let unregister_buffer =
-            write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
+        let unregister_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
         system.dispatch_pending_ipc_request().unwrap();
         let unregister_response = read_tls_ipc_response(&mut system, unregister_buffer, 2);
         assert_eq!(unregister_response, vec![0x0014_0040, 0]);
