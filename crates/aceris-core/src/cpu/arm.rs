@@ -1083,6 +1083,20 @@ impl Arm11Core {
             });
         }
 
+        // ARMv6 makes every use of R15 in a register-controlled data
+        // processing shift UNPREDICTABLE, including the otherwise-unused Rn
+        // field of MOV/MVN. Reject all four fields before reading operands.
+        if !bit(word, 25) && bit(word, 4) {
+            let rs = bits(word, 11, 8);
+            let rm = bits(word, 3, 0);
+            if rn == PC as u32 || rd == PC as u32 || rs == PC as u32 || rm == PC as u32 {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+        }
+
         let (operand, shifter_carry, pc_offset) = self.shifter_operand(word);
         let a = self.reg(rn, pc_offset);
 
@@ -2931,6 +2945,33 @@ mod tests {
             m.cpu.regs[0] = 0x1234_5678;
             m.cpu.regs[1] = 0xA5A5_5A5A;
             m.cpu.regs[2] = 0x8765_4321;
+            m.cpu.cpsr.set_flags(true, false, true, false);
+            let registers_before = m.cpu.regs;
+            let status_before = m.cpu.cpsr;
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+            ));
+            assert_eq!(m.cpu.regs, registers_before, "instruction {instruction:#010x}");
+            assert_eq!(m.cpu.cpsr, status_before, "instruction {instruction:#010x}");
+            assert_eq!(m.cpu.pc(), 0, "instruction {instruction:#010x}");
+        }
+    }
+
+    #[test]
+    fn armv6_a32_register_shift_rejects_pc_in_every_operand_field() {
+        // ADD r0,r3,r1,LSL r2 with R15 in Rn, Rd, Rs or Rm.
+        for instruction in [
+            0xE08F_0211, // Rn = PC
+            0xE083_F211, // Rd = PC
+            0xE083_0F11, // Rs = PC
+            0xE083_021F, // Rm = PC
+        ] {
+            let mut m = Machine::new(&[instruction]);
+            m.cpu.regs[1] = 0x1234_5678;
+            m.cpu.regs[2] = 3;
+            m.cpu.regs[3] = 0x8765_4321;
             m.cpu.cpsr.set_flags(true, false, true, false);
             let registers_before = m.cpu.regs;
             let status_before = m.cpu.cpsr;
