@@ -1313,7 +1313,8 @@ mod tests {
         let mut tlb = TranslationLookasideBuffer::default();
         let initial = {
             let mut mmu = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
-            mmu.translate_for_pa_register(va, Access::Read, true).unwrap()
+            mmu.translate_for_pa_register(va, Access::Read, true)
+                .unwrap()
         };
         assert!(matches!(
             initial,
@@ -1339,7 +1340,8 @@ mod tests {
 
         let before_invalidation = {
             let mut mmu = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
-            mmu.translate_for_pa_register(va, Access::Read, true).unwrap()
+            mmu.translate_for_pa_register(va, Access::Read, true)
+                .unwrap()
         };
         assert!(matches!(
             before_invalidation,
@@ -1357,7 +1359,8 @@ mod tests {
         tlb.maintain(TlbMaintenance::All);
         let after_invalidation = {
             let mut mmu = MmuBus::new(&mut mem, params(&cpu), &mut tlb);
-            mmu.translate_for_pa_register(va, Access::Read, true).unwrap()
+            mmu.translate_for_pa_register(va, Access::Read, true)
+                .unwrap()
         };
         assert!(matches!(
             after_invalidation,
