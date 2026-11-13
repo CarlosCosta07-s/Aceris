@@ -769,3 +769,10 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - A matriz percorre sete endereços-base (incluindo valores em torno de `INT32_MAX` e perto do wrap de `u32`), seis pares `rotate/imm8`, C de entrada ligado/desligado e V inicial ligado/desligado: 1.344 combinações no total. O modelo referência usa `base.wrapping_add(8)` para o PC e valida resultado, NZCV, writeback apenas para instruções com destino e PC sequencial.
 - Workflow [43511663360](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43511663360) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
 - Apenas testes externos em `crates/aceris-core/tests/arm11_arithmetic_flags.rs` foram alterados; nenhuma implementação de produção ou código Thumb foi modificado.
+
+## A32 — matriz lógica com PC em Rn e Operand2 imediato (13/11/2026)
+
+- `180067e` — acrescenta `arm_immediate_logical_uses_pc_plus_eight_as_rn_across_opcodes` para AND/EOR/TST/TEQ/ORR/BIC. MOV/MVN foram intencionalmente excluídos porque `Rn` é SBZ nesses opcodes e sua rejeição já é testada separadamente.
+- A matriz percorre sete bases de PC, nove pares `rotate/imm8`, C de entrada ligado/desligado e V inicial ligado/desligado: 1.512 combinações. Verifica `PC+8`, o valor lógico, carry do shifter (ou preservação de C quando rotate=0), preservação de V, ausência de writeback em TST/TEQ e avanço sequencial de PC.
+- `1cbf979` — aplica o formato Rustfmt indicado pela primeira execução da CI. Workflow [43512120871](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43512120871) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
+- Apenas testes externos em `crates/aceris-core/tests/arm11_arithmetic_flags.rs` foram alterados; nenhuma implementação de produção ou código Thumb foi modificado.
