@@ -1,6 +1,6 @@
 //! Independent integration tests for ARMv6 byte/halfword media instructions.
 
-use aceris_core::cpu::{Arm11Core, Psr};
+use aceris_core::cpu::Arm11Core;
 use aceris_core::memory::{Bus, FlatMemory};
 
 fn execute(program: &[u32], setup: impl FnOnce(&mut Arm11Core)) -> Arm11Core {
