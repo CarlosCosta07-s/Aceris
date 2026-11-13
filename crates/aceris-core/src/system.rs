@@ -8,18 +8,16 @@ use crate::gpu::{
     GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
-use crate::loader::ncsd::session::{Arm11RunStopReason, ThreadId};
+use crate::loader::ncsd::session::gsp_service::{
+    GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE, GspClientUnregistration,
+    GspInterruptDispatchReport, GspIpcRequest, GspIpcResultResponse,
+    GspRegisterInterruptRelayQueueResponse, GspRenderingRightAcquireOutcome,
+    GspRenderingRightHandoff, GspServiceError, GspServiceRegistry, decode_gsp_ipc_request,
+};
 use crate::loader::ncsd::session::ipc::{IpcCommandHeader, IpcMessage};
 use crate::loader::ncsd::session::kernel::ServiceSessionKind;
-use crate::loader::ncsd::session::gsp_service::{
-    decode_gsp_ipc_request, GspClientUnregistration, GspInterruptDispatchReport,
-    GspIpcRequest, GspIpcResultResponse, GspRegisterInterruptRelayQueueResponse,
-    GspRenderingRightAcquireOutcome, GspRenderingRightHandoff, GspServiceError,
-    GspServiceRegistry, GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE,
-};
-use crate::loader::ncsd::{
-    Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader,
-};
+use crate::loader::ncsd::session::{Arm11RunStopReason, ThreadId}; 
+use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::ncsd::session::{
     RESULT_INVALID_ADDRESS, RESULT_INVALID_ENUM, RESULT_INVALID_HANDLE, RESULT_OUT_OF_MEMORY,
 };
@@ -405,10 +403,11 @@ impl System {
             .rendering_right_handoff
             .and_then(|handoff| handoff.next_owner)
         {
-            self.wake_pending_gsp_acquire(next_owner, 0)
-                .map_err(|_| GspServiceError::ClientSessionUnavailable {
+            self.wake_pending_gsp_acquire(next_owner, 0).map_err(|_| {
+                GspServiceError::ClientSessionUnavailable {
                     client_id: next_owner,
-                })?;
+                }
+            })?;
         }
         Ok(unregistration)
     }
@@ -441,10 +440,11 @@ impl System {
             .gsp_service
             .release_rendering_right_with_handoff(client_id)?;
         if let Some(next_owner) = handoff.next_owner {
-            self.wake_pending_gsp_acquire(next_owner, 0)
-                .map_err(|_| GspServiceError::ClientSessionUnavailable {
+            self.wake_pending_gsp_acquire(next_owner, 0).map_err(|_| {
+                GspServiceError::ClientSessionUnavailable {
                     client_id: next_owner,
-                })?;
+                }
+            })?;
         }
         Ok(handoff)
     }
@@ -533,26 +533,32 @@ impl System {
             if expected_words > ARM11_IPC_BUFFER_WORDS {
                 return Err(Error::Io(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("ARM11 IPC message declares {expected_words} words; TLS buffer holds {ARM11_IPC_BUFFER_WORDS}"),
+                    format!(
+                        "ARM11 IPC message declares {expected_words} words; TLS buffer holds {ARM11_IPC_BUFFER_WORDS}"
+                    ),
                 )));
             }
 
             let mut request_words = Vec::with_capacity(expected_words);
             for index in 0..expected_words {
-                let offset = u32::try_from(index.saturating_mul(4))
-                    .map_err(|_| Error::InvalidAccess { addr: request_address })?;
+                let offset =
+                    u32::try_from(index.saturating_mul(4)).map_err(|_| Error::InvalidAccess {
+                        addr: request_address,
+                    })?;
                 let address = request_address
                     .checked_add(offset)
-                    .ok_or(Error::InvalidAccess { addr: request_address })?;
+                    .ok_or(Error::InvalidAccess {
+                        addr: request_address,
+                    })?;
                 request_words.push(session.read_memory_u32(address)?);
             }
             let service_handle = registers[0];
-            let service_kind = session.service_session_kind(service_handle).ok_or(
-                Error::Io(io::Error::new(
+            let service_kind = session
+                .service_session_kind(service_handle)
+                .ok_or(Error::Io(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!("SVC SendSyncRequest used non-service handle 0x{service_handle:08X}"),
-                )),
-            )?;
+                )))?;
             (service_handle, tls_address, request_words, service_kind)
         };
 
@@ -564,9 +570,7 @@ impl System {
         })?;
         let pending_before = self.pending_gsp_acquires.len();
         let response_words = match service_kind {
-            ServiceSessionKind::ServiceManager => {
-                self.dispatch_service_manager_request(message)?
-            }
+            ServiceSessionKind::ServiceManager => self.dispatch_service_manager_request(message)?,
             ServiceSessionKind::GspGpu {
                 client_id,
                 shared_memory_handle,
@@ -685,10 +689,7 @@ impl System {
                 // the newly created client-side gsp::Gpu session.
                 Ok(vec![0x0005_0042, 0, 0, service_handle])
             }
-            _ => Ok(vec![
-                (raw_header & 0xFFFF_0000) | 0x40,
-                RESULT_INVALID_ENUM,
-            ]),
+            _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
         }
     }
 
