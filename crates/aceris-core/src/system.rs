@@ -515,9 +515,12 @@ impl System {
     /// Requests and replies use the current thread's TLS command buffer. A
     /// service call is handled synchronously before ARM11 execution resumes.
     fn dispatch_pending_ipc_request(&mut self) -> Result<bool> {
-        let (service_handle, tls_address, request_words, service_kind) = {
+        let (request_thread, service_handle, tls_address, request_words, service_kind) = {
             let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
                 "an NCSD ARM11 process session has not been prepared",
+            ))?;
+            let request_thread = session.current_thread_id().ok_or(Error::Unimplemented(
+                "IPC request has no selected ARM11 thread",
             ))?;
             let registers = session.current_registers().ok_or(Error::Unimplemented(
                 "IPC request has no running ARM11 thread",
@@ -559,7 +562,13 @@ impl System {
                     io::ErrorKind::InvalidInput,
                     format!("SVC SendSyncRequest used non-service handle 0x{service_handle:08X}"),
                 )))?;
-            (service_handle, tls_address, request_words, service_kind)
+            (
+                request_thread,
+                service_handle,
+                tls_address,
+                request_words,
+                service_kind,
+            )
         };
 
         let message = IpcMessage::decode(&request_words).map_err(|error| {
@@ -606,7 +615,12 @@ impl System {
             "ARM11 process session was removed during IPC dispatch",
         ))?;
         session.write_memory_bytes(request_address, &response_bytes)?;
-        session.set_current_register(0, 0);
+        if !session.set_thread_register(request_thread, 0, 0) {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "ARM11 IPC response thread disappeared during service dispatch",
+            )));
+        }
         Ok(false)
     }
 
