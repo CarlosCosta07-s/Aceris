@@ -797,7 +797,7 @@ impl Arm11Core {
                 base,
                 (imm8 / words_per_reg) as usize,
                 w.then(|| base.wrapping_add(offset)),
-            )
+            ),
             // VLDM / VSTM decrement-before (VPUSH / VPOP-adjacent forms)
             (true, false, true) => {
                 let address = base.wrapping_sub(offset);
