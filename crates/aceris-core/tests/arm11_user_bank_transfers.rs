@@ -67,9 +67,7 @@ fn ldm_user_bank_loads_user_registers_without_overwriting_active_fiq_bank() {
     let mut memory = FlatMemory::new(0, 0x200);
     memory.write32(0, 0xE8D0_7F00).unwrap(); // LDMIA r0, {r8-r14}^
     for (lane, value) in user_values().iter().enumerate() {
-        memory
-            .write32(DATA + (lane as u32 * 4), *value)
-            .unwrap();
+        memory.write32(DATA + (lane as u32 * 4), *value).unwrap();
     }
 
     let mut cpu = Arm11Core::new();
