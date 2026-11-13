@@ -3,6 +3,12 @@
 //! SVC argument registers are dispatched by Arm11ProcessSession, which has
 //! access to the address space and scheduler needed to validate operations.
 
+/// Connects to a kernel-visible service-manager port.
+pub const SVC_CONNECT_TO_PORT: u32 = 0x2D;
+
+/// Sends the IPC command buffer through a client session handle.
+pub const SVC_SEND_SYNC_REQUEST: u32 = 0x32;
+
 /// Control process memory mappings (allocation and release).
 pub const SVC_CONTROL_MEMORY: u32 = 0x01;
 
