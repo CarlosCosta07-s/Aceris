@@ -222,8 +222,7 @@ fn arm_immediate_shift_reads_pc_as_instruction_address_plus_eight() {
         for amount in AMOUNTS {
             for carry_in in [false, true] {
                 for overflow_in in [false, true] {
-                    let instruction =
-                        0xE1B0_400F | (amount << 7) | (kind.encoding() << 5); // MOVS r4, pc, shift #imm.
+                    let instruction = 0xE1B0_400F | (amount << 7) | (kind.encoding() << 5); // MOVS r4, pc, shift #imm.
                     let mut memory = FlatMemory::new(BASE, 4);
                     memory.write32(BASE, instruction).unwrap();
 
@@ -240,12 +239,7 @@ fn arm_immediate_shift_reads_pc_as_instruction_address_plus_eight() {
                     );
                     assert_eq!(
                         flags(&cpu),
-                        (
-                            expected >> 31 != 0,
-                            expected == 0,
-                            carry_out,
-                            overflow_in
-                        ),
+                        (expected >> 31 != 0, expected == 0, carry_out, overflow_in),
                         "{kind:?} #{amount} with PC={pc_operand:#010x}, carry_in={carry_in}"
                     );
                 }
