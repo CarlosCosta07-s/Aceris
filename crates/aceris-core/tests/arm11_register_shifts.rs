@@ -68,6 +68,38 @@ fn movs_register_shift(kind: Shift) -> u32 {
     0xE1B0_4010 | (2 << 8) | (kind.encoding() << 5) | 1
 }
 
+fn reference_immediate_shift(kind: Shift, value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    match (kind, amount) {
+        (Shift::Lsl, 0) => (value, carry_in),
+        (Shift::Lsr | Shift::Asr, 0) => reference_shift(kind, value, 32, carry_in),
+        (Shift::Ror, 0) => ((u32::from(carry_in) << 31) | (value >> 1), value & 1 != 0),
+        _ => reference_shift(kind, value, amount, carry_in),
+    }
+}
+
+/// Encodes MOVS r4, r1, <shift> #imm5.
+fn movs_immediate_shift(kind: Shift, amount: u32) -> u32 {
+    0xE1B0_4001 | (amount << 7) | (kind.encoding() << 5)
+}
+
+fn execute_immediate_shift(
+    kind: Shift,
+    value: u32,
+    amount: u32,
+    carry: bool,
+    overflow: bool,
+) -> Arm11Core {
+    let mut memory = FlatMemory::new(0, 4);
+    memory.write32(0, movs_immediate_shift(kind, amount)).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(0);
+    cpu.regs[1] = value;
+    cpu.cpsr.set_flags(false, false, carry, overflow);
+    cpu.step(&mut memory).unwrap();
+    cpu
+}
+
 fn execute_shift(kind: Shift, value: u32, amount: u32, carry: bool, overflow: bool) -> Arm11Core {
     let mut memory = FlatMemory::new(0, 4);
     memory.write32(0, movs_register_shift(kind)).unwrap();
@@ -118,6 +150,47 @@ fn arm_register_shifts_match_independent_reference_at_boundaries() {
                             flags(&cpu),
                             expected_flags,
                             "{kind:?}: value={value:#010x}, amount={amount}, carry={carry_in}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn arm_immediate_shifts_match_reference_including_special_zero_encodings() {
+    const VALUES: [u32; 7] = [
+        0,
+        1,
+        2,
+        0x7FFF_FFFF,
+        0x8000_0000,
+        0x8000_0001,
+        u32::MAX,
+    ];
+    const AMOUNTS: [u32; 5] = [0, 1, 2, 15, 31];
+
+    for kind in Shift::ALL {
+        for value in VALUES {
+            for amount in AMOUNTS {
+                for carry_in in [false, true] {
+                    for overflow_in in [false, true] {
+                        let (expected, carry_out) =
+                            reference_immediate_shift(kind, value, amount, carry_in);
+                        let cpu =
+                            execute_immediate_shift(kind, value, amount, carry_in, overflow_in);
+                        let expected_flags =
+                            (expected >> 31 != 0, expected == 0, carry_out, overflow_in);
+
+                        assert_eq!(
+                            cpu.regs[4], expected,
+                            "{kind:?} #{amount}: value={value:#010x}"
+                        );
+                        assert_eq!(
+                            flags(&cpu),
+                            expected_flags,
+                            "{kind:?} #{amount}: value={value:#010x}, carry={carry_in}"
                         );
                     }
                 }
