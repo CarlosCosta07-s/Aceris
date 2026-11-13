@@ -305,10 +305,10 @@ fn smlald_and_smlsld_accumulate_dual_products_into_64_bits() {
                         let first = signed_half(rm, false) * rhs_low;
                         let second = signed_half(rm, true) * rhs_high;
                         let products = if subtract {
-                        first - second
-                    } else {
-                        first + second
-                    };
+                            first - second
+                        } else {
+                            first + second
+                        };
                         let expected = accumulator.wrapping_add(products as u64);
                         let cpu = machine(
                             instruction,
