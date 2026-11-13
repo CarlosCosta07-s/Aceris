@@ -3033,7 +3033,7 @@ mod tests {
             m.cpu.regs[1] = DATA + 1;
             m.cpu.regs[4] = 0xAABB_CCDD;
             m.cpu.regs[5] = 0x1122_3344;
-            m.cp15_mut().write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+            m.cpu.cp15_mut().write(true, 0, 1, 0, 0, 1 << 22).unwrap();
             m.mem.write32(DATA, 0xDEAD_BEEF).unwrap();
             m.mem.write32(DATA + 4, 0xCAFE_BABE).unwrap();
             assert!(matches!(
