@@ -31,6 +31,10 @@ fn privileged_mode_can_read_write_fpexc_fpinst_and_fpinst2_while_vfp_is_disabled
     execute(&mut cpu, 0xEEF8_3A10).unwrap(); // VMRS r3, FPEXC
     assert_eq!(cpu.regs[3], 0xD000_078D);
 
+    // Context support must clear EX before reading or writing FPINST/FPINST2.
+    cpu.regs[2] = cpu.regs[3] & !(1 << 31);
+    execute(&mut cpu, 0xEEE8_2A10).unwrap(); // VMSR FPEXC, r2
+
     cpu.regs[4] = 0x1234_5678;
     execute(&mut cpu, 0xEEE9_4A10).unwrap(); // VMSR FPINST, r4
     execute(&mut cpu, 0xEEF9_5A10).unwrap(); // VMRS r5, FPINST
