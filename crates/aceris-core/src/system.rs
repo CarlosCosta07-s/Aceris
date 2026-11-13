@@ -1795,6 +1795,7 @@ mod tests {
             .load_ncsd_with_keys(
                 std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
                     0xEF00_002D, // SVC ConnectToPort
+                    0xEF00_0032, // srv:RegisterClient
                     0xEF00_0032, // srv:GetServiceHandle
                     0xEF00_0032, // GSP RegisterInterruptRelayQueue
                     0xEF00_0032, // GSP TriggerCmdReqQueue
@@ -1843,6 +1844,22 @@ mod tests {
                 .service_session_kind(service_manager),
             Some(ServiceSessionKind::ServiceManager)
         ));
+
+        // srv:RegisterClient supplies the process-ID translation descriptor.
+        let register_client_buffer =
+            write_tls_ipc_request(&mut system, service_manager, &[0x0001_0002, 0x20, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, register_client_buffer, 2),
+            vec![0x0001_0040, 0]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .service_manager_client_registered(service_manager),
+            Some(true)
+        );
 
         // srv:GetServiceHandle("gsp::Gpu", 8, 0)
         let srv_buffer = write_tls_ipc_request(
