@@ -312,12 +312,7 @@ fn thumb_mul_and_logical_ops_keep_c_and_v() {
 fn arm_immediate_instruction(op: Op, rotate: u32, immediate: u32) -> u32 {
     let compare = matches!(op, Op::Cmp | Op::Cmn);
     let rd = if compare { 0 } else { 2 };
-    0xE200_0000
-        | (arm_opcode(op) << 21)
-        | (1 << 20)
-        | (rd << 12)
-        | (rotate << 8)
-        | immediate
+    0xE200_0000 | (arm_opcode(op) << 21) | (1 << 20) | (rd << 12) | (rotate << 8) | immediate
 }
 
 #[test]
