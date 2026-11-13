@@ -289,12 +289,9 @@ fn smlald_and_smlsld_accumulate_dual_products_into_64_bits() {
             let instruction = dual_multiply(0xE740_0010, 4, 5, 1, 0, subtract, exchange);
             for &rm in &PACKED {
                 for &rs in &PACKED {
-                    for accumulator in [
-                        0u64,
-                        u64::MAX,
-                        0x7FFF_FFFF_FFFF_FFFF,
-                        0x8000_0000_0000_0000,
-                    ] {
+                    for accumulator in
+                        [0u64, u64::MAX, 0x7FFF_FFFF_FFFF_FFFF, 0x8000_0000_0000_0000]
+                    {
                         let rhs_low = if exchange {
                             signed_half(rs, true)
                         } else {
