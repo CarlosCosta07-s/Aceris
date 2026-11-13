@@ -6,9 +6,10 @@
 //! and VCVT (float<->float and float<->integer).
 //!
 //! A verified subset of VFP11 short-vector arithmetic and unary operations is
-//! supported. Remaining limits include trapped floating-point exceptions,
-//! deprecated FLDMX/FSTMX forms, scalar-only comparisons/conversions, and
-//! extreme precision/subnormal cases. Scalar operations honor FPSCR.RMode and
+//! supported. The legacy FLDMX/FSTMX double context-transfer forms with odd
+//! word counts are also implemented. Remaining limits include trapped
+//! floating-point exceptions, scalar-only comparisons/conversions, and extreme
+//! precision/subnormal cases. Scalar operations honor FPSCR.RMode and
 //! accumulate IXC/UFC for inexact and tiny results. Single precision is
 //! computed through `f64`; double precision residuals use TwoSum/FMA where
 //! available.
