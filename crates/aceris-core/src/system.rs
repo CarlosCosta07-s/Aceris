@@ -2217,6 +2217,25 @@ mod tests {
                 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1,
             ]
         );
+        let mut relay_queue_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(GSP_SHARED_MEMORY_BASE, &mut relay_queue_bytes)
+            .unwrap();
+        let relay_queue = GspInterruptRelayQueue::parse(&relay_queue_bytes).unwrap();
+        assert_eq!(
+            relay_queue.pending_interrupts().unwrap(),
+            vec![GspInterruptId::Psc0]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(true)
+        );
 
         // ReleaseRight must travel through the same guest IPC path.
         let release_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0017_0000]);
