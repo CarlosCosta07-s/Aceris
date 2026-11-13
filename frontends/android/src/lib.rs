@@ -422,9 +422,8 @@ mod tests {
         );
 
         // SAFETY: A zero-capacity query does not dereference the null output.
-        let required = unsafe {
-            aceris_system_copy_last_error(handle, std::ptr::null_mut(), 0)
-        };
+        let required =
+            unsafe { aceris_system_copy_last_error(handle, std::ptr::null_mut(), 0) };
         assert!(required > 0);
 
         let mut buffer = vec![0u8; required as usize + 1];
