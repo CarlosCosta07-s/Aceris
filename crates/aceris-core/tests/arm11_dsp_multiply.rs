@@ -569,3 +569,90 @@ fn smlald_family_snapshots_source_registers_that_overlap_the_accumulator_pair() 
         }
     }
 }
+fn assert_undefined_atomically(instruction: u32) {
+    let mut memory = FlatMemory::new(0, 8);
+    memory.write32(0, instruction).unwrap();
+    memory.write32(4, 0xA5A5_5A5A).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    for register in 0..15 {
+        cpu.regs[register] = 0x1020_3040 ^ ((register as u32) * 0x0101_0101);
+    }
+    cpu.set_pc(0);
+    cpu.cpsr.set_flags(true, false, true, true);
+    cpu.cpsr.set_q();
+    cpu.cpsr.set_ge(0b1010);
+
+    let registers_before = cpu.regs;
+    let status_before = cpu.cpsr;
+    let data_before = memory.read32(4).unwrap();
+
+    assert!(
+        matches!(
+            cpu.step(&mut memory),
+            Err(aceris_core::Error::UndefinedInstruction { pc: 0, word })
+                if word == instruction
+        ),
+        "instruction {instruction:#010x} must be undefined"
+    );
+    assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
+    assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
+    assert_eq!(cpu.pc(), 0, "{instruction:#010x}");
+    assert_eq!(memory.read32(4).unwrap(), data_before, "{instruction:#010x}");
+}
+
+#[test]
+fn dsp_multiply_rejects_pc_reserved_fields_and_invalid_destination_pairs_atomically() {
+    let invalid = [
+        // SMLAxy: all four encoded register operands must exclude PC.
+        half_multiply(0xE100_0080, 15, 2, 1, 0, false, false),
+        half_multiply(0xE100_0080, 4, 15, 1, 0, false, false),
+        half_multiply(0xE100_0080, 4, 2, 15, 0, false, false),
+        half_multiply(0xE100_0080, 4, 2, 1, 15, false, false),
+        // SMULxy: the accumulator field is reserved and must be zero.
+        half_multiply(0xE160_0080, 4, 1, 2, 0, false, false),
+        half_multiply(0xE160_0080, 15, 0, 2, 0, false, false),
+        half_multiply(0xE160_0080, 4, 0, 15, 0, false, false),
+        half_multiply(0xE160_0080, 4, 0, 2, 15, false, false),
+        // SMLALxy: destination pair must differ and no operand may be PC.
+        half_multiply(0xE140_0080, 4, 4, 1, 0, false, false),
+        half_multiply(0xE140_0080, 15, 5, 1, 0, false, false),
+        half_multiply(0xE140_0080, 4, 15, 1, 0, false, false),
+        half_multiply(0xE140_0080, 4, 5, 15, 0, false, false),
+        half_multiply(0xE140_0080, 4, 5, 1, 15, false, false),
+        // SMLAWy: Rd, Rm, Rs, and accumulator Ra must not be PC.
+        half_multiply(0xE120_0080, 15, 2, 1, 0, false, false),
+        half_multiply(0xE120_0080, 4, 15, 1, 0, false, false),
+        half_multiply(0xE120_0080, 4, 2, 15, 0, false, false),
+        half_multiply(0xE120_0080, 4, 2, 1, 15, false, false),
+        // SMULWy: Ra is reserved, in addition to the normal PC restrictions.
+        half_multiply(0xE120_0080, 4, 1, 1, 0, true, false),
+        half_multiply(0xE120_0080, 15, 0, 1, 0, true, false),
+        half_multiply(0xE120_0080, 4, 0, 15, 0, true, false),
+        half_multiply(0xE120_0080, 4, 0, 1, 15, true, false),
+        // SMLAD/SMLSD: bit[7] is reserved; Rd/Rm/Rs cannot be PC.
+        dual_multiply(0xE700_0010, 4, 2, 1, 0, false, false) | (1 << 7),
+        dual_multiply(0xE700_0010, 15, 2, 1, 0, false, false),
+        dual_multiply(0xE700_0010, 4, 2, 15, 0, false, false),
+        dual_multiply(0xE700_0010, 4, 2, 1, 15, false, false),
+        // SMLALD/SMLSLD: reserved bit, equal destinations, and PC operands.
+        dual_multiply(0xE740_0010, 4, 5, 1, 0, false, false) | (1 << 7),
+        dual_multiply(0xE740_0010, 4, 4, 1, 0, false, false),
+        dual_multiply(0xE740_0010, 15, 5, 1, 0, false, false),
+        dual_multiply(0xE740_0010, 4, 15, 1, 0, false, false),
+        dual_multiply(0xE740_0010, 4, 5, 15, 0, false, false),
+        dual_multiply(0xE740_0010, 4, 5, 1, 15, false, false),
+        // SMMUL/SMMLA/SMMLS: bit[7] must match bit[6].
+        dual_multiply(0xE750_0010, 4, 2, 1, 0, false, false) | (1 << 7),
+        dual_multiply(0xE750_0010, 4, 2, 1, 0, true, false),
+        dual_multiply(0xE750_0010, 15, 2, 1, 0, false, false),
+        dual_multiply(0xE750_0010, 4, 2, 15, 0, false, false),
+        dual_multiply(0xE750_0010, 4, 2, 1, 15, false, false),
+        // SMMLS cannot use PC as its subtraction accumulator.
+        dual_multiply(0xE750_0010, 4, 15, 1, 0, true, false) | (1 << 7),
+    ];
+
+    for instruction in invalid {
+        assert_undefined_atomically(instruction);
+    }
+}
