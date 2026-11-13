@@ -484,3 +484,11 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 - `thumb.rs` não foi alterado. Nenhum código-fonte interno de emuladores de terceiros foi consultado.
 
 Referência primária independente: ARM11 MPCore Processor Technical Reference Manual, ARM DDI 0360F, seções CP15 PRRR/NMRR, SCTLR.TRE, tabelas de atributos de memória e consulta VA→PA/PAR. A documentação pública do processador é permitida; o código continua original do Aceris.
+
+
+### Cobertura guest-side adicional de VA→PA e FCSE — 12/11/2026
+
+- `8d7a35b` — adiciona teste de integração executando as quatro codificações `MCR p15,0,Rn,c7,c8,op2`: op2 0 (leitura privilegiada), 1 (escrita privilegiada), 2 (verificação de leitura User) e 3 (verificação de escrita User). O fixture concede AP=01 (somente acesso privilegiado) e confirma PAR de sucesso para op2 0/1 e fault de permissão codificado em PAR para op2 2/3.
+- O mesmo commit acrescenta teste guest-side que define FCSE PID, busca a instrução na janela MVA do processo e consulta uma VA baixa; o PAR precisa apontar para o mapeamento físico do MVA resultante.
+- `26d3bad` — aplica Rustfmt às duas regressões. Workflow `43338851227` aprovado: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
+- Os testes não completam a conformidade ARM11: fault status adicional do PAR, fine tables/tiny pages, associatividade/replacement real do TLB e efeitos de caches/IMB/barreiras continuam pendentes.

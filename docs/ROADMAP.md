@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `ea07fe75900297c2a82d252b5749404f37b446df`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `26d3bad19566b7236b5adc5a8efa88306880e3b4`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -243,6 +243,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
 - [x] Bancos de upload de vertex shader (instruções e operand descriptors), conclusão de transferência e uniforms float24/float32 passaram Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43185644119](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43185644119), código no commit `d559ef7b14fddac6cf758613f72fa75350cf96a5`; execução de shader continua pendente
 - [x] Testes para VA→PA/PAR e atributos TEX/C/B/S: consultas privilegiadas/User, fallback com MMU desligada, MCR durante execução MMU traduzida, PRRR/NMRR/TRE e revalidação de atributos após TLBI; matriz aprovada no workflow [43337932833](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43337932833)
+- [x] Teste guest-side das quatro variantes `MCR c7,c8,op2=0..3` (leitura/escrita privilegiada e User) e teste guest-side de FCSE com VA baixa; Rustfmt, Clippy e testes em Linux/Windows/macOS e build Android ARM64 aprovados no workflow [43338851227](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43338851227)
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
 - [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis
