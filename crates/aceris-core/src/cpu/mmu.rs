@@ -51,6 +51,9 @@ pub(super) struct Params {
     pub xp: bool,
     pub sctlr_s: bool,
     pub sctlr_r: bool,
+    pub tre: bool,
+    pub primary_remap: u32,
+    pub normal_remap: u32,
     pub tlb_preserve: bool,
     pub tlb_victim: usize,
     pub privileged: bool,
@@ -61,6 +64,131 @@ pub(super) enum Walk {
     Mapped(u32),
     Fault(Fault),
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaTranslation {
+    Mapped {
+        physical_address: u32,
+        attributes: MemoryAttributes,
+    },
+    Fault(Fault),
+}
+
+/// ARM11 memory type reported by the VA-to-PA Physical Address Register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub(super) enum MemoryType {
+    StronglyOrdered = 0,
+    Device = 1,
+    Normal = 2,
+    Reserved = 3,
+}
+
+/// Resolved attributes retained by a TLB entry and exposed through PAR.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MemoryAttributes {
+    pub memory_type: MemoryType,
+    pub shareable: bool,
+    pub inner: u8,
+    pub outer: u8,
+}
+
+impl MemoryAttributes {
+    fn strongly_ordered() -> Self {
+        Self {
+            memory_type: MemoryType::StronglyOrdered,
+            shareable: true,
+            inner: 0,
+            outer: 0,
+        }
+    }
+
+    /// Encodes the successful ARM11 MPCore Physical Address Register.
+    fn to_pa_register(self, physical_address: u32) -> u32 {
+        (physical_address & 0xFFFF_F000)
+            | (u32::from(self.shareable) << 8)
+            | ((self.memory_type as u32) << 6)
+            | (u32::from(self.inner & 3) << 4)
+            | (u32::from(self.outer & 3) << 2)
+    }
+}
+
+/// Raw TEX/C/B/S fields captured from one page-table descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DescriptorMemoryAttributes {
+    tex: u8,
+    cacheable: bool,
+    bufferable: bool,
+    shareable: bool,
+}
+
+impl DescriptorMemoryAttributes {
+    fn resolve(self, params: &Params) -> MemoryAttributes {
+        // With TEX remapping enabled, TEX[0], C and B select one of eight
+        // PRRR/NMRR entries; TEX[2:1] are OS-defined page-table bits.
+        let index = (u32::from(self.tex & 1) << 2)
+            | (u32::from(self.cacheable) << 1)
+            | u32::from(self.bufferable);
+
+        if params.tre {
+            let primary_type = (params.primary_remap >> (index * 2)) & 3;
+            let memory_type = match primary_type {
+                0 => MemoryType::StronglyOrdered,
+                1 => MemoryType::Device,
+                2 => MemoryType::Normal,
+                _ => MemoryType::Reserved,
+            };
+            let shareable = match memory_type {
+                MemoryType::StronglyOrdered => true,
+                MemoryType::Device => {
+                    let bit = if self.shareable { 17 } else { 16 };
+                    params.primary_remap & (1 << bit) != 0
+                }
+                MemoryType::Normal => {
+                    let bit = if self.shareable { 19 } else { 18 };
+                    params.primary_remap & (1 << bit) != 0
+                }
+                MemoryType::Reserved => false,
+            };
+            let (inner, outer) = if memory_type == MemoryType::Normal {
+                (
+                    ((params.normal_remap >> (index * 2)) & 3) as u8,
+                    ((params.normal_remap >> (16 + index * 2)) & 3) as u8,
+                )
+            } else {
+                (0, 0)
+            };
+            return MemoryAttributes {
+                memory_type,
+                shareable,
+                inner,
+                outer,
+            };
+        }
+
+        let cache_policy = (u8::from(self.cacheable) << 1) | u8::from(self.bufferable);
+        let (memory_type, shareable, inner, outer) = match (self.tex, cache_policy) {
+            (0, 0) => (MemoryType::StronglyOrdered, true, 0, 0),
+            (0, 1) => (MemoryType::Device, true, 0, 0),
+            (0, 2) => (MemoryType::Normal, self.shareable, 2, 2),
+            (0, 3) => (MemoryType::Normal, self.shareable, 3, 3),
+            (1, 0) => (MemoryType::Normal, self.shareable, 0, 0),
+            (1, 3) => (MemoryType::Normal, self.shareable, 1, 1),
+            (2, 0) => (MemoryType::Device, false, 0, 0),
+            (4..=7, policy) => {
+                (MemoryType::Normal, self.shareable, policy, self.tex & 3)
+            }
+            _ => (MemoryType::Reserved, false, 0, 0),
+        };
+        MemoryAttributes {
+            memory_type,
+            shareable,
+            inner,
+            outer,
+        }
+    }
+}
+
 
 #[derive(Clone, Copy)]
 enum FaultKind {
@@ -152,6 +280,7 @@ struct TlbEntry {
     apx: bool,
     xn: bool,
     section: bool,
+    memory_attributes: MemoryAttributes,
 }
 
 impl TlbEntry {
@@ -332,8 +461,19 @@ fn walk_page_tables<B: Bus + ?Sized>(
     };
     let l1 = bus.read32(l1_address)?;
 
-    let (domain, ap, subpage_shift, apx, xn, physical, global, address_mask, section, legacy) =
-        match l1 & 3 {
+    let (
+        domain,
+        ap,
+        subpage_shift,
+        apx,
+        xn,
+        physical,
+        global,
+        address_mask,
+        section,
+        legacy,
+        descriptor_attributes,
+    ) = match l1 & 3 {
             0b10 if params.xp => {
                 let supersection = bit(l1, 18);
                 let address_mask = if supersection {
@@ -357,6 +497,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
                     address_mask,
                     true,
                     false,
+                    DescriptorMemoryAttributes {
+                        tex: bits(l1, 14, 12) as u8,
+                        cacheable: bit(l1, 3),
+                        bufferable: bit(l1, 2),
+                        shareable: bit(l1, 16),
+                    },
                 )
             }
             0b10 => {
@@ -374,6 +520,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
                     address_mask,
                     true,
                     true,
+                    DescriptorMemoryAttributes {
+                        tex: bits(l1, 14, 12) as u8,
+                        cacheable: bit(l1, 3),
+                        bufferable: bit(l1, 2),
+                        shareable: false,
+                    },
                 )
             }
             0b01 => {
@@ -407,6 +559,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
                             0xFFFF_0000,
                             false,
                             false,
+                            DescriptorMemoryAttributes {
+                                tex: bits(l2, 14, 12) as u8,
+                                cacheable: bit(l2, 3),
+                                bufferable: bit(l2, 2),
+                                shareable: bit(l2, 10),
+                            },
                         )
                     } else {
                         (
@@ -420,6 +578,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
                             0xFFFF_F000,
                             false,
                             false,
+                            DescriptorMemoryAttributes {
+                                tex: bits(l2, 8, 6) as u8,
+                                cacheable: bit(l2, 3),
+                                bufferable: bit(l2, 2),
+                                shareable: bit(l2, 10),
+                            },
                         )
                     }
                 } else if descriptor_type == 0b11 {
@@ -439,6 +603,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
                         0xFFFF_F000,
                         false,
                         true,
+                        DescriptorMemoryAttributes {
+                            tex: bits(l2, 8, 6) as u8,
+                            cacheable: bit(l2, 3),
+                            bufferable: bit(l2, 2),
+                            shareable: false,
+                        },
                     )
                 } else {
                     // Legacy large/small pages each have four independent AP fields.
@@ -460,6 +630,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
                             0xFFFF_0000,
                             false,
                             true,
+                            DescriptorMemoryAttributes {
+                                tex: bits(l2, 14, 12) as u8,
+                                cacheable: bit(l2, 3),
+                                bufferable: bit(l2, 2),
+                                shareable: false,
+                            },
                         )
                     } else {
                         (
@@ -473,6 +649,12 @@ fn walk_page_tables<B: Bus + ?Sized>(
                             0xFFFF_F000,
                             false,
                             true,
+                            DescriptorMemoryAttributes {
+                                tex: 0,
+                                cacheable: bit(l2, 3),
+                                bufferable: bit(l2, 2),
+                                shareable: false,
+                            },
                         )
                     }
                 }
@@ -501,6 +683,7 @@ fn walk_page_tables<B: Bus + ?Sized>(
         apx,
         xn,
         section,
+        memory_attributes: descriptor_attributes.resolve(params),
     }))
 }
 
@@ -584,6 +767,48 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
                 self.fault.get_or_insert(fault);
                 Err(Error::InvalidAccess { addr: va })
             }
+        }
+    }
+
+    /// Translates a true virtual address for a CP15 c7,c8 VA-to-PA request.
+    ///
+    /// Unlike a normal access, a permission fault is returned to the caller so
+    /// it can be encoded in PAR; it does not become the instruction's Data Abort.
+    pub(super) fn translate_for_pa_register(
+        &mut self,
+        va: u32,
+        access: Access,
+        privileged: bool,
+    ) -> Result<PaTranslation> {
+        // The architectural register accepts a true VA. FCSE is applied here,
+        // immediately before the lookup/walk, just as it is for ordinary MMU
+        // accesses.
+        let mva = if va < 0x0200_0000 {
+            self.params.fcse_pid | va
+        } else {
+            va
+        };
+
+        let page_walk = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
+            PageWalk::Mapped(entry)
+        } else {
+            walk_page_tables(self.inner, &self.params, mva, access)?
+        };
+
+        match page_walk {
+            PageWalk::Mapped(entry) => {
+                let result = entry.resolve_with_privilege(&self.params, mva, access, privileged);
+                self.tlb
+                    .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
+                match result {
+                    Walk::Mapped(physical_address) => Ok(PaTranslation::Mapped {
+                        physical_address,
+                        attributes: entry.memory_attributes,
+                    }),
+                    Walk::Fault(fault) => Ok(PaTranslation::Fault(fault)),
+                }
+            }
+            PageWalk::Fault(fault) => Ok(PaTranslation::Fault(fault)),
         }
     }
 }
@@ -695,6 +920,68 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 }
 
 impl Arm11Core {
+    /// Executes the privileged CP15 VA-to-PA operation and updates PAR.
+    pub(super) fn translate_va_to_pa_register<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        virtual_address: u32,
+        access: Access,
+        privileged_access: bool,
+    ) -> Result<()> {
+        let mut tlb = std::mem::take(&mut self.tlb);
+        let params = Params {
+            ttbr0: self.cp15.ttbr0(),
+            ttbr1: self.cp15.ttbr1(),
+            n: self.cp15.ttbcr_n(),
+            dacr: self.cp15.dacr(),
+            asid: self.cp15.asid(),
+            fcse_pid: self.cp15.fcse_pid(),
+            xp: self.cp15.extended_page_tables(),
+            sctlr_s: self.cp15.legacy_sctlr_s(),
+            sctlr_r: self.cp15.legacy_sctlr_r(),
+            tre: self.cp15.memory_region_remap_enabled(),
+            primary_remap: self.cp15.primary_memory_remap(),
+            normal_remap: self.cp15.normal_memory_remap(),
+            tlb_preserve: self.cp15.tlb_preserve(),
+            tlb_victim: self.cp15.tlb_victim(),
+            privileged: self.cpsr.privileged(),
+        };
+
+        let translation = if self.cp15.mmu_enabled() {
+            let mut mmu = MmuBus::new(bus, params, &mut tlb);
+            mmu.translate_for_pa_register(virtual_address, access, privileged_access)?
+        } else {
+            // With translation disabled, data accesses use a flat address map.
+            // The default data-side type is Strongly Ordered before TEX remap.
+            let attributes = if params.tre {
+                DescriptorMemoryAttributes {
+                    tex: 0,
+                    cacheable: false,
+                    bufferable: false,
+                    shareable: true,
+                }
+                .resolve(&params)
+            } else {
+                MemoryAttributes::strongly_ordered()
+            };
+            PaTranslation::Mapped {
+                physical_address: virtual_address,
+                attributes,
+            }
+        };
+        self.tlb = tlb;
+
+        let pa_register = match translation {
+            PaTranslation::Mapped {
+                physical_address,
+                attributes,
+            } => attributes.to_pa_register(physical_address),
+            PaTranslation::Fault(fault) => ((fault.status & 0xF) << 1) | 1,
+        };
+        self.cp15.set_pa_register(pa_register);
+        Ok(())
+    }
+
     /// Executes one instruction with address translation enabled.
     pub(super) fn step_translated<B: Bus + ?Sized>(
         &mut self,
@@ -713,6 +1000,9 @@ impl Arm11Core {
             xp: self.cp15.extended_page_tables(),
             sctlr_s: self.cp15.legacy_sctlr_s(),
             sctlr_r: self.cp15.legacy_sctlr_r(),
+            tre: self.cp15.memory_region_remap_enabled(),
+            primary_remap: self.cp15.primary_memory_remap(),
+            normal_remap: self.cp15.normal_memory_remap(),
             tlb_preserve: self.cp15.tlb_preserve(),
             tlb_victim: self.cp15.tlb_victim(),
             privileged: self.cpsr.privileged(),
@@ -820,6 +1110,9 @@ mod tests {
             xp: cpu.cp15.extended_page_tables(),
             sctlr_s: cpu.cp15.legacy_sctlr_s(),
             sctlr_r: cpu.cp15.legacy_sctlr_r(),
+            tre: cpu.cp15.memory_region_remap_enabled(),
+            primary_remap: cpu.cp15.primary_memory_remap(),
+            normal_remap: cpu.cp15.normal_memory_remap(),
             tlb_preserve: cpu.cp15.tlb_preserve(),
             tlb_victim: cpu.cp15.tlb_victim(),
             privileged: cpu.cpsr.privileged(),
@@ -830,11 +1123,156 @@ mod tests {
         translate(mem, &params(cpu), va, access).unwrap()
     }
 
+    fn entry(cpu: &Arm11Core, mem: &mut FlatMemory, va: u32) -> TlbEntry {
+        match walk_page_tables(mem, &params(cpu), va, Access::Read).unwrap() {
+            PageWalk::Mapped(entry) => entry,
+            PageWalk::Fault(fault) => panic!("expected a mapping, got fault {:#x}", fault.status),
+        }
+    }
+
     fn status_of(walk: Walk) -> u32 {
         match walk {
             Walk::Fault(fault) => fault.status,
             Walk::Mapped(pa) => panic!("expected a fault, got {pa:#x}"),
         }
+    }
+
+    #[test]
+    fn xp_section_retains_tex_cb_and_shareable_attributes() {
+        let (cpu, mut mem) = machine();
+        let va = 0x1234_5678;
+        set_l1(
+            &mut mem,
+            0x123,
+            0x0120_0000 | SECTION | SECTION_AP_RW_ALL | (4 << 12) | (1 << 16) | (1 << 3) | (1 << 2),
+        );
+
+        assert_eq!(
+            entry(&cpu, &mut mem, va).memory_attributes,
+            MemoryAttributes {
+                memory_type: MemoryType::Normal,
+                shareable: true,
+                inner: 3,
+                outer: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn xp_small_page_uses_its_own_tex_field_and_shareability_bit() {
+        let (cpu, mut mem) = machine();
+        let va = 0x2000_1000;
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        mem.write32(
+            L2 + 4,
+            0x0002_0000 | SMALL | SMALL_AP_RW_ALL | (5 << 6) | (1 << 10) | (1 << 3) | (1 << 2),
+        )
+        .unwrap();
+
+        assert_eq!(
+            entry(&cpu, &mut mem, va).memory_attributes,
+            MemoryAttributes {
+                memory_type: MemoryType::Normal,
+                shareable: true,
+                inner: 3,
+                outer: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_small_page_without_tex_uses_device_cb_encoding() {
+        let (cpu, mut mem) = legacy_machine();
+        let va = 0x2000_0000;
+        set_l1(&mut mem, 0x200, L2 | COARSE);
+        mem.write32(L2, 0x0002_0000 | SMALL | SMALL_AP_RW_ALL | (1 << 2))
+            .unwrap();
+
+        assert_eq!(
+            entry(&cpu, &mut mem, va).memory_attributes,
+            MemoryAttributes {
+                memory_type: MemoryType::Device,
+                shareable: true,
+                inner: 0,
+                outer: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn tre_maps_descriptor_type_and_cache_policy_through_prrr_and_nmrr() {
+        let (mut cpu, mut mem) = machine();
+        let va = 0x2000_0000;
+        set_l1(
+            &mut mem,
+            0x200,
+            SECTION | SECTION_AP_RW_ALL | (1 << 16) | (1 << 3) | (1 << 2),
+        );
+
+        // Index {TEX[0],C,B}=011 maps to Normal. Remap S=1 as shareable,
+        // with Inner=01 and Outer=11.
+        cpu.cp15.write(true, 0, 10, 2, 0, (1 << 19) | (2 << 6)).unwrap();
+        cpu.cp15
+            .write(true, 0, 10, 2, 1, (1 << 6) | (3 << 22))
+            .unwrap();
+        cpu.cp15
+            .write(true, 0, 1, 0, 0, 1 | (1 << 23) | (1 << 28))
+            .unwrap();
+
+        assert_eq!(
+            entry(&cpu, &mut mem, va).memory_attributes,
+            MemoryAttributes {
+                memory_type: MemoryType::Normal,
+                shareable: true,
+                inner: 1,
+                outer: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn va_to_pa_populates_par_with_physical_page_and_resolved_attributes() {
+        let (mut cpu, mut mem) = machine();
+        let va = 0x1234_5678;
+        set_l1(
+            &mut mem,
+            0x123,
+            0x0120_0000 | SECTION | SECTION_AP_RW_ALL | (4 << 12) | (1 << 16) | (1 << 3) | (1 << 2),
+        );
+
+        cpu.translate_va_to_pa_register(&mut mem, va, Access::Read, true)
+            .unwrap();
+        assert_eq!(
+            cpu.cp15.read(true, 0, 7, 4, 0),
+            Ok(0x0124_51B0)
+        );
+
+        // A translation fault is reported in PAR, not raised as an instruction abort.
+        cpu.translate_va_to_pa_register(&mut mem, 0x5000_0000, Access::Read, true)
+            .unwrap();
+        assert_eq!(cpu.cp15.read(true, 0, 7, 4, 0), Ok(0x0B));
+    }
+
+    #[test]
+    fn va_to_pa_applies_the_requested_user_permission_check() {
+        let (mut cpu, mut mem) = machine();
+        let va = 0x2000_0000;
+        set_l1(&mut mem, 0x200, SECTION | SECTION_AP_PRIV_RW);
+
+        // The MCR itself runs privileged, but opc2=3 requests a User write check.
+        cpu.translate_va_to_pa_register(&mut mem, va, Access::Write, false)
+            .unwrap();
+        assert_eq!(cpu.cp15.read(true, 0, 7, 4, 0), Ok(0x1B));
+    }
+
+    #[test]
+    fn va_to_pa_is_flat_mapped_when_the_mmu_is_disabled() {
+        let mut cpu = Arm11Core::new();
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        let mut mem = FlatMemory::new(0, 16);
+        cpu.translate_va_to_pa_register(&mut mem, 0x1234_5678, Access::Read, true)
+            .unwrap();
+        assert_eq!(cpu.cp15.read(true, 0, 7, 4, 0), Ok(0x1234_5100));
     }
 
     #[test]

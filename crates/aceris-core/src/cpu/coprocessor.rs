@@ -15,7 +15,7 @@ impl Arm11Core {
     ) -> Result<StepEvent> {
         match bits(word, 11, 8) {
             10 | 11 => self.execute_vfp(bus, word),
-            15 => self.execute_cp15(word),
+            15 => self.execute_cp15(bus, word),
             _ => Err(Error::Unimplemented("coprocessor instructions")),
         }
     }
@@ -28,7 +28,7 @@ impl Arm11Core {
     }
 
     /// MRC/MCR to CP15. Other CP15 encodings are undefined on this core.
-    fn execute_cp15(&mut self, word: u32) -> Result<StepEvent> {
+    fn execute_cp15<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
         if bits(word, 27, 24) != 0b1110 || !bit(word, 4) {
             return Err(self.undefined(word));
         }
@@ -67,6 +67,18 @@ impl Arm11Core {
                 return Err(self.undefined(word));
             }
             let value = self.regs[rt as usize];
+            if opc1 == 0 && crn == 7 && crm == 8 && opc2 <= 3 {
+                if !privileged {
+                    return Err(self.undefined(word));
+                }
+                let access = if opc2 == 0 || opc2 == 2 {
+                    super::mmu::Access::Read
+                } else {
+                    super::mmu::Access::Write
+                };
+                self.translate_va_to_pa_register(bus, value & !0x3FF, access, opc2 < 2)?;
+                return Ok(StepEvent::Executed);
+            }
             self.cp15
                 .write(privileged, opc1, crn, crm, opc2, value)
                 .map_err(|f| fault(f, self))?;
@@ -103,8 +115,33 @@ mod tests {
 
     // mrc p15,0,r0,c0,c0,0 / mcr p15,0,r1,c1,c0,0 / mrc p15,0,r2,c13,c0,3
     const MRC_MIDR: u32 = 0xEE10_0F10;
+    // mcr p15,0,r0,c7,c8,0 / mrc p15,0,r1,c7,c4,0
+    const MCR_VA_TO_PA_PRIV_READ: u32 = 0xEE07_0F18;
+    const MRC_PA_REGISTER_R1: u32 = 0xEE17_1F14;
     const MCR_SCTLR_R1: u32 = 0xEE01_1F10;
     const MRC_TLS_R2: u32 = 0xEE1D_2F70;
+
+    #[test]
+    fn va_to_pa_cp15_operations_write_and_read_par() {
+        let mut cpu = Arm11Core::new();
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.regs[0] = 0x1234_5678;
+
+        run(&mut cpu, &[MCR_VA_TO_PA_PRIV_READ, MRC_PA_REGISTER_R1]).unwrap();
+
+        // MMU-disabled data translations are flat and Strongly Ordered.
+        assert_eq!(cpu.regs[1], 0x1234_5100);
+    }
+
+    #[test]
+    fn va_to_pa_cp15_operation_is_privileged_even_for_user_permission_checks() {
+        let mut cpu = Arm11Core::new();
+        cpu.regs[0] = 0x1234_5678;
+        assert!(matches!(
+            run(&mut cpu, &[MCR_VA_TO_PA_PRIV_READ]),
+            Err(Error::UndefinedInstruction { .. })
+        ));
+    }
 
     #[test]
     fn mrc_reads_midr_in_privileged_mode() {

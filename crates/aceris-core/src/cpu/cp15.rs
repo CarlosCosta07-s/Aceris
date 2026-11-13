@@ -88,6 +88,7 @@ pub struct Cp15 {
     tlb_lockdown: u32,
     primary_remap: u32,
     normal_remap: u32,
+    pa_register: u32,
 }
 
 impl Default for Cp15 {
@@ -120,6 +121,7 @@ impl Cp15 {
             tlb_lockdown: 0,
             primary_remap: PRIMARY_REMAP_RESET,
             normal_remap: NORMAL_REMAP_RESET,
+            pa_register: 0,
         }
     }
 
@@ -151,6 +153,11 @@ impl Cp15 {
     /// CP15 c10,c2,1 — Normal Memory Remap Register (NMRR).
     pub fn normal_memory_remap(&self) -> u32 {
         self.normal_remap
+    }
+
+    /// Stores the result of a privileged CP15 VA-to-PA operation in PAR.
+    pub(super) fn set_pa_register(&mut self, value: u32) {
+        self.pa_register = value;
     }
 
     /// SCTLR.XP: ARMv6 page-table format (AP[1:0] plus APX/XN, no subpages).
@@ -313,6 +320,7 @@ impl Cp15 {
             (5, 0, 1) => self.ifsr,
             (6, 0, 0) => self.dfar,
             (6, 0, 2) => self.ifar,
+            (7, 4, 0) => self.pa_register,
             (10, 0, 0) => self.tlb_lockdown,
             (10, 2, 0) => self.primary_remap,
             (10, 2, 1) => self.normal_remap,
