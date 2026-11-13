@@ -3,10 +3,10 @@
 use crate::cpu::Arm11Core;
 use crate::gpu::{
     GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
-    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace,
-    GpuPhysicalMemory, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
-    GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
+    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
+    GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult,
+    GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, Pica200,
+    VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::gsp_service::{
@@ -1446,11 +1446,10 @@ impl System {
                         report.cache_flush_requested |= arguments.flush_buffer;
                         report.gas_blend_update_requested |= arguments.update_gas_blend;
                         if client_has_rendering_right {
-                            self.dispatch_gsp_process_command_list(arguments)
-                                .map(|()| {
-                                    report.command_lists_submitted =
-                                        report.command_lists_submitted.saturating_add(1);
-                                })
+                            self.dispatch_gsp_process_command_list(arguments).map(|()| {
+                                report.command_lists_submitted =
+                                    report.command_lists_submitted.saturating_add(1);
+                            })
                         } else {
                             Ok(())
                         }
@@ -1460,27 +1459,30 @@ impl System {
                             .memory_fill()
                             .expect("command ID was checked immediately above");
                         if client_has_rendering_right {
-                            self.dispatch_gsp_memory_fill(arguments).and_then(|completed_mask| {
-                                report.memory_fills_completed = report
-                                    .memory_fills_completed
-                                    .saturating_add(completed_mask.count_ones() as u8);
-                                let completion_interrupt = if completed_mask & 1 != 0 {
-                                    Some(GspInterruptId::Psc0)
-                                } else if completed_mask & 2 != 0 {
-                                    Some(GspInterruptId::Psc1)
-                                } else {
-                                    None
-                                };
-                                if let Some(interrupt) = completion_interrupt {
-                                    self.dispatch_gsp_interrupt(interrupt).map(|_| ()).map_err(
-                                        |error| {
-                                            GspGxCommandQueueError::ProcessMemory(error.to_string())
-                                        },
-                                    )
-                                } else {
-                                    Ok(())
-                                }
-                            })
+                            self.dispatch_gsp_memory_fill(arguments)
+                                .and_then(|completed_mask| {
+                                    report.memory_fills_completed = report
+                                        .memory_fills_completed
+                                        .saturating_add(completed_mask.count_ones() as u8);
+                                    let completion_interrupt = if completed_mask & 1 != 0 {
+                                        Some(GspInterruptId::Psc0)
+                                    } else if completed_mask & 2 != 0 {
+                                        Some(GspInterruptId::Psc1)
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(interrupt) = completion_interrupt {
+                                        self.dispatch_gsp_interrupt(interrupt).map(|_| ()).map_err(
+                                            |error| {
+                                                GspGxCommandQueueError::ProcessMemory(
+                                                    error.to_string(),
+                                                )
+                                            },
+                                        )
+                                    } else {
+                                        Ok(())
+                                    }
+                                })
                         } else {
                             Ok(())
                         }
@@ -1586,11 +1588,11 @@ impl System {
                 end_address: buffer.end_address,
             })?;
 
-        let element_width = buffer
-            .element_width_bytes()
-            .ok_or(GspGxCommandQueueError::UnsupportedMemoryFillWidth {
+        let element_width = buffer.element_width_bytes().ok_or(
+            GspGxCommandQueueError::UnsupportedMemoryFillWidth {
                 control: buffer.control,
-            })?;
+            },
+        )?;
         let pattern = buffer.fill_value.to_le_bytes();
         let mut bytes = vec![0u8; length];
         for chunk in bytes.chunks_mut(element_width) {
@@ -2186,8 +2188,7 @@ mod tests {
             .write_memory_bytes(queue_address, &fill_queue)
             .unwrap();
 
-        let fill_trigger_buffer =
-            write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
+        let fill_trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, fill_trigger_buffer, 2),
@@ -2201,8 +2202,8 @@ mod tests {
         assert_eq!(
             fill_0_bytes,
             [
-                0x44, 0x33, 0x22, 0x11, 0x44, 0x33, 0x22, 0x11, 0x44, 0x33, 0x22, 0x11,
-                0x44, 0x33, 0x22, 0x11,
+                0x44, 0x33, 0x22, 0x11, 0x44, 0x33, 0x22, 0x11, 0x44, 0x33, 0x22, 0x11, 0x44, 0x33,
+                0x22, 0x11,
             ]
         );
         let mut fill_1_bytes = [0u8; 24];
@@ -2213,8 +2214,8 @@ mod tests {
         assert_eq!(
             fill_1_bytes,
             [
-                0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1,
-                0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1,
+                0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2,
+                0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1, 0xC3, 0xB2, 0xA1,
             ]
         );
         let mut relay_queue_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
