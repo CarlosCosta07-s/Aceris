@@ -215,8 +215,16 @@ fn flush_to_zero_detects_tininess_before_rounding() {
     flushed.step(&mut flushed_memory).unwrap();
     flushed.step(&mut flushed_memory).unwrap();
 
-    assert_eq!(flushed.vfp().s(0), 0, "FZ flushes the pre-rounding tiny result");
-    assert_eq!(flushed.vfp().fpexc() & (1 << 31), 0, "UFE is ignored with FZ");
+    assert_eq!(
+        flushed.vfp().s(0),
+        0,
+        "FZ flushes the pre-rounding tiny result"
+    );
+    assert_eq!(
+        flushed.vfp().fpexc() & (1 << 31),
+        0,
+        "UFE is ignored with FZ"
+    );
     assert_ne!(flushed.vfp().fpscr() & (1 << 3), 0, "FPSCR.UFC is set");
 
     // Without FZ the same exact result rounds up to min-normal. Tininess is
