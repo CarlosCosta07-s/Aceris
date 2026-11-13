@@ -691,3 +691,12 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - O módulo Thumb contém agora 85 declarações `#[test]`. Não foi alterado o caminho de execução de produção neste conjunto: as mudanças são regressões de CPU.
 - CI do commit `9b6f41a0abc63eba76c2644198679d9f0d64c00b`: workflow `43359531774`; no momento da atualização, Ubuntu, Windows e build Android ARM64 concluíram com sucesso, enquanto macOS ainda executava `cargo test --workspace`. Não declarar a matriz concluída até o término desse job.
 - Referência: ARM Architecture Reference Manual, ARM DDI 0100I, seção A6.4.2 e descrição de ADD (4), páginas A6-10 a A7-9. O formato permite registradores altos e mantém as flags inalteradas, exceto CMP. Nenhuma implementação de emulador de terceiros foi consultada.
+
+## Thumb — PC relativo e pipeline de branches em endereços halfword-aligned (13/11/2026)
+
+- `81773fd` — acrescenta testes de `LDR` literal e `ADR` com a instrução em endereço 2. Ambos confirmam `Align(PC + 4, 4)` antes da soma do imediato.
+- `e050387` — acrescenta cobertura para branches condicionais e incondicionais para frente e para trás, executados em endereço 2. O teste também verifica o caso condicional não tomado e a preservação do CPSR.
+- O mesmo commit testa os pares `BL` e `BLX` com prefixo em endereço 2: o prefixo usa `PC + 4` sem alinhamento para preparar LR; `BL` completa o destino Thumb, enquanto `BLX` alinha o destino final a palavra e muda para ARM.
+- A suíte Thumb contém agora 89 declarações `#[test]`. Essas alterações são testes de regressão; não mudam o caminho de execução de produção.
+- CI do commit `e050387d05e82bfd50da818695bf0dd7cec4dcc2`: workflow `43360946115` concluído com sucesso. Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` aprovados em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
+- Não foi criada branch, não foram adicionadas dependências e nenhuma implementação de emulador de terceiros foi consultada.
