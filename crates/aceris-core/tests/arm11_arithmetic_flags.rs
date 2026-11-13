@@ -421,8 +421,7 @@ fn arm_immediate_logical_flags_match_rotated_shifter_carry_reference() {
 
                 for carry_in in [false, true] {
                     for overflow_in in [false, true] {
-                        let instruction =
-                            arm_immediate_logical_instruction(opcode, rotate, imm8);
+                        let instruction = arm_immediate_logical_instruction(opcode, rotate, imm8);
                         let mut memory = FlatMemory::new(0, 4);
                         memory.write32(0, instruction).unwrap();
 
