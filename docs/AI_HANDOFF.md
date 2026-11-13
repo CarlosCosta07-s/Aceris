@@ -573,3 +573,16 @@ Referência: https://www.scs.stanford.edu/~zyedidia/docs/arm/armv6.pdf — seç�
 - A semântica completa de faults/alinhamento de memória Thumb depende da integração comum CPU/MMU/CP15 e precisa ser validada junto com o subsistema de memória.
 - A validação de todas as famílias de instruções não significa que cada caso de alinhamento, abort, acesso ao PC, timing ou comportamento UNPREDICTABLE esteja concluído.
 - Nenhuma dependência foi adicionada; não foi consultado código-fonte de emuladores de terceiros.
+
+
+### Auditoria adicional do Thumb ARMv6K — alinhamento e codificações reservadas (13/11/2026)
+
+Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/aceris-core/src/cpu/thumb.rs` tem 65 testes declarados.
+
+- `8c08628` — rejeita `STMIA Rn!,{...}` quando Rn está na lista, mas não é o registrador de menor número; mantém a forma válida quando Rn é o menor e testa que a rejeição não altera memória nem registradores.
+- `ab6b2d3` — `POP {PC}` agora rejeita o valor carregado com bits[1:0] = `10` antes de alterar SP/PC/CPSR, pois tentaria entrar em ARM com alinhamento inválido.
+- `e6b54ac` — rejeita `ADD` e `CMP` na forma de registradores altos quando ambos H1/H2 são zero (ambos operandos baixos), combinação UNPREDICTABLE. A guarda não inclui MOV: em ARMv6, o caso MOV low-to-low nesse formato é CPY e permanece válido.
+- A revisão de conformidade mantém `BF00` (NOP Thumb), IT e os hints Thumb `YIELD/WFE/WFI/SEV` rejeitados: NOP T16/IT são ARMv6T2; YIELD/WFE/WFI/SEV T16 aparecem em ARMv7, enquanto as formas A32 de WFE/WFI/SEV são uma extensão separada ARMv6K. Não confundir suporte A32 com suporte Thumb.
+- As transferências multi-register continuam dependentes de validação integrada de faults/alinhamento e da semântica do bus/MMU; não se deve afirmar conformidade completa só pelos testes sintéticos locais.
+- CI para `e6b54ac` (`43343866363`) falhou antes de executar Clippy/testes: Rustfmt reportou somente a diferença antiga em `cpu/mmu.rs:371`; Android falhou na compilação de `cpu/mmu.rs` com `TLB_CAPACITY` não encontrado, `matches_context` em `Option<TlbEntry>` e incompatibilidade Option/TlbEntry. O log não reportou diferença de formatação em `cpu/thumb.rs`.
+- O MMU não foi modificado nesta tarefa. O bloqueio exige intervenção autorizada no arquivo do TLB antes de executar a matriz completa.
