@@ -1393,15 +1393,14 @@ impl System {
             return Err(Error::NoImageLoaded);
         }
 
-        let cpu_report = {
+        let cpu_report = self.run_instructions(instruction_budget)?;
+        {
             let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
                 "a prepared ARM11 process session is required for frame execution",
             ))?;
-            let report = session.run_instructions(instruction_budget)?;
             session.advance_time(NOMINAL_FRAME_DURATION_NS);
             self.cpu = session.core().clone();
-            report
-        };
+        }
 
         let gpu_command_lists_submitted = self.process_pending_pica_command_buffers()?;
         let lcd_report = self
