@@ -1623,12 +1623,25 @@ mod tests {
     }
 
     fn ipc_svc_ncsd_cartridge_fixture(svc_count: usize) -> Vec<u8> {
-        const EXEFS_CODE_OFFSET: usize = 0x6200;
+        const NCSD_PARTITION_OFFSET: usize = 0x4000;
+        const EXEFS_OFFSET: usize = 0x2000;
+        const EXEFS_HEADER_SIZE: usize = 0x200;
+        const CODE_SIZE: usize = 0x3000;
         let mut image = clear_ncsd_cartridge_fixture();
+        let exefs_start = NCSD_PARTITION_OFFSET + EXEFS_OFFSET;
+        let code_start = exefs_start + EXEFS_HEADER_SIZE;
         for index in 0..svc_count {
-            let offset = EXEFS_CODE_OFFSET + index * 4;
+            let offset = code_start + index * 4;
             image[offset..offset + 4].copy_from_slice(&0xEF00_0032u32.to_le_bytes());
         }
+
+        // Rebuild the .code digest and the NCCH digest of the ExeFS header
+        // after modifying the synthetic executable instructions.
+        let code_hash = sha256_digest(&image[code_start..code_start + CODE_SIZE]);
+        image[exefs_start + 0x1E0..exefs_start + 0x200].copy_from_slice(&code_hash);
+        let exefs_header_hash = sha256_digest(&image[exefs_start..exefs_start + EXEFS_HEADER_SIZE]);
+        let ncch = NCSD_PARTITION_OFFSET;
+        image[ncch + 0x1C0..ncch + 0x1E0].copy_from_slice(&exefs_header_hash);
         image
     }
 
