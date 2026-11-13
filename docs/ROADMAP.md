@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `b2dedee16aaf69230f7b5811cdfc340f04844f7e`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `ea07fe75900297c2a82d252b5749404f37b446df`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -55,12 +55,12 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ### Coprocessadores e MMU
 
-- [x] Arquivo de estado CP15 com MIDR, CTR, TLBTR, PFR/DFR/MMFR/ISAR do ARM11, controle, CPACR, TTBR0/1, TTBCR, DACR, fault status/address, FCSE PID, CONTEXTIDR e TPIDR*; leitura com privilégio e escrita de TPIDRURO testadas
-- [~] CP15 `PRRR` (`c10,c2,0`), `NMRR` (`c10,c2,1`) e `SCTLR.TRE` agora têm estado, valores de reset, máscaras de campos e regras de privilégio testados; a MMU ainda não aplica esse remapeamento aos atributos TEX/C/B/S dos descritores.
+- [~] Estado CP15 ARM11: MIDR/CTR/TLBTR, PFR/DFR/MMFR/ISAR, SCTLR/ACTLR/CPACR, TTBR0/1, TTBCR, DACR, DFSR/IFSR/DFAR/IFAR, FCSE PID, CONTEXTIDR, TPIDR*, PRRR/NMRR e PAR; acessos privilegiados e TPIDRURO User testados. PAR permite leitura/escrita (`c7,c4,0`) e recebe o resultado das consultas VA→PA (`c7,c8,op2=0..3`).
+- [x] CP15 `PRRR` (`c10,c2,0`), `NMRR` (`c10,c2,1`) e `SCTLR.TRE` têm estado, reset, máscaras e regras de privilégio; são consumidos na resolução dos atributos de memória de novos page walks. Alterações em PRRR/NMRR preservam atributos já cacheados até uma invalidação de TLB, coberta por teste.
 - [x] CP15 WFI (`MCR p15,0,Rt,c7,c0,4`) suspende o core e interrompe o orçamento de execução; IRQ/FIQ acordam WFI mesmo com CPSR.I/F mascarado, e somente uma interrupção desmascarada entra no vetor. A sessão expõe linhas IRQ/FIQ externas ao host; não substitui um controlador de interrupções de dispositivos.
 - [~] Operações de manutenção do TLB CP15 c8 estão ligadas ao TLB unificado de software; manutenção de cache, coerência entre agentes e algumas barreiras ainda não têm efeitos arquiteturais modelados
-- [~] MMU ARMv6 de descritores curtos: TTBR0/TTBR1 e TTBCR.N; seções/superseções e coarse tables; formato XP=1 com AP/APX/XN e descritores de páginas grandes/pequenas; formato legado XP=0 com AP0–AP3 por subpágina, regras AP=00/S/R e extended-small-page de 4 KiB em coarse tables; FCSE PID (VA abaixo de 32 MiB → MVA) e domínios
-- [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; descritor L2 type 0b11 gera fault no formato XP=1, e fine tables/tiny pages permanecem fora do perfil VMSAv6; atributos TEX e faults de alinhamento para acessos de dados comuns ainda não estão modelados
+- [~] MMU ARMv6 de descritores curtos: TTBR0/TTBR1 e TTBCR.N; seções/superseções e coarse tables; XP=1 com AP/APX/XN e páginas grandes/pequenas; XP=0 com AP0–AP3 por subpágina, regras AP=00/S/R e extended-small-page de 4 KiB em coarse tables; FCSE PID e domínios; preserva TEX/C/B/S nos formatos suportados e resolve tipo/shareability/atributos inner/outer com PRRR/NMRR quando TRE está ativo. Atributos resolvidos permanecem no TLB até invalidação.
+- [~] Faults de tradução, domínio e permissão são reportados e registrados em CP15; VA→PA codifica sucesso e o campo FSR de falha atualmente modelado no PAR. Fine tables/tiny pages permanecem fora do perfil VMSAv6; estados adicionais de FSR no PAR, faults de alinhamento para acessos de dados comuns e semântica completa de caches/barreiras ainda precisam de implementação/validação.
 - [~] VFPv2: registradores S/D, FPSCR/FPEXC/FPSID, transferências ARM/VFP, loads/stores múltiplos, operações aritméticas, comparação e conversões; operações escalares consultam FPSCR.RMode e registram IXC/UFC conforme o caminho implementado
 - [~] Short vectors VFPv2 implementados para VADD/VSUB/VMUL/VNMUL/VDIV, VMLA/VMLS/VNMLA/VNMLS e VMOV/VABS/VNEG/VSQRT; inclui quatro bancos circulares, wrap, Fm escalar em bank 0, destino escalar em bank 0 e validação de LEN/STRIDE. Comparações/conversões permanecem escalares; traps VFP, FLDMX/FSTMX e casos extremos ainda precisam de validação/implementação
 - [x] TLB unificado de software integrado ao caminho real de tradução: cacheia seções, superseções, páginas grandes e pequenas; aplica ASID/global, oito slots de lockdown controlados por CP15 c10 e TLBIALL/TLBIMVA/TLBIASID/TLBIMVAA. A região normal ainda usa capacidade de 64 entradas e substituição round-robin simplificada, sem equivalência ao replacement set-associative físico
@@ -242,6 +242,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Build Android `arm64-v8a` aprovado no mesmo workflow; testes de execução no dispositivo Android ainda pendentes
 - [x] Alocação/liberação linear FCRAM, aliases CPU→físico, backing compartilhado e integração ControlMemory passaram Rustfmt, Clippy e testes em Linux/Windows/macOS; build Android ARM64 também aprovado no workflow [43183171033](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43183171033), código no commit `a7cd047b17db9e1a1441f19f540941259445770a`
 - [x] Bancos de upload de vertex shader (instruções e operand descriptors), conclusão de transferência e uniforms float24/float32 passaram Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43185644119](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43185644119), código no commit `d559ef7b14fddac6cf758613f72fa75350cf96a5`; execução de shader continua pendente
+- [x] Testes para VA→PA/PAR e atributos TEX/C/B/S: consultas privilegiadas/User, fallback com MMU desligada, MCR durante execução MMU traduzida, PRRR/NMRR/TRE e revalidação de atributos após TLBI; matriz aprovada no workflow [43337932833](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43337932833)
 - [ ] Testes de conformidade ARMv6/Thumb/VFP com corpus independente e legalmente utilizável
 - [ ] Testes adversariais de parser para CIA/NCSD/NCCH/ExeFS/RomFS
 - [ ] Testes de execução de homebrew com resultados reproduzíveis

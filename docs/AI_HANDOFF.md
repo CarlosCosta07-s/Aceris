@@ -454,24 +454,33 @@ Limites: o helper não é ainda um dispatcher IPC geral e precisa ser chamado pe
 
 ### Trabalho de Claude preservado no `main`
 
-- `ed153e3` — acrescenta `ScreenSurface::to_png()` e o codificador PNG RGBA8 sem dependência externa. O comando `aceris <JOGO> --dump-lcd <DIR>` exporta `top_left.png`, `top_right.png` e `bottom.png`. Workflow `43331314353`: Linux, Windows, macOS e build Android ARM64 aprovados.
-- `c9cd08f` — acrescenta gerações de exclusividade no backing de memória física, com granularidade de reserva de 8 bytes. Escritas de dispositivos que tocam a mesma faixa de reserva de 8 bytes invalidam reservas LDREX/STREX; o caminho de memória linear da sessão combina a geração virtual com a física. Workflow `43331633910`: matriz desktop e Android ARM64 aprovada.
-- `2af7b1b` — acrescenta janela desktop X11 carregando Xlib dinamicamente por FFI Rust, sem crate ou dependência de compilação externa. `--window [--scale N]` compõe a superfície superior esquerda e a LCD inferior; X11/Linux apenas. Win32/Cocoa, Android window surface, entrada, áudio e redimensionamento continuam pendentes. Workflow `43332199817`: Linux, Windows, macOS e Android ARM64 aprovados. A CI valida compilação e testes, não substitui teste manual em todas as plataformas.
-- Essas implementações foram revisadas sem reescrever os arquivos de vídeo, memória física ou janela. A saída PNG contém as três superfícies; a janela monoscópica escolhe a imagem superior esquerda e não apresenta a imagem superior direita em paralelo.
+- `ed153e3` — acrescenta `ScreenSurface::to_png()` e o codificador PNG RGBA8 sem dependência externa. `aceris <JOGO> --dump-lcd <DIR>` exporta `top_left.png`, `top_right.png` e `bottom.png`. Workflow `43331314353`: Linux, Windows, macOS e build Android ARM64 aprovados.
+- `c9cd08f` — gerações de exclusividade no backing físico com granularidade de 8 bytes; escritas em mapeamentos lineares invalidam LDREX/STREX. Workflow `43331633910` aprovado na matriz desktop e Android ARM64.
+- `2af7b1b` — janela X11 por FFI Rust/dlopen, sem crate externo; somente Linux. `--window [--scale N]` compõe a superfície superior esquerda e a LCD inferior; o backend não apresenta a superfície superior direita em paralelo. Win32/Cocoa, janela Android, entrada, áudio e redimensionamento continuam pendentes. Workflow `43332199817` aprovado.
+- As três contribuições foram revisadas sem reescrever arquivos de vídeo, memória física ou janela.
 
-### CP15 — registradores de remapeamento de memória
+### CP15 — atributos de memória e VA→PA/PAR
 
-- `9fb463b` — adiciona armazenamento e acesso CP15 aos registradores `PRRR` (`c10,c2,0`) e `NMRR` (`c10,c2,1`), valores de reset, máscaras dos campos e controle `SCTLR.TRE` (bit 28). Acesso fica restrito a modos privilegiados.
-- A primeira execução de CI `43333251319` falhou em Linux/macOS/Windows porque os acessores preparatórios estavam declarados como privados ao módulo e não eram usados ainda pela MMU. Android concluiu. Não considerar esse commit validado.
-- `b2dedee` corrige a máscara de escrita do `PRRR` para preservar também [1:0], expõe os acessores necessários para a próxima etapa da MMU e mantém testes de reset, máscaras, privilégio e `SCTLR.TRE`.
-- Workflow `43333329655` para `b2dedee` passou em Linux, Windows e macOS (Rustfmt, Clippy com `-D warnings`, testes do workspace) e no build release Android `arm64-v8a`.
-- Limite deliberado: `PRRR`/`NMRR` e `SCTLR.TRE` já têm estado CP15 correto, mas ainda não são consumidos pelo caminho de tradução. Não declarar os atributos de memória da MMU concluídos, nem implementar `PAR` como se os atributos estivessem disponíveis.
+#### Implementação
 
-### Próxima etapa técnica
+- `9fb463b` — adiciona PRRR (`c10,c2,0`), NMRR (`c10,c2,1`) e SCTLR.TRE (bit 28) à camada CP15, com reset, máscaras e testes.
+- `b2dedee` — corrige máscara PRRR para incluir bits [1:0] e expõe acessores usados na integração MMU. Workflow `43333329655` aprovado em Linux, Windows, macOS e Android ARM64.
+- `7ea966c` — preserva TEX/C/B/S de descritores XP=1 e XP=0 suportados no `TlbEntry`; resolve tipo primário, shareability e atributos inner/outer através de PRRR/NMRR quando TRE está ligado; acrescenta PAR e consulta VA→PA.
+- `bc71f5a` — permite que o MCR VA→PA consulte o adaptador MMU/TLB que está executando a instrução, em vez de fazer uma segunda tradução sobre um bus já traduzido.
+- `9ab50f6` — acrescenta teste de execução real de `MCR p15,0,Rn,c7,c8,0` com a MMU ativa.
+- `3a8f791` — corrige o tipo de resultado do caminho plano/MMU e restaura o TLB mesmo quando uma leitura da tabela de páginas retorna erro.
+- `ee6067c` e `09ca53e` — correções de formato e fixtures de `TlbEntry`; workflow `43337369085` aprovado na matriz Linux, Windows, macOS e Android ARM64.
+- `4227ae7` — implementa escrita privilegiada de PAR (`MCR c7,c4,0`) além da leitura MRC; adiciona regressão que comprova atributos de memória preservados em entradas TLB existentes até TLBI.
+- `ea07fe7` — formata o teste de revalidação pós-invalidação. Workflow `43337932833` aprovado: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado.
 
-1. Preservar em `TlbEntry` os atributos brutos de descritores XP=1 e XP=0: TEX, C, B e S, respeitando os formatos de seção/superseção, large/small page e extended-small-page.
-2. Aplicar a conversão do tipo primário e os atributos internos/externos de `PRRR`/`NMRR` somente quando `SCTLR.TRE` estiver habilitado, conforme o ARM11 MPCore TRM.
-3. Somente depois integrar `MCR p15,0,Rn,c7,c8,{0..3}` e `MRC p15,0,Rd,c7,c4,0` para consulta VA→PA/PAR, considerando privilégio, ASID, TLB, faults e sem introduzir valores de atributo fictícios.
-4. Continuar em `main`, sem editar `crates/aceris-core/src/cpu/thumb.rs`, sem alterar os arquivos recém-entregues por Claude sem necessidade e sem adicionar dependências externas.
+#### Semântica e limites que devem ser preservados
 
-Referência primária independente: ARM11 MPCore Processor Technical Reference Manual, ARM DDI 0360F, seções CP15 c10 Memory Region Remap Registers e formato do Physical Address Register. Documentação pública do processador é permitida; código interno de outros emuladores não foi usado.
+- `MCR p15,0,Rn,c7,c8,op2` com op2 0/1/2/3 executa respectivamente verificação de leitura privilegiada, escrita privilegiada, leitura User e escrita User. O MCR é privilegiado; os dois últimos opcodes só mudam o privilégio usado na verificação de permissão da tradução.
+- A entrada é o endereço virtual verdadeiro; FCSE remapeia VA baixa internamente antes do lookup/walk. A operação usa o ASID atual e o TLB atual do núcleo. O caminho ativo de `MmuBus` é reutilizado durante execução normal.
+- `MRC p15,0,Rd,c7,c4,0` lê PAR; `MCR p15,0,Rn,c7,c4,0` grava PAR em modo privilegiado. O PAR de sucesso contém o endereço físico da página e os atributos codificados; uma falha de tradução/permissão é reportada no formato de fault atualmente modelado, sem transformar a consulta em Data Abort da instrução.
+- O modelo de atributos cobre os campos TEX/C/B/S disponíveis nos descritores curtos XP=1 e XP=0 implementados: seção/superseção, large/small page e extended-small-page de coarse table. A resolução de TRE usa `{TEX[0],C,B}` como índice PRRR/NMRR.
+- As alterações PRRR/NMRR não reescrevem entradas já guardadas no TLB: o teste comprova que o mapeamento conserva atributos antigos até a invalidação, e recebe os novos atributos depois de TLBI.
+- Limites conhecidos: fine tables/tiny pages não são suportadas; os campos adicionais de FSR do PAR (fora do status que o MMU atualmente conserva) ainda não são codificados; caches ARM observáveis, manutenção de cache, IMB/barreiras e coerência efetiva entre CPU e dispositivos continuam pendentes; a resolução de atributos não significa que as caches físicas já estejam implementadas.
+- `thumb.rs` não foi alterado. Nenhum código-fonte interno de emuladores de terceiros foi consultado.
+
+Referência primária independente: ARM11 MPCore Processor Technical Reference Manual, ARM DDI 0360F, seções CP15 PRRR/NMRR, SCTLR.TRE, tabelas de atributos de memória e consulta VA→PA/PAR. A documentação pública do processador é permitida; o código continua original do Aceris.
