@@ -6,7 +6,7 @@ use aceris_core::memory::{Bus, FlatMemory};
 
 const VMSR_FPSCR_R0: u32 = 0xEEE1_0A10;
 const VDIV_S0_S1_S2: u32 = 0xEE80_0A81;
-const VADD_S3_S1_S2: u32 = 0xEE70_0A81;
+const VADD_S3_S1_S2: u32 = 0xEE70_1A81;
 const VSQRT_S0_S1: u32 = 0xEEB1_0AE0;
 const VMRS_R4_FPEXC: u32 = 0xEEF8_4A10;
 const VMSR_FPEXC_R5: u32 = 0xEEE8_5A10;
