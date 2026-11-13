@@ -777,6 +777,9 @@ impl Arm11Core {
         } else {
             self.regs[rn as usize]
         };
+        // VFP double-precision odd imm8 encodings are the deprecated
+        // FLDMX/FSTMX context-save forms. They transfer imm8 - 1 words,
+        // while retaining the full imm8 * 4 address displacement.
         let offset = imm8 * 4;
 
         let (start, count, writeback) = match (p, u, w) {
@@ -790,21 +793,13 @@ impl Arm11Core {
                 (address, 1, None)
             }
             // VLDM / VSTM increment-after
-            (false, true, _) => {
-                if imm8 % words_per_reg != 0 {
-                    return Err(Error::Unimplemented("VFP FLDMX/FSTMX transfers"));
-                }
-                (
-                    base,
-                    (imm8 / words_per_reg) as usize,
-                    w.then(|| base.wrapping_add(offset)),
-                )
-            }
+            (false, true, _) => (
+                base,
+                (imm8 / words_per_reg) as usize,
+                w.then(|| base.wrapping_add(offset)),
+            )
             // VLDM / VSTM decrement-before (VPUSH / VPOP-adjacent forms)
             (true, false, true) => {
-                if imm8 % words_per_reg != 0 {
-                    return Err(Error::Unimplemented("VFP FLDMX/FSTMX transfers"));
-                }
                 let address = base.wrapping_sub(offset);
                 (address, (imm8 / words_per_reg) as usize, Some(address))
             }
