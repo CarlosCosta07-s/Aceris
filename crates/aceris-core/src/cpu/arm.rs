@@ -1815,6 +1815,11 @@ impl Arm11Core {
             // BX Rm
             let target = self.reg(rm, 8);
             self.branch_exchange(target);
+        } else if word & 0x0FFF_FFF0 == 0x012F_FF20 {
+            // This profile models the Jazelle extension as permanently disabled
+            // (the ARMv6 trivial implementation), so BXJ behaves exactly as BX.
+            let target = self.reg(rm, 8);
+            self.branch_exchange(target);
         } else if word & 0x0FFF_FFF0 == 0x012F_FF30 {
             // BLX Rm does not permit PC as its source register in ARMv6.
             if rm as usize == PC {
