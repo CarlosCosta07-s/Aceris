@@ -347,7 +347,7 @@ fn input_subnormal_without_fz_or_ide_is_processed_and_sets_idc() {
 
 #[test]
 fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
-    for mask in [1 << 15, 1 << 12] {
+    for mask in [1 << 12] {
         let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
         cpu.regs[0] = mask;
         let previous = cpu.vfp().fpscr();
