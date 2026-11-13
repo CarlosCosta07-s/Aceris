@@ -36,10 +36,8 @@ const FPSCR_OFE: u32 = 1 << 10;
 const FPSCR_UFE: u32 = 1 << 11;
 const FPSCR_IXE: u32 = 1 << 12;
 const FPSCR_IDE: u32 = 1 << 15;
-const FPSCR_SUPPORTED_TRAP_ENABLES: u32 =
-    FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_UFE | FPSCR_IXE;
-const FPSCR_EXCEPTION_STATUS: u32 =
-    FPSCR_IOC | FPSCR_DZC | FPSCR_OFC | FPSCR_UFC | FPSCR_IXC;
+const FPSCR_SUPPORTED_TRAP_ENABLES: u32 = FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_UFE | FPSCR_IXE;
+const FPSCR_EXCEPTION_STATUS: u32 = FPSCR_IOC | FPSCR_DZC | FPSCR_OFC | FPSCR_UFC | FPSCR_IXC;
 const FPEXC_EXCEPTION_STATUS: u32 = FPEXC_INV | FPEXC_UFC | FPEXC_OFC | FPEXC_IOC;
 const FPSCR_DN: u32 = 1 << 25;
 const FPSCR_FZ: u32 = 1 << 24;
@@ -191,8 +189,9 @@ impl Vfp {
     }
 
     fn merge_exception_status(&mut self, previous_fpscr: u32, raised: u32) {
-        self.fpscr =
-            (self.fpscr & !FPSCR_EXCEPTION_STATUS) | (previous_fpscr & FPSCR_EXCEPTION_STATUS) | raised;
+        self.fpscr = (self.fpscr & !FPSCR_EXCEPTION_STATUS)
+            | (previous_fpscr & FPSCR_EXCEPTION_STATUS)
+            | raised;
     }
 
     fn record_exception_bounce(&mut self, instruction: u32, status: u32) {
@@ -727,10 +726,8 @@ impl Arm11Core {
         }
 
         let top = bits(word, 27, 24);
-        let system_register = top == 0b1110
-            && bit(word, 4)
-            && bits(word, 23, 21) == 0b111
-            && bits(word, 19, 16) == 8;
+        let system_register =
+            top == 0b1110 && bit(word, 4) && bits(word, 23, 21) == 0b111 && bits(word, 19, 16) == 8;
         // VFP11 permits the exception handler to inspect and clear FPEXC.EX.
         // Other VFP operations bounce through Undefined until support code
         // has acknowledged the pending exception.
@@ -898,9 +895,7 @@ impl Arm11Core {
             1 => {
                 self.require_enabled(word)?;
                 if value & FPSCR_IDE != 0 {
-                    return Err(Error::Unimplemented(
-                        "VFP input-denormal exception bounce",
-                    ));
+                    return Err(Error::Unimplemented("VFP input-denormal exception bounce"));
                 }
                 self.vfp.fpscr = value & FPSCR_WRITABLE;
             }
@@ -1076,9 +1071,7 @@ impl Arm11Core {
         let (d, n, m) = (d?, n?, m?);
         let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(n, false), (m, true)])?;
         if lanes.len() > 1 && self.vfp.has_enabled_traps() {
-            return Err(Error::Unimplemented(
-                "VFP short-vector exception bounce",
-            ));
+            return Err(Error::Unimplemented("VFP short-vector exception bounce"));
         }
 
         // Snapshot every source and accumulator before committing any lane.
@@ -1148,9 +1141,7 @@ impl Arm11Core {
                 let m = self.vfp_reg(word, prec, vm, m_low)?;
                 let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(m, true)])?;
                 if lanes.len() > 1 && self.vfp.has_enabled_traps() {
-                    return Err(Error::Unimplemented(
-                        "VFP short-vector exception bounce",
-                    ));
+                    return Err(Error::Unimplemented("VFP short-vector exception bounce"));
                 }
                 let inputs: Vec<_> = lanes
                     .into_iter()
