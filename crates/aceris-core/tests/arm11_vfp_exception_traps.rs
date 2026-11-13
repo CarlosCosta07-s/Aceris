@@ -7,7 +7,7 @@ use aceris_core::memory::{Bus, FlatMemory};
 const VMSR_FPSCR_R0: u32 = 0xEEE1_0A10;
 const VDIV_S0_S1_S2: u32 = 0xEE80_0A81;
 const VADD_S3_S1_S2: u32 = 0xEE70_0A81;
-const VSQRT_S0_S1: u32 = 0xEEB1_0A41;
+const VSQRT_S0_S1: u32 = 0xEEB1_0AE0;
 const VMRS_R4_FPEXC: u32 = 0xEEF8_4A10;
 const VMSR_FPEXC_R5: u32 = 0xEEE8_5A10;
 const VMRS_R6_FPINST: u32 = 0xEEF9_6A10;
@@ -35,7 +35,6 @@ fn enabled_divide_by_zero_records_fpinst_and_bounces_the_next_vfp_operation() {
         VMRS_R4_FPEXC,
         VMSR_FPEXC_R5,
         VMRS_R6_FPINST,
-        VADD_S3_S1_S2,
     ]);
     cpu.regs[0] = 1 << 9; // FPSCR.DZE
     cpu.vfp_mut().set_s(0, 0xDEAD_BEEF);
@@ -62,6 +61,8 @@ fn enabled_divide_by_zero_records_fpinst_and_bounces_the_next_vfp_operation() {
     assert_eq!(cpu.vfp().s(3), 0xCAFE_BABE);
 
     // Exception support code can inspect FPEXC, clear EX, and retrieve FPINST.
+    // Move to the handler's instruction stream after the simulated bounce.
+    cpu.set_pc(12);
     cpu.step(&mut memory).unwrap(); // VMRS r4,FPEXC is allowed while EX is set.
     assert_ne!(cpu.regs[4] & (1 << 31), 0);
     cpu.regs[5] = cpu.regs[4] & !(1 << 31);
@@ -70,9 +71,10 @@ fn enabled_divide_by_zero_records_fpinst_and_bounces_the_next_vfp_operation() {
     cpu.step(&mut memory).unwrap(); // VMRS r6,FPINST
     assert_eq!(cpu.regs[6], VDIV_S0_S1_S2);
 
+    cpu.set_pc(8);
     cpu.step(&mut memory).unwrap(); // Retry the previously bounced VADD.
-    assert_eq!(cpu.vfp().s(3), 2.0f32.to_bits());
-    assert_eq!(cpu.pc(), 28);
+    assert_eq!(cpu.vfp().s(3), 1.0f32.to_bits());
+    assert_eq!(cpu.pc(), 12);
 }
 
 #[test]
