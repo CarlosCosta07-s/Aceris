@@ -6,7 +6,7 @@ use aceris_core::memory::{Bus, FlatMemory};
 
 #[test]
 fn bx_pc_uses_the_architectural_pc_operand_and_remains_valid_in_armv6() {
-    let instruction = 0xE12F_F01F; // BX pc
+    let instruction = 0xE12F_FF1F; // BX pc
     let mut memory = FlatMemory::new(0, 0x40);
     memory.write32(0, instruction).unwrap();
     memory.write32(8, 0xE1A0_0000).unwrap(); // MOV r0, r0
@@ -29,7 +29,7 @@ fn bx_pc_uses_the_architectural_pc_operand_and_remains_valid_in_armv6() {
 
 #[test]
 fn blx_pc_is_rejected_before_link_or_branch_side_effects() {
-    let instruction = 0xE12F_F03F; // BLX pc
+    let instruction = 0xE12F_FF3F; // BLX pc
     let mut memory = FlatMemory::new(0, 0x40);
     memory.write32(0, instruction).unwrap();
 
