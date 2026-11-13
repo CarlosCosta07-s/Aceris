@@ -2,9 +2,10 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
-    GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspGxCommandQueue,
-    GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue,
+    GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
+    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace,
+    GpuPhysicalMemory, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
+    GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
     GspProcessCommandList, Pica200, VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -74,6 +75,8 @@ pub struct GspGxCommandQueueReport {
     pub commands_consumed: u8,
     /// Number of ProcessCommandList entries submitted to the PICA200 parser.
     pub command_lists_submitted: u8,
+    /// Number of MemoryFill buffer operations completed.
+    pub memory_fills_completed: u8,
     /// Number of entries still pending after this dispatch.
     pub pending_commands: u8,
     /// Requests observed but not independently emulated by this GSP layer.
@@ -1419,6 +1422,7 @@ impl System {
         let mut report = GspGxCommandQueueReport {
             commands_consumed: 0,
             command_lists_submitted: 0,
+            memory_fills_completed: 0,
             pending_commands: queue.command_count(),
             cache_flush_requested: false,
             gas_blend_update_requested: false,
@@ -1434,41 +1438,51 @@ impl System {
                 report.commands_consumed = report.commands_consumed.saturating_add(1);
                 report.busy_check_requested |= command.fail_if_busy;
 
-                if command.command_id != GSP_GX_COMMAND_PROCESS_COMMAND_LIST {
-                    let error = GspGxCommandQueueError::UnsupportedCommand {
-                        command_id: command.command_id,
-                    };
-                    queue.mark_error(None);
+                let dispatch_result = match command.command_id {
+                    GSP_GX_COMMAND_PROCESS_COMMAND_LIST => {
+                        let arguments = command
+                            .process_command_list()
+                            .expect("command ID was checked immediately above");
+                        report.cache_flush_requested |= arguments.flush_buffer;
+                        report.gas_blend_update_requested |= arguments.update_gas_blend;
+                        if client_has_rendering_right {
+                            self.dispatch_gsp_process_command_list(arguments)
+                                .map(|()| {
+                                    report.command_lists_submitted =
+                                        report.command_lists_submitted.saturating_add(1);
+                                })
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    GSP_GX_COMMAND_MEMORY_FILL => {
+                        let arguments = command
+                            .memory_fill()
+                            .expect("command ID was checked immediately above");
+                        if client_has_rendering_right {
+                            self.dispatch_gsp_memory_fill(arguments).map(|completed| {
+                                report.memory_fills_completed =
+                                    report.memory_fills_completed.saturating_add(completed);
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    command_id => Err(GspGxCommandQueueError::UnsupportedCommand { command_id }),
+                };
+
+                if let Err(error) = dispatch_result {
+                    let result = matches!(
+                        &error,
+                        GspGxCommandQueueError::InvalidCommandListAddress { .. }
+                            | GspGxCommandQueueError::InvalidCommandListSize { .. }
+                            | GspGxCommandQueueError::InvalidMemoryFillRange { .. }
+                    )
+                    .then_some(GSP_INVALID_ADDRESS_RESULT);
+                    queue.mark_error(result);
                     queue.halt();
                     report.error = Some(error);
                     break;
-                }
-
-                let arguments = command
-                    .process_command_list()
-                    .expect("command ID was checked immediately above");
-                report.cache_flush_requested |= arguments.flush_buffer;
-                report.gas_blend_update_requested |= arguments.update_gas_blend;
-
-                if client_has_rendering_right {
-                    match self.dispatch_gsp_process_command_list(arguments) {
-                        Ok(()) => {
-                            report.command_lists_submitted =
-                                report.command_lists_submitted.saturating_add(1);
-                        }
-                        Err(error) => {
-                            let result = matches!(
-                                &error,
-                                GspGxCommandQueueError::InvalidCommandListAddress { .. }
-                                    | GspGxCommandQueueError::InvalidCommandListSize { .. }
-                            )
-                            .then_some(GSP_INVALID_ADDRESS_RESULT);
-                            queue.mark_error(result);
-                            queue.halt();
-                            report.error = Some(error);
-                            break;
-                        }
-                    }
                 }
 
                 if command.stop_after {
@@ -1483,6 +1497,88 @@ impl System {
         report.status = queue.status();
         report.last_result = queue.last_result();
         report
+    }
+
+    /// Executes the two optional buffers of one GX MemoryFill command.
+    ///
+    /// The original 3DS exposes the fill units over VRAM. Both ranges are
+    /// validated and prepared before either buffer is modified, preventing a
+    /// malformed second buffer from leaving a partially completed command.
+    fn dispatch_gsp_memory_fill(
+        &mut self,
+        fill: GspMemoryFill,
+    ) -> std::result::Result<u8, GspGxCommandQueueError> {
+        let first = self.prepare_gsp_memory_fill_buffer(fill.buffers[0])?;
+        let second = self.prepare_gsp_memory_fill_buffer(fill.buffers[1])?;
+
+        let mut completed = 0u8;
+        for prepared in [first, second].into_iter().flatten() {
+            let (physical_address, bytes) = prepared;
+            self.physical_memory
+                .write(physical_address, &bytes)
+                .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+            completed = completed.saturating_add(1);
+        }
+        Ok(completed)
+    }
+
+    fn prepare_gsp_memory_fill_buffer(
+        &self,
+        buffer: GspMemoryFillBuffer,
+    ) -> std::result::Result<Option<(u32, Vec<u8>)>, GspGxCommandQueueError> {
+        if buffer.start_address == 0 || !buffer.is_triggered() {
+            return Ok(None);
+        }
+        if buffer.start_address & 7 != 0
+            || buffer.end_address & 7 != 0
+            || buffer.start_address >= buffer.end_address
+        {
+            return Err(GspGxCommandQueueError::InvalidMemoryFillRange {
+                start_address: buffer.start_address,
+                end_address: buffer.end_address,
+            });
+        }
+
+        let guest_vram_base = 0x1F00_0000u32;
+        let guest_vram_end = u64::from(guest_vram_base) + u64::from(VRAM_SIZE);
+        let physical_vram_end = u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
+        let start = u64::from(buffer.start_address);
+        let end = u64::from(buffer.end_address);
+        let physical_address = if start >= u64::from(VRAM_BASE) && end <= physical_vram_end {
+            buffer.start_address
+        } else if start >= u64::from(guest_vram_base) && end <= guest_vram_end {
+            VRAM_BASE + (buffer.start_address - guest_vram_base)
+        } else {
+            return Err(GspGxCommandQueueError::InvalidMemoryFillRange {
+                start_address: buffer.start_address,
+                end_address: buffer.end_address,
+            });
+        };
+
+        let length = usize::try_from(end - start).map_err(|_| {
+            GspGxCommandQueueError::InvalidMemoryFillRange {
+                start_address: buffer.start_address,
+                end_address: buffer.end_address,
+            }
+        })?;
+        self.physical_memory
+            .validate_range(physical_address, length)
+            .map_err(|_| GspGxCommandQueueError::InvalidMemoryFillRange {
+                start_address: buffer.start_address,
+                end_address: buffer.end_address,
+            })?;
+
+        let element_width = buffer
+            .element_width_bytes()
+            .ok_or(GspGxCommandQueueError::UnsupportedMemoryFillWidth {
+                control: buffer.control,
+            })?;
+        let pattern = buffer.fill_value.to_le_bytes();
+        let mut bytes = vec![0u8; length];
+        for chunk in bytes.chunks_mut(element_width) {
+            chunk.copy_from_slice(&pattern[..chunk.len()]);
+        }
+        Ok(Some((physical_address, bytes)))
     }
 
     fn dispatch_gsp_process_command_list(
