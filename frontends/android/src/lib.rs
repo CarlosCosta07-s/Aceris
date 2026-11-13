@@ -3,6 +3,8 @@
 //! Rust-only C ABI for an Android host shell. Pixel buffers are borrowed from
 //! the owning system handle and remain valid until that handle is destroyed.
 
+mod ui;
+
 use std::ffi::{CStr, c_char};
 use std::path::Path;
 use std::slice;
