@@ -311,6 +311,12 @@ impl Arm11Core {
 
     fn thumb_push<B: Bus + ?Sized>(&mut self, bus: &mut B, half: u32) -> Result<()> {
         let list = bits(half, 7, 0) | (u32::from(bit(half, 8)) << LR);
+        if list == 0 {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: half,
+            });
+        }
         let new_sp = self.regs[SP].wrapping_sub(4 * list.count_ones());
 
         let regs = self.regs;
@@ -327,6 +333,12 @@ impl Arm11Core {
 
     fn thumb_pop<B: Bus + ?Sized>(&mut self, bus: &mut B, half: u32) -> Result<()> {
         let list = bits(half, 7, 0) | (u32::from(bit(half, 8)) << PC);
+        if list == 0 {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: half,
+            });
+        }
 
         let mut addr = self.regs[SP];
         let mut values = [0u32; 16];
@@ -388,6 +400,9 @@ impl Arm11Core {
         let rm = bits(half, 5, 3) as usize;
         let rd = bits(half, 2, 0) as usize;
 
+        // The BFxx hint/IT space is outside the ARMv6/ARMv6K Thumb baseline.
+        // NOP and IT are ARMv6T2 additions; YIELD/WFE/WFI/SEV are later additions.
+        // Reject these encodings instead of treating an unsupported hint as a NOP.
         match bits(half, 11, 8) {
             // ADD/SUB sp, #imm7*4
             0b0000 => {
@@ -424,16 +439,6 @@ impl Arm11Core {
                         });
                     }
                 };
-            }
-            // Only the 16-bit NOP hint encoding is defined for the ARMv6K
-            // Thumb profile implemented by the ARM11 core.
-            0b1111 if bits(half, 3, 0) == 0 => {
-                if bits(half, 7, 4) != 0 {
-                    return Err(Error::UndefinedInstruction {
-                        pc: self.pc(),
-                        word: half,
-                    });
-                }
             }
             _ => {
                 return Err(Error::UndefinedInstruction {
@@ -704,6 +709,23 @@ mod tests {
     }
 
     #[test]
+    fn armv6_cpy_low_register_alias_moves_value_without_changing_flags() {
+        let mut m = Machine::with(0x4608, |cpu, _| {
+            cpu.regs[1] = 0xA5A5_5A5A;
+            cpu.cpsr.set_flags(true, false, true, true);
+        });
+        let flags = m.cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V);
+
+        m.step();
+
+        assert_eq!(m.cpu.regs[0], 0xA5A5_5A5A);
+        assert_eq!(
+            m.cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V),
+            flags
+        );
+    }
+
+    #[test]
     fn add_high_register_leaves_flags_alone() {
         // ADD r0,r8
         let mut m = Machine::with(0x4440, |cpu, _| {
@@ -860,6 +882,21 @@ mod tests {
     }
 
     #[test]
+    fn setend_big_endian_is_used_by_thumb_word_loads_and_stores() {
+        let mut m = Machine::new(&[0xB658, 0x6008, 0x680A]); // SETEND BE; STR r0,[r1]; LDR r2,[r1].
+        m.cpu.regs[0] = 0x1122_3344;
+        m.cpu.regs[1] = DATA;
+
+        m.step();
+        assert!(m.cpu.cpsr.big_endian());
+        m.step();
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0x4433_2211);
+        m.step();
+
+        assert_eq!(m.cpu.regs[2], 0x1122_3344);
+    }
+
+    #[test]
     fn load_address_from_sp_and_pc() {
         // ADD r0,sp,#8
         let mut m = Machine::with(0xA802, |cpu, _| cpu.regs[13] = 0x100);
@@ -901,6 +938,24 @@ mod tests {
         assert_eq!(m.cpu.regs[13], 0x900);
         assert_eq!(m.cpu.pc(), 0x20);
         assert!(m.cpu.cpsr.thumb(), "bit 0 of the popped value keeps Thumb");
+    }
+
+    #[test]
+    fn empty_thumb_push_and_pop_register_lists_are_rejected_atomically() {
+        for half in [0xB400, 0xBC00] {
+            let mut m = Machine::with(half, |cpu, mem| {
+                cpu.regs[SP] = DATA;
+                mem.write32(DATA, 0xC0DE_CAFE).unwrap();
+            });
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == u32::from(half)
+            ));
+            assert_eq!(m.cpu.pc(), 0);
+            assert_eq!(m.cpu.regs[SP], DATA);
+            assert_eq!(m.mem.read32(DATA).unwrap(), 0xC0DE_CAFE);
+        }
     }
 
     #[test]
@@ -1162,12 +1217,16 @@ mod tests {
     }
 
     #[test]
-    fn armv6k_thumb_only_accepts_the_defined_nop_hint() {
+    fn armv6k_thumb_rejects_the_armv6t2_nop_hint() {
         let mut machine = Machine::with(0xBF00, |_, _| {});
-        assert_eq!(
-            machine.cpu.step(&mut machine.mem).unwrap(),
-            StepEvent::Executed
-        );
+        assert!(matches!(
+            machine.cpu.step(&mut machine.mem),
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xBF00
+            })
+        ));
+        assert_eq!(machine.cpu.pc(), 0);
     }
 
     #[test]
@@ -1185,9 +1244,17 @@ mod tests {
     }
 
     #[test]
-    fn nop_does_nothing() {
-        let mut m = Machine::new(&[0xBF00]);
+    fn mov_register_to_itself_has_no_visible_effect() {
+        let mut m = Machine::with(0x46C0, |cpu, _| {
+            cpu.regs[8] = 0x1234_5678;
+            cpu.cpsr.set_flags(true, false, true, false);
+        });
+        let old_status = m.cpu.cpsr;
+
         m.step();
+
+        assert_eq!(m.cpu.regs[8], 0x1234_5678);
+        assert_eq!(m.cpu.cpsr, old_status);
         assert_eq!(m.cpu.pc(), 2);
     }
 
