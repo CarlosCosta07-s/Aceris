@@ -2336,6 +2336,21 @@ impl Arm11Core {
         let rn = bits(word, 19, 16);
         let list = bits(word, 15, 0);
 
+        // ARMv6 does not permit PC as the A32 multiple-transfer base.
+        // A writeback load may not include its base in the destination list.
+        // For a writeback store, the base may appear only as the lowest
+        // numbered register, where the original base value is well-defined.
+        let base_in_list = list & (1 << rn) != 0;
+        let invalid_writeback_list = writeback
+            && base_in_list
+            && (load || list & ((1 << rn) - 1) != 0);
+        if rn as usize == PC || invalid_writeback_list {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
         let s_bit = bit(word, 22);
         let pc_in_list = list & (1 << PC) != 0;
         // S without a loaded PC transfers the User-mode registers; with a loaded
