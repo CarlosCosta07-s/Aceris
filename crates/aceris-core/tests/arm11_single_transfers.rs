@@ -77,6 +77,44 @@ fn byte_and_halfword_stores_reject_pc_as_the_transfer_register() {
 }
 
 #[test]
+fn halfword_register_transfers_reject_pc_as_the_base() {
+    // LDRH/LDRSB/LDRSH r0,[pc,r2] ; STRH r0,[pc,r2] ; STRH r0,[pc,#0].
+    for instruction in [
+        0xE19F_00B2,
+        0xE19F_00D2,
+        0xE19F_00F2,
+        0xE18F_00B2,
+        0xE1CF_00B0,
+    ] {
+        assert_undefined_without_side_effects(instruction);
+    }
+}
+
+#[test]
+fn signed_halfword_and_doubleword_pc_relative_literal_loads_remain_valid() {
+    let mut memory = FlatMemory::new(0, 0x1000);
+    memory.write32(0, 0xE1DF_00D0).unwrap(); // LDRSB r0,[pc,#0]
+    memory.write32(4, 0xE1DF_10F0).unwrap(); // LDRSH r1,[pc,#0]
+    memory.write32(8, 0xE1CF_20D0).unwrap(); // LDRD r2,r3,[pc,#0]
+    memory.write32(16, 0x0000_0080).unwrap();
+    memory.write32(20, 0x0000_8001).unwrap();
+    memory.write32(24, 0x1122_3344).unwrap();
+    memory.write32(28, 0x5566_7788).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_pc(0);
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[0], 0xFFFF_FF80);
+    assert_eq!(cpu.regs[1], 0xFFFF_8001);
+    assert_eq!(cpu.regs[2], 0x1122_3344);
+    assert_eq!(cpu.regs[3], 0x5566_7788);
+    assert_eq!(cpu.pc(), 12);
+}
+
+#[test]
 fn halfword_transfers_reject_pc_offsets_and_invalid_writeback_bases() {
     // LDRH r0,[r1,pc] ; LDRH r0,[pc,#0]! ; LDRH r1,[r1,#0]!.
     for instruction in [0xE191_00BF, 0xE1FF_00B0, 0xE1F1_10B0] {
