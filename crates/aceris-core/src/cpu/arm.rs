@@ -2515,8 +2515,7 @@ mod tests {
         m.cpu.set_saved_program_status(saved).unwrap();
 
         // SRSIA sp!, #irq: data uses Align(SP), writeback uses the original SP.
-        let instruction =
-            0xF84D_0500 | (1 << 23) | (1 << 21) | Psr::IRQ_MODE;
+        let instruction = 0xF84D_0500 | (1 << 23) | (1 << 21) | Psr::IRQ_MODE;
         m.mem.write32(0, instruction).unwrap();
         assert_eq!(m.step(), StepEvent::Executed);
         assert_eq!(m.mem.read32(0x900).unwrap(), 0x1122_3344);
