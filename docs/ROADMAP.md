@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 12/11/2026, com base na implementação de código até o commit `26d3bad19566b7236b5adc5a8efa88306880e3b4`.
+> Estado revisado em 12/11/2026, com base na implementação de código até o commit `877efa1170cf5f37efce620c5f78bf4c71d53821`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -46,10 +46,10 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] A32 ARM1136 `NOP32`: verdadeiro no-op que ignora a condição; `YIELD` e hints reservados continuam sem efeito no perfil modelado. Testes EQ, AL e NV aprovados no workflow [43318212186](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43318212186)
 - [~] ARMv6K A32 `WFE`/`WFI`/`SEV`: registrador de evento, wake-up por IRQ/FIQ conforme máscaras, estado de espera e eventos de sessão implementados e testados. `SEV` é reportado como `SendEvent`; eventos externos entram por `signal_cpu_event`. Retornos de exceção A32 também levantam um latch consultável pelo host (`take_exception_return_wakeup`), convertido pela sessão em `ExceptionReturn` para que o scheduler sinalize os outros MP11 CPUs. Broadcast SMP automático e wake-up por debug ainda não estão integrados. CI [43329839504](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43329839504) aprovada em todas as plataformas.
 - [x] A32 ARMv6 `LDRT`/`LDRBT`/`STRT`/`STRBT`: o MMU reavalia permissões User por transação sem alterar CPSR nem o privilégio global; testes de acesso permitido, rejeição de página privilegiada, TLB em cache e writeback aprovados no workflow [43321797092](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43321797092)
-- [~] Conjunto Thumb-1 principal com desvios, acessos, pilha, operações aritméticas/lógicas e extensões ARMv6 REV/SXT/UXT
+- [~] Interpretador Thumb-1 de 16 bits: 19 formatos clássicos, BL/BLX, SWI, transferências, PUSH/POP, alias CPY/MOV e extensões ARMv6 CPS/SETEND/BKPT/REV/SXTx/UXTx; permanecem auditoria de casos-limite e conformidade independente
 - [x] Thumb BKPT, CPS e SETEND implementados; BKPT é encaminhado como evento de breakpoint para a camada de processo
 - [ ] Inventariar codificações A32 ARMv6/ARMv6K ainda não suportadas ou decodificadas incorretamente
-- [ ] Completar e validar todas as codificações Thumb aplicáveis ao ARM11; não tratar Thumb-2 como requisito sem evidência de que a arquitetura-alvo o suporta
+- [~] Completar a matriz de validação Thumb aplicável ao ARM11: BFxx/IT e NOP ARMv6T2, além de hints ARMv7, são rejeitados no perfil ARMv6K; listas vazias PUSH/POP/LDM/STM são rejeitadas deterministicamente. Ainda faltam testes independentes por codificação e auditoria completa de estados UNPREDICTABLE/UNDEFINED. Não tratar Thumb-2 como requisito sem evidência de que a arquitetura-alvo o suporta
 - [ ] Auditar alinhamento, endianness, flags, estados UNPREDICTABLE/UNDEFINED e efeitos colaterais de todas as famílias
 - [ ] Criar testes de conformidade independentes por instrução, além dos testes unitários internos
 
