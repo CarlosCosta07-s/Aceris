@@ -396,7 +396,21 @@ impl System {
         &mut self,
         client_id: u8,
     ) -> std::result::Result<GspClientUnregistration, GspServiceError> {
-        self.gsp_service.unregister_client_with_handoff(client_id)
+        let unregistration = self.gsp_service.unregister_client_with_handoff(client_id)?;
+        if unregistration.rendering_right_wait_cancelled {
+            self.wake_pending_gsp_acquire(client_id, RESULT_INVALID_HANDLE)
+                .map_err(|_| GspServiceError::ClientSessionUnavailable { client_id })?;
+        }
+        if let Some(next_owner) = unregistration
+            .rendering_right_handoff
+            .and_then(|handoff| handoff.next_owner)
+        {
+            self.wake_pending_gsp_acquire(next_owner, 0)
+                .map_err(|_| GspServiceError::ClientSessionUnavailable {
+                    client_id: next_owner,
+                })?;
+        }
+        Ok(unregistration)
     }
 
     /// Attempts to acquire rendering rights without joining the wait queue.
@@ -409,8 +423,8 @@ impl System {
 
     /// Queues an AcquireRight request in FIFO order.
     ///
-    /// The service dispatcher must suspend the calling IPC thread when the
-    /// returned outcome is Waiting; this facade does not suspend it.
+    /// Guest IPC calls that return Waiting suspend their ARM11 thread and are
+    /// resumed by the system dispatcher after a rendering-right handoff.
     pub fn acquire_gsp_rendering_right(
         &mut self,
         client_id: u8,
@@ -423,8 +437,16 @@ impl System {
         &mut self,
         client_id: u8,
     ) -> std::result::Result<GspRenderingRightHandoff, GspServiceError> {
-        self.gsp_service
-            .release_rendering_right_with_handoff(client_id)
+        let handoff = self
+            .gsp_service
+            .release_rendering_right_with_handoff(client_id)?;
+        if let Some(next_owner) = handoff.next_owner {
+            self.wake_pending_gsp_acquire(next_owner, 0)
+                .map_err(|_| GspServiceError::ClientSessionUnavailable {
+                    client_id: next_owner,
+                })?;
+        }
+        Ok(handoff)
     }
 
     /// Routes one GPU interrupt through registered relay queues and event handles.
@@ -785,8 +807,17 @@ impl System {
             GspIpcRequest::UnregisterInterruptRelayQueue => {
                 let result = match (client_id, shared_memory_handle) {
                     (Some(client_id), Some(memory_handle)) => {
-                        match self.gsp_service.unregister_client(client_id) {
-                            Ok(_) => {
+                        match self.gsp_service.unregister_client_with_handoff(client_id) {
+                            Ok(unregistration) => {
+                                if unregistration.rendering_right_wait_cancelled {
+                                    self.wake_pending_gsp_acquire(client_id, RESULT_INVALID_HANDLE)?;
+                                }
+                                if let Some(next_owner) = unregistration
+                                    .rendering_right_handoff
+                                    .and_then(|handoff| handoff.next_owner)
+                                {
+                                    self.wake_pending_gsp_acquire(next_owner, 0)?;
+                                }
                                 if let Some(session) = self.ncsd_session.as_mut() {
                                     let _ = session
                                         .unmap_memory_block(memory_handle, GSP_SHARED_MEMORY_BASE);
