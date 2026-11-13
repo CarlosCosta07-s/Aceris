@@ -71,7 +71,11 @@ fn halfword_and_signed_byte_loads_reject_pc_as_the_destination() {
             Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
         ));
         assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
-        assert_eq!(memory.read32(DATA).unwrap(), data_before, "{instruction:#010x}");
+        assert_eq!(
+            memory.read32(DATA).unwrap(),
+            data_before,
+            "{instruction:#010x}"
+        );
         assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
     }
 }
