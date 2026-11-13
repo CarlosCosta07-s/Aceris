@@ -1,7 +1,7 @@
 //! Independent integration tests for the A32 unconditional instruction space.
 
 use aceris_core::Error;
-use aceris_core::cpu::Arm11Core;
+use aceris_core::cpu::{Arm11Core, Psr};
 use aceris_core::memory::{Bus, FlatMemory};
 
 fn execute(instruction: u32) -> (Arm11Core, aceris_core::Result<aceris_core::cpu::StepEvent>) {
