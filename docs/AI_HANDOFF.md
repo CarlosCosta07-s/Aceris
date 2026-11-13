@@ -596,3 +596,13 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - O build Android ARM64 continua falhando ao compilar `cpu/mmu.rs`: `TLB_CAPACITY` não encontrado em 349; método `matches_context` chamado em `&Option<TlbEntry>` em 397; incompatibilidade entre `Option<TlbEntry>` e `TlbEntry` em 399.
 - A CI, portanto, ainda não executou `cargo test --workspace` para validar estes 66 testes. Não declarar o interpretador concluído nem testes aprovados até que o MMU compile e a matriz seja concluída.
 - Nenhum arquivo do MMU ou de outra frente foi alterado nesta continuação.
+
+
+### Auditoria Thumb — restrições de PC em CMP e BX (13/11/2026)
+
+- Commit de código: `ee367cb69e8ffbc54a817f3eed1cdeb4ef761fd3` — valida `CMP (3)`: o primeiro operando `Rn` não pode ser `R15/PC`; a codificação é rejeitada como `UndefinedInstruction` antes de ler/alterar registradores ou CPSR. `PC` permanece permitido como segundo operando `Rm`.
+- Foram adicionados três testes: rejeição atômica de `CMP PC,R0`; `BX PC` em endereço de instrução alinhado a palavra, que deve saltar para o próximo word e entrar em ARM; e `BX PC` em endereço apenas halfword-aligned, cujo destino PC+4 tem bits[1:0] = `10` e é imprevisível.
+- A regra foi conferida no ARM Architecture Reference Manual, ARM DDI 0100I: A7.1.23 `CMP (3)` (página A7-37/A7-38, restrição de `Rn`) e A7.1.19 `BX` (A7-32, uso de R15). Referência: https://www.scs.stanford.edu/~zyedidia/docs/arm/armv6.pdf
+- O módulo contém agora 69 declarações `#[test]`. Isso é contagem estática, não resultado de execução.
+- O workflow `43345628033` foi iniciado para o commit de código e estava enfileirado na primeira consulta. Não declarar os novos testes aprovados até obter resultado da CI. As falhas anteriores continuam apontando para o bloqueio de compilação/formatação em `crates/aceris-core/src/cpu/mmu.rs`; essa frente não foi modificada.
+- Nenhum outro arquivo de código, dependência ou implementação de terceiros foi incluído nesta alteração.
