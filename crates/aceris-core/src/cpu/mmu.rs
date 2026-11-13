@@ -1350,11 +1350,7 @@ mod tests {
         let (mut cpu, mut mem) = machine();
         // Instructions execute from a Normal section. The data section maps
         // VA 0x0010_0000 to the same physical 1 MiB window for compact tests.
-        set_l1(
-            &mut mem,
-            0,
-            SECTION | SECTION_AP_RW_ALL | (1 << 12),
-        );
+        set_l1(&mut mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
         set_l1(&mut mem, 1, data_descriptor);
         mem.write32(0, instruction).unwrap();
         cpu.cp15.write(true, 0, 1, 0, 0, sctlr).unwrap();
@@ -1415,7 +1411,11 @@ mod tests {
             store_halfword.cpsr.set_big_endian(big_endian);
             store_halfword.regs[0] = 0xA1B2;
             store_halfword.step(&mut store_halfword_mem).unwrap();
-            let expected_halfword = if big_endian { [0xA1, 0xB2] } else { [0xB2, 0xA1] };
+            let expected_halfword = if big_endian {
+                [0xA1, 0xB2]
+            } else {
+                [0xB2, 0xA1]
+            };
             for (offset, expected) in expected_halfword.into_iter().enumerate() {
                 assert_eq!(
                     store_halfword_mem
@@ -1487,7 +1487,10 @@ mod tests {
 
         assert!(matches!(
             cpu.step(&mut mem),
-            Err(Error::UndefinedInstruction { pc: 0, word: 0xE101_0092 })
+            Err(Error::UndefinedInstruction {
+                pc: 0,
+                word: 0xE101_0092
+            })
         ));
         assert_eq!(cpu.regs[0], 0xCAFE_BABE);
         assert_eq!(cpu.regs[2], 0x1122_3344);
