@@ -719,10 +719,7 @@ mod tests {
         m.step();
 
         assert_eq!(m.cpu.regs[0], 0xA5A5_5A5A);
-        assert_eq!(
-            m.cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V),
-            flags
-        );
+        assert_eq!(m.cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V), flags);
     }
 
     #[test]
@@ -768,6 +765,17 @@ mod tests {
         m.step();
         assert_eq!((m.cpu.regs[14], m.cpu.pc()), (3, 0x30));
         assert!(m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn blx_register_switches_to_arm_when_target_bit_zero_is_clear() {
+        // BLX r3 with an even target clears Thumb state and word-aligns PC.
+        let mut m = Machine::with(0x4798, |cpu, _| cpu.regs[3] = 0x42);
+        m.step();
+
+        assert_eq!(m.cpu.regs[LR], 3);
+        assert_eq!(m.cpu.pc(), 0x40);
+        assert!(!m.cpu.cpsr.thumb());
     }
 
     // ----- loads and stores -------------------------------------------------
