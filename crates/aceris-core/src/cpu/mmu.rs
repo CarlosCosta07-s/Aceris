@@ -2134,7 +2134,7 @@ mod tests {
         }
         assert_eq!(tlb.len(), 1);
         assert!(tlb.lockdown_entries[6].is_some());
-        assert!(tlb.entries.is_empty());
+        assert!(tlb.sets.iter().flatten().all(|entry| entry.is_none()));
     }
 
     #[test]
