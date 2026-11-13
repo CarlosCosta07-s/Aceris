@@ -2573,7 +2573,7 @@ mod tests {
     fn armv6_rfe_legacy_unaligned_base_aligns_transfer_and_writes_back_original_base() {
         // RFEIA r0!: the two memory words start at Align(r0), but writeback
         // advances the original, unaligned base by eight bytes.
-        let mut m = Machine::new(&[0xF890_0A00]);
+        let mut m = Machine::new(&[0xF8B0_0A00]);
         m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
         m.cpu.regs[0] = DATA + 1;
         let restored = Psr(Psr::SYSTEM_MODE);
