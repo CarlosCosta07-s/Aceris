@@ -11,11 +11,12 @@
 //! deterministic zero for its architecturally UNPREDICTABLE reset). The legacy
 //! FLDMX/FSTMX double context-transfer forms with odd word counts are also
 //! implemented. Scalar asynchronous exception bounce covers IOE, DZE, OFE,
-//! UFE and IDE. Input subnormals set IDC; FZ replaces them with positive zero,
-//! and IDE bounces while preserving the destination and exposing IDC to the
-//! handler. FZ also suppresses the UFE bounce. Remaining limits include IXE
-//! traps, short-vector exception bounce, scalar-only comparisons/conversions,
-//! and extreme precision/subnormal cases.
+//! UFE, IDE and IXE. Input subnormals set IDC; FZ replaces them with positive
+//! zero, and IDE bounces while preserving the destination and exposing IDC to
+//! the handler. FZ also suppresses the UFE bounce. IXE computes the scalar
+//! result and bounces only when IXC is raised; overflow/underflow take priority.
+//! Remaining limits include short-vector exception bounce, scalar-only
+//! comparisons/conversions, and extreme precision/subnormal cases.
 //! Scalar operations honor FPSCR.RMode and
 //! accumulate IXC/UFC for inexact and tiny results. Single precision is
 //! computed through `f64`; double precision residuals use TwoSum/FMA where
