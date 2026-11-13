@@ -17,11 +17,21 @@ pub const ACERIS_STATUS_INVALID_ARGUMENT: i32 = -2;
 pub const ACERIS_STATUS_LOAD_FAILED: i32 = -3;
 pub const ACERIS_STATUS_FRAME_FAILED: i32 = -4;
 pub const ACERIS_STATUS_INVALID_SCREEN: i32 = -5;
+pub const ACERIS_STATUS_LAST_ERROR_INVALID_ARGUMENT: isize = -2;
 
 /// Opaque emulator instance owned by the C/Android host.
 #[repr(C)]
 pub struct AcerisSystemHandle {
     system: System,
+    last_error: Option<String>,
+}
+
+/// CPU state exposed for deterministic boot diagnostics on every frontend.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AcerisCpuState {
+    pub program_counter: u32,
+    pub cpsr: u32,
 }
 
 /// Read-only description of one RGBA8 LCD pixel buffer.
@@ -68,6 +78,7 @@ pub extern "C" fn aceris_selftest() -> i32 {
 pub extern "C" fn aceris_system_create() -> *mut AcerisSystemHandle {
     Box::into_raw(Box::new(AcerisSystemHandle {
         system: System::new(),
+        last_error: None,
     }))
 }
 
@@ -82,6 +93,56 @@ pub unsafe extern "C" fn aceris_system_destroy(handle: *mut AcerisSystemHandle) 
         // SAFETY: Guaranteed by this function's caller contract.
         drop(unsafe { Box::from_raw(handle) });
     }
+}
+
+/// Copies the most recent load/frame error into a caller-owned UTF-8 buffer.
+///
+/// Pass a null buffer with capacity 0 to query the required byte length.
+/// The returned length excludes the terminating NUL. A non-null buffer is
+/// always NUL-terminated when capacity is greater than zero; truncated
+/// messages retain the returned full length so the caller can retry.
+///
+/// # Safety
+/// handle must be live. When capacity is greater than zero, output must point
+/// to at least capacity writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_copy_last_error(
+    handle: *const AcerisSystemHandle,
+    output: *mut c_char,
+    capacity: usize,
+) -> isize {
+    // SAFETY: The caller guarantees the handle's lifetime.
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE as isize;
+    };
+
+    let Some(error) = handle.last_error.as_deref() else {
+        if capacity == 0 {
+            return 0;
+        }
+        if output.is_null() {
+            return ACERIS_STATUS_LAST_ERROR_INVALID_ARGUMENT;
+        }
+        // SAFETY: The caller guarantees writable storage of capacity bytes.
+        unsafe { *output = 0 };
+        return 0;
+    };
+
+    let required = isize::try_from(error.len()).unwrap_or(isize::MAX);
+    if capacity == 0 {
+        return required;
+    }
+    if output.is_null() {
+        return ACERIS_STATUS_LAST_ERROR_INVALID_ARGUMENT;
+    }
+
+    let copied = error.len().min(capacity - 1);
+    // SAFETY: The caller guarantees writable storage of capacity bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(error.as_ptr(), output.cast::<u8>(), copied);
+        *output.add(copied) = 0;
+    }
+    required
 }
 
 /// Loads a NoCrypto NCSD image (.3ds or .cci) from a UTF-8 path.
@@ -107,8 +168,14 @@ pub unsafe extern "C" fn aceris_system_load_no_crypto_file(
         return ACERIS_STATUS_INVALID_ARGUMENT;
     };
     match handle.system.load_ncsd_no_crypto_file(Path::new(path)) {
-        Ok(_) => ACERIS_STATUS_OK,
-        Err(_) => ACERIS_STATUS_LOAD_FAILED,
+        Ok(_) => {
+            handle.last_error = None;
+            ACERIS_STATUS_OK
+        }
+        Err(error) => {
+            handle.last_error = Some(error.to_string());
+            ACERIS_STATUS_LOAD_FAILED
+        }
     }
 }
 
@@ -153,8 +220,14 @@ pub unsafe extern "C" fn aceris_system_load_file_with_keys(
         .system
         .load_ncsd_file_with_keys(Path::new(path), menu_key, content_key)
     {
-        Ok(_) => ACERIS_STATUS_OK,
-        Err(_) => ACERIS_STATUS_LOAD_FAILED,
+        Ok(_) => {
+            handle.last_error = None;
+            ACERIS_STATUS_OK
+        }
+        Err(error) => {
+            handle.last_error = Some(error.to_string());
+            ACERIS_STATUS_LOAD_FAILED
+        }
     }
 }
 
@@ -175,8 +248,14 @@ pub unsafe extern "C" fn aceris_system_run_frame(
         return ACERIS_STATUS_INVALID_ARGUMENT;
     };
     match handle.system.run_frame_with_budget(budget) {
-        Ok(_) => ACERIS_STATUS_OK,
-        Err(_) => ACERIS_STATUS_FRAME_FAILED,
+        Ok(_) => {
+            handle.last_error = None;
+            ACERIS_STATUS_OK
+        }
+        Err(error) => {
+            handle.last_error = Some(error.to_string());
+            ACERIS_STATUS_FRAME_FAILED
+        }
     }
 }
 
@@ -194,9 +273,40 @@ pub unsafe extern "C" fn aceris_system_run_default_frame(handle: *mut AcerisSyst
         .system
         .run_frame_with_budget(DEFAULT_FRAME_INSTRUCTION_BUDGET)
     {
-        Ok(_) => ACERIS_STATUS_OK,
-        Err(_) => ACERIS_STATUS_FRAME_FAILED,
+        Ok(_) => {
+            handle.last_error = None;
+            ACERIS_STATUS_OK
+        }
+        Err(error) => {
+            handle.last_error = Some(error.to_string());
+            ACERIS_STATUS_FRAME_FAILED
+        }
     }
+}
+
+/// Writes the current ARM11 PC and CPSR to a caller-owned structure.
+///
+/// # Safety
+/// handle must be live and out_state must point to writable AcerisCpuState storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_get_cpu_state(
+    handle: *const AcerisSystemHandle,
+    out_state: *mut AcerisCpuState,
+) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime.
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    // SAFETY: The caller guarantees writable AcerisCpuState output storage.
+    let Some(output) = (unsafe { out_state.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    };
+
+    *output = AcerisCpuState {
+        program_counter: handle.system.cpu().pc(),
+        cpsr: handle.system.cpu().cpsr.0,
+    };
+    ACERIS_STATUS_OK
 }
 
 /// Writes the current presentation counter to out_frame_number.
@@ -284,7 +394,7 @@ pub extern "C" fn aceris_screen_height(screen_id: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
+    use std::ffi::{CStr, CString};
 
     #[test]
     fn version_is_a_valid_c_string() {
@@ -297,6 +407,44 @@ mod tests {
     fn selftest_runs_the_shared_core() {
         let expected = i32::try_from(aceris_core::selftest::EXPECTED).unwrap();
         assert_eq!(aceris_selftest(), expected);
+    }
+
+    #[test]
+    fn android_abi_exposes_the_last_load_error() {
+        let handle = aceris_system_create();
+        assert!(!handle.is_null());
+        let path = CString::new("/aceris-test-file-that-does-not-exist.3ds").unwrap();
+
+        // SAFETY: handle is live and path is a valid NUL-terminated string.
+        assert_eq!(
+            unsafe { aceris_system_load_no_crypto_file(handle, path.as_ptr()) },
+            ACERIS_STATUS_LOAD_FAILED
+        );
+
+        // SAFETY: A zero-capacity query does not dereference the null output.
+        let required = unsafe {
+            aceris_system_copy_last_error(handle, std::ptr::null_mut(), 0)
+        };
+        assert!(required > 0);
+
+        let mut buffer = vec![0u8; required as usize + 1];
+        // SAFETY: buffer has the queried number of bytes plus a NUL terminator.
+        let copied = unsafe {
+            aceris_system_copy_last_error(
+                handle,
+                buffer.as_mut_ptr().cast::<c_char>(),
+                buffer.len(),
+            )
+        };
+        assert_eq!(copied, required);
+        // SAFETY: The getter writes a NUL-terminated UTF-8 error string.
+        let message = unsafe { CStr::from_ptr(buffer.as_ptr().cast::<c_char>()) }
+            .to_str()
+            .unwrap();
+        assert!(!message.is_empty());
+
+        // SAFETY: handle is live, unique and destroyed exactly once.
+        unsafe { aceris_system_destroy(handle) };
     }
 
     #[test]
