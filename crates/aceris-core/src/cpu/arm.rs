@@ -2251,7 +2251,32 @@ impl Arm11Core {
             )
         };
 
-        let mut addr = start;
+        // LDM/STM are multi-word accesses. U=1 or A=1 requires a
+        // word-aligned start address; the legacy U=0,A=0 path uses
+        // Word[Align(Addr)] but still writes back from the original base.
+        let unaligned = start & 3 != 0;
+        if unaligned && self.cp15.alignment_fault_enabled() {
+            return Err(Error::InvalidAccess { addr: start });
+        }
+        let transfer_start = if unaligned {
+            let aligned = start & !3;
+            // Device and Strongly-ordered memory cannot use the legacy
+            // unaligned multi-word behavior. Preflight the complete byte
+            // range before the first load/store to avoid partial state.
+            self.require_normal_unaligned_range(
+                bus,
+                aligned,
+                size as usize,
+                !load,
+                self.cpsr.privileged(),
+                word,
+            )?;
+            aligned
+        } else {
+            start
+        };
+
+        let mut addr = transfer_start;
         if load {
             let mut values = [0u32; 16];
             for (r, value) in values.iter_mut().enumerate() {
@@ -3264,6 +3289,81 @@ mod tests {
         assert_eq!(m.mem.read32(DATA + 4).unwrap(), 20);
         assert_eq!(m.mem.read32(DATA + 8).unwrap(), 30);
         assert_eq!(m.cpu.regs[0], DATA, "no writeback requested");
+    }
+
+    #[test]
+    fn armv6_legacy_unaligned_ldm_stm_align_memory_and_preserve_writeback() {
+        for big_endian in [false, true] {
+            let mut load = Machine::new(&[0xE8B0_0006]); // LDMIA r0!,{r1,r2}
+            load.cpu.regs[0] = DATA + 1;
+            load.cpu.cpsr.set_big_endian(big_endian);
+            load.mem.write32(DATA, 0x1122_3344).unwrap();
+            load.mem.write32(DATA + 4, 0x5566_7788).unwrap();
+
+            load.step();
+
+            assert_eq!(
+                (load.cpu.regs[1], load.cpu.regs[2]),
+                if big_endian {
+                    (0x4433_2211, 0x8877_6655)
+                } else {
+                    (0x1122_3344, 0x5566_7788)
+                }
+            );
+            assert_eq!(load.cpu.regs[0], DATA + 9);
+
+            let mut store = Machine::new(&[0xE8A0_0006]); // STMIA r0!,{r1,r2}
+            store.cpu.regs[0] = DATA + 1;
+            store.cpu.regs[1] = 0x1122_3344;
+            store.cpu.regs[2] = 0x5566_7788;
+            store.cpu.cpsr.set_big_endian(big_endian);
+            store.mem.write32(DATA - 4, 0xAABB_CCDD).unwrap();
+
+            store.step();
+
+            assert_eq!(
+                store.mem.read32(DATA).unwrap(),
+                if big_endian { 0x4433_2211 } else { 0x1122_3344 }
+            );
+            assert_eq!(
+                store.mem.read32(DATA + 4).unwrap(),
+                if big_endian { 0x8877_6655 } else { 0x5566_7788 }
+            );
+            assert_eq!(store.mem.read32(DATA - 4).unwrap(), 0xAABB_CCDD);
+            assert_eq!(store.cpu.regs[0], DATA + 9);
+        }
+    }
+
+    #[test]
+    fn armv6_u_and_a_alignment_faults_are_atomic_for_ldm_and_stm() {
+        for alignment_bit in [1 << 22, 1 << 1] {
+            for instruction in [0xE8B0_0006, 0xE8A0_0006] {
+                let mut m = Machine::new(&[instruction]);
+                m.cpu.regs[0] = DATA + 1;
+                m.cpu.regs[1] = 0x1122_3344;
+                m.cpu.regs[2] = 0x5566_7788;
+                m.cpu.cp15_mut().write(true, 0, 1, 0, 0, alignment_bit).unwrap();
+                m.mem.write32(DATA, 0xAABB_CCDD).unwrap();
+                m.mem.write32(DATA + 4, 0x1234_5678).unwrap();
+                let before = (
+                    m.mem.read32(DATA).unwrap(),
+                    m.mem.read32(DATA + 4).unwrap(),
+                );
+
+                assert!(matches!(
+                    m.cpu.step(&mut m.mem),
+                    Err(Error::InvalidAccess { addr }) if addr == DATA + 1
+                ));
+                assert_eq!(m.cpu.regs[0], DATA + 1);
+                assert_eq!(m.cpu.regs[1], 0x1122_3344);
+                assert_eq!(m.cpu.regs[2], 0x5566_7788);
+                assert_eq!(
+                    (m.mem.read32(DATA).unwrap(), m.mem.read32(DATA + 4).unwrap()),
+                    before
+                );
+                assert_eq!(m.cpu.pc(), 0);
+            }
+        }
     }
 
     // ----- branches ---------------------------------------------------------
