@@ -2254,9 +2254,14 @@ impl Arm11Core {
             word,
         };
 
-        // Halfword and signed-byte loads do not permit PC as Rt. The word
-        // LDR path is handled separately because it supports interworking.
-        if load && rd as usize == PC {
+        // PC is not a valid Rt/Rm in halfword or signed-byte transfers.
+        // PC-relative immediate forms remain available without writeback.
+        let register_offset = !bit(word, 22);
+        let rm = bits(word, 3, 0);
+        let invalid_operands = rd as usize == PC
+            || (writeback && (rn as usize == PC || rn == rd))
+            || (register_offset && rm as usize == PC);
+        if invalid_operands {
             return Err(undefined);
         }
 
