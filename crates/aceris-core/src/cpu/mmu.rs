@@ -345,6 +345,7 @@ impl TlbEntry {
     }
 }
 
+const TLB_CAPACITY: usize = 64;
 const TLB_WAYS: usize = 2;
 const TLB_SET_COUNT: usize = TLB_CAPACITY / TLB_WAYS;
 const TLB_PAGE_SHIFTS: [u32; 4] = [12, 16, 20, 24];
@@ -371,9 +372,8 @@ impl TranslationLookasideBuffer {
     }
 
     fn set_indices_for_address(address: u32) -> [usize; TLB_PAGE_SHIFTS.len()] {
-        TLB_PAGE_SHIFTS.map(|shift| {
-            ((address >> shift) as usize) & (TLB_SET_COUNT - 1)
-        })
+        TLB_PAGE_SHIFTS
+            .map(|shift| ((address >> shift) as usize) & (TLB_SET_COUNT - 1))
     }
 
     fn lookup(&self, params: &Params, address: u32) -> Option<TlbEntry> {
@@ -381,8 +381,7 @@ impl TranslationLookasideBuffer {
             .lockdown_entries
             .iter()
             .rev()
-            .flatten()
-            .copied()
+            .filter_map(|slot| *slot)
             .find(|entry| entry.matches_context(params, address))
         {
             return Some(entry);
@@ -392,8 +391,7 @@ impl TranslationLookasideBuffer {
             if let Some(entry) = self.sets[set_index]
                 .iter()
                 .rev()
-                .flatten()
-                .copied()
+                .filter_map(|slot| *slot)
                 .find(|entry| entry.matches_context(params, address))
             {
                 return Some(entry);
