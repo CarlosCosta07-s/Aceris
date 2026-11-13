@@ -2140,19 +2140,24 @@ impl Arm11Core {
         // post-indexed; only the memory transaction uses User permissions.
         let unprivileged_access = !pre_index && bit(word, 21);
 
-        if unprivileged_access
-            && (rn as usize == PC
-                || (load && rd as usize == PC)
-                || (writeback && rn == rd)
-                || (bit(word, 25) && bits(word, 3, 0) as usize == PC))
-        {
+        // R15 is never a register offset (Rm). A writeback form cannot
+        // use PC as its base or use the same register for base and transfer.
+        // Byte transfers also cannot use PC as Rt; PC is supported only by
+        // word LDR/STR forms. Keep PC-relative, no-writeback forms available.
+        let register_offset = bit(word, 25);
+        let rm = bits(word, 3, 0);
+        let invalid_operands = (writeback && (rn as usize == PC || rn == rd))
+            || (register_offset && rm as usize == PC)
+            || (byte && rd as usize == PC)
+            || (unprivileged_access && load && rd as usize == PC);
+        if invalid_operands {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
                 word,
             });
         }
 
-        let offset = if bit(word, 25) {
+        let offset = if register_offset {
             let kind = ShiftKind::from_bits(bits(word, 6, 5));
             let rm = self.reg(bits(word, 3, 0), 8);
             shift_imm(kind, rm, bits(word, 11, 7), self.cpsr.c()).0
