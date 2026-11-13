@@ -712,3 +712,12 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - CI final: workflow `43361987199` concluído com sucesso. Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` aprovados em Linux, Windows e macOS; build release Android `arm64-v8a` aprovado. A execução anterior `43361873343` falhou apenas pelo fixture de sufixo incorreto, corrigido em `3e54357`.
 - Referência independente: ARM Architecture Reference Manual, ARM DDI 0100I, seção A7.1.17 (BL, BLX), que descreve o par de instruções e o cálculo dos offsets; A7.1.17 também especifica alinhamento de palavra para o destino BLX.
 - Não foram criadas branches, adicionadas dependências ou consultadas implementações de outros emuladores.
+
+## A32 — aliases de destino nas famílias de multiplicação DSP (13/11/2026)
+
+- `24c8539` — acrescenta testes independentes para aliases de destino nas operações `SMLAD/SMLSD`: `Rd` coincide separadamente com `Rm`, `Rs` ou `Ra`. O modelo de referência calcula produtos e acumulador a partir dos valores pré-instrução e verifica o resultado, o Q sticky e a preservação de NZCV.
+- `24c8539` — acrescenta também cobertura para `SMLALD/SMLSLD` com `Rm` sobrepondo `RdHi` e `Rs` sobrepondo `RdLo`, verificando que os operandos e o acumulador de 64 bits são lidos antes da gravação do par de destino.
+- `6ffd484` — aplica os ajustes de Rustfmt identificados pela primeira execução da CI. Nenhum código de produção foi alterado nesta etapa.
+- Referência arquitetural independente: ARM Instruction Set Reference Guide, entradas C2.114 (`SMLAD`) e C2.119 (`SMLALD`), que definem a operação e as restrições de registradores. A referência inclui um exemplo de SMLAD com `Rd == Ra`; para SMLALD exige `RdHi != RdLo` e proíbe PC como operando: https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab
+- Workflow [43504486197](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43504486197) concluído com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
+- O trabalho de código permaneceu restrito a `crates/aceris-core/tests/arm11_dsp_multiply.rs`. Não foram adicionadas dependências nem consultadas implementações de outros emuladores.
