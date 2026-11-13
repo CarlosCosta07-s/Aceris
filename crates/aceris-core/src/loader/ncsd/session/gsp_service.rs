@@ -218,6 +218,9 @@ pub fn decode_gsp_ipc_request(words: &[u32]) -> Result<GspIpcRequest, GspIpcRequ
     }
 }
 
+/// Guest virtual address used by the documented GSP shared-memory mapping.
+pub const GSP_SHARED_MEMORY_BASE: u32 = 0x1000_2000;
+
 /// Complete GSP shared-memory size used by the current GX and relay layouts.
 pub const GSP_SHARED_MEMORY_SIZE: usize = 0x1000;
 
