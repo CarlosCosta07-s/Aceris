@@ -669,3 +669,206 @@ fn arm_immediate_logical_uses_pc_plus_eight_as_rn_across_opcodes() {
         }
     }
 }
+#[derive(Clone, Copy, Debug)]
+enum OperandShift {
+    Lsl,
+    Lsr,
+    Asr,
+    Ror,
+}
+
+impl OperandShift {
+    const ALL: [(Self, u32); 12] = [
+        (Self::Lsl, 0),
+        (Self::Lsl, 1),
+        (Self::Lsl, 31),
+        (Self::Lsr, 0),
+        (Self::Lsr, 1),
+        (Self::Lsr, 31),
+        (Self::Asr, 0),
+        (Self::Asr, 1),
+        (Self::Asr, 31),
+        (Self::Ror, 0),
+        (Self::Ror, 1),
+        (Self::Ror, 31),
+    ];
+
+    const fn encoding(self) -> u32 {
+        match self {
+            Self::Lsl => 0,
+            Self::Lsr => 1,
+            Self::Asr => 2,
+            Self::Ror => 3,
+        }
+    }
+}
+
+fn reference_operand_shift(
+    kind: OperandShift,
+    value: u32,
+    amount: u32,
+    carry_in: bool,
+) -> (u32, bool) {
+    match (kind, amount) {
+        (OperandShift::Lsl, 0) => (value, carry_in),
+        (OperandShift::Lsl, 1..=31) => (
+            value.wrapping_shl(amount),
+            value & (1 << (32 - amount)) != 0,
+        ),
+        (OperandShift::Lsr, 0) => (0, value >> 31 != 0),
+        (OperandShift::Lsr, 1..=31) => (value >> amount, value & (1 << (amount - 1)) != 0),
+        (OperandShift::Asr, 0) => (
+            if value >> 31 != 0 { u32::MAX } else { 0 },
+            value >> 31 != 0,
+        ),
+        (OperandShift::Asr, 1..=31) => (
+            ((value as i32) >> amount) as u32,
+            value & (1 << (amount - 1)) != 0,
+        ),
+        (OperandShift::Ror, 0) => {
+            ((u32::from(carry_in) << 31) | (value >> 1), value & 1 != 0)
+        }
+        (OperandShift::Ror, 1..=31) => {
+            let result = value.rotate_right(amount);
+            (result, result >> 31 != 0)
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn arm_shifted_register_instruction(opcode: u32, rd: u32, amount: u32, kind: OperandShift) -> u32 {
+    0xE000_0000
+        | (opcode << 21)
+        | (1 << 20)
+        | (15 << 16)
+        | (rd << 12)
+        | (amount << 7)
+        | (kind.encoding() << 5)
+        | 1
+}
+
+#[test]
+fn arm_shifted_register_arithmetic_uses_pc_plus_eight_as_rn() {
+    const BASES: [u32; 3] = [0x7FFF_FFF8, 0x8000_0000, 0xFFFF_FFF0];
+    const VALUES: [u32; 4] = [0, 1, 0x8000_0000, u32::MAX];
+    let ops = [
+        Op::Add,
+        Op::Adc,
+        Op::Sub,
+        Op::Sbc,
+        Op::Rsb,
+        Op::Rsc,
+        Op::Cmp,
+        Op::Cmn,
+    ];
+
+    for op in ops {
+        let compare = matches!(op, Op::Cmp | Op::Cmn);
+        let rd = if compare { 0 } else { 2 };
+        for base in BASES {
+            let pc_operand = base.wrapping_add(8);
+            for value in VALUES {
+                for (kind, amount) in OperandShift::ALL {
+                    for carry_in in [false, true] {
+                        for overflow_in in [false, true] {
+                            let (operand, _) =
+                                reference_operand_shift(kind, value, amount, carry_in);
+                            let instruction =
+                                arm_shifted_register_instruction(arm_opcode(op), rd, amount, kind);
+                            let mut memory = FlatMemory::new(base, 4);
+                            memory.write32(base, instruction).unwrap();
+
+                            let mut cpu =
+                                cpu_with(pc_operand, value, carry_in, overflow_in);
+                            cpu.regs[0] = 0xA5A5_5A5A;
+                            cpu.regs[2] = 0x5A5A_A5A5;
+                            cpu.set_pc(base);
+                            cpu.step(&mut memory).unwrap();
+
+                            let (expected, carry, overflow) =
+                                reference(op, pc_operand, operand, carry_in);
+                            assert_eq!(
+                                flags(&cpu),
+                                (expected >> 31 != 0, expected == 0, carry, overflow),
+                                "{instruction:#010x} base={base:#010x} value={value:#010x} operand={operand:#010x} carry_in={carry_in}"
+                            );
+                            if compare {
+                                assert_eq!(cpu.regs[0], 0xA5A5_5A5A, "{instruction:#010x}");
+                            } else {
+                                assert_eq!(
+                                    cpu.regs[2], expected,
+                                    "{instruction:#010x} base={base:#010x} value={value:#010x}"
+                                );
+                            }
+                            assert_eq!(cpu.pc(), base.wrapping_add(4), "{instruction:#010x}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn arm_shifted_register_logical_uses_pc_plus_eight_as_rn() {
+    const BASES: [u32; 3] = [0x7FFF_FFF8, 0x8000_0000, 0xFFFF_FFF0];
+    const VALUES: [u32; 4] = [0, 1, 0x8000_0000, u32::MAX];
+    // AND, EOR, TST, TEQ, ORR and BIC all consume Rn.
+    const OPCODES: [u32; 6] = [0x0, 0x1, 0x8, 0x9, 0xC, 0xE];
+
+    for opcode in OPCODES {
+        let compare = matches!(opcode, 0x8 | 0x9);
+        let rd = if compare { 0 } else { 2 };
+        for base in BASES {
+            let pc_operand = base.wrapping_add(8);
+            for value in VALUES {
+                for (kind, amount) in OperandShift::ALL {
+                    for carry_in in [false, true] {
+                        for overflow_in in [false, true] {
+                            let (operand, carry_out) =
+                                reference_operand_shift(kind, value, amount, carry_in);
+                            let expected = match opcode {
+                                0x0 | 0x8 => pc_operand & operand,
+                                0x1 | 0x9 => pc_operand ^ operand,
+                                0xC => pc_operand | operand,
+                                0xE => pc_operand & !operand,
+                                _ => unreachable!(),
+                            };
+                            let instruction =
+                                arm_shifted_register_instruction(opcode, rd, amount, kind);
+                            let mut memory = FlatMemory::new(base, 4);
+                            memory.write32(base, instruction).unwrap();
+
+                            let mut cpu =
+                                cpu_with(pc_operand, value, carry_in, overflow_in);
+                            cpu.regs[0] = 0xA5A5_5A5A;
+                            cpu.regs[2] = 0x5A5A_A5A5;
+                            cpu.set_pc(base);
+                            cpu.step(&mut memory).unwrap();
+
+                            assert_eq!(
+                                flags(&cpu),
+                                (
+                                    expected >> 31 != 0,
+                                    expected == 0,
+                                    carry_out,
+                                    overflow_in
+                                ),
+                                "{instruction:#010x} base={base:#010x} value={value:#010x} operand={operand:#010x} carry_in={carry_in}"
+                            );
+                            if compare {
+                                assert_eq!(cpu.regs[0], 0xA5A5_5A5A, "{instruction:#010x}");
+                            } else {
+                                assert_eq!(
+                                    cpu.regs[2], expected,
+                                    "{instruction:#010x} base={base:#010x} value={value:#010x}"
+                                );
+                            }
+                            assert_eq!(cpu.pc(), base.wrapping_add(4), "{instruction:#010x}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
