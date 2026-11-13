@@ -1809,6 +1809,7 @@ mod tests {
             apx: false,
             xn: false,
             section: false,
+            memory_attributes: MemoryAttributes::strongly_ordered(),
         };
 
         tlb.insert(make_entry(0x1000, 0xA000, 7, true), false, 0);
@@ -1858,6 +1859,7 @@ mod tests {
                 apx: false,
                 xn: false,
                 section: false,
+                memory_attributes: MemoryAttributes::strongly_ordered(),
             },
             false,
             0,
@@ -1884,6 +1886,7 @@ mod tests {
             apx: false,
             xn: false,
             section: false,
+            memory_attributes: MemoryAttributes::strongly_ordered(),
         };
         tlb.insert(make_entry(0x1000, 0xA000, 7, false), true, 2);
         tlb.insert(make_entry(0x2000, 0xB000, 7, false), false, 0);
