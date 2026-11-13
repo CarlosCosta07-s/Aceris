@@ -1879,7 +1879,9 @@ mod tests {
                 .ncsd_session()
                 .unwrap()
                 .service_session_kind(service_manager),
-            Some(ServiceSessionKind::ServiceManager)
+            Some(ServiceSessionKind::ServiceManager {
+                client_registered: false,
+            })
         ));
 
         // srv:RegisterClient supplies the process-ID translation descriptor.
