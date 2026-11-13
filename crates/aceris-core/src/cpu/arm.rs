@@ -1782,7 +1782,13 @@ impl Arm11Core {
             self.regs[LR] = self.pc().wrapping_add(4);
             self.branch_exchange(target);
         } else if word & 0x0FFF_0FF0 == 0x016F_0F10 {
-            // CLZ Rd, Rm
+            // CLZ Rd, Rm does not permit PC as either operand.
+            if rd as usize == PC || rm as usize == PC {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
             let value = self.reg(rm, 8).leading_zeros();
             self.write_reg(rd, value);
         } else if word & 0x0FBF_0FFF == 0x010F_0000 {
