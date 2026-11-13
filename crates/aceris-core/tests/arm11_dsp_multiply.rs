@@ -3,7 +3,7 @@
 //! Expected values are calculated from signed lane arithmetic and wide integer
 //! intermediates, independently of the instruction decoder implementation.
 
-use aceris_core::cpu::{Arm11Core, Psr};
+use aceris_core::cpu::Arm11Core;
 use aceris_core::memory::{Bus, FlatMemory};
 
 const HALFWORDS: [i32; 7] = [i16::MIN as i32, -32767, -1, 0, 1, 32766, i16::MAX as i32];
