@@ -311,7 +311,7 @@ fn all_36_parallel_arithmetic_encodings_match_the_independent_lane_model() {
 #[test]
 fn parallel_instruction_encodings_reject_pc_in_each_register_operand() {
     // SADD8 r2,r1,pc ; SADD16 pc,r1,r3 ; QSUB16 r2,pc,r3.
-    for instruction in [0xE611_2F93, 0xE611_FF13, 0xE621_2F13] {
+    for instruction in [0xE611_2F9F, 0xE611_FF13, 0xE62F_2F13] {
         let mut memory = FlatMemory::new(0, 4);
         memory.write32(0, instruction).unwrap();
         let mut cpu = Arm11Core::new();
