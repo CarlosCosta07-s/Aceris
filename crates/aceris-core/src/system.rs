@@ -9,11 +9,20 @@ use crate::gpu::{
 };
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::Arm11RunStopReason;
+use crate::loader::ncsd::session::ipc::{IpcCommandHeader, IpcMessage};
+use crate::loader::ncsd::session::kernel::ServiceSessionKind;
 use crate::loader::ncsd::session::gsp_service::{
-    GspClientUnregistration, GspInterruptDispatchReport, GspRenderingRightAcquireOutcome,
-    GspRenderingRightHandoff, GspServiceError, GspServiceRegistry,
+    decode_gsp_ipc_request, GspClientUnregistration, GspInterruptDispatchReport,
+    GspIpcRequest, GspIpcResultResponse, GspRegisterInterruptRelayQueueResponse,
+    GspRenderingRightAcquireOutcome, GspRenderingRightHandoff, GspServiceError,
+    GspServiceRegistry, GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE,
 };
-use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
+use crate::loader::ncsd::{
+    Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader,
+};
+use crate::loader::ncsd::session::{
+    RESULT_INVALID_ADDRESS, RESULT_INVALID_ENUM, RESULT_INVALID_HANDLE, RESULT_OUT_OF_MEMORY,
+};
 use crate::loader::{self, ImageFormat};
 use crate::video::{DualScreenDisplay, LcdController};
 use aceris_common::{Error, Result};
@@ -44,6 +53,14 @@ pub const DEFAULT_FRAME_INSTRUCTION_BUDGET: usize = 100_000;
 
 /// Maximum guest PICA200 command-list size accepted by one submission.
 pub const MAX_PICA_COMMAND_WORDS: usize = 0x1_0000;
+
+/// Result returned by GSP when another client currently owns rendering rights.
+const RESULT_GSP_RENDERING_RIGHT_BUSY: u32 = 0xC840_2BF0;
+
+/// Maximum number of 32-bit words in the ARM11 TLS IPC command buffer.
+const ARM11_IPC_BUFFER_WORDS: usize = 0x40;
+/// Offset of the IPC command buffer within each ARM11 TLS page.
+const ARM11_TLS_IPC_BUFFER_OFFSET: u32 = 0x80;
 
 /// Result of processing one GSP GX shared-memory queue snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +93,35 @@ pub struct GspInterruptRelayReport {
     pub missed_pdc0: u32,
     pub missed_pdc1: u32,
     pub error_code: u8,
+}
+
+fn message_words(message: IpcMessage<'_>) -> Result<Vec<u32>> {
+    let word_count = message.header().expected_word_count();
+    let mut words = Vec::with_capacity(word_count);
+    words.push(message.header().raw());
+    words.extend_from_slice(message.normal_parameters());
+    words.extend_from_slice(message.translation_words());
+    Ok(words)
+}
+
+fn gsp_service_result_code(error: GspServiceError) -> u32 {
+    match error {
+        GspServiceError::NoFreeClientSlots => RESULT_OUT_OF_MEMORY,
+        GspServiceError::MisalignedSharedMemoryBase { .. }
+        | GspServiceError::SharedMemoryUnavailable { .. }
+        | GspServiceError::AddressOverflow { .. } => RESULT_INVALID_ADDRESS,
+        GspServiceError::InvalidEventHandle { .. }
+        | GspServiceError::InvalidClientId { .. }
+        | GspServiceError::ClientNotRegistered { .. }
+        | GspServiceError::ClientAlreadyRegistered { .. }
+        | GspServiceError::RenderingRightRequired { .. }
+        | GspServiceError::RenderingRightNotOwned { .. }
+        | GspServiceError::DuplicateClientSession { .. }
+        | GspServiceError::ClientSessionUnavailable { .. }
+        | GspServiceError::ProcessSessionUnavailable
+        | GspServiceError::InvalidRelayQueue { .. }
+        | GspServiceError::EventSignalFailed { .. } => RESULT_INVALID_HANDLE,
+    }
 }
 
 /// Result of one completed development frame.
@@ -391,12 +437,391 @@ impl System {
     /// and scheduler states without claiming that one instruction budget equals
     /// one video frame.
     pub fn run_instructions(&mut self, instruction_budget: usize) -> Result<Arm11RunReport> {
-        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+        let mut instructions_executed = 0u64;
+        let mut stop_reason = Arm11RunStopReason::InstructionBudgetExhausted;
+
+        loop {
+            let already_executed = usize::try_from(instructions_executed).unwrap_or(usize::MAX);
+            let remaining = instruction_budget.saturating_sub(already_executed);
+            if remaining == 0 {
+                break;
+            }
+
+            let report = self
+                .ncsd_session
+                .as_mut()
+                .ok_or(Error::Unimplemented(
+                    "an NCSD ARM11 process session has not been prepared",
+                ))?
+                .run_instructions(remaining)?;
+            instructions_executed =
+                instructions_executed.saturating_add(report.instructions_executed);
+            stop_reason = report.stop_reason;
+
+            if stop_reason != Arm11RunStopReason::IpcRequest {
+                break;
+            }
+
+            self.dispatch_pending_ipc_request()?;
+            stop_reason = Arm11RunStopReason::InstructionBudgetExhausted;
+        }
+
+        let session = self.ncsd_session.as_ref().ok_or(Error::Unimplemented(
             "an NCSD ARM11 process session has not been prepared",
         ))?;
-        let report = session.run_instructions(instruction_budget)?;
         self.cpu = session.core().clone();
-        Ok(report)
+        Ok(Arm11RunReport {
+            instructions_executed,
+            stop_reason,
+        })
+    }
+
+    /// Dispatches one guest SendSyncRequest against the HLE service registry.
+    ///
+    /// Requests and replies use the current thread's TLS command buffer. A
+    /// service call is handled synchronously before ARM11 execution resumes.
+    fn dispatch_pending_ipc_request(&mut self) -> Result<()> {
+        let (service_handle, tls_address, request_words, service_kind) = {
+            let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+                "an NCSD ARM11 process session has not been prepared",
+            ))?;
+            let registers = session.current_registers().ok_or(Error::Unimplemented(
+                "IPC request has no running ARM11 thread",
+            ))?;
+            let tls_address = session.current_tls_address().ok_or(Error::Unimplemented(
+                "IPC request thread has no TLS mapping",
+            ))?;
+            let request_address = tls_address
+                .checked_add(ARM11_TLS_IPC_BUFFER_OFFSET)
+                .ok_or(Error::InvalidAccess { addr: tls_address })?;
+            let header = session.read_memory_u32(request_address)?;
+            let expected_words = IpcCommandHeader::decode(header).expected_word_count();
+            if expected_words > ARM11_IPC_BUFFER_WORDS {
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("ARM11 IPC message declares {expected_words} words; TLS buffer holds {ARM11_IPC_BUFFER_WORDS}"),
+                )));
+            }
+
+            let mut request_words = Vec::with_capacity(expected_words);
+            for index in 0..expected_words {
+                let offset = u32::try_from(index.saturating_mul(4))
+                    .map_err(|_| Error::InvalidAccess { addr: request_address })?;
+                let address = request_address
+                    .checked_add(offset)
+                    .ok_or(Error::InvalidAccess { addr: request_address })?;
+                request_words.push(session.read_memory_u32(address)?);
+            }
+            let service_handle = registers[0];
+            let service_kind = session.service_session_kind(service_handle).ok_or(
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("SVC SendSyncRequest used non-service handle 0x{service_handle:08X}"),
+                )),
+            )?;
+            (service_handle, tls_address, request_words, service_kind)
+        };
+
+        let message = IpcMessage::decode(&request_words).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid ARM11 IPC request: {error:?}"),
+            ))
+        })?;
+        let response_words = match service_kind {
+            ServiceSessionKind::ServiceManager => {
+                self.dispatch_service_manager_request(message)?
+            }
+            ServiceSessionKind::GspGpu {
+                client_id,
+                shared_memory_handle,
+                event_handle,
+                flags,
+            } => self.dispatch_gsp_request(
+                service_handle,
+                client_id,
+                shared_memory_handle,
+                event_handle,
+                flags,
+                message,
+            )?,
+        };
+
+        if response_words.len() > ARM11_IPC_BUFFER_WORDS {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "ARM11 IPC response exceeds the TLS command buffer",
+            )));
+        }
+        let request_address = tls_address
+            .checked_add(ARM11_TLS_IPC_BUFFER_OFFSET)
+            .ok_or(Error::InvalidAccess { addr: tls_address })?;
+        let mut response_bytes = Vec::with_capacity(response_words.len() * 4);
+        for word in response_words {
+            response_bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+            "ARM11 process session was removed during IPC dispatch",
+        ))?;
+        session.write_memory_bytes(request_address, &response_bytes)?;
+        session.set_current_register(0, 0);
+        Ok(())
+    }
+
+    fn dispatch_service_manager_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        const SRV_REGISTER_CLIENT_HEADER: u32 = 0x0001_0002;
+        const SRV_GET_SERVICE_HANDLE_HEADER: u32 = 0x0005_0100;
+
+        let raw_header = message.header().raw();
+        match raw_header {
+            SRV_REGISTER_CLIENT_HEADER => {
+                let translation = message.translation_words();
+                if translation.len() != 2 || translation[0] != 0x20 {
+                    return Ok(vec![0x0001_0040, RESULT_INVALID_ENUM]);
+                }
+                // The kernel-supplied process ID is not yet modelled. The
+                // current single-process bootstrap accepts registration.
+                Ok(vec![0x0001_0040, 0])
+            }
+            SRV_GET_SERVICE_HANDLE_HEADER => {
+                let parameters = message.normal_parameters();
+                if parameters.len() != 4 || !message.translation_words().is_empty() {
+                    return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
+                }
+                let mut requested_name = [0u8; 8];
+                requested_name[0..4].copy_from_slice(&parameters[0].to_le_bytes());
+                requested_name[4..8].copy_from_slice(&parameters[1].to_le_bytes());
+                let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
+                if name_length != 8 || &requested_name != b"gsp::Gpu" {
+                    return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
+                }
+
+                let service_handle = match self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                    .create_gsp_gpu_session()
+                {
+                    Ok(handle) => handle,
+                    Err(_) => return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]),
+                };
+                // GetServiceHandle returns a COPY_HANDLE translation containing
+                // the newly created client-side gsp::Gpu session.
+                Ok(vec![0x0005_0042, 0, 0, service_handle])
+            }
+            _ => Ok(vec![
+                (raw_header & 0xFFFF_0000) | 0x40,
+                RESULT_INVALID_ENUM,
+            ]),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_gsp_request(
+        &mut self,
+        service_handle: u32,
+        client_id: Option<u8>,
+        shared_memory_handle: Option<u32>,
+        event_handle: Option<u32>,
+        flags: u32,
+        message: IpcMessage<'_>,
+    ) -> Result<Vec<u32>> {
+        let request = match decode_gsp_ipc_request(&message_words(message)?) {
+            Ok(request) => request,
+            Err(_) => {
+                return Ok(vec![
+                    (message.header().raw() & 0xFFFF_0000) | 0x40,
+                    RESULT_INVALID_ENUM,
+                ]);
+            }
+        };
+
+        match request {
+            GspIpcRequest::RegisterInterruptRelayQueue {
+                flags: requested_flags,
+                event_handle: requested_event,
+            } => {
+                if client_id.is_some() {
+                    return Ok(GspRegisterInterruptRelayQueueResponse::error(
+                        RESULT_INVALID_HANDLE,
+                    )
+                    .encode()
+                    .to_vec());
+                }
+
+                let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+                    "ARM11 process session is unavailable",
+                ))?;
+                let memory_handle = match session.create_memory_block(
+                    GSP_SHARED_MEMORY_SIZE as u32,
+                    3,
+                    3,
+                ) {
+                    Ok(handle) => handle,
+                    Err(_) => {
+                        return Ok(GspRegisterInterruptRelayQueueResponse::error(
+                            RESULT_OUT_OF_MEMORY,
+                        )
+                        .encode()
+                        .to_vec());
+                    }
+                };
+                if session
+                    .map_memory_block(memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
+                    .is_err()
+                {
+                    let _ = session.close_handle(memory_handle);
+                    return Ok(GspRegisterInterruptRelayQueueResponse::error(
+                        RESULT_INVALID_ADDRESS,
+                    )
+                    .encode()
+                    .to_vec());
+                }
+
+                let registration = self.gsp_service.register_next_available_client_with_flags(
+                    session,
+                    GSP_SHARED_MEMORY_BASE,
+                    requested_event,
+                    requested_flags,
+                );
+                let assigned_client_id = match registration {
+                    Ok(client_id) => client_id,
+                    Err(error) => {
+                        let _ = session.unmap_memory_block(
+                            memory_handle,
+                            GSP_SHARED_MEMORY_BASE,
+                        );
+                        let _ = session.close_handle(memory_handle);
+                        return Ok(GspRegisterInterruptRelayQueueResponse::error(
+                            gsp_service_result_code(error),
+                        )
+                        .encode()
+                        .to_vec());
+                    }
+                };
+                if session
+                    .set_gsp_session_registration(
+                        service_handle,
+                        Some(assigned_client_id),
+                        Some(memory_handle),
+                        Some(requested_event),
+                        requested_flags,
+                    )
+                    .is_err()
+                {
+                    let _ = self.gsp_service.unregister_client(assigned_client_id);
+                    let _ = session.unmap_memory_block(
+                        memory_handle,
+                        GSP_SHARED_MEMORY_BASE,
+                    );
+                    let _ = session.close_handle(memory_handle);
+                    return Ok(GspRegisterInterruptRelayQueueResponse::error(
+                        RESULT_INVALID_HANDLE,
+                    )
+                    .encode()
+                    .to_vec());
+                }
+
+                Ok(GspRegisterInterruptRelayQueueResponse::new(
+                    0,
+                    assigned_client_id,
+                    memory_handle,
+                )
+                .encode()
+                .to_vec())
+            }
+            GspIpcRequest::TriggerCmdReqQueue => {
+                let result = match client_id {
+                    Some(client_id) => self
+                        .trigger_gsp_cmd_req_queue(client_id)
+                        .map(|_| 0)
+                        .unwrap_or(RESULT_INVALID_ADDRESS),
+                    None => RESULT_INVALID_HANDLE,
+                };
+                Ok(GspIpcResultResponse::for_request(request, result)
+                    .expect("TriggerCmdReqQueue has a simple reply")
+                    .encode()
+                    .to_vec())
+            }
+            GspIpcRequest::UnregisterInterruptRelayQueue => {
+                let result = match (client_id, shared_memory_handle) {
+                    (Some(client_id), Some(memory_handle)) => {
+                        match self.gsp_service.unregister_client(client_id) {
+                            Ok(_) => {
+                                if let Some(session) = self.ncsd_session.as_mut() {
+                                    let _ = session.unmap_memory_block(
+                                        memory_handle,
+                                        GSP_SHARED_MEMORY_BASE,
+                                    );
+                                    let _ = session.close_handle(memory_handle);
+                                    let _ = session.set_gsp_session_registration(
+                                        service_handle,
+                                        None,
+                                        None,
+                                        None,
+                                        flags,
+                                    );
+                                }
+                                0
+                            }
+                            Err(error) => gsp_service_result_code(error),
+                        }
+                    }
+                    _ => RESULT_INVALID_HANDLE,
+                };
+                Ok(GspIpcResultResponse::for_request(request, result)
+                    .expect("UnregisterInterruptRelayQueue has a simple reply")
+                    .encode()
+                    .to_vec())
+            }
+            GspIpcRequest::TryAcquireRight { process_handle: _ } => {
+                let result = match client_id {
+                    Some(client_id) => match self.gsp_service.try_acquire_rendering_right(client_id) {
+                        Ok(true) => 0,
+                        Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
+                        Err(error) => gsp_service_result_code(error),
+                    },
+                    None => RESULT_INVALID_HANDLE,
+                };
+                Ok(GspIpcResultResponse::for_request(request, result)
+                    .expect("TryAcquireRight has a simple reply")
+                    .encode()
+                    .to_vec())
+            }
+            GspIpcRequest::AcquireRight {
+                flags: _,
+                process_handle: _,
+            } => {
+                let result = match client_id {
+                    Some(client_id) => match self.gsp_service.try_acquire_rendering_right(client_id) {
+                        Ok(true) => 0,
+                        // Waiting-thread suspension and ownership handoff are
+                        // deliberately not faked by this first IPC milestone.
+                        Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
+                        Err(error) => gsp_service_result_code(error),
+                    },
+                    None => RESULT_INVALID_HANDLE,
+                };
+                Ok(GspIpcResultResponse::for_request(request, result)
+                    .expect("AcquireRight has a simple reply")
+                    .encode()
+                    .to_vec())
+            }
+            GspIpcRequest::ReleaseRight => {
+                let result = match client_id {
+                    Some(client_id) => self
+                        .gsp_service
+                        .release_rendering_right_with_handoff(client_id)
+                        .map(|_| 0)
+                        .unwrap_or_else(gsp_service_result_code),
+                    None => RESULT_INVALID_HANDLE,
+                };
+                Ok(GspIpcResultResponse::for_request(request, result)
+                    .expect("ReleaseRight has a simple reply")
+                    .encode()
+                    .to_vec())
+            }
+        }
     }
 
     /// Returns the PICA200 command processor.
