@@ -486,9 +486,9 @@ impl Arm11KernelObjectTable {
                 }
                 Ok(true)
             }
-            Some(KernelObject::Thread(_)) | Some(KernelObject::MemoryBlock(_)) => {
-                Err(KernelHandleError::WrongType)
-            }
+            Some(KernelObject::Thread(_))
+            | Some(KernelObject::MemoryBlock(_))
+            | Some(KernelObject::ServiceSession(_)) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
         }
     }
@@ -504,7 +504,9 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Mutex(mutex)) => &mut mutex.waiters,
             Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
             Some(KernelObject::Timer(timer)) => &mut timer.waiters,
-            Some(KernelObject::Thread(_)) | Some(KernelObject::MemoryBlock(_)) => {
+            Some(KernelObject::Thread(_))
+            | Some(KernelObject::MemoryBlock(_))
+            | Some(KernelObject::ServiceSession(_)) => {
                 return Err(KernelHandleError::WrongType);
             }
             None => return Err(KernelHandleError::InvalidHandle),
@@ -527,7 +529,9 @@ impl Arm11KernelObjectTable {
                 KernelObject::Mutex(mutex) => &mut mutex.waiters,
                 KernelObject::Semaphore(semaphore) => &mut semaphore.waiters,
                 KernelObject::Timer(timer) => &mut timer.waiters,
-                KernelObject::Thread(_) | KernelObject::MemoryBlock(_) => continue,
+                KernelObject::Thread(_)
+                | KernelObject::MemoryBlock(_)
+                | KernelObject::ServiceSession(_) => continue,
             };
             let previous_len = waiters.len();
             waiters.retain(|waiter| *waiter != thread);
