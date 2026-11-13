@@ -1606,7 +1606,10 @@ mod tests {
     }
 
     fn read_tls_ipc_response(system: &mut System, buffer: u32, word_count: usize) -> Vec<u32> {
-        let session = system.ncsd_session.as_mut().expect("test process is loaded");
+        let session = system
+            .ncsd_session
+            .as_mut()
+            .expect("test process is loaded");
         (0..word_count)
             .map(|index| {
                 session
