@@ -625,10 +625,13 @@ fn arm_immediate_logical_uses_pc_plus_eight_as_rn_across_opcodes() {
                     Some(operand >> 31 != 0)
                 };
                 let rd = if compare { 0 } else { 2 };
-                let instruction =
-                    0xE200_0000 | (opcode << 21) | (1 << 20) | (15 << 16) | (rd << 12)
-                        | (rotate << 8)
-                        | imm8;
+                let instruction = 0xE200_0000
+                    | (opcode << 21)
+                    | (1 << 20)
+                    | (15 << 16)
+                    | (rd << 12)
+                    | (rotate << 8)
+                    | imm8;
 
                 for carry_in in [false, true] {
                     for overflow_in in [false, true] {
