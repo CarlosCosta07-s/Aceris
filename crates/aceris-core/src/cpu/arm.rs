@@ -981,8 +981,25 @@ impl Arm11Core {
         if word & 0xFE50_FFFF == 0xF810_0A00 {
             return self.return_from_exception_memory(bus, word);
         }
-        if bits(word, 27, 25) != 0b101 {
-            return Err(Error::Unimplemented("unconditional-space instruction"));
+        let unconditional_class = bits(word, 27, 25);
+        if matches!(unconditional_class, 0b110 | 0b111) {
+            // ARMv6 reserves the unconditional CP15 instruction forms:
+            // MCR2/MRC2, CDP2, LDC2/STC2 and MCRR2/MRRC2 are Undefined for
+            // CP15. Other coprocessors may define these encodings; they are
+            // kept as explicit emulator limits until that coprocessor exists.
+            if bits(word, 11, 8) == 15 {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word,
+                });
+            }
+            return Err(Error::Unimplemented("unconditional coprocessor instruction"));
+        }
+        if unconditional_class != 0b101 {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
         }
 
         // BLX (immediate): always switches to Thumb state.
