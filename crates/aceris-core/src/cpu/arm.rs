@@ -1072,6 +1072,16 @@ impl Arm11Core {
         let rn = bits(word, 19, 16);
         let rd = bits(word, 15, 12);
         let carry_in = self.cpsr.c();
+        let is_compare = (0x8..=0xB).contains(&opcode);
+
+        // TST, TEQ, CMP and CMN encode Rd as SBZ. Reject malformed
+        // encodings instead of silently executing them as comparisons.
+        if is_compare && rd != 0 {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
 
         let (operand, shifter_carry, pc_offset) = self.shifter_operand(word);
         let a = self.reg(rn, pc_offset);
@@ -1094,8 +1104,6 @@ impl Arm11Core {
         let result = match outcome {
             Alu::Logical(value) | Alu::Arithmetic { value, .. } => value,
         };
-        let is_compare = (0x8..=0xB).contains(&opcode);
-
         // S + Rd == PC performs an exception return: restore CPSR from the
         // active mode's SPSR, then branch using the restored ARM/Thumb state.
         if set_flags && !is_compare && rd as usize == PC {
@@ -2908,6 +2916,33 @@ mod tests {
         m.cpu.regs[0] = 5;
         m.run(3);
         assert_eq!((m.cpu.regs[1], m.cpu.regs[2]), (1, 0));
+    }
+
+    #[test]
+    fn armv6_a32_comparisons_reject_nonzero_rd_without_side_effects() {
+        // TST, TEQ, CMP and CMN all reserve the Rd field as SBZ.
+        for instruction in [
+            0xE110_1002, // TST r0,r2 with invalid Rd=r1
+            0xE130_1002, // TEQ r0,r2 with invalid Rd=r1
+            0xE150_1002, // CMP r0,r2 with invalid Rd=r1
+            0xE170_1002, // CMN r0,r2 with invalid Rd=r1
+        ] {
+            let mut m = Machine::new(&[instruction]);
+            m.cpu.regs[0] = 0x1234_5678;
+            m.cpu.regs[1] = 0xA5A5_5A5A;
+            m.cpu.regs[2] = 0x8765_4321;
+            m.cpu.cpsr.set_flags(true, false, true, false);
+            let registers_before = m.cpu.regs;
+            let status_before = m.cpu.cpsr;
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+            ));
+            assert_eq!(m.cpu.regs, registers_before, "instruction {instruction:#010x}");
+            assert_eq!(m.cpu.cpsr, status_before, "instruction {instruction:#010x}");
+            assert_eq!(m.cpu.pc(), 0, "instruction {instruction:#010x}");
+        }
     }
 
     #[test]
