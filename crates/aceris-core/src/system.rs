@@ -772,7 +772,7 @@ impl System {
                             Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
                             Err(error) => gsp_service_result_code(error),
                         }
-                    },
+                    }
                     None => RESULT_INVALID_HANDLE,
                 };
                 Ok(GspIpcResultResponse::for_request(request, result)
