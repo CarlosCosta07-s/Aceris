@@ -37,7 +37,7 @@ fn flags_from_index(index: u32) -> (bool, bool, bool, bool) {
 #[test]
 fn all_a32_conditions_match_every_nzcv_combination() {
     // MOV{cond} r2, #0x5A; S=0 must preserve all CPSR bits.
-    const MOV_IMMEDIATE_R2: u32 = 0x03A2_005A;
+    const MOV_IMMEDIATE_R2: u32 = 0x03A0_205A;
     const INITIAL_R2: u32 = 0xA55A_3CC3;
 
     for condition in 0..=0xE {
@@ -114,7 +114,9 @@ fn failed_a32_conditions_suppress_undefined_instruction_exceptions() {
                     result.is_ok(),
                     "failed condition must suppress decode: condition={condition:#x} NZCV={n}{z}{c}{v}: {result:?}"
                 );
-                assert_eq!(cpu.regs, registers_before);
+                let mut expected_registers = registers_before;
+                expected_registers[15] = 4;
+                assert_eq!(cpu.regs, expected_registers);
                 assert_eq!(cpu.cpsr, status_before);
                 assert_eq!(cpu.pc(), 4);
             }
