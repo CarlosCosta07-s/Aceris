@@ -90,7 +90,9 @@ fn execute_immediate_shift(
     overflow: bool,
 ) -> Arm11Core {
     let mut memory = FlatMemory::new(0, 4);
-    memory.write32(0, movs_immediate_shift(kind, amount)).unwrap();
+    memory
+        .write32(0, movs_immediate_shift(kind, amount))
+        .unwrap();
 
     let mut cpu = Arm11Core::new();
     cpu.set_pc(0);
@@ -160,15 +162,7 @@ fn arm_register_shifts_match_independent_reference_at_boundaries() {
 
 #[test]
 fn arm_immediate_shifts_match_reference_including_special_zero_encodings() {
-    const VALUES: [u32; 7] = [
-        0,
-        1,
-        2,
-        0x7FFF_FFFF,
-        0x8000_0000,
-        0x8000_0001,
-        u32::MAX,
-    ];
+    const VALUES: [u32; 7] = [0, 1, 2, 0x7FFF_FFFF, 0x8000_0000, 0x8000_0001, u32::MAX];
     const AMOUNTS: [u32; 5] = [0, 1, 2, 15, 31];
 
     for kind in Shift::ALL {
