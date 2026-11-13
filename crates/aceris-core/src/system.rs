@@ -925,7 +925,7 @@ impl System {
                             }
                             Err(error) => gsp_service_result_code(error),
                         }
-                    },
+                    }
                     None => RESULT_INVALID_HANDLE,
                 };
                 Ok(GspIpcResultResponse::for_request(request, result)
