@@ -886,9 +886,8 @@ impl System {
                                         acquire,
                                         Ok(GspRenderingRightAcquireOutcome::Waiting { .. })
                                     ) {
-                                        let _ = self
-                                            .gsp_service
-                                            .cancel_rendering_right_wait(client_id);
+                                        let _ =
+                                            self.gsp_service.cancel_rendering_right_wait(client_id);
                                     }
                                     return Ok(GspIpcResultResponse::for_request(
                                         request,
