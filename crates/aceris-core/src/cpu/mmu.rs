@@ -1570,6 +1570,122 @@ mod tests {
     }
 
     #[test]
+    fn translated_legacy_srs_aligns_normal_memory_and_writes_back_the_original_stack_pointer() {
+        let normal = SECTION | SECTION_AP_RW_ALL | (1 << 12);
+        let sctlr = 1 | (1 << 23);
+        let instruction =
+            0xF84D_0500 | (1 << 23) | (1 << 21) | Psr::IRQ_MODE;
+        let (mut cpu, mut mem) = a32_unaligned_machine(instruction, normal, sctlr);
+
+        cpu.regs[super::super::super::LR] = 0x1122_3344;
+        cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        cpu.regs[crate::cpu::SP] = UNALIGNED_DATA_VA;
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.set_saved_program_status(Psr(Psr::USER_MODE)).unwrap();
+
+        assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
+        assert_eq!(
+            mem.read32(UNALIGNED_DATA_PA & !3).unwrap(),
+            0x1122_3344
+        );
+        assert_eq!(
+            mem.read32((UNALIGNED_DATA_PA & !3) + 4).unwrap(),
+            Psr::USER_MODE
+        );
+        cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        assert_eq!(cpu.regs[crate::cpu::SP], UNALIGNED_DATA_VA + 8);
+    }
+
+    #[test]
+    fn translated_legacy_srs_rejects_device_and_ordered_memory_atomically() {
+        let descriptors = [
+            SECTION | SECTION_AP_RW_ALL | (1 << 2), // Device
+            SECTION | SECTION_AP_RW_ALL,            // Strongly-ordered
+        ];
+        let sctlr = 1 | (1 << 23);
+        let instruction =
+            0xF84D_0500 | (1 << 23) | (1 << 21) | Psr::IRQ_MODE;
+
+        for descriptor in descriptors {
+            let (mut cpu, mut mem) = a32_unaligned_machine(instruction, descriptor, sctlr);
+            cpu.regs[super::super::super::LR] = 0x1122_3344;
+            cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+            cpu.regs[crate::cpu::SP] = UNALIGNED_DATA_VA;
+            cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            cpu.set_saved_program_status(Psr(Psr::USER_MODE)).unwrap();
+            mem.write32(UNALIGNED_DATA_PA & !3, 0xAABB_CCDD)
+                .unwrap();
+            mem.write32((UNALIGNED_DATA_PA & !3) + 4, 0x5566_7788)
+                .unwrap();
+
+            assert!(matches!(
+                cpu.step(&mut mem),
+                Err(Error::UndefinedInstruction { pc: 0, word: found }) if found == instruction
+            ));
+            assert_eq!(cpu.pc(), 0);
+            assert_eq!(
+                mem.read32(UNALIGNED_DATA_PA & !3).unwrap(),
+                0xAABB_CCDD
+            );
+            assert_eq!(
+                mem.read32((UNALIGNED_DATA_PA & !3) + 4).unwrap(),
+                0x5566_7788
+            );
+            cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+            assert_eq!(cpu.regs[crate::cpu::SP], UNALIGNED_DATA_VA);
+        }
+    }
+
+    #[test]
+    fn translated_legacy_rfe_aligns_normal_memory_and_writes_back_original_base() {
+        let normal = SECTION | SECTION_AP_RW_ALL | (1 << 12);
+        let sctlr = 1 | (1 << 23);
+        let instruction = 0xF8B0_0A00; // RFEIA r0!
+        let (mut cpu, mut mem) = a32_unaligned_machine(instruction, normal, sctlr);
+        cpu.regs[0] = UNALIGNED_DATA_VA;
+        mem.write32(UNALIGNED_DATA_PA & !3, 0x2345).unwrap();
+        mem.write32(
+            (UNALIGNED_DATA_PA & !3) + 4,
+            Psr::SYSTEM_MODE,
+        )
+        .unwrap();
+
+        assert_eq!(cpu.step(&mut mem).unwrap(), StepEvent::Executed);
+        assert_eq!(cpu.pc(), 0x2344);
+        assert_eq!(cpu.cpsr.mode(), Psr::SYSTEM_MODE);
+        assert_eq!(cpu.regs[0], UNALIGNED_DATA_VA + 8);
+    }
+
+    #[test]
+    fn translated_legacy_rfe_rejects_device_and_ordered_memory_atomically() {
+        let descriptors = [
+            SECTION | SECTION_AP_RW_ALL | (1 << 2), // Device
+            SECTION | SECTION_AP_RW_ALL,            // Strongly-ordered
+        ];
+        let sctlr = 1 | (1 << 23);
+        let instruction = 0xF8B0_0A00; // RFEIA r0!
+
+        for descriptor in descriptors {
+            let (mut cpu, mut mem) = a32_unaligned_machine(instruction, descriptor, sctlr);
+            cpu.regs[0] = UNALIGNED_DATA_VA;
+            mem.write32(UNALIGNED_DATA_PA & !3, 0x2345).unwrap();
+            mem.write32(
+                (UNALIGNED_DATA_PA & !3) + 4,
+                Psr::SYSTEM_MODE,
+            )
+            .unwrap();
+
+            assert!(matches!(
+                cpu.step(&mut mem),
+                Err(Error::UndefinedInstruction { pc: 0, word: found }) if found == instruction
+            ));
+            assert_eq!(cpu.pc(), 0);
+            assert_eq!(cpu.cpsr.mode(), Psr::SUPERVISOR_MODE);
+            assert_eq!(cpu.regs[0], UNALIGNED_DATA_VA);
+        }
+    }
+
+    #[test]
     fn va_to_pa_populates_par_with_physical_page_and_resolved_attributes() {
         let (mut cpu, mut mem) = machine();
         let va = 0x1234_5678;
