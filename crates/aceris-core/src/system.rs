@@ -606,16 +606,11 @@ impl System {
         Ok(false)
     }
 
-    /// Completes the queued IPC request of the next GSP rendering-right owner.
+    /// Completes every queued IPC request belonging to a GSP rendering-right owner.
+    ///
+    /// The GSP wait queue is per registered client, while more than one ARM11
+    /// thread in that client may be waiting on the same AcquireRight operation.
     fn wake_pending_gsp_acquire(&mut self, client_id: u8, result_code: u32) -> Result<bool> {
-        let Some(index) = self
-            .pending_gsp_acquires
-            .iter()
-            .position(|pending| pending.client_id == client_id)
-        else {
-            return Ok(false);
-        };
-        let pending = self.pending_gsp_acquires[index];
         let response = GspIpcResultResponse::for_request(
             GspIpcRequest::AcquireRight {
                 flags: 0,
@@ -626,15 +621,27 @@ impl System {
         .expect("AcquireRight has a simple reply")
         .encode();
 
-        let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
-            "ARM11 process session is unavailable while completing GSP AcquireRight",
-        ))?;
-        session.write_ipc_response_to_thread(pending.thread_id, &response)?;
-        session
-            .wake_thread_for_ipc(pending.thread_id)
-            .map_err(|error| Error::Io(io::Error::other(error.to_string())))?;
-        self.pending_gsp_acquires.remove(index);
-        Ok(true)
+        let mut woke_any = false;
+        loop {
+            let Some(index) = self
+                .pending_gsp_acquires
+                .iter()
+                .position(|pending| pending.client_id == client_id)
+            else {
+                break;
+            };
+            let pending = self.pending_gsp_acquires[index];
+            let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+                "ARM11 process session is unavailable while completing GSP AcquireRight",
+            ))?;
+            session.write_ipc_response_to_thread(pending.thread_id, &response)?;
+            session
+                .wake_thread_for_ipc(pending.thread_id)
+                .map_err(|error| Error::Io(io::Error::other(error.to_string())))?;
+            self.pending_gsp_acquires.remove(index);
+            woke_any = true;
+        }
+        Ok(woke_any)
     }
 
     fn dispatch_service_manager_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
@@ -863,25 +870,26 @@ impl System {
                 process_handle: _,
             } => {
                 let result = match client_id {
-                    Some(client_id) => match self.gsp_service.acquire_rendering_right(client_id) {
-                        Ok(GspRenderingRightAcquireOutcome::Acquired) => 0,
-                        Ok(GspRenderingRightAcquireOutcome::AlreadyWaiting { .. }) => {
-                            RESULT_GSP_RENDERING_RIGHT_BUSY
-                        }
-                        Ok(GspRenderingRightAcquireOutcome::Waiting { .. }) => {
-                            if self
-                                .pending_gsp_acquires
-                                .iter()
-                                .any(|pending| pending.client_id == client_id)
-                            {
-                                let _ = self.gsp_service.cancel_rendering_right_wait(client_id);
-                                RESULT_GSP_RENDERING_RIGHT_BUSY
-                            } else {
+                    Some(client_id) => {
+                        let acquire = self.gsp_service.acquire_rendering_right(client_id);
+                        match acquire {
+                            Ok(GspRenderingRightAcquireOutcome::Acquired) => 0,
+                            Ok(
+                                GspRenderingRightAcquireOutcome::Waiting { .. }
+                                | GspRenderingRightAcquireOutcome::AlreadyWaiting { .. },
+                            ) => {
                                 let session = self.ncsd_session.as_mut().ok_or(
                                     Error::Unimplemented("ARM11 process session is unavailable"),
                                 )?;
                                 let Some(thread_id) = session.current_thread_id() else {
-                                    let _ = self.gsp_service.cancel_rendering_right_wait(client_id);
+                                    if matches!(
+                                        acquire,
+                                        Ok(GspRenderingRightAcquireOutcome::Waiting { .. })
+                                    ) {
+                                        let _ = self
+                                            .gsp_service
+                                            .cancel_rendering_right_wait(client_id);
+                                    }
                                     return Ok(GspIpcResultResponse::for_request(
                                         request,
                                         RESULT_INVALID_HANDLE,
@@ -899,13 +907,24 @@ impl System {
                                         return Ok(Vec::new());
                                     }
                                     Err(_) => {
-                                        let _ = self.gsp_service.cancel_rendering_right_wait(client_id);
+                                        if matches!(
+                                            acquire,
+                                            Ok(GspRenderingRightAcquireOutcome::Waiting { .. })
+                                        ) && !self
+                                            .pending_gsp_acquires
+                                            .iter()
+                                            .any(|pending| pending.client_id == client_id)
+                                        {
+                                            let _ = self
+                                                .gsp_service
+                                                .cancel_rendering_right_wait(client_id);
+                                        }
                                         RESULT_INVALID_HANDLE
                                     }
                                 }
                             }
+                            Err(error) => gsp_service_result_code(error),
                         }
-                        Err(error) => gsp_service_result_code(error),
                     },
                     None => RESULT_INVALID_HANDLE,
                 };
