@@ -797,7 +797,10 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
         let (page_walk, cached) = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
             (PageWalk::Mapped(entry), true)
         } else {
-            (walk_page_tables(self.inner, &self.params, mva, access)?, false)
+            (
+                walk_page_tables(self.inner, &self.params, mva, access)?,
+                false,
+            )
         };
 
         match page_walk {
@@ -902,18 +905,18 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
     }
 
     fn read8_unprivileged(&mut self, addr: u32) -> Result<u8> {
-        let physical = self.map_with_privilege(addr, Access::Read, false)?;
+        let (physical, _) = self.map_with_privilege(addr, Access::Read, false)?;
         self.inner.read8(physical)
     }
 
     fn write8_unprivileged(&mut self, addr: u32, value: u8) -> Result<()> {
-        let physical = self.map_with_privilege(addr, Access::Write, false)?;
+        let (physical, _) = self.map_with_privilege(addr, Access::Write, false)?;
         self.inner.write8(physical, value)
     }
 
     fn read32_unprivileged(&mut self, addr: u32) -> Result<u32> {
         if addr & 0xFFF <= 0xFFC {
-            let physical = self.map_with_privilege(addr, Access::Read, false)?;
+            let (physical, _) = self.map_with_privilege(addr, Access::Read, false)?;
             return self.inner.read32(physical);
         }
         let mut bytes = [0u8; 4];
@@ -925,7 +928,7 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn write32_unprivileged(&mut self, addr: u32, value: u32) -> Result<()> {
         if addr & 0xFFF <= 0xFFC {
-            let physical = self.map_with_privilege(addr, Access::Write, false)?;
+            let (physical, _) = self.map_with_privilege(addr, Access::Write, false)?;
             return self.inner.write32(physical, value);
         }
         for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
