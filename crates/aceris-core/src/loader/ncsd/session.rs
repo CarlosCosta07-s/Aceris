@@ -34,11 +34,13 @@ use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError, ServiceSessionKind};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
-    SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MEMORY_BLOCK,
+    SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
+    SVC_CREATE_MEMORY_BLOCK,
     SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_EXIT_THREAD,
     SVC_GET_THREAD_PRIORITY, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX,
     SVC_RELEASE_SEMAPHORE, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
-    SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION1,
+    SVC_SEND_SYNC_REQUEST, SVC_SLEEP_THREAD, SVC_MAP_MEMORY_BLOCK, SVC_UNMAP_MEMORY_BLOCK,
+    SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -96,6 +98,8 @@ pub enum Arm11RunStopReason {
     ExceptionReturn,
     /// No thread is currently eligible to execute.
     NoRunnableThread,
+    /// A synchronous IPC request must be dispatched by the system service layer.
+    IpcRequest,
     /// A void SVC could not be completed by the current bootstrap.
     KernelServiceError { number: u32, result: u32 },
 }
@@ -203,6 +207,7 @@ enum SvcRunDisposition {
     Unhandled(u32),
     NoRunnableThread,
     KernelServiceError { number: u32, result: u32 },
+    IpcRequest,
 }
 
 /// An initialized ARM11 process with an address space, per-thread CPU contexts,
@@ -1672,6 +1677,12 @@ impl Arm11ProcessSession {
                                 },
                             });
                         }
+                        SvcRunDisposition::IpcRequest => {
+                            return Ok(Arm11RunReport {
+                                instructions_executed: executed,
+                                stop_reason: Arm11RunStopReason::IpcRequest,
+                            });
+                        }
                     }
                 }
             }
@@ -1689,9 +1700,11 @@ impl Arm11ProcessSession {
         };
 
         match number {
+            SVC_CONNECT_TO_PORT => self.svc_connect_to_port(caller),
+            SVC_SEND_SYNC_REQUEST => self.svc_send_sync_request(caller),
             SVC_CREATE_MEMORY_BLOCK => self.svc_create_memory_block(caller),
             SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
-
+            SVC_MAP_MEMORY_BLOCK => self.svc_map_memory_block(caller),
             SVC_UNMAP_MEMORY_BLOCK => self.svc_unmap_memory_block(caller),
             SVC_QUERY_MEMORY => self.svc_query_memory(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
@@ -1707,6 +1720,7 @@ impl Arm11ProcessSession {
             SVC_CREATE_EVENT => self.svc_create_event(caller),
             SVC_SIGNAL_EVENT => self.svc_signal_event(caller),
             SVC_CLEAR_EVENT => self.svc_clear_event(caller),
+            SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
@@ -1856,8 +1870,55 @@ impl Arm11ProcessSession {
         self.write_svc_result(caller, 0)
     }
 
+    /// Handles ConnectToPort: r0 = output handle pointer, r1 = four-byte port name.
+    /// The current bootstrap provides the service-manager port only.
+    fn svc_connect_to_port(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let output_address = registers[0];
+        let name_address = registers[1];
+        if !self.address_space.is_writable_range(output_address, 4) {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        let mut port_name = [0u8; 4];
+        if self.read_memory_bytes(name_address, &mut port_name).is_err() {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        if &port_name != b"srv:" {
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+        }
+
+        let handle = match self.create_service_manager_session() {
+            Ok(handle) => handle,
+            Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
+        };
+        if self.address_space.write32(output_address, handle).is_err() {
+            let _ = self.kernel_objects.close_handle(handle);
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.write_svc_result(caller, 0)
+    }
+
+    /// Defers the request to the system-level service dispatcher.
+    fn svc_send_sync_request(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self.scheduler.core(caller).expect("caller context exists").regs[0];
+        if self.kernel_objects.service_session(handle).is_none() {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
+        SvcRunDisposition::IpcRequest
+    }
+
     /// Handles MapMemoryBlock: r0 = handle, r1 = address,
     /// r2 = this-process permissions, r3 = peer-process permissions.
+    fn svc_map_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let result = self
+            .map_memory_block(registers[0], registers[1], registers[2], registers[3])
+            .map(|()| 0)
+            .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
+    }
+
     /// Handles UnmapMemoryBlock: r0 = handle, r1 = mapping base address.
     fn svc_unmap_memory_block(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
@@ -2440,6 +2501,16 @@ impl Arm11ProcessSession {
     }
 
     /// Handles CloseHandle using the process-local object handle in r0.
+    fn svc_close_handle(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self.scheduler.core(caller).expect("current thread context exists").regs[0];
+        let result = self
+            .kernel_objects
+            .close_handle(handle)
+            .map(|()| 0)
+            .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
+    }
+
     fn write_svc_result(&mut self, caller: ThreadId, result: u32) -> SvcRunDisposition {
         self.scheduler
             .core_mut(caller)
