@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn blx_register_switches_to_arm_when_target_bit_zero_is_clear() {
         // BLX r3 with an even target clears Thumb state and word-aligns PC.
-        let mut m = Machine::with(0x4798, |cpu, _| cpu.regs[3] = 0x42);
+        let mut m = Machine::with(0x4798, |cpu, _| cpu.regs[3] = 0x40);
         m.step();
 
         assert_eq!(m.cpu.regs[LR], 3);
@@ -1494,7 +1494,7 @@ mod tests {
     #[test]
     fn stmia_rejects_writeback_base_that_is_not_lowest_in_register_list() {
         // STMIA r2!,{r1,r2} has no architecturally reliable stored value for R2.
-        let mut m = Machine::with(0xC406, |cpu, mem| {
+        let mut m = Machine::with(0xC206, |cpu, mem| {
             cpu.regs[1] = 0x1122_3344;
             cpu.regs[2] = DATA;
             mem.write32(DATA, 0xCAFE_BABE).unwrap();
