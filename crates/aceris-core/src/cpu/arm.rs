@@ -2341,9 +2341,8 @@ impl Arm11Core {
         // For a writeback store, the base may appear only as the lowest
         // numbered register, where the original base value is well-defined.
         let base_in_list = list & (1 << rn) != 0;
-        let invalid_writeback_list = writeback
-            && base_in_list
-            && (load || list & ((1 << rn) - 1) != 0);
+        let invalid_writeback_list =
+            writeback && base_in_list && (load || list & ((1 << rn) - 1) != 0);
         if rn as usize == PC || invalid_writeback_list {
             return Err(Error::UndefinedInstruction {
                 pc: self.pc(),
