@@ -739,7 +739,7 @@ mod tests {
         assert_eq!(m.cpu.regs[0], 3);
         assert_eq!(m.flags(), (true, false, false, false));
     }
-    
+
     #[test]
     fn cmn_sets_addition_flags_without_writing_destination() {
         let m = alu(0x42C8, 0x7FFF_FFFF, 1, Psr::default()); // CMN r0,r1.
@@ -1082,7 +1082,7 @@ mod tests {
         assert_eq!((m.cpu.regs[1], m.cpu.regs[2]), (7, 8));
         assert_eq!(m.cpu.regs[0], DATA + 8);
     }
-    
+
     #[test]
     fn multiple_transfers_preserve_architectural_base_register_rules() {
         // STMIA r0!,{r0,r1}: when Rn is the lowest register, its old value is stored.
