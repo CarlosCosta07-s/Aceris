@@ -1246,14 +1246,11 @@ impl Arm11Core {
                 pc: self.pc(),
                 word,
             })?;
-        let base = if raw_base & 3 != 0 {
-            if self.cp15.alignment_fault_enabled() {
-                return Err(Error::InvalidAccess { addr: raw_base });
-            }
-            raw_base & !3
-        } else {
-            raw_base
-        };
+        let unaligned = raw_base & 3 != 0;
+        if unaligned && self.cp15.alignment_fault_enabled() {
+            return Err(Error::InvalidAccess { addr: raw_base });
+        }
+        let base = if unaligned { raw_base & !3 } else { raw_base };
 
         let pre_index = bit(word, 24);
         let increment = bit(word, 23);
@@ -1270,6 +1267,17 @@ impl Arm11Core {
             address = address.wrapping_add(4);
         }
 
+        if unaligned {
+            self.require_normal_unaligned_range(
+                bus,
+                address,
+                8,
+                true,
+                self.cpsr.privileged(),
+                word,
+            )?;
+        }
+
         let (link_value, status_value) = if self.cpsr.big_endian() {
             (self.regs[LR].swap_bytes(), saved_status.0.swap_bytes())
         } else {
@@ -1280,9 +1288,9 @@ impl Arm11Core {
 
         if writeback {
             let updated = if increment {
-                base.wrapping_add(8)
+                raw_base.wrapping_add(8)
             } else {
-                base.wrapping_sub(8)
+                raw_base.wrapping_sub(8)
             };
             if !self.set_banked_sp(target_mode, updated) {
                 return Err(Error::UndefinedInstruction {
@@ -1315,10 +1323,12 @@ impl Arm11Core {
             });
         }
 
-        let base = self.regs[base_register];
-        if base & 3 != 0 {
-            return Err(Error::InvalidAccess { addr: base });
+        let raw_base = self.regs[base_register];
+        let unaligned = raw_base & 3 != 0;
+        if unaligned && self.cp15.alignment_fault_enabled() {
+            return Err(Error::InvalidAccess { addr: raw_base });
         }
+        let base = if unaligned { raw_base & !3 } else { raw_base };
 
         let pre_index = bit(word, 24);
         let increment = bit(word, 23);
@@ -1334,6 +1344,17 @@ impl Arm11Core {
         };
         if pre_index == increment {
             address = address.wrapping_add(4);
+        }
+
+        if unaligned {
+            self.require_normal_unaligned_range(
+                bus,
+                address,
+                8,
+                false,
+                self.cpsr.privileged(),
+                word,
+            )?;
         }
 
         let mut target = bus.read32(address)?;
@@ -1354,9 +1375,9 @@ impl Arm11Core {
         // essential when Rn is SP and the return restores User/System mode.
         if writeback {
             self.regs[base_register] = if increment {
-                base.wrapping_add(8)
+                raw_base.wrapping_add(8)
             } else {
-                base.wrapping_sub(8)
+                raw_base.wrapping_sub(8)
             };
         }
 
