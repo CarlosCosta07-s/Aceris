@@ -1760,12 +1760,11 @@ mod tests {
         assert_eq!(cpu.regs[5], MVFR0);
         assert_eq!(cpu.regs[6], MVFR1);
 
-        // Trapped exceptions are not modeled and must not be silently accepted.
+        // Scalar invalid-operation traps are recorded in FPSCR and enter
+        // the VFP11 exception-bounce state when the instruction executes.
         cpu.regs[1] = 1 << 8;
-        assert!(matches!(
-            run(&mut cpu, &mut mem, &[0xEEE1_1A10]),
-            Err(Error::Unimplemented(_))
-        ));
+        run(&mut cpu, &mut mem, &[0xEEE1_1A10]).unwrap();
+        assert_eq!(cpu.vfp().fpscr() & FPSCR_IOE, FPSCR_IOE);
 
         // FPEXC is privileged: user mode gets an undefined instruction.
         assert!(matches!(
