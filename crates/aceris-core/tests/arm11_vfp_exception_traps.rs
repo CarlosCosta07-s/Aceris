@@ -149,7 +149,11 @@ fn overflow_enable_bounces_and_preserves_the_scalar_destination() {
     assert_eq!(cpu.vfp().s(0), 0xDEAD_BEEF);
     assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
     assert_ne!(cpu.vfp().fpexc() & (1 << 2), 0, "FPEXC.OFC is set");
-    assert_eq!(cpu.vfp().fpscr() & (1 << 2), 0, "support code owns FPSCR.OFC");
+    assert_eq!(
+        cpu.vfp().fpscr() & (1 << 2),
+        0,
+        "support code owns FPSCR.OFC"
+    );
     assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
 }
 
@@ -167,7 +171,11 @@ fn underflow_enable_bounces_even_when_the_tiny_result_is_exact() {
     assert_eq!(cpu.vfp().s(0), 0xCAFE_BABE);
     assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
     assert_ne!(cpu.vfp().fpexc() & (1 << 3), 0, "FPEXC.UFC is set");
-    assert_eq!(cpu.vfp().fpscr() & (1 << 3), 0, "support code owns FPSCR.UFC");
+    assert_eq!(
+        cpu.vfp().fpscr() & (1 << 3),
+        0,
+        "support code owns FPSCR.UFC"
+    );
     assert_eq!(cpu.vfp().fpinst(), VDIV_S0_S1_S2);
 }
 
@@ -182,7 +190,11 @@ fn flush_to_zero_ignores_underflow_trap_and_returns_positive_zero() {
     cpu.step(&mut memory).unwrap();
 
     assert_eq!(cpu.vfp().s(0), 0, "FZ flushes to positive zero");
-    assert_eq!(cpu.vfp().fpexc() & (1 << 31), 0, "UFE is ignored in FZ mode");
+    assert_eq!(
+        cpu.vfp().fpexc() & (1 << 31),
+        0,
+        "UFE is ignored in FZ mode"
+    );
     assert_ne!(cpu.vfp().fpscr() & (1 << 3), 0, "FPSCR.UFC is set");
     assert_eq!(cpu.vfp().fpinst(), 0xEE00_0A00);
 }
