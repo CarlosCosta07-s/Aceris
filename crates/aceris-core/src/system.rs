@@ -731,15 +731,15 @@ impl System {
                     .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
                 let memory_handle =
                     match session.create_memory_block(GSP_SHARED_MEMORY_SIZE as u32, 3, 3) {
-                    Ok(handle) => handle,
-                    Err(_) => {
-                        return Ok(GspRegisterInterruptRelayQueueResponse::error(
-                            RESULT_OUT_OF_MEMORY,
-                        )
-                        .encode()
-                        .to_vec());
-                    }
-                };
+                        Ok(handle) => handle,
+                        Err(_) => {
+                            return Ok(GspRegisterInterruptRelayQueueResponse::error(
+                                RESULT_OUT_OF_MEMORY,
+                            )
+                            .encode()
+                            .to_vec());
+                        }
+                    };
                 if session
                     .map_memory_block(memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
                     .is_err()
