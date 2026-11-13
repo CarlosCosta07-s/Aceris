@@ -1837,8 +1837,10 @@ mod tests {
                     0xEF00_0032, // srv:RegisterClient
                     0xEF00_0032, // srv:GetServiceHandle
                     0xEF00_0032, // GSP RegisterInterruptRelayQueue
+                    0xEF00_0032, // GSP TryAcquireRight
                     0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
+                    0xEF00_0032, // GSP ReleaseRight
                     0xEF00_0032, // GSP UnregisterInterruptRelayQueue
                 ])),
                 [0; AES_BLOCK_SIZE],
@@ -1949,8 +1951,15 @@ mod tests {
             .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
             .unwrap();
 
-        // Give client 0 the rendering token so ProcessCommandList is submitted.
-        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+        // Acquire rendering rights through the guest GSP IPC request.
+        let acquire_buffer =
+            write_tls_ipc_request(&mut system, gsp_handle, &[0x0015_0002, 0, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, acquire_buffer, 2),
+            vec![0x0015_0040, 0]
+        );
+        assert!(system.gsp_service_registry().owns_rendering_right(0));
 
         // Two commands are queued. The first halts after execution; the second
         // must remain pending until a second TriggerCmdReqQueue IPC arrives.
@@ -2032,6 +2041,15 @@ mod tests {
         assert_eq!(queue_header[1], 0);
         assert_eq!(queue_header[2] & 0x01, 0);
         assert_eq!(queue_header[3] & 0x01, 0);
+
+        // ReleaseRight must travel through the same guest IPC path.
+        let release_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0017_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, release_buffer, 2),
+            vec![0x0017_0040, 0]
+        );
+        assert_eq!(system.gsp_service_registry().rendering_right_owner(), None);
 
         // Unregister releases the queue mapping and memory handle.
         let unregister_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
