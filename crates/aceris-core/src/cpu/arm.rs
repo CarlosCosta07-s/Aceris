@@ -1993,6 +1993,71 @@ impl Arm11Core {
         }
     }
 
+    /// Reads an ARMv6 halfword using SCTLR.U/A and the current memory attributes.
+    ///
+    /// U=1 allows the exact unaligned halfword. U=0 with A=0 is architecturally
+    /// UNPREDICTABLE, so the interpreter rejects it deterministically. A=1
+    /// always reports an alignment fault for an odd address.
+    pub(super) fn read_armv6_halfword<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        instruction: u32,
+    ) -> Result<u16> {
+        if address & 1 != 0 {
+            let sctlr = self.cp15.sctlr();
+            if sctlr & (1 << 1) != 0 {
+                return Err(Error::InvalidAccess { addr: address });
+            }
+            if sctlr & (1 << 22) == 0 {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word: instruction,
+                });
+            }
+            self.require_normal_unaligned_range(
+                bus,
+                address,
+                2,
+                false,
+                self.cpsr.privileged(),
+                instruction,
+            )?;
+        }
+        self.read_data_u16(bus, address)
+    }
+
+    /// Writes an ARMv6 halfword using SCTLR.U/A and the current memory attributes.
+    pub(super) fn write_armv6_halfword<B: Bus + ?Sized>(
+        &self,
+        bus: &mut B,
+        address: u32,
+        value: u16,
+        instruction: u32,
+    ) -> Result<()> {
+        if address & 1 != 0 {
+            let sctlr = self.cp15.sctlr();
+            if sctlr & (1 << 1) != 0 {
+                return Err(Error::InvalidAccess { addr: address });
+            }
+            if sctlr & (1 << 22) == 0 {
+                return Err(Error::UndefinedInstruction {
+                    pc: self.pc(),
+                    word: instruction,
+                });
+            }
+            self.require_normal_unaligned_range(
+                bus,
+                address,
+                2,
+                true,
+                self.cpsr.privileged(),
+                instruction,
+            )?;
+        }
+        self.write_data_u16(bus, address, value)
+    }
+
     fn single_transfer<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
         let pre_index = bit(word, 24);
         let up = bit(word, 23);

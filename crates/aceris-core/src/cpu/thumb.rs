@@ -234,13 +234,18 @@ impl Arm11Core {
 
         match bits(half, 11, 9) {
             0b000 => self.write_armv6_single_word(bus, addr, self.regs[rt], false, half)?,
-            0b001 => self.write_data_u16(bus, addr, self.regs[rt] as u16)?,
+            0b001 => self.write_armv6_halfword(bus, addr, self.regs[rt] as u16, half)?,
             0b010 => bus.write8(addr, self.regs[rt] as u8)?,
             0b011 => self.regs[rt] = i32::from(bus.read8(addr)? as i8) as u32,
             0b100 => self.regs[rt] = load_word(self, bus, addr, half)?,
-            0b101 => self.regs[rt] = u32::from(self.read_data_u16(bus, addr)?),
+            0b101 => {
+                self.regs[rt] = u32::from(self.read_armv6_halfword(bus, addr, half)?);
+            }
             0b110 => self.regs[rt] = u32::from(bus.read8(addr)?),
-            _ => self.regs[rt] = i32::from(self.read_data_u16(bus, addr)? as i16) as u32,
+            _ => {
+                self.regs[rt] =
+                    i32::from(self.read_armv6_halfword(bus, addr, half)? as i16) as u32;
+            }
         }
         Ok(())
     }
@@ -273,9 +278,9 @@ impl Arm11Core {
         let addr = self.regs[rn].wrapping_add(bits(half, 10, 6) * 2);
 
         if bit(half, 11) {
-            self.regs[rt] = u32::from(self.read_data_u16(bus, addr)?);
+            self.regs[rt] = u32::from(self.read_armv6_halfword(bus, addr, half)?);
         } else {
-            self.write_data_u16(bus, addr, self.regs[rt] as u16)?;
+            self.write_armv6_halfword(bus, addr, self.regs[rt] as u16, half)?;
         }
         Ok(())
     }
@@ -1389,6 +1394,127 @@ mod tests {
         assert_eq!(m.cpu.regs[2], 0x8001);
         m.step(); // LDRSH r3,[r1,r6].
         assert_eq!(m.cpu.regs[3], 0xFFFF_8001);
+    }
+
+    #[test]
+    fn thumb_unaligned_halfword_loads_and_stores_honor_sctlr_u_and_endianness() {
+        // T1 register-offset and immediate-offset forms share ARMv6's
+        // Halfword[Addr] behavior when SCTLR.U=1.
+        let load_forms = [0x5A88, 0x8808]; // LDRH register and immediate.
+        let store_forms = [0x5288, 0x8008]; // STRH register and immediate.
+
+        for big_endian in [false, true] {
+            for half in load_forms {
+                let mut m = Machine::with(half, |cpu, mem| {
+                    cpu.regs[1] = DATA + 1;
+                    cpu.regs[2] = 0;
+                    cpu.cpsr.set_big_endian(big_endian);
+                    cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+                    mem.write8(DATA, 0xAA).unwrap();
+                    let bytes = if big_endian { [0x81, 0x23] } else { [0x23, 0x81] };
+                    mem.write8(DATA + 1, bytes[0]).unwrap();
+                    mem.write8(DATA + 2, bytes[1]).unwrap();
+                    mem.write8(DATA + 3, 0xBB).unwrap();
+                });
+                m.step();
+                assert_eq!(m.cpu.regs[0], 0x8123, "LDRH {half:#06x}, BE={big_endian}");
+            }
+
+            // LDRSH has no immediate-offset Thumb form; it uses register offset.
+            let mut signed = Machine::with(0x5E88, |cpu, mem| {
+                cpu.regs[1] = DATA + 1;
+                cpu.regs[2] = 0;
+                cpu.cpsr.set_big_endian(big_endian);
+                cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+                let bytes = if big_endian { [0x81, 0x23] } else { [0x23, 0x81] };
+                mem.write8(DATA + 1, bytes[0]).unwrap();
+                mem.write8(DATA + 2, bytes[1]).unwrap();
+            });
+            signed.step();
+            assert_eq!(signed.cpu.regs[0], 0xFFFF_8123, "LDRSH, BE={big_endian}");
+
+            for half in store_forms {
+                let mut m = Machine::with(half, |cpu, mem| {
+                    cpu.regs[0] = 0xA1B2;
+                    cpu.regs[1] = DATA + 1;
+                    cpu.regs[2] = 0;
+                    cpu.cpsr.set_big_endian(big_endian);
+                    cpu.cp15.write(true, 0, 1, 0, 0, 1 << 22).unwrap();
+                    mem.write8(DATA, 0xAA).unwrap();
+                    mem.write8(DATA + 1, 0).unwrap();
+                    mem.write8(DATA + 2, 0).unwrap();
+                    mem.write8(DATA + 3, 0xBB).unwrap();
+                });
+                m.step();
+                let expected = if big_endian { [0xA1, 0xB2] } else { [0xB2, 0xA1] };
+                assert_eq!(m.mem.read8(DATA).unwrap(), 0xAA);
+                assert_eq!(m.mem.read8(DATA + 1).unwrap(), expected[0]);
+                assert_eq!(m.mem.read8(DATA + 2).unwrap(), expected[1]);
+                assert_eq!(m.mem.read8(DATA + 3).unwrap(), 0xBB);
+            }
+        }
+    }
+
+    #[test]
+    fn thumb_unaligned_halfword_is_rejected_without_u_and_faults_with_a() {
+        for half in [0x5A88, 0x5E88, 0x5288, 0x8808, 0x8008] {
+            let mut legacy = Machine::with(half, |cpu, mem| {
+                cpu.regs[0] = 0xA1B2_C3D4;
+                cpu.regs[1] = DATA + 1;
+                cpu.regs[2] = 0;
+                mem.write8(DATA + 1, 0x34).unwrap();
+                mem.write8(DATA + 2, 0x12).unwrap();
+            });
+            let old_regs = legacy.cpu.regs;
+            let old_mem = [legacy.mem.read8(DATA + 1).unwrap(), legacy.mem.read8(DATA + 2).unwrap()];
+            assert!(matches!(
+                legacy.cpu.step(&mut legacy.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == u32::from(half)
+            ));
+            assert_eq!(legacy.cpu.regs, old_regs);
+            assert_eq!(legacy.mem.read8(DATA + 1).unwrap(), old_mem[0]);
+            assert_eq!(legacy.mem.read8(DATA + 2).unwrap(), old_mem[1]);
+
+            let mut alignment_fault = Machine::with(half, |cpu, mem| {
+                cpu.regs[0] = 0xA1B2_C3D4;
+                cpu.regs[1] = DATA + 1;
+                cpu.regs[2] = 0;
+                cpu.cp15.write(true, 0, 1, 0, 0, 1 << 1).unwrap();
+                mem.write8(DATA + 1, 0x34).unwrap();
+                mem.write8(DATA + 2, 0x12).unwrap();
+            });
+            let old_regs = alignment_fault.cpu.regs;
+            assert!(matches!(
+                alignment_fault.cpu.step(&mut alignment_fault.mem),
+                Err(Error::InvalidAccess { addr }) if addr == DATA + 1
+            ));
+            assert_eq!(alignment_fault.cpu.regs, old_regs);
+            assert_eq!(alignment_fault.mem.read8(DATA + 1).unwrap(), 0x34);
+            assert_eq!(alignment_fault.mem.read8(DATA + 2).unwrap(), 0x12);
+        }
+    }
+
+    #[test]
+    fn thumb_unaligned_halfword_fault_enters_data_abort_and_latches_address() {
+        let mut m = Machine::with(0x8808, |cpu, mem| {
+            cpu.regs[0] = 0xDEAD_BEEF;
+            cpu.regs[1] = DATA + 1;
+            cpu.cp15.write(true, 0, 1, 0, 0, 1 << 1).unwrap();
+            cpu.set_fault_exception_entry_enabled(true);
+            mem.write8(DATA + 1, 0x34).unwrap();
+            mem.write8(DATA + 2, 0x12).unwrap();
+        });
+        let interrupted_status = m.cpu.cpsr;
+
+        assert_eq!(m.cpu.step(&mut m.mem).unwrap(), StepEvent::Executed);
+        assert_eq!(m.cpu.cpsr.mode(), Psr::ABORT_MODE);
+        assert!(!m.cpu.cpsr.thumb());
+        assert_eq!(m.cpu.pc(), 0x10);
+        assert_eq!(m.cpu.regs[LR], 8);
+        assert_eq!(m.cpu.saved_program_status(), Some(interrupted_status));
+        assert_eq!(m.cpu.cp15.dfar(), DATA + 1);
+        assert_eq!(m.cpu.cp15.dfsr(), 0x8);
+        assert_eq!(m.cpu.regs[0], 0xDEAD_BEEF);
     }
 
     #[test]
