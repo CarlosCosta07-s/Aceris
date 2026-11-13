@@ -580,3 +580,89 @@ fn arm_immediate_arithmetic_uses_pc_plus_eight_as_rn_across_opcodes() {
         }
     }
 }
+#[test]
+fn arm_immediate_logical_uses_pc_plus_eight_as_rn_across_opcodes() {
+    const BASES: [u32; 7] = [
+        0,
+        0x0000_1000,
+        0x7FFF_FFE0,
+        0x7FFF_FFFF,
+        0x8000_0000,
+        0xFFFF_FFF0,
+        0x1234_5678,
+    ];
+    const IMMEDIATES: [(u32, u32); 9] = [
+        (0, 0x00),
+        (0, 0x81),
+        (1, 0x80),
+        (2, 0x01),
+        (4, 0xFF),
+        (7, 0x80),
+        (8, 0x00),
+        (12, 0x01),
+        (15, 0x80),
+    ];
+    // These operations use Rn. MOV/MVN are excluded because Rn is SBZ.
+    // TST/TEQ are compare forms and must not write their encoded Rd field.
+    const OPCODES: [u32; 6] = [0x0, 0x1, 0x8, 0x9, 0xC, 0xE];
+
+    for opcode in OPCODES {
+        let compare = matches!(opcode, 0x8 | 0x9);
+        for base in BASES {
+            let pc_operand = base.wrapping_add(8);
+            for (rotate, imm8) in IMMEDIATES {
+                let operand = imm8.rotate_right(rotate * 2);
+                let result = match opcode {
+                    0x0 | 0x8 => pc_operand & operand,
+                    0x1 | 0x9 => pc_operand ^ operand,
+                    0xC => pc_operand | operand,
+                    0xE => pc_operand & !operand,
+                    _ => unreachable!(),
+                };
+                let carry_out = if rotate == 0 {
+                    None
+                } else {
+                    Some(operand >> 31 != 0)
+                };
+                let rd = if compare { 0 } else { 2 };
+                let instruction =
+                    0xE200_0000 | (opcode << 21) | (1 << 20) | (15 << 16) | (rd << 12)
+                        | (rotate << 8)
+                        | imm8;
+
+                for carry_in in [false, true] {
+                    for overflow_in in [false, true] {
+                        let mut memory = FlatMemory::new(base, 4);
+                        memory.write32(base, instruction).unwrap();
+
+                        let mut cpu = cpu_with(pc_operand, 0, carry_in, overflow_in);
+                        cpu.regs[0] = 0xA5A5_5A5A;
+                        cpu.regs[2] = 0x5A5A_A5A5;
+                        cpu.set_pc(base);
+                        cpu.step(&mut memory).unwrap();
+
+                        assert_eq!(
+                            flags(&cpu),
+                            (
+                                result >> 31 != 0,
+                                result == 0,
+                                carry_out.unwrap_or(carry_in),
+                                overflow_in
+                            ),
+                            "{instruction:#010x} base={base:#010x} pc_operand={pc_operand:#010x} operand={operand:#010x} carry_in={carry_in}"
+                        );
+                        if compare {
+                            assert_eq!(cpu.regs[0], 0xA5A5_5A5A, "{instruction:#010x}");
+                        } else {
+                            assert_eq!(
+                                cpu.regs[2], result,
+                                "{instruction:#010x} base={base:#010x} operand={operand:#010x}"
+                            );
+                        }
+                        assert_eq!(cpu.pc(), base.wrapping_add(4), "{instruction:#010x}");
+                    }
+                }
+            }
+        }
+    }
+}
