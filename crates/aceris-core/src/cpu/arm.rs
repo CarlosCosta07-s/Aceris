@@ -936,7 +936,9 @@ impl Arm11Core {
         // Its register offset (when present) must not be PC; PC-relative
         // immediate literals remain valid.
         if word & 0xFD70_F000 == 0xF550_F000 {
-            if bit(word, 25) && bits(word, 3, 0) as usize == PC {
+            // Register-offset PLD uses Addressing Mode 2; bit[4] is
+            // fixed to zero even when an immediate shift is specified.
+            if bit(word, 25) && (bit(word, 4) || bits(word, 3, 0) as usize == PC) {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
                     word,
