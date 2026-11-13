@@ -1669,16 +1669,10 @@ mod tests {
         assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
 
         // Client 1 issues AcquireRight while client 0 owns the rendering token.
-        let request_buffer = write_tls_ipc_request(
-            &mut system,
-            gsp_handle,
-            &[0x0016_0042, 0, 0, 0],
-        );
+        let request_buffer =
+            write_tls_ipc_request(&mut system, gsp_handle, &[0x0016_0042, 0, 0, 0]);
         assert!(system.dispatch_pending_ipc_request().unwrap());
-        assert_eq!(
-            system.ncsd_session().unwrap().current_thread_id(),
-            None
-        );
+        assert_eq!(system.ncsd_session().unwrap().current_thread_id(), None);
         assert_eq!(
             system.pending_gsp_acquires,
             vec![PendingGspAcquire {
