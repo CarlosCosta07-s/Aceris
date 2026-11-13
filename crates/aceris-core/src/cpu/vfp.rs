@@ -1640,10 +1640,13 @@ mod tests {
             0xEEE7_1A10, // VMSR MVFR0, r1
             0xEEE6_1A10, // VMSR MVFR1, r1
         ] {
-            assert!(matches!(
-                run(&mut cpu, &mut mem, &[instruction]),
-                Err(Error::UndefinedInstruction { .. })
-            ), "User mode, FPEXC.EN=0: {instruction:#010x}");
+            assert!(
+                matches!(
+                    run(&mut cpu, &mut mem, &[instruction]),
+                    Err(Error::UndefinedInstruction { .. })
+                ),
+                "User mode, FPEXC.EN=0: {instruction:#010x}"
+            );
         }
 
         // Privileged mode may inspect identification registers while disabled.
