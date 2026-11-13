@@ -537,3 +537,39 @@ Os testes foram adicionados ao arquivo Thumb. Esta intervenção não dispõe de
 - O job Android falhou antes de chegar à validação Thumb por erros de compilação no TLB em `cpu/mmu.rs`: constante `TLB_CAPACITY` ausente, chamada `matches_context` em `Option<TlbEntry>` e retorno com tipo `Option<TlbEntry>` onde se esperava `TlbEntry`.
 - O job Windows ainda estava em execução na consulta. Os jobs Linux/macOS e Android não chegaram a Clippy ou `cargo test`; portanto, nenhum teste do interpretador Thumb foi validado por essa execução.
 - A área MMU permanece sem alterações nesta tarefa. O próximo agente responsável pelo TLB deve corrigir a implementação e o formato em `mmu.rs`; depois disso, reexecutar a matriz inteira para validar também os novos testes Thumb.
+
+
+## Continuação do interpretador Thumb — validação ARMv6 e ampliação de testes (13/11/2026)
+
+Trabalho executado diretamente em `main`, com alterações de código limitadas a `crates/aceris-core/src/cpu/thumb.rs`. Nenhuma alteração foi feita no MMU ou em arquivos atribuídos a outra frente.
+
+### Estado e alterações
+
+- O módulo Thumb agora contém 62 testes declarados. Isso é contagem de testes no código, não quantidade de testes executados com sucesso.
+- `877efa1` — rejeita deterministicamente as codificações `BFxx` fora do perfil ARMv6/ARMv6K e listas vazias em PUSH/POP; acrescenta regressões para CPY, endian e atomicidade.
+- `b73d1aa` — acrescenta caso de BLX por registrador que muda de Thumb para ARM.
+- `df5bd80` — valida os bits SBZ de BX/BLX, rejeita BLX com PC como Rm e destinos ARM halfword-aligned (bits[1:0] == 10), sem modificar PC/LR/CPSR nos casos rejeitados; também valida o bit fixo do sufixo BLX imediato.
+- `39f02cf` — testa a extensão de sinal do offset alto negativo em um par BL.
+- `24a067a` — acrescenta testes de SBC, ASR por registrador, LSR/ASR com imediato zero e transferências halfword/signed em big-endian.
+- `6d7de5f` — acrescenta testes de CMN, CMP entre registradores altos e regras de writeback de LDMIA/STMIA quando o registrador base está na lista.
+- `6224efc` — remove whitespace final dos testes novos para Rustfmt.
+
+### Cobertura consultada
+
+A tabela A7-1 do ARM Architecture Reference Manual ARM DDI 0100I enumera as instruções Thumb presentes em ARMv6. Ela inclui as famílias clássicas e as extensões v6 como BKPT, BLX, CPS, CPY, SETEND, REV, SXTB/SXTH e UXTB/UXTH. O conjunto ARMv6 do Aceris foi comparado com essa tabela; Thumb-2/ARMv6T2 não foi introduzido como requisito.
+
+Referência: https://www.scs.stanford.edu/~zyedidia/docs/arm/armv6.pdf — seção A7.2, tabela A7-1, páginas A7-125/A7-126. As regras específicas de BX/BLX, LDMIA e STMIA foram verificadas nas descrições A7.1 correspondentes.
+
+### CI e bloqueio externo
+
+- Workflow `43343294738`, HEAD `8286c77`: os logs de Rustfmt de Ubuntu/macOS apontaram somente `crates/aceris-core/src/cpu/mmu.rs:371`; não apontaram diferenças em `cpu/thumb.rs`. Os jobs Clippy/testes foram ignorados porque `cargo fmt --check` falhou primeiro.
+- O mesmo workflow falhou no build Android antes da validação Thumb por problemas de compilação em `cpu/mmu.rs`: `TLB_CAPACITY` não encontrado na linha 349, `matches_context` chamado em `&Option<TlbEntry>` na linha 397 e incompatibilidade `Option<TlbEntry>`/ `TlbEntry` na linha 399.
+- O workflow `43343388687` foi disparado para `6224efc` e estava enfileirado na última consulta. Ainda é necessário verificar Rustfmt após os testes finais, Clippy e `cargo test` quando a compilação do MMU estiver corrigida.
+- O MMU não foi editado nesta tarefa para preservar o isolamento entre agentes. Enquanto o TLB não compilar e passar no Rustfmt, não declarar o interpretador Thumb validado pela CI.
+
+### Limites remanescentes
+
+- Testes do módulo não foram executados localmente nesta intervenção; só foram declarados no código.
+- A semântica completa de faults/alinhamento de memória Thumb depende da integração comum CPU/MMU/CP15 e precisa ser validada junto com o subsistema de memória.
+- A validação de todas as famílias de instruções não significa que cada caso de alinhamento, abort, acesso ao PC, timing ou comportamento UNPREDICTABLE esteja concluído.
+- Nenhuma dependência foi adicionada; não foi consultado código-fonte de emuladores de terceiros.
