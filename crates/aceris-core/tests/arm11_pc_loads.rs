@@ -75,6 +75,17 @@ fn byte_load_rejects_pc_as_the_destination_even_for_a_thumb_aligned_value() {
 }
 
 #[test]
+fn ldm_pc_still_interworks_to_thumb_targets() {
+    let instruction = 0xE891_8000; // LDMIA r1, {pc}
+    let (mut cpu, mut memory) = machine(instruction, 0x43);
+    cpu.step(&mut memory).unwrap();
+
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x42);
+    assert_eq!(cpu.regs[1], DATA);
+}
+
+#[test]
 fn halfword_and_signed_byte_loads_reject_pc_as_the_destination() {
     // LDRH pc,[r1] ; LDRSB pc,[r1] ; LDRSH pc,[r1].
     for instruction in [0xE1D1_F0B0, 0xE1D1_F0D0, 0xE1D1_F0F0] {
