@@ -36,7 +36,8 @@ const FPSCR_OFE: u32 = 1 << 10;
 const FPSCR_UFE: u32 = 1 << 11;
 const FPSCR_IXE: u32 = 1 << 12;
 const FPSCR_IDE: u32 = 1 << 15;
-const FPSCR_SUPPORTED_TRAP_ENABLES: u32 = FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_UFE | FPSCR_IXE;
+const FPSCR_SUPPORTED_TRAP_ENABLES: u32 = FPSCR_IOE | FPSCR_DZE;
+const FPSCR_UNSUPPORTED_TRAP_ENABLES: u32 = FPSCR_OFE | FPSCR_UFE | FPSCR_IXE | FPSCR_IDE;
 const FPSCR_EXCEPTION_STATUS: u32 = FPSCR_IOC | FPSCR_DZC | FPSCR_OFC | FPSCR_UFC | FPSCR_IXC;
 const FPEXC_EXCEPTION_STATUS: u32 = FPEXC_INV | FPEXC_UFC | FPEXC_OFC | FPEXC_IOC;
 const FPSCR_DN: u32 = 1 << 25;
@@ -195,7 +196,8 @@ impl Vfp {
     }
 
     fn record_exception_bounce(&mut self, instruction: u32, status: u32) {
-        self.fpinst = instruction;
+        // VFP11 forces the bounced instruction condition to AL.
+        self.fpinst = (instruction & 0x0FFF_FFFF) | 0xE000_0000;
         self.fpexc &= !(FPEXC_EXCEPTION_STATUS | FPEXC_FP2V | FPEXC_VECITR);
         self.fpexc |= FPEXC_EX;
         if status & FPSCR_IOC != 0 {
@@ -894,8 +896,10 @@ impl Arm11Core {
             0 | 6 | 7 if enabled || privileged => {}
             1 => {
                 self.require_enabled(word)?;
-                if value & FPSCR_IDE != 0 {
-                    return Err(Error::Unimplemented("VFP input-denormal exception bounce"));
+                if value & FPSCR_UNSUPPORTED_TRAP_ENABLES != 0 {
+                    return Err(Error::Unimplemented(
+                        "VFP OFE/UFE/IDE/IXE exception support",
+                    ));
                 }
                 self.vfp.fpscr = value & FPSCR_WRITABLE;
             }
