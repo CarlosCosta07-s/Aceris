@@ -1089,7 +1089,11 @@ impl Arm11Core {
         if !bit(word, 25) && bit(word, 4) {
             let rs = bits(word, 11, 8);
             let rm = bits(word, 3, 0);
-            if rn == PC as u32 || rd == PC as u32 || rs == PC as u32 || rm == PC as u32 {
+            if rn == PC as u32
+                || rd == PC as u32
+                || rs == PC as u32
+                || rm == PC as u32
+            {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
                     word,
@@ -2953,7 +2957,10 @@ mod tests {
                 m.cpu.step(&mut m.mem),
                 Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
             ));
-            assert_eq!(m.cpu.regs, registers_before, "instruction {instruction:#010x}");
+            assert_eq!(
+                m.cpu.regs, registers_before,
+                "instruction {instruction:#010x}"
+            );
             assert_eq!(m.cpu.cpsr, status_before, "instruction {instruction:#010x}");
             assert_eq!(m.cpu.pc(), 0, "instruction {instruction:#010x}");
         }
@@ -2980,7 +2987,10 @@ mod tests {
                 m.cpu.step(&mut m.mem),
                 Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
             ));
-            assert_eq!(m.cpu.regs, registers_before, "instruction {instruction:#010x}");
+            assert_eq!(
+                m.cpu.regs, registers_before,
+                "instruction {instruction:#010x}"
+            );
             assert_eq!(m.cpu.cpsr, status_before, "instruction {instruction:#010x}");
             assert_eq!(m.cpu.pc(), 0, "instruction {instruction:#010x}");
         }
