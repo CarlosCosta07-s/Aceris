@@ -1970,6 +1970,51 @@ mod tests {
     }
 
     #[test]
+    fn immediate_branches_use_pc_plus_four_at_halfword_aligned_addresses() {
+        // BNE +2: PC is address + 4 (6), not Align(address + 4, 4).
+        let mut conditional_forward = Machine::with(0xD101, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xD101).unwrap();
+        });
+        conditional_forward.step();
+        assert_eq!(conditional_forward.cpu.pc(), 8);
+
+        // BNE -4 branches back to the instruction at address 2.
+        let mut conditional_backward = Machine::with(0xD1FE, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xD1FE).unwrap();
+        });
+        conditional_backward.step();
+        assert_eq!(conditional_backward.cpu.pc(), 2);
+
+        // A failed condition retires normally without changing CPSR.
+        let mut conditional_not_taken = Machine::with(0xD101, |cpu, mem| {
+            cpu.set_pc(2);
+            cpu.cpsr.set_flags(false, true, true, true);
+            mem.write16(2, 0xD101).unwrap();
+        });
+        let old_cpsr = conditional_not_taken.cpu.cpsr;
+        conditional_not_taken.step();
+        assert_eq!(conditional_not_taken.cpu.pc(), 4);
+        assert_eq!(conditional_not_taken.cpu.cpsr, old_cpsr);
+
+        // The same address + 4 base applies to an unconditional B.
+        let mut unconditional_forward = Machine::with(0xE001, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xE001).unwrap();
+        });
+        unconditional_forward.step();
+        assert_eq!(unconditional_forward.cpu.pc(), 8);
+
+        let mut unconditional_backward = Machine::with(0xE7FE, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xE7FE).unwrap();
+        });
+        unconditional_backward.step();
+        assert_eq!(unconditional_backward.cpu.pc(), 2);
+    }
+
+    #[test]
     fn unconditional_branch() {
         let mut m = Machine::new(&[0xE000]); // B +0 -> pc + 4
         m.step();
@@ -2059,6 +2104,34 @@ mod tests {
         assert_eq!(m.cpu.pc(), 8);
         assert_eq!(m.cpu.regs[14], 5, "return address 4 with the Thumb bit");
         assert!(m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn bl_and_blx_pairs_use_pc_plus_four_from_halfword_aligned_prefixes() {
+        let mut bl = Machine::with(0xF000, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xF000).unwrap();
+            mem.write16(4, 0xF802).unwrap();
+        });
+        bl.step();
+        assert_eq!((bl.cpu.regs[LR], bl.cpu.pc()), (6, 4));
+        bl.step();
+        assert_eq!(bl.cpu.pc(), 10);
+        assert_eq!(bl.cpu.regs[LR], 7);
+        assert!(bl.cpu.cpsr.thumb());
+
+        let mut blx = Machine::with(0xF000, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0xF000).unwrap();
+            mem.write16(4, 0xE802).unwrap();
+        });
+        blx.step();
+        assert_eq!((blx.cpu.regs[LR], blx.cpu.pc()), (6, 4));
+        blx.step();
+        // BLX immediate aligns the computed target down to a word boundary.
+        assert_eq!(blx.cpu.pc(), 8);
+        assert_eq!(blx.cpu.regs[LR], 7);
+        assert!(!blx.cpu.cpsr.thumb());
     }
 
     #[test]
