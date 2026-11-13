@@ -354,9 +354,14 @@ impl Arm11ProcessSession {
         self.scheduler.current_core().map(|core| core.regs)
     }
 
-    /// Updates one register in the currently running thread.
-    pub fn set_current_register(&mut self, index: usize, value: u32) -> bool {
-        let Some(core) = self.scheduler.current_core_mut() else {
+    /// Updates one register in a selected live thread context.
+    pub fn set_thread_register(
+        &mut self,
+        thread: ThreadId,
+        index: usize,
+        value: u32,
+    ) -> bool {
+        let Some(core) = self.scheduler.core_mut(thread) else {
             return false;
         };
         let Some(register) = core.regs.get_mut(index) else {
@@ -364,6 +369,14 @@ impl Arm11ProcessSession {
         };
         *register = value;
         true
+    }
+
+    /// Updates one register in the currently running thread.
+    pub fn set_current_register(&mut self, index: usize, value: u32) -> bool {
+        let Some(thread) = self.scheduler.current_thread_id() else {
+            return false;
+        };
+        self.set_thread_register(thread, index, value)
     }
 
     /// Creates the `srv:` service-manager endpoint in this process.
