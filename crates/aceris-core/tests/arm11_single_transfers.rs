@@ -116,10 +116,9 @@ fn doubleword_transfers_reject_writeback_aliases_and_overlapping_offsets() {
 #[test]
 fn strd_register_offset_allows_rm_to_alias_either_transfer_source() {
     // STRD r4,r5,[r1,r4] and STRD r4,r5,[r1,r5].
-    for (instruction, first, second) in [
-        (0xE181_40F4, 8, 0x5566_7788),
-        (0xE181_40F5, 0x1122_3344, 8),
-    ] {
+    for (instruction, first, second) in
+        [(0xE181_40F4, 8, 0x5566_7788), (0xE181_40F5, 0x1122_3344, 8)]
+    {
         let (mut cpu, mut memory) = machine(instruction);
         cpu.regs[4] = first;
         cpu.regs[5] = second;
