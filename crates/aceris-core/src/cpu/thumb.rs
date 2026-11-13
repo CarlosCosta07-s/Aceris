@@ -319,6 +319,9 @@ impl Arm11Core {
         }
 
         let base = self.regs[rn];
+        if base & 3 != 0 && self.cp15.alignment_fault_enabled() {
+            return Err(Error::InvalidAccess { addr: base });
+        }
         // Legacy ARMv6 multi-word transfers access Word[Align(Addr)].
         // Keep writeback based on the original (possibly unaligned) base.
         let mut addr = base & !3;
@@ -1366,6 +1369,36 @@ mod tests {
                 DATA + 9,
                 "STMIA writeback must use original base"
             );
+        }
+    }
+
+    #[test]
+    fn thumb_multiple_transfers_fault_on_unaligned_base_when_sctlr_requires_alignment() {
+        for control_bit in [1 << 22, 1 << 1] {
+            for half in [0xC806, 0xC006] {
+                let mut m = Machine::with(half, |cpu, mem| {
+                    cpu.regs[0] = DATA + 1;
+                    cpu.regs[1] = 0x1122_3344;
+                    cpu.regs[2] = 0x5566_7788;
+                    cpu.cp15
+                        .write(true, 0, 1, 0, 0, control_bit)
+                        .unwrap();
+                    mem.write32(DATA, 0xCAFE_BABE).unwrap();
+                    mem.write32(DATA + 4, 0xDEAD_BEEF).unwrap();
+                });
+                let old_regs = m.cpu.regs;
+                let old_first = m.mem.read32(DATA).unwrap();
+                let old_second = m.mem.read32(DATA + 4).unwrap();
+
+                assert!(matches!(
+                    m.cpu.step(&mut m.mem),
+                    Err(Error::InvalidAccess { addr }) if addr == DATA + 1
+                ));
+                assert_eq!(m.cpu.regs, old_regs);
+                assert_eq!(m.cpu.pc(), 0);
+                assert_eq!(m.mem.read32(DATA).unwrap(), old_first);
+                assert_eq!(m.mem.read32(DATA + 4).unwrap(), old_second);
+            }
         }
     }
 
