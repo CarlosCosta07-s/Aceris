@@ -681,3 +681,13 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - Nenhuma semântica nova foi adicionada por essa refatoração; ela remove a duplicação entre os dois estados e mantém os testes A32/Thumb existentes.
 - Workflow `43357747003` concluiu com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
 - Não foi criada branch e nenhuma implementação de terceiros foi consultada.
+
+## Thumb — cobertura adicional de SP, PC e BKPT (13/11/2026)
+
+- `a1330a9` — acrescenta testes para MOV/ADD/CMP com SP como operando alto e BX/BLX com SP como registrador-alvo. O módulo passou a 84 testes.
+- `bf7c0e9` — testa o evento BKPT com os imediatos `0xA5` e `0xFF`, avanço do PC em dois bytes e preservação dos registradores gerais, flags e modo. O dispatcher da sessão já converte `StepEvent::Breakpoint` em `Arm11RunStopReason::Breakpoint`, com teste integrado existente em `session.rs`.
+- `28b26e0` — fortalece o teste de BKPT para comparar o CPSR inteiro, além dos registradores gerais.
+- `9b6f41a` — estende a regressão de escrita no PC com ADD high-register para validar leitura de PC+4, branch sem interworking, manutenção do estado Thumb e flags inalteradas.
+- O módulo Thumb contém agora 85 declarações `#[test]`. Não foi alterado o caminho de execução de produção neste conjunto: as mudanças são regressões de CPU.
+- CI do commit `9b6f41a0abc63eba76c2644198679d9f0d64c00b`: workflow `43359531774`; no momento da atualização, Ubuntu, Windows e build Android ARM64 concluíram com sucesso, enquanto macOS ainda executava `cargo test --workspace`. Não declarar a matriz concluída até o término desse job.
+- Referência: ARM Architecture Reference Manual, ARM DDI 0100I, seção A6.4.2 e descrição de ADD (4), páginas A6-10 a A7-9. O formato permite registradores altos e mantém as flags inalteradas, exceto CMP. Nenhuma implementação de emulador de terceiros foi consultada.
