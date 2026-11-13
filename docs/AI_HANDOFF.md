@@ -672,3 +672,12 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - A implementação Thumb continua parcial: a matriz de instruções ARMv6/ARMv6K precisa de auditoria independente por encoding, efeitos colaterais, comportamento PC e todas as condições UNPREDICTABLE/UNDEFINED.
 - A verificação atual não comprova execução de jogos nem substitui testes de conformidade independentes do interpretador.
 - Não reabrir as correções anteriores de alinhamento, exceto diante de regressão reproduzível ou nova evidência arquitetural.
+
+
+## Compartilhamento dos helpers de meia palavra entre A32 e Thumb (13/11/2026)
+
+- `32fa96d` — refatora `halfword_transfer` A32 para usar `read_armv6_halfword` e `write_armv6_halfword`, os mesmos helpers usados pelo interpretador Thumb.
+- A verificação de `SCTLR.U/A`, rejeição determinística da meia palavra ímpar no modelo legado e pré-validação de atributos Normal passa a ter uma única implementação para A32/Thumb. As transferências de byte não são afetadas; os caminhos `LDRD/STRD` continuam com suas próprias regras de alinhamento.
+- Nenhuma semântica nova foi adicionada por essa refatoração; ela remove a duplicação entre os dois estados e mantém os testes A32/Thumb existentes.
+- Workflow `43357747003` concluiu com sucesso: Rustfmt, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado.
+- Não foi criada branch e nenhuma implementação de terceiros foi consultada.
