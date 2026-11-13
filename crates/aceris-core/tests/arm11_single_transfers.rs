@@ -139,7 +139,7 @@ fn pc_relative_literal_halfword_load_without_writeback_remains_valid() {
 fn doubleword_transfers_reject_writeback_aliases_and_overlapping_offsets() {
     // LDRD r4,r5,[r1,r4] ; LDRD r4,r5,[r1,r5] ;
     // LDRD r4,r5,[r5,#4]! ; STRD r4,r5,[r5,#4]!.
-    // The final form uses reserved P=0,W=1.
+    // P=0,W=1 is CONSTRAINED UNPREDICTABLE; this model rejects it.
     for instruction in [
         0xE181_40D4,
         0xE181_40D5,
