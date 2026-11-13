@@ -355,12 +355,7 @@ impl Arm11ProcessSession {
     }
 
     /// Updates one register in a selected live thread context.
-    pub fn set_thread_register(
-        &mut self,
-        thread: ThreadId,
-        index: usize,
-        value: u32,
-    ) -> bool {
+    pub fn set_thread_register(&mut self, thread: ThreadId, index: usize, value: u32) -> bool {
         let Some(core) = self.scheduler.core_mut(thread) else {
             return false;
         };
