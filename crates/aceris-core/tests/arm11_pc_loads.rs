@@ -59,6 +59,22 @@ fn word_pc_loads_still_interwork_to_thumb_targets() {
 }
 
 #[test]
+fn byte_load_rejects_pc_as_the_destination_even_for_a_thumb_aligned_value() {
+    let instruction = 0xE5D1_F000; // LDRB pc, [r1]
+    let (mut cpu, mut memory) = machine(instruction, 0x41);
+    let registers_before = cpu.regs;
+    let data_before = memory.read32(DATA).unwrap();
+
+    assert!(matches!(
+        cpu.step(&mut memory),
+        Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+    ));
+    assert_eq!(cpu.regs, registers_before);
+    assert_eq!(memory.read32(DATA).unwrap(), data_before);
+    assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
+}
+
+#[test]
 fn halfword_and_signed_byte_loads_reject_pc_as_the_destination() {
     // LDRH pc,[r1] ; LDRSB pc,[r1] ; LDRSH pc,[r1].
     for instruction in [0xE1D1_F0B0, 0xE1D1_F0D0, 0xE1D1_F0F0] {
