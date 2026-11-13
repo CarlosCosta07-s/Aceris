@@ -95,13 +95,13 @@ pub struct GspInterruptRelayReport {
     pub error_code: u8,
 }
 
-fn message_words(message: IpcMessage<'_>) -> Result<Vec<u32>> {
+fn message_words(message: IpcMessage<'_>) -> Vec<u32> {
     let word_count = message.header().expected_word_count();
     let mut words = Vec::with_capacity(word_count);
     words.push(message.header().raw());
     words.extend_from_slice(message.normal_parameters());
     words.extend_from_slice(message.translation_words());
-    Ok(words)
+    words
 }
 
 fn gsp_service_result_code(error: GspServiceError) -> u32 {
@@ -622,11 +622,11 @@ impl System {
         service_handle: u32,
         client_id: Option<u8>,
         shared_memory_handle: Option<u32>,
-        event_handle: Option<u32>,
+        _event_handle: Option<u32>,
         flags: u32,
         message: IpcMessage<'_>,
     ) -> Result<Vec<u32>> {
-        let request = match decode_gsp_ipc_request(&message_words(message)?) {
+        let request = match decode_gsp_ipc_request(&message_words(message)) {
             Ok(request) => request,
             Err(_) => {
                 return Ok(vec![
@@ -649,14 +649,12 @@ impl System {
                     .to_vec());
                 }
 
-                let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
-                    "ARM11 process session is unavailable",
-                ))?;
-                let memory_handle = match session.create_memory_block(
-                    GSP_SHARED_MEMORY_SIZE as u32,
-                    3,
-                    3,
-                ) {
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                let memory_handle =
+                    match session.create_memory_block(GSP_SHARED_MEMORY_SIZE as u32, 3, 3) {
                     Ok(handle) => handle,
                     Err(_) => {
                         return Ok(GspRegisterInterruptRelayQueueResponse::error(
@@ -687,10 +685,7 @@ impl System {
                 let assigned_client_id = match registration {
                     Ok(client_id) => client_id,
                     Err(error) => {
-                        let _ = session.unmap_memory_block(
-                            memory_handle,
-                            GSP_SHARED_MEMORY_BASE,
-                        );
+                        let _ = session.unmap_memory_block(memory_handle, GSP_SHARED_MEMORY_BASE);
                         let _ = session.close_handle(memory_handle);
                         return Ok(GspRegisterInterruptRelayQueueResponse::error(
                             gsp_service_result_code(error),
@@ -710,10 +705,7 @@ impl System {
                     .is_err()
                 {
                     let _ = self.gsp_service.unregister_client(assigned_client_id);
-                    let _ = session.unmap_memory_block(
-                        memory_handle,
-                        GSP_SHARED_MEMORY_BASE,
-                    );
+                    let _ = session.unmap_memory_block(memory_handle, GSP_SHARED_MEMORY_BASE);
                     let _ = session.close_handle(memory_handle);
                     return Ok(GspRegisterInterruptRelayQueueResponse::error(
                         RESULT_INVALID_HANDLE,
@@ -749,10 +741,8 @@ impl System {
                         match self.gsp_service.unregister_client(client_id) {
                             Ok(_) => {
                                 if let Some(session) = self.ncsd_session.as_mut() {
-                                    let _ = session.unmap_memory_block(
-                                        memory_handle,
-                                        GSP_SHARED_MEMORY_BASE,
-                                    );
+                                    let _ = session
+                                        .unmap_memory_block(memory_handle, GSP_SHARED_MEMORY_BASE);
                                     let _ = session.close_handle(memory_handle);
                                     let _ = session.set_gsp_session_registration(
                                         service_handle,
@@ -776,10 +766,12 @@ impl System {
             }
             GspIpcRequest::TryAcquireRight { process_handle: _ } => {
                 let result = match client_id {
-                    Some(client_id) => match self.gsp_service.try_acquire_rendering_right(client_id) {
-                        Ok(true) => 0,
-                        Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
-                        Err(error) => gsp_service_result_code(error),
+                    Some(client_id) => {
+                        match self.gsp_service.try_acquire_rendering_right(client_id) {
+                            Ok(true) => 0,
+                            Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
+                            Err(error) => gsp_service_result_code(error),
+                        }
                     },
                     None => RESULT_INVALID_HANDLE,
                 };
@@ -793,12 +785,14 @@ impl System {
                 process_handle: _,
             } => {
                 let result = match client_id {
-                    Some(client_id) => match self.gsp_service.try_acquire_rendering_right(client_id) {
-                        Ok(true) => 0,
-                        // Waiting-thread suspension and ownership handoff are
-                        // deliberately not faked by this first IPC milestone.
-                        Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
-                        Err(error) => gsp_service_result_code(error),
+                    Some(client_id) => {
+                        match self.gsp_service.try_acquire_rendering_right(client_id) {
+                            Ok(true) => 0,
+                            // Waiting-thread suspension and ownership handoff are
+                            // deliberately not faked by this first IPC milestone.
+                            Ok(false) => RESULT_GSP_RENDERING_RIGHT_BUSY,
+                            Err(error) => gsp_service_result_code(error),
+                        }
                     },
                     None => RESULT_INVALID_HANDLE,
                 };
