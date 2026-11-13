@@ -73,3 +73,55 @@ fn user_mode_cannot_read_spsr() {
     assert_eq!(cpu.cpsr.mode(), Psr::USER_MODE);
     assert_eq!(cpu.pc(), 0);
 }
+
+#[test]
+fn mrs_msr_reject_pc_operands_and_reserved_misc_encodings_atomically() {
+    for instruction in [
+        0xE10F_F000, // MRS pc, CPSR
+        0xE12F_F00F, // MSR CPSR_fsxc, pc
+        0xE16F_F00F, // MSR SPSR_fsxc, pc
+        0xE10F_00F0, // MRS with reserved low bits
+        0xE12F_F010, // MSR register form with reserved bit[4]
+    ] {
+        let mut cpu = Arm11Core::new();
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        cpu.regs[0] = 0x1357_9BDF;
+        cpu.regs[15] = 0;
+        let registers_before = cpu.regs;
+        let status_before = cpu.cpsr;
+        let saved_before = cpu.saved_program_status();
+
+        assert!(matches!(
+            execute(&mut cpu, instruction),
+            Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+        ), "{instruction:#010x}");
+
+        assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
+        assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
+        assert_eq!(cpu.saved_program_status(), saved_before, "{instruction:#010x}");
+        assert_eq!(cpu.pc(), 0, "{instruction:#010x}");
+    }
+}
+
+#[test]
+fn partial_spsr_msr_requires_an_initialized_spsr_but_full_write_initializes_it() {
+    let mut cpu = Arm11Core::new();
+    cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+    cpu.regs[0] = 0xA000_0013;
+    let registers_before = cpu.regs;
+    let status_before = cpu.cpsr;
+
+    assert!(matches!(
+        execute(&mut cpu, 0xE168_F000), // MSR SPSR_f, r0
+        Err(Error::Unimplemented(_))
+    ));
+    assert_eq!(cpu.regs, registers_before);
+    assert_eq!(cpu.cpsr, status_before);
+    assert_eq!(cpu.saved_program_status(), None);
+    assert_eq!(cpu.pc(), 0);
+
+    execute(&mut cpu, 0xE16F_F000).unwrap(); // MSR SPSR_fsxc, r0
+    assert_eq!(cpu.saved_program_status(), Some(Psr(0xA000_0013)));
+    execute(&mut cpu, 0xE14F_1000).unwrap(); // MRS r1, SPSR
+    assert_eq!(cpu.regs[1], 0xA000_0013);
+}
