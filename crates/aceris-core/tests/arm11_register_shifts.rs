@@ -212,3 +212,44 @@ fn arm_register_shift_by_zero_preserves_carry_and_value() {
         }
     }
 }
+#[test]
+fn arm_immediate_shift_reads_pc_as_instruction_address_plus_eight() {
+    const BASE: u32 = 0x8000_0000;
+    const AMOUNTS: [u32; 5] = [0, 1, 2, 15, 31];
+    let pc_operand = BASE.wrapping_add(8);
+
+    for kind in Shift::ALL {
+        for amount in AMOUNTS {
+            for carry_in in [false, true] {
+                for overflow_in in [false, true] {
+                    let instruction =
+                        0xE1B0_400F | (amount << 7) | (kind.encoding() << 5); // MOVS r4, pc, shift #imm.
+                    let mut memory = FlatMemory::new(BASE, 4);
+                    memory.write32(BASE, instruction).unwrap();
+
+                    let mut cpu = Arm11Core::new();
+                    cpu.set_pc(BASE);
+                    cpu.cpsr.set_flags(false, false, carry_in, overflow_in);
+                    cpu.step(&mut memory).unwrap();
+
+                    let (expected, carry_out) =
+                        reference_immediate_shift(kind, pc_operand, amount, carry_in);
+                    assert_eq!(
+                        cpu.regs[4], expected,
+                        "{kind:?} #{amount} with PC={pc_operand:#010x}"
+                    );
+                    assert_eq!(
+                        flags(&cpu),
+                        (
+                            expected >> 31 != 0,
+                            expected == 0,
+                            carry_out,
+                            overflow_in
+                        ),
+                        "{kind:?} #{amount} with PC={pc_operand:#010x}, carry_in={carry_in}"
+                    );
+                }
+            }
+        }
+    }
+}
