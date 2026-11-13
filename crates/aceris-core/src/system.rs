@@ -1460,9 +1460,26 @@ impl System {
                             .memory_fill()
                             .expect("command ID was checked immediately above");
                         if client_has_rendering_right {
-                            self.dispatch_gsp_memory_fill(arguments).map(|completed| {
-                                report.memory_fills_completed =
-                                    report.memory_fills_completed.saturating_add(completed);
+                            self.dispatch_gsp_memory_fill(arguments).and_then(|completed_mask| {
+                                report.memory_fills_completed = report
+                                    .memory_fills_completed
+                                    .saturating_add(completed_mask.count_ones() as u8);
+                                let completion_interrupt = if completed_mask & 1 != 0 {
+                                    Some(GspInterruptId::Psc0)
+                                } else if completed_mask & 2 != 0 {
+                                    Some(GspInterruptId::Psc1)
+                                } else {
+                                    None
+                                };
+                                if let Some(interrupt) = completion_interrupt {
+                                    self.dispatch_gsp_interrupt(interrupt).map(|_| ()).map_err(
+                                        |error| {
+                                            GspGxCommandQueueError::ProcessMemory(error.to_string())
+                                        },
+                                    )
+                                } else {
+                                    Ok(())
+                                }
                             })
                         } else {
                             Ok(())
@@ -1511,15 +1528,16 @@ impl System {
         let first = self.prepare_gsp_memory_fill_buffer(fill.buffers[0])?;
         let second = self.prepare_gsp_memory_fill_buffer(fill.buffers[1])?;
 
-        let mut completed = 0u8;
-        for prepared in [first, second].into_iter().flatten() {
-            let (physical_address, bytes) = prepared;
-            self.physical_memory
-                .write(physical_address, &bytes)
-                .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
-            completed = completed.saturating_add(1);
+        let mut completed_mask = 0u8;
+        for (index, prepared) in [first, second].into_iter().enumerate() {
+            if let Some((physical_address, bytes)) = prepared {
+                self.physical_memory
+                    .write(physical_address, &bytes)
+                    .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+                completed_mask |= 1 << index;
+            }
         }
-        Ok(completed)
+        Ok(completed_mask)
     }
 
     fn prepare_gsp_memory_fill_buffer(
