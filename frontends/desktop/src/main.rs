@@ -7,7 +7,7 @@ mod window;
 
 use aceris_common::{NAME, VERSION};
 use aceris_core::{
-    System,
+    DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     video::{DualScreenDisplay, intro},
 };
 use std::{
@@ -64,6 +64,41 @@ fn dump_lcd(display: &DualScreenDisplay, dir: &Path) -> io::Result<()> {
     ] {
         fs::write(dir.join(name), surface.to_png())?;
     }
+    Ok(())
+}
+
+/// Loads the same NoCrypto NCSD execution path exposed by the Android frontend.
+fn load_game(system: &mut System, game: &Path) -> Result<(), String> {
+    let format = system
+        .load_ncsd_no_crypto_file(game)
+        .map_err(|err| format!("could not prepare {}: {err}", game.display()))?;
+
+    println!(
+        "Cartridge prepared: {format:?}; ARM11 entry PC={:#010X}, CPSR={:#010X}",
+        system.cpu().pc(),
+        system.cpu().cpsr.0
+    );
+    Ok(())
+}
+
+/// Runs one bounded frame and prints the first frame's CPU/GPU/LCD diagnostics.
+fn run_frame_with_diagnostics(system: &mut System) -> Result<(), String> {
+    let report = system
+        .run_frame_with_budget(DEFAULT_FRAME_INSTRUCTION_BUDGET)
+        .map_err(|err| format!("emulation stopped: {err}"))?;
+
+    if report.frame_number == 1 {
+        println!(
+            "First frame: instructions={}, stop={:?}, PC={:#010X}, CPSR={:#010X}, GPU lists={}, LCD screens={}",
+            report.instructions_executed,
+            report.cpu_stop_reason,
+            system.cpu().pc(),
+            system.cpu().cpsr.0,
+            report.gpu_command_lists_submitted,
+            report.lcd_screens_scanned_out
+        );
+    }
+
     Ok(())
 }
 
@@ -127,9 +162,7 @@ fn run_windowed(
     let Some(game) = game else {
         return idle_on_logo(&mut window, scale, frame_time);
     };
-    system
-        .load(game)
-        .map_err(|err| format!("could not load {}: {err}", game.display()))?;
+    load_game(system, game)?;
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
@@ -137,9 +170,7 @@ fn run_windowed(
                 return Ok(());
             }
         }
-        system
-            .run_frame()
-            .map_err(|err| format!("emulation stopped: {err}"))?;
+        run_frame_with_diagnostics(system)?;
         window
             .present(&window::compose_bgrx(system.display(), scale))
             .map_err(|err| format!("could not draw the frame: {err}"))?;
@@ -188,12 +219,12 @@ fn run(options: RunOptions) -> ExitCode {
             return ExitCode::FAILURE;
         }
     } else if let Some(game) = &options.game {
-        if let Err(err) = system.load(game) {
-            eprintln!("error: could not load {}: {err}", game.display());
+        if let Err(message) = load_game(&mut system, game) {
+            eprintln!("error: {message}");
             return ExitCode::FAILURE;
         }
-        if let Err(err) = system.run_frame() {
-            eprintln!("error: emulation stopped: {err}");
+        if let Err(message) = run_frame_with_diagnostics(&mut system) {
+            eprintln!("error: {message}");
             return ExitCode::FAILURE;
         }
     }
