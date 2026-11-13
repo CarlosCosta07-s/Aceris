@@ -132,3 +132,88 @@ fn partial_spsr_msr_requires_an_initialized_spsr_but_full_write_initializes_it()
     execute(&mut cpu, 0xE14F_1000).unwrap(); // MRS r1, SPSR
     assert_eq!(cpu.regs[1], 0xA000_0013);
 }
+#[test]
+fn exception_modes_preserve_their_banked_registers_and_independent_spsrs() {
+    let user_r8_r12 = [
+        0x0808_0008,
+        0x0809_0009,
+        0x080A_000A,
+        0x080B_000B,
+        0x080C_000C,
+    ];
+    let user_sp_lr = [0x1000_0013, 0x1000_0014];
+    let fiq_r8_r14 = [
+        0xF008_0008,
+        0xF009_0009,
+        0xF00A_000A,
+        0xF00B_000B,
+        0xF00C_000C,
+        0xF00D_000D,
+        0xF00E_000E,
+    ];
+    let modes = [
+        Psr::FIQ_MODE,
+        Psr::IRQ_MODE,
+        Psr::SUPERVISOR_MODE,
+        Psr::ABORT_MODE,
+        Psr::UNDEFINED_MODE,
+    ];
+
+    let mut cpu = Arm11Core::new();
+    cpu.regs[8..13].copy_from_slice(&user_r8_r12);
+    cpu.regs[13] = user_sp_lr[0];
+    cpu.regs[14] = user_sp_lr[1];
+
+    let mut expected_sp_lr = [[0; 2]; 5];
+    let mut expected_spsr = [Psr(0); 5];
+
+    for (index, mode) in modes.iter().copied().enumerate() {
+        cpu.switch_mode(mode).unwrap();
+        expected_spsr[index] = Psr(Psr::USER_MODE | (1 << (28 - index)));
+        cpu.regs[0] = expected_spsr[index].0;
+        execute(&mut cpu, 0xE16F_F000).unwrap(); // MSR SPSR_fsxc, r0
+
+        if mode == Psr::FIQ_MODE {
+            cpu.regs[8..15].copy_from_slice(&fiq_r8_r14);
+        } else {
+            assert_eq!(&cpu.regs[8..13], &user_r8_r12);
+            expected_sp_lr[index] = [
+                0x2000_0013 + (index as u32 * 0x100),
+                0x2000_0014 + (index as u32 * 0x100),
+            ];
+            cpu.regs[13] = expected_sp_lr[index][0];
+            cpu.regs[14] = expected_sp_lr[index][1];
+        }
+    }
+
+    cpu.switch_mode(Psr::USER_MODE).unwrap();
+    assert_eq!(&cpu.regs[8..13], &user_r8_r12);
+    assert_eq!([cpu.regs[13], cpu.regs[14]], user_sp_lr);
+    assert_eq!(cpu.saved_program_status(), None);
+
+    cpu.switch_mode(Psr::SYSTEM_MODE).unwrap();
+    assert_eq!(&cpu.regs[8..13], &user_r8_r12);
+    assert_eq!([cpu.regs[13], cpu.regs[14]], user_sp_lr);
+    assert_eq!(cpu.saved_program_status(), None);
+
+    for (index, mode) in modes.iter().copied().enumerate() {
+        cpu.switch_mode(mode).unwrap();
+        if mode == Psr::FIQ_MODE {
+            assert_eq!(&cpu.regs[8..15], &fiq_r8_r14);
+        } else {
+            assert_eq!(&cpu.regs[8..13], &user_r8_r12);
+            assert_eq!(
+                [cpu.regs[13], cpu.regs[14]],
+                expected_sp_lr[index],
+                "mode {mode:#x}"
+            );
+        }
+
+        execute(&mut cpu, 0xE14F_1000).unwrap(); // MRS r1, SPSR
+        assert_eq!(
+            cpu.regs[1],
+            expected_spsr[index].0,
+            "SPSR bank for mode {mode:#x}"
+        );
+    }
+}
