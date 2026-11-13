@@ -2001,6 +2001,23 @@ impl Arm11Core {
             word,
         };
 
+        // ARMv6 U=1 permits unaligned single-halfword accesses. In legacy
+        // U=0 mode they are UNPREDICTABLE; SCTLR.A forces an alignment fault
+        // in either mode. Byte loads such as LDRSB have no alignment check.
+        let halfword_access = matches!(
+            (load, bits(word, 6, 5)),
+            (true, 0b01 | 0b11) | (false, 0b01)
+        );
+        if halfword_access && addr & 1 != 0 {
+            let sctlr = self.cp15.sctlr();
+            if sctlr & (1 << 1) != 0 {
+                return Err(Error::InvalidAccess { addr });
+            }
+            if sctlr & (1 << 22) == 0 {
+                return Err(undefined);
+            }
+        }
+
         match (load, bits(word, 6, 5)) {
             (true, 0b01) => {
                 let value = u32::from(self.read_data_u16(bus, addr)?);
@@ -2847,6 +2864,85 @@ mod tests {
         m.cpu.regs[0] = 0xFFFF_1234;
         m.step();
         assert_eq!(m.mem.read32(DATA).unwrap(), 0xDEAD_1234);
+    }
+
+    #[test]
+    fn armv6_unaligned_halfword_loads_and_stores_follow_u_a_model() {
+        for big_endian in [false, true] {
+            let mut load = machine_with_data(&[0xE1D1_00B0]); // LDRH r0,[r1]
+            load.mem.write32(DATA, 0x3322_11AA).unwrap();
+            load.cpu.regs[1] = DATA + 1;
+            load.cpu.cpsr.set_big_endian(big_endian);
+            load.cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            load.step();
+            assert_eq!(load.cpu.regs[0], if big_endian { 0x1122 } else { 0x2211 });
+
+            let mut store = Machine::new(&[0xE1C1_00B0]); // STRH r0,[r1]
+            store.cpu.regs[0] = 0xA1B2;
+            store.cpu.regs[1] = DATA + 1;
+            store.cpu.cpsr.set_big_endian(big_endian);
+            store
+                .cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, 1 << 22)
+                .unwrap();
+            store.mem.write32(DATA, 0x3322_11AA).unwrap();
+            store.step();
+
+            let expected = if big_endian { [0xA1, 0xB2] } else { [0xB2, 0xA1] };
+            assert_eq!(store.mem.read8(DATA).unwrap(), 0xAA);
+            assert_eq!(store.mem.read8(DATA + 1).unwrap(), expected[0]);
+            assert_eq!(store.mem.read8(DATA + 2).unwrap(), expected[1]);
+            assert_eq!(store.mem.read8(DATA + 3).unwrap(), 0x33);
+        }
+    }
+
+    #[test]
+    fn legacy_unaligned_halfword_transfers_are_rejected_without_side_effects() {
+        let mut load = Machine::new(&[0xE1F1_00B2]); // LDRH r0,[r1,#2]!
+        load.cpu.regs[0] = 0xCAFE_BABE;
+        load.cpu.regs[1] = DATA + 1;
+        load.mem.write32(DATA, 0x4433_2211).unwrap();
+        assert!(matches!(
+            load.cpu.step(&mut load.mem),
+            Err(Error::UndefinedInstruction { pc: 0, word: 0xE1F1_00B2 })
+        ));
+        assert_eq!(load.cpu.regs[0], 0xCAFE_BABE);
+        assert_eq!(load.cpu.regs[1], DATA + 1);
+        assert_eq!(load.mem.read32(DATA).unwrap(), 0x4433_2211);
+
+        let mut store = Machine::new(&[0xE1E1_00B2]); // STRH r0,[r1,#2]!
+        store.cpu.regs[0] = 0xA1B2;
+        store.cpu.regs[1] = DATA + 1;
+        store.mem.write32(DATA, 0x4433_2211).unwrap();
+        assert!(matches!(
+            store.cpu.step(&mut store.mem),
+            Err(Error::UndefinedInstruction { pc: 0, word: 0xE1E1_00B2 })
+        ));
+        assert_eq!(store.cpu.regs[1], DATA + 1);
+        assert_eq!(store.mem.read32(DATA).unwrap(), 0x4433_2211);
+    }
+
+    #[test]
+    fn alignment_check_faults_unaligned_halfword_store_before_writeback_or_memory() {
+        let mut m = Machine::new(&[0xE1E1_00B2]); // STRH r0,[r1,#2]!
+        m.cpu.regs[0] = 0xA1B2;
+        m.cpu.regs[1] = DATA + 1;
+        m.cpu
+            .cp15_mut()
+            .write(true, 0, 1, 0, 0, (1 << 22) | (1 << 1))
+            .unwrap();
+        m.mem.write32(DATA, 0x4433_2211).unwrap();
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::InvalidAccess { addr }) if addr == DATA + 3
+        ));
+        assert_eq!(m.cpu.regs[1], DATA + 1);
+        assert_eq!(m.mem.read32(DATA).unwrap(), 0x4433_2211);
     }
 
     #[test]
