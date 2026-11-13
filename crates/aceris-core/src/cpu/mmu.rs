@@ -175,9 +175,7 @@ impl DescriptorMemoryAttributes {
             (1, 0) => (MemoryType::Normal, self.shareable, 0, 0),
             (1, 3) => (MemoryType::Normal, self.shareable, 1, 1),
             (2, 0) => (MemoryType::Device, false, 0, 0),
-            (4..=7, policy) => {
-                (MemoryType::Normal, self.shareable, policy, self.tex & 3)
-            }
+            (4..=7, policy) => (MemoryType::Normal, self.shareable, policy, self.tex & 3)
             _ => (MemoryType::Reserved, false, 0, 0),
         };
         MemoryAttributes {
@@ -188,7 +186,6 @@ impl DescriptorMemoryAttributes {
         }
     }
 }
-
 
 #[derive(Clone, Copy)]
 enum FaultKind {
@@ -474,128 +471,174 @@ fn walk_page_tables<B: Bus + ?Sized>(
         legacy,
         descriptor_attributes,
     ) = match l1 & 3 {
-            0b10 if params.xp => {
-                let supersection = bit(l1, 18);
-                let address_mask = if supersection {
-                    0xFF00_0000
-                } else {
-                    0xFFF0_0000
+        0b10 if params.xp => {
+            let supersection = bit(l1, 18);
+            let address_mask = if supersection {
+                0xFF00_0000
+            } else {
+                0xFFF0_0000
+            };
+            let physical = if supersection {
+                (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
+            } else {
+                (l1 & 0xFFF0_0000) | (va & 0x000F_FFFF)
+            };
+            (
+                if supersection { 0 } else { bits(l1, 8, 5) },
+                [bits(l1, 11, 10) as u8; 4],
+                0,
+                bits(l1, 15, 15) != 0,
+                bit(l1, 4),
+                physical,
+                !bit(l1, 17),
+                address_mask,
+                true,
+                false,
+                DescriptorMemoryAttributes {
+                    tex: bits(l1, 14, 12) as u8,
+                    cacheable: bit(l1, 3),
+                    bufferable: bit(l1, 2),
+                    shareable: bit(l1, 16),
+                },
+            )
+        }
+        0b10 => {
+            // Legacy section descriptors have one AP field for the full 1 MiB.
+            let ap = bits(l1, 11, 10) as u8;
+            let address_mask = 0xFFF0_0000;
+            (
+                bits(l1, 8, 5),
+                [ap; 4],
+                0,
+                false,
+                false,
+                (l1 & address_mask) | (va & !address_mask),
+                true,
+                address_mask,
+                true,
+                true,
+                DescriptorMemoryAttributes {
+                    tex: bits(l1, 14, 12) as u8,
+                    cacheable: bit(l1, 3),
+                    bufferable: bit(l1, 2),
+                    shareable: false,
+                },
+            )
+        }
+        0b01 => {
+            let domain = bits(l1, 8, 5);
+            let l2_address = (l1 & 0xFFFF_FC00) | (((va >> 12) & 0xFF) << 2);
+            let l2 = bus.read32(l2_address)?;
+            let descriptor_type = l2 & 3;
+
+            // In the ARMv6 XP=1 format, L2 type 0b11 is reserved.
+            // It is an extended-small-page descriptor only in the
+            // backwards-compatible XP=0 format handled below.
+            if descriptor_type == 0 || (params.xp && descriptor_type == 0b11) {
+                let page_fault = match fault(FaultKind::Translation, false, domain, va, access)
+                {
+                    Walk::Fault(value) => value,
+                    Walk::Mapped(_) => unreachable!(),
                 };
-                let physical = if supersection {
-                    (l1 & 0xFF00_0000) | (va & 0x00FF_FFFF)
-                } else {
-                    (l1 & 0xFFF0_0000) | (va & 0x000F_FFFF)
-                };
-                (
-                    if supersection { 0 } else { bits(l1, 8, 5) },
-                    [bits(l1, 11, 10) as u8; 4],
-                    0,
-                    bits(l1, 15, 15) != 0,
-                    bit(l1, 4),
-                    physical,
-                    !bit(l1, 17),
-                    address_mask,
-                    true,
-                    false,
-                    DescriptorMemoryAttributes {
-                        tex: bits(l1, 14, 12) as u8,
-                        cacheable: bit(l1, 3),
-                        bufferable: bit(l1, 2),
-                        shareable: bit(l1, 16),
-                    },
-                )
+                return Ok(PageWalk::Fault(page_fault));
             }
-            0b10 => {
-                // Legacy section descriptors have one AP field for the full 1 MiB.
-                let ap = bits(l1, 11, 10) as u8;
-                let address_mask = 0xFFF0_0000;
+
+            if params.xp {
+                if descriptor_type == 0b01 {
+                    (
+                        domain,
+                        [bits(l2, 5, 4) as u8; 4],
+                        0,
+                        bits(l2, 9, 9) != 0,
+                        bit(l2, 15),
+                        (l2 & 0xFFFF_0000) | (va & 0xFFFF),
+                        !bit(l2, 11),
+                        0xFFFF_0000,
+                        false,
+                        false,
+                        DescriptorMemoryAttributes {
+                            tex: bits(l2, 14, 12) as u8,
+                            cacheable: bit(l2, 3),
+                            bufferable: bit(l2, 2),
+                            shareable: bit(l2, 10),
+                        },
+                    )
+                } else {
+                    (
+                        domain,
+                        [bits(l2, 5, 4) as u8; 4],
+                        0,
+                        bits(l2, 9, 9) != 0,
+                        descriptor_type == 0b11,
+                        (l2 & 0xFFFF_F000) | (va & 0xFFF),
+                        !bit(l2, 11),
+                        0xFFFF_F000,
+                        false,
+                        false,
+                        DescriptorMemoryAttributes {
+                            tex: bits(l2, 8, 6) as u8,
+                            cacheable: bit(l2, 3),
+                            bufferable: bit(l2, 2),
+                            shareable: bit(l2, 10),
+                        },
+                    )
+                }
+            } else if descriptor_type == 0b11 {
+                // Backwards-compatible extended-small-page descriptor.
+                // In a coarse table this maps one 4 KiB page and uses a
+                // single AP field; the 1 KiB extended subpage form requires
+                // a fine table, which is not implemented by this MMU yet.
+                let ap = bits(l2, 5, 4) as u8;
                 (
-                    bits(l1, 8, 5),
+                    domain,
                     [ap; 4],
                     0,
                     false,
                     false,
-                    (l1 & address_mask) | (va & !address_mask),
+                    (l2 & 0xFFFF_F000) | (va & 0xFFF),
                     true,
-                    address_mask,
-                    true,
+                    0xFFFF_F000,
+                    false,
                     true,
                     DescriptorMemoryAttributes {
-                        tex: bits(l1, 14, 12) as u8,
-                        cacheable: bit(l1, 3),
-                        bufferable: bit(l1, 2),
+                        tex: bits(l2, 8, 6) as u8,
+                        cacheable: bit(l2, 3),
+                        bufferable: bit(l2, 2),
                         shareable: false,
                     },
                 )
-            }
-            0b01 => {
-                let domain = bits(l1, 8, 5);
-                let l2_address = (l1 & 0xFFFF_FC00) | (((va >> 12) & 0xFF) << 2);
-                let l2 = bus.read32(l2_address)?;
-                let descriptor_type = l2 & 3;
-
-                // In the ARMv6 XP=1 format, L2 type 0b11 is reserved.
-                // It is an extended-small-page descriptor only in the
-                // backwards-compatible XP=0 format handled below.
-                if descriptor_type == 0 || (params.xp && descriptor_type == 0b11) {
-                    let page_fault = match fault(FaultKind::Translation, false, domain, va, access)
-                    {
-                        Walk::Fault(value) => value,
-                        Walk::Mapped(_) => unreachable!(),
-                    };
-                    return Ok(PageWalk::Fault(page_fault));
-                }
-
-                if params.xp {
-                    if descriptor_type == 0b01 {
-                        (
-                            domain,
-                            [bits(l2, 5, 4) as u8; 4],
-                            0,
-                            bits(l2, 9, 9) != 0,
-                            bit(l2, 15),
-                            (l2 & 0xFFFF_0000) | (va & 0xFFFF),
-                            !bit(l2, 11),
-                            0xFFFF_0000,
-                            false,
-                            false,
-                            DescriptorMemoryAttributes {
-                                tex: bits(l2, 14, 12) as u8,
-                                cacheable: bit(l2, 3),
-                                bufferable: bit(l2, 2),
-                                shareable: bit(l2, 10),
-                            },
-                        )
-                    } else {
-                        (
-                            domain,
-                            [bits(l2, 5, 4) as u8; 4],
-                            0,
-                            bits(l2, 9, 9) != 0,
-                            descriptor_type == 0b11,
-                            (l2 & 0xFFFF_F000) | (va & 0xFFF),
-                            !bit(l2, 11),
-                            0xFFFF_F000,
-                            false,
-                            false,
-                            DescriptorMemoryAttributes {
-                                tex: bits(l2, 8, 6) as u8,
-                                cacheable: bit(l2, 3),
-                                bufferable: bit(l2, 2),
-                                shareable: bit(l2, 10),
-                            },
-                        )
-                    }
-                } else if descriptor_type == 0b11 {
-                    // Backwards-compatible extended-small-page descriptor.
-                    // In a coarse table this maps one 4 KiB page and uses a
-                    // single AP field; the 1 KiB extended subpage form requires
-                    // a fine table, which is not implemented by this MMU yet.
-                    let ap = bits(l2, 5, 4) as u8;
+            } else {
+                // Legacy large/small pages each have four independent AP fields.
+                let ap = [
+                    bits(l2, 5, 4) as u8,
+                    bits(l2, 7, 6) as u8,
+                    bits(l2, 9, 8) as u8,
+                    bits(l2, 11, 10) as u8,
+                ];
+                if descriptor_type == 0b01 {
                     (
                         domain,
-                        [ap; 4],
-                        0,
+                        ap,
+                        14,
+                        false,
+                        false,
+                        (l2 & 0xFFFF_0000) | (va & 0xFFFF),
+                        true,
+                        0xFFFF_0000,
+                        false,
+                        true,
+                        DescriptorMemoryAttributes {
+                            tex: bits(l2, 14, 12) as u8,
+                            cacheable: bit(l2, 3),
+                            bufferable: bit(l2, 2),
+                            shareable: false,
+                        },
+                    )
+                } else {
+                    (
+                        domain,
+                        ap,
+                        10,
                         false,
                         false,
                         (l2 & 0xFFFF_F000) | (va & 0xFFF),
@@ -604,69 +647,23 @@ fn walk_page_tables<B: Bus + ?Sized>(
                         false,
                         true,
                         DescriptorMemoryAttributes {
-                            tex: bits(l2, 8, 6) as u8,
+                            tex: 0,
                             cacheable: bit(l2, 3),
                             bufferable: bit(l2, 2),
                             shareable: false,
                         },
                     )
-                } else {
-                    // Legacy large/small pages each have four independent AP fields.
-                    let ap = [
-                        bits(l2, 5, 4) as u8,
-                        bits(l2, 7, 6) as u8,
-                        bits(l2, 9, 8) as u8,
-                        bits(l2, 11, 10) as u8,
-                    ];
-                    if descriptor_type == 0b01 {
-                        (
-                            domain,
-                            ap,
-                            14,
-                            false,
-                            false,
-                            (l2 & 0xFFFF_0000) | (va & 0xFFFF),
-                            true,
-                            0xFFFF_0000,
-                            false,
-                            true,
-                            DescriptorMemoryAttributes {
-                                tex: bits(l2, 14, 12) as u8,
-                                cacheable: bit(l2, 3),
-                                bufferable: bit(l2, 2),
-                                shareable: false,
-                            },
-                        )
-                    } else {
-                        (
-                            domain,
-                            ap,
-                            10,
-                            false,
-                            false,
-                            (l2 & 0xFFFF_F000) | (va & 0xFFF),
-                            true,
-                            0xFFFF_F000,
-                            false,
-                            true,
-                            DescriptorMemoryAttributes {
-                                tex: 0,
-                                cacheable: bit(l2, 3),
-                                bufferable: bit(l2, 2),
-                                shareable: false,
-                            },
-                        )
-                    }
                 }
             }
-            _ => {
-                let page_fault = match fault(FaultKind::Translation, true, 0, va, access) {
-                    Walk::Fault(value) => value,
-                    Walk::Mapped(_) => unreachable!(),
-                };
-                return Ok(PageWalk::Fault(page_fault));
-            }
-        };
+        }
+        _ => {
+            let page_fault = match fault(FaultKind::Translation, true, 0, va, access) {
+                Walk::Fault(value) => value,
+                Walk::Mapped(_) => unreachable!(),
+            };
+            return Ok(PageWalk::Fault(page_fault));
+        }
+    };
 
     Ok(PageWalk::Mapped(TlbEntry {
         virtual_base: va & address_mask,
@@ -1229,7 +1226,9 @@ mod tests {
 
         // Index {TEX[0],C,B}=011 maps to Normal. Remap S=1 as shareable,
         // with Inner=01 and Outer=11.
-        cpu.cp15.write(true, 0, 10, 2, 0, (1 << 19) | (2 << 6)).unwrap();
+        cpu.cp15
+            .write(true, 0, 10, 2, 0, (1 << 19) | (2 << 6))
+            .unwrap();
         cpu.cp15
             .write(true, 0, 10, 2, 1, (1 << 6) | (3 << 22))
             .unwrap();
@@ -1260,10 +1259,7 @@ mod tests {
 
         cpu.translate_va_to_pa_register(&mut mem, va, Access::Read, true)
             .unwrap();
-        assert_eq!(
-            cpu.cp15.read(true, 0, 7, 4, 0),
-            Ok(0x0124_51B0)
-        );
+        assert_eq!(cpu.cp15.read(true, 0, 7, 4, 0), Ok(0x0124_51B0));
 
         // A translation fault is reported in PAR, not raised as an instruction abort.
         cpu.translate_va_to_pa_register(&mut mem, 0x5000_0000, Access::Read, true)
