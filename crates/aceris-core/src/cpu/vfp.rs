@@ -10,7 +10,9 @@
 //! storage are modeled (FPINST has its defined reset value; FPINST2 uses a
 //! deterministic zero for its architecturally UNPREDICTABLE reset). The legacy
 //! FLDMX/FSTMX double context-transfer forms with odd word counts are also
-//! implemented. Remaining limits include hardware-generated exception bounce,
+//! implemented. Scalar asynchronous exception bounce covers IOE, DZE, OFE and
+//! UFE, including FZ's no-bounce underflow behavior. Remaining limits include
+//! IXE/IDE traps, short-vector exception bounce,
 //! scalar-only comparisons/conversions, and extreme precision/subnormal cases.
 //! Scalar operations honor FPSCR.RMode and
 //! accumulate IXC/UFC for inexact and tiny results. Single precision is
