@@ -2027,16 +2027,16 @@ mod tests {
 
     #[test]
     fn conditional_and_unconditional_branch_offsets_sign_extend_at_limits() {
-        let mut conditional_positive = Machine::with(0xD07F, |cpu, mem| {
+        let mut conditional_positive = Machine::with(0xD17F, |cpu, mem| {
             cpu.set_pc(2);
-            mem.write16(2, 0xD07F).unwrap();
+            mem.write16(2, 0xD17F).unwrap();
         });
         conditional_positive.step();
         assert_eq!(conditional_positive.cpu.pc(), 260);
 
-        let mut conditional_negative = Machine::with(0xD080, |cpu, mem| {
+        let mut conditional_negative = Machine::with(0xD180, |cpu, mem| {
             cpu.set_pc(2);
-            mem.write16(2, 0xD080).unwrap();
+            mem.write16(2, 0xD180).unwrap();
         });
         conditional_negative.step();
         assert_eq!(conditional_negative.cpu.pc(), 0xFFFF_FF06);
