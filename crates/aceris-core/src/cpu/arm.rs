@@ -2288,6 +2288,8 @@ impl Arm11Core {
         let pair_transfer = matches!((load, bits(word, 6, 5)), (false, 0b10 | 0b11));
         let doubleword_load = pair_transfer && bits(word, 6, 5) == 0b10;
         let pair_second = rd + 1;
+        // P=0,W=1 is CONSTRAINED UNPREDICTABLE for LDRD/STRD in ARMv6.
+        // This core selects the deterministic UndefinedInstruction outcome.
         let invalid_pair = pair_transfer
             && (rd % 2 != 0
                 || rd >= 14
