@@ -163,10 +163,22 @@ impl Arm11Core {
     fn thumb_hi_register(&mut self, half: u32) -> Result<()> {
         let rd = bits(half, 2, 0) | (u32::from(bit(half, 7)) << 3);
         let rs = bits(half, 5, 3) | (u32::from(bit(half, 6)) << 3);
+        let op = bits(half, 9, 8);
+
+        // High-register ADD (T2) and CMP (T3) require at least one
+        // high register. The low/low encodings are UNPREDICTABLE.
+        // MOV (T3) is deliberately excluded: low/low is CPY in ARMv6.
+        if op <= 1 && !bit(half, 7) && !bit(half, 6) {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word: half,
+            });
+        }
+
         let a = self.reg(rd, PC_OFFSET);
         let b = self.reg(rs, PC_OFFSET);
 
-        match bits(half, 9, 8) {
+        match op {
             0 => self.thumb_write_hi(rd, a.wrapping_add(b)),
             1 => self.thumb_arith(None, a, !b, true),
             2 => self.thumb_write_hi(rd, b),
@@ -807,6 +819,27 @@ mod tests {
 
         assert_eq!(m.cpu.regs[0], 0xA5A5_5A5A);
         assert_eq!(m.cpu.cpsr.0 & (Psr::N | Psr::Z | Psr::C | Psr::V), flags);
+    }
+
+    #[test]
+    fn high_register_add_and_cmp_reject_low_low_encodings_atomically() {
+        for half in [0x4408, 0x4508] {
+            let mut m = Machine::with(half, |cpu, _| {
+                cpu.regs[0] = 0x1122_3344;
+                cpu.regs[1] = 0x5566_7788;
+                cpu.cpsr.set_flags(true, false, true, true);
+            });
+            let old_regs = m.cpu.regs;
+            let old_cpsr = m.cpu.cpsr;
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == u32::from(half)
+            ));
+            assert_eq!(m.cpu.pc(), 0);
+            assert_eq!(m.cpu.regs, old_regs);
+            assert_eq!(m.cpu.cpsr, old_cpsr);
+        }
     }
 
     #[test]
