@@ -16,6 +16,8 @@ const GRID: [u32; 9] = [
     0xBFFF_FFFF,
 ];
 
+type Model = fn(i64, i64) -> (u32, bool);
+
 fn clamp(value: i64) -> (u32, bool) {
     let clamped = value.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
     (clamped as i32 as u32, clamped != value)
@@ -38,7 +40,7 @@ fn run(word: u32, rm: u32, rn: u32, q: bool) -> Arm11Core {
 #[test]
 fn saturating_add_sub_match_reference_and_keep_q_sticky() {
     // QADD/QSUB/QDADD/QDSUB r2, r0, r1 (Rm = r0, Rn = r1).
-    let forms: [(u32, fn(i64, i64) -> (u32, bool)); 4] = [
+    let forms: [(u32, Model); 4] = [
         (0xE101_2050, |m, n| clamp(m + n)),
         (0xE121_2050, |m, n| clamp(m - n)),
         (0xE141_2050, |m, n| {
