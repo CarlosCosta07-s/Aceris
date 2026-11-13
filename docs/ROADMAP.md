@@ -180,11 +180,11 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Superfícies de saída RGBA8 para LCD superior esquerdo, superior direito (estéreo) e inferior
 - [x] Modelo inicial de registradores do controlador LCD/PDC e seleção de framebuffer
 - [x] Scanout básico de framebuffers a partir da memória física para as três superfícies
-- [~] Scanout e apresentação no núcleo já são chamados pelo ciclo experimental de frame; o frontend ainda não exibe essas superfícies em uma janela gráfica funcional
+- [~] Scanout e apresentação no núcleo são chamados pelo ciclo de frame; o frontend desktop Linux apresenta uma composição monoscópica da tela superior esquerda e da inferior em janela X11. A tela superior direita/estéreo permanece apenas como superfície separada, ainda sem seleção/apresentação no frontend.
 - [ ] Integrar a saída efetiva do PICA200 às áreas de framebuffer apresentadas
 - [ ] Validar resoluções, formatos, stride, escala, orientação, alternância de buffers e sincronização
 - [~] `aceris <JOGO> --dump-lcd <DIR>` grava as três superfícies como PNG RGBA8 (codificador próprio, sem dependências, validado com decodificadores independentes); é saída para inspeção, não uma janela
-- [ ] Apresentar as duas telas no desktop e Android com redimensionamento e ciclo de vida corretos
+- [~] Apresentação monoscópica das superfícies superior esquerda + inferior em janela X11 no desktop Linux; faltam seleção/alternância estéreo, redimensionamento, ciclo de vida, backends Win32/Cocoa e superfície Android.
 
 ## 5. Ciclo de execução e dispositivos
 
@@ -268,9 +268,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 1. Implementar o serviço GSP IPC em torno do GX queue: mapping de shared memory, rendering rights, `TriggerCmdReqQueue`, relay queue/eventos e callbacks; conectar cache flush/invalidate somente quando houver um modelo de cache ARM observável.
 2. Implementar decodificadores tipados para os formatos de instrução e operand descriptors de vertex shader, priorizando formatos 1/1i/1u/1c e opcodes aritméticos básicos documentados; adicionar testes de campo e rejeitar codificações desconhecidas. O armazenamento de código/descriptors e uniforms já existe, sem executor.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
-4. Estender a invalidação de reservas LDREX/STREX a regiões compartilhadas e a outros dispositivos que venham a escrever na memória do processo (escritas físicas de DMA/GPU/LCD em mapeamentos lineares já invalidam).
-5. Completar atributos de memória, associatividade e replacement do TLB normal, atributos TEX e semântica observável de manutenção de cache/barreiras ao CP15.
-6. Apresentar as superfícies LCD em uma janela no desktop e depois no Android (o desktop já exporta PNG com `--dump-lcd`); a janela X11 já existe no desktop Linux; faltam os backends Win32/Cocoa, a entrada e o Android.
+4. Estender a invalidação de reservas LDREX/STREX a outras regiões compartilhadas e dispositivos que venham a escrever na memória do processo (DMA/GPU/LCD em FCRAM linear já invalidam).
+5. Completar associatividade e replacement do TLB normal e implementar efeitos observáveis de manutenção de cache, IMB e barreiras CP15; atributos TEX/C/B/S e remapeamento PRRR/NMRR já estão parcialmente integrados e testados.
+6. Evoluir a janela X11 Linux para seleção das três superfícies, redimensionamento e entrada; implementar backends nativos Win32/Cocoa e depois a superfície Android com ciclo de vida/entrada.
 
 ## Critérios para concluir um item
 
