@@ -16,7 +16,7 @@ use crate::loader::ncsd::session::gsp_service::{
 };
 use crate::loader::ncsd::session::ipc::{IpcCommandHeader, IpcMessage};
 use crate::loader::ncsd::session::kernel::ServiceSessionKind;
-use crate::loader::ncsd::session::{Arm11RunStopReason, ThreadId}; 
+use crate::loader::ncsd::session::{Arm11RunStopReason, ThreadId};
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::ncsd::session::{
     RESULT_INVALID_ADDRESS, RESULT_INVALID_ENUM, RESULT_INVALID_HANDLE, RESULT_OUT_OF_MEMORY,
@@ -1766,7 +1766,7 @@ mod tests {
         let srv_buffer = write_tls_ipc_request(
             &mut system,
             service_manager,
-            &[0x0005_0100, 0x3A70_7367, 0x7550_473A, 8, 0],
+            &[0x0005_0100, 0x3A70_7367, 0x7570_473A, 8, 0],
         );
         run_one_ipc_svc(&mut system);
         let srv_response = read_tls_ipc_response(&mut system, srv_buffer, 4);
