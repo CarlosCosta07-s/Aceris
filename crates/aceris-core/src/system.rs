@@ -1610,6 +1610,25 @@ mod tests {
         assert!(matches!(system.run_frame(), Err(Error::NoImageLoaded)));
     }
 
+    fn ipc_svc_ncsd_cartridge_fixture(svc_count: usize) -> Vec<u8> {
+        const EXEFS_CODE_OFFSET: usize = 0x6200;
+        let mut image = clear_ncsd_cartridge_fixture();
+        for index in 0..svc_count {
+            let offset = EXEFS_CODE_OFFSET + index * 4;
+            image[offset..offset + 4].copy_from_slice(&0xEF00_0032u32.to_le_bytes());
+        }
+        image
+    }
+
+    fn run_one_ipc_svc(system: &mut System) {
+        let report = system.run_instructions(1).unwrap();
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+    }
+
     fn write_tls_ipc_request(system: &mut System, session_handle: u32, words: &[u32]) -> u32 {
         let session = system
             .ncsd_session
@@ -1645,7 +1664,7 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(1)),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
@@ -1691,7 +1710,7 @@ mod tests {
         // Client 1 issues AcquireRight while client 0 owns the rendering token.
         let request_buffer =
             write_tls_ipc_request(&mut system, gsp_handle, &[0x0016_0042, 0, 0, 0]);
-        assert!(system.dispatch_pending_ipc_request().unwrap());
+        run_one_ipc_svc(&mut system);
         assert_eq!(system.ncsd_session().unwrap().current_thread_id(), None);
         assert_eq!(
             system.pending_gsp_acquires,
@@ -1724,7 +1743,7 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(4)),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
@@ -1748,7 +1767,7 @@ mod tests {
             service_manager,
             &[0x0005_0100, 0x3A70_7367, 0x7550_473A, 8, 0],
         );
-        system.dispatch_pending_ipc_request().unwrap();
+        run_one_ipc_svc(&mut system);
         let srv_response = read_tls_ipc_response(&mut system, srv_buffer, 4);
         assert_eq!(srv_response[0], 0x0005_0042);
         assert_eq!(srv_response[1], 0);
@@ -1769,7 +1788,7 @@ mod tests {
         // gsp::Gpu:RegisterInterruptRelayQueue(flags=0, event_handle)
         let register_buffer =
             write_tls_ipc_request(&mut system, gsp_handle, &[0x0013_0042, 0, 0, event_handle]);
-        system.dispatch_pending_ipc_request().unwrap();
+        run_one_ipc_svc(&mut system);
         let register_response = read_tls_ipc_response(&mut system, register_buffer, 5);
         assert_eq!(register_response[0], 0x0013_0082);
         assert_eq!(register_response[1], 0);
@@ -1790,13 +1809,13 @@ mod tests {
 
         // TriggerCmdReqQueue must reach the registered client's empty GX ring.
         let trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
-        system.dispatch_pending_ipc_request().unwrap();
+        run_one_ipc_svc(&mut system);
         let trigger_response = read_tls_ipc_response(&mut system, trigger_buffer, 2);
         assert_eq!(trigger_response, vec![0x000C_0040, 0]);
 
         // Unregister releases the queue mapping and memory handle.
         let unregister_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
-        system.dispatch_pending_ipc_request().unwrap();
+        run_one_ipc_svc(&mut system);
         let unregister_response = read_tls_ipc_response(&mut system, unregister_buffer, 2);
         assert_eq!(unregister_response, vec![0x0014_0040, 0]);
         assert_eq!(system.gsp_service_registry().registered_client_count(), 0);
