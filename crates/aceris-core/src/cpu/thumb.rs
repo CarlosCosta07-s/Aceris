@@ -318,8 +318,11 @@ impl Arm11Core {
             });
         }
 
-        let mut addr = self.regs[rn];
-        let new_base = addr.wrapping_add(4 * list.count_ones());
+        let base = self.regs[rn];
+        // Legacy ARMv6 multi-word transfers access Word[Align(Addr)].
+        // Keep writeback based on the original (possibly unaligned) base.
+        let mut addr = base & !3;
+        let new_base = base.wrapping_add(4 * list.count_ones());
 
         if load {
             let mut values = [0u32; 8];
@@ -1316,6 +1319,54 @@ mod tests {
         load.step();
         assert_eq!(load.cpu.regs[0], DATA + 0x100);
         assert_eq!(load.cpu.regs[1], 0x5566_7788);
+    }
+
+    #[test]
+    fn legacy_unaligned_thumb_multiple_transfers_align_memory_and_preserve_base_writeback() {
+        for big_endian in [false, true] {
+            let first = 0x1122_3344;
+            let second = 0x5566_7788;
+            let mut load = Machine::with(0xC806, |cpu, mem| {
+                cpu.regs[0] = DATA + 1;
+                cpu.cpsr.set_big_endian(big_endian);
+                mem.write32(
+                    DATA,
+                    if big_endian { first.swap_bytes() } else { first },
+                )
+                .unwrap();
+                mem.write32(
+                    DATA + 4,
+                    if big_endian { second.swap_bytes() } else { second },
+                )
+                .unwrap();
+            });
+            load.step();
+
+            assert_eq!((load.cpu.regs[1], load.cpu.regs[2]), (first, second));
+            assert_eq!(load.cpu.regs[0], DATA + 9, "LDMIA writeback must use original base");
+
+            let mut store = Machine::with(0xC006, |cpu, _| {
+                cpu.regs[0] = DATA + 1;
+                cpu.regs[1] = first;
+                cpu.regs[2] = second;
+                cpu.cpsr.set_big_endian(big_endian);
+            });
+            store.step();
+
+            assert_eq!(
+                store.mem.read32(DATA).unwrap(),
+                if big_endian { first.swap_bytes() } else { first }
+            );
+            assert_eq!(
+                store.mem.read32(DATA + 4).unwrap(),
+                if big_endian { second.swap_bytes() } else { second }
+            );
+            assert_eq!(
+                store.cpu.regs[0],
+                DATA + 9,
+                "STMIA writeback must use original base"
+            );
+        }
     }
 
     #[test]
