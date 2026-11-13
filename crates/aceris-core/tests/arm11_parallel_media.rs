@@ -129,7 +129,7 @@ fn reference(
         };
         let a = (lhs >> (lane * width)) & lane_mask;
         let b = (rhs >> (rhs_lane * width)) & lane_mask;
-        let add = operation.adds(lane, lane_count);
+        let add = operation.adds(lane as usize, lane_count as usize);
 
         let (lane_result, ge_set) = match arithmetic {
             Arithmetic::SignedModulo => {
