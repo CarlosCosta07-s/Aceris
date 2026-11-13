@@ -1622,7 +1622,7 @@ mod tests {
         assert!(matches!(system.run_frame(), Err(Error::NoImageLoaded)));
     }
 
-    fn ipc_svc_ncsd_cartridge_fixture(svc_count: usize) -> Vec<u8> {
+    fn ipc_program_ncsd_cartridge_fixture(instructions: &[u32]) -> Vec<u8> {
         const NCSD_PARTITION_OFFSET: usize = 0x4000;
         const EXEFS_OFFSET: usize = 0x2000;
         const EXEFS_HEADER_SIZE: usize = 0x200;
@@ -1630,9 +1630,9 @@ mod tests {
         let mut image = clear_ncsd_cartridge_fixture();
         let exefs_start = NCSD_PARTITION_OFFSET + EXEFS_OFFSET;
         let code_start = exefs_start + EXEFS_HEADER_SIZE;
-        for index in 0..svc_count {
+        for (index, instruction) in instructions.iter().copied().enumerate() {
             let offset = code_start + index * 4;
-            image[offset..offset + 4].copy_from_slice(&0xEF00_0032u32.to_le_bytes());
+            image[offset..offset + 4].copy_from_slice(&instruction.to_le_bytes());
         }
 
         // Rebuild the .code digest and the NCCH digest of the ExeFS header
@@ -1643,6 +1643,10 @@ mod tests {
         let ncch = NCSD_PARTITION_OFFSET;
         image[ncch + 0x1C0..ncch + 0x1E0].copy_from_slice(&exefs_header_hash);
         image
+    }
+
+    fn ipc_svc_ncsd_cartridge_fixture(svc_count: usize) -> Vec<u8> {
+        ipc_program_ncsd_cartridge_fixture(&vec![0xEF00_0032; svc_count])
     }
 
     fn run_one_ipc_svc(system: &mut System) {
@@ -1768,23 +1772,56 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(4)),
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
+                    0xEF00_002D, // SVC ConnectToPort
+                    0xEF00_0032, // srv:GetServiceHandle
+                    0xEF00_0032, // GSP RegisterInterruptRelayQueue
+                    0xEF00_0032, // GSP TriggerCmdReqQueue
+                    0xEF00_0032, // GSP UnregisterInterruptRelayQueue
+                ])),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
 
-        let (service_manager, event_handle) = {
-            let session = system.ncsd_session.as_mut().unwrap();
-            (
-                session.create_service_manager_session().unwrap(),
-                session
-                    .create_event_handle(
-                        crate::loader::ncsd::session::kernel::EventResetType::OneShot,
-                    )
-                    .unwrap(),
-            )
-        };
+        let event_handle = system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+            .unwrap();
+
+        // ConnectToPort("srv:") creates the service-manager client handle.
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(0x0020_1000, b"srv:")
+            .unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .set_current_register(0, 0x0020_0000);
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .set_current_register(1, 0x0020_1000);
+        run_one_ipc_svc(&mut system);
+        let service_manager = system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_u32(0x0020_0000)
+            .unwrap();
+        assert!(matches!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .service_session_kind(service_manager),
+            Some(ServiceSessionKind::ServiceManager)
+        ));
 
         // srv:GetServiceHandle("gsp::Gpu", 8, 0)
         let srv_buffer = write_tls_ipc_request(
