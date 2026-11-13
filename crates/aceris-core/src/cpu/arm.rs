@@ -1110,6 +1110,15 @@ impl Arm11Core {
             });
         }
 
+        // MOV and MVN encode Rn as SBZ: their only source is shifter_operand.
+        // Reject nonzero Rn before evaluating the shifter or writing state.
+        if matches!(opcode, 0xD | 0xF) && rn != 0 {
+            return Err(Error::UndefinedInstruction {
+                pc: self.pc(),
+                word,
+            });
+        }
+
         // ARMv6 makes every use of R15 in a register-controlled data
         // processing shift UNPREDICTABLE, including the otherwise-unused Rn
         // field of MOV/MVN. Reject all four fields before reading operands.
