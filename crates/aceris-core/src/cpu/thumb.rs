@@ -1016,12 +1016,23 @@ mod tests {
     }
 
     #[test]
-    fn mov_pc_lr_stays_in_thumb_state() {
-        // MOV pc,lr
-        let mut m = Machine::with(0x46F7, |cpu, _| cpu.regs[14] = 0x41);
-        m.step();
-        assert_eq!(m.cpu.pc(), 0x40);
-        assert!(m.cpu.cpsr.thumb());
+    fn mov_and_add_pc_stay_in_thumb_state_without_interworking() {
+        // MOV pc,lr branches within Thumb state even when LR bit zero is set.
+        let mut mov = Machine::with(0x46F7, |cpu, _| cpu.regs[LR] = 0x41);
+        mov.step();
+        assert_eq!(mov.cpu.pc(), 0x40);
+        assert!(mov.cpu.cpsr.thumb());
+
+        // ADD pc,r0 uses PC+4 as its first operand and also stays in Thumb.
+        let mut add = Machine::with(0x4487, |cpu, _| {
+            cpu.regs[0] = 0x41;
+            cpu.cpsr.set_flags(true, false, true, true);
+        });
+        let old_flags = add.flags();
+        add.step();
+        assert_eq!(add.cpu.pc(), 0x44);
+        assert!(add.cpu.cpsr.thumb());
+        assert_eq!(add.flags(), old_flags);
     }
 
     #[test]
