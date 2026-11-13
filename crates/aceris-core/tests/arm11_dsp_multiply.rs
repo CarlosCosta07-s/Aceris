@@ -399,3 +399,67 @@ fn usad8_and_usada8_match_bytewise_absolute_difference_reference() {
         }
     }
 }
+
+#[test]
+fn umaal_matches_independent_two_word_accumulator_reference() {
+    const VALUES: [u32; 8] = [
+        0,
+        1,
+        2,
+        0x0000_FFFF,
+        0x7FFF_FFFF,
+        0x8000_0000,
+        0xFFFF_0000,
+        u32::MAX,
+    ];
+    // UMAAL r0,r1,r2,r3 = UInt(r2)*UInt(r3) + UInt(r0) + UInt(r1).
+    const INSTRUCTION: u32 = 0xE041_0392;
+
+    for &lhs in &VALUES {
+        for &rhs in &VALUES {
+            for &acc_low in &VALUES {
+                for &acc_high in &VALUES {
+                    let expected = u64::from(lhs) * u64::from(rhs)
+                        + u64::from(acc_low)
+                        + u64::from(acc_high);
+                    let cpu = machine(
+                        INSTRUCTION,
+                        &[(0, acc_low), (1, acc_high), (2, lhs), (3, rhs)],
+                        true,
+                    );
+
+                    assert_eq!(cpu.regs[0], expected as u32);
+                    assert_eq!(cpu.regs[1], (expected >> 32) as u32);
+                    assert!(cpu.cpsr.q());
+                    assert_nzcv_preserved(&cpu);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn umaal_rejects_overlapping_destination_registers_without_side_effects() {
+    // UMAAL r1,r1,r2,r3 encodes RdLo == RdHi.
+    let instruction = 0xE041_1392;
+    let mut memory = FlatMemory::new(0, 4);
+    memory.write32(0, instruction).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.regs[0] = 0x1234_5678;
+    cpu.regs[1] = 0xAABB_CCDD;
+    cpu.regs[2] = 0xFFFF_FFFF;
+    cpu.regs[3] = 0xFFFF_FFFF;
+    cpu.cpsr.set_flags(true, false, true, true);
+    cpu.cpsr.set_q();
+    let registers_before = cpu.regs;
+    let status_before = cpu.cpsr;
+
+    assert!(matches!(
+        cpu.step(&mut memory),
+        Err(aceris_core::Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+    ));
+    assert_eq!(cpu.regs, registers_before);
+    assert_eq!(cpu.cpsr, status_before);
+    assert_eq!(cpu.pc(), 0);
+}
