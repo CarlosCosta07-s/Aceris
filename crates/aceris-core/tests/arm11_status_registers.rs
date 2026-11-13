@@ -91,14 +91,21 @@ fn mrs_msr_reject_pc_operands_and_reserved_misc_encodings_atomically() {
         let status_before = cpu.cpsr;
         let saved_before = cpu.saved_program_status();
 
-        assert!(matches!(
-            execute(&mut cpu, instruction),
-            Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
-        ), "{instruction:#010x}");
+        assert!(
+            matches!(
+                execute(&mut cpu, instruction),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == instruction
+            ),
+            "{instruction:#010x}"
+        );
 
         assert_eq!(cpu.regs, registers_before, "{instruction:#010x}");
         assert_eq!(cpu.cpsr, status_before, "{instruction:#010x}");
-        assert_eq!(cpu.saved_program_status(), saved_before, "{instruction:#010x}");
+        assert_eq!(
+            cpu.saved_program_status(),
+            saved_before,
+            "{instruction:#010x}"
+        );
         assert_eq!(cpu.pc(), 0, "{instruction:#010x}");
     }
 }
