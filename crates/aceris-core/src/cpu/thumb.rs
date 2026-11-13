@@ -30,7 +30,7 @@ impl Arm11Core {
             0b001 => self.thumb_immediate(half),
             0b010 => match bits(half, 12, 10) {
                 0b000 => self.thumb_alu(half),
-                0b001 => self.thumb_hi_register(half),
+                0b001 => self.thumb_hi_register(half)?,
                 0b010 | 0b011 => self.thumb_pc_relative_load(bus, half)?,
                 _ => self.thumb_register_offset(bus, half)?,
             },
@@ -41,7 +41,7 @@ impl Arm11Core {
             0b101 => return self.thumb_misc(bus, half),
             0b110 if !bit(half, 12) => self.thumb_block_transfer(bus, half)?,
             0b110 => return self.thumb_conditional_branch(half),
-            _ => self.thumb_branch(half),
+            _ => self.thumb_branch(half)?,
         }
         Ok(StepEvent::Executed)
     }
@@ -160,7 +160,7 @@ impl Arm11Core {
         self.update_flags(result, Some(carry), None);
     }
 
-    fn thumb_hi_register(&mut self, half: u32) {
+    fn thumb_hi_register(&mut self, half: u32) -> Result<()> {
         let rd = bits(half, 2, 0) | (u32::from(bit(half, 7)) << 3);
         let rs = bits(half, 5, 3) | (u32::from(bit(half, 6)) << 3);
         let a = self.reg(rd, PC_OFFSET);
@@ -171,13 +171,24 @@ impl Arm11Core {
             1 => self.thumb_arith(None, a, !b, true),
             2 => self.thumb_write_hi(rd, b),
             _ => {
-                // BX Rm, or BLX Rm when the H1 bit is set.
-                if bit(half, 7) {
+                // BX/BLX reserve the low three destination bits as zero.
+                // BLX cannot use PC as Rm. A target with bits[1:0] == 0b10
+                // would enter ARM state at a non-word-aligned address.
+                let link = bit(half, 7);
+                if bits(half, 2, 0) != 0 || (link && rs as usize == PC) || (b & 3 == 2) {
+                    return Err(Error::UndefinedInstruction {
+                        pc: self.pc(),
+                        word: half,
+                    });
+                }
+
+                if link {
                     self.regs[LR] = self.pc().wrapping_add(2) | 1;
                 }
                 self.branch_exchange(b);
             }
         }
+        Ok(())
     }
 
     // ----- loads and stores -------------------------------------------------
@@ -478,7 +489,7 @@ impl Arm11Core {
     ///
     /// The first half only stages the upper offset bits in `lr`; the second
     /// half completes the branch and leaves the return address in `lr`.
-    fn thumb_branch(&mut self, half: u32) {
+    fn thumb_branch(&mut self, half: u32) -> Result<()> {
         let pc = self.pc();
         let imm11 = half & 0x7FF;
 
@@ -497,6 +508,10 @@ impl Arm11Core {
                 self.branch(target & !1);
             }
             _ => {
+                // BLX suffix bit[0] is fixed to zero in the ARMv6 encoding.
+                if bit(half, 0) {
+                    return Err(Error::UndefinedInstruction { pc, word: half });
+                }
                 // BLX suffix: continue in ARM state at a word-aligned target.
                 let target = self.regs[LR].wrapping_add(imm11 << 1) & !3;
                 self.regs[LR] = pc.wrapping_add(2) | 1;
@@ -504,6 +519,7 @@ impl Arm11Core {
                 self.branch(target);
             }
         }
+        Ok(())
     }
 }
 
@@ -1100,6 +1116,71 @@ mod tests {
         assert_eq!(m.cpu.pc(), 4);
         assert_eq!(m.cpu.regs[14], 5);
         assert!(!m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn bx_and_blx_register_encodings_reject_nonzero_reserved_bits_atomically() {
+        for half in [0x4701, 0x4781] {
+            let mut m = Machine::with(half, |cpu, _| {
+                cpu.regs[0] = 0x41;
+                cpu.regs[LR] = 0xDEAD_BEEF;
+            });
+            let old_cpsr = m.cpu.cpsr;
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == u32::from(half)
+            ));
+            assert_eq!(m.cpu.pc(), 0);
+            assert_eq!(m.cpu.regs[LR], 0xDEAD_BEEF);
+            assert_eq!(m.cpu.cpsr, old_cpsr);
+        }
+    }
+
+    #[test]
+    fn bx_rejects_a_halfword_aligned_arm_target() {
+        let mut m = Machine::with(0x4700, |cpu, _| cpu.regs[0] = 0x102);
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 0, word: 0x4700 })
+        ));
+        assert_eq!(m.cpu.pc(), 0);
+        assert!(m.cpu.cpsr.thumb());
+    }
+
+    #[test]
+    fn blx_register_rejects_pc_and_halfword_aligned_arm_targets_atomically() {
+        for (half, target) in [(0x47F8, 0), (0x4780, 0x102)] {
+            let mut m = Machine::with(half, |cpu, _| {
+                cpu.regs[0] = target;
+                cpu.regs[LR] = 0xCAFE_BABE;
+            });
+            let old_cpsr = m.cpu.cpsr;
+
+            assert!(matches!(
+                m.cpu.step(&mut m.mem),
+                Err(Error::UndefinedInstruction { pc: 0, word }) if word == u32::from(half)
+            ));
+            assert_eq!(m.cpu.pc(), 0);
+            assert_eq!(m.cpu.regs[LR], 0xCAFE_BABE);
+            assert_eq!(m.cpu.cpsr, old_cpsr);
+        }
+    }
+
+    #[test]
+    fn blx_immediate_suffix_rejects_nonzero_fixed_bit_atomically() {
+        let mut m = Machine::new(&[0xF000, 0xE801]);
+        m.step();
+        let staged_lr = m.cpu.regs[LR];
+
+        assert!(matches!(
+            m.cpu.step(&mut m.mem),
+            Err(Error::UndefinedInstruction { pc: 2, word: 0xE801 })
+        ));
+        assert_eq!(m.cpu.pc(), 2);
+        assert_eq!(m.cpu.regs[LR], staged_lr);
+        assert!(m.cpu.cpsr.thumb());
     }
 
     // ----- ARMv6 extras and hints ---------------------------------------------
