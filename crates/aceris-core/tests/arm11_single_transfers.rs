@@ -93,13 +93,13 @@ fn halfword_register_transfers_reject_pc_as_the_base() {
 #[test]
 fn signed_halfword_and_doubleword_pc_relative_literal_loads_remain_valid() {
     let mut memory = FlatMemory::new(0, 0x1000);
-    memory.write32(0, 0xE1DF_00D0).unwrap(); // LDRSB r0,[pc,#0]
-    memory.write32(4, 0xE1DF_10F0).unwrap(); // LDRSH r1,[pc,#0]
-    memory.write32(8, 0xE1CF_20D0).unwrap(); // LDRD r2,r3,[pc,#0]
-    memory.write32(16, 0x0000_0080).unwrap();
-    memory.write32(20, 0x0000_8001).unwrap();
-    memory.write32(24, 0x1122_3344).unwrap();
-    memory.write32(28, 0x5566_7788).unwrap();
+    memory.write32(0, 0xE1DF_08D0).unwrap(); // LDRSB r0,[pc,#0x80]
+    memory.write32(4, 0xE1DF_18F0).unwrap(); // LDRSH r1,[pc,#0x80]
+    memory.write32(8, 0xE1CF_28D0).unwrap(); // LDRD r2,r3,[pc,#0x80]
+    memory.write8(0x88, 0x80).unwrap();
+    memory.write16(0x8C, 0x8001).unwrap();
+    memory.write32(0x90, 0x1122_3344).unwrap();
+    memory.write32(0x94, 0x5566_7788).unwrap();
 
     let mut cpu = Arm11Core::new();
     cpu.set_pc(0);
