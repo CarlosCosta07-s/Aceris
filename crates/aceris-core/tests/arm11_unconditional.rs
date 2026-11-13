@@ -74,7 +74,10 @@ fn cps_rejects_nonzero_fixed_bit_before_user_mode_no_op() {
 
     assert!(matches!(
         result,
-        Err(Error::UndefinedInstruction { pc: 0, word: INVALID_CPS })
+        Err(Error::UndefinedInstruction {
+            pc: 0,
+            word: INVALID_CPS
+        })
     ));
     assert_eq!(cpu.pc(), 0);
     assert_eq!(cpu.cpsr.mode(), aceris_core::cpu::Psr::USER_MODE);
