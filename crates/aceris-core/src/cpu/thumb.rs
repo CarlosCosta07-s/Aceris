@@ -1083,6 +1083,54 @@ mod tests {
     }
 
     #[test]
+    fn legacy_unaligned_thumb_word_accesses_align_stores_and_rotate_loads() {
+        // The legacy ARMv6 word path aligns stores and rotates unaligned loads.
+        // Cover both immediate-offset and register-offset Thumb encodings.
+        for (load, store) in [(0x680B, 0x6008), (0x588B, 0x5088)] {
+            let mut m = Machine::new(&[load, store]);
+            m.cpu.regs[0] = 0xAABB_CCDD;
+            m.cpu.regs[1] = DATA + 1;
+            m.cpu.regs[2] = 0;
+            m.mem.write32(DATA, 0x1122_3344).unwrap();
+
+            m.step();
+            assert_eq!(m.cpu.regs[3], 0x4411_2233, "LDR {load:#06x}");
+
+            m.step();
+            assert_eq!(
+                m.mem.read32(DATA).unwrap(),
+                0xAABB_CCDD,
+                "STR {store:#06x} must use Align(Addr)"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_unaligned_thumb_word_accesses_preserve_big_endian_rotation() {
+        // SETEND BE; the legacy load rotates left while a store writes Word[Align(Addr)].
+        for (load, store) in [(0x680B, 0x6008), (0x588B, 0x5088)] {
+            let mut m = Machine::new(&[0xB658, load, store]);
+            m.cpu.regs[0] = 0xAABB_CCDD;
+            m.cpu.regs[1] = DATA + 1;
+            m.cpu.regs[2] = 0;
+            // Big-endian logical word 0x11223344 in the flat little-endian backing store.
+            m.mem.write32(DATA, 0x4433_2211).unwrap();
+
+            m.step();
+            assert!(m.cpu.cpsr.big_endian());
+            m.step();
+            assert_eq!(m.cpu.regs[3], 0x2233_4411, "LDR {load:#06x}");
+
+            m.step();
+            assert_eq!(
+                m.mem.read32(DATA).unwrap(),
+                0xDDCC_BBAA,
+                "STR {store:#06x} must preserve big-endian Word[Align(Addr)]"
+            );
+        }
+    }
+
+    #[test]
     fn sp_relative_store_and_load() {
         let mut m = Machine::with(0x9002, |cpu, _| {
             // STR r0,[sp,#8]
