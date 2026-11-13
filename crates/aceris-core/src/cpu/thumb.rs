@@ -1,8 +1,9 @@
 //! Thumb (16-bit) instruction decoding and execution.
 //!
-//! Covers the ARMv6 Thumb set: the 19 classic formats, the two-halfword
-//! `BL`/`BLX` pair, and the ARMv6 additions `REV*`, `SXT*` and `UXT*`.
-//! Reading `pc` as an operand yields the instruction address plus 4.
+//! Covers the ARMv6 Thumb formats and ARMv6 additions supported by the
+//! ARM11 target, including `BL`/`BLX`, `CPS`, `CPY`, `SETEND`, `BKPT`,
+//! `REV*`, `SXT*` and `UXT*`. Thumb-2 and later Thumb hint encodings are
+//! rejected. Reading `pc` as an operand yields the instruction address plus 4.
 
 use super::arm::{bit, bits};
 use super::shifter::{ShiftKind, add_with_carry, shift_imm, shift_reg};
@@ -805,6 +806,35 @@ mod tests {
         let mut m = Machine::with(0x4640, |cpu, _| cpu.regs[8] = 0x55);
         m.step();
         assert_eq!(m.cpu.regs[0], 0x55);
+    }
+
+    #[test]
+    fn high_register_pc_operands_read_current_instruction_plus_four() {
+        // At address 2, PC reads as 6 (bit 1 is retained in high-register forms).
+        let mut mov = Machine::with(0x4678, |cpu, mem| {
+            cpu.set_pc(2);
+            mem.write16(2, 0x4678).unwrap(); // MOV r0,pc.
+        });
+        mov.step();
+        assert_eq!(mov.cpu.regs[0], 6);
+        assert_eq!(mov.cpu.pc(), 4);
+
+        let mut add = Machine::with(0x4478, |cpu, mem| {
+            cpu.set_pc(2);
+            cpu.regs[0] = 10;
+            mem.write16(2, 0x4478).unwrap(); // ADD r0,pc.
+        });
+        add.step();
+        assert_eq!(add.cpu.regs[0], 16);
+
+        let mut cmp = Machine::with(0x4578, |cpu, mem| {
+            cpu.set_pc(2);
+            cpu.regs[0] = 6;
+            mem.write16(2, 0x4578).unwrap(); // CMP r0,pc.
+        });
+        cmp.step();
+        assert!(cmp.cpu.cpsr.z());
+        assert!(cmp.cpu.cpsr.c());
     }
 
     #[test]
