@@ -38,9 +38,9 @@ const FPSCR_OFE: u32 = 1 << 10;
 const FPSCR_UFE: u32 = 1 << 11;
 const FPSCR_IXE: u32 = 1 << 12;
 const FPSCR_IDE: u32 = 1 << 15;
-const FPSCR_SUPPORTED_TRAP_ENABLES: u32 = FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_UFE;
-const FPSCR_UNSUPPORTED_TRAP_ENABLES: u32 = FPSCR_IXE | FPSCR_IDE;
-const FPSCR_EXCEPTION_STATUS: u32 = FPSCR_IOC | FPSCR_DZC | FPSCR_OFC | FPSCR_UFC | FPSCR_IXC;
+const FPSCR_SUPPORTED_TRAP_ENABLES: u32 = FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_UFE | FPSCR_IDE;
+const FPSCR_UNSUPPORTED_TRAP_ENABLES: u32 = FPSCR_IXE;
+const FPSCR_EXCEPTION_STATUS: u32 = FPSCR_IOC | FPSCR_DZC | FPSCR_OFC | FPSCR_UFC | FPSCR_IXC | FPSCR_IDC;
 const FPEXC_EXCEPTION_STATUS: u32 = FPEXC_INV | FPEXC_UFC | FPEXC_OFC | FPEXC_IOC;
 const FPSCR_DN: u32 = 1 << 25;
 const FPSCR_FZ: u32 = 1 << 24;
@@ -161,7 +161,7 @@ impl Vfp {
 
     fn has_enabled_traps(&self) -> bool {
         let enabled = self.fpscr & FPSCR_SUPPORTED_TRAP_ENABLES;
-        enabled & (FPSCR_IOE | FPSCR_DZE | FPSCR_OFE) != 0
+        enabled & (FPSCR_IOE | FPSCR_DZE | FPSCR_OFE | FPSCR_IDE) != 0
             || (enabled & FPSCR_UFE != 0 && self.fpscr & FPSCR_FZ == 0)
     }
 
@@ -192,6 +192,9 @@ impl Vfp {
         if self.fpscr & FPSCR_IXE != 0 {
             enabled |= FPSCR_IXC;
         }
+        if self.fpscr & FPSCR_IDE != 0 {
+            enabled |= FPSCR_IDC;
+        }
         raised & enabled
     }
 
@@ -214,6 +217,9 @@ impl Vfp {
         }
         if status & FPSCR_UFC != 0 {
             self.fpexc |= FPEXC_UFC;
+        }
+        if status & FPSCR_IDC != 0 {
+            self.fpscr |= FPSCR_IDC;
         }
     }
 
@@ -415,11 +421,17 @@ impl Vfp {
         }
     }
 
-    /// Applies input flush-to-zero (FPSCR.FZ) and records IDC.
+    /// Records an input subnormal and applies flush-to-zero when enabled.
     fn input(&mut self, prec: Prec, bits: u64) -> u64 {
-        if self.fpscr & FPSCR_FZ != 0 && prec.is_subnormal(bits) {
-            self.raise(FPSCR_IDC);
-            bits & prec.sign_bit()
+        if !prec.is_subnormal(bits) {
+            return bits;
+        }
+
+        self.raise(FPSCR_IDC);
+        if self.fpscr & FPSCR_FZ != 0 {
+            // VFP11 replaces a flushed input with positive zero, regardless
+            // of the sign bit of the original subnormal.
+            0
         } else {
             bits
         }
