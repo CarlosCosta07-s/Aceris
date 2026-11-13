@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 13/11/2026, com base na implementação de código até o commit `120f2d21d077fc4181c28f01ba1699e4c8d39720`.
+> Estado revisado em 13/11/2026, com base no código validado até o commit `7be452a404886612975bca1441182a6b4eefaab3`.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
@@ -124,13 +124,14 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ### IPC e serviços do sistema
 
-- [ ] IPC entre processos e sessões
-- [ ] Infraestrutura de registro, descoberta e despacho dos serviços do sistema
-- [ ] Serviços mínimos necessários para inicializar homebrew
-- [ ] Serviços adicionais priorizados pela evidência dos testes de compatibilidade
-- [ ] Controlador de interrupções, timers de hardware e notificações entre dispositivos
-- [ ] Testes de integração de SVC, threads e objetos com binários de teste independentes
-
+- [~] Caminho comum de IPC no núcleo: `SVC SendSyncRequest` transfere o controle ao dispatcher de `System`, que lê o cabeçalho e os parâmetros do command buffer em `TLS + 0x80`, despacha o serviço e grava a resposta na TLS da thread solicitante.
+- [~] `SVC ConnectToPort` cria sessão para `srv:`; `srv:RegisterClient` registra a sessão local e `srv:GetServiceHandle` só entrega `gsp::Gpu` após o registro. A identificação real do processo/kernel ProcessId ainda não é modelada.
+- [~] `gsp::Gpu:RegisterInterruptRelayQueue` cria e mapeia o bloco compartilhado do cliente, associa o event handle e devolve a resposta estendida com client ID e handle de memória; `UnregisterInterruptRelayQueue` remove o registro, mapeamento e handles.
+- [~] `TriggerCmdReqQueue` funciona pelo IPC do convidado e despacha a fila GX compartilhada. `TryAcquireRight`, `AcquireRight` e `ReleaseRight` usam direitos FIFO; threads ARM11 que aguardam são suspensas e reativadas após handoff ou cancelamento.
+- [~] Testes sintéticos executam a sequência pelo interpretador ARM e SVCs reais, incluindo `srv:`, registro/descoberta de serviço, fila GSP, handoff e retorno à TLS da thread; ainda não equivalem a compatibilidade de homebrew ou jogos reais.
+- [ ] IPC genérico entre processos/sessões independentes, gestão de múltiplos processos ARM11, tradução efetiva dos tipos restantes de buffers/handles e ciclo completo de portas, sessões e objetos de kernel.
+- [ ] Implementar e validar os serviços adicionais necessários ao boot de homebrew, guiados por logs reais de execução; `srv:` e `gsp::Gpu` são apenas o primeiro subconjunto.
+- [ ] Controlador de interrupções de dispositivos, timers de hardware e integração de IRQ/eventos ao escalonador e à sincronização do sistema.
 ## 4. GPU PICA200, rasterização e LCD
 
 ### GPU PICA200
@@ -138,9 +139,9 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Banco inicial de 0x400 registradores PICA200
 - [x] Decodificador de command lists com parâmetros, cabeçalhos, máscaras de byte, escrita consecutiva e validação de limites
 - [x] Descritores e acknowledgement dos canais de command buffer 0 e 1
-- [~] Integração inicial no ciclo de frame: captura descritores dos dois canais PICA200, lê command buffers do backing físico FCRAM/VRAM e aplica as escritas aos registradores; os pedidos GSP via IPC e eventos continuam pendentes
+- [~] Integração inicial no ciclo de frame: captura descritores dos dois canais PICA200, lê command buffers do backing físico FCRAM/VRAM e aplica as escritas aos registradores; o caminho de serviços GSP/IPC agora existe para o subconjunto descrito abaixo, mas o ciclo de renderização completo ainda não.
 - [~] Parser do GX command queue em shared memory: cabeçalho de 8 bytes, ring de 15 entradas de 32 bytes, wrap do índice, contagem/status/resultado, flags halt-after e fail-if-busy
-- [~] Dispatcher inicial para GX `ProcessCommandList` (ID 0x01): valida slot/client, tamanho e alinhamento, resolve intervalos de VRAM ou DMA linear, submete a lista ao parser PICA200, consome entradas, atualiza o cabeçalho e registra erro de endereço; a API exige que o bloco de shared memory já esteja mapeado no processo
+- [~] Dispatcher da GX command queue pelo `TriggerCmdReqQueue` convidado: `ProcessCommandList` (ID 0x01) valida alinhamento/tamanho, resolve VRAM ou DMA linear e submete ao parser PICA200; `MemoryFill` (ID 0x02) executa os dois buffers de VRAM com larguras de 16/24/32 bits e sinaliza `PSC0`/`PSC1` pela relay queue/event handle. Outros comandos GX ainda não são despachados.
 - [~] Flags flush-buffer, update-GAS e fail-if-busy são reconhecidas e expostas no relatório; cache flush real, GAS e arbitragem de busy não são simulados
 - [~] `GpuDmaAddressSpace` compartilha seus registros com o processo e traduz intervalos lineares virtuais para FCRAM físico: janela antiga `0x14000000–0x1C000000` com deslocamento `+0x0C000000`, e janela nova `0x30000000–0x38000000` relativa ao início de FCRAM; intervalos são registrados automaticamente pelo `ControlMemory` e validados por alinhamento, sobreposição, overflow e limite físico
 - [~] `ControlMemory` aloca e libera linear FCRAM nos aliases antigo e novo; hints não nulos são honrados por reserva física exata, e ponteiros CPU mapeados usam o mesmo backing observado pelo DMA/GPU/LCD
@@ -166,10 +167,10 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [ ] Implementar executor do subconjunto de opcodes PICA200 verificado, com registradores v/o/r/c, swizzles, máscaras, conversões e controle de fluxo; não tratar o armazenamento/transferência atual como execução
 - [ ] Integrar o fetch de atributos/índices ao executor do vertex shader PICA200 e ao estágio genérico de transformação, clipping e rasterizador
 - [ ] Decodificar e executar os triggers DRAWARRAYS/DRAWELEMENTS, primitiva, culling e montagem com semântica confirmada por documentação/testes próprios
-- [~] Modelo inicial da fila GX e despacho síncrono de `ProcessCommandList`; RequestDMA, MemoryFill, DisplayTransfer, TextureCopy, FlushCacheRegions, estados busy e sincronização assíncrona ainda não são despachados
-- [~] Modelo da GSP Interrupt Relay Queue por cliente: bloco de 0x40 bytes com ring de 52 eventos, PDC0/PDC1 limitados a 0x20 com contadores de perdas, `ignore_pdc` e endereçamento de quatro clientes; o registro GSP e a entrega de eventos já usam shared memory mapeada e handles de evento. O kernel oferece CreateMemoryBlock anônimo para SYSTEM/BASE e criação de backing sobre heap regular já mapeado, além de Map/Unmap local; o despacho IPC de registro e a resposta estendida ainda não estão integrados
-- [~] Existem primitivas host-side para importar (`Arm11ProcessSession::import_memory_block_handle`, COPY-like), mover (`move_memory_block_handle`) e aplicar descritores IPC type-0 a um único ou a um array de memory blocks (`translate_memory_block_handle_from_ipc` / `translate_memory_block_handles_from_ipc`): COPY mantém as origens, MOVE fecha as origens somente após importar os destinos, handles zero permanecem nulos, MOVE repetido é rejeitado e todos os objetos são pré-validados como memory blocks. `session::ipc::IpcCommandHeader` e `IpcMessage` agora leem o cabeçalho TLS, validam a contagem de words e separam parâmetros normais da seção de tradução; `decode_translation_section` reconhece estruturalmente type 0 (handles), type 1 (static buffer) e types 5/6/7 (mapeamento temporário R/W/RW). `copy_static_buffer_translation_from_ipc` aplica type 1 usando a tabela de 16 entradas do TLS da thread receptora, verifica capacidade e permissões, e prepara todas as fontes antes de escrever qualquer destino; types 5/6/7 continuam apenas decodificados, sem mapeamento efetivo. Types 2/3 já são decodificados e materializam tabelas de pares endereço físico/tamanho em static buffers do receptor, limitados a ranges FCRAM linear explicitamente mapeados; buffers privados e shared sem endereço físico são recusados. O decoder GSP consome a visão comum, e `translate_memory_block_translation_section_from_ipc` exige exatamente um grupo type-0 de handles para a transferência host-side de arrays homogêneos. O serializador de resposta estendida de `RegisterInterruptRelayQueue` modela resultado, thread ID e handle COPY. Ainda faltam o mapeamento efetivo de buffers temporários types 5/6/7, a tradução IPC geral para outros tipos de kernel object e arrays heterogêneos de handles, integração ao transporte/dispatcher real, criação do backing pelo serviço, `TriggerCmdReqQueue` pelo caminho IPC e handoff que suspenda/reative threads IPC. O `System` ainda não mantém nem agenda múltiplas sessões de processo ARM11.
-- [ ] Implementar comandos GX adicionais e semântica de busy/erro/async com registros GPU e devices correspondentes
+- [~] Ring GX: cabeçalho de 8 bytes, 15 entradas de 32 bytes, wrap, stop-after, fail-if-busy, status e resultado; `TriggerCmdReqQueue` é integrado ao IPC real. `ProcessCommandList` e `MemoryFill` têm execução parcial, mas arbitragem `fail-if-busy`, flush de cache, GAS e sincronização assíncrona completa não são simulados.
+- [~] GSP Interrupt Relay Queue integrada ao serviço: bloco de 0x40 bytes por cliente, ring de 52 eventos, PDC0/PDC1 limitados a 0x20, contadores de perdas, `ignore_pdc` e quatro clientes. O registro pela chamada `RegisterInterruptRelayQueue` cria o shared memory e liga o event handle; notificações `PSC0`/`PSC1` são enfileiradas e sinalizam o evento do cliente.
+- [~] IPC comum e tradução de handles: `IpcCommandHeader`/`IpcMessage` decodificam TLS e separam parâmetros normais/tradução; type 0, type 1 e types 5/6/7 são reconhecidos estruturalmente; type-1 static buffer e arrays homogêneos de memory blocks têm helpers host-side. O transporte atual utiliza somente o subconjunto necessário a `srv:` e `gsp::Gpu`; mapeamento efetivo de buffers temporários, tipos 2/3 de forma geral, arrays heterogêneos, outros objetos de kernel e sessões de processos independentes permanecem pendentes.
+- [ ] Implementar `RequestDMA`, `DisplayTransfer`, `TextureCopy`, `FlushCacheRegions`, comandos de hardware e semântica completa de busy/erro/cache/sincronização assíncrona.
 - [~] Transformação matricial e clipping genéricos implementados; clipping, montagem de primitivas, culling e convenções exatas do PICA200 ainda pendentes
 - [ ] Fragment pipeline, texturas, filtragem, mipmaps e formatos de superfície
 - [ ] Depth/stencil, blending, máscaras e operações completas de framebuffer
@@ -230,6 +231,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Testes unitários para CPU, memória, loaders, processo, kernel inicial, PICA200 command lists e LCD
 - [~] Testes de integração sintéticos para NCSD/CCI, preparação de processo, instruções ARM, command buffers e scanout de duas telas; teste real com uma imagem fornecida pelo usuário ainda pendente
 - [~] Testes ABI Android para leitura de PC/CPSR e recuperação da mensagem original de erro; validação de carga/execução em dispositivo ainda pendente
+- [x] IPC `srv:`/`gsp::Gpu`, registro de cliente, fila GX, `ProcessCommandList`, `MemoryFill`, interrupções PSC e handoff FIFO: `rustfmt`, Clippy e 928 testes aprovados no Linux; Windows, macOS e Android ARM64 também aprovados no workflow [43426673012](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43426673012), código até o commit `7be452a404886612975bca1441182a6b4eefaab3`.
 - [x] Testes do rasterizador, interpolação perspective-correct e estágio geométrico aprovados no workflow multiplataforma do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
 - [x] Decoder de arrays, leitura de atributos brutos, leitura de índices e snapshots de registradores PICA200 aprovados no workflow do commit `629c3a6c5eb808724bc8e74bb8ed4af82fd959a7`
 - [x] Bridge de fetch físico, formatos de 8/16/24/32 bits, conversão numérica, float24, armazenamento/aplicação de atributos fixos e mapeamento de entradas `v0–v15` aprovados em Rustfmt, Clippy e testes Linux/Windows/macOS; build Android `arm64-v8a` aprovado no workflow [43177475915](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43177475915), código no commit `b7c4b92cfc1356ddda9ba40ba96573c812443a56`
@@ -272,7 +274,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ## Próximas tarefas prioritárias
 
-1. Implementar o serviço GSP IPC em torno do GX queue: mapping de shared memory, rendering rights, `TriggerCmdReqQueue`, relay queue/eventos e callbacks; conectar cache flush/invalidate somente quando houver um modelo de cache ARM observável.
+1. Expandir a fila GX após o subconjunto `ProcessCommandList`/`MemoryFill`: `RequestDMA`, `DisplayTransfer`, `TextureCopy`, cache flush/invalidate, busy arbitration, registros externos, sincronização e eventos de conclusão com testes sintéticos independentes.
 2. Implementar decodificadores tipados para os formatos de instrução e operand descriptors de vertex shader, priorizando formatos 1/1i/1u/1c e opcodes aritméticos básicos documentados; adicionar testes de campo e rejeitar codificações desconhecidas. O armazenamento de código/descriptors e uniforms já existe, sem executor.
 3. Decodificar DRAWARRAYS/DRAWELEMENTS, primitive config, índices e vertex offset, com testes próprios para draw arrays e draw elements.
 4. Estender a invalidação de reservas LDREX/STREX a outras regiões compartilhadas e dispositivos que venham a escrever na memória do processo (DMA/GPU/LCD em FCRAM linear já invalidam).
