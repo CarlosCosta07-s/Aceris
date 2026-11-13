@@ -242,6 +242,40 @@ fn flush_to_zero_detects_tininess_before_rounding() {
 }
 
 #[test]
+fn double_underflow_below_host_f64_range_bounces_when_fz_is_clear() {
+    const VMUL_D0_D1_D2: u32 = 0xEE21_0B02;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VMUL_D0_D1_D2]);
+    cpu.regs[0] = 1 << 11; // FPSCR.UFE
+    cpu.vfp_mut().set_d(0, 0xDEAD_BEEF_CAFE_BABE);
+    cpu.vfp_mut().set_d(1, f64::MIN_POSITIVE.to_bits());
+    cpu.vfp_mut().set_d(2, 2.0f64.powi(-53).to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().d(0), 0xDEAD_BEEF_CAFE_BABE);
+    assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
+    assert_ne!(cpu.vfp().fpexc() & (1 << 3), 0, "FPEXC.UFC is set");
+    assert_eq!(cpu.vfp().fpscr() & (1 << 3), 0);
+}
+
+#[test]
+fn double_underflow_below_host_f64_range_flushes_to_positive_zero_with_fz() {
+    const VMUL_D0_D1_D2: u32 = 0xEE21_0B02;
+    let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0, VMUL_D0_D1_D2]);
+    cpu.regs[0] = (1 << 11) | (1 << 24); // FPSCR.UFE | FPSCR.FZ
+    cpu.vfp_mut().set_d(1, f64::MIN_POSITIVE.to_bits());
+    cpu.vfp_mut().set_d(2, 2.0f64.powi(-53).to_bits());
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.vfp().d(0), 0);
+    assert_eq!(cpu.vfp().fpexc() & (1 << 31), 0, "UFE is ignored with FZ");
+    assert_ne!(cpu.vfp().fpscr() & (1 << 3), 0, "FPSCR.UFC is set");
+}
+
+#[test]
 fn unsupported_fpscr_trap_enables_remain_explicit_unimplemented_limits() {
     for mask in [1 << 15, 1 << 12] {
         let (mut cpu, mut memory) = machine(&[VMSR_FPSCR_R0]);
