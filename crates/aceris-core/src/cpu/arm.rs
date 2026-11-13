@@ -2504,6 +2504,29 @@ mod tests {
     }
 
     #[test]
+    fn armv6_srs_legacy_unaligned_sp_aligns_transfer_and_writes_back_original_base() {
+        let mut m = Machine::new(&[0]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.regs[super::LR] = 0x1122_3344;
+        m.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        m.cpu.regs[SP] = 0x901;
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        let saved = Psr(Psr::USER_MODE);
+        m.cpu.set_saved_program_status(saved).unwrap();
+
+        // SRSIA sp!, #irq: data uses Align(SP), writeback uses the original SP.
+        let instruction =
+            0xF84D_0500 | (1 << 23) | (1 << 21) | Psr::IRQ_MODE;
+        m.mem.write32(0, instruction).unwrap();
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.mem.read32(0x900).unwrap(), 0x1122_3344);
+        assert_eq!(m.mem.read32(0x904).unwrap(), saved.0);
+
+        m.cpu.switch_mode(Psr::IRQ_MODE).unwrap();
+        assert_eq!(m.cpu.regs[SP], 0x909);
+    }
+
+    #[test]
     fn armv6_rfe_supports_all_four_addressing_modes_and_sp_writeback() {
         let cases = [
             (0xF8BD_0A00, 0x800, 0x808), // RFEIA sp!
@@ -2548,6 +2571,23 @@ mod tests {
     }
 
     #[test]
+    fn armv6_rfe_legacy_unaligned_base_aligns_transfer_and_writes_back_original_base() {
+        // RFEIA r0!: the two memory words start at Align(r0), but writeback
+        // advances the original, unaligned base by eight bytes.
+        let mut m = Machine::new(&[0xF890_0A00]);
+        m.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        m.cpu.regs[0] = DATA + 1;
+        let restored = Psr(Psr::SYSTEM_MODE);
+        m.mem.write32(DATA, 0x2345).unwrap();
+        m.mem.write32(DATA + 4, restored.0).unwrap();
+
+        assert_eq!(m.step(), StepEvent::Executed);
+        assert_eq!(m.cpu.pc(), 0x2344);
+        assert_eq!(m.cpu.cpsr, restored);
+        assert_eq!(m.cpu.regs[0], DATA + 9);
+    }
+
+    #[test]
     fn armv6_rfe_rejects_user_mode_bad_base_and_invalid_status_atomically() {
         // RFE from User mode is undefined and does not advance the PC.
         let mut user = Machine::new(&[0xF8BD_0A00]);
@@ -2567,16 +2607,23 @@ mod tests {
             Err(Error::UndefinedInstruction { pc: 0, .. })
         ));
 
-        // Unaligned base is rejected before accessing memory.
-        let mut unaligned = Machine::new(&[0xF8B0_0A00]);
-        unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
-        unaligned.cpu.regs[0] = DATA + 1;
-        assert!(matches!(
-            unaligned.cpu.step(&mut unaligned.mem),
-            Err(Error::InvalidAccess { addr: 0x801 })
-        ));
-        assert_eq!(unaligned.cpu.pc(), 0);
-        assert_eq!(unaligned.cpu.regs[0], DATA + 1);
+        // U or A makes an unaligned RFE a word-alignment fault.
+        for alignment_bit in [1 << 22, 1 << 1] {
+            let mut unaligned = Machine::new(&[0xF8B0_0A00]);
+            unaligned.cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+            unaligned.cpu.regs[0] = DATA + 1;
+            unaligned
+                .cpu
+                .cp15_mut()
+                .write(true, 0, 1, 0, 0, alignment_bit)
+                .unwrap();
+            assert!(matches!(
+                unaligned.cpu.step(&mut unaligned.mem),
+                Err(Error::InvalidAccess { addr: 0x801 })
+            ));
+            assert_eq!(unaligned.cpu.pc(), 0);
+            assert_eq!(unaligned.cpu.regs[0], DATA + 1);
+        }
 
         // Invalid restored mode must not partially apply writeback.
         let mut invalid_status = Machine::new(&[0xF8BD_0A00]);
