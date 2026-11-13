@@ -6,15 +6,7 @@
 use aceris_core::cpu::{Arm11Core, Psr};
 use aceris_core::memory::{Bus, FlatMemory};
 
-const HALFWORDS: [i32; 7] = [
-    i16::MIN as i32,
-    -32767,
-    -1,
-    0,
-    1,
-    32766,
-    i16::MAX as i32,
-];
+const HALFWORDS: [i32; 7] = [i16::MIN as i32, -32767, -1, 0, 1, 32766, i16::MAX as i32];
 
 const WORDS: [u32; 8] = [
     0,
@@ -70,17 +62,8 @@ fn packed(low: i32, high: i32) -> u32 {
     ((high as i16 as u16 as u32) << 16) | (low as i16 as u16 as u32)
 }
 
-fn half_multiply(
-    base: u32,
-    rd: usize,
-    rn: usize,
-    rs: usize,
-    rm: usize,
-    x: bool,
-    y: bool,
-) -> u32 {
-    base
-        | ((rd as u32) << 16)
+fn half_multiply(base: u32, rd: usize, rn: usize, rs: usize, rm: usize, x: bool, y: bool) -> u32 {
+    base | ((rd as u32) << 16)
         | ((rn as u32) << 12)
         | ((rs as u32) << 8)
         | (u32::from(y) << 6)
@@ -97,8 +80,7 @@ fn dual_multiply(
     subtract: bool,
     exchange: bool,
 ) -> u32 {
-    base
-        | ((rd as u32) << 16)
+    base | ((rd as u32) << 16)
         | ((ra as u32) << 12)
         | ((rs as u32) << 8)
         | (u32::from(subtract) << 6)
@@ -119,12 +101,11 @@ fn smlaxy_matches_signed_halfword_reference_and_sets_only_sticky_q_on_overflow()
                             let rs = packed(rs_low, rs_high);
                             for accumulator in [i32::MIN, -1, 0, i32::MAX] {
                                 for q_before in [false, true] {
-                                    let product =
-                                        i64::from(if x { rm_high } else { rm_low })
-                                            * i64::from(if y { rs_high } else { rs_low });
+                                    let product = i64::from(if x { rm_high } else { rm_low })
+                                        * i64::from(if y { rs_high } else { rs_low });
                                     let wide = product + i64::from(accumulator);
-                                    let overflow = wide < i64::from(i32::MIN)
-                                        || wide > i64::from(i32::MAX);
+                                    let overflow =
+                                        wide < i64::from(i32::MIN) || wide > i64::from(i32::MAX);
                                     let cpu = machine(
                                         instruction,
                                         &[(0, rm), (1, rs), (2, accumulator as u32)],
@@ -177,12 +158,9 @@ fn smlalxy_accumulates_into_the_64_bit_destination_pair() {
                 for &rm_high in &HALFWORDS {
                     for &rs_low in &HALFWORDS {
                         for &rs_high in &HALFWORDS {
-                            for accumulator in [
-                                0u64,
-                                u64::MAX,
-                                0x7FFF_FFFF_FFFF_FFFF,
-                                0x8000_0000_0000_0000,
-                            ] {
+                            for accumulator in
+                                [0u64, u64::MAX, 0x7FFF_FFFF_FFFF_FFFF, 0x8000_0000_0000_0000]
+                            {
                                 let rm = packed(rm_low, rm_high);
                                 let rs = packed(rs_low, rs_high);
                                 let product = i64::from(if x { rm_high } else { rm_low })
@@ -225,15 +203,7 @@ fn smlawy_and_smulwy_match_the_signed_word_by_halfword_reference() {
                 };
                 let product_high = (i64::from(word as i32) * selected) >> 16;
 
-                let smulwy = half_multiply(
-                    0xE120_0080,
-                    4,
-                    0,
-                    1,
-                    0,
-                    true,
-                    top,
-                );
+                let smulwy = half_multiply(0xE120_0080, 4, 0, 1, 0, true, top);
                 let smulwy = smulwy | (1 << 5);
                 let smul = machine(smulwy, &[(0, rm), (1, rs)], true);
                 assert_eq!(smul.regs[4], product_high as u32);
@@ -242,11 +212,9 @@ fn smlawy_and_smulwy_match_the_signed_word_by_halfword_reference() {
 
                 for accumulator in [i32::MIN, -1, 0, i32::MAX] {
                     for q_before in [false, true] {
-                        let instruction =
-                            half_multiply(0xE120_0080, 4, 2, 1, 0, false, top);
+                        let instruction = half_multiply(0xE120_0080, 4, 2, 1, 0, false, top);
                         let wide = product_high + i64::from(accumulator);
-                        let overflow = wide < i64::from(i32::MIN)
-                            || wide > i64::from(i32::MAX);
+                        let overflow = wide < i64::from(i32::MIN) || wide > i64::from(i32::MAX);
                         let cpu = machine(
                             instruction,
                             &[(0, rm), (1, rs), (2, accumulator as u32)],
@@ -266,24 +234,8 @@ fn smlawy_and_smulwy_match_the_signed_word_by_halfword_reference() {
 fn smlad_smladx_smusd_and_smusdx_match_dual_halfword_reference() {
     for subtract in [false, true] {
         for exchange in [false, true] {
-            let instruction = dual_multiply(
-                0xE700_0010,
-                4,
-                2,
-                1,
-                0,
-                subtract,
-                exchange,
-            );
-            let unaccumulated = dual_multiply(
-                0xE700_0010,
-                4,
-                15,
-                1,
-                0,
-                subtract,
-                exchange,
-            );
+            let instruction = dual_multiply(0xE700_0010, 4, 2, 1, 0, subtract, exchange);
+            let unaccumulated = dual_multiply(0xE700_0010, 4, 15, 1, 0, subtract, exchange);
             for &rm in &PACKED {
                 for &rs in &PACKED {
                     let rhs_low = if exchange {
@@ -305,8 +257,7 @@ fn smlad_smladx_smusd_and_smusdx_match_dual_halfword_reference() {
                     for accumulator in [i32::MIN, -1, 0, i32::MAX] {
                         for q_before in [false, true] {
                             let wide = products + i64::from(accumulator);
-                            let overflow = wide < i64::from(i32::MIN)
-                                || wide > i64::from(i32::MAX);
+                            let overflow = wide < i64::from(i32::MIN) || wide > i64::from(i32::MAX);
                             let cpu = machine(
                                 instruction,
                                 &[(0, rm), (1, rs), (2, accumulator as u32)],
@@ -319,15 +270,11 @@ fn smlad_smladx_smusd_and_smusdx_match_dual_halfword_reference() {
                     }
 
                     let unaccumulated_wide = products;
-                    let unaccumulated_overflow = unaccumulated_wide
-                        < i64::from(i32::MIN)
+                    let unaccumulated_overflow = unaccumulated_wide < i64::from(i32::MIN)
                         || unaccumulated_wide > i64::from(i32::MAX);
                     let cpu = machine(unaccumulated, &[(0, rm), (1, rs)], false);
                     assert_eq!(cpu.regs[4], unaccumulated_wide as u32);
-                    assert_eq!(
-                        cpu.cpsr.q(),
-                        !subtract && unaccumulated_overflow
-                    );
+                    assert_eq!(cpu.cpsr.q(), !subtract && unaccumulated_overflow);
                     assert_nzcv_preserved(&cpu);
                 }
             }
@@ -339,15 +286,7 @@ fn smlad_smladx_smusd_and_smusdx_match_dual_halfword_reference() {
 fn smlald_and_smlsld_accumulate_dual_products_into_64_bits() {
     for subtract in [false, true] {
         for exchange in [false, true] {
-            let instruction = dual_multiply(
-                0xE740_0010,
-                4,
-                5,
-                1,
-                0,
-                subtract,
-                exchange,
-            );
+            let instruction = dual_multiply(0xE740_0010, 4, 5, 1, 0, subtract, exchange);
             for &rm in &PACKED {
                 for &rs in &PACKED {
                     for accumulator in [
@@ -368,7 +307,11 @@ fn smlald_and_smlsld_accumulate_dual_products_into_64_bits() {
                         };
                         let first = signed_half(rm, false) * rhs_low;
                         let second = signed_half(rm, true) * rhs_high;
-                        let products = if subtract { first - second } else { first + second };
+                        let products = if subtract {
+                        first - second
+                    } else {
+                        first + second
+                    };
                         let expected = accumulator.wrapping_add(products as u64);
                         let cpu = machine(
                             instruction,
@@ -451,11 +394,7 @@ fn usad8_and_usada8_match_bytewise_absolute_difference_reference() {
 
             for accumulator in [0, 1, 0x7FFF_FFFF, u32::MAX] {
                 let usada8 = dual_multiply(0xE780_0010, 4, 2, 1, 0, false, false);
-                let cpu = machine(
-                    usada8,
-                    &[(0, lhs), (1, rhs), (2, accumulator)],
-                    false,
-                );
+                let cpu = machine(usada8, &[(0, lhs), (1, rhs), (2, accumulator)], false);
                 assert_eq!(cpu.regs[4], distance.wrapping_add(accumulator));
                 assert!(!cpu.cpsr.q());
                 assert_nzcv_preserved(&cpu);
