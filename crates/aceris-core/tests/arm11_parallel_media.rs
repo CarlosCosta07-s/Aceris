@@ -266,7 +266,10 @@ fn all_36_parallel_arithmetic_encodings_match_the_independent_lane_model() {
                                 assert_eq!(cpu.regs[2], expected, "{context}");
                                 assert_eq!(cpu.cpsr.ge(), expected_ge, "{context}");
                                 assert_eq!(cpu.cpsr.q(), q_before, "{context}");
-                                assert!(cpu.cpsr.n() && !cpu.cpsr.z() && cpu.cpsr.c() && cpu.cpsr.v(), "{context}");
+                                assert!(
+                                    cpu.cpsr.n() && !cpu.cpsr.z() && cpu.cpsr.c() && cpu.cpsr.v(),
+                                    "{context}"
+                                );
                             }
                         }
                     }
