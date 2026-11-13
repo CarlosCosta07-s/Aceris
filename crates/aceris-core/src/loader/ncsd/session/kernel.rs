@@ -151,6 +151,18 @@ struct KernelMemoryBlock {
     other_permissions: u32,
 }
 
+/// HLE service endpoint attached to a process-local session handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceSessionKind {
+    ServiceManager,
+    GspGpu {
+        client_id: Option<u8>,
+        shared_memory_handle: Option<u32>,
+        event_handle: Option<u32>,
+        flags: u32,
+    },
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum KernelObject {
     Thread(ThreadId),
@@ -159,6 +171,7 @@ enum KernelObject {
     Semaphore(KernelSemaphore),
     Timer(KernelTimer),
     MemoryBlock(KernelMemoryBlock),
+    ServiceSession(ServiceSessionKind),
 }
 
 /// Process-local table mapping guest-visible handles to typed kernel objects.
@@ -251,6 +264,56 @@ impl Arm11KernelObjectTable {
                 Some((block.owner_permissions, block.other_permissions))
             }
             _ => None,
+        }
+    }
+
+    /// Creates a process-local service-manager client session.
+    pub fn insert_service_manager_session(&mut self) -> Result<u32, KernelHandleError> {
+        self.insert(KernelObject::ServiceSession(ServiceSessionKind::ServiceManager))
+    }
+
+    /// Creates a process-local GSP GPU client session.
+    pub fn insert_gsp_gpu_session(&mut self) -> Result<u32, KernelHandleError> {
+        self.insert(KernelObject::ServiceSession(ServiceSessionKind::GspGpu {
+            client_id: None,
+            shared_memory_handle: None,
+            event_handle: None,
+            flags: 0,
+        }))
+    }
+
+    /// Returns the service endpoint state associated with a guest handle.
+    pub fn service_session(&self, handle: u32) -> Option<ServiceSessionKind> {
+        match self.objects.get(&handle) {
+            Some(KernelObject::ServiceSession(kind)) => Some(*kind),
+            _ => None,
+        }
+    }
+
+    /// Updates the registration data retained by a GSP service session.
+    pub fn set_gsp_session_registration(
+        &mut self,
+        handle: u32,
+        client_id: Option<u8>,
+        shared_memory_handle: Option<u32>,
+        event_handle: Option<u32>,
+        flags: u32,
+    ) -> Result<(), KernelHandleError> {
+        match self.objects.get_mut(&handle) {
+            Some(KernelObject::ServiceSession(ServiceSessionKind::GspGpu {
+                client_id: current_client_id,
+                shared_memory_handle: current_memory_handle,
+                event_handle: current_event_handle,
+                flags: current_flags,
+            })) => {
+                *current_client_id = client_id;
+                *current_memory_handle = shared_memory_handle;
+                *current_event_handle = event_handle;
+                *current_flags = flags;
+                Ok(())
+            }
+            Some(_) => Err(KernelHandleError::WrongType),
+            None => Err(KernelHandleError::InvalidHandle),
         }
     }
 
@@ -619,7 +682,7 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Mutex(mutex)) => !mutex.waiters.is_empty(),
             Some(KernelObject::Semaphore(semaphore)) => !semaphore.waiters.is_empty(),
             Some(KernelObject::Timer(timer)) => !timer.waiters.is_empty(),
-            Some(KernelObject::Thread(_) | KernelObject::MemoryBlock(_)) => false,
+            Some(KernelObject::Thread(_) | KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_)) => false,
             None => return Err(KernelHandleError::InvalidHandle),
         };
         if has_waiters {
