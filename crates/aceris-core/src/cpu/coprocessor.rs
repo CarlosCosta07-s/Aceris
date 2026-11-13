@@ -76,7 +76,24 @@ impl Arm11Core {
                 } else {
                     super::mmu::Access::Write
                 };
-                self.translate_va_to_pa_register(bus, value & !0x3FF, access, opc2 < 2)?;
+                let virtual_address = value & !0x3FF;
+                let pa_register = match bus.translate_va_to_pa_for_par(
+                    virtual_address,
+                    access == super::mmu::Access::Write,
+                    opc2 < 2,
+                ) {
+                    Some(result) => result?,
+                    None => {
+                        self.translate_va_to_pa_register(
+                            bus,
+                            virtual_address,
+                            access,
+                            opc2 < 2,
+                        )?;
+                        return Ok(StepEvent::Executed);
+                    }
+                };
+                self.cp15.set_pa_register(pa_register);
                 return Ok(StepEvent::Executed);
             }
             self.cp15

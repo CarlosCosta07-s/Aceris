@@ -69,6 +69,20 @@ pub trait Bus {
         self.write32(addr, value)
     }
 
+    /// Allows an MMU bus adapter to perform the CP15 VA-to-PA permission probe
+    /// against the same TLB and page tables used by the current instruction.
+    ///
+    /// `None` means this bus has no translation layer; the CPU then applies the
+    /// architecturally flat mapping used when its MMU is disabled.
+    fn translate_va_to_pa_for_par(
+        &mut self,
+        _virtual_address: u32,
+        _write: bool,
+        _privileged: bool,
+    ) -> Option<Result<u32>> {
+        None
+    }
+
     fn write16(&mut self, addr: u32, value: u16) -> Result<()> {
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
             self.write8(addr.wrapping_add(i as u32), byte)?;

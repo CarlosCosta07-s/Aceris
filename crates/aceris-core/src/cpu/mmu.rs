@@ -814,6 +814,24 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
 }
 
 impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
+    fn translate_va_to_pa_for_par(
+        &mut self,
+        virtual_address: u32,
+        write: bool,
+        privileged: bool,
+    ) -> Option<Result<u32>> {
+        let access = if write { Access::Write } else { Access::Read };
+        Some(self.translate_for_pa_register(virtual_address, access, privileged).map(
+            |translation| match translation {
+                PaTranslation::Mapped {
+                    physical_address,
+                    attributes,
+                } => attributes.to_pa_register(physical_address),
+                PaTranslation::Fault(fault) => ((fault.status & 0xF) << 1) | 1,
+            },
+        ))
+    }
+
     fn read8(&mut self, addr: u32) -> Result<u8> {
         let physical = self.map(addr, Access::Read)?;
         self.inner.read8(physical)
