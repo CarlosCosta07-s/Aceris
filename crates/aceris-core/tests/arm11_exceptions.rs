@@ -296,9 +296,7 @@ fn prefetch_abort_during_thumb_restores_state_and_returns_to_faulting_address() 
 fn mmu_enabled_thumb_machine() -> (Arm11Core, FlatMemory) {
     let mut memory = FlatMemory::new(0, 0x1_0000);
     // L1 table at 0x4000: identity-map VA 0..1 MiB as an RW section.
-    memory
-        .write32(0x4000, 0b10 | (0b11 << 10))
-        .unwrap();
+    memory.write32(0x4000, 0b10 | (0b11 << 10)).unwrap();
     // MCR p15,0,r0,c2,c0,0 (TTBR0), MCR p15,0,r1,c3,c0,0 (DACR),
     // MCR p15,0,r2,c1,c0,0 (SCTLR.M | SCTLR.XP).
     memory.write32(0x00, 0xEE02_0F10).unwrap();
