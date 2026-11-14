@@ -373,9 +373,7 @@ fn thumb_data_translation_abort_preserves_thumb_state_and_faulting_instruction()
 
 fn enable_mmu_high_vectors(cpu: &mut Arm11Core, memory: &mut FlatMemory) {
     // TTBR0 L1[0xFFF] maps FFF00000..FFFFFFFF onto physical 0..1 MiB.
-    memory
-        .write32(0x7FFC, 0b10 | (0b11 << 10))
-        .unwrap();
+    memory.write32(0x7FFC, 0b10 | (0b11 << 10)).unwrap();
     // MCR p15,0,r2,c1,c0,0: retain M/XP and enable SCTLR.V.
     memory.write32(0x0C, 0xEE01_2F10).unwrap();
     cpu.regs[2] = 1 | (1 << 23) | (1 << 13);
@@ -448,4 +446,3 @@ fn fiq_during_thumb_uses_high_vector_through_enabled_mmu() {
     assert_eq!(cpu.regs[0], 9);
     assert_eq!(cpu.pc(), 0x102);
 }
-
