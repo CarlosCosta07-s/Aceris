@@ -211,3 +211,85 @@ fn fiq_during_thumb_execution_saves_and_restores_thumb_state() {
     assert_eq!(cpu.regs[0], 9);
     assert_eq!(cpu.pc(), 0x04);
 }
+
+#[test]
+fn undefined_during_thumb_saves_halfword_return_and_restores_thumb_state() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write16(0x00, 0xDE00).unwrap(); // Permanently undefined T16 encoding.
+    memory.write32(0x04, 0xE25E_F002).unwrap(); // SUBS pc, lr, #2
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_fault_exception_entry_enabled(true);
+    cpu.cpsr.set_thumb(true);
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::UNDEFINED_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x04);
+    assert_eq!(cpu.regs[14], 0x02);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x00);
+}
+
+#[test]
+fn data_abort_during_thumb_restores_state_and_returns_to_faulting_halfword() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write16(0x00, 0x6808).unwrap(); // LDR r0, [r1, #0]
+    memory.write32(0x10, 0xE25E_F008).unwrap(); // SUBS pc, lr, #8
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_fault_exception_entry_enabled(true);
+    cpu.cpsr.set_thumb(true);
+    cpu.regs[0] = 0x1234_5678;
+    cpu.regs[1] = 0x1000;
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x08);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().dfar(), 0x1000);
+    assert_eq!(cpu.cp15().dfsr(), 0x8);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+    assert_eq!(cpu.regs[1], 0x1000);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x00);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+}
+
+#[test]
+fn prefetch_abort_during_thumb_restores_state_and_returns_to_faulting_address() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write32(0x0C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+
+    let mut cpu = Arm11Core::new();
+    cpu.set_fault_exception_entry_enabled(true);
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x1000);
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x0C);
+    assert_eq!(cpu.regs[14], 0x1004);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().ifar(), 0x1000);
+    assert_eq!(cpu.cp15().ifsr(), 0x8);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x1000);
+}
+
