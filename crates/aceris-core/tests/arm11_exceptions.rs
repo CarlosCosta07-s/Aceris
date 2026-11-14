@@ -543,7 +543,6 @@ fn thumb_prefetch_translation_abort_uses_high_vector_through_enabled_mmu() {
     assert_eq!(cpu.saved_program_status(), None);
 }
 
-
 #[test]
 fn a32_ldmia_translation_abort_keeps_registers_and_writeback_atomic() {
     let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
