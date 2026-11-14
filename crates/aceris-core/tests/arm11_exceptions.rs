@@ -370,3 +370,82 @@ fn thumb_data_translation_abort_preserves_thumb_state_and_faulting_instruction()
     assert_eq!(cpu.pc(), 0x100);
     assert_eq!(cpu.regs[0], 0x1234_5678);
 }
+
+fn enable_mmu_high_vectors(cpu: &mut Arm11Core, memory: &mut FlatMemory) {
+    // TTBR0 L1[0xFFF] maps FFF00000..FFFFFFFF onto physical 0..1 MiB.
+    memory
+        .write32(0x7FFC, 0b10 | (0b11 << 10))
+        .unwrap();
+    // MCR p15,0,r2,c1,c0,0: retain M/XP and enable SCTLR.V.
+    memory.write32(0x0C, 0xEE01_2F10).unwrap();
+    cpu.regs[2] = 1 | (1 << 23) | (1 << 13);
+    cpu.step(memory).unwrap();
+    assert!(cpu.cp15().mmu_enabled());
+    assert!(cpu.cp15().high_vectors());
+}
+
+#[test]
+fn irq_during_thumb_uses_high_vector_through_enabled_mmu() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    enable_mmu_high_vectors(&mut cpu, &mut memory);
+    memory.write16(0x100, 0x2007).unwrap(); // MOVS r0, #7
+    memory.write32(0x18, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    let interrupted = cpu.cpsr;
+    cpu.set_irq_line(true);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0xFFFF_0018);
+    assert_eq!(cpu.regs[14], 0x104);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+
+    cpu.set_irq_line(false);
+    cpu.step(&mut memory).unwrap(); // Fetch high vector through MmuBus and return.
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x100);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.regs[0], 7);
+    assert_eq!(cpu.pc(), 0x102);
+}
+
+#[test]
+fn fiq_during_thumb_uses_high_vector_through_enabled_mmu() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    enable_mmu_high_vectors(&mut cpu, &mut memory);
+    memory.write16(0x100, 0x2009).unwrap(); // MOVS r0, #9
+    memory.write32(0x1C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    let interrupted = cpu.cpsr;
+    cpu.set_fiq_line(true);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::FIQ_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0xFFFF_001C);
+    assert_eq!(cpu.regs[14], 0x104);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F),
+        Psr::A | Psr::I | Psr::F
+    );
+
+    cpu.set_fiq_line(false);
+    cpu.step(&mut memory).unwrap(); // Fetch high vector through MmuBus and return.
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x100);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.regs[0], 9);
+    assert_eq!(cpu.pc(), 0x102);
+}
+
