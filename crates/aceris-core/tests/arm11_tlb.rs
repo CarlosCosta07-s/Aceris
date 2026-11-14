@@ -440,9 +440,7 @@ fn guest_tlbimvaa_matches_an_address_inside_a_large_page_and_preserves_neighbor_
     memory
         .write32(L1_BASE + 0x300 * 4, section_descriptor(0, false))
         .unwrap();
-    memory
-        .write32(L1_BASE + 0x123 * 4, L2_BASE | 0b01)
-        .unwrap();
+    memory.write32(L1_BASE + 0x123 * 4, L2_BASE | 0b01).unwrap();
 
     for index in 0..16 {
         memory
