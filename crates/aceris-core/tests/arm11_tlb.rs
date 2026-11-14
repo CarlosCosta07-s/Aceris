@@ -354,9 +354,7 @@ fn guest_tlbimvaa_invalidates_only_the_target_small_page_inside_a_coarse_table()
     memory
         .write32(L1_BASE + 0x300 * 4, section_descriptor(0, false))
         .unwrap();
-    memory
-        .write32(L1_BASE + 0x123 * 4, L2_BASE | 0b01)
-        .unwrap();
+    memory.write32(L1_BASE + 0x123 * 4, L2_BASE | 0b01).unwrap();
 
     let data_l2_index = ((DATA_VA >> 12) & 0xFF) as usize;
     let sibling_l2_index = ((SIBLING_VA >> 12) & 0xFF) as usize;
@@ -373,15 +371,11 @@ fn guest_tlbimvaa_invalidates_only_the_target_small_page_inside_a_coarse_table()
         )
         .unwrap();
 
-    memory
-        .write32(OLD_PHYSICAL + 0x100, 0x1111_1001)
-        .unwrap();
+    memory.write32(OLD_PHYSICAL + 0x100, 0x1111_1001).unwrap();
     memory
         .write32(SIBLING_OLD_PHYSICAL + 0x100, 0x2222_2002)
         .unwrap();
-    memory
-        .write32(NEW_PHYSICAL + 0x100, 0x3333_3003)
-        .unwrap();
+    memory.write32(NEW_PHYSICAL + 0x100, 0x3333_3003).unwrap();
     memory
         .write32(SIBLING_NEW_PHYSICAL + 0x100, 0x4444_4004)
         .unwrap();
@@ -520,4 +514,3 @@ fn guest_tlbimvaa_matches_an_address_inside_a_large_page_and_preserves_neighbor_
     assert_eq!(cpu.regs[7], 0xCCCC_3003);
     assert_eq!(cpu.regs[8], 0xBBBB_2002);
 }
-
