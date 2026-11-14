@@ -337,3 +337,187 @@ fn guest_fcse_pid_separates_low_virtual_address_tlb_entries_and_tlbi_uses_mva() 
     cpu.step(&mut memory).unwrap(); // PID_TWO retains its cached mapping.
     assert_eq!(cpu.regs[9], 0xBBBB_0002);
 }
+
+#[test]
+fn guest_tlbimvaa_invalidates_only_the_target_small_page_inside_a_coarse_table() {
+    const L2_BASE: u32 = 0x8000;
+    const DATA_VA: u32 = 0x1234_5100;
+    const SIBLING_VA: u32 = DATA_VA + 0x1000;
+    const OLD_PHYSICAL: u32 = 0x0012_3000;
+    const SIBLING_OLD_PHYSICAL: u32 = 0x0013_4000;
+    const NEW_PHYSICAL: u32 = 0x0023_4000;
+    const SIBLING_NEW_PHYSICAL: u32 = 0x0024_5000;
+    const SMALL_PAGE: u32 = 0b10 | (0b11 << 4) | (1 << 11);
+
+    let (mut cpu, mut memory) = mmu_machine();
+
+    memory
+        .write32(L1_BASE + 0x300 * 4, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(L1_BASE + 0x123 * 4, L2_BASE | 0b01)
+        .unwrap();
+
+    let data_l2_index = ((DATA_VA >> 12) & 0xFF) as usize;
+    let sibling_l2_index = ((SIBLING_VA >> 12) & 0xFF) as usize;
+    memory
+        .write32(
+            L2_BASE + data_l2_index as u32 * 4,
+            (OLD_PHYSICAL & 0xFFFF_F000) | SMALL_PAGE,
+        )
+        .unwrap();
+    memory
+        .write32(
+            L2_BASE + sibling_l2_index as u32 * 4,
+            (SIBLING_OLD_PHYSICAL & 0xFFFF_F000) | SMALL_PAGE,
+        )
+        .unwrap();
+
+    memory
+        .write32(OLD_PHYSICAL + 0x100, 0x1111_1001)
+        .unwrap();
+    memory
+        .write32(SIBLING_OLD_PHYSICAL + 0x100, 0x2222_2002)
+        .unwrap();
+    memory
+        .write32(NEW_PHYSICAL + 0x100, 0x3333_3003)
+        .unwrap();
+    memory
+        .write32(SIBLING_NEW_PHYSICAL + 0x100, 0x4444_4004)
+        .unwrap();
+
+    memory.write32(0x100, 0xE590_5000).unwrap(); // LDR r5, [r0].
+    memory.write32(0x104, 0xE592_6000).unwrap(); // LDR r6, [r2].
+    memory.write32(0x108, mcr(3, 8, 7, 3)).unwrap(); // TLBIMVAA r3.
+    memory.write32(0x10C, 0xE590_7000).unwrap(); // LDR r7, [r0].
+    memory.write32(0x110, 0xE592_8000).unwrap(); // LDR r8, [r2].
+
+    cpu.regs[0] = DATA_VA;
+    cpu.regs[2] = SIBLING_VA;
+    cpu.regs[3] = DATA_VA & 0xFFFF_F000;
+    cpu.set_pc(0x3000_0100);
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.regs[5], 0x1111_1001);
+    assert_eq!(cpu.regs[6], 0x2222_2002);
+
+    // Remap both adjacent 4 KiB pages, then invalidate only the first MVA.
+    memory
+        .write32(
+            L2_BASE + data_l2_index as u32 * 4,
+            (NEW_PHYSICAL & 0xFFFF_F000) | SMALL_PAGE,
+        )
+        .unwrap();
+    memory
+        .write32(
+            L2_BASE + sibling_l2_index as u32 * 4,
+            (SIBLING_NEW_PHYSICAL & 0xFFFF_F000) | SMALL_PAGE,
+        )
+        .unwrap();
+
+    cpu.step(&mut memory).unwrap(); // Queue TLBIMVAA.
+    cpu.step(&mut memory).unwrap(); // Invalidate target page, then read new PA.
+    cpu.step(&mut memory).unwrap(); // Sibling translation remains cached.
+
+    assert_eq!(cpu.regs[7], 0x3333_3003);
+    assert_eq!(cpu.regs[8], 0x2222_2002);
+}
+
+#[test]
+fn guest_tlbimvaa_matches_an_address_inside_a_large_page_and_preserves_neighbor_page() {
+    const L2_BASE: u32 = 0x8000;
+    const DATA_VA: u32 = 0x1235_2340;
+    const SIBLING_VA: u32 = DATA_VA + 0x1_0000;
+    const OLD_PHYSICAL: u32 = 0x0010_0000;
+    const SIBLING_OLD_PHYSICAL: u32 = 0x0011_0000;
+    const NEW_PHYSICAL: u32 = 0x0020_0000;
+    const SIBLING_NEW_PHYSICAL: u32 = 0x0021_0000;
+    const LARGE_PAGE: u32 = 0b01 | (0b11 << 4) | (1 << 11);
+    const LARGE_PAGE_MASK: u32 = 0xFFFF_0000;
+    const DATA_PAGE_INDEX = ((DATA_VA >> 12) & 0xFF) as usize;
+    const SIBLING_PAGE_INDEX = ((SIBLING_VA >> 12) & 0xFF) as usize;
+    const DATA_GROUP_START = DATA_PAGE_INDEX & !0xF;
+    const SIBLING_GROUP_START = SIBLING_PAGE_INDEX & !0xF;
+    const PAGE_OFFSET = DATA_VA & 0xFFFF;
+
+    let (mut cpu, mut memory) = mmu_machine();
+
+    memory
+        .write32(L1_BASE + 0x300 * 4, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(L1_BASE + 0x123 * 4, L2_BASE | 0b01)
+        .unwrap();
+
+    for index in 0..16 {
+        memory
+            .write32(
+                L2_BASE + (DATA_GROUP_START + index) as u32 * 4,
+                (OLD_PHYSICAL & LARGE_PAGE_MASK) | LARGE_PAGE,
+            )
+            .unwrap();
+        memory
+            .write32(
+                L2_BASE + (SIBLING_GROUP_START + index) as u32 * 4,
+                (SIBLING_OLD_PHYSICAL & LARGE_PAGE_MASK) | LARGE_PAGE,
+            )
+            .unwrap();
+    }
+
+    memory
+        .write32(OLD_PHYSICAL + PAGE_OFFSET, 0xAAAA_1001)
+        .unwrap();
+    memory
+        .write32(SIBLING_OLD_PHYSICAL + PAGE_OFFSET, 0xBBBB_2002)
+        .unwrap();
+    memory
+        .write32(NEW_PHYSICAL + PAGE_OFFSET, 0xCCCC_3003)
+        .unwrap();
+    memory
+        .write32(SIBLING_NEW_PHYSICAL + PAGE_OFFSET, 0xDDDD_4004)
+        .unwrap();
+
+    memory.write32(0x100, 0xE590_5000).unwrap(); // LDR r5, [r0].
+    memory.write32(0x104, 0xE592_6000).unwrap(); // LDR r6, [r2].
+    memory.write32(0x108, mcr(3, 8, 7, 3)).unwrap(); // TLBIMVAA r3.
+    memory.write32(0x10C, 0xE590_7000).unwrap(); // LDR r7, [r0].
+    memory.write32(0x110, 0xE592_8000).unwrap(); // LDR r8, [r2].
+
+    cpu.regs[0] = DATA_VA;
+    cpu.regs[2] = SIBLING_VA;
+    // The encoded MVA points at another 4 KiB offset inside the same 64 KiB
+    // large page. The TLB must compare against the full large-page range.
+    cpu.regs[3] = (DATA_VA + 0xA000) & 0xFFFF_F000;
+    cpu.set_pc(0x3000_0100);
+
+    cpu.step(&mut memory).unwrap();
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.regs[5], 0xAAAA_1001);
+    assert_eq!(cpu.regs[6], 0xBBBB_2002);
+
+    // Both large-page descriptors are updated. Only the first mapping's
+    // TLB entry should be invalidated by an MVA inside its 64 KiB range.
+    for index in 0..16 {
+        memory
+            .write32(
+                L2_BASE + (DATA_GROUP_START + index) as u32 * 4,
+                (NEW_PHYSICAL & LARGE_PAGE_MASK) | LARGE_PAGE,
+            )
+            .unwrap();
+        memory
+            .write32(
+                L2_BASE + (SIBLING_GROUP_START + index) as u32 * 4,
+                (SIBLING_NEW_PHYSICAL & LARGE_PAGE_MASK) | LARGE_PAGE,
+            )
+            .unwrap();
+    }
+
+    cpu.step(&mut memory).unwrap(); // Queue TLBIMVAA with an interior large-page MVA.
+    cpu.step(&mut memory).unwrap(); // Re-walk target and read the new physical page.
+    cpu.step(&mut memory).unwrap(); // Neighbor large page remains cached.
+
+    assert_eq!(cpu.regs[7], 0xCCCC_3003);
+    assert_eq!(cpu.regs[8], 0xBBBB_2002);
+}
+
