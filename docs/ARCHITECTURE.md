@@ -101,8 +101,9 @@ O LCD possui superfícies de saída e scanout básico dos framebuffers para as t
 
 ## Frontends e validação
 
-- **Desktop:** atualmente oferece diagnóstico/autoteste por linha de comando; janela gráfica, apresentação de telas, áudio, controles e biblioteca de títulos estão pendentes.
-- **Android:** o crate Rust nativo compila para `arm64-v8a`; aplicativo instalável completo, interface, ciclo de vida, entrada, áudio e testes em dispositivo real ainda estão pendentes.
+- **Desktop:** o binário mantém diagnóstico/autoteste por linha de comando e possui uma janela experimental X11 no Linux. A janela reproduz a abertura original, apresenta a biblioteca compartilhada com movimento ambiente a 60 Hz e aceita sequências pessoais de fundos RGBA por `--background-dir`/`--background-fps`. A apresentação dos LCDs permanece experimental; não representa compatibilidade de jogos. Backends Win32/Cocoa, áudio e controles de jogo ainda estão pendentes.
+- **Android:** o crate Rust compila como `arm64-v8a` e expõe C ABI para abertura/biblioteca, fundos personalizados (com quadros separados para vertical e horizontal), preferência de orientação e geometria das duas telas, além de desenho/hit-test de controles virtuais. Ainda não há Activity/host instalável que apresente essas superfícies, escolha mídias, solicite rotação do sistema ou encaminhe toques ao dispositivo HID do núcleo. Não considerar os controles jogáveis até essa última integração.
+- **Contrato visual:** a lógica RGBA da biblioteca e as geometrias de tela/controles ficam em `aceris-core`; os frontends hospedam essas funções e preservam a identidade definida em `docs/IDENTIDADE_VISUAL.md`. Especificações e formatos de fundos estão em `docs/FRONTENDS.md`.
 - **CI:** Rustfmt, Clippy e testes do workspace são executados para Linux, Windows e macOS; o build nativo Android ARM64 é validado em workflow separado.
 
 Comandos locais de verificação:
