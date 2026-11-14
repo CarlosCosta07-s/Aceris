@@ -230,7 +230,7 @@ fn pc_base_register_offsets_obey_zero_shift_encodings_and_add_subtract_direction
     let cases = [
         // shift type, Rm value, carry-in, add/subtract, expected address
         (0u32, 0x0000_0005, true, true, 13u32),  // LSL #0: offset 5
-        (1u32, 0x8000_0000, false, true, 9u32),  // LSR #0: offset 1
+        (1u32, 0x8000_0000, false, true, 8u32),  // LSR #0: shift by 32 gives zero
         (2u32, 0x8000_0000, false, false, 9u32), // ASR #0: offset 0xFFFF_FFFF
         (3u32, 0x0000_0002, false, true, 9u32),  // RRX: offset 1
     ];
