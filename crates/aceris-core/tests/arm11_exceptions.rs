@@ -1073,9 +1073,7 @@ fn a32_stm_translation_abort_with_thirteen_registers_keeps_completed_stores_in_a
     }
 }
 
-fn enter_fiq_with_distinct_banks_for_abort(
-    cpu: &mut Arm11Core,
-) -> ([u32; 7], [u32; 7]) {
+fn enter_fiq_with_distinct_banks_for_abort(cpu: &mut Arm11Core) -> ([u32; 7], [u32; 7]) {
     let user = [
         0xA000_0008,
         0xA000_0009,
@@ -1113,9 +1111,7 @@ fn a32_ldm_user_bank_data_abort_preserves_user_and_fiq_banks() {
 
     // Four words are mapped; the fifth word at 0x00100000 faults.
     for lane in 0..4 {
-        memory
-            .write32(BASE + lane * 4, 0x5100_0000 + lane)
-            .unwrap();
+        memory.write32(BASE + lane * 4, 0x5100_0000 + lane).unwrap();
     }
 
     cpu.regs[0] = BASE;
