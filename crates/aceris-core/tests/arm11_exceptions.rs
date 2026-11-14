@@ -474,7 +474,6 @@ fn fiq_during_thumb_uses_high_vector_through_enabled_mmu() {
     assert_eq!(cpu.pc(), 0x102);
 }
 
-
 #[test]
 fn thumb_data_translation_abort_uses_high_vector_through_enabled_mmu() {
     let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
