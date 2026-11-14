@@ -371,7 +371,11 @@ fn thumb_data_translation_abort_preserves_thumb_state_and_faulting_instruction()
     assert_eq!(cpu.regs[0], 0x1234_5678);
 }
 
-fn enable_mmu_high_vectors(cpu: &mut Arm11Core, memory: &mut FlatMemory) {
+fn enable_mmu_high_vectors(
+    cpu: &mut Arm11Core,
+    memory: &mut FlatMemory,
+    exception_big_endian: bool,
+) {
     // With TTBCR.N=1, TTBR0 is the 8 KiB low-address table and TTBR1
     // is the 16 KiB high-address table. Both descriptors identity-map the
     // low region or map the high vector section onto physical 0..1 MiB.
@@ -387,13 +391,15 @@ fn enable_mmu_high_vectors(cpu: &mut Arm11Core, memory: &mut FlatMemory) {
     cpu.regs[0] = 0xC000;
     cpu.regs[3] = 0x4000;
     cpu.regs[4] = 1;
-    cpu.regs[2] = 1 | (1 << 23) | (1 << 13);
+    let exception_endian_bit = if exception_big_endian { 1 << 15 } else { 0 };
+    cpu.regs[2] = 1 | (1 << 23) | (1 << 13) | exception_endian_bit;
 
     for _ in 0..4 {
         cpu.step(memory).unwrap();
     }
     assert!(cpu.cp15().mmu_enabled());
     assert!(cpu.cp15().high_vectors());
+    assert_eq!(cpu.cp15().exception_big_endian(), exception_big_endian);
     assert_eq!(cpu.cp15().ttbr0(), 0xC000);
     assert_eq!(cpu.cp15().ttbr1(), 0x4000);
     assert_eq!(cpu.cp15().ttbcr_n(), 1);
@@ -402,7 +408,7 @@ fn enable_mmu_high_vectors(cpu: &mut Arm11Core, memory: &mut FlatMemory) {
 #[test]
 fn irq_during_thumb_uses_high_vector_through_enabled_mmu() {
     let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
-    enable_mmu_high_vectors(&mut cpu, &mut memory);
+    enable_mmu_high_vectors(&mut cpu, &mut memory, false);
     memory.write16(0x100, 0x2007).unwrap(); // MOVS r0, #7
     memory.write32(0x000F_0018, 0xE25E_F004).unwrap(); // PA for high IRQ vector
 
@@ -415,6 +421,7 @@ fn irq_during_thumb_uses_high_vector_through_enabled_mmu() {
     assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
     assert!(!cpu.cpsr.thumb());
     assert_eq!(cpu.pc(), 0xFFFF_0018);
+    assert!(!cpu.cpsr.big_endian());
     assert_eq!(cpu.regs[14], 0x104);
     assert_eq!(cpu.saved_program_status(), Some(interrupted));
     assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
@@ -448,6 +455,7 @@ fn fiq_during_thumb_uses_high_vector_through_enabled_mmu() {
     assert_eq!(cpu.cpsr.mode(), Psr::FIQ_MODE);
     assert!(!cpu.cpsr.thumb());
     assert_eq!(cpu.pc(), 0xFFFF_001C);
+    assert!(!cpu.cpsr.big_endian());
     assert_eq!(cpu.regs[14], 0x104);
     assert_eq!(cpu.saved_program_status(), Some(interrupted));
     assert_eq!(
@@ -464,4 +472,74 @@ fn fiq_during_thumb_uses_high_vector_through_enabled_mmu() {
     cpu.step(&mut memory).unwrap();
     assert_eq!(cpu.regs[0], 9);
     assert_eq!(cpu.pc(), 0x102);
+}
+
+
+#[test]
+fn thumb_data_translation_abort_uses_high_vector_through_enabled_mmu() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    enable_mmu_high_vectors(&mut cpu, &mut memory, true);
+    memory.write16(0x100, 0x6808).unwrap(); // LDR r0, [r1, #0]
+    // VA 0xFFFF0010 maps to PA 0x000F0010 through the high-vector section.
+    memory.write32(0x000F_0010, 0xE25E_F008).unwrap(); // SUBS pc, lr, #8
+
+    let faulting_data_address = 0x0010_0000; // TTBR0 descriptor is absent.
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    cpu.regs[0] = 0x1234_5678;
+    cpu.regs[1] = faulting_data_address;
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert!(cpu.cpsr.big_endian()); // SCTLR.EE selects big-endian exception state.
+    assert_eq!(cpu.pc(), 0xFFFF_0010);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().dfar(), faulting_data_address);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+    assert_eq!(cpu.regs[1], faulting_data_address);
+
+    cpu.step(&mut memory).unwrap(); // Fetch handler through MMU and return.
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert!(!cpu.cpsr.big_endian());
+    assert_eq!(cpu.pc(), 0x100);
+    assert_eq!(cpu.saved_program_status(), None);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+    assert_eq!(cpu.regs[1], faulting_data_address);
+}
+
+#[test]
+fn thumb_prefetch_translation_abort_uses_high_vector_through_enabled_mmu() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    enable_mmu_high_vectors(&mut cpu, &mut memory, true);
+    // VA 0xFFFF000C maps to PA 0x000F000C through the high-vector section.
+    memory.write32(0x000F_000C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+
+    let faulting_address = 0x0010_0000; // TTBR0 descriptor is absent.
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(faulting_address);
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert!(cpu.cpsr.big_endian());
+    assert_eq!(cpu.pc(), 0xFFFF_000C);
+    assert_eq!(cpu.regs[14], faulting_address + 4);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().ifar(), faulting_address);
+    assert_eq!(cpu.cp15().ifsr(), 0x5);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+
+    cpu.step(&mut memory).unwrap(); // Fetch handler through MMU and return.
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert!(!cpu.cpsr.big_endian());
+    assert_eq!(cpu.pc(), faulting_address);
+    assert_eq!(cpu.saved_program_status(), None);
 }
