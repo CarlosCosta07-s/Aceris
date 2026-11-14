@@ -16,7 +16,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Workflow completo do commit `849e5a33933ea9444122f2160daf867e2d4e60d0` terminou com sucesso em 12/11/2026, incluindo a etapa Android ARM64
 - [x] Workflow do commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808` concluído com sucesso: Rustfmt, Clippy e testes em Linux, Windows e macOS; build Android `arm64-v8a` também aprovado
 - [x] Executar `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` no CI para Linux, Windows e macOS no commit `cadeb4381de1fe3227ec1d152a91c2b86ae61808`
-- [ ] Executar e registrar `cargo build --locked --workspace` explicitamente no CI
+- [x] Executar e registrar `cargo build --locked --workspace` explicitamente no CI; workflow [43542724526](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43542724526) aprovado em Linux, Windows e macOS, além do build Android ARM64.
 - [x] README, arquitetura e roadmap sincronizados com o estado observado no commit `6e7d0e81d6d43a03d734fd24526737072b637db3`, sem anunciar compatibilidade não testada
 
 ## 1. CPU ARM11 / ARMv6 e Thumb
