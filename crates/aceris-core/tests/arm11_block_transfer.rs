@@ -176,3 +176,95 @@ fn a32_ldm_stm_writeback_covers_all_four_addressing_modes() {
         }
     }
 }
+
+#[test]
+fn a32_ldm_stm_large_register_list_covers_all_four_addressing_modes() {
+    const REGISTER_LIST: u32 = 0x3FFE; // r1-r13: 13 registers, excluding base r0 and PC.
+    const TRANSFER_COUNT: u32 = 13;
+    const SIZE: u32 = TRANSFER_COUNT * 4;
+    const BASE: u32 = DATA + 0x400;
+    let values: Vec<u32> = (0..TRANSFER_COUNT)
+        .map(|index| 0xA500_0000 | index)
+        .collect();
+
+    for (mode, pre_index, up) in [
+        ("IA", false, true),
+        ("IB", true, true),
+        ("DA", false, false),
+        ("DB", true, false),
+    ] {
+        let start = if up {
+            BASE + if pre_index { 4 } else { 0 }
+        } else {
+            BASE - SIZE + if pre_index { 0 } else { 4 }
+        };
+        let expected_base = if up { BASE + SIZE } else { BASE - SIZE };
+
+        for load in [false, true] {
+            let instruction = 0xE800_0000
+                | if pre_index { 1 << 24 } else { 0 }
+                | if up { 1 << 23 } else { 0 }
+                | (1 << 21)
+                | if load { 1 << 20 } else { 0 }
+                | REGISTER_LIST;
+            let (mut cpu, mut memory) = cpu_and_memory(instruction);
+            cpu.regs[0] = BASE;
+
+            for (index, value) in values.iter().copied().enumerate() {
+                memory
+                    .write32(
+                        start + index as u32 * 4,
+                        if load { value } else { 0xDEAD_BEEF },
+                    )
+                    .unwrap();
+            }
+
+            if !load {
+                cpu.regs[1..14].copy_from_slice(&values);
+            }
+
+            cpu.step(&mut memory).unwrap();
+
+            assert_eq!(cpu.regs[0], expected_base, "{mode}, load={load}");
+            if load {
+                assert_eq!(&cpu.regs[1..14], values.as_slice(), "{mode}");
+            } else {
+                for (index, value) in values.iter().copied().enumerate() {
+                    assert_eq!(
+                        memory.read32(start + index as u32 * 4).unwrap(),
+                        value,
+                        "{mode}, beat={index}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a32_ldm_with_pc_loads_extended_register_list_and_branches_after_writeback() {
+    const BASE: u32 = DATA + 0x100;
+    const TARGET: u32 = 0x300;
+    const REGISTER_LIST: u32 = 0xFFFE; // r1-r15, including PC.
+    const TRANSFER_COUNT: u32 = 15;
+    const SIZE: u32 = TRANSFER_COUNT * 4;
+    let instruction = 0xE8B0_FFFE; // LDMIA r0!, {r1-r15}
+    let (mut cpu, mut memory) = cpu_and_memory(instruction);
+    let mut values: Vec<u32> = (0..14)
+        .map(|index| 0xB600_0000 | index)
+        .collect();
+    values.push(TARGET);
+
+    cpu.regs[0] = BASE;
+    for (index, value) in values.iter().copied().enumerate() {
+        memory
+            .write32(BASE + index as u32 * 4, value)
+            .unwrap();
+    }
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[0], BASE + SIZE);
+    assert_eq!(&cpu.regs[1..15], &values[..14]);
+    assert_eq!(cpu.pc(), TARGET);
+}
