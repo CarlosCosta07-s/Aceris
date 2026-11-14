@@ -828,3 +828,124 @@ fn thumb_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores(
         }
     }
 }
+
+#[test]
+fn a32_ldm_translation_abort_in_all_addressing_modes_keeps_registers_and_writeback_atomic() {
+    for (mode, pre_index, up) in [
+        ("IA", 0, 1),
+        ("IB", 1, 1),
+        ("DA", 0, 0),
+        ("DB", 1, 0),
+    ] {
+        for (register_list, transfer_count) in [(0x000E, 3usize), (0x001E, 4usize)] {
+            let start = 0x0010_0000 - (transfer_count as u32 - 1) * 4;
+            let size = transfer_count as u32 * 4;
+            let base = match (pre_index, up) {
+                (0, 1) => start,
+                (1, 1) => start - 4,
+                (0, 0) => start + size - 4,
+                (1, 0) => start + size,
+                _ => unreachable!(),
+            };
+            let instruction = 0xE800_0000
+                | (pre_index << 24)
+                | (up << 23)
+                | (1 << 21)
+                | (1 << 20)
+                | register_list;
+            let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+            memory.write32(0x100, instruction).unwrap();
+
+            for index in 0..transfer_count - 1 {
+                memory
+                    .write32(start + index as u32 * 4, 0x1100_0000 + index as u32)
+                    .unwrap();
+            }
+
+            cpu.set_pc(0x100);
+            cpu.regs[0] = base;
+            for (register, value) in cpu.regs.iter_mut().enumerate().take(5).skip(1) {
+                *value = 0xA000_0000 + register as u32;
+            }
+            let interrupted_regs = cpu.regs;
+            let interrupted_cpsr = cpu.cpsr;
+
+            cpu.step(&mut memory).unwrap();
+
+            assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.pc(), 0x10, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.regs[14], 0x108, "{mode}, count={transfer_count}");
+            assert_eq!(
+                cpu.saved_program_status(),
+                Some(interrupted_cpsr),
+                "{mode}, count={transfer_count}"
+            );
+            assert_eq!(cpu.cp15().dfar(), 0x0010_0000, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.cp15().dfsr(), 0x5, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.regs[..13], interrupted_regs[..13], "{mode}, count={transfer_count}");
+        }
+    }
+}
+
+#[test]
+fn a32_stm_translation_abort_in_all_addressing_modes_keeps_completed_stores_without_writeback() {
+    for (mode, pre_index, up) in [
+        ("IA", 0, 1),
+        ("IB", 1, 1),
+        ("DA", 0, 0),
+        ("DB", 1, 0),
+    ] {
+        for (register_list, transfer_count) in [(0x000E, 3usize), (0x001E, 4usize)] {
+            let start = 0x0010_0000 - (transfer_count as u32 - 1) * 4;
+            let size = transfer_count as u32 * 4;
+            let base = match (pre_index, up) {
+                (0, 1) => start,
+                (1, 1) => start - 4,
+                (0, 0) => start + size - 4,
+                (1, 0) => start + size,
+                _ => unreachable!(),
+            };
+            let instruction = 0xE800_0000
+                | (pre_index << 24)
+                | (up << 23)
+                | (1 << 21)
+                | register_list;
+            let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+            memory.write32(0x100, instruction).unwrap();
+
+            for index in 0..transfer_count - 1 {
+                memory.write32(start + index as u32 * 4, 0xDEAD_BEEF).unwrap();
+            }
+
+            cpu.set_pc(0x100);
+            cpu.regs[0] = base;
+            for (register, value) in cpu.regs.iter_mut().enumerate().take(5).skip(1) {
+                *value = 0x2200_0000 + register as u32;
+            }
+            let interrupted_regs = cpu.regs;
+            let interrupted_cpsr = cpu.cpsr;
+
+            cpu.step(&mut memory).unwrap();
+
+            assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.pc(), 0x10, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.regs[14], 0x108, "{mode}, count={transfer_count}");
+            assert_eq!(
+                cpu.saved_program_status(),
+                Some(interrupted_cpsr),
+                "{mode}, count={transfer_count}"
+            );
+            assert_eq!(cpu.cp15().dfar(), 0x0010_0000, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.cp15().dfsr(), 0x805, "{mode}, count={transfer_count}");
+            assert_eq!(cpu.regs[..13], interrupted_regs[..13], "{mode}, count={transfer_count}");
+
+            for index in 0..transfer_count - 1 {
+                assert_eq!(
+                    memory.read32(start + index as u32 * 4).unwrap(),
+                    interrupted_regs[index + 1],
+                    "{mode}, beat={index}, count={transfer_count}"
+                );
+            }
+        }
+    }
+}
