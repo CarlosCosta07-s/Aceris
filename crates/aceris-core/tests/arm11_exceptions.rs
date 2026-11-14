@@ -1072,3 +1072,180 @@ fn a32_stm_translation_abort_with_thirteen_registers_keeps_completed_stores_in_a
         assert_eq!(cpu.regs[13], interrupted_regs[13], "{mode}, SVC SP");
     }
 }
+
+fn enter_fiq_with_distinct_banks_for_abort(
+    cpu: &mut Arm11Core,
+) -> ([u32; 7], [u32; 7]) {
+    let user = [
+        0xA000_0008,
+        0xA000_0009,
+        0xA000_000A,
+        0xA000_000B,
+        0xA000_000C,
+        0xA000_000D,
+        0xA000_000E,
+    ];
+    let fiq = [
+        0xF000_0008,
+        0xF000_0009,
+        0xF000_000A,
+        0xF000_000B,
+        0xF000_000C,
+        0xF000_000D,
+        0xF000_000E,
+    ];
+
+    cpu.switch_mode(Psr::USER_MODE).unwrap();
+    cpu.regs[8..15].copy_from_slice(&user);
+    cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+    cpu.regs[8..15].copy_from_slice(&fiq);
+    (user, fiq)
+}
+
+#[test]
+fn a32_ldm_user_bank_data_abort_preserves_user_and_fiq_banks() {
+    const BASE: u32 = 0x000F_FFF0;
+    const INSTRUCTION: u32 = 0xE8D0_7F00; // LDMIA r0, {r8-r14}^
+
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    let (user_values, fiq_values) = enter_fiq_with_distinct_banks_for_abort(&mut cpu);
+    memory.write32(0x100, INSTRUCTION).unwrap();
+
+    // Four words are mapped; the fifth word at 0x00100000 faults.
+    for lane in 0..4 {
+        memory
+            .write32(BASE + lane * 4, 0x5100_0000 + lane)
+            .unwrap();
+    }
+
+    cpu.regs[0] = BASE;
+    cpu.set_pc(0x100);
+    let interrupted_cpsr = cpu.cpsr;
+    let shared_before = cpu.regs[..8].to_vec();
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.regs[..8], shared_before);
+    assert_eq!(cpu.regs[0], BASE);
+
+    cpu.switch_mode(Psr::USER_MODE).unwrap();
+    assert_eq!(&cpu.regs[8..15], &user_values);
+
+    cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+    assert_eq!(&cpu.regs[8..15], &fiq_values);
+}
+
+#[test]
+fn a32_stm_user_bank_data_abort_keeps_completed_user_stores_and_both_banks() {
+    const BASE: u32 = 0x000F_FFF0;
+    const INSTRUCTION: u32 = 0xE8C0_7F00; // STMIA r0, {r8-r14}^
+
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    let (user_values, fiq_values) = enter_fiq_with_distinct_banks_for_abort(&mut cpu);
+    memory.write32(0x100, INSTRUCTION).unwrap();
+
+    for lane in 0..4 {
+        memory.write32(BASE + lane * 4, 0xDEAD_BEEF).unwrap();
+    }
+
+    cpu.regs[0] = BASE;
+    cpu.set_pc(0x100);
+    let interrupted_cpsr = cpu.cpsr;
+    let shared_before = cpu.regs[..8].to_vec();
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+    assert_eq!(cpu.cp15().dfsr(), 0x805);
+    assert_eq!(cpu.regs[..8], shared_before);
+    assert_eq!(cpu.regs[0], BASE);
+
+    // The four successful stores must use User-bank r8-r11, not FIQ r8-r11.
+    for lane in 0..4 {
+        assert_eq!(
+            memory.read32(BASE + lane * 4).unwrap(),
+            user_values[lane as usize],
+            "completed user-bank store {lane}"
+        );
+    }
+
+    cpu.switch_mode(Psr::USER_MODE).unwrap();
+    assert_eq!(&cpu.regs[8..15], &user_values);
+
+    cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+    assert_eq!(&cpu.regs[8..15], &fiq_values);
+}
+
+#[test]
+fn a32_ldm_exception_return_data_abort_preserves_spsr_and_retries_after_abort_handler() {
+    const BASE: u32 = 0x000F_FFF8;
+    const INSTRUCTION: u32 = 0xE8F4_8003; // LDMIA r4!, {r0,r1,pc}^
+    const SAVED_STATUS: Psr = Psr(Psr::USER_MODE | Psr::T | Psr::N | Psr::C);
+
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write32(0x100, INSTRUCTION).unwrap();
+    memory.write32(BASE, 0xA0A0_0000).unwrap();
+    memory.write32(BASE + 4, 0xB1B1_0001).unwrap();
+    memory.write16(0x300, 0x2209).unwrap(); // MOVS r2, #9 in Thumb state.
+
+    // The third LDM beat is at 0x00100000 and initially has no L1 descriptor.
+    cpu.regs[0] = 0x1111_1111;
+    cpu.regs[1] = 0x2222_2222;
+    cpu.regs[4] = BASE;
+    cpu.set_saved_program_status(SAVED_STATUS).unwrap();
+    cpu.set_pc(0x100);
+    let interrupted_cpsr = cpu.cpsr;
+    let interrupted_regs = cpu.regs;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.regs[0], interrupted_regs[0]);
+    assert_eq!(cpu.regs[1], interrupted_regs[1]);
+    assert_eq!(cpu.regs[4], BASE);
+
+    // Confirm the fault did not consume or overwrite the Supervisor SPSR.
+    cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+    assert_eq!(cpu.saved_program_status(), Some(SAVED_STATUS));
+    cpu.switch_mode(Psr::ABORT_MODE).unwrap();
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+
+    // Map VA 0x00100000 onto PA 0, where the third LDM word is placed.
+    // The failed translation was not cached, so the retry sees this descriptor.
+    memory.write32(0x4004, 0b10 | (0b11 << 10)).unwrap();
+    memory.write32(0x0000_0000, 0x0000_0301).unwrap();
+    memory.write32(0x10, 0xE25E_F008).unwrap(); // SUBS pc, lr, #8
+
+    cpu.step(&mut memory).unwrap(); // Abort handler returns to the original LDM.
+    assert_eq!(cpu.cpsr, interrupted_cpsr);
+    assert_eq!(cpu.pc(), 0x100);
+    assert_eq!(cpu.regs[4], BASE);
+
+    cpu.step(&mut memory).unwrap(); // Retried LDM returns through its original SPSR.
+    assert_eq!(cpu.cpsr, SAVED_STATUS);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x300);
+    assert_eq!(cpu.regs[0], 0xA0A0_0000);
+    assert_eq!(cpu.regs[1], 0xB1B1_0001);
+    assert_eq!(cpu.regs[4], BASE + 12);
+    assert_eq!(cpu.saved_program_status(), None);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.regs[2], 9);
+    assert_eq!(cpu.pc(), 0x302);
+}
