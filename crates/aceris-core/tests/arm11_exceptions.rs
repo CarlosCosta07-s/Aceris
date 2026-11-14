@@ -962,3 +962,131 @@ fn a32_stm_translation_abort_in_all_addressing_modes_keeps_completed_stores_with
         }
     }
 }
+
+#[test]
+fn a32_ldm_translation_abort_with_thirteen_registers_preserves_all_destinations_in_all_modes() {
+    const REGISTER_LIST: u32 = 0x3FFE; // r1-r13; r0 is the writeback base.
+    const TRANSFER_COUNT: u32 = 13;
+    const SIZE: u32 = TRANSFER_COUNT * 4;
+    let start = 0x0010_0000 - (TRANSFER_COUNT - 1) * 4;
+
+    for (mode, pre_index, up) in [
+        ("IA", 0, 1),
+        ("IB", 1, 1),
+        ("DA", 0, 0),
+        ("DB", 1, 0),
+    ] {
+        let base = match (pre_index, up) {
+            (0, 1) => start,
+            (1, 1) => start - 4,
+            (0, 0) => start + SIZE - 4,
+            (1, 0) => start + SIZE,
+            _ => unreachable!(),
+        };
+        let instruction = 0xE800_0000
+            | (pre_index << 24)
+            | (up << 23)
+            | (1 << 21)
+            | (1 << 20)
+            | REGISTER_LIST;
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory.write32(0x100, instruction).unwrap();
+
+        for index in 0..TRANSFER_COUNT - 1 {
+            memory
+                .write32(start + index * 4, 0x7100_0000 + index)
+                .unwrap();
+        }
+
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(14).skip(1) {
+            *value = 0xA100_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE, "{mode}");
+        assert_eq!(cpu.pc(), 0x10, "{mode}");
+        assert_eq!(cpu.regs[14], 0x108, "{mode}");
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr), "{mode}");
+        assert_eq!(cpu.cp15().dfar(), 0x0010_0000, "{mode}");
+        assert_eq!(cpu.cp15().dfsr(), 0x5, "{mode}");
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13], "{mode}");
+        for index in 0..TRANSFER_COUNT - 1 {
+            assert_eq!(
+                memory.read32(start + index * 4).unwrap(),
+                0x7100_0000 + index,
+                "{mode}, beat={index}"
+            );
+        }
+
+        // SP is banked on entry to Abort; inspect the interrupted SVC bank too.
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!(cpu.regs[13], interrupted_regs[13], "{mode}, SVC SP");
+    }
+}
+
+#[test]
+fn a32_stm_translation_abort_with_thirteen_registers_keeps_completed_stores_in_all_modes() {
+    const REGISTER_LIST: u32 = 0x3FFE; // r1-r13; r0 is the writeback base.
+    const TRANSFER_COUNT: u32 = 13;
+    const SIZE: u32 = TRANSFER_COUNT * 4;
+    let start = 0x0010_0000 - (TRANSFER_COUNT - 1) * 4;
+
+    for (mode, pre_index, up) in [
+        ("IA", 0, 1),
+        ("IB", 1, 1),
+        ("DA", 0, 0),
+        ("DB", 1, 0),
+    ] {
+        let base = match (pre_index, up) {
+            (0, 1) => start,
+            (1, 1) => start - 4,
+            (0, 0) => start + SIZE - 4,
+            (1, 0) => start + SIZE,
+            _ => unreachable!(),
+        };
+        let instruction = 0xE800_0000
+            | (pre_index << 24)
+            | (up << 23)
+            | (1 << 21)
+            | REGISTER_LIST;
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory.write32(0x100, instruction).unwrap();
+
+        for index in 0..TRANSFER_COUNT - 1 {
+            memory.write32(start + index * 4, 0xDEAD_BEEF).unwrap();
+        }
+
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(14).skip(1) {
+            *value = 0xC100_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE, "{mode}");
+        assert_eq!(cpu.pc(), 0x10, "{mode}");
+        assert_eq!(cpu.regs[14], 0x108, "{mode}");
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr), "{mode}");
+        assert_eq!(cpu.cp15().dfar(), 0x0010_0000, "{mode}");
+        assert_eq!(cpu.cp15().dfsr(), 0x805, "{mode}");
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13], "{mode}");
+        for index in 0..TRANSFER_COUNT - 1 {
+            assert_eq!(
+                memory.read32(start + index * 4).unwrap(),
+                interrupted_regs[index + 1],
+                "{mode}, beat={index}"
+            );
+        }
+
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!(cpu.regs[13], interrupted_regs[13], "{mode}, SVC SP");
+    }
+}
