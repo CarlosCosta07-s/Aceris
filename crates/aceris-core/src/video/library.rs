@@ -163,14 +163,12 @@ impl Library {
             }
         }
         if let Some(background) = background_frame.filter(|frame| frame.len() == w * h * 4) {
-            for (destination, source) in out
-                .chunks_exact_mut(4)
-                .zip(background.chunks_exact(4))
-            {
+            for (destination, source) in out.chunks_exact_mut(4).zip(background.chunks_exact(4)) {
                 let alpha = (source[3] as f32 / 255.0 * 0.38).clamp(0.0, 0.38);
                 for channel in 0..3 {
                     destination[channel] = (source[channel] as f32 * alpha
-                        + destination[channel] as f32 * (1.0 - alpha)) as u8;
+                        + destination[channel] as f32 * (1.0 - alpha))
+                        as u8;
                 }
             }
         }
@@ -336,8 +334,8 @@ fn blend_pixel(canvas: &mut [u8], x: i32, y: i32, color: [u8; 3], alpha: f32) {
     }
     let at = (y as usize * WIDTH + x as usize) * 4;
     for channel in 0..3 {
-        canvas[at + channel] = (color[channel] as f32 * alpha
-            + canvas[at + channel] as f32 * (1.0 - alpha)) as u8;
+        canvas[at + channel] =
+            (color[channel] as f32 * alpha + canvas[at + channel] as f32 * (1.0 - alpha)) as u8;
     }
 }
 

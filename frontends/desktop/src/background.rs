@@ -23,17 +23,24 @@ pub struct Sequence {
 impl Sequence {
     pub fn load(directory: &Path, fps: u32) -> Result<Self, String> {
         if !(1..=60).contains(&fps) {
-            return Err(format!("background FPS must be between 1 and 60, got {fps}"));
+            return Err(format!(
+                "background FPS must be between 1 and 60, got {fps}"
+            ));
         }
         let read = fs::read_dir(directory).map_err(|error| {
-            format!("could not read background directory {}: {error}", directory.display())
+            format!(
+                "could not read background directory {}: {error}",
+                directory.display()
+            )
         })?;
         let mut paths: Vec<PathBuf> = read
             .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| {
                 path.is_file()
-                    && path.extension().and_then(|ext| ext.to_str())
+                    && path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
                         .is_some_and(|ext| ext.eq_ignore_ascii_case("rgba"))
             })
             .collect();

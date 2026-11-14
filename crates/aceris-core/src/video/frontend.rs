@@ -71,18 +71,10 @@ pub fn compute_screen_layout(
                 TOP_H + GAP,
             )
         } else {
-            (
-                TOP_W + GAP + BOTTOM_W,
-                TOP_H,
-                0.0,
-                0.0,
-                TOP_W + GAP,
-                0.0,
-            )
+            (TOP_W + GAP + BOTTOM_W, TOP_H, 0.0, 0.0, TOP_W + GAP, 0.0)
         };
 
-    let scale = (view_width as f32 / logical_width)
-        .min(view_height as f32 / logical_height);
+    let scale = (view_width as f32 / logical_width).min(view_height as f32 / logical_height);
     let fitted_width = logical_width * scale;
     let fitted_height = logical_height * scale;
     let origin_x = (view_width as f32 - fitted_width) * 0.5;
@@ -159,21 +151,39 @@ fn button_shapes(width: u32, height: u32, orientation: u32) -> [ButtonShape; 12]
         ButtonShape { bit: buttons::B, x: right_x, y: control_y + face_d, radius, label: "B" },
         ButtonShape { bit: buttons::X, x: right_x, y: control_y - face_d, radius, label: "X" },
         ButtonShape { bit: buttons::Y, x: right_x - face_d, y: control_y, radius, label: "Y" },
-        ButtonShape { bit: buttons::L, x: left_x, y: shoulder_y, radius: small, label: "L" },
-        ButtonShape { bit: buttons::R, x: right_x, y: shoulder_y, radius: small, label: "R" },
-        ButtonShape { bit: buttons::START, x: w * 0.54, y: h * 0.94, radius: small, label: "S" },
-        ButtonShape { bit: buttons::SELECT, x: w * 0.46, y: h * 0.94, radius: small, label: "E" },
+        ButtonShape {
+            bit: buttons::L,
+            x: left_x,
+            y: shoulder_y,
+            radius: small,
+            label: "L",
+        },
+        ButtonShape {
+            bit: buttons::R,
+            x: right_x,
+            y: shoulder_y,
+            radius: small,
+            label: "R",
+        },
+        ButtonShape {
+            bit: buttons::START,
+            x: w * 0.54,
+            y: h * 0.94,
+            radius: small,
+            label: "S",
+        },
+        ButtonShape {
+            bit: buttons::SELECT,
+            x: w * 0.46,
+            y: h * 0.94,
+            radius: small,
+            label: "E",
+        },
     ]
 }
 
 /// Returns the button bit under a touch point, or zero when no control is hit.
-pub fn hit_test_virtual_control(
-    width: u32,
-    height: u32,
-    x: i32,
-    y: i32,
-    orientation: u32,
-) -> u32 {
+pub fn hit_test_virtual_control(width: u32, height: u32, x: i32, y: i32, orientation: u32) -> u32 {
     if width == 0 || height == 0 || x < 0 || y < 0 {
         return 0;
     }
@@ -257,16 +267,66 @@ pub fn render_virtual_pad_overlay(
 
 fn draw_glyph(pixels: &mut [u8], width: usize, height: usize, cx: i32, cy: i32, label: &str) {
     let glyphs: &[([u8; 7], i32)] = match label {
-        "A" => &[([0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001], 5)],
-        "B" => &[([0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110], 5)],
-        "X" => &[([0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001], 5)],
-        "Y" => &[([0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100], 5)],
-        "L" => &[([0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111], 5)],
-        "R" => &[([0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001], 5)],
-        "U" => &[([0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110], 5)],
-        "D" => &[([0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110], 5)],
-        "S" => &[([0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110], 5)],
-        "E" => &[([0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111], 5)],
+        "A" => &[(
+            [
+                0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001
+            ],
+            5,
+        )],
+        "B" => &[(
+            [
+                0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110
+            ],
+            5,
+        )],
+        "X" => &[(
+            [
+                0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001
+            ],
+            5,
+        )],
+        "Y" => &[(
+            [
+                0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100
+            ],
+            5,
+        )],
+        "L" => &[(
+            [
+                0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111
+            ],
+            5,
+        )],
+        "R" => &[(
+            [
+                0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001
+            ],
+            5,
+        )],
+        "U" => &[(
+            [
+                0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110
+            ],
+            5,
+        )],
+        "D" => &[(
+            [
+                0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110
+            ],
+            5,
+        )],
+        "S" => &[(
+            [
+                0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110
+            ],
+            5,
+        )],
+        "E" => &[(
+            [
+                0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111
+            ],
+            5,
+        )],
         _ => &[],
     };
     for (rows, glyph_width) in glyphs {
@@ -330,7 +390,10 @@ mod tests {
         let width = 1080;
         let height = 2400;
         let layout = button_shapes(width, height, ORIENTATION_PORTRAIT);
-        let a = layout.iter().find(|button| button.bit == buttons::A).unwrap();
+        let a = layout
+            .iter()
+            .find(|button| button.bit == buttons::A)
+            .unwrap();
         assert_eq!(
             hit_test_virtual_control(
                 width,
@@ -341,13 +404,8 @@ mod tests {
             ),
             buttons::A
         );
-        let overlay = render_virtual_pad_overlay(
-            width,
-            height,
-            ORIENTATION_PORTRAIT,
-            buttons::A
-        )
-        .unwrap();
+        let overlay =
+            render_virtual_pad_overlay(width, height, ORIENTATION_PORTRAIT, buttons::A).unwrap();
         assert_eq!(overlay.len(), width as usize * height as usize * 4);
         assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] > 0));
