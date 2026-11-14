@@ -955,7 +955,7 @@ fn a32_stm_translation_abort_in_all_addressing_modes_keeps_completed_stores_with
             for index in 0..transfer_count - 1 {
                 assert_eq!(
                     memory.read32(start + index as u32 * 4).unwrap(),
-                    interrupted_regs[index as usize + 1],
+                    interrupted_regs[index + 1],
                     "{mode}, beat={index}, count={transfer_count}"
                 );
             }
@@ -1063,7 +1063,7 @@ fn a32_stm_translation_abort_with_thirteen_registers_keeps_completed_stores_in_a
         for index in 0..TRANSFER_COUNT - 1 {
             assert_eq!(
                 memory.read32(start + index * 4).unwrap(),
-                interrupted_regs[index + 1],
+                interrupted_regs[index as usize + 1],
                 "{mode}, beat={index}"
             );
         }
