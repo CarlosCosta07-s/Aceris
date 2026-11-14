@@ -435,11 +435,11 @@ fn guest_tlbimvaa_matches_an_address_inside_a_large_page_and_preserves_neighbor_
     const SIBLING_NEW_PHYSICAL: u32 = 0x0021_0000;
     const LARGE_PAGE: u32 = 0b01 | (0b11 << 4) | (1 << 11);
     const LARGE_PAGE_MASK: u32 = 0xFFFF_0000;
-    const DATA_PAGE_INDEX = ((DATA_VA >> 12) & 0xFF) as usize;
-    const SIBLING_PAGE_INDEX = ((SIBLING_VA >> 12) & 0xFF) as usize;
-    const DATA_GROUP_START = DATA_PAGE_INDEX & !0xF;
-    const SIBLING_GROUP_START = SIBLING_PAGE_INDEX & !0xF;
-    const PAGE_OFFSET = DATA_VA & 0xFFFF;
+    const DATA_PAGE_INDEX: usize = ((DATA_VA >> 12) & 0xFF) as usize;
+    const SIBLING_PAGE_INDEX: usize = ((SIBLING_VA >> 12) & 0xFF) as usize;
+    const DATA_GROUP_START: usize = DATA_PAGE_INDEX & !0xF;
+    const SIBLING_GROUP_START: usize = SIBLING_PAGE_INDEX & !0xF;
+    const PAGE_OFFSET: u32 = DATA_VA & 0xFFFF;
 
     let (mut cpu, mut memory) = mmu_machine();
 
