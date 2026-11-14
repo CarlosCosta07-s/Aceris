@@ -372,14 +372,31 @@ fn thumb_data_translation_abort_preserves_thumb_state_and_faulting_instruction()
 }
 
 fn enable_mmu_high_vectors(cpu: &mut Arm11Core, memory: &mut FlatMemory) {
-    // TTBR0 L1[0xFFF] maps FFF00000..FFFFFFFF onto physical 0..1 MiB.
+    // With TTBCR.N=1, TTBR0 is the 8 KiB low-address table and TTBR1
+    // is the 16 KiB high-address table. Both descriptors identity-map the
+    // low region or map the high vector section onto physical 0..1 MiB.
+    memory.write32(0xC000, 0b10 | (0b11 << 10)).unwrap();
     memory.write32(0x7FFC, 0b10 | (0b11 << 10)).unwrap();
-    // MCR p15,0,r2,c1,c0,0: retain M/XP and enable SCTLR.V.
-    memory.write32(0x0C, 0xEE01_2F10).unwrap();
+
+    // Configure TTBR0=0xC000, TTBR1=0x4000 and TTBCR.N=1 through guest MCRs.
+    memory.write32(0x0C, 0xEE02_0F10).unwrap(); // MCR p15,0,r0,c2,c0,0
+    memory.write32(0x10, 0xEE02_3F30).unwrap(); // MCR p15,0,r3,c2,c0,1
+    memory.write32(0x14, 0xEE02_4F50).unwrap(); // MCR p15,0,r4,c2,c0,2
+    memory.write32(0x18, 0xEE01_2F10).unwrap(); // MCR p15,0,r2,c1,c0,0
+
+    cpu.regs[0] = 0xC000;
+    cpu.regs[3] = 0x4000;
+    cpu.regs[4] = 1;
     cpu.regs[2] = 1 | (1 << 23) | (1 << 13);
-    cpu.step(memory).unwrap();
+
+    for _ in 0..4 {
+        cpu.step(memory).unwrap();
+    }
     assert!(cpu.cp15().mmu_enabled());
     assert!(cpu.cp15().high_vectors());
+    assert_eq!(cpu.cp15().ttbr0(), 0xC000);
+    assert_eq!(cpu.cp15().ttbr1(), 0x4000);
+    assert_eq!(cpu.cp15().ttbcr_n(), 1);
 }
 
 #[test]
