@@ -92,8 +92,7 @@ pub enum Key {
 /// `GAME_CANVAS_HEIGHT * scale`, in little-endian BGRX byte order.
 pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
     let scale = scale.max(1);
-    let mut canvas =
-        [0u8, 0, 0, 0xFF].repeat(GAME_CANVAS_WIDTH * GAME_CANVAS_HEIGHT);
+    let mut canvas = [0u8, 0, 0, 0xFF].repeat(GAME_CANVAS_WIDTH * GAME_CANVAS_HEIGHT);
     let mut blit =
         |surface: &aceris_core::video::ScreenSurface, origin_x: usize, origin_y: usize| {
             for (y, row) in surface
@@ -130,8 +129,7 @@ pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
     let (width, height) = (GAME_CANVAS_WIDTH * scale, GAME_CANVAS_HEIGHT * scale);
     let mut scaled = Vec::with_capacity(width * height * 4);
     for y in 0..height {
-        let source_row = &canvas[(y / scale) * GAME_CANVAS_WIDTH * 4..]
-            [..GAME_CANVAS_WIDTH * 4];
+        let source_row = &canvas[(y / scale) * GAME_CANVAS_WIDTH * 4..][..GAME_CANVAS_WIDTH * 4];
         for pixel in source_row.chunks_exact(4) {
             for _ in 0..scale {
                 scaled.extend_from_slice(pixel);
@@ -196,9 +194,6 @@ mod tests {
             assert_eq!(pixel(&scaled, 3, x, 0), [6, 5, 4, 255]);
         }
         // The second LCD starts at x=416 and is scaled without a vertical offset.
-        assert_eq!(
-            pixel(&scaled, 3, 416 * 3, 0),
-            [0, 0, 0, 255]
-        );
+        assert_eq!(pixel(&scaled, 3, 416 * 3, 0), [0, 0, 0, 255]);
     }
 }
