@@ -662,3 +662,180 @@ fn thumb_stmia_translation_abort_preserves_completed_store_without_writeback() {
     // A completed earlier STM beat is not rolled back by exception entry.
     assert_eq!(memory.read32(base).unwrap(), interrupted_regs[1]);
 }
+
+
+#[test]
+fn a32_ldmia_translation_abort_on_third_or_fourth_beat_is_atomic() {
+    for (base, register_list, transfer_count) in [
+        (0x000F_FFF8, 0x000E, 3usize),
+        (0x000F_FFF4, 0x001E, 4usize),
+    ] {
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory
+            .write32(0x100, 0xE8B0_0000 | register_list)
+            .unwrap(); // LDMIA r0!, {r1-rN}
+
+        for index in 0..transfer_count - 1 {
+            memory
+                .write32(base + index as u32 * 4, 0x1100_0000 + index as u32)
+                .unwrap();
+        }
+
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for register in 1..=4 {
+            cpu.regs[register] = 0xA000_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+        assert_eq!(cpu.pc(), 0x10);
+        assert_eq!(cpu.regs[14], 0x108);
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+        assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+        assert_eq!(cpu.cp15().dfsr(), 0x5);
+        assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+        for index in 0..transfer_count - 1 {
+            assert_eq!(
+                memory.read32(base + index as u32 * 4).unwrap(),
+                0x1100_0000 + index as u32
+            );
+        }
+    }
+}
+
+#[test]
+fn a32_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores() {
+    for (base, register_list, transfer_count) in [
+        (0x000F_FFF8, 0x000E, 3usize),
+        (0x000F_FFF4, 0x001E, 4usize),
+    ] {
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory
+            .write32(0x100, 0xE8A0_0000 | register_list)
+            .unwrap(); // STMIA r0!, {r1-rN}
+
+        for index in 0..transfer_count - 1 {
+            memory
+                .write32(base + index as u32 * 4, 0xDEAD_BEEF)
+                .unwrap();
+        }
+
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for register in 1..=4 {
+            cpu.regs[register] = 0x2200_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+        assert_eq!(cpu.pc(), 0x10);
+        assert_eq!(cpu.regs[14], 0x108);
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+        assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+        assert_eq!(cpu.cp15().dfsr(), 0x805);
+        assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+        for index in 0..transfer_count - 1 {
+            assert_eq!(
+                memory.read32(base + index as u32 * 4).unwrap(),
+                interrupted_regs[index + 1]
+            );
+        }
+    }
+}
+
+#[test]
+fn thumb_ldmia_translation_abort_on_third_or_fourth_beat_is_atomic() {
+    for (base, register_list, transfer_count) in [
+        (0x000F_FFF8, 0x0E, 3usize),
+        (0x000F_FFF4, 0x1E, 4usize),
+    ] {
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory.write16(0x100, 0xC800 | register_list).unwrap(); // LDMIA r0!, {r1-rN}
+
+        for index in 0..transfer_count - 1 {
+            memory
+                .write32(base + index as u32 * 4, 0x3300_0000 + index as u32)
+                .unwrap();
+        }
+
+        cpu.cpsr.set_thumb(true);
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for register in 1..=4 {
+            cpu.regs[register] = 0xA000_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+        assert!(!cpu.cpsr.thumb());
+        assert_eq!(cpu.pc(), 0x10);
+        assert_eq!(cpu.regs[14], 0x108);
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+        assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+        assert_eq!(cpu.cp15().dfsr(), 0x5);
+        assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+        for index in 0..transfer_count - 1 {
+            assert_eq!(
+                memory.read32(base + index as u32 * 4).unwrap(),
+                0x3300_0000 + index as u32
+            );
+        }
+    }
+}
+
+#[test]
+fn thumb_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores() {
+    for (base, register_list, transfer_count) in [
+        (0x000F_FFF8, 0x0E, 3usize),
+        (0x000F_FFF4, 0x1E, 4usize),
+    ] {
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory.write16(0x100, 0xC000 | register_list).unwrap(); // STMIA r0!, {r1-rN}
+
+        for index in 0..transfer_count - 1 {
+            memory
+                .write32(base + index as u32 * 4, 0xCAFEBABE)
+                .unwrap();
+        }
+
+        cpu.cpsr.set_thumb(true);
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for register in 1..=4 {
+            cpu.regs[register] = 0x4400_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+        assert!(!cpu.cpsr.thumb());
+        assert_eq!(cpu.pc(), 0x10);
+        assert_eq!(cpu.regs[14], 0x108);
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+        assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+        assert_eq!(cpu.cp15().dfsr(), 0x805);
+        assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+        for index in 0..transfer_count - 1 {
+            assert_eq!(
+                memory.read32(base + index as u32 * 4).unwrap(),
+                interrupted_regs[index + 1]
+            );
+        }
+    }
+}
