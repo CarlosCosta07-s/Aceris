@@ -250,16 +250,12 @@ fn a32_ldm_with_pc_loads_extended_register_list_and_branches_after_writeback() {
     const SIZE: u32 = TRANSFER_COUNT * 4;
     let instruction = 0xE8B0_FFFE; // LDMIA r0!, {r1-r15}
     let (mut cpu, mut memory) = cpu_and_memory(instruction);
-    let mut values: Vec<u32> = (0..14)
-        .map(|index| 0xB600_0000 | index)
-        .collect();
+    let mut values: Vec<u32> = (0..14).map(|index| 0xB600_0000 | index).collect();
     values.push(TARGET);
 
     cpu.regs[0] = BASE;
     for (index, value) in values.iter().copied().enumerate() {
-        memory
-            .write32(BASE + index as u32 * 4, value)
-            .unwrap();
+        memory.write32(BASE + index as u32 * 4, value).unwrap();
     }
 
     cpu.step(&mut memory).unwrap();
