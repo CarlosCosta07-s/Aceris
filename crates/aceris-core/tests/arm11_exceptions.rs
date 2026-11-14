@@ -679,8 +679,8 @@ fn a32_ldmia_translation_abort_on_third_or_fourth_beat_is_atomic() {
 
         cpu.set_pc(0x100);
         cpu.regs[0] = base;
-        for register in 1..=4 {
-            cpu.regs[register] = 0xA000_0000 + register as u32;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(5).skip(1) {
+            *value = 0xA000_0000 + register as u32;
         }
         let interrupted_regs = cpu.regs;
         let interrupted_cpsr = cpu.cpsr;
@@ -720,8 +720,8 @@ fn a32_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores() 
 
         cpu.set_pc(0x100);
         cpu.regs[0] = base;
-        for register in 1..=4 {
-            cpu.regs[register] = 0x2200_0000 + register as u32;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(5).skip(1) {
+            *value = 0x2200_0000 + register as u32;
         }
         let interrupted_regs = cpu.regs;
         let interrupted_cpsr = cpu.cpsr;
@@ -762,8 +762,8 @@ fn thumb_ldmia_translation_abort_on_third_or_fourth_beat_is_atomic() {
         cpu.cpsr.set_thumb(true);
         cpu.set_pc(0x100);
         cpu.regs[0] = base;
-        for register in 1..=4 {
-            cpu.regs[register] = 0xA000_0000 + register as u32;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(5).skip(1) {
+            *value = 0xA000_0000 + register as u32;
         }
         let interrupted_regs = cpu.regs;
         let interrupted_cpsr = cpu.cpsr;
@@ -803,8 +803,8 @@ fn thumb_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores(
         cpu.cpsr.set_thumb(true);
         cpu.set_pc(0x100);
         cpu.regs[0] = base;
-        for register in 1..=4 {
-            cpu.regs[register] = 0x4400_0000 + register as u32;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(5).skip(1) {
+            *value = 0x4400_0000 + register as u32;
         }
         let interrupted_regs = cpu.regs;
         let interrupted_cpsr = cpu.cpsr;
