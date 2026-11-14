@@ -192,3 +192,33 @@ fn pc_relative_literal_word_load_without_writeback_remains_valid() {
     assert_eq!(cpu.pc(), 4);
     assert_eq!(cpu.regs[1], DATA);
 }
+
+#[test]
+fn register_offset_transfers_allow_pc_as_base_with_pc_plus_eight() {
+    // LDR r2,[pc,r4,LSL #2] and STR r2,[pc,r4,LSL #2].
+    // Addressing Mode 2 permits R15 as Rn and reads instruction address + 8.
+    let (mut cpu, mut memory) = machine(0xE79F_2104);
+    cpu.regs[4] = 4;
+    memory.write32(24, 0xDEAD_BEEF).unwrap();
+    let status_before = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.regs[2], 0xDEAD_BEEF);
+    assert_eq!(cpu.regs[4], 4);
+    assert_eq!(cpu.cpsr, status_before);
+    assert_eq!(cpu.pc(), 4);
+
+    let (mut cpu, mut memory) = machine(0xE78F_2104);
+    cpu.regs[4] = 4;
+    cpu.regs[2] = 0xCAFE_BABE;
+    memory.write32(24, 0x1122_3344).unwrap();
+    let status_before = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(memory.read32(24).unwrap(), 0xCAFE_BABE);
+    assert_eq!(cpu.regs[4], 4);
+    assert_eq!(cpu.cpsr, status_before);
+    assert_eq!(cpu.pc(), 4);
+}
