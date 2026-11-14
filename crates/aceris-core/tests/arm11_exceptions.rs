@@ -292,4 +292,3 @@ fn prefetch_abort_during_thumb_restores_state_and_returns_to_faulting_address() 
     assert!(cpu.cpsr.thumb());
     assert_eq!(cpu.pc(), 0x1000);
 }
-
