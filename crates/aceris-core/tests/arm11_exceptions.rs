@@ -970,12 +970,7 @@ fn a32_ldm_translation_abort_with_thirteen_registers_preserves_all_destinations_
     const SIZE: u32 = TRANSFER_COUNT * 4;
     let start = 0x0010_0000 - (TRANSFER_COUNT - 1) * 4;
 
-    for (mode, pre_index, up) in [
-        ("IA", 0, 1),
-        ("IB", 1, 1),
-        ("DA", 0, 0),
-        ("DB", 1, 0),
-    ] {
+    for (mode, pre_index, up) in [("IA", 0, 1), ("IB", 1, 1), ("DA", 0, 0), ("DB", 1, 0)] {
         let base = match (pre_index, up) {
             (0, 1) => start,
             (1, 1) => start - 4,
@@ -983,12 +978,8 @@ fn a32_ldm_translation_abort_with_thirteen_registers_preserves_all_destinations_
             (1, 0) => start + SIZE,
             _ => unreachable!(),
         };
-        let instruction = 0xE800_0000
-            | (pre_index << 24)
-            | (up << 23)
-            | (1 << 21)
-            | (1 << 20)
-            | REGISTER_LIST;
+        let instruction =
+            0xE800_0000 | (pre_index << 24) | (up << 23) | (1 << 21) | (1 << 20) | REGISTER_LIST;
         let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
         memory.write32(0x100, instruction).unwrap();
 
@@ -1036,12 +1027,7 @@ fn a32_stm_translation_abort_with_thirteen_registers_keeps_completed_stores_in_a
     const SIZE: u32 = TRANSFER_COUNT * 4;
     let start = 0x0010_0000 - (TRANSFER_COUNT - 1) * 4;
 
-    for (mode, pre_index, up) in [
-        ("IA", 0, 1),
-        ("IB", 1, 1),
-        ("DA", 0, 0),
-        ("DB", 1, 0),
-    ] {
+    for (mode, pre_index, up) in [("IA", 0, 1), ("IB", 1, 1), ("DA", 0, 0), ("DB", 1, 0)] {
         let base = match (pre_index, up) {
             (0, 1) => start,
             (1, 1) => start - 4,
@@ -1049,11 +1035,7 @@ fn a32_stm_translation_abort_with_thirteen_registers_keeps_completed_stores_in_a
             (1, 0) => start + SIZE,
             _ => unreachable!(),
         };
-        let instruction = 0xE800_0000
-            | (pre_index << 24)
-            | (up << 23)
-            | (1 << 21)
-            | REGISTER_LIST;
+        let instruction = 0xE800_0000 | (pre_index << 24) | (up << 23) | (1 << 21) | REGISTER_LIST;
         let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
         memory.write32(0x100, instruction).unwrap();
 
