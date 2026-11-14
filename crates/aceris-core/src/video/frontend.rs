@@ -418,6 +418,22 @@ mod tests {
     }
 
     #[test]
+    fn explicit_portrait_stacks_the_bottom_screen_below_the_top() {
+        let layout = compute_screen_layout(1080, 2400, ORIENTATION_PORTRAIT);
+        assert_eq!(layout.orientation, ORIENTATION_PORTRAIT);
+        assert!(layout.bottom.y >= layout.top.y + layout.top.height as i32);
+        assert!(layout.bottom.x > layout.top.x);
+    }
+
+    #[test]
+    fn explicit_landscape_keeps_screens_side_by_side_even_in_a_tall_surface() {
+        let layout = compute_screen_layout(1080, 2400, ORIENTATION_LANDSCAPE);
+        assert_eq!(layout.orientation, ORIENTATION_LANDSCAPE);
+        assert_eq!(layout.bottom.y, layout.top.y);
+        assert!(layout.bottom.x >= layout.top.x + layout.top.width as i32);
+    }
+
+    #[test]
     fn portrait_and_landscape_layouts_fit_inside_the_surface() {
         for (width, height, mode) in [
             (1080, 2400, ORIENTATION_PORTRAIT),

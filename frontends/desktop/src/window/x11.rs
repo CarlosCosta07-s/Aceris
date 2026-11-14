@@ -60,6 +60,7 @@ struct Xlib {
     intern_atom: unsafe extern "C" fn(*mut Display, *const c_char, c_int) -> c_ulong,
     set_wm_protocols: unsafe extern "C" fn(*mut Display, c_ulong, *mut c_ulong, c_int) -> c_int,
     map_window: unsafe extern "C" fn(*mut Display, c_ulong) -> c_int,
+    resize_window: unsafe extern "C" fn(*mut Display, c_ulong, c_uint, c_uint) -> c_int,
     create_gc: unsafe extern "C" fn(*mut Display, c_ulong, c_ulong, *mut c_void) -> *mut c_void,
     free_gc: unsafe extern "C" fn(*mut Display, *mut c_void) -> c_int,
     create_image: unsafe extern "C" fn(
@@ -146,6 +147,7 @@ impl Xlib {
             intern_atom: symbol!("XInternAtom"),
             set_wm_protocols: symbol!("XSetWMProtocols"),
             map_window: symbol!("XMapWindow"),
+            resize_window: symbol!("XResizeWindow"),
             create_gc: symbol!("XCreateGC"),
             free_gc: symbol!("XFreeGC"),
             create_image: symbol!("XCreateImage"),
@@ -170,6 +172,8 @@ pub struct Window {
     width: usize,
     height: usize,
     delete_atom: c_ulong,
+    visual: *mut c_void,
+    depth: c_int,
 }
 
 fn backend_error(message: &str) -> WindowError {
@@ -280,8 +284,64 @@ impl Window {
                 width,
                 height,
                 delete_atom,
+                visual,
+                depth,
             })
         }
+    }
+
+    /// Resizes the X11 window and replaces its client-side image buffer.
+    ///
+    /// The new XImage is created before the old one is released, so allocation
+    /// or XCreateImage failures leave the existing window buffer usable.
+    pub fn resize(&mut self, width: usize, height: usize) -> Result<(), WindowError> {
+        let (w, h) = (
+            c_uint::try_from(width).map_err(|_| backend_error("window width is too large"))?,
+            c_uint::try_from(height).map_err(|_| backend_error("window height is too large"))?,
+        );
+        if w == 0 || h == 0 {
+            return Err(backend_error("window dimensions must be non-zero"));
+        }
+        let byte_len = width
+            .checked_mul(height)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| backend_error("window is too large"))?;
+
+        // SAFETY: the X11 handles and visual remain live for this Window.
+        // The new XImage takes ownership of the new malloc buffer; destroying
+        // the old XImage releases its previous buffer exactly once.
+        unsafe {
+            let Some(pixels) = NonNull::new(malloc(byte_len).cast::<u8>()) else {
+                return Err(backend_error("out of memory for the resized frame buffer"));
+            };
+            ptr::write_bytes(pixels.as_ptr(), 0, byte_len);
+            let image = (self.xlib.create_image)(
+                self.display.as_ptr(),
+                self.visual,
+                self.depth as c_uint,
+                ZPIXMAP,
+                0,
+                pixels.as_ptr().cast::<c_char>(),
+                w,
+                h,
+                32,
+                0,
+            );
+            let Some(image) = NonNull::new(image) else {
+                libc_free(pixels.as_ptr().cast());
+                return Err(backend_error("XCreateImage failed while resizing"));
+            };
+
+            (self.xlib.resize_window)(self.display.as_ptr(), self.window, w, h);
+            let previous_image = self.image;
+            self.image = image;
+            self.pixels = pixels;
+            self.width = width;
+            self.height = height;
+            (self.xlib.destroy_image)(previous_image.as_ptr());
+            (self.xlib.flush)(self.display.as_ptr());
+        }
+        Ok(())
     }
 
     /// Draws a `width * height * 4` byte BGRX image into the window.
@@ -457,6 +517,11 @@ mod tests {
         };
         window.present(&gradient(64, 48)).unwrap();
         assert!(window.present(&[0; 3]).is_err());
+        assert!(window.resize(0, 48).is_err());
+        assert!(window.resize(usize::MAX, 2).is_err());
+        window.resize(736, 240).unwrap();
+        window.present(&gradient(736, 240)).unwrap();
+        assert!(window.present(&gradient(64, 48)).is_err());
         let _ = window.poll_events();
     }
 

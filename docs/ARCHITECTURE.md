@@ -33,7 +33,7 @@ Frontend
 |---|---|
 | `aceris-common` | Tipos de erro e resultado compartilhados. |
 | `aceris-core` | CPU ARM11, CP15/MMU, VFP, memória, loader, kernel inicial, GPU PICA200, LCD e sistema. |
-| `aceris-desktop` | Binário de diagnóstico e autoteste por linha de comando; ainda não é um frontend gráfico jogável. |
+| `aceris-desktop` | Binário de diagnóstico/autoteste e frontend gráfico experimental X11 com biblioteca de jogos e duas telas lado a lado durante a execução. |
 | `aceris-android` | Biblioteca nativa Rust `cdylib` para Android; ainda não constitui um aplicativo Android completo. |
 | `aceris-icongen` | Ferramenta Rust interna para gerar os ícones originais do projeto. |
 
@@ -97,11 +97,11 @@ Os comandos GX `RequestDMA`, `DisplayTransfer` e `TextureCopy`, cache flush/inva
 
 Ainda faltam a execução real dos vertex shaders PICA200, decodificação e execução integrada de DRAWARRAYS/DRAWELEMENTS, fragment pipeline, texturas, blending, sincronização GSP/IPC e coerência de cache.
 
-O LCD possui superfícies de saída e scanout básico dos framebuffers para as telas. O resultado PICA200 ainda não está integrado a uma pipeline gráfica completa e os frontends não apresentam as duas telas em uma janela gráfica funcional.
+O LCD possui superfícies de saída e scanout básico dos framebuffers para as telas. O frontend X11 experimental apresenta as duas superfícies lado a lado durante o jogo: tela superior à esquerda e tela inferior à direita. A biblioteca do PC usa seu próprio canvas de interface; o Android calcula o layout a partir da orientação escolhida, empilhando as telas no modo vertical e colocando-as lado a lado no modo horizontal. O resultado PICA200 ainda não está integrado a uma pipeline gráfica completa, portanto essa apresentação não representa compatibilidade de jogos.
 
 ## Frontends e validação
 
-- **Desktop:** o binário mantém diagnóstico/autoteste por linha de comando e possui uma janela experimental X11 no Linux. A janela reproduz a abertura original, apresenta a biblioteca compartilhada com movimento ambiente a 60 Hz e aceita sequências pessoais de fundos RGBA por `--background-dir`/`--background-fps`. A apresentação dos LCDs permanece experimental; não representa compatibilidade de jogos. Backends Win32/Cocoa, áudio e controles de jogo ainda estão pendentes.
+- **Desktop:** o binário mantém diagnóstico/autoteste por linha de comando e possui uma janela experimental X11 no Linux. A janela reproduz a abertura original, apresenta a biblioteca compartilhada com movimento ambiente a 60 Hz e aceita sequências pessoais de fundos RGBA por `--background-dir`/`--background-fps`. Ao executar um jogo, a janela é redimensionada para 736x240 e apresenta os LCDs permanentemente lado a lado; ao voltar à biblioteca, retorna ao canvas de interface 400x480. A apresentação continua experimental e não representa compatibilidade de jogos. Backends Win32/Cocoa, áudio e controles de jogo ainda estão pendentes.
 - **Android:** o crate Rust compila como `arm64-v8a` e expõe C ABI para abertura/biblioteca, fundos personalizados (com quadros separados para vertical e horizontal), preferência de orientação e geometria das duas telas, além de desenho/hit-test de controles virtuais. Ainda não há Activity/host instalável que apresente essas superfícies, escolha mídias, solicite rotação do sistema ou encaminhe toques ao dispositivo HID do núcleo. Não considerar os controles jogáveis até essa última integração.
 - **Contrato visual:** a lógica RGBA da biblioteca e as geometrias de tela/controles ficam em `aceris-core`; os frontends hospedam essas funções e preservam a identidade definida em `docs/IDENTIDADE_VISUAL.md`. Especificações e formatos de fundos estão em `docs/FRONTENDS.md`.
 - **CI:** Rustfmt, Clippy e testes do workspace são executados para Linux, Windows e macOS; o build nativo Android ARM64 é validado em workflow separado.

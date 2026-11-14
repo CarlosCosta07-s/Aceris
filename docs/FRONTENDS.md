@@ -26,6 +26,10 @@ ffmpeg -i fundo.mp4 \
 
 O conversor não é incorporado ao Aceris. O emulador apenas lê os quadros que o usuário escolheu. O formato cru evita adicionar dependências de decodificação de mídia ao núcleo.
 
+### Duas telas durante o jogo
+
+No PC, a orientação é fixa: as duas telas nunca são empilhadas. Quando um jogo é aberto, a janela X11 muda para um canvas de 736x240: a tela superior (400x240) fica à esquerda e a tela inferior (320x240) à direita, separadas por uma margem de 16 pixels. O fator `--scale` amplia as duas telas juntas. Ao retornar à biblioteca, a janela volta ao canvas de interface 400x480. O formato da janela não altera a disposição horizontal das telas durante o jogo.
+
 ## Android: orientação e telas
 
 O crate nativo expõe um contrato C ABI para o host Android:
@@ -34,7 +38,7 @@ O crate nativo expõe um contrato C ABI para o host Android:
 - `aceris_library_get_orientation(handle)`: recupera a preferência.
 - `aceris_library_get_screen_layout(handle, width, height, out)`: calcula os retângulos das duas telas no tamanho real da superfície.
 
-No modo vertical, a tela superior fica acima da inferior, que permanece centralizada. No horizontal, elas ficam lado a lado. Ambos os modos preservam a proporção, centralizam o conjunto e evitam recorte. O modo automático acompanha a proporção da superfície.
+No Android, o usuário pode alternar entre dois modos: no horizontal, as telas ficam lado a lado (superior à esquerda e inferior à direita); no vertical, a tela superior fica acima da inferior, que permanece centralizada. Ambos os modos preservam a proporção, centralizam o conjunto e evitam recorte. O modo automático acompanha a proporção atual da superfície. Essa rotação é exclusiva do Android: no PC as telas permanecem sempre lado a lado.
 
 A ABI informa o modo e a geometria; o host Android é responsável por solicitar a orientação correspondente à Activity e recalcular o layout após mudanças de tamanho. O repositório ainda não possui uma Activity/projeto Android instalável, portanto essa chamada de orientação do sistema operacional e a tela de configurações ainda precisam ser conectadas ao host.
 
@@ -59,7 +63,7 @@ A camada gráfica e o hit-test estão disponíveis. A ligação final desses bit
 
 ## Estado e limites atuais
 
-- PC: biblioteca animada e fundos em sequência RGBA estão integrados ao frontend X11 existente.
+- PC: biblioteca animada e fundos em sequência RGBA estão integrados ao frontend X11. Durante o jogo, o canvas é 736x240 com as telas lado a lado; a janela redimensiona ao entrar e sair do jogo.
 - Android: ABI nativa para renderização animada, fundos fornecidos pelo host, orientação, geometria de telas e controles virtuais.
 - Android: ainda falta o host/Activity instalável que apresente as telas, solicite rotação do sistema, faça seleção de mídia e mantenha o ciclo de vida da superfície.
 - Windows/macOS: os backends de janela ainda não foram implementados.

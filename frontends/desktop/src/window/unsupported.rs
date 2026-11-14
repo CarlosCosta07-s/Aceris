@@ -16,6 +16,10 @@ impl Window {
         Err(WindowError::Unsupported)
     }
 
+    pub fn resize(&mut self, _width: usize, _height: usize) -> Result<(), WindowError> {
+        Err(WindowError::Unsupported)
+    }
+
     pub fn poll_events(&mut self) -> Vec<WindowEvent> {
         Vec::new()
     }

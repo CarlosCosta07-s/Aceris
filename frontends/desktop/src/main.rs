@@ -1,7 +1,8 @@
 //! Aceris desktop front-end.
 //!
-//! Currently a command-line shell around the core; the window, renderer and
-//! input handling come later.
+//! Provides command-line diagnostics and an experimental X11 window frontend.
+//! The library uses a dedicated home canvas; gameplay always places the two
+//! LCDs side by side and resizes the window when entering or leaving a game.
 
 mod background;
 mod window;
@@ -206,7 +207,20 @@ fn run_windowed(
                 None => return Ok(()),
             },
         };
+
+        // Desktop gameplay always presents the two LCDs horizontally:
+        // top LCD on the left, bottom LCD on the right.
+        window
+            .resize(
+                window::GAME_CANVAS_WIDTH * scale,
+                window::GAME_CANVAS_HEIGHT * scale,
+            )
+            .map_err(|err| format!("could not resize the gameplay window: {err}"))?;
+
         if let Err(message) = load_game(system, &path) {
+            window
+                .resize(window::CANVAS_WIDTH * scale, window::CANVAS_HEIGHT * scale)
+                .map_err(|err| format!("could not restore the library window: {err}"))?;
             if game == Some(path.as_path()) && library.entries().is_empty() {
                 return Err(message);
             }
@@ -215,9 +229,18 @@ fn run_windowed(
         }
         match emulate(system, &mut window, scale) {
             Ok(Flow::Quit) => return Ok(()),
-            Ok(Flow::BackToLibrary) => {}
+            Ok(Flow::BackToLibrary) => {
+                window
+                    .resize(window::CANVAS_WIDTH * scale, window::CANVAS_HEIGHT * scale)
+                    .map_err(|err| format!("could not restore the library window: {err}"))?;
+            }
             // A failing game returns to the library instead of closing the emulator.
-            Err(message) => library.set_status(message),
+            Err(message) => {
+                window
+                    .resize(window::CANVAS_WIDTH * scale, window::CANVAS_HEIGHT * scale)
+                    .map_err(|err| format!("could not restore the library window: {err}"))?;
+                library.set_status(message);
+            }
         }
     }
 }
