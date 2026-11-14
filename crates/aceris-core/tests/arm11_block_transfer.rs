@@ -245,7 +245,6 @@ fn a32_ldm_stm_large_register_list_covers_all_four_addressing_modes() {
 fn a32_ldm_with_pc_loads_extended_register_list_and_branches_after_writeback() {
     const BASE: u32 = DATA + 0x100;
     const TARGET: u32 = 0x300;
-    const REGISTER_LIST: u32 = 0xFFFE; // r1-r15, including PC.
     const TRANSFER_COUNT: u32 = 15;
     const SIZE: u32 = TRANSFER_COUNT * 4;
     let instruction = 0xE8B0_FFFE; // LDMIA r0!, {r1-r15}
