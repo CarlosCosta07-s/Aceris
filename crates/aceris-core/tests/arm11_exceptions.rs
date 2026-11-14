@@ -145,3 +145,70 @@ fn prefetch_abort_handler_return_restores_cpsr_and_retries_the_fetch_address() {
     assert_eq!(cpu.pc(), 0x1000);
     assert_eq!(cpu.saved_program_status(), None);
 }
+
+#[test]
+fn irq_during_thumb_execution_saves_and_restores_thumb_state() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write16(0x00, 0x2007).unwrap(); // MOVS r0, #7
+    memory.write32(0x18, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+
+    let mut cpu = Arm11Core::new();
+    cpu.cpsr.set_thumb(true);
+    let interrupted = cpu.cpsr;
+    cpu.set_irq_line(true);
+
+    // The pending IRQ is accepted before the current Thumb instruction runs.
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x18);
+    assert_eq!(cpu.regs[14], 4);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+
+    cpu.set_irq_line(false);
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x00);
+
+    // Returning from IRQ resumes the same halfword instead of skipping it.
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.regs[0], 7);
+    assert_eq!(cpu.pc(), 0x02);
+}
+
+#[test]
+fn fiq_during_thumb_execution_saves_and_restores_thumb_state() {
+    let mut memory = FlatMemory::new(0, 0x40);
+    memory.write16(0x02, 0x2009).unwrap(); // MOVS r0, #9
+    memory.write32(0x1C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+
+    let mut cpu = Arm11Core::new();
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x02);
+    let interrupted = cpu.cpsr;
+    cpu.set_fiq_line(true);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::FIQ_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x1C);
+    assert_eq!(cpu.regs[14], 0x06);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(
+        cpu.cpsr.0 & (Psr::A | Psr::I | Psr::F),
+        Psr::A | Psr::I | Psr::F
+    );
+
+    cpu.set_fiq_line(false);
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x02);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.regs[0], 9);
+    assert_eq!(cpu.pc(), 0x04);
+}
+
