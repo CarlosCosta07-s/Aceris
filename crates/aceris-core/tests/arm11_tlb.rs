@@ -271,13 +271,13 @@ fn guest_fcse_pid_separates_low_virtual_address_tlb_entries_and_tlbi_uses_mva() 
     memory
         .write32(
             L1_BASE + 0x21 * 4,
-            section_descriptor(PID_ONE_PHYSICAL, true),
+            section_descriptor(PID_ONE_PHYSICAL, false),
         )
         .unwrap();
     memory
         .write32(
             L1_BASE + 0x41 * 4,
-            section_descriptor(PID_TWO_PHYSICAL, true),
+            section_descriptor(PID_TWO_PHYSICAL, false),
         )
         .unwrap();
 
@@ -320,7 +320,7 @@ fn guest_fcse_pid_separates_low_virtual_address_tlb_entries_and_tlbi_uses_mva() 
     memory
         .write32(
             L1_BASE + 0x21 * 4,
-            section_descriptor(PID_ONE_NEW_PHYSICAL, true),
+            section_descriptor(PID_ONE_NEW_PHYSICAL, false),
         )
         .unwrap();
 
