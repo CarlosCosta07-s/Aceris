@@ -229,19 +229,14 @@ fn pc_base_register_offsets_obey_zero_shift_encodings_and_add_subtract_direction
     // LSL #0 is identity; LSR #0 and ASR #0 mean #32; ROR #0 means RRX.
     let cases = [
         // shift type, Rm value, carry-in, add/subtract, expected address
-        (0u32, 0x0000_0005, true, true, 13u32),  // LSL #0: offset 5
-        (1u32, 0x8000_0000, false, true, 8u32),  // LSR #0: shift by 32 gives zero
+        (0u32, 0x0000_0005, true, true, 13u32), // LSL #0: offset 5
+        (1u32, 0x8000_0000, false, true, 8u32), // LSR #0: shift by 32 gives zero
         (2u32, 0x8000_0000, false, false, 9u32), // ASR #0: offset 0xFFFF_FFFF
-        (3u32, 0x0000_0002, false, true, 9u32),  // RRX: offset 1
+        (3u32, 0x0000_0002, false, true, 9u32), // RRX: offset 1
     ];
 
-    for (index, (shift_type, rm_value, carry, add, address)) in
-        cases.into_iter().enumerate()
-    {
-        let instruction = 0xE75F_2000
-            | (u32::from(add) << 23)
-            | (shift_type << 5)
-            | 4;
+    for (index, (shift_type, rm_value, carry, add, address)) in cases.into_iter().enumerate() {
+        let instruction = 0xE75F_2000 | (u32::from(add) << 23) | (shift_type << 5) | 4;
         let (mut cpu, mut memory) = machine(instruction);
         cpu.regs[4] = rm_value;
         cpu.cpsr.set_flags(false, false, carry, false);
