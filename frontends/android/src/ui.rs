@@ -511,7 +511,6 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-
     #[test]
     fn library_orientation_switches_between_portrait_and_landscape() {
         let directory =

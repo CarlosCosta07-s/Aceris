@@ -143,14 +143,62 @@ fn button_shapes(width: u32, height: u32, orientation: u32) -> [ButtonShape; 12]
     let shoulder_y = (h * 0.13).max(radius + 4.0);
     let small = (radius * 0.78).max(12.0);
     [
-        ButtonShape { bit: buttons::UP, x: left_x, y: control_y - d, radius, label: "U" },
-        ButtonShape { bit: buttons::DOWN, x: left_x, y: control_y + d, radius, label: "D" },
-        ButtonShape { bit: buttons::LEFT, x: left_x - d, y: control_y, radius, label: "L" },
-        ButtonShape { bit: buttons::RIGHT, x: left_x + d, y: control_y, radius, label: "R" },
-        ButtonShape { bit: buttons::A, x: right_x + face_d, y: control_y, radius, label: "A" },
-        ButtonShape { bit: buttons::B, x: right_x, y: control_y + face_d, radius, label: "B" },
-        ButtonShape { bit: buttons::X, x: right_x, y: control_y - face_d, radius, label: "X" },
-        ButtonShape { bit: buttons::Y, x: right_x - face_d, y: control_y, radius, label: "Y" },
+        ButtonShape {
+            bit: buttons::UP,
+            x: left_x,
+            y: control_y - d,
+            radius: radius,
+            label: "U",
+        },
+        ButtonShape {
+            bit: buttons::DOWN,
+            x: left_x,
+            y: control_y + d,
+            radius: radius,
+            label: "D",
+        },
+        ButtonShape {
+            bit: buttons::LEFT,
+            x: left_x - d,
+            y: control_y,
+            radius: radius,
+            label: "L",
+        },
+        ButtonShape {
+            bit: buttons::RIGHT,
+            x: left_x + d,
+            y: control_y,
+            radius: radius,
+            label: "R",
+        },
+        ButtonShape {
+            bit: buttons::A,
+            x: right_x + face_d,
+            y: control_y,
+            radius: radius,
+            label: "A",
+        },
+        ButtonShape {
+            bit: buttons::B,
+            x: right_x,
+            y: control_y + face_d,
+            radius: radius,
+            label: "B",
+        },
+        ButtonShape {
+            bit: buttons::X,
+            x: right_x,
+            y: control_y - face_d,
+            radius: radius,
+            label: "X",
+        },
+        ButtonShape {
+            bit: buttons::Y,
+            x: right_x - face_d,
+            y: control_y,
+            radius: radius,
+            label: "Y",
+        },
         ButtonShape {
             bit: buttons::L,
             x: left_x,
@@ -269,61 +317,61 @@ fn draw_glyph(pixels: &mut [u8], width: usize, height: usize, cx: i32, cy: i32, 
     let glyphs: &[([u8; 7], i32)] = match label {
         "A" => &[(
             [
-                0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001
+                0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
             ],
             5,
         )],
         "B" => &[(
             [
-                0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110
+                0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
             ],
             5,
         )],
         "X" => &[(
             [
-                0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001
+                0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001,
             ],
             5,
         )],
         "Y" => &[(
             [
-                0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100
+                0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
             ],
             5,
         )],
         "L" => &[(
             [
-                0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111
+                0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
             ],
             5,
         )],
         "R" => &[(
             [
-                0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001
+                0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
             ],
             5,
         )],
         "U" => &[(
             [
-                0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110
+                0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
             ],
             5,
         )],
         "D" => &[(
             [
-                0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110
+                0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
             ],
             5,
         )],
         "S" => &[(
             [
-                0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110
+                0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
             ],
             5,
         )],
         "E" => &[(
             [
-                0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111
+                0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
             ],
             5,
         )],
