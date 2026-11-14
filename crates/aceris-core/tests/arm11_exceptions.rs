@@ -211,4 +211,3 @@ fn fiq_during_thumb_execution_saves_and_restores_thumb_state() {
     assert_eq!(cpu.regs[0], 9);
     assert_eq!(cpu.pc(), 0x04);
 }
-
