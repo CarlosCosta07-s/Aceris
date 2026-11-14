@@ -442,7 +442,7 @@ fn irq_during_thumb_uses_high_vector_through_enabled_mmu() {
 #[test]
 fn fiq_during_thumb_uses_high_vector_through_enabled_mmu() {
     let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
-    enable_mmu_high_vectors(&mut cpu, &mut memory);
+    enable_mmu_high_vectors(&mut cpu, &mut memory, false);
     memory.write16(0x100, 0x2009).unwrap(); // MOVS r0, #9
     memory.write32(0x000F_001C, 0xE25E_F004).unwrap(); // PA for high FIQ vector
 
