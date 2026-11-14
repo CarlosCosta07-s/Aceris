@@ -7,7 +7,7 @@ use aceris_core::memory::{Bus, FlatMemory};
 fn irq_waits_until_unmasked_and_exception_return_restores_the_interrupted_context() {
     let mut memory = FlatMemory::new(0, 0x40);
     memory.write32(0, 0xE1A0_0000).unwrap(); // MOV r0, r0
-    memory.write32(0x18, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+    memory.write32(0x000F_0018, 0xE25E_F004).unwrap(); // PA for high IRQ vector
 
     let mut cpu = Arm11Core::new();
     cpu.set_irq_line(true);
@@ -182,7 +182,7 @@ fn irq_during_thumb_execution_saves_and_restores_thumb_state() {
 fn fiq_during_thumb_execution_saves_and_restores_thumb_state() {
     let mut memory = FlatMemory::new(0, 0x40);
     memory.write16(0x02, 0x2009).unwrap(); // MOVS r0, #9
-    memory.write32(0x1C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+    memory.write32(0x000F_001C, 0xE25E_F004).unwrap(); // PA for high FIQ vector
 
     let mut cpu = Arm11Core::new();
     cpu.cpsr.set_thumb(true);
@@ -294,7 +294,7 @@ fn prefetch_abort_during_thumb_restores_state_and_returns_to_faulting_address() 
 }
 
 fn mmu_enabled_thumb_machine() -> (Arm11Core, FlatMemory) {
-    let mut memory = FlatMemory::new(0, 0x1_0000);
+    let mut memory = FlatMemory::new(0, 0x10_0000);
     // L1 table at 0x4000: identity-map VA 0..1 MiB as an RW section.
     memory.write32(0x4000, 0b10 | (0b11 << 10)).unwrap();
     // MCR p15,0,r0,c2,c0,0 (TTBR0), MCR p15,0,r1,c3,c0,0 (DACR),
