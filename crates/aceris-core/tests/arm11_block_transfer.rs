@@ -118,3 +118,58 @@ fn a32_writeback_store_allows_base_as_lowest_register_and_stores_its_original_va
     assert_eq!(memory.read32(DATA + 4).unwrap(), 0xAABB_CCDD);
     assert_eq!(cpu.regs[1], DATA + 8);
 }
+
+#[test]
+fn a32_ldm_stm_writeback_covers_all_four_addressing_modes() {
+    for (mode, pre_index, up) in [
+        ("IA", false, true),
+        ("IB", true, true),
+        ("DA", false, false),
+        ("DB", true, false),
+    ] {
+        let size = 12;
+        let start = if up {
+            DATA + if pre_index { 4 } else { 0 }
+        } else {
+            DATA - size + if pre_index { 0 } else { 4 }
+        };
+        let expected_base = if up { DATA + size } else { DATA - size };
+        let values = [0x1122_3344, 0x5566_7788, 0x99AA_BBCC];
+
+        for load in [false, true] {
+            let instruction = 0xE800_0000
+                | if pre_index { 1 << 24 } else { 0 }
+                | if up { 1 << 23 } else { 0 }
+                | (1 << 21)
+                | if load { 1 << 20 } else { 0 }
+                | (1 << 16)
+                | 0x001C; // {r2,r3,r4}, with r1 as the writeback base.
+            let (mut cpu, mut memory) = cpu_and_memory(instruction);
+
+            for (index, value) in values.iter().copied().enumerate() {
+                memory
+                    .write32(start + index as u32 * 4, if load { value } else { 0xDEAD_BEEF })
+                    .unwrap();
+            }
+
+            if !load {
+                cpu.regs[2..5].copy_from_slice(&values);
+            }
+
+            cpu.step(&mut memory).unwrap();
+
+            assert_eq!(cpu.regs[1], expected_base, "{mode}, load={load}");
+            if load {
+                assert_eq!(&cpu.regs[2..5], &values, "{mode}");
+            } else {
+                for (index, value) in values.iter().copied().enumerate() {
+                    assert_eq!(
+                        memory.read32(start + index as u32 * 4).unwrap(),
+                        value,
+                        "{mode}, beat={index}"
+                    );
+                }
+            }
+        }
+    }
+}
