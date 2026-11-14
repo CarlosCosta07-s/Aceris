@@ -421,6 +421,17 @@ fn irq_during_thumb_uses_high_vector_through_enabled_mmu() {
 
     cpu.set_irq_line(false);
     cpu.step(&mut memory).unwrap(); // Fetch high vector through MmuBus and return.
+    assert_eq!(
+        cpu.cpsr.mode(),
+        Psr::IRQ_MODE,
+        "high IRQ vector fetch: pc={:#010X}, IFAR={:#010X}, IFSR={:#X}, TTBR0={:#010X}, TTBR1={:#010X}, N={}",
+        cpu.pc(),
+        cpu.cp15().ifar(),
+        cpu.cp15().ifsr(),
+        cpu.cp15().ttbr0(),
+        cpu.cp15().ttbr1(),
+        cpu.cp15().ttbcr_n()
+    );
     assert_eq!(cpu.cpsr, interrupted);
     assert!(cpu.cpsr.thumb());
     assert_eq!(cpu.pc(), 0x100);
