@@ -34,19 +34,22 @@ continuam presentes no SVG do ícone e no fundo do ícone adaptativo.
 - Android: `frontends/android/res/mipmap-*` (ícone adaptativo, fundo `#2A1240`).
 - Regenerar tudo: `cargo run --release -p aceris-icongen`.
 
-## Abertura animada
+## Abertura e biblioteca animadas
 `aceris_core::video::intro` gera a abertura (2,5 s a 60 FPS, 150 quadros) como função pura
-do número do quadro, então PC e Android veem exatamente a mesma sequência:
-queda da acerola, dois quicadas com achatamento, brilho diagonal, nome "ACERIS" letra a letra
-e fade para preto. Feita só com a paleta acima, sem recursos de terceiros.
-- PC: toca assim que o emulador abre (`aceris` sem argumentos ou `--window`), antes de carregar o jogo; sem jogo, o logo fica na tela esperando; `--skip-intro` pula; `--dump-intro <DIR>` grava quadros-chave em PNG.
-- Android: a UI futura deve chamar `render_frame` e `rgba_to_scaled_bgrx`/RGBA direto.
+do número do quadro, então PC e Android compartilham a mesma sequência original. A biblioteca
+também é renderizada pelo núcleo em RGBA8 e recebe animação sutil da própria paleta.
+
+- PC: a biblioteca redesenha a 60 FPS no X11 e aceita fundos personalizados por sequência de quadros
+  RGBA8 400x480 usando `--background-dir` e `--background-fps`.
+- Android: a ABI nativa expõe renderização da biblioteca com quadro de fundo fornecido pelo host,
+  orientação automática/vertical/horizontal, geometria das telas e camada/hit-test dos controles
+  virtuais. O host ainda precisa aplicar a orientação à Activity e encaminhar o estado dos botões.
 - Fluxo no PC: abrir o ícone → abertura → **biblioteca** (lista de jogos `.3ds`/`.cci` da pasta
   `--games`, `$ACERIS_GAMES` ou `~/Aceris/Games`). Setas/PgUp/PgDn/roda do mouse navegam, Enter ou
   segundo clique jogam, Esc volta à biblioteca durante o jogo (e sai dela). Telas em
   `aceris_core::video::library` (reutilizável no Android).
 - Atalho de Linux: `packaging/linux/aceris.desktop` (`Exec=aceris --window`).
-- Áudio da abertura: pendente (ainda não há backend de áudio).
+- Fundos personalizados são escurecidos na composição para preservar contraste e a identidade Aceris.
 
 ## Pendências
 - Ícone na janela X11 (`_NET_WM_ICON`) e backends Win32/Cocoa.

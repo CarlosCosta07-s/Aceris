@@ -9,6 +9,9 @@ use std::ffi::{CStr, c_char};
 use std::path::Path;
 use std::slice;
 
+use aceris_core::video::frontend::{
+    self, ScreenLayout, ORIENTATION_AUTO, ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT,
+};
 use aceris_core::video::intro;
 use aceris_core::video::library::{self, ClickResult, Library};
 
@@ -17,6 +20,8 @@ use crate::{ACERIS_STATUS_INVALID_ARGUMENT, ACERIS_STATUS_INVALID_HANDLE, ACERIS
 /// Opaque game library owned by the host.
 pub struct AcerisLibraryHandle {
     library: Library,
+    /// Requested orientation; the Android host applies it to its Activity.
+    orientation: u32,
 }
 
 const FRAME_BYTES: usize = library::WIDTH * library::HEIGHT * 4;
@@ -85,6 +90,7 @@ pub unsafe extern "C" fn aceris_library_create(
     let entries = library::scan_games(Path::new(text));
     Box::into_raw(Box::new(AcerisLibraryHandle {
         library: Library::new(entries, text.to_string()),
+        orientation: ORIENTATION_AUTO,
     }))
 }
 
@@ -242,7 +248,189 @@ pub unsafe extern "C" fn aceris_library_render(
     let Some(h) = (unsafe { handle.as_ref() }) else {
         return ACERIS_STATUS_INVALID_HANDLE;
     };
-    write_frame(&h.library.render(), output, capacity)
+    write_frame(&h.library.render_animated(0, None), output, capacity)
+}
+
+
+/// Requests automatic, portrait or landscape presentation for this library.
+///
+/// Values: 0 = automatic, 1 = portrait, 2 = landscape. The Android host
+/// should read this value and apply the matching Activity orientation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_library_set_orientation(
+    handle: *mut AcerisLibraryHandle,
+    orientation: u32,
+) -> i32 {
+    // SAFETY: the caller guarantees that the handle is live.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    if !matches!(orientation, ORIENTATION_AUTO | ORIENTATION_PORTRAIT | ORIENTATION_LANDSCAPE) {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+    handle.orientation = orientation;
+    ACERIS_STATUS_OK
+}
+
+/// Returns the requested orientation, or a negative status for an invalid handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_library_get_orientation(
+    handle: *const AcerisLibraryHandle,
+) -> i32 {
+    // SAFETY: the caller guarantees that the handle is live.
+    match unsafe { handle.as_ref() } {
+        Some(handle) => handle.orientation as i32,
+        None => ACERIS_STATUS_INVALID_HANDLE,
+    }
+}
+
+/// Computes screen rectangles using this library's requested orientation.
+///
+/// # Safety
+/// handle must be live; output must point to writable ScreenLayout storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_library_get_screen_layout(
+    handle: *const AcerisLibraryHandle,
+    view_width: u32,
+    view_height: u32,
+    output: *mut ScreenLayout,
+) -> i32 {
+    // SAFETY: the caller guarantees that the handle is live.
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    // SAFETY: the caller guarantees writable ScreenLayout storage.
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    };
+    *output = frontend::compute_screen_layout(view_width, view_height, handle.orientation);
+    ACERIS_STATUS_OK
+}
+
+/// Renders an animated library frame with an optional host-decoded RGBA8
+/// background frame. Background frames must be exactly 400x480 RGBA8 bytes.
+///
+/// # Safety
+/// handle must be live; output must have capacity writable bytes. When a
+/// background pointer is non-null, it must reference FRAME_BYTES readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_library_render_animated(
+    handle: *const AcerisLibraryHandle,
+    animation_frame: u64,
+    background_pixels: *const u8,
+    background_len: usize,
+    output: *mut u8,
+    capacity: usize,
+) -> i32 {
+    // SAFETY: the caller guarantees that the handle is live.
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    let background = if background_pixels.is_null() {
+        if background_len != 0 {
+            return ACERIS_STATUS_INVALID_ARGUMENT;
+        }
+        None
+    } else {
+        if background_len != FRAME_BYTES {
+            return ACERIS_STATUS_INVALID_ARGUMENT;
+        }
+        // SAFETY: the caller guarantees FRAME_BYTES readable bytes.
+        Some(unsafe { slice::from_raw_parts(background_pixels, background_len) })
+    };
+    let frame = handle.library.render_animated(animation_frame, background);
+    write_frame(&frame, output, capacity)
+}
+
+/// Renders an animated library frame with distinct portrait and landscape backgrounds.
+///
+/// The host decodes both user-selected background animations and supplies the
+/// current RGBA8 frame for each orientation. Only the frame matching the
+/// current display orientation is composited. A null pointer with length zero
+/// disables that orientation's custom background.
+///
+/// # Safety
+/// handle must be live; output must have capacity writable bytes. Every
+/// non-null background pointer must reference exactly FRAME_BYTES readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_library_render_animated_with_backgrounds(
+    handle: *const AcerisLibraryHandle,
+    animation_frame: u64,
+    display_orientation: u32,
+    portrait_pixels: *const u8,
+    portrait_len: usize,
+    landscape_pixels: *const u8,
+    landscape_len: usize,
+    output: *mut u8,
+    capacity: usize,
+) -> i32 {
+    // SAFETY: the caller guarantees that the handle is live.
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    if !matches!(display_orientation, ORIENTATION_PORTRAIT | ORIENTATION_LANDSCAPE) {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+
+    let selected = if display_orientation == ORIENTATION_PORTRAIT {
+        (portrait_pixels, portrait_len)
+    } else {
+        (landscape_pixels, landscape_len)
+    };
+    let (pixels, len) = selected;
+    let background = if pixels.is_null() {
+        if len != 0 {
+            return ACERIS_STATUS_INVALID_ARGUMENT;
+        }
+        None
+    } else {
+        if len != FRAME_BYTES {
+            return ACERIS_STATUS_INVALID_ARGUMENT;
+        }
+        // SAFETY: the caller guarantees FRAME_BYTES readable bytes.
+        Some(unsafe { slice::from_raw_parts(pixels, len) })
+    };
+
+    let frame = handle.library.render_animated(animation_frame, background);
+    write_frame(&frame, output, capacity)
+}
+
+/// Returns the virtual button bit at a touch point, or zero when no button is hit.
+#[unsafe(no_mangle)]
+pub extern "C" fn aceris_ui_hit_test_virtual_control(
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    orientation: u32,
+) -> u32 {
+    frontend::hit_test_virtual_control(width, height, x, y, orientation)
+}
+
+/// Writes a transparent RGBA8 virtual gamepad overlay into a host-owned buffer.
+///
+/// # Safety
+/// output must reference at least capacity writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_ui_render_virtual_controls(
+    width: u32,
+    height: u32,
+    orientation: u32,
+    pressed_mask: u32,
+    output: *mut u8,
+    capacity: usize,
+) -> i32 {
+    let Some(frame) =
+        frontend::render_virtual_pad_overlay(width, height, orientation, pressed_mask)
+    else {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    };
+    if output.is_null() || capacity < frame.len() {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+    // SAFETY: output is non-null and capacity covers the complete rendered frame.
+    unsafe { slice::from_raw_parts_mut(output, frame.len()) }.copy_from_slice(&frame);
+    ACERIS_STATUS_OK
 }
 
 #[cfg(test)]
@@ -318,6 +506,192 @@ mod tests {
             aceris_library_destroy(handle);
         }
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+
+    #[test]
+    fn library_orientation_switches_between_portrait_and_landscape() {
+        let directory = std::env::temp_dir().join(format!(
+            "aceris-orientation-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let c_dir = CString::new(directory.to_str().unwrap()).unwrap();
+        // SAFETY: pointers are valid and the handle is destroyed once.
+        unsafe {
+            let handle = aceris_library_create(c_dir.as_ptr());
+            assert!(!handle.is_null());
+            assert_eq!(aceris_library_get_orientation(handle), ORIENTATION_AUTO as i32);
+            assert_eq!(
+                aceris_library_set_orientation(handle, ORIENTATION_PORTRAIT),
+                ACERIS_STATUS_OK
+            );
+            let mut layout = ScreenLayout::default();
+            assert_eq!(
+                aceris_library_get_screen_layout(handle, 1080, 2400, &mut layout),
+                ACERIS_STATUS_OK
+            );
+            assert_eq!(layout.orientation, ORIENTATION_PORTRAIT);
+            assert_eq!(
+                aceris_library_set_orientation(handle, ORIENTATION_LANDSCAPE),
+                ACERIS_STATUS_OK
+            );
+            assert_eq!(
+                aceris_library_get_screen_layout(handle, 2400, 1080, &mut layout),
+                ACERIS_STATUS_OK
+            );
+            assert_eq!(layout.orientation, ORIENTATION_LANDSCAPE);
+            assert_eq!(aceris_library_set_orientation(handle, 99), ACERIS_STATUS_INVALID_ARGUMENT);
+            aceris_library_destroy(handle);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn virtual_controls_render_and_report_touch_buttons() {
+        let width = 480;
+        let height = 800;
+        let mut overlay = vec![0u8; width as usize * height as usize * 4];
+        // The A button is on the right-hand control cluster.
+        let pressed = frontend::buttons::A;
+        let rect_center_x = (width as f32 * 0.83
+            + (width.min(height) as f32 * 0.048 * 1.5))
+            .round() as i32;
+        let rect_center_y = (height as f32 * 0.76).round() as i32;
+        assert_eq!(
+            aceris_ui_hit_test_virtual_control(
+                width,
+                height,
+                rect_center_x,
+                rect_center_y,
+                ORIENTATION_PORTRAIT
+            ),
+            pressed
+        );
+        // SAFETY: overlay has exactly width * height * 4 writable bytes.
+        assert_eq!(
+            unsafe {
+                aceris_ui_render_virtual_controls(
+                    width,
+                    height,
+                    ORIENTATION_PORTRAIT,
+                    pressed,
+                    overlay.as_mut_ptr(),
+                    overlay.len()
+                )
+            },
+            ACERIS_STATUS_OK
+        );
+        assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn animated_library_renderer_accepts_only_full_size_background_frames() {
+        let directory = std::env::temp_dir().join(format!(
+            "aceris-animated-lib-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let c_dir = CString::new(directory.to_str().unwrap()).unwrap();
+        // SAFETY: pointers and output buffers are valid for each call.
+        unsafe {
+            let handle = aceris_library_create(c_dir.as_ptr());
+            let mut output = vec![0u8; FRAME_BYTES];
+            let background = vec![20u8; FRAME_BYTES];
+            assert_eq!(
+                aceris_library_render_animated(
+                    handle,
+                    12,
+                    background.as_ptr(),
+                    background.len(),
+                    output.as_mut_ptr(),
+                    output.len()
+                ),
+                ACERIS_STATUS_OK
+            );
+            assert_eq!(
+                aceris_library_render_animated(
+                    handle,
+                    12,
+                    background.as_ptr(),
+                    background.len() - 1,
+                    output.as_mut_ptr(),
+                    output.len()
+                ),
+                ACERIS_STATUS_INVALID_ARGUMENT
+            );
+            aceris_library_destroy(handle);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn animated_library_selects_a_distinct_background_for_each_orientation() {
+        let directory = std::env::temp_dir().join(format!(
+            "aceris-dual-background-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let c_dir = CString::new(directory.to_str().unwrap()).unwrap();
+        // SAFETY: all pointers and buffers remain valid during each call.
+        unsafe {
+            let handle = aceris_library_create(c_dir.as_ptr());
+            assert!(!handle.is_null());
+            let mut portrait = Vec::with_capacity(FRAME_BYTES);
+            let mut landscape = Vec::with_capacity(FRAME_BYTES);
+            for _ in 0..(FRAME_BYTES / 4) {
+                portrait.extend_from_slice(&[255, 0, 0, 255]);
+                landscape.extend_from_slice(&[0, 0, 255, 255]);
+            }
+            let mut output = vec![0u8; FRAME_BYTES];
+            assert_eq!(
+                aceris_library_render_animated_with_backgrounds(
+                    handle,
+                    0,
+                    ORIENTATION_PORTRAIT,
+                    portrait.as_ptr(),
+                    portrait.len(),
+                    landscape.as_ptr(),
+                    landscape.len(),
+                    output.as_mut_ptr(),
+                    output.len()
+                ),
+                ACERIS_STATUS_OK
+            );
+            let portrait_output = output.clone();
+            assert_eq!(
+                aceris_library_render_animated_with_backgrounds(
+                    handle,
+                    0,
+                    ORIENTATION_LANDSCAPE,
+                    portrait.as_ptr(),
+                    portrait.len(),
+                    landscape.as_ptr(),
+                    landscape.len(),
+                    output.as_mut_ptr(),
+                    output.len()
+                ),
+                ACERIS_STATUS_OK
+            );
+            assert_ne!(portrait_output, output);
+            assert_eq!(
+                aceris_library_render_animated_with_backgrounds(
+                    handle,
+                    0,
+                    99,
+                    portrait.as_ptr(),
+                    portrait.len(),
+                    landscape.as_ptr(),
+                    landscape.len(),
+                    output.as_mut_ptr(),
+                    output.len()
+                ),
+                ACERIS_STATUS_INVALID_ARGUMENT
+            );
+            aceris_library_destroy(handle);
+        }
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -143,6 +143,13 @@ impl Library {
 
     /// Draws the library as a 400x480 RGBA frame.
     pub fn render(&self) -> Vec<u8> {
+        self.render_animated(0, None)
+    }
+
+    /// Draws the library with a deterministic animated brand backdrop.
+    /// A host may supply one tightly-packed 400x480 RGBA background frame;
+    /// invalid-sized frames are ignored rather than risking an out-of-bounds read.
+    pub fn render_animated(&self, frame_index: u64, background_frame: Option<&[u8]>) -> Vec<u8> {
         let (w, h) = (WIDTH, HEIGHT);
         let mut out = vec![255u8; w * h * 4];
         let top = rgb(brand::PURPLE_LIGHT);
@@ -155,6 +162,37 @@ impl Library {
                 out[at..at + 3].copy_from_slice(&color);
             }
         }
+        if let Some(background) = background_frame.filter(|frame| frame.len() == w * h * 4) {
+            for (destination, source) in out
+                .chunks_exact_mut(4)
+                .zip(background.chunks_exact(4))
+            {
+                let alpha = (source[3] as f32 / 255.0 * 0.38).clamp(0.0, 0.38);
+                for channel in 0..3 {
+                    destination[channel] = (source[channel] as f32 * alpha
+                        + destination[channel] as f32 * (1.0 - alpha)) as u8;
+                }
+            }
+        }
+
+        // Slow, low-contrast glints give the home screen movement without
+        // changing the Aceris palette or competing with selected game rows.
+        let animation = (frame_index % 1_000_000) as usize;
+        let sweep = animation as i32 % 520 - 80;
+        for y in (HEADER_HEIGHT + 4)..FOOTER_TOP {
+            let x = (sweep + y / 5).rem_euclid(w as i32);
+            blend_pixel(&mut out, x, y, rgb(brand::ACCENT_RED_LIGHT), 0.055);
+        }
+        let ambient_height = (FOOTER_TOP - HEADER_HEIGHT - 16) as usize;
+        for particle in 0..7usize {
+            let x = ((animation * (particle + 1) * 3 + particle * 47) % w) as i32;
+            let y = HEADER_HEIGHT
+                + 8
+                + ((particle * 53 + animation * (particle + 1) / 9) % ambient_height) as i32;
+            blend_pixel(&mut out, x, y, rgb(brand::ACCENT_GREEN_LIGHT), 0.11);
+            blend_pixel(&mut out, x + 1, y, rgb(brand::ACCENT_RED_LIGHT), 0.07);
+        }
+
         let text = rgb(brand::TEXT);
         let red = rgb(brand::ACCENT_RED);
 
@@ -289,6 +327,17 @@ impl Library {
             &path,
             rgb(brand::ACCENT_GREEN_LIGHT),
         );
+    }
+}
+
+fn blend_pixel(canvas: &mut [u8], x: i32, y: i32, color: [u8; 3], alpha: f32) {
+    if x < 0 || y < 0 || x >= WIDTH as i32 || y >= HEIGHT as i32 {
+        return;
+    }
+    let at = (y as usize * WIDTH + x as usize) * 4;
+    for channel in 0..3 {
+        canvas[at + channel] = (color[channel] as f32 * alpha
+            + canvas[at + channel] as f32 * (1.0 - alpha)) as u8;
     }
 }
 

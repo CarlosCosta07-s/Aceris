@@ -5,6 +5,7 @@
 //! RGBA8 surfaces; the core does not depend on a windowing system.
 
 pub mod font;
+pub mod frontend;
 pub mod intro;
 mod lcd;
 pub mod library;

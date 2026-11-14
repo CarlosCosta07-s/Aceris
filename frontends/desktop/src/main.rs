@@ -3,6 +3,7 @@
 //! Currently a command-line shell around the core; the window, renderer and
 //! input handling come later.
 
+mod background;
 mod window;
 
 use aceris_common::{NAME, VERSION};
@@ -42,6 +43,10 @@ fn print_usage() {
     println!("                     closed (Linux/X11 only for now)");
     println!("        --scale <N>  Integer window scale factor, 1-4 (default 2)");
     println!("        --games <DIR>");
+    println!("        --background-dir <DIR>");
+    println!("                     Folder of 400x480 .rgba frames for an animated home background");
+    println!("        --background-fps <N>");
+    println!("                     Source rate for background frames, 1-60 (default 24)");
     println!("                     Folder with .3ds/.cci games for the library (default:");
     println!("                     $ACERIS_GAMES or ~/Aceris/Games)");
     println!("        --skip-intro Do not play the start-up animation when the emulator opens");
@@ -176,6 +181,8 @@ fn run_windowed(
     games_dir: &Path,
     scale: usize,
     skip_intro: bool,
+    background_dir: Option<&Path>,
+    background_fps: u32,
 ) -> Result<(), String> {
     let mut window = window::Window::open(
         &format!("{NAME} {VERSION}"),
@@ -187,11 +194,14 @@ fn run_windowed(
         return Ok(());
     }
     let mut library = Library::new(scan_games(games_dir), games_dir.display().to_string());
+    let background = background_dir
+        .map(|directory| background::Sequence::load(directory, background_fps))
+        .transpose()?;
     let mut next = game.map(Path::to_path_buf);
     loop {
         let path = match next.take() {
             Some(path) => path,
-            None => match browse_library(&mut window, &mut library, scale)? {
+            None => match browse_library(&mut window, &mut library, scale, background.as_ref())? {
                 Some(path) => path,
                 None => return Ok(()),
             },
@@ -217,9 +227,10 @@ fn browse_library(
     window: &mut window::Window,
     library: &mut Library,
     scale: usize,
+    background: Option<&background::Sequence>,
 ) -> Result<Option<PathBuf>, String> {
     let frame_time = Duration::from_micros(16_667);
-    let mut dirty = true;
+    let mut animation_frame = 0u64;
     loop {
         for event in window.poll_events() {
             let mut activate = false;
@@ -242,21 +253,23 @@ fn browse_library(
                     activate = library.click(x, y) == ClickResult::Activated;
                 }
             }
-            dirty = true;
             if activate {
                 if let Some(entry) = library.selected_entry() {
                     return Ok(Some(entry.path.clone()));
                 }
             }
         }
-        if dirty {
-            let bgrx = intro::rgba_to_scaled_bgrx(&library.render(), window::CANVAS_WIDTH, scale);
-            window
-                .present(&bgrx)
-                .map_err(|err| format!("could not draw the frame: {err}"))?;
-            dirty = false;
+        let started = Instant::now();
+        let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
+        let rgba = library.render_animated(animation_frame, background_frame);
+        let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
+        window
+            .present(&bgrx)
+            .map_err(|err| format!("could not draw the frame: {err}"))?;
+        animation_frame = animation_frame.wrapping_add(1);
+        if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
+            thread::sleep(rest);
         }
-        thread::sleep(frame_time);
     }
 }
 
@@ -292,6 +305,8 @@ fn run(options: RunOptions) -> ExitCode {
             &options.games_dir.clone().unwrap_or_else(default_games_dir),
             options.scale,
             options.skip_intro,
+            options.background_dir.as_deref(),
+            options.background_fps,
         ) {
             eprintln!("error: {message}");
             return ExitCode::FAILURE;
@@ -331,6 +346,8 @@ struct RunOptions {
     scale: usize,
     skip_intro: bool,
     games_dir: Option<PathBuf>,
+    background_dir: Option<PathBuf>,
+    background_fps: u32,
 }
 
 /// Parses `<GAME> [--dump-lcd <DIR>] [--window] [--scale <N>]` in any order.
@@ -341,6 +358,9 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let mut scale = 2;
     let mut skip_intro = false;
     let mut games_dir = None;
+    let mut background_dir = None;
+    let mut background_fps = 24;
+    let mut background_fps_configured = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -358,6 +378,23 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
                     .ok_or_else(|| "--games requires a directory".to_string())?;
                 games_dir = Some(PathBuf::from(dir));
             }
+            "--background-dir" => {
+                let dir = iter
+                    .next()
+                    .ok_or_else(|| "--background-dir requires a directory".to_string())?;
+                background_dir = Some(PathBuf::from(dir));
+            }
+            "--background-fps" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--background-fps requires a number".to_string())?;
+                background_fps = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|fps| (1..=60).contains(fps))
+                    .ok_or_else(|| format!("--background-fps must be 1-60, got {value}"))?;
+                background_fps_configured = true;
+            }
             "--scale" => {
                 let value = iter
                     .next()
@@ -371,6 +408,9 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
             _ => return Err(format!("unexpected argument: {arg}")),
         }
     }
+    if (background_dir.is_some() || background_fps_configured) && !window {
+        return Err("--background-dir/--background-fps require --window".to_string());
+    }
     Ok(RunOptions {
         game: match game {
             Some(game) => Some(game),
@@ -382,6 +422,8 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
         scale,
         skip_intro,
         games_dir,
+        background_dir,
+        background_fps,
     })
 }
 
@@ -428,6 +470,8 @@ fn main() -> ExitCode {
             scale: 2,
             skip_intro: false,
             games_dir: None,
+            background_dir: None,
+            background_fps: 24,
         }),
     }
 }
@@ -448,6 +492,8 @@ mod tests {
             scale,
             skip_intro: false,
             games_dir: None,
+            background_dir: None,
+            background_fps: 24,
         }
     }
 
@@ -484,6 +530,19 @@ mod tests {
         let parsed = parse_run_args(&strings(&["--window", "--games", "/g"])).unwrap();
         assert_eq!(parsed.games_dir, Some(PathBuf::from("/g")));
         assert!(parse_run_args(&strings(&["--window", "--games"])).is_err());
+        let themed = parse_run_args(&strings(&[
+            "--window",
+            "--background-dir",
+            "/wallpapers",
+            "--background-fps",
+            "30",
+        ]))
+        .unwrap();
+        assert_eq!(themed.background_dir, Some(PathBuf::from("/wallpapers")));
+        assert_eq!(themed.background_fps, 30);
+        assert!(parse_run_args(&strings(&["--background-dir", "/wallpapers"])).is_err());
+        assert!(parse_run_args(&strings(&["--window", "--background-fps", "0"])).is_err());
+        assert!(parse_run_args(&strings(&["game.3ds", "--background-fps", "24"])).is_err());
     }
 
     #[test]
