@@ -209,6 +209,11 @@ fn guest_tlb_keeps_same_virtual_address_per_asid_and_mva_invalidation_is_asid_sc
     memory.write32(0x124, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 1
     memory.write32(0x128, 0xE590_7000).unwrap(); // LDR r7, [r0]
     memory.write32(0x12C, mcr(1, 8, 7, 1)).unwrap(); // TLBIMVA r1 (MVA + ASID).
+    memory.write32(0x130, 0xE590_8000).unwrap(); // LDR r8, [r0].
+    memory.write32(0x134, mcr(3, 2, 0, 0)).unwrap(); // TTBR0 = B.
+    memory.write32(0x138, 0xE3A0_4002).unwrap(); // MOV r4, #2.
+    memory.write32(0x13C, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 2.
+    memory.write32(0x140, 0xE590_9000).unwrap(); // LDR r9, [r0].
 
     // The high code VA is deliberately outside the FCSE-remapped low window.
     cpu.regs[0] = DATA_VA;
