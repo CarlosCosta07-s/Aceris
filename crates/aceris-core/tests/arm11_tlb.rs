@@ -147,3 +147,188 @@ fn guest_tlbi_all_preserves_locked_entries_until_mva_asid_invalidates_them() {
     cpu.step(&mut memory).unwrap(); // Locked data mapping is invalidated and refilled.
     assert_eq!(cpu.regs[6], 0xBBBB_0002);
 }
+
+#[test]
+fn guest_tlb_keeps_same_virtual_address_per_asid_and_mva_invalidation_is_asid_scoped() {
+    const DATA_VA: u32 = 0x1230_0100;
+    const SECOND_L1_BASE: u32 = 0x8000;
+    const ASID_ONE_PHYSICAL: u32 = 0x0010_0000;
+    const ASID_TWO_PHYSICAL: u32 = 0x0020_0000;
+    const ASID_ONE_NEW_PHYSICAL: u32 = 0x0030_0000;
+    const ASID_TWO_NEW_PHYSICAL: u32 = 0x0000_0000;
+
+    let (mut cpu, mut memory) = mmu_machine();
+
+    // Both address spaces execute the same code section, but map the same
+    // data VA to different physical sections with non-global descriptors.
+    memory
+        .write32(L1_BASE + 0x300 * 4, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(SECOND_L1_BASE, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(SECOND_L1_BASE + 0x300 * 4, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(L1_BASE + 0x123 * 4, section_descriptor(ASID_ONE_PHYSICAL, true))
+        .unwrap();
+    memory
+        .write32(
+            SECOND_L1_BASE + 0x123 * 4,
+            section_descriptor(ASID_TWO_PHYSICAL, true),
+        )
+        .unwrap();
+
+    memory
+        .write32(ASID_ONE_PHYSICAL + 0x100, 0x1111_0001)
+        .unwrap();
+    memory
+        .write32(ASID_TWO_PHYSICAL + 0x100, 0x2222_0002)
+        .unwrap();
+    memory
+        .write32(ASID_ONE_NEW_PHYSICAL + 0x100, 0x3333_0003)
+        .unwrap();
+    memory
+        .write32(ASID_TWO_NEW_PHYSICAL + 0x100, 0x4444_0004)
+        .unwrap();
+
+    // ASID 1 -> TTBR0 A; ASID 2 -> TTBR0 B; return to ASID 1.
+    memory.write32(0x100, 0xE3A0_4001).unwrap(); // MOV r4, #1
+    memory.write32(0x104, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 1
+    memory.write32(0x108, 0xE590_5000).unwrap(); // LDR r5, [r0]
+    memory.write32(0x10C, mcr(3, 2, 0, 0)).unwrap(); // TTBR0 = B
+    memory.write32(0x110, 0xE3A0_4002).unwrap(); // MOV r4, #2
+    memory.write32(0x114, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 2
+    memory.write32(0x118, 0xE590_6000).unwrap(); // LDR r6, [r0]
+    memory.write32(0x11C, mcr(2, 2, 0, 0)).unwrap(); // TTBR0 = A
+    memory.write32(0x120, 0xE3A0_4001).unwrap(); // MOV r4, #1
+    memory.write32(0x124, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 1
+    memory.write32(0x128, 0xE590_7000).unwrap(); // LDR r7, [r0]
+    memory
+        .write32(0x12C, mcr(1, 8, 7, 1))
+        .unwrap(); // TLBIMVA r1 (MVA + ASID).
+
+    // The high code VA is deliberately outside the FCSE-remapped low window.
+    cpu.regs[0] = DATA_VA;
+    cpu.regs[1] = (DATA_VA & 0xFFFF_F000) | 1;
+    cpu.regs[2] = L1_BASE;
+    cpu.regs[3] = SECOND_L1_BASE;
+    cpu.set_pc(0x3000_0100);
+
+    for _ in 0..11 {
+        cpu.step(&mut memory).unwrap();
+    }
+    assert_eq!(cpu.regs[5], 0x1111_0001);
+    assert_eq!(cpu.regs[6], 0x2222_0002);
+    assert_eq!(cpu.regs[7], 0x1111_0001);
+
+    // Change both page-table entries. MVA+ASID invalidation must replace only
+    // the ASID 1 translation; ASID 2 must keep its already-cached mapping.
+    memory
+        .write32(
+            L1_BASE + 0x123 * 4,
+            section_descriptor(ASID_ONE_NEW_PHYSICAL, true),
+        )
+        .unwrap();
+    memory
+        .write32(
+            SECOND_L1_BASE + 0x123 * 4,
+            section_descriptor(ASID_TWO_NEW_PHYSICAL, true),
+        )
+        .unwrap();
+
+    cpu.step(&mut memory).unwrap(); // Queues MVA+ASID invalidation for ASID 1.
+    cpu.step(&mut memory).unwrap(); // ASID 1 reloads from its updated L1 table.
+    assert_eq!(cpu.regs[8], 0x3333_0003);
+
+    cpu.step(&mut memory).unwrap(); // Switch TTBR0 back to B.
+    cpu.step(&mut memory).unwrap(); // MOV r4, #2.
+    cpu.step(&mut memory).unwrap(); // Switch CONTEXTIDR to ASID 2.
+    cpu.step(&mut memory).unwrap(); // ASID 2 still uses its cached old mapping.
+    assert_eq!(cpu.regs[6], 0x2222_0002);
+    assert_eq!(cpu.regs[9], 0x2222_0002);
+}
+
+#[test]
+fn guest_fcse_pid_separates_low_virtual_address_tlb_entries_and_tlbi_uses_mva() {
+    const DATA_VA: u32 = 0x0010_0120;
+    const PID_ONE: u32 = 0x0200_0000;
+    const PID_TWO: u32 = 0x0400_0000;
+    const MVA_ONE: u32 = PID_ONE | DATA_VA;
+    const PID_ONE_PHYSICAL: u32 = 0x0010_0000;
+    const PID_TWO_PHYSICAL: u32 = 0x0020_0000;
+    const PID_ONE_NEW_PHYSICAL: u32 = 0x0030_0000;
+
+    let (mut cpu, mut memory) = mmu_machine();
+
+    // Keep instruction fetches outside the FCSE window; data accesses use
+    // the same low VA under two different process identifiers.
+    memory
+        .write32(L1_BASE + 0x300 * 4, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(
+            L1_BASE + 0x21 * 4,
+            section_descriptor(PID_ONE_PHYSICAL, true),
+        )
+        .unwrap();
+    memory
+        .write32(
+            L1_BASE + 0x41 * 4,
+            section_descriptor(PID_TWO_PHYSICAL, true),
+        )
+        .unwrap();
+
+    memory
+        .write32(PID_ONE_PHYSICAL + 0x120, 0xAAAA_0001)
+        .unwrap();
+    memory
+        .write32(PID_TWO_PHYSICAL + 0x120, 0xBBBB_0002)
+        .unwrap();
+    memory
+        .write32(PID_ONE_NEW_PHYSICAL + 0x120, 0xCCCC_0003)
+        .unwrap();
+
+    memory.write32(0x100, mcr(1, 13, 0, 0)).unwrap(); // FCSE PID = r1.
+    memory.write32(0x104, 0xE590_5000).unwrap(); // LDR r5, [r0].
+    memory.write32(0x108, mcr(2, 13, 0, 0)).unwrap(); // FCSE PID = r2.
+    memory.write32(0x10C, 0xE590_6000).unwrap(); // LDR r6, [r0].
+    memory.write32(0x110, mcr(1, 13, 0, 0)).unwrap(); // FCSE PID = PID_ONE.
+    memory.write32(0x114, 0xE590_7000).unwrap(); // LDR r7, [r0].
+    memory.write32(0x118, mcr(3, 8, 7, 3)).unwrap(); // TLBIMVAA r3.
+    memory.write32(0x11C, 0xE590_8000).unwrap(); // LDR r8, [r0].
+    memory.write32(0x120, mcr(2, 13, 0, 0)).unwrap(); // FCSE PID = PID_TWO.
+    memory.write32(0x124, 0xE590_9000).unwrap(); // LDR r9, [r0].
+
+    cpu.regs[0] = DATA_VA;
+    cpu.regs[1] = PID_ONE;
+    cpu.regs[2] = PID_TWO;
+    cpu.regs[3] = MVA_ONE; // TLBI uses the modified VA, not the low true VA.
+    cpu.set_pc(0x3000_0100);
+
+    for _ in 0..6 {
+        cpu.step(&mut memory).unwrap();
+    }
+    assert_eq!(cpu.regs[5], 0xAAAA_0001);
+    assert_eq!(cpu.regs[6], 0xBBBB_0002);
+    assert_eq!(cpu.regs[7], 0xAAAA_0001);
+
+    // Only PID_ONE's modified VA is remapped. The guest invalidates by MVA;
+    // the entry for PID_TWO must remain cached at its prior physical address.
+    memory
+        .write32(
+            L1_BASE + 0x21 * 4,
+            section_descriptor(PID_ONE_NEW_PHYSICAL, true),
+        )
+        .unwrap();
+
+    cpu.step(&mut memory).unwrap(); // TLBIMVAA for MVA_ONE.
+    cpu.step(&mut memory).unwrap(); // PID_ONE sees the updated translation.
+    assert_eq!(cpu.regs[8], 0xCCCC_0003);
+
+    cpu.step(&mut memory).unwrap(); // Switch to PID_TWO.
+    cpu.step(&mut memory).unwrap(); // PID_TWO retains its cached mapping.
+    assert_eq!(cpu.regs[9], 0xBBBB_0002);
+}
+
