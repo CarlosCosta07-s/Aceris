@@ -542,3 +542,124 @@ fn thumb_prefetch_translation_abort_uses_high_vector_through_enabled_mmu() {
     assert_eq!(cpu.pc(), faulting_address);
     assert_eq!(cpu.saved_program_status(), None);
 }
+
+
+#[test]
+fn a32_ldmia_translation_abort_keeps_registers_and_writeback_atomic() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write32(0x100, 0xE8B0_0006).unwrap(); // LDMIA r0!, {r1,r2}
+
+    let base = 0x000F_FFFC; // First word mapped; second word is in unmapped VA section.
+    let first_value = 0x1122_3344;
+    memory.write32(base, first_value).unwrap();
+    cpu.set_pc(0x100);
+    cpu.regs[0] = base;
+    cpu.regs[1] = 0xAAAA_AAAA;
+    cpu.regs[2] = 0xBBBB_BBBB;
+    let interrupted_regs = cpu.regs;
+    let interrupted_cpsr = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+    assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+    assert_eq!(memory.read32(base).unwrap(), first_value);
+}
+
+#[test]
+fn a32_stmia_translation_abort_preserves_completed_store_without_writeback() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write32(0x100, 0xE8A0_0006).unwrap(); // STMIA r0!, {r1,r2}
+
+    let base = 0x000F_FFFC; // First word mapped; second word is in unmapped VA section.
+    let first_sentinel = 0xDEAD_BEEF;
+    memory.write32(base, first_sentinel).unwrap();
+    cpu.set_pc(0x100);
+    cpu.regs[0] = base;
+    cpu.regs[1] = 0x1122_3344;
+    cpu.regs[2] = 0x5566_7788;
+    let interrupted_regs = cpu.regs;
+    let interrupted_cpsr = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+    assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+    // A completed earlier STM beat is not rolled back by exception entry.
+    assert_eq!(memory.read32(base).unwrap(), interrupted_regs[1]);
+}
+
+#[test]
+fn thumb_ldmia_translation_abort_keeps_registers_and_writeback_atomic() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write16(0x100, 0xC806).unwrap(); // LDMIA r0!, {r1,r2}
+
+    let base = 0x000F_FFFC; // First word mapped; second word is in unmapped VA section.
+    let first_value = 0x1234_5678;
+    memory.write32(base, first_value).unwrap();
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    cpu.regs[0] = base;
+    cpu.regs[1] = 0xAAAA_AAAA;
+    cpu.regs[2] = 0xBBBB_BBBB;
+    let interrupted_regs = cpu.regs;
+    let interrupted_cpsr = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+    assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+    assert_eq!(memory.read32(base).unwrap(), first_value);
+}
+
+#[test]
+fn thumb_stmia_translation_abort_preserves_completed_store_without_writeback() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write16(0x100, 0xC006).unwrap(); // STMIA r0!, {r1,r2}
+
+    let base = 0x000F_FFFC; // First word mapped; second word is in unmapped VA section.
+    let first_sentinel = 0xCAFEBABE;
+    memory.write32(base, first_sentinel).unwrap();
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    cpu.regs[0] = base;
+    cpu.regs[1] = 0x1122_3344;
+    cpu.regs[2] = 0x5566_7788;
+    let interrupted_regs = cpu.regs;
+    let interrupted_cpsr = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+    assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
+    // A completed earlier STM beat is not rolled back by exception entry.
+    assert_eq!(memory.read32(base).unwrap(), interrupted_regs[1]);
+}
