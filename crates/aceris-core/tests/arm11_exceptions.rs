@@ -7,7 +7,7 @@ use aceris_core::memory::{Bus, FlatMemory};
 fn irq_waits_until_unmasked_and_exception_return_restores_the_interrupted_context() {
     let mut memory = FlatMemory::new(0, 0x40);
     memory.write32(0, 0xE1A0_0000).unwrap(); // MOV r0, r0
-    memory.write32(0x000F_0018, 0xE25E_F004).unwrap(); // PA for high IRQ vector
+    memory.write32(0x18, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
 
     let mut cpu = Arm11Core::new();
     cpu.set_irq_line(true);
@@ -182,7 +182,7 @@ fn irq_during_thumb_execution_saves_and_restores_thumb_state() {
 fn fiq_during_thumb_execution_saves_and_restores_thumb_state() {
     let mut memory = FlatMemory::new(0, 0x40);
     memory.write16(0x02, 0x2009).unwrap(); // MOVS r0, #9
-    memory.write32(0x000F_001C, 0xE25E_F004).unwrap(); // PA for high FIQ vector
+    memory.write32(0x1C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
 
     let mut cpu = Arm11Core::new();
     cpu.cpsr.set_thumb(true);
@@ -404,7 +404,7 @@ fn irq_during_thumb_uses_high_vector_through_enabled_mmu() {
     let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
     enable_mmu_high_vectors(&mut cpu, &mut memory);
     memory.write16(0x100, 0x2007).unwrap(); // MOVS r0, #7
-    memory.write32(0x18, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+    memory.write32(0x000F_0018, 0xE25E_F004).unwrap(); // PA for high IRQ vector
 
     cpu.cpsr.set_thumb(true);
     cpu.set_pc(0x100);
@@ -446,7 +446,7 @@ fn fiq_during_thumb_uses_high_vector_through_enabled_mmu() {
     let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
     enable_mmu_high_vectors(&mut cpu, &mut memory);
     memory.write16(0x100, 0x2009).unwrap(); // MOVS r0, #9
-    memory.write32(0x1C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+    memory.write32(0x000F_001C, 0xE25E_F004).unwrap(); // PA for high FIQ vector
 
     cpu.cpsr.set_thumb(true);
     cpu.set_pc(0x100);
