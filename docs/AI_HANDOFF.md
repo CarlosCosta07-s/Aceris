@@ -803,3 +803,11 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 
 - `02aede7` — `.github/workflows/ci.yml` adiciona `cargo build --locked --workspace` à matriz Linux/Windows/macOS, entre Rustfmt e Clippy. A etapa comprova que os pacotes padrão do workspace compilam usando o `Cargo.lock` sem modificações implícitas.
 - Workflow [43542724526](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43542724526) aprovado em Linux, Windows e macOS: Rustfmt, `cargo build --locked --workspace`, Clippy `-D warnings` e `cargo test --workspace`; Android `arm64-v8a` release também aprovado. O item correspondente no `docs/ROADMAP.md` foi marcado como concluído.
+
+## A32 — regressões de IRQ/FIQ durante execução Thumb
+
+- Commit `9f99bd84e50490083b13a652926677ead3f44c5f` adiciona dois testes externos em `crates/aceris-core/tests/arm11_exceptions.rs`: `irq_during_thumb_execution_saves_and_restores_thumb_state` e `fiq_during_thumb_execution_saves_and_restores_thumb_state`.
+- Os testes verificam que a interrupção é aceita antes da instrução Thumb pendente, que o CPSR original (incluindo T) é salvo no SPSR do modo de exceção, que o core entra no vetor A32 com as máscaras corretas e que `SUBS pc,lr,#4` restaura Thumb e retorna ao mesmo halfword. A instrução interrompida é então executada e o PC avança em dois bytes.
+- Nenhum código de produção, `thumb.rs`, contrato compartilhado ou dependência foi alterado nesta etapa.
+- O workflow em `.github/workflows/ci.yml` é acionado por pushes em `main`. A consulta de status disponível não retornou entradas para o commit no momento deste registro; os resultados de Rustfmt, Clippy, testes do workspace e build Android permanecem **não verificados**. Também não foi possível executar `cargo test` localmente neste ambiente porque o clone remoto falhou na resolução de `github.com`. Não declarar a etapa validada até obter o resultado da CI.
+
