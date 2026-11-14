@@ -292,3 +292,83 @@ fn prefetch_abort_during_thumb_restores_state_and_returns_to_faulting_address() 
     assert!(cpu.cpsr.thumb());
     assert_eq!(cpu.pc(), 0x1000);
 }
+
+fn mmu_enabled_thumb_machine() -> (Arm11Core, FlatMemory) {
+    let mut memory = FlatMemory::new(0, 0x1_0000);
+    // L1 table at 0x4000: identity-map VA 0..1 MiB as an RW section.
+    memory
+        .write32(0x4000, 0b10 | (0b11 << 10))
+        .unwrap();
+    // MCR p15,0,r0,c2,c0,0 (TTBR0), MCR p15,0,r1,c3,c0,0 (DACR),
+    // MCR p15,0,r2,c1,c0,0 (SCTLR.M | SCTLR.XP).
+    memory.write32(0x00, 0xEE02_0F10).unwrap();
+    memory.write32(0x04, 0xEE03_1F10).unwrap();
+    memory.write32(0x08, 0xEE01_2F10).unwrap();
+
+    let mut cpu = Arm11Core::new();
+    cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+    cpu.set_fault_exception_entry_enabled(true);
+    cpu.regs[0] = 0x4000;
+    cpu.regs[1] = 0b01; // Domain 0 = client.
+    cpu.regs[2] = 1 | (1 << 23); // Enable MMU and ARMv6 XP descriptors.
+
+    for _ in 0..3 {
+        cpu.step(&mut memory).unwrap();
+    }
+    assert!(cpu.cp15().mmu_enabled());
+    (cpu, memory)
+}
+
+#[test]
+fn thumb_prefetch_translation_abort_preserves_thumb_state_and_return_address() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write32(0x0C, 0xE25E_F004).unwrap(); // SUBS pc, lr, #4
+    let faulting_address = 0x0010_0000; // L1 descriptor is absent.
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(faulting_address);
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x0C);
+    assert_eq!(cpu.regs[14], faulting_address + 4);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().ifar(), faulting_address);
+    assert_eq!(cpu.cp15().ifsr(), 0x5);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), faulting_address);
+}
+
+#[test]
+fn thumb_data_translation_abort_preserves_thumb_state_and_faulting_instruction() {
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write16(0x100, 0x6808).unwrap(); // LDR r0, [r1, #0]
+    memory.write32(0x10, 0xE25E_F008).unwrap(); // SUBS pc, lr, #8
+    let faulting_data_address = 0x0010_0000; // L1 descriptor is absent.
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    cpu.regs[0] = 0x1234_5678;
+    cpu.regs[1] = faulting_data_address;
+    let interrupted = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted));
+    assert_eq!(cpu.cp15().dfar(), faulting_data_address);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+    assert_eq!(cpu.regs[1], faulting_data_address);
+
+    cpu.step(&mut memory).unwrap();
+    assert_eq!(cpu.cpsr, interrupted);
+    assert!(cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x100);
+    assert_eq!(cpu.regs[0], 0x1234_5678);
+}
