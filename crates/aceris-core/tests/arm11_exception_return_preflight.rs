@@ -79,10 +79,10 @@ fn ldm_exception_return_with_valid_spsr_commits_registers_and_restores_user_mode
 
 #[test]
 fn ldm_exception_return_loads_multiple_registers_restores_thumb_and_branches() {
-    const instruction: u32 = 0xE8F4_8007; // LDMIA r4!, {r0,r1,r2,pc}^
+    const INSTRUCTION: u32 = 0xE8F4_8007; // LDMIA r4!, {r0,r1,r2,pc}^
     let saved = Psr(Psr::USER_MODE | Psr::T | Psr::N | Psr::C);
     let mut memory = FlatMemory::new(0, 0x1000);
-    memory.write32(0, instruction).unwrap();
+    memory.write32(0, INSTRUCTION).unwrap();
     memory.write32(DATA, 0xA0A0_0000).unwrap();
     memory.write32(DATA + 4, 0xB1B1_0001).unwrap();
     memory.write32(DATA + 8, 0xC2C2_0002).unwrap();
