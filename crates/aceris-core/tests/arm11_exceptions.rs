@@ -595,7 +595,7 @@ fn a32_stmia_translation_abort_preserves_completed_store_without_writeback() {
     assert_eq!(cpu.regs[14], 0x108);
     assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
     assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
-    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cp15().dfsr(), 0x805);
     assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
     assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
     // A completed earlier STM beat is not rolled back by exception entry.
@@ -656,7 +656,7 @@ fn thumb_stmia_translation_abort_preserves_completed_store_without_writeback() {
     assert_eq!(cpu.regs[14], 0x108);
     assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
     assert_eq!(cpu.cp15().dfar(), 0x0010_0000);
-    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cp15().dfsr(), 0x805);
     assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
     assert_eq!(cpu.regs[..13], interrupted_regs[..13]);
     // A completed earlier STM beat is not rolled back by exception entry.
