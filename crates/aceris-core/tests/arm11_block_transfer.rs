@@ -148,7 +148,10 @@ fn a32_ldm_stm_writeback_covers_all_four_addressing_modes() {
 
             for (index, value) in values.iter().copied().enumerate() {
                 memory
-                    .write32(start + index as u32 * 4, if load { value } else { 0xDEAD_BEEF })
+                    .write32(
+                        start + index as u32 * 4,
+                        if load { value } else { 0xDEAD_BEEF },
+                    )
                     .unwrap();
             }
 
