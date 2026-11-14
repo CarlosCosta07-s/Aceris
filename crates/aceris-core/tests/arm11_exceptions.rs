@@ -663,17 +663,13 @@ fn thumb_stmia_translation_abort_preserves_completed_store_without_writeback() {
     assert_eq!(memory.read32(base).unwrap(), interrupted_regs[1]);
 }
 
-
 #[test]
 fn a32_ldmia_translation_abort_on_third_or_fourth_beat_is_atomic() {
-    for (base, register_list, transfer_count) in [
-        (0x000F_FFF8, 0x000E, 3usize),
-        (0x000F_FFF4, 0x001E, 4usize),
-    ] {
+    for (base, register_list, transfer_count) in
+        [(0x000F_FFF8, 0x000E, 3usize), (0x000F_FFF4, 0x001E, 4usize)]
+    {
         let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
-        memory
-            .write32(0x100, 0xE8B0_0000 | register_list)
-            .unwrap(); // LDMIA r0!, {r1-rN}
+        memory.write32(0x100, 0xE8B0_0000 | register_list).unwrap(); // LDMIA r0!, {r1-rN}
 
         for index in 0..transfer_count - 1 {
             memory
@@ -715,9 +711,7 @@ fn a32_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores() 
         (0x000F_FFF4, 0x001E, 4usize),
     ] {
         let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
-        memory
-            .write32(0x100, 0xE8A0_0000 | register_list)
-            .unwrap(); // STMIA r0!, {r1-rN}
+        memory.write32(0x100, 0xE8A0_0000 | register_list).unwrap(); // STMIA r0!, {r1-rN}
 
         for index in 0..transfer_count - 1 {
             memory
@@ -754,10 +748,9 @@ fn a32_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores() 
 
 #[test]
 fn thumb_ldmia_translation_abort_on_third_or_fourth_beat_is_atomic() {
-    for (base, register_list, transfer_count) in [
-        (0x000F_FFF8, 0x0E, 3usize),
-        (0x000F_FFF4, 0x1E, 4usize),
-    ] {
+    for (base, register_list, transfer_count) in
+        [(0x000F_FFF8, 0x0E, 3usize), (0x000F_FFF4, 0x1E, 4usize)]
+    {
         let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
         memory.write16(0x100, 0xC800 | register_list).unwrap(); // LDMIA r0!, {r1-rN}
 
@@ -806,9 +799,7 @@ fn thumb_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores(
         memory.write16(0x100, 0xC000 | register_list).unwrap(); // STMIA r0!, {r1-rN}
 
         for index in 0..transfer_count - 1 {
-            memory
-                .write32(base + index as u32 * 4, 0xCAFEBABE)
-                .unwrap();
+            memory.write32(base + index as u32 * 4, 0xCAFEBABE).unwrap();
         }
 
         cpu.cpsr.set_thumb(true);
