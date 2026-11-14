@@ -13,14 +13,14 @@ fn mcr(rd: u32, crn: u32, crm: u32, opc2: u32) -> u32 {
 }
 
 fn section_descriptor(physical_base: u32, non_global: bool) -> u32 {
-    (physical_base & 0xFFF0_0000)
-        | SECTION_RW
-        | if non_global { SECTION_NOT_GLOBAL } else { 0 }
+    (physical_base & 0xFFF0_0000) | SECTION_RW | if non_global { SECTION_NOT_GLOBAL } else { 0 }
 }
 
 fn mmu_machine() -> (Arm11Core, FlatMemory) {
     let mut memory = FlatMemory::new(0, MEMORY_SIZE);
-    memory.write32(L1_BASE, section_descriptor(0, false)).unwrap();
+    memory
+        .write32(L1_BASE, section_descriptor(0, false))
+        .unwrap();
 
     // Configure TTBR0, DACR (domain 0 = client), then enable SCTLR.M and XP.
     memory.write32(0x00, mcr(0, 2, 0, 0)).unwrap();
@@ -52,16 +52,10 @@ fn guest_tlbi_asid_invalidates_non_global_entries_but_preserves_global_entries()
     let (mut cpu, mut memory) = mmu_machine();
 
     memory
-        .write32(
-            L1_BASE + 0x123 * 4,
-            section_descriptor(OLD_PHYSICAL, true),
-        )
+        .write32(L1_BASE + 0x123 * 4, section_descriptor(OLD_PHYSICAL, true))
         .unwrap();
     memory
-        .write32(
-            L1_BASE + 0x124 * 4,
-            section_descriptor(OLD_PHYSICAL, false),
-        )
+        .write32(L1_BASE + 0x124 * 4, section_descriptor(OLD_PHYSICAL, false))
         .unwrap();
     memory.write32(OLD_PHYSICAL + 0x100, 0x1111_1111).unwrap();
     memory.write32(NEW_PHYSICAL + 0x100, 0x2222_2222).unwrap();
@@ -92,16 +86,10 @@ fn guest_tlbi_asid_invalidates_non_global_entries_but_preserves_global_entries()
     // Remap both sections. TLBIASID must discard the ASID-specific entry,
     // but the global entry must continue using the translation already cached.
     memory
-        .write32(
-            L1_BASE + 0x123 * 4,
-            section_descriptor(NEW_PHYSICAL, true),
-        )
+        .write32(L1_BASE + 0x123 * 4, section_descriptor(NEW_PHYSICAL, true))
         .unwrap();
     memory
-        .write32(
-            L1_BASE + 0x124 * 4,
-            section_descriptor(NEW_PHYSICAL, false),
-        )
+        .write32(L1_BASE + 0x124 * 4, section_descriptor(NEW_PHYSICAL, false))
         .unwrap();
 
     cpu.step(&mut memory).unwrap(); // MCR TLBIASID queues the operation.
@@ -120,10 +108,7 @@ fn guest_tlbi_all_preserves_locked_entries_until_mva_asid_invalidates_them() {
 
     let (mut cpu, mut memory) = mmu_machine();
     memory
-        .write32(
-            L1_BASE + 0x125 * 4,
-            section_descriptor(OLD_PHYSICAL, true),
-        )
+        .write32(L1_BASE + 0x125 * 4, section_descriptor(OLD_PHYSICAL, true))
         .unwrap();
     memory.write32(OLD_PHYSICAL + 0x100, 0xAAAA_0001).unwrap();
     memory.write32(NEW_PHYSICAL + 0x100, 0xBBBB_0002).unwrap();
@@ -151,10 +136,7 @@ fn guest_tlbi_all_preserves_locked_entries_until_mva_asid_invalidates_them() {
     assert_eq!(cpu.regs[2], 0xAAAA_0001);
 
     memory
-        .write32(
-            L1_BASE + 0x125 * 4,
-            section_descriptor(NEW_PHYSICAL, true),
-        )
+        .write32(L1_BASE + 0x125 * 4, section_descriptor(NEW_PHYSICAL, true))
         .unwrap();
 
     cpu.step(&mut memory).unwrap(); // TLBIALL.
