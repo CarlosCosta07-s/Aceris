@@ -22,6 +22,8 @@ O caminho 3DSX já dispõe de:
 - cópia privada do layout preparado, que rejeita alterações posteriores de endereços/permissões depois da aplicação das relocations;
 - helper `ThreeDsxStackRequest::conventional_3ds_homebrew()` para o perfil de stack convencional, mantendo a possibilidade de configuração explícita.
 
+- `ThreeDsxPreparedProcess::memory_mappings()`, que revalida o processo e oferece quatro descritores emprestados e imutáveis em ordem Code/ROData/Data/Stack, com base virtual, tamanhos, bytes e permissões R/W/X explícitas;
+
 O resultado é `ThreeDsxPreparedProcess`, definido em `loader/threedsx/process.rs`. Ele contém layout e buffers, mas ainda não é um `Bus`, `Arm11CodeAddressSpace` ou `Arm11ProcessSession`.
 
 ## 3. Por que a conversão direta para NCCH é incorreta
@@ -135,3 +137,17 @@ A validação adicional fica isolada no módulo 3DSX e é chamada pelo próprio 
 - o snapshot privado do layout rejeita mudanças posteriores de bases e metadados, protegendo a coerência com as relocations calculadas.
 
 O helper de stack convencional não fixa a base dos segmentos. A seleção das bases Code/ROData/Data continua explícita até que o perfil completo do primeiro alvo homebrew seja fechado e testado.
+
+
+## 10. Interface de descritores de memória
+
+`ThreeDsxPreparedProcess::memory_mappings()` é a fronteira pública destinada ao adaptador de memória. A chamada executa `validate()` antes de devolver a lista fixa e ordenada:
+
+- `Code`: leitura + execução, sem escrita;
+- `ReadOnly`: somente leitura;
+- `Data`: leitura + escrita, sem execução; o backing já inclui Data inicializado, BSS zerado e padding;
+- `Stack`: leitura + escrita, sem execução; backing inicialmente zerado.
+
+Cada `ThreeDsxProcessMemoryMapping` contém endereço, tamanho inicializado, tamanho mapeado e uma fatia imutável dos bytes completos. Nenhum buffer é copiado pela enumeração. Regiões ROData ou Data vazias são descritas com tamanho zero para o adaptador poder ignorá-las sem inventar uma página.
+
+A API não instala mapeamentos, não cria permissões de MMU e não instancia sessão ARM11. O proprietário do espaço de endereçamento ainda precisa validar o manifesto inteiro antes de instalar o primeiro segmento.
