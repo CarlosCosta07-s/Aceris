@@ -183,9 +183,10 @@ pub unsafe extern "C" fn aceris_system_load_no_crypto_file(
 
 /// Loads an executable supported by the shared core from a UTF-8 path.
 ///
-/// Currently accepts standard 3DSX homebrew and unencrypted NCSD
-/// cartridge images (.3ds/.cci). Encrypted NCSD still uses the explicit-key
-/// entry point below.
+/// Currently accepts standard 3DSX homebrew, unencrypted NCSD cartridge
+/// images (.3ds/.cci), and CIA archives whose selected boot content is clear
+/// and uses NCCH NoCrypto. Encrypted NCSD still uses the explicit-key entry
+/// point below; encrypted CIA content is not yet supported by this path.
 ///
 /// # Safety
 /// handle must be a live system instance. path must be a readable,
