@@ -22,6 +22,23 @@ pub struct ThreeDsxStackRequest {
     pub size_bytes: u32,
 }
 
+/// Explicit runtime parameters for loading and preparing one 3DSX process.
+///
+/// Segment addresses, stack reservation and host-side safety limits are
+/// supplied by the caller because the 3DSX container does not contain a
+/// complete process-memory profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThreeDsxProcessPreparationRequest {
+    /// Virtual bases for Code, ROData and Data, in that order.
+    pub segment_bases: [u32; 3],
+    /// Main-thread stack reservation selected by the runtime.
+    pub stack_request: ThreeDsxStackRequest,
+    /// Maximum total memory allowed for the prepared image and stack.
+    pub maximum_memory_size_bytes: u64,
+    /// Maximum number of relocation words that may be patched.
+    pub maximum_patched_words: usize,
+}
+
 impl ThreeDsxStackRequest {
     /// Returns a conventional 3DS homebrew main-thread stack request.
     ///
@@ -506,6 +523,35 @@ fn ensure_zeroed_tail(
 }
 
 impl ThreeDsxImage {
+    /// Loads, relocates and prepares a 3DSX image as one bounded operation.
+    ///
+    /// The reader is reused for segment loading and relocation-table access.
+    /// Every relocation table is processed before the prepared process is
+    /// returned, including the zero-entry case. On failure, no partially
+    /// prepared process escapes this method.
+    ///
+    /// This method does not create an ARM11 address space or session.
+    pub fn load_and_prepare_process<R: std::io::Read + std::io::Seek>(
+        &self,
+        reader: &mut R,
+        request: ThreeDsxProcessPreparationRequest,
+    ) -> io::Result<ThreeDsxPreparedProcess> {
+        let mut loaded =
+            self.load_segments(reader, request.maximum_memory_size_bytes)?;
+        self.apply_relocations(
+            reader,
+            &mut loaded,
+            request.segment_bases,
+            request.maximum_patched_words,
+        )?;
+        self.prepare_process(
+            loaded,
+            request.segment_bases,
+            request.stack_request,
+            request.maximum_memory_size_bytes,
+        )
+    }
+
     /// Creates a page-aligned process image from loaded and (when present) relocated segments.
     ///
     /// The caller must run apply_relocations before this method when relocation
@@ -956,6 +1002,56 @@ mod tests {
             ThreeDsxProcessMemoryKind::Stack
         );
         assert_eq!(manifest.mappings()[3].address(), 0x0400_0000);
+    }
+
+    #[test]
+    fn load_and_prepare_process_runs_the_complete_relocation_pipeline() {
+        let image = relocatable_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let request = ThreeDsxProcessPreparationRequest {
+            segment_bases: [0x0010_0000, 0x0020_0000, 0x0030_0000],
+            stack_request: ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            maximum_memory_size_bytes: 0x5000,
+            maximum_patched_words: 1,
+        };
+
+        let prepared = parsed
+            .load_and_prepare_process(&mut Cursor::new(&image), request)
+            .unwrap();
+        let manifest = prepared.memory_manifest().unwrap();
+
+        assert_eq!(manifest.entry_point(), request.segment_bases[0]);
+        assert_eq!(
+            u32::from_le_bytes(manifest.mappings()[0].bytes()[..4].try_into().unwrap()),
+            request.segment_bases[1]
+        );
+        assert_eq!(manifest.initial_stack_pointer(), 0x0400_2000);
+        assert_eq!(manifest.bss_address(), u64::from(request.segment_bases[2]) + 4);
+        assert_eq!(manifest.bss_offset_bytes(), 4);
+    }
+
+    #[test]
+    fn load_and_prepare_process_enforces_relocation_patch_budget() {
+        let image = relocatable_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let request = ThreeDsxProcessPreparationRequest {
+            segment_bases: [0x0010_0000, 0x0020_0000, 0x0030_0000],
+            stack_request: ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            maximum_memory_size_bytes: 0x5000,
+            maximum_patched_words: 0,
+        };
+
+        let error = parsed
+            .load_and_prepare_process(&mut Cursor::new(&image), request)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
