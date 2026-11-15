@@ -6,6 +6,9 @@
 
 use std::fmt;
 
+use super::draw::{
+    MAX_PENDING_DRAW_REQUESTS, PicaDrawKind, PicaDrawRequest, REG_DRAWARRAYS, REG_DRAWELEMENTS,
+};
 use super::fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
     REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
@@ -163,6 +166,9 @@ pub struct Pica200 {
     vertex_shader_uniforms_uploaded: [bool; VSH_FLOAT_UNIFORM_COUNT],
     pending_uniform_words: Vec<u32>,
     vertex_shader_program_ready: bool,
+    pending_draws: Vec<PicaDrawRequest>,
+    draws_triggered: u64,
+    draws_dropped: u64,
     command_lists_submitted: u64,
     register_writes: u64,
 }
@@ -181,6 +187,9 @@ impl Default for Pica200 {
             vertex_shader_uniforms_uploaded: [false; VSH_FLOAT_UNIFORM_COUNT],
             pending_uniform_words: Vec::with_capacity(4),
             vertex_shader_program_ready: false,
+            pending_draws: Vec::new(),
+            draws_triggered: 0,
+            draws_dropped: 0,
             command_lists_submitted: 0,
             register_writes: 0,
         }
@@ -209,8 +218,55 @@ impl Pica200 {
         *register = value;
         self.apply_fixed_attribute_register_write(id);
         self.apply_vertex_shader_register_write(id);
+        self.apply_draw_trigger_register_write(id, 0xF);
         self.register_writes = self.register_writes.saturating_add(1);
         Ok(())
+    }
+
+    /// Removes and returns the draws triggered since the last call, in order.
+    ///
+    /// Each request holds the register state captured at its trigger write.
+    pub fn take_draw_requests(&mut self) -> Vec<PicaDrawRequest> {
+        std::mem::take(&mut self.pending_draws)
+    }
+
+    /// Number of accepted draw triggers, including ones dropped by a full queue.
+    pub const fn draw_requests_triggered(&self) -> u64 {
+        self.draws_triggered
+    }
+
+    /// Number of draw requests discarded because the pending queue was full.
+    pub const fn draw_requests_dropped(&self) -> u64 {
+        self.draws_dropped
+    }
+
+    /// Records a draw when a trigger register's low byte is written with bit 0 set.
+    ///
+    /// `written_mask` is the command byte-lane mask (bit 0 = lowest byte). The
+    /// bit-0 condition follows the documented "write 1 to draw" behavior; the
+    /// effect of other trigger values is not documented and is ignored.
+    fn apply_draw_trigger_register_write(&mut self, id: u16, written_mask: u8) {
+        let kind = match id {
+            REG_DRAWARRAYS => PicaDrawKind::Arrays,
+            REG_DRAWELEMENTS => PicaDrawKind::Elements,
+            _ => return,
+        };
+        let value = self.registers[usize::from(id)];
+        if written_mask & 1 == 0 || value & 1 == 0 {
+            return;
+        }
+        let sequence = self.draws_triggered;
+        self.draws_triggered = self.draws_triggered.saturating_add(1);
+        if self.pending_draws.len() >= MAX_PENDING_DRAW_REQUESTS {
+            self.draws_dropped = self.draws_dropped.saturating_add(1);
+            return;
+        }
+        self.pending_draws.push(PicaDrawRequest::capture(
+            kind,
+            value,
+            &self.registers,
+            sequence,
+        ));
     }
 
     /// Returns the three packed data words for a fixed vertex attribute.
@@ -477,6 +533,7 @@ impl Pica200 {
                 apply_byte_mask(&mut self.registers[register as usize], value, byte_mask);
                 self.apply_fixed_attribute_register_write(register as u16);
                 self.apply_vertex_shader_register_write(register as u16);
+                self.apply_draw_trigger_register_write(register as u16, byte_mask);
                 report.register_writes = report.register_writes.saturating_add(1);
             }
 
@@ -589,6 +646,9 @@ impl Pica200 {
         self.vertex_shader_uniforms_uploaded.fill(false);
         self.pending_uniform_words.clear();
         self.vertex_shader_program_ready = false;
+        self.pending_draws.clear();
+        self.draws_triggered = 0;
+        self.draws_dropped = 0;
         self.command_lists_submitted = 0;
         self.register_writes = 0;
     }

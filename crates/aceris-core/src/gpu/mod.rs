@@ -1,6 +1,7 @@
 //! PICA200 graphics hardware model and its software bring-up primitives.
 
 mod address_space;
+mod draw;
 mod fixed_attribute;
 mod geometry;
 mod gsp_interrupt;
@@ -10,6 +11,7 @@ mod input_fetch;
 mod physical_memory;
 mod pica200;
 mod rasterizer;
+mod shader_exec;
 mod shader_input;
 mod vertex;
 mod vertex_shader;
@@ -17,6 +19,10 @@ mod vertex_shader;
 pub use address_space::{
     GpuAddressSpaceError, GpuDmaAddressSpace, GpuLinearMapping, LINEAR_PAGE_SIZE, NEW_LINEAR_BASE,
     NEW_LINEAR_END, OLD_LINEAR_BASE, OLD_LINEAR_END, ResolvedGpuRange,
+};
+pub use draw::{
+    MAX_ASSEMBLED_VERTICES, MAX_PENDING_DRAW_REQUESTS, PicaDrawError, PicaDrawKind,
+    PicaDrawRequest, PicaPrimitiveMode, REG_DRAWARRAYS, REG_DRAWELEMENTS, REG_PRIMITIVE_CONFIG,
 };
 pub use fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, Float24, IMMEDIATE_ATTRIBUTE_INDEX,
@@ -59,6 +65,10 @@ pub use pica200::{
 };
 pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
+};
+pub use shader_exec::{
+    PicaShaderExecError, PicaShaderOpcode, PicaVertexShaderOutput, PicaVertexShaderProgram,
+    SHADER_INPUT_REGISTERS, SHADER_OUTPUT_REGISTERS, SHADER_TEMPORARY_REGISTERS,
 };
 pub use shader_input::{
     MAX_VERTEX_SHADER_INPUTS, MAX_VERTEX_SHADER_REGISTERS, PicaVertexShaderInputLayout,
