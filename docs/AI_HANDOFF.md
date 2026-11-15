@@ -1092,3 +1092,15 @@ Contrato atualmente implementado:
 - `9bfa895` aplicou o formato solicitado por Rustfmt; `ecebd93` removeu a conversão redundante apontada por Clippy.
 - Workflow [43664492854](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43664492854), para o commit `ecebd9364ba2f6113c09cba95f602cb5ca6fd9c1`, concluiu com sucesso em Linux, Windows, macOS e Android `arm64-v8a` (fmt, build, Clippy, testes e build release Android).
 - A regressão cobre a estrutura de memória preparada, não a instalação em um `Arm11CodeAddressSpace` nem a execução de um homebrew. Esses itens continuam pendentes do contrato genérico descrito em `docs/THREEDSX_ARM11_INTEGRATION.md`.
+
+
+## 3DSX — revalidação do processo preparado e perfil convencional de stack (15/11/2026)
+
+- `bf4b4a2` introduziu `ThreeDsxPreparedProcess::validate()` para revalidar o objeto antes de qualquer instalação: comprimentos, alinhamento, permissões, ranges de 32 bits, entry point, SP, BSS, sobreposições, total de memória e regiões de zeros.
+- `ca0ff00` acrescentou testes negativos de buffer truncado, permissões alteradas, BSS movido, bytes não zerados e stack sobreposta; o CI apontou somente formatação e o formato foi corrigido em `3aa81b4`.
+- `7e9ac40` adicionou um snapshot privado do layout criado após relocations; a validação agora rejeita mudanças posteriores de base/entrypoint que poderiam tornar os ponteiros relocacionados incompatíveis com os novos endereços. O layout da stack também deve começar sem bytes inicializados.
+- Workflow [43665552498](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43665552498) aprovou essa etapa em Linux, Windows, macOS e Android `arm64-v8a`.
+- `a5e0db5` acrescentou `ThreeDsxStackRequest::conventional_3ds_homebrew()`, um perfil runtime explícito com base `0x0FFFC000`, tamanho `0x4000` e topo/SP `0x10000000`. O valor não vem do formato 3DSX e pode ser substituído pelo chamador. O primeiro teste precisou elevar o limite combinado da fixture para `0x7000` porque ela mapeia três segmentos de uma página mais a stack de 16 KiB; `bc17a71` corrige esse limite.
+- Referências de documentação consultadas: 3dbrew [Memory map](https://www.3dbrew.org/wiki/Memory_map) descreve a stack principal em `0x10000000 - StackSize`, usualmente `0x4000`; a API pública libctru [svc.h](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/svc.h) expõe `StartupInfo.stack_size` e documenta o alinhamento de 8 bytes para stack top em `svcCreateThread`. Nenhum código de outro emulador foi consultado nem incorporado.
+- `036077b` atualiza `docs/THREEDSX_ARM11_INTEGRATION.md` e o roadmap com o validador e o perfil convencional; essa documentação não transforma o perfil em requisito universal de todo 3DSX.
+- Limite atual: ainda não existe adaptador para `Arm11CodeAddressSpace`/sessão, nenhum homebrew real foi executado e o tamanho/base da stack devem continuar configuráveis.
