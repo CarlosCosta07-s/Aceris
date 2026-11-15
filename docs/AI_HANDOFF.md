@@ -1166,3 +1166,27 @@ Esta etapa foi autorizada pelo mantenedor ao solicitar a continuação do desenv
 **Próxima etapa:** obter do mantenedor um arquivo `.3dsx` homebrew que ele tenha direito de usar. Executá-lo sem alterar o binário, registrar loader/entry PC/CPSR, instruções executadas e primeiro motivo de parada; depois implementar somente o primeiro SVC/serviço ausente demonstrado pelos logs. Manter o trabalho limitado ao necessário para esse alvo. Não introduzir dependências, firmware, chaves, jogos, dumps ou assets protegidos no repositório.
 
 **Preservação da colaboração:** o adaptador 3DSX foi integrado aos arquivos compartilhados `loader/ncsd/process.rs` e `loader/ncsd/session.rs` por autorização explícita do mantenedor nesta etapa. Isso não concede autorização geral para modificar ou reescrever trabalho de outro agente. Ler o diff e preservar as alterações de terceiros; não tocar em `cpu/thumb.rs` ou em outras frentes atribuídas sem autorização específica.
+
+
+## CIA — primeiro caminho de execução de conteúdo claro (15/11/2026)
+
+- Commit `73783fb` extrai a preparação de executável NCCH para uma função compartilhada, usada pelo carregador NCSD e reutilizável por leitores de conteúdo CIA.
+- Commit `c8e61be` acrescenta `CiaContentNcchReader::load_arm11_address_space()`: o conteúdo precisa ter sido aberto pelo leitor que valida o SHA-256 do TMD; em seguida o caminho comum valida extended header, ExeFS e `.code`, aplica BLZ quando declarado e monta o mesmo layout ARM11.
+- Commit `73ebb1f` liga `ImageFormat::Cia` ao `System::load_executable_file()`. O sistema seleciona o boot content pelo TMD, exige que o NCCH program ID corresponda ao TMD title ID e, nesta primeira etapa, só aceita conteúdo CIA não criptografado com NCCH NoCrypto. A sessão ativa só é substituída depois que toda a preparação termina.
+- Commits `269d1c9`, `8386a3d` e `c172997` corrigem Rustfmt e um borrow conflict no fixture sintético.
+- O teste `loads_clear_no_crypto_cia_boot_content_into_arm11_session` monta um CIA sintético com ticket/TMD e hashes coerentes, carrega o boot NCCH, executa duas instruções ARM e confere os registradores. Não inclui nenhum pacote comercial nem conteúdo de usuário no repositório.
+- O ABI Android e o frontend desktop já encaminham o formato pelo mesmo `System::load_executable_file()`; a documentação do ABI Android e o roadmap foram atualizados.
+
+### Análise da amostra CIA fornecida pelo mantenedor
+
+- A amostra local `0004000000F23F00 Cookie Clicker port for 3DS (CTR-P-LPPD) (v0.0.0) (W).standard.cia` contém um boot content (índice 0); o ticket e o TMD declaram o title ID `0004000000F23F00`, que coincide com o program ID do NCCH.
+- O SHA-256 do conteúdo declarado no TMD confere com os bytes da seção de conteúdo. O registro TMD marca o conteúdo como não criptografado e o NCCH declara NoCrypto. O pacote também contém uma seção meta.
+- Essa análise confirma a adequação estrutural da amostra ao novo caminho de conteúdo claro, mas **não é um lançamento real do pacote pelo Aceris**. O conteúdo da amostra não foi copiado para o repositório e ainda precisa ser submetido ao leitor Rust integrado para confirmar extended header, ExeFS e `.code` reais.
+
+### Limites e próxima etapa
+
+- Não há verificação criptográfica das assinaturas RSA do ticket/TMD nesta etapa.
+- CIA com conteúdo AES-CBC ou NCCH com regiões AES-CTR ainda não é aceito por `load_cia_no_crypto_file()`; não há descoberta nem armazenamento automático de chaves.
+- Ainda não existe instalação persistente, catálogo/registro de títulos, gestão de tickets, atualização de títulos, save data ou remoção de títulos. O caminho atual prepara e inicia diretamente o boot content a partir do CIA; não deve ser descrito como instalação concluída.
+- A CI do commit `c172997`, workflow `43757473749`, aprovou Rustfmt, build, Clippy e testes em Linux e macOS, além do build Android `arm64-v8a`; no momento do registro, o job de testes Windows ainda estava em execução.
+- Próxima etapa: concluir a validação da matriz Windows; em seguida executar a amostra local pelo caminho Rust sem adicioná-la ao repositório e registrar exatamente em qual verificação ela passa ou falha. Só depois disso avançar para instalação persistente e suporte criptográfico explícito.
