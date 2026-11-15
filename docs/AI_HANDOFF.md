@@ -1218,3 +1218,17 @@ Esta seção atualiza o estado do trabalho depois do primeiro carregamento CIA s
 - O caminho de inicialização com chaves é demonstrado por fixtures artificiais e CI; não confirma chaves reais de console.
 - Ainda não existe instalação persistente, catálogo/registro de títulos, gestão de tickets instalados, atualização de títulos, save data ou remoção de títulos.
 - Próxima etapa: executar o teste opt-in com a amostra no checkout local; capturar exatamente o primeiro erro ou estado após uma instrução ARM11; implementar somente o primeiro serviço/SVC comprovadamente necessário; seguir para assinatura/autorização e desenho seguro de chaves antes da instalação persistente.
+
+
+## ABI Android — carregamento explícito de CIA criptografado (15/11/2026)
+
+Com a autorização de continuidade do mantenedor, o ChatGPT estendeu o contrato C ABI do crate Android sem alterar o trabalho de Thumb:
+
+- Adiciona `aceris_system_load_cia_file_with_keys`, que cria um `TicketCommonKeyStore` temporário por chamada e encaminha para `System::load_cia_file_with_keys()`.
+- O chamador informa índice de common key (0–5), tipo de material e buffers AES-128 para o common key, menu-info e content. Modo KeyY exige KeyX; modo normal exige ponteiro KeyX nulo.
+- Publica as constantes `ACERIS_CIA_KEY_MATERIAL_KEY_Y` (0) e `ACERIS_CIA_KEY_MATERIAL_NORMAL` (1).
+- As chaves não são guardadas em `AcerisSystemHandle`, não são gravadas em disco e não há descoberta automática. O código não promete apagamento seguro de memória.
+- Testes do ABI cobrem rejeição de índice/tipo/modo inválido e o encaminhamento de configurações KeyY/normal ao carregador do núcleo; eles não substituem a execução de um CIA criptografado com chaves reais.
+- As assinaturas RSA/ECDSA de ticket/TMD continuam sem verificação; a API não habilita instalação persistente de títulos.
+- A matriz de CI deste commit deve ser consultada antes de declarar formatação, Clippy, testes e build Android aprovados.
+

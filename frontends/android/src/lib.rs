@@ -10,6 +10,7 @@ use std::path::Path;
 use std::slice;
 
 use aceris_core::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
+use aceris_core::loader::cia::{COMMON_KEY_COUNT, TicketCommonKeyStore};
 use aceris_core::video::{BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH, ScreenSurface};
 use aceris_core::{DEFAULT_FRAME_INSTRUCTION_BUDGET, System};
 
@@ -20,6 +21,11 @@ pub const ACERIS_STATUS_LOAD_FAILED: i32 = -3;
 pub const ACERIS_STATUS_FRAME_FAILED: i32 = -4;
 pub const ACERIS_STATUS_INVALID_SCREEN: i32 = -5;
 pub const ACERIS_STATUS_LAST_ERROR_INVALID_ARGUMENT: isize = -2;
+
+/// `common_key_kind` value for a caller-supplied ticket KeyY (requires KeyX).
+pub const ACERIS_CIA_KEY_MATERIAL_KEY_Y: u32 = 0;
+/// `common_key_kind` value for a caller-supplied, already-derived normal key.
+pub const ACERIS_CIA_KEY_MATERIAL_NORMAL: u32 = 1;
 
 /// Opaque emulator instance owned by the C/Android host.
 #[repr(C)]
@@ -272,6 +278,117 @@ pub unsafe extern "C" fn aceris_system_load_file_with_keys(
     }
 }
 
+/// Loads a CIA using caller-supplied ticket common-key and NCCH key material.
+///
+/// The common-key index must be in 0..COMMON_KEY_COUNT. For
+/// ACERIS_CIA_KEY_MATERIAL_KEY_Y, common_key contains KeyY and key_x is
+/// required. For ACERIS_CIA_KEY_MATERIAL_NORMAL, common_key is the already
+/// derived normal key and key_x must be null. All keys are 16 bytes.
+/// The temporary key store is created for this call only; keys are not
+/// retained by the emulator handle or written to disk.
+///
+/// # Safety
+/// handle must be live; path must be a readable NUL-terminated UTF-8 string;
+/// common_key, menu_info_key and content_key must each reference 16 readable
+/// bytes. key_x must reference 16 readable bytes in KeyY mode and must be
+/// null in normal-key mode. Key buffers must not overlap the mutable handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_load_cia_file_with_keys(
+    handle: *mut AcerisSystemHandle,
+    path: *const c_char,
+    ticket_common_key_index: u32,
+    common_key_kind: u32,
+    common_key: *const u8,
+    key_x: *const u8,
+    menu_info_key: *const u8,
+    content_key: *const u8,
+) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    if path.is_null()
+        || common_key.is_null()
+        || menu_info_key.is_null()
+        || content_key.is_null()
+    {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+
+    let Ok(ticket_common_key_index) = u8::try_from(ticket_common_key_index) else {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    };
+    if usize::from(ticket_common_key_index) >= COMMON_KEY_COUNT {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+    if common_key_kind != ACERIS_CIA_KEY_MATERIAL_KEY_Y
+        && common_key_kind != ACERIS_CIA_KEY_MATERIAL_NORMAL
+    {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+    if common_key_kind == ACERIS_CIA_KEY_MATERIAL_KEY_Y && key_x.is_null() {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+    if common_key_kind == ACERIS_CIA_KEY_MATERIAL_NORMAL && !key_x.is_null() {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+
+    // SAFETY: The caller guarantees every non-null key pointer references 16 readable bytes.
+    let common_key_bytes: [u8; AES_BLOCK_SIZE] =
+        unsafe { slice::from_raw_parts(common_key, AES_BLOCK_SIZE) }
+            .try_into()
+            .expect("the AES key slice has exactly AES_BLOCK_SIZE bytes");
+    // SAFETY: The caller guarantees these pointers reference AES_BLOCK_SIZE readable bytes.
+    let menu_key: [u8; AES_BLOCK_SIZE] =
+        unsafe { slice::from_raw_parts(menu_info_key, AES_BLOCK_SIZE) }
+            .try_into()
+            .expect("the AES key slice has exactly AES_BLOCK_SIZE bytes");
+    // SAFETY: The caller guarantees these pointers reference AES_BLOCK_SIZE readable bytes.
+    let content_key: [u8; AES_BLOCK_SIZE] =
+        unsafe { slice::from_raw_parts(content_key, AES_BLOCK_SIZE) }
+            .try_into()
+            .expect("the AES key slice has exactly AES_BLOCK_SIZE bytes");
+
+    let mut key_store = TicketCommonKeyStore::default();
+    let key_result = if common_key_kind == ACERIS_CIA_KEY_MATERIAL_KEY_Y {
+        // SAFETY: The caller guarantees key_x references AES_BLOCK_SIZE readable bytes.
+        let key_x_bytes: [u8; AES_BLOCK_SIZE] =
+            unsafe { slice::from_raw_parts(key_x, AES_BLOCK_SIZE) }
+                .try_into()
+                .expect("the AES key slice has exactly AES_BLOCK_SIZE bytes");
+        key_store.set_key_x(key_x_bytes);
+        key_store.set_key_y(ticket_common_key_index, common_key_bytes)
+    } else {
+        key_store.set_normal_key(ticket_common_key_index, common_key_bytes)
+    };
+    if let Err(error) = key_result {
+        handle.last_error = Some(error.to_string());
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+
+    // SAFETY: The caller guarantees path is readable and NUL-terminated.
+    let path = unsafe { CStr::from_ptr(path) };
+    let Ok(path) = path.to_str() else {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    };
+
+    match handle.system.load_cia_file_with_keys(
+        Path::new(path),
+        &key_store,
+        menu_key,
+        content_key,
+    ) {
+        Ok(_) => {
+            handle.last_error = None;
+            ACERIS_STATUS_OK
+        }
+        Err(error) => {
+            handle.last_error = Some(error.to_string());
+            ACERIS_STATUS_LOAD_FAILED
+        }
+    }
+}
+
 /// Advances one frame with an explicit ARM11 instruction budget.
 ///
 /// # Safety
@@ -483,6 +600,139 @@ mod tests {
         assert!(!message.is_empty());
 
         // SAFETY: handle is live, unique and destroyed exactly once.
+        unsafe { aceris_system_destroy(handle) };
+    }
+
+    #[test]
+    fn android_abi_rejects_invalid_cia_key_parameters() {
+        let handle = aceris_system_create();
+        assert!(!handle.is_null());
+        let path = CString::new("not-opened.cia").unwrap();
+        let common_key = [0x11u8; AES_BLOCK_SIZE];
+        let menu_key = [0x22u8; AES_BLOCK_SIZE];
+        let content_key = [0x33u8; AES_BLOCK_SIZE];
+
+        // SAFETY: The handle and path are live; all non-null key arrays are 16 readable bytes.
+        assert_eq!(
+            unsafe {
+                aceris_system_load_cia_file_with_keys(
+                    handle,
+                    path.as_ptr(),
+                    COMMON_KEY_COUNT as u32,
+                    ACERIS_CIA_KEY_MATERIAL_NORMAL,
+                    common_key.as_ptr(),
+                    std::ptr::null(),
+                    menu_key.as_ptr(),
+                    content_key.as_ptr(),
+                )
+            },
+            ACERIS_STATUS_INVALID_ARGUMENT
+        );
+
+        // SAFETY: The handle and path are live; all key arrays are 16 readable bytes.
+        assert_eq!(
+            unsafe {
+                aceris_system_load_cia_file_with_keys(
+                    handle,
+                    path.as_ptr(),
+                    0,
+                    2,
+                    common_key.as_ptr(),
+                    std::ptr::null(),
+                    menu_key.as_ptr(),
+                    content_key.as_ptr(),
+                )
+            },
+            ACERIS_STATUS_INVALID_ARGUMENT
+        );
+
+        // SAFETY: The handle and path are live; non-null key arrays are 16 readable bytes.
+        assert_eq!(
+            unsafe {
+                aceris_system_load_cia_file_with_keys(
+                    handle,
+                    path.as_ptr(),
+                    0,
+                    ACERIS_CIA_KEY_MATERIAL_KEY_Y,
+                    common_key.as_ptr(),
+                    std::ptr::null(),
+                    menu_key.as_ptr(),
+                    content_key.as_ptr(),
+                )
+            },
+            ACERIS_STATUS_INVALID_ARGUMENT
+        );
+
+        // SAFETY: The handle and path are live; all key arrays are 16 readable bytes.
+        assert_eq!(
+            unsafe {
+                aceris_system_load_cia_file_with_keys(
+                    handle,
+                    path.as_ptr(),
+                    0,
+                    ACERIS_CIA_KEY_MATERIAL_NORMAL,
+                    common_key.as_ptr(),
+                    common_key.as_ptr(),
+                    menu_key.as_ptr(),
+                    content_key.as_ptr(),
+                )
+            },
+            ACERIS_STATUS_INVALID_ARGUMENT
+        );
+
+        // SAFETY: This is the unique live allocation, destroyed exactly once.
+        unsafe { aceris_system_destroy(handle) };
+    }
+
+    #[test]
+    fn android_abi_routes_key_y_and_normal_key_configurations_to_the_core_loader() {
+        let handle = aceris_system_create();
+        assert!(!handle.is_null());
+        let path = std::env::temp_dir().join(format!(
+            "aceris-android-missing-cia-{}.cia",
+            std::process::id()
+        ));
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+        let common_key = [0x11u8; AES_BLOCK_SIZE];
+        let key_x = [0x44u8; AES_BLOCK_SIZE];
+        let menu_key = [0x22u8; AES_BLOCK_SIZE];
+        let content_key = [0x33u8; AES_BLOCK_SIZE];
+
+        // SAFETY: The handle/path and all fixed-size key buffers are valid for this call.
+        assert_eq!(
+            unsafe {
+                aceris_system_load_cia_file_with_keys(
+                    handle,
+                    path.as_ptr(),
+                    0,
+                    ACERIS_CIA_KEY_MATERIAL_KEY_Y,
+                    common_key.as_ptr(),
+                    key_x.as_ptr(),
+                    menu_key.as_ptr(),
+                    content_key.as_ptr(),
+                )
+            },
+            ACERIS_STATUS_LOAD_FAILED
+        );
+
+        // SAFETY: The handle/path and all fixed-size key buffers are valid for this call.
+        assert_eq!(
+            unsafe {
+                aceris_system_load_cia_file_with_keys(
+                    handle,
+                    path.as_ptr(),
+                    0,
+                    ACERIS_CIA_KEY_MATERIAL_NORMAL,
+                    common_key.as_ptr(),
+                    std::ptr::null(),
+                    menu_key.as_ptr(),
+                    content_key.as_ptr(),
+                )
+            },
+            ACERIS_STATUS_LOAD_FAILED
+        );
+
+        // SAFETY: The handle is uniquely owned and destroyed exactly once.
         unsafe { aceris_system_destroy(handle) };
     }
 

@@ -32,7 +32,11 @@ No PC, a orientação é fixa: as duas telas nunca são empilhadas. Quando um jo
 
 ## Android: carregamento de executáveis
 
-`aceris_system_load_executable_file(handle, path)` usa o mesmo `System::load_executable_file` do desktop. O contrato atual aceita homebrew 3DSX padrão e imagens NCSD sem criptografia (`.3ds`/`.cci`); imagens NCSD criptografadas continuam usando a função com chaves explícitas. O ABI preserva o texto do erro para consulta pelo host. O carregamento 3DSX foi coberto por teste sintético do ABI, mas ainda não foi validado com um homebrew externo real nem em dispositivo físico.
+`aceris_system_load_executable_file(handle, path)` usa o mesmo `System::load_executable_file` do desktop. O contrato aceita homebrew 3DSX padrão, imagens NCSD sem criptografia (`.3ds`/`.cci`) e CIA cujo conteúdo selecionado para boot esteja claro e use NCCH NoCrypto. O ABI preserva o texto do erro para consulta pelo host.
+
+Para CIA com conteúdo AES-CBC e/ou regiões NCCH AES-CTR, `aceris_system_load_cia_file_with_keys` recebe as chaves do chamador na própria chamada. O índice de common key deve estar entre 0 e 5; o modo `ACERIS_CIA_KEY_MATERIAL_KEY_Y` recebe KeyY e exige KeyX, enquanto `ACERIS_CIA_KEY_MATERIAL_NORMAL` recebe a chave normal já derivada e exige ponteiro nulo para KeyX. As chaves menu-info e content também são fornecidas como buffers de 16 bytes. A ABI cria um `TicketCommonKeyStore` temporário e não guarda essas chaves no handle do emulador nem as grava em disco.
+
+O contrato não descobre chaves, não valida as assinaturas RSA/ECDSA do ticket/TMD e não promete apagamento seguro da memória temporária. O host deve obter/configurar o material por um meio legítimo e seguro. A disponibilidade desta função C ABI não equivale a um host Android/Activity instalável; esse projeto hospedeiro continua pendente. O carregamento 3DSX continua coberto por fixture sintética, sem validação em dispositivo físico ou com homebrew externo real.
 
 ## Android: orientação e telas
 
