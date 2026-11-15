@@ -10,12 +10,14 @@ pub mod intro;
 mod lcd;
 pub mod library;
 pub mod png;
+mod present;
 pub use lcd::{
     LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport, PDC_CONTROL,
     PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
     PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT, PDC_FRAMEBUFFER_SELECT,
     PDC_FRAMEBUFFER_STRIDE,
 };
+pub use present::{FramebufferWriteError, minimum_framebuffer_stride, present_to_framebuffer};
 
 use std::fmt;
 

@@ -26,7 +26,7 @@ pub enum LcdPixelFormat {
 }
 
 impl LcdPixelFormat {
-    fn bytes_per_pixel(self) -> usize {
+    pub(super) fn bytes_per_pixel(self) -> usize {
         match self {
             Self::Rgba8 => 4,
             Self::Rgb8 => 3,
@@ -448,15 +448,15 @@ fn decode_row(
     Ok(())
 }
 
-fn expand_4(value: u16) -> u8 {
+pub(super) fn expand_4(value: u16) -> u8 {
     (value * 17) as u8
 }
 
-fn expand_5(value: u16) -> u8 {
+pub(super) fn expand_5(value: u16) -> u8 {
     ((u32::from(value) * 255 + 15) / 31) as u8
 }
 
-fn expand_6(value: u16) -> u8 {
+pub(super) fn expand_6(value: u16) -> u8 {
     ((u32::from(value) * 255 + 31) / 63) as u8
 }
 
