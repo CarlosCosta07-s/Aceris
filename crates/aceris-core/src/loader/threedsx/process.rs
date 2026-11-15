@@ -53,6 +53,44 @@ pub struct ThreeDsxProcessMemorySegment {
     pub executable: bool,
 }
 
+/// Semantic kind of one memory mapping in a prepared 3DSX process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreeDsxProcessMemoryKind {
+    /// Executable, read-only program code.
+    Code,
+    /// Read-only, non-executable constants and static data.
+    ReadOnly,
+    /// Writable initialized data followed by BSS and zero-filled page padding.
+    Data,
+    /// Writable, zero-initialized main-thread stack.
+    Stack,
+}
+
+/// Immutable, borrowed view of one validated 3DSX process mapping.
+///
+/// The backing bytes are borrowed from a prepared 3DSX process. Consumers can
+/// inspect or install these mappings without copying the buffers or
+/// reconstructing permissions from the original file format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThreeDsxProcessMemoryMapping<'a> {
+    /// Semantic role of this mapping.
+    pub kind: ThreeDsxProcessMemoryKind,
+    /// First virtual address of the mapping.
+    pub address: u32,
+    /// Number of bytes initialized from the 3DSX image; zero for Stack.
+    pub initialized_size_bytes: u32,
+    /// Total page-aligned virtual size.
+    pub mapped_size_bytes: u32,
+    /// Borrowed, fully materialized mapping bytes, including zero-filled tails.
+    pub bytes: &'a [u8],
+    /// All current 3DSX process mappings are readable.
+    pub readable: bool,
+    /// Whether user-mode writes are permitted.
+    pub writable: bool,
+    /// Whether instruction fetch is permitted.
+    pub executable: bool,
+}
+
 /// Validated 3DSX virtual layout, including the implicit entry point and BSS.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreeDsxProcessLayout {
@@ -93,6 +131,63 @@ pub struct ThreeDsxPreparedProcess {
 }
 
 impl ThreeDsxPreparedProcess {
+    /// Returns all process mappings in deterministic Code/ROData/Data/Stack order.
+    ///
+    /// This method revalidates the complete prepared image before exposing any
+    /// mapping. The returned descriptors borrow the already materialized bytes,
+    /// carry explicit R/W/X permissions, and preserve the exact virtual layout.
+    /// Empty ROData or Data mappings are represented with zero length; adapters
+    /// may skip installing those empty ranges.
+    pub fn memory_mappings(
+        &self,
+    ) -> io::Result<[ThreeDsxProcessMemoryMapping<'_>; 4]> {
+        self.validate()?;
+        let layout = &self.layout;
+
+        Ok([
+            ThreeDsxProcessMemoryMapping {
+                kind: ThreeDsxProcessMemoryKind::Code,
+                address: layout.code.address,
+                initialized_size_bytes: layout.code.initialized_size_bytes,
+                mapped_size_bytes: layout.code.mapped_size_bytes,
+                bytes: &self.code,
+                readable: true,
+                writable: layout.code.writable,
+                executable: layout.code.executable,
+            },
+            ThreeDsxProcessMemoryMapping {
+                kind: ThreeDsxProcessMemoryKind::ReadOnly,
+                address: layout.read_only.address,
+                initialized_size_bytes: layout.read_only.initialized_size_bytes,
+                mapped_size_bytes: layout.read_only.mapped_size_bytes,
+                bytes: &self.read_only,
+                readable: true,
+                writable: layout.read_only.writable,
+                executable: layout.read_only.executable,
+            },
+            ThreeDsxProcessMemoryMapping {
+                kind: ThreeDsxProcessMemoryKind::Data,
+                address: layout.data.address,
+                initialized_size_bytes: layout.data.initialized_size_bytes,
+                mapped_size_bytes: layout.data.mapped_size_bytes,
+                bytes: &self.data,
+                readable: true,
+                writable: layout.data.writable,
+                executable: layout.data.executable,
+            },
+            ThreeDsxProcessMemoryMapping {
+                kind: ThreeDsxProcessMemoryKind::Stack,
+                address: layout.stack.address,
+                initialized_size_bytes: layout.stack.initialized_size_bytes,
+                mapped_size_bytes: layout.stack.mapped_size_bytes,
+                bytes: &self.stack,
+                readable: true,
+                writable: layout.stack.writable,
+                executable: layout.stack.executable,
+            },
+        ])
+    }
+
     /// Revalidates the public layout and buffers before they are installed in a process address space.
     ///
     /// The fields of this type are public so loaders and frontends can inspect
@@ -561,6 +656,71 @@ mod tests {
             prepared.data[layout.data.initialized_size_bytes as usize..]
                 .iter()
                 .all(|byte| *byte == 0)
+        );
+    }
+
+    #[test]
+    fn exposes_validated_borrowed_memory_mappings_in_stable_order() {
+        let prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+
+        let mappings = prepared.memory_mappings().unwrap();
+        assert_eq!(
+            mappings.map(|mapping| mapping.kind),
+            [
+                ThreeDsxProcessMemoryKind::Code,
+                ThreeDsxProcessMemoryKind::ReadOnly,
+                ThreeDsxProcessMemoryKind::Data,
+                ThreeDsxProcessMemoryKind::Stack,
+            ]
+        );
+
+        assert_eq!(mappings[0].address, 0x0010_0000);
+        assert_eq!(mappings[0].initialized_size_bytes, 4);
+        assert_eq!(mappings[0].mapped_size_bytes, 0x1000);
+        assert_eq!(&mappings[0].bytes[..4], &[0x11, 0x22, 0x33, 0x44]);
+        assert!(mappings[0].readable);
+        assert!(!mappings[0].writable);
+        assert!(mappings[0].executable);
+
+        assert_eq!(mappings[1].address, 0x0020_0000);
+        assert!(!mappings[1].writable);
+        assert!(!mappings[1].executable);
+
+        assert_eq!(mappings[2].address, 0x0030_0000);
+        assert_eq!(mappings[2].initialized_size_bytes, 4);
+        assert!(mappings[2].writable);
+        assert!(!mappings[2].executable);
+        assert!(mappings[2].bytes[4..].iter().all(|byte| *byte == 0));
+
+        assert_eq!(mappings[3].address, 0x0400_0000);
+        assert_eq!(mappings[3].initialized_size_bytes, 0);
+        assert!(mappings[3].writable);
+        assert!(!mappings[3].executable);
+        assert!(mappings[3].bytes.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn memory_mappings_reject_a_modified_prepared_process() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.layout.code.address += 0x1000;
+
+        assert_eq!(
+            prepared.memory_mappings().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
         );
     }
 
