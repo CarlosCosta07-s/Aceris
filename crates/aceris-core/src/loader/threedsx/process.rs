@@ -202,13 +202,42 @@ pub struct ThreeDsxProcessLayout {
 /// fully zero-initialized.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreeDsxPreparedProcess {
+    /// Validated virtual layout. Mutations are detected by validate().
     pub layout: ThreeDsxProcessLayout,
-    pub code: Vec<u8>,
-    pub read_only: Vec<u8>,
-    pub data: Vec<u8>,
-    pub stack: Vec<u8>,
+    code: Vec<u8>,
+    read_only: Vec<u8>,
+    data: Vec<u8>,
+    stack: Vec<u8>,
     /// Immutable copy of the prepared layout, used to detect post-relocation address edits.
     validation_layout: ThreeDsxProcessLayout,
+}
+
+impl ThreeDsxPreparedProcess {
+    /// Returns the fully materialized executable Code mapping.
+    ///
+    /// The returned slice is immutable so callers cannot modify instructions
+    /// after the process has been validated and relocated.
+    pub fn code_bytes(&self) -> &[u8] {
+        &self.code
+    }
+
+    /// Returns the fully materialized, read-only ROData mapping.
+    pub fn read_only_bytes(&self) -> &[u8] {
+        &self.read_only
+    }
+
+    /// Returns the fully materialized writable Data mapping, including BSS.
+    ///
+    /// This is an immutable host-side view. Guest write permission is described
+    /// separately by the memory mapping contract.
+    pub fn data_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Returns the zero-initialized main-thread stack backing.
+    pub fn stack_bytes(&self) -> &[u8] {
+        &self.stack
+    }
 }
 
 impl ThreeDsxPreparedProcess {
@@ -714,6 +743,49 @@ mod tests {
         assert_eq!(&prepared.data[..4], &[0x99, 0xAA, 0xBB, 0xCC]);
         assert!(prepared.data[4..].iter().all(|byte| *byte == 0));
         assert!(prepared.stack.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn prepared_process_exposes_immutable_views_of_all_backing_buffers() {
+        let prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+
+        assert_eq!(
+            prepared.code_bytes().get(..4),
+            Some(&[0x11, 0x22, 0x33, 0x44][..])
+        );
+        assert!(prepared.code_bytes()[4..].iter().all(|byte| *byte == 0));
+        assert_eq!(
+            prepared.read_only_bytes().get(..4),
+            Some(&[0x55, 0x66, 0x77, 0x88][..])
+        );
+        assert_eq!(
+            prepared.data_bytes().get(..4),
+            Some(&[0x99, 0xAA, 0xBB, 0xCC][..])
+        );
+        assert!(prepared.stack_bytes().iter().all(|byte| *byte == 0));
+        assert_eq!(
+            prepared.code_bytes().len(),
+            prepared.layout.code.mapped_size_bytes as usize
+        );
+        assert_eq!(
+            prepared.read_only_bytes().len(),
+            prepared.layout.read_only.mapped_size_bytes as usize
+        );
+        assert_eq!(
+            prepared.data_bytes().len(),
+            prepared.layout.data.mapped_size_bytes as usize
+        );
+        assert_eq!(
+            prepared.stack_bytes().len(),
+            prepared.layout.stack.mapped_size_bytes as usize
+        );
     }
 
     #[test]
