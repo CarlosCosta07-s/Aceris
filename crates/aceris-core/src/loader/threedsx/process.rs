@@ -522,6 +522,75 @@ fn ensure_zeroed_tail(
     Ok(())
 }
 
+struct ThreeDsxProcessMemoryPlan {
+    segment_sizes: [u64; 3],
+    stack_size: u64,
+    initial_stack_pointer: u32,
+    total_mapped_size_bytes: u64,
+}
+
+fn plan_process_memory(
+    image: &ThreeDsxImage,
+    segment_bases: [u32; 3],
+    stack_request: ThreeDsxStackRequest,
+    maximum_memory_size_bytes: u64,
+) -> io::Result<ThreeDsxProcessMemoryPlan> {
+    let segment_sizes = [
+        super::align_to_page(image.code.memory_size_bytes)?,
+        super::align_to_page(image.rodata.memory_size_bytes)?,
+        super::align_to_page(image.data.memory_size_bytes)?,
+    ];
+    super::validate_segment_bases(segment_bases, segment_sizes)?;
+
+    if stack_request.size_bytes == 0 {
+        return Err(invalid_data("3DSX main stack size must be non-zero"));
+    }
+    if u64::from(stack_request.base_address) % super::PAGE_SIZE != 0 {
+        return Err(invalid_data("3DSX main stack base is not page-aligned"));
+    }
+
+    let stack_size = super::align_to_page(u64::from(stack_request.size_bytes))?;
+    let stack_end = u64::from(stack_request.base_address)
+        .checked_add(stack_size)
+        .ok_or_else(|| invalid_data("3DSX main stack address range overflows"))?;
+    if stack_end > u64::from(u32::MAX) {
+        return Err(invalid_data(
+            "3DSX main stack top does not fit the ARM11 stack-pointer register",
+        ));
+    }
+
+    for (index, segment_size) in segment_sizes.into_iter().enumerate() {
+        let segment_start = u64::from(segment_bases[index]);
+        let segment_end = segment_start
+            .checked_add(segment_size)
+            .ok_or_else(|| invalid_data("3DSX segment address range overflows"))?;
+        let stack_start = u64::from(stack_request.base_address);
+        if segment_size != 0 && stack_start < segment_end && segment_start < stack_end {
+            return Err(invalid_data(format!(
+                "3DSX main stack overlaps segment {index}"
+            )));
+        }
+    }
+
+    let total_mapped_size_bytes = segment_sizes
+        .into_iter()
+        .chain(std::iter::once(stack_size))
+        .try_fold(0u64, |total, size| total.checked_add(size))
+        .ok_or_else(|| invalid_data("3DSX total process memory size overflows"))?;
+    if total_mapped_size_bytes > maximum_memory_size_bytes {
+        return Err(invalid_data(format!(
+            "3DSX process requires {total_mapped_size_bytes} bytes, exceeding the {maximum_memory_size_bytes}-byte limit"
+        )));
+    }
+
+    Ok(ThreeDsxProcessMemoryPlan {
+        segment_sizes,
+        stack_size,
+        initial_stack_pointer: stack_end as u32,
+        total_mapped_size_bytes,
+    })
+}
+
 impl ThreeDsxImage {
     /// Loads, relocates and prepares a 3DSX image as one bounded operation.
     ///
@@ -536,6 +605,12 @@ impl ThreeDsxImage {
         reader: &mut R,
         request: ThreeDsxProcessPreparationRequest,
     ) -> io::Result<ThreeDsxPreparedProcess> {
+        plan_process_memory(
+            self,
+            request.segment_bases,
+            request.stack_request,
+            request.maximum_memory_size_bytes,
+        )?;
         let mut loaded = self.load_segments(reader, request.maximum_memory_size_bytes)?;
         self.apply_relocations(
             reader,
@@ -575,52 +650,15 @@ impl ThreeDsxImage {
             ));
         }
 
-        let [code_size, read_only_size, data_size] = [
-            super::align_to_page(self.code.memory_size_bytes)?,
-            super::align_to_page(self.rodata.memory_size_bytes)?,
-            super::align_to_page(self.data.memory_size_bytes)?,
-        ];
-        let segment_sizes = [code_size, read_only_size, data_size];
-        super::validate_segment_bases(segment_bases, segment_sizes)?;
-
-        if stack_request.size_bytes == 0 {
-            return Err(invalid_data("3DSX main stack size must be non-zero"));
-        }
-        if u64::from(stack_request.base_address) % super::PAGE_SIZE != 0 {
-            return Err(invalid_data("3DSX main stack base is not page-aligned"));
-        }
-        let stack_size = super::align_to_page(u64::from(stack_request.size_bytes))?;
-        let stack_end = u64::from(stack_request.base_address)
-            .checked_add(stack_size)
-            .ok_or_else(|| invalid_data("3DSX main stack address range overflows"))?;
-        if stack_end > u32::MAX as u64 {
-            return Err(invalid_data(
-                "3DSX main stack top does not fit the ARM11 stack-pointer register",
-            ));
-        }
-        for index in 0..3 {
-            let segment_start = u64::from(segment_bases[index]);
-            let segment_end = segment_start
-                .checked_add(segment_sizes[index])
-                .ok_or_else(|| invalid_data("3DSX segment address range overflows"))?;
-            let stack_start = u64::from(stack_request.base_address);
-            if segment_sizes[index] != 0 && stack_start < segment_end && segment_start < stack_end {
-                return Err(invalid_data(format!(
-                    "3DSX main stack overlaps segment {index}"
-                )));
-            }
-        }
-
-        let total_mapped_size_bytes = segment_sizes
-            .into_iter()
-            .chain(std::iter::once(stack_size))
-            .try_fold(0u64, |total, size| total.checked_add(size))
-            .ok_or_else(|| invalid_data("3DSX total process memory size overflows"))?;
-        if total_mapped_size_bytes > maximum_memory_size_bytes {
-            return Err(invalid_data(format!(
-                "3DSX process requires {total_mapped_size_bytes} bytes, exceeding the {maximum_memory_size_bytes}-byte limit"
-            )));
-        }
+        let memory_plan = plan_process_memory(
+            self,
+            segment_bases,
+            stack_request,
+            maximum_memory_size_bytes,
+        )?;
+        let [code_size, read_only_size, data_size] = memory_plan.segment_sizes;
+        let stack_size = memory_plan.stack_size;
+        let total_mapped_size_bytes = memory_plan.total_mapped_size_bytes;
 
         let mut code = super::allocate_zeroed_bytes(code_size, "mapped Code")?;
         let mut read_only = super::allocate_zeroed_bytes(read_only_size, "mapped ROData")?;
@@ -688,7 +726,7 @@ impl ThreeDsxImage {
                 writable: true,
                 executable: false,
             },
-            initial_stack_pointer: stack_end as u32,
+            initial_stack_pointer: memory_plan.initial_stack_pointer,
             total_mapped_size_bytes,
         };
         let prepared = ThreeDsxPreparedProcess {
@@ -1078,11 +1116,13 @@ mod tests {
             maximum_patched_words: 0,
         };
 
+        let mut reader = Cursor::new(&image);
         let error = parsed
-            .load_and_prepare_process(&mut Cursor::new(&image), request)
+            .load_and_prepare_process(&mut reader, request)
             .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.position(), 0);
     }
 
     #[test]
