@@ -1126,6 +1126,29 @@ mod tests {
     }
 
     #[test]
+    fn load_and_prepare_process_rejects_stack_overlap_before_reading_image() {
+        let image = code_only_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let request = ThreeDsxProcessPreparationRequest {
+            segment_bases: [0x0010_0000, 0x0020_0000, 0x0030_0000],
+            stack_request: ThreeDsxStackRequest {
+                base_address: 0x0010_0000,
+                size_bytes: 0x1000,
+            },
+            maximum_memory_size_bytes: 0x2000,
+            maximum_patched_words: 0,
+        };
+        let mut reader = Cursor::new(&image);
+
+        let error = parsed
+            .load_and_prepare_process(&mut reader, request)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reader.position(), 0);
+    }
+
+    #[test]
     fn load_and_prepare_process_enforces_relocation_patch_budget() {
         let image = relocatable_image();
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
