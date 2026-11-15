@@ -257,7 +257,7 @@ impl System {
         }
         if !ncch.header().declares_no_crypto() {
             return Err(Error::Unimplemented(
-                "CIA boot content uses NCCH encryption; caller-supplied NCCH keys are required",
+                "CIA boot content uses NCCH encryption; encrypted CIA/NCCH launch is not supported by this path",
             ));
         }
 
