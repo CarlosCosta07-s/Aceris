@@ -1122,3 +1122,10 @@ Contrato atualmente implementado:
 - Dois testes verificam o BSS no offset exato dentro do Data e a rejeição de um backing alterado. A primeira execução de CI apontou somente um ajuste de Rustfmt no teste, corrigido no commit `43d8c75`; aguardar o resultado dessa execução antes de declarar a etapa aprovada.
 - Para o responsável pelo espaço ARM11: este manifesto é a fronteira de entrada do lado 3DSX. Não criar um `NcchExtendedHeader` fictício nem separar artificialmente BSS. Não editar `loader/ncsd/process.rs` ou `loader/ncsd/session.rs` sem autorização expressa do mantenedor; preservar o trabalho atribuído ao outro agente.
 - O manifesto ainda não cria ou instala páginas, não conecta backing físico, não inicia scheduler/SVC e não significa que homebrew 3DSX já esteja executável.
+
+## 3DSX — manifesto de memória somente leitura (15/11/2026)
+
+- Commit `155aaf4` torna privados os campos de `ThreeDsxProcessMemoryMapping` e `ThreeDsxProcessMemoryManifest`, oferecendo accessors somente de leitura. Consumidores externos não podem fabricar ou alterar endereços, tamanhos, permissões, backing slices ou dados de inicialização e ainda chamar isso de manifesto produzido pelo loader.
+- `ThreeDsxProcessMemoryManifest::bss_offset_bytes()` expõe o offset de BSS dentro da região Data já validada, evitando que o adaptador recalcule esse valor.
+- Commit `99b5d0a` ajusta os testes para consumir exclusivamente os accessors públicos, inclusive a consulta ao array de mapeamentos.
+- A validação do manifesto continua baseada em `ThreeDsxPreparedProcess::validate()`; isso não cria memória MMU, sessão nem execução. Preservar o BSS dentro do mapeamento Data.
