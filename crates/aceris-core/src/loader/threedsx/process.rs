@@ -764,7 +764,7 @@ mod tests {
                 + u64::from(layout.stack.mapped_size_bytes)
         );
         assert!(
-            prepared.data[layout.data.initialized_size_bytes as usize..]
+            prepared.data[layout.data.initialized_size_bytes() as usize..]
                 .iter()
                 .all(|byte| *byte == 0)
         );
@@ -862,7 +862,7 @@ mod tests {
         assert_eq!(manifest.bss_size_bytes(), 4);
 
         let data = manifest
-            .mappings
+            .mappings()
             .iter()
             .find(|mapping| mapping.kind() == ThreeDsxProcessMemoryKind::Data)
             .unwrap();
@@ -874,7 +874,7 @@ mod tests {
         );
 
         assert_eq!(bss_offset, data.initialized_size_bytes as usize);
-        assert_eq!(data.bytes.get(bss_offset..bss_end), Some(&[0; 4][..]));
+        assert_eq!(data.bytes().get(bss_offset..bss_end), Some(&[0; 4][..]));
         assert_eq!(manifest.mappings()[3].kind(), ThreeDsxProcessMemoryKind::Stack);
         assert_eq!(manifest.mappings()[3].address(), 0x0400_0000);
     }
