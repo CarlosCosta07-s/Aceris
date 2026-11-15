@@ -84,6 +84,14 @@ impl ThreeDsxImage {
         maximum_memory_size_bytes: u64,
     ) -> io::Result<ThreeDsxPreparedProcess> {
         super::validate_loaded_segments(self, &loaded)?;
+        let has_relocations = self.relocation_headers.iter().any(|header| {
+            header.absolute_entries != 0 || header.relative_entries != 0
+        });
+        if has_relocations && !loaded.relocations_applied {
+            return Err(invalid_data(
+                "3DSX relocation tables must be applied before process preparation",
+            ));
+        }
 
         let [code_size, read_only_size, data_size] = [
             super::align_to_page(self.code.memory_size_bytes)?,
