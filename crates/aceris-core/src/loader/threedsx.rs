@@ -393,9 +393,11 @@ impl ThreeDsxImage {
             })
             .ok_or_else(|| invalid_data("3DSX patched-word count overflows"))?;
         let mut patches = Vec::new();
-        patches.try_reserve_exact(relocation_count).map_err(|error| {
-            io::Error::other(format!("could not allocate 3DSX patch list: {error}"))
-        })?;
+        patches
+            .try_reserve_exact(relocation_count)
+            .map_err(|error| {
+                io::Error::other(format!("could not allocate 3DSX patch list: {error}"))
+            })?;
 
         for segment_index in 0..SEGMENT_COUNT {
             prepare_relocation_words(
