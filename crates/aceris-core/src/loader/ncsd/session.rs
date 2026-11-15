@@ -27,11 +27,10 @@ use crate::gpu::{
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::ncch::extended_header::Arm11MemoryType;
 use crate::loader::ncsd::process::{
-    Arm11CodeAddressSpace, Arm11DynamicMemoryError, Arm11ProcessLayoutError,
-    SharedMemoryBacking,
+    Arm11CodeAddressSpace, Arm11DynamicMemoryError, Arm11ProcessLayoutError, SharedMemoryBacking,
 };
-use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
+use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError, ServiceSessionKind};
 use svc::{

@@ -16,9 +16,7 @@ use crate::gpu::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
     OLD_LINEAR_END,
 };
-use crate::loader::threedsx::process::{
-    ThreeDsxPreparedProcess, ThreeDsxProcessMemorySegment,
-};
+use crate::loader::threedsx::process::{ThreeDsxPreparedProcess, ThreeDsxProcessMemorySegment};
 use crate::memory::Bus;
 use aceris_common::{Error, Result as BusResult};
 

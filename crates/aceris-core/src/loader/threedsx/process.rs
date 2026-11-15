@@ -624,9 +624,7 @@ impl ThreeDsxImage {
     /// boundaries. The 3DSX format does not encode these virtual bases, the
     /// stack size, or host safety limits; this profile makes those choices
     /// explicit and replaceable by a future title-specific loader.
-    pub fn conventional_process_request(
-        &self,
-    ) -> io::Result<ThreeDsxProcessPreparationRequest> {
+    pub fn conventional_process_request(&self) -> io::Result<ThreeDsxProcessPreparationRequest> {
         let code_size = super::align_to_page(self.code.memory_size_bytes)?;
         let read_only_size = super::align_to_page(self.rodata.memory_size_bytes)?;
         let code_size = u32::try_from(code_size)
