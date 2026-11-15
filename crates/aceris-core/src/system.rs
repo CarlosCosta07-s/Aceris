@@ -3336,18 +3336,13 @@ mod tests {
 
     #[test]
     fn loads_encrypted_cia_and_encrypted_ncch_into_arm11_session() {
-        let (cia, normal_key, menu_info_key, content_key) =
-            encrypted_cia_archive_fixture(true);
+        let (cia, normal_key, menu_info_key, content_key) = encrypted_cia_archive_fixture(true);
         let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
         keys.set_normal_key(0, normal_key).unwrap();
 
         let mut system = System::new();
-        let result = system.load_cia_with_keys(
-            std::io::Cursor::new(cia),
-            &keys,
-            menu_info_key,
-            content_key,
-        );
+        let result =
+            system.load_cia_with_keys(std::io::Cursor::new(cia), &keys, menu_info_key, content_key);
 
         assert_eq!(result.unwrap(), ImageFormat::Cia);
         assert_eq!(system.image(), Some(ImageFormat::Cia));
