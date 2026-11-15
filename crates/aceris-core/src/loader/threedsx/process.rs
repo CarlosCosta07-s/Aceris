@@ -301,6 +301,56 @@ mod tests {
     }
 
     #[test]
+    fn prepared_segments_preserve_the_complete_3dsx_mapping_contract() {
+        let prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+
+        let layout = &prepared.layout;
+        assert_eq!(prepared.code.len(), layout.code.mapped_size_bytes as usize);
+        assert_eq!(
+            prepared.read_only.len(),
+            layout.read_only.mapped_size_bytes as usize
+        );
+        assert_eq!(prepared.data.len(), layout.data.mapped_size_bytes as usize);
+        assert_eq!(prepared.stack.len(), layout.stack.mapped_size_bytes as usize);
+
+        assert!(layout.code.executable);
+        assert!(!layout.code.writable);
+        assert!(!layout.read_only.executable);
+        assert!(!layout.read_only.writable);
+        assert!(!layout.data.executable);
+        assert!(layout.data.writable);
+        assert!(!layout.stack.executable);
+        assert!(layout.stack.writable);
+
+        assert_eq!(
+            u64::from(layout.bss_address),
+            u64::from(layout.data.address)
+                + u64::from(layout.data.initialized_size_bytes)
+        );
+        let bss_end = layout.bss_address + u64::from(layout.bss_size_bytes);
+        let data_end =
+            u64::from(layout.data.address) + u64::from(layout.data.mapped_size_bytes);
+        assert!(bss_end <= data_end);
+        assert_eq!(
+            layout.total_mapped_size_bytes,
+            u64::from(layout.code.mapped_size_bytes)
+                + u64::from(layout.read_only.mapped_size_bytes)
+                + u64::from(layout.data.mapped_size_bytes)
+                + u64::from(layout.stack.mapped_size_bytes)
+        );
+        assert!(prepared.data[layout.data.initialized_size_bytes as usize..]
+            .iter()
+            .all(|byte| *byte == 0));
+    }
+
+    #[test]
     fn requires_relocations_before_preparing_a_process() {
         let image = relocatable_image();
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
