@@ -536,8 +536,7 @@ impl ThreeDsxImage {
         reader: &mut R,
         request: ThreeDsxProcessPreparationRequest,
     ) -> io::Result<ThreeDsxPreparedProcess> {
-        let mut loaded =
-            self.load_segments(reader, request.maximum_memory_size_bytes)?;
+        let mut loaded = self.load_segments(reader, request.maximum_memory_size_bytes)?;
         self.apply_relocations(
             reader,
             &mut loaded,
