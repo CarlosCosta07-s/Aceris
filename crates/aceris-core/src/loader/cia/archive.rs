@@ -754,6 +754,30 @@ impl<R: Read + Seek> CiaDecryptedContentNcchReader<'_, R> {
         self
     }
 
+    /// Prepares this TMD-verified, outer-decrypted NCCH as an ARM11 address space.
+    ///
+    /// The reader must come from `open_verified_decrypted_ncch_content_reader`,
+    /// which removes the CIA AES-CBC layer and verifies the cleartext content
+    /// against its TMD SHA-256. This method then validates/decrypts the NCCH
+    /// extended header and ExeFS executable with the caller-supplied NCCH keys,
+    /// applies optional BLZ decompression, and builds the shared process layout.
+    /// Aceris does not discover or persist any of these keys.
+    pub fn load_arm11_address_space(
+        self,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<Arm11CodeAddressSpace, NcsdExecutableLoadError> {
+        let Self { header, reader, .. } = self;
+        let prepared = ncsd::prepare_arm11_executable_image_from_ncch(
+            header,
+            reader,
+            menu_info_key,
+            content_key,
+        )?;
+        Arm11CodeAddressSpace::from_prepared(prepared)
+            .map_err(NcsdExecutableLoadError::ProcessLayout)
+    }
+
     /// Consumes this TMD-verified NCCH stream and opens one AES-CTR region.
     ///
     /// The outer CIA AES-CBC layer has already been removed and the content

@@ -8,7 +8,7 @@ use crate::gpu::{
     GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, Pica200,
     VRAM_BASE, VRAM_SIZE,
 };
-use crate::loader::cia::CiaArchiveReader;
+use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::gsp_service::{
     GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE, GspClientUnregistration,
@@ -279,6 +279,105 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.pending_gsp_acquires.clear();
         Ok(ImageFormat::Cia)
+    }
+
+    /// Loads the boot NCCH from an encrypted CIA using caller-supplied keys.
+    ///
+    /// The ticket title key is decrypted through `key_store`, then the CIA
+    /// AES-CBC content hash is verified before the NCCH is opened. The shared
+    /// NCCH preparation path validates the executable and uses the supplied
+    /// menu-info/content keys for encrypted NCCH regions. Ticket/TMD signatures
+    /// are not verified; Aceris never discovers or persists key material.
+    ///
+    /// The active process is replaced only after all content and executable
+    /// checks succeed.
+    pub fn load_cia_with_keys<R: Read + Seek>(
+        &mut self,
+        reader: R,
+        key_store: &TicketCommonKeyStore,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<ImageFormat> {
+        let mut archive = CiaArchiveReader::open(reader).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not open CIA archive: {error}"),
+            ))
+        })?;
+        let title_id = archive.title_metadata().title_id;
+        let boot_content_index = archive.title_metadata().boot_content_index;
+
+        let ticket = archive.ticket().ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "encrypted CIA launch requires a ticket",
+            ))
+        })?;
+        let title_key = key_store.decrypt_ticket_title_key(ticket).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("could not resolve caller-supplied CIA ticket keys: {error}"),
+            ))
+        })?;
+
+        let ncch = archive
+            .open_verified_decrypted_ncch_content_reader(boot_content_index, &title_key)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("could not decrypt and verify CIA boot content: {error}"),
+                ))
+            })?
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CIA boot content is not selected by its content-index bitmap",
+                ))
+            })?;
+
+        if ncch.header().program_id != title_id {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "CIA TMD title ID {title_id:#018x} does not match NCCH program ID {:#018x}",
+                    ncch.header().program_id
+                ),
+            )));
+        }
+
+        let address_space = ncch
+            .load_arm11_address_space(menu_info_key, content_key)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("could not prepare ARM11 process from encrypted CIA: {error}"),
+                ))
+            })?;
+        let mut session = Arm11ProcessSession::from_address_space(address_space);
+
+        self.reset_gpu_linear_memory();
+        session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        self.cpu = session.core().clone();
+        self.image = Some(ImageFormat::Cia);
+        self.ncsd_session = Some(session);
+        self.gsp_service = GspServiceRegistry::new();
+        self.pending_gsp_acquires.clear();
+        Ok(ImageFormat::Cia)
+    }
+
+    /// Opens and launches an encrypted CIA from a file with caller-supplied keys.
+    pub fn load_cia_file_with_keys(
+        &mut self,
+        path: &Path,
+        key_store: &TicketCommonKeyStore,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<ImageFormat> {
+        if loader::identify_file(path)? != ImageFormat::Cia {
+            return Err(Error::UnsupportedFormat);
+        }
+
+        self.load_cia_with_keys(File::open(path)?, key_store, menu_info_key, content_key)
     }
 
     /// Inspects and returns the validated public header of an NCSD cartridge.
@@ -3090,6 +3189,95 @@ mod tests {
         let mut system = System::new();
         let result = system.load_executable_file(&path);
         let _ = std::fs::remove_file(&path);
+
+        assert_eq!(result.unwrap(), ImageFormat::Cia);
+        assert_eq!(system.image(), Some(ImageFormat::Cia));
+        assert_eq!(system.cpu().pc(), 0x0010_0000);
+
+        let report = system.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(system.cpu().regs[0], 7);
+        assert_eq!(system.cpu().regs[1], 5);
+    }
+
+    fn encrypted_cia_archive_fixture() -> (Vec<u8>, [u8; 16]) {
+        const TICKET_OFFSET: usize = 0x2040;
+        const TICKET_SIZE: usize = 0x350;
+        const TMD_SIZE: usize = 0xB34;
+        const CONTENT_SIZE: usize = 0x8000;
+        const TITLE_ID: u64 = 0x0004_0000_0000_0001;
+        const TITLE_KEY: [u8; 16] = [0x82; 16];
+        const NORMAL_KEY: [u8; 16] = [0x71; 16];
+
+        let mut cia = clear_cia_archive_fixture();
+        let tmd_offset = (TICKET_OFFSET + TICKET_SIZE + 0x3F) & !0x3F;
+        let content_offset = (tmd_offset + TMD_SIZE + 0x3F) & !0x3F;
+        let tmd_body = tmd_offset + 0x140;
+        let info_table_start = tmd_body + 0xC4;
+        let content_records_start = info_table_start + 64 * 0x24;
+
+        // Mark the boot content as outer-CIA encrypted and refresh the TMD
+        // content-info hashes without changing the SHA-256 of cleartext data.
+        let mut content_record = [0u8; 0x30];
+        content_record.copy_from_slice(
+            &cia[content_records_start..content_records_start + content_record.len()],
+        );
+        content_record[0x06..0x08].copy_from_slice(&1u16.to_be_bytes());
+        cia[content_records_start..content_records_start + content_record.len()]
+            .copy_from_slice(&content_record);
+
+        let mut info_table = cia[info_table_start..content_records_start].to_vec();
+        info_table[0x04..0x24].copy_from_slice(&sha256_digest(&content_record));
+        cia[info_table_start..content_records_start].copy_from_slice(&info_table);
+        cia[tmd_body + 0xA4..tmd_body + 0xC4]
+            .copy_from_slice(&sha256_digest(&info_table));
+
+        // Encrypt the ticket title key with the explicitly configured normal key.
+        let mut title_key_iv = [0u8; 16];
+        title_key_iv[..8].copy_from_slice(&TITLE_ID.to_be_bytes());
+        let mut title_key_block = TITLE_KEY;
+        for (byte, previous) in title_key_block.iter_mut().zip(title_key_iv) {
+            *byte ^= previous;
+        }
+        let encrypted_title_key =
+            crate::loader::ncsd::ncch::crypto::Aes128::new(NORMAL_KEY)
+                .encrypt_block(title_key_block);
+        let ticket_body = TICKET_OFFSET + 0x140;
+        cia[ticket_body + 0x7F..ticket_body + 0x8F]
+            .copy_from_slice(&encrypted_title_key);
+
+        // Encrypt the complete boot content with the ticket title key.
+        let cipher = crate::loader::ncsd::ncch::crypto::Aes128::new(TITLE_KEY);
+        let mut previous = crate::loader::cia::cia_content_iv(0);
+        let clear_content = cia[content_offset..content_offset + CONTENT_SIZE].to_vec();
+        let mut encrypted_content = Vec::with_capacity(CONTENT_SIZE);
+        for chunk in clear_content.chunks_exact(16) {
+            let mut block: [u8; 16] = chunk.try_into().unwrap();
+            for (byte, prior) in block.iter_mut().zip(previous) {
+                *byte ^= prior;
+            }
+            let ciphertext = cipher.encrypt_block(block);
+            encrypted_content.extend_from_slice(&ciphertext);
+            previous = ciphertext;
+        }
+        cia[content_offset..content_offset + CONTENT_SIZE].copy_from_slice(&encrypted_content);
+
+        (cia, NORMAL_KEY)
+    }
+
+    #[test]
+    fn loads_encrypted_cia_boot_content_with_caller_supplied_ticket_keys() {
+        let (cia, normal_key) = encrypted_cia_archive_fixture();
+        let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
+        keys.set_normal_key(0, normal_key).unwrap();
+
+        let mut system = System::new();
+        let result = system.load_cia_with_keys(
+            std::io::Cursor::new(cia),
+            &keys,
+            [0; AES_BLOCK_SIZE],
+            [0; AES_BLOCK_SIZE],
+        );
 
         assert_eq!(result.unwrap(), ImageFormat::Cia);
         assert_eq!(system.image(), Some(ImageFormat::Cia));
