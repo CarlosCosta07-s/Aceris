@@ -3074,7 +3074,8 @@ mod tests {
         info_record[0x04..0x24].copy_from_slice(&sha256_digest(&content_record));
         cia[info_table_start..info_table_start + info_record.len()].copy_from_slice(&info_record);
         let info_table = &cia[info_table_start..content_records_start];
-        cia[tmd_body + 0xA4..tmd_body + 0xC4].copy_from_slice(&sha256_digest(info_table));
+        let info_table_hash = sha256_digest(info_table);
+        cia[tmd_body + 0xA4..tmd_body + 0xC4].copy_from_slice(&info_table_hash);
 
         cia[content_offset..content_offset + content.len()].copy_from_slice(&content);
         cia
