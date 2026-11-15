@@ -1002,3 +1002,35 @@ Workflow 43661943563 (https://github.com/CarlosCosta07-s/Aceris/actions/runs/436
 2. Implementar e testar a aplicação de cada tipo de relocation suportado a partir da especificação pública, rejeitando tipos desconhecidos em vez de adivinhar.
 3. Preparar um construtor genérico de processo/AddressSpace para segmentos com endereços e permissões explícitos. Revisar a propriedade de process.rs antes de editar; a implementação existente contém trabalho anterior de Claude.
 4. Conectar a criação de sessão e executar um artefato homebrew mínimo, legalmente fornecido pelo mantenedor, com saída reproduzível e diagnóstico de SVCs/serviços faltantes.
+## 3DSX — expansão das posições de relocation e proteção do BSS (14/11/2026)
+
+Continuação isolada do loader 3DSX, sem alterações no trabalho de Thumb, GPU, CPU, sessão ou processo.
+
+### Alterações adicionais
+
+- 5be0fe6 — adiciona ThreeDsxImage::read_relocation_word_offsets, expandindo as sequências documentadas de u16 skip/u16 patch em índices de palavras por segmento. Exige um limite global de patches para limitar alocação de memória.
+- 9d6c3f5 — restringe as validações dos patches aos bytes efetivamente armazenados nos segmentos. O Data inclui BSS no tamanho de memória, mas a cauda BSS não existe no arquivo e não pode ser alvo de correção feita a partir das tabelas.
+- 20e0059 — aplica Rustfmt ao leitor de índices de relocation.
+- 5cd4380 — corrige a verificação da tabela relativa para usar também o tamanho file-backed, igual à tabela absoluta.
+- d1ddf9b — atualiza este registro e o roadmap.
+
+### Contrato e limites
+
+- Os índices retornados são offsets de palavra relativos ao início do segmento em questão. O método apenas expande skip/patch; não interpreta o valor armazenado, não calcula endereços de destino e não modifica Code/ROData/Data.
+- O limite global maximum_patched_words é obrigatório e compartilhado pelas seis tabelas (absolute/relative de Code, ROData e Data).
+- Ambas as tabelas são limitadas por file_size_bytes; nenhuma entrada pode apontar para a cauda BSS.
+- O parser e a materialização ainda não aplicam relocation, não arredondam/mapeiam segmentos em um address space de processo e não criam uma sessão ARM11.
+- Não usar os índices para aplicar patches até que os tipos e a semântica de cada relocation estejam confirmados por documentação independente do código de outros emuladores. As regras internas de outros emuladores não foram usadas como implementação.
+
+### CI
+
+- Workflow 43662274175 (commit 20e0059) concluiu com sucesso em Linux, Windows e macOS, incluindo Rustfmt, build, Clippy e testes; Android arm64-v8a também passou.
+- Workflow 43662363452 (commit 5cd4380) ainda estava em andamento na última verificação. Não marcar o commit 5cd4380 como aprovado até conferir o resultado final.
+
+### Próximos passos
+
+1. Confirmar a semântica dos tipos de relocation em documentação primária do formato/fornecedor da toolchain, sem ler código interno de emuladores.
+2. Implementar patches absolutos/relativos em arrays de segmentos de teste, com fixtures independentes cobrindo overflow, offsets entre segmentos, subtype desconhecido e PREL31 se confirmado pela especificação.
+3. Só depois criar um objeto preparado de segmentos com tamanhos virtuais alinhados, entrypoint e permissões explícitas; não fabricar NcchExtendedHeader para reaproveitar o caminho NCCH.
+4. Revisar o ownership de process.rs antes de alterar qualquer construtor existente, pois contém trabalho anterior de Claude.
+5. Integrar o processo ao caminho de sessão e testar com um arquivo homebrew legalmente fornecido pelo mantenedor.
