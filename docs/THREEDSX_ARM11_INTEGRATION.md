@@ -148,7 +148,7 @@ O helper de stack convencional não fixa a base dos segmentos. A seleção das b
 - `Data`: leitura + escrita, sem execução; o backing já inclui Data inicializado, BSS zerado e padding;
 - `Stack`: leitura + escrita, sem execução; backing inicialmente zerado.
 
-Cada `ThreeDsxProcessMemoryMapping` contém endereço, tamanho inicializado, tamanho mapeado e uma fatia imutável dos bytes completos. Nenhum buffer é copiado pela enumeração. Regiões ROData ou Data vazias são descritas com tamanho zero para o adaptador poder ignorá-las sem inventar uma página.
+Cada `ThreeDsxProcessMemoryMapping` contém endereço, tamanho inicializado, tamanho mapeado e uma fatia imutável dos bytes completos. Seus campos são privados e só podem ser lidos por accessors; um consumidor externo não consegue construir ou alterar um descritor arbitrário. Nenhum buffer é copiado pela enumeração. Regiões ROData ou Data vazias são descritas com tamanho zero para o adaptador poder ignorá-las sem inventar uma página.
 
 A API não instala mapeamentos, não cria permissões de MMU e não instancia sessão ARM11. O proprietário do espaço de endereçamento ainda precisa validar o manifesto inteiro antes de instalar o primeiro segmento.
 
@@ -160,4 +160,4 @@ A API não instala mapeamentos, não cria permissões de MMU e não instancia se
 - os quatro mapeamentos Code/ROData/Data/Stack, com endereços, bytes e permissões R/W/X;
 - endereço virtual e tamanho exato do BSS dentro do mapeamento Data.
 
-O método chama `validate()` antes de devolver o manifesto. Assim, os endereços de inicialização, a faixa de BSS e os buffers pertencem ao mesmo objeto preparado validado. O manifesto não copia os buffers, não reserva memória e não altera o espaço ARM11. O BSS continua dentro do Data contínuo, imediatamente após os bytes inicializados, e não deve ser instalado como uma região independente.
+O método chama `validate()` antes de devolver o manifesto. Seus campos e os dos descritores são privados, com accessors somente de leitura; o consumidor não pode substituir entry point, SP, endereços, permissões ou fatias por valores arbitrários. Além do endereço e tamanho do BSS, `bss_offset_bytes()` fornece o deslocamento já validado dentro de Data. Assim, os endereços de inicialização, a faixa de BSS e os buffers pertencem ao mesmo objeto preparado validado. O manifesto não copia os buffers, não reserva memória e não altera o espaço ARM11. O BSS continua dentro do Data contínuo, imediatamente após os bytes inicializados, e não deve ser instalado como uma região independente.
