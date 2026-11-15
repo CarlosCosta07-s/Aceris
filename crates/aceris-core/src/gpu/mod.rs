@@ -2,6 +2,7 @@
 
 mod address_space;
 mod draw;
+mod draw_exec;
 mod fixed_attribute;
 mod geometry;
 mod gsp_interrupt;
@@ -24,6 +25,7 @@ pub use draw::{
     MAX_ASSEMBLED_VERTICES, MAX_PENDING_DRAW_REQUESTS, PicaDrawError, PicaDrawKind,
     PicaDrawRequest, PicaPrimitiveMode, REG_DRAWARRAYS, REG_DRAWELEMENTS, REG_PRIMITIVE_CONFIG,
 };
+pub use draw_exec::{PicaDrawExecError, PicaShadedDraw, PicaShadedVertex};
 pub use fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, Float24, IMMEDIATE_ATTRIBUTE_INDEX,
     REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
