@@ -764,7 +764,7 @@ mod tests {
                 + u64::from(layout.stack.mapped_size_bytes)
         );
         assert!(
-            prepared.data[layout.data.initialized_size_bytes() as usize..]
+            prepared.data[layout.data.initialized_size_bytes as usize..]
                 .iter()
                 .all(|byte| *byte == 0)
         );
