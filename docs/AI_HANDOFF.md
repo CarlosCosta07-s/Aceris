@@ -906,3 +906,36 @@ Base de código: `e6b54ac3857360fca1292682eb6e1fb5b447fbd1`. O módulo `crates/a
 - Os dois cenários executam A32 MCR/LDR com MMU ativa, L1/L2 e memória de dados sintéticas. O resultado verifica que o comparador do TLB respeita o tamanho real da tradução (máscara de 4 KiB ou 64 KiB), e não invalida a seção inteira ou a página vizinha. As codificações de page size e a repetição do large-page descriptor seguem a tabela curta ARMv6 do core; referência: ARM Architecture Reference Manual ARM DDI 0100I, seção de short-descriptor translation tables: https://www.scs.stanford.edu/~zyedidia/docs/arm/armv6.pdf.
 - Workflow [43650935476](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43650935476) aprovado integralmente: `cargo fmt --all --check`, build do workspace, Clippy com `-D warnings` e `cargo test --workspace` em Linux, Windows e macOS; build release Android `arm64-v8a` também aprovado. Os dois testes novos aparecem como `ok` nos três jobs desktop.
 - Alterações de código limitadas a `crates/aceris-core/tests/arm11_tlb.rs`. Nenhum código de produção, `thumb.rs`, trabalho exclusivo do Claude, helper compartilhado ou dependência foi alterado. O resultado cobre as duas formas de página testadas, não todas as combinações de descritores, manutenção/lockdown nem compatibilidade com jogos comerciais.
+
+## PICA200 — triggers de desenho e executor de vertex shader (14/11/2026)
+
+Claude implementou duas peças pequenas e independentes do pipeline gráfico, ambas em Rust, sem consultar código de outros emuladores. O trabalho foi pedido por Carlos Costa e restringe-se a arquivos do módulo `gpu`.
+
+### Arquivos
+
+- `crates/aceris-core/src/gpu/draw.rs` (novo) — `PicaDrawRequest`, `PicaDrawKind`, `PicaPrimitiveMode` e montagem de triângulos (lista, strip com winding alternado, fan). 12 testes.
+- `crates/aceris-core/src/gpu/shader_exec.rs` (novo) — tabela de opcodes e executor de referência do vertex shader. 14 testes.
+- `crates/aceris-core/src/gpu/pica200.rs` — somente: campos `pending_draws`/`draws_triggered`/`draws_dropped`, hook `apply_draw_trigger_register_write` chamado em `write_register` e em `execute_command_list`, acessores `take_draw_requests`/`draw_requests_triggered`/`draw_requests_dropped` e limpeza em `reset`.
+- `crates/aceris-core/src/gpu/mod.rs` — declara os módulos e reexporta os tipos públicos.
+- `docs/ROADMAP.md` — duas linhas do bloco PICA200 reescritas de `[ ]` para `[~]`.
+
+### Contratos
+
+- Um draw é aceito quando o byte baixo de 0x22E/0x22F é escrito e o bit 0 do valor está ligado; a requisição guarda o estado dos registradores naquele instante. A fila é limitada (`MAX_PENDING_DRAW_REQUESTS`) e descartes são contados.
+- O executor não faz fluxo de controle nem endereçamento por a0/a1/aL; esses casos retornam erro explícito (`UnsupportedOpcode`, `AddressRegisterUnsupported`). Não os implemente por adivinhação: exigem testes independentes.
+- MUL/DP*/MAD usam a regra de zero absorvente; a aritmética é `f32`.
+
+### Verificação realmente executada
+
+Neste ambiente, com Rust 1.97: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` passaram localmente (962 testes unitários do núcleo mais as suítes de integração). O CI remoto não foi consultado.
+
+### Limites e dúvidas abertas
+
+- Os números de opcode, o layout dos campos e as semânticas (zero absorvente, DPH com w=1, NaN em MAX/MIN/SLT/SGE) vêm de documentação pública reverse-engineered, e os testes foram montados à mão a partir desse mesmo layout. Eles garantem consistência interna, não equivalência com o hardware; valide com cenas/testes independentes antes de tratar o executor como correto.
+- Os bits de 0x25E fora de 8–9 e o efeito de valores de gatilho diferentes de 1 não são interpretados.
+
+### Próximas tarefas
+
+1. Consumir `PicaDrawRequest`: resolver a base de vértices, aplicar `raw_vertex_offset`, buscar atributos/índices, ligar `v0–v15` via `PicaVertexShaderInputBindings` e rodar `PicaVertexShaderProgram::run` por vértice.
+2. Encaminhar os triângulos montados ao `GeometryPipeline` e ao rasterizador.
+3. Ampliar o executor com CMP/condition codes, MOVA e a0/a1/aL, depois fluxo de controle, sempre com testes por instrução.
