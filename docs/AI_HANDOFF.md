@@ -1129,3 +1129,10 @@ Contrato atualmente implementado:
 - `ThreeDsxProcessMemoryManifest::bss_offset_bytes()` expõe o offset de BSS dentro da região Data já validada, evitando que o adaptador recalcule esse valor.
 - Commit `99b5d0a` ajusta os testes para consumir exclusivamente os accessors públicos, inclusive a consulta ao array de mapeamentos.
 - A validação do manifesto continua baseada em `ThreeDsxPreparedProcess::validate()`; isso não cria memória MMU, sessão nem execução. Preservar o BSS dentro do mapeamento Data.
+
+## 3DSX — layout e backing imutáveis (15/11/2026)
+
+- Commit `99f61c2` torna privados os buffers Code, ROData, Data e Stack de `ThreeDsxPreparedProcess`; os métodos `code_bytes()`, `read_only_bytes()`, `data_bytes()` e `stack_bytes()` retornam somente fatias imutáveis.
+- Commit `ea067be` também torna privado o layout e expõe `layout()` como referência somente de leitura. A validação já rejeitava alterações no layout, mas o backing inicial podia ser alterado publicamente sem invalidar o objeto; esta alteração fecha essa brecha na API externa.
+- Os testes internos continuam podendo fabricar objetos adulterados para validar a rejeição de dados fora do contrato; consumidores externos não recebem acesso mutável às estruturas.
+- Commits `8724ad6` e `ae1dfd3` acrescentam casos sintéticos de segmentos vazios e de execução do pipeline parse → relocation → prepare → manifesto. Nenhum deles constitui teste de homebrew real.
