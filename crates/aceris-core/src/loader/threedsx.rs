@@ -5,6 +5,9 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 
+/// 3DSX-specific process layout and initial memory materialization.
+pub mod process;
+
 pub const HEADER_SIZE: usize = 0x20;
 const EXTENDED_HEADER_SIZE: usize = 0x2C;
 const STANDARD_RELOCATION_HEADER_SIZE: u16 = 8;
