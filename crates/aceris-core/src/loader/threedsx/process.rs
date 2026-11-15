@@ -883,6 +883,46 @@ mod tests {
     }
 
     #[test]
+    fn relocated_3dsx_pipeline_produces_a_consistent_memory_manifest() {
+        let image = relocatable_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        let bases = [0x0010_0000, 0x0020_0000, 0x0030_0000];
+
+        assert_eq!(
+            parsed
+                .apply_relocations(&mut Cursor::new(&image), &mut loaded, bases, 1)
+                .unwrap(),
+            1
+        );
+
+        let prepared = parsed
+            .prepare_process(
+                loaded,
+                bases,
+                ThreeDsxStackRequest {
+                    base_address: 0x0400_0000,
+                    size_bytes: 0x2000,
+                },
+                0x5000,
+            )
+            .unwrap();
+        let manifest = prepared.memory_manifest().unwrap();
+        let code = &manifest.mappings()[0];
+
+        assert_eq!(manifest.entry_point(), bases[0]);
+        assert_eq!(
+            u32::from_le_bytes(code.bytes()[..4].try_into().unwrap()),
+            bases[1]
+        );
+        assert_eq!(manifest.bss_address(), u64::from(bases[2]) + 4);
+        assert_eq!(manifest.bss_offset_bytes(), 4);
+        assert_eq!(manifest.bss_size_bytes(), 4);
+        assert!(manifest.mappings()[0].executable());
+        assert!(!manifest.mappings()[0].writable());
+    }
+
+    #[test]
     fn memory_manifest_handles_empty_data_and_zero_length_bss() {
         let image = code_only_image();
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
