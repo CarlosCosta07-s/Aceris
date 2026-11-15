@@ -1,0 +1,113 @@
+# Contrato de integração 3DSX com a sessão ARM11
+
+**Status:** especificação de integração; ainda não implementada  
+**Base verificada:** `main` em `8614b2a5c9e10da0011df657e0dea375fc98fc67`  
+**CI dessa base:** workflow [43663672991](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43663672991), aprovado em Linux, Windows, macOS e Android `arm64-v8a`.
+
+## 1. Objetivo
+
+Permitir que um executável 3DSX validado seja convertido em um processo ARM11 executável pelo mesmo scheduler, dispatcher SVC e barramento de memória usados pelo caminho NCCH, sem transformar artificialmente o arquivo 3DSX em NCCH e sem enfraquecer o carregamento NCCH existente.
+
+Este documento define a fronteira entre os módulos. Não declara suporte de execução 3DSX.
+
+## 2. Estado atual confirmado
+
+O caminho 3DSX já dispõe de:
+
+- parsing estrutural do cabeçalho padrão/estendido, segmentos, BSS, tabelas skip/patch e regiões opcionais;
+- materialização de Code, ROData, Data e BSS;
+- aplicação atômica das relocations absolutas, relativas de 32 bits e PREL31;
+- preparação de buffers e endereços virtuais page-aligned, permissões RX/R/RW, stack RW zerada e limite de memória explícito;
+- controle de estado que impede preparar o processo antes das relocations exigidas ou aplicá-las duas vezes.
+
+O resultado é `ThreeDsxPreparedProcess`, definido em `loader/threedsx/process.rs`. Ele contém layout e buffers, mas ainda não é um `Bus`, `Arm11CodeAddressSpace` ou `Arm11ProcessSession`.
+
+## 3. Por que a conversão direta para NCCH é incorreta
+
+A implementação NCCH recebe `PreparedArm11Image` e usa `NcchExtendedHeader` para obter, entre outros dados:
+
+- endereços e tamanhos dos code sets;
+- tipo de memória ARM11;
+- stack size;
+- tamanhos de dados e BSS.
+
+O construtor `Arm11CodeAddressSpace::from_prepared` deriva o layout NCCH e cria regiões separadas de Data e BSS. Em contraste, o layout 3DSX produzido atualmente representa o Data gravável como uma região contínua que já contém os bytes inicializados, a cauda BSS zerada e o padding da página. O formato 3DSX também não declara os metadados NCCH acima.
+
+Portanto, não se deve criar `NcchExtendedHeader`, `CodeSetInfo`, title ID, stack size ou qualquer metadado NCCH fictício para reutilizar o construtor existente. Também não se deve mover o início do BSS para depois de uma região Data arredondada se isso alterar o layout virtual já preparado pelo 3DSX.
+
+## 4. Contrato genérico necessário
+
+A fronteira apropriada é um tipo de imagem de processo independente do formato de origem. A API concreta deve ser implementada no módulo proprietário do espaço ARM11, mantendo o adaptador 3DSX em seu próprio módulo.
+
+O contrato genérico deve carregar, no mínimo:
+
+1. **Entry point** em endereço virtual de 32 bits.
+2. **SP inicial** validado e alinhado conforme a regra escolhida pelo runtime.
+3. **Mapeamentos explícitos**, cada um com endereço base, tamanho mapeado, tamanho inicializado, bytes de backing e permissões de leitura/escrita/execução.
+4. **Perfil de processo/runtime** fornecido pelo chamador para parâmetros que o arquivo não contém, como classe/região de memória e política de heap. Esses parâmetros não podem ser inferidos como se fossem metadados do 3DSX.
+5. **Limites de memória** e validação de overflow/sobreposição antes de reservar ou instalar qualquer mapeamento.
+
+Requisitos de preservação dos dados:
+
+- Code permanece executável e não gravável.
+- ROData permanece legível, não gravável e não executável.
+- Data permanece legível/gravável e não executável; sua cauda BSS e padding permanecem zerados dentro do mesmo mapeamento contínuo descrito pelo 3DSX.
+- Stack permanece legível/gravável, não executável e zerada no início.
+- Os endereços e tamanhos virtuais preparados pelo 3DSX são preservados exatamente; não se pode reinterpretar os buffers como se fossem o layout NCCH.
+- A validação é feita para todos os segmentos em conjunto, antes de instalar o primeiro segmento, evitando estado parcialmente mapeado.
+
+A implementação NCCH deve continuar sendo um adaptador para esse contrato genérico, e não ser substituída por uma estrutura especial para 3DSX. Os testes atuais do caminho NCCH precisam permanecer válidos sem mudanças de semântica.
+
+## 5. Integração com a sessão
+
+A sessão existente já oferece um ponto de entrada posterior à criação do espaço: `Arm11ProcessSession::from_address_space`. Ela inicializa o contexto principal a partir do entry point/SP do espaço, habilita VFP, aloca TLS e constrói o scheduler.
+
+O adaptador genérico deverá, portanto:
+
+1. converter um objeto de imagem de processo validado em `Arm11CodeAddressSpace`;
+2. criar `Arm11ProcessSession` pelo construtor comum;
+3. conectar a mesma memória física/GPU usada pelo sistema, sem inventar backing independente;
+4. preservar o comportamento existente de threads, TLS, IPC, SVCs, eventos e relatórios de parada.
+
+O `System` atualmente armazena uma opção chamada `ncsd_session` e seus métodos de carregamento público são NCSD-específicos. Para aceitar formatos diferentes, será necessário generalizar a propriedade da sessão ativa no nível de `System`, mantendo acessores compatíveis para o caminho NCSD durante a transição. O processamento de frames e os serviços GSP devem consultar a sessão ativa genérica, não depender do formato que a originou.
+
+## 6. Testes de aceitação antes de declarar execução
+
+### Testes de memória e permissões
+
+- verificar bytes iniciais e entry point;
+- verificar BSS e padding zerados no endereço exato do layout 3DSX;
+- verificar stack zerada e SP inicial;
+- confirmar escrita negada em Code e ROData;
+- confirmar escrita permitida em Data e Stack;
+- confirmar execução permitida somente nas regiões executáveis;
+- confirmar que uma falha de validação não instala mapeamentos parciais.
+
+### Testes de sessão
+
+- criar uma sessão a partir de uma fixture 3DSX sintética relocacionada;
+- verificar PC, SP e TLS do contexto principal;
+- executar uma sequência ARM/Thumb sintética conhecida e confirmar os registradores, PC e relatório de parada;
+- executar regressões do caminho NCCH no mesmo workflow para detectar regressões no adaptador existente.
+
+### Teste de homebrew
+
+A declaração de primeiro suporte de execução depende de um 3DSX real fornecido legalmente pelo mantenedor, com identidade e resultado esperado documentados. A execução deve registrar PC/CPSR, instruções executadas, motivo de parada e SVC/serviço ausente. Fixtures sintéticas não substituem esse teste.
+
+## 7. Limites de escopo e propriedade
+
+- Este arquivo é uma especificação, não um adaptador executável.
+- Não modificar `loader/ncsd/process.rs` ou `loader/ncsd/session.rs` sem autorização expressa do mantenedor; esses arquivos contêm trabalho reservado ao outro agente.
+- O trabalho 3DSX permanece isolado em `loader/threedsx/` até que o contrato seja acordado e implementado pelo responsável pelo espaço/sessão.
+- Não incorporar código ou assets de outros emuladores. Usar apenas documentação pública de formatos e arquitetura.
+- Não incluir ROMs, firmware, chaves, dumps protegidos ou executáveis de terceiros no repositório, CI ou releases.
+
+## 8. Próxima sequência
+
+1. Revisar este contrato com o responsável pelo espaço ARM11/sessão.
+2. Implementar o tipo genérico de imagem/mapeamentos e adaptar o construtor NCCH sem mudar sua semântica.
+3. Ligar `ThreeDsxPreparedProcess` ao construtor genérico e adicionar testes de permissões/BSS/layout.
+4. Generalizar o armazenamento da sessão ativa em `System` e disponibilizar a carga 3DSX para CLI/desktop e Android pelo mesmo `aceris-core`.
+5. Validar com um homebrew real fornecido legalmente e registrar os serviços ainda ausentes.
+
+Até a conclusão desses passos, o estado correto continua sendo: **3DSX validado, relocacionado e preparado em memória; não executável pela sessão ARM11 ainda.**
