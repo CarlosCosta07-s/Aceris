@@ -122,7 +122,8 @@ impl ThreeDsxPreparedProcess {
                 "3DSX entry point is outside the executable Code mapping",
             ));
         }
-        if layout.initial_stack_pointer as u64 != stack_end
+        if stack_end > u64::from(u32::MAX)
+            || u64::from(layout.initial_stack_pointer) != stack_end
             || layout.initial_stack_pointer % 8 != 0
         {
             return Err(invalid_data(
@@ -513,6 +514,7 @@ mod tests {
         )
         .unwrap();
 
+        prepared.validate().unwrap();
         let layout = &prepared.layout;
         assert_eq!(prepared.code.len(), layout.code.mapped_size_bytes as usize);
         assert_eq!(
@@ -552,6 +554,98 @@ mod tests {
             prepared.data[layout.data.initialized_size_bytes as usize..]
                 .iter()
                 .all(|byte| *byte == 0)
+        );
+    }
+
+    #[test]
+    fn rejects_prepared_process_with_modified_buffer_length() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.code.pop();
+
+        assert_eq!(
+            prepared.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn rejects_prepared_process_with_modified_permissions() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.layout.code.writable = true;
+
+        assert_eq!(
+            prepared.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn rejects_prepared_process_with_bss_outside_data() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.layout.bss_address += 4;
+
+        assert_eq!(
+            prepared.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn rejects_prepared_process_with_nonzero_bss_or_padding() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.data[4] = 0xA5;
+
+        assert_eq!(
+            prepared.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn rejects_prepared_process_with_overlapping_stack() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.layout.stack.address = prepared.layout.data.address;
+        prepared.layout.initial_stack_pointer = prepared.layout.data.address
+            + prepared.layout.data.mapped_size_bytes;
+
+        assert_eq!(
+            prepared.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
         );
     }
 
