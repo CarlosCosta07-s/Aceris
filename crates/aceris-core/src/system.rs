@@ -313,12 +313,14 @@ impl System {
                 "encrypted CIA launch requires a ticket",
             ))
         })?;
-        let title_key = key_store.decrypt_ticket_title_key(ticket).map_err(|error| {
-            Error::Io(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("could not resolve caller-supplied CIA ticket keys: {error}"),
-            ))
-        })?;
+        let title_key = key_store
+            .decrypt_ticket_title_key(ticket)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("could not resolve caller-supplied CIA ticket keys: {error}"),
+                ))
+            })?;
 
         let ncch = archive
             .open_verified_decrypted_ncch_content_reader(boot_content_index, &title_key)
@@ -3229,8 +3231,7 @@ mod tests {
         let mut info_table = cia[info_table_start..content_records_start].to_vec();
         info_table[0x04..0x24].copy_from_slice(&sha256_digest(&content_record));
         cia[info_table_start..content_records_start].copy_from_slice(&info_table);
-        cia[tmd_body + 0xA4..tmd_body + 0xC4]
-            .copy_from_slice(&sha256_digest(&info_table));
+        cia[tmd_body + 0xA4..tmd_body + 0xC4].copy_from_slice(&sha256_digest(&info_table));
 
         // Encrypt the ticket title key with the explicitly configured normal key.
         let mut title_key_iv = [0u8; 16];
@@ -3239,12 +3240,10 @@ mod tests {
         for (byte, previous) in title_key_block.iter_mut().zip(title_key_iv) {
             *byte ^= previous;
         }
-        let encrypted_title_key =
-            crate::loader::ncsd::ncch::crypto::Aes128::new(NORMAL_KEY)
-                .encrypt_block(title_key_block);
+        let encrypted_title_key = crate::loader::ncsd::ncch::crypto::Aes128::new(NORMAL_KEY)
+            .encrypt_block(title_key_block);
         let ticket_body = TICKET_OFFSET + 0x140;
-        cia[ticket_body + 0x7F..ticket_body + 0x8F]
-            .copy_from_slice(&encrypted_title_key);
+        cia[ticket_body + 0x7F..ticket_body + 0x8F].copy_from_slice(&encrypted_title_key);
 
         // Encrypt the complete boot content with the ticket title key.
         let cipher = crate::loader::ncsd::ncch::crypto::Aes128::new(TITLE_KEY);
