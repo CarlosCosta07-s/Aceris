@@ -67,6 +67,8 @@ pub struct ThreeDsxPreparedProcess {
     pub read_only: Vec<u8>,
     pub data: Vec<u8>,
     pub stack: Vec<u8>,
+    /// Immutable copy of the prepared layout, used to detect post-relocation address edits.
+    validation_layout: ThreeDsxProcessLayout,
 }
 
 impl ThreeDsxPreparedProcess {
@@ -78,6 +80,11 @@ impl ThreeDsxPreparedProcess {
     /// sizes, addresses, permissions, overlap, BSS placement, entry point,
     /// stack pointer and zero-filled regions as one atomic precondition.
     pub fn validate(&self) -> io::Result<()> {
+        if self.layout != self.validation_layout {
+            return Err(invalid_data(
+                "3DSX process layout changed after relocation and preparation",
+            ));
+        }
         let layout = &self.layout;
         let code_end = validate_prepared_segment(
             "Code",
@@ -122,7 +129,8 @@ impl ThreeDsxPreparedProcess {
                 "3DSX entry point is outside the executable Code mapping",
             ));
         }
-        if stack_end > u64::from(u32::MAX)
+        if layout.stack.initialized_size_bytes != 0
+            || stack_end > u64::from(u32::MAX)
             || u64::from(layout.initial_stack_pointer) != stack_end
             || layout.initial_stack_pointer % 8 != 0
         {
@@ -376,8 +384,7 @@ impl ThreeDsxImage {
             .checked_add(self.data.file_size_bytes)
             .ok_or_else(|| invalid_data("3DSX BSS virtual address overflows"))?;
 
-        let prepared = ThreeDsxPreparedProcess {
-            layout: ThreeDsxProcessLayout {
+        let layout = ThreeDsxProcessLayout {
                 entry_point: segment_bases[0],
                 code: ThreeDsxProcessMemorySegment {
                     address: segment_bases[0],
@@ -411,7 +418,10 @@ impl ThreeDsxImage {
                 },
                 initial_stack_pointer: stack_end as u32,
                 total_mapped_size_bytes,
-            },
+            };
+        let prepared = ThreeDsxPreparedProcess {
+            validation_layout: layout.clone(),
+            layout,
             code,
             read_only,
             data,
@@ -568,6 +578,25 @@ mod tests {
         )
         .unwrap();
         prepared.code.pop();
+
+        assert_eq!(
+            prepared.validate().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn rejects_prepared_process_when_relocated_segment_bases_are_changed() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.layout.code.address += 0x1000;
+        prepared.layout.entry_point += 0x1000;
 
         assert_eq!(
             prepared.validate().unwrap_err().kind(),
