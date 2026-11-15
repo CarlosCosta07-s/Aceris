@@ -8,6 +8,7 @@ use crate::gpu::{
     GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, Pica200,
     VRAM_BASE, VRAM_SIZE,
 };
+use crate::loader::cia::CiaArchiveReader;
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::gsp_service::{
     GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE, GspClientUnregistration,
@@ -23,7 +24,6 @@ use crate::loader::ncsd::session::{
 };
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::threedsx::ThreeDsxImage;
-use crate::loader::cia::CiaArchiveReader;
 use crate::loader::{self, ImageFormat};
 use crate::video::{DualScreenDisplay, LcdController};
 use aceris_common::{Error, Result};
@@ -3047,16 +3047,13 @@ mod tests {
         cia[0x18..0x20].copy_from_slice(&(CONTENT_SIZE as u64).to_le_bytes());
         cia[0x20] = 0x80;
 
-        cia[ticket_offset..ticket_offset + 4]
-            .copy_from_slice(&0x0001_0004u32.to_be_bytes());
+        cia[ticket_offset..ticket_offset + 4].copy_from_slice(&0x0001_0004u32.to_be_bytes());
         let ticket_body = ticket_offset + 0x140;
-        cia[ticket_body + 0x9C..ticket_body + 0xA4]
-            .copy_from_slice(&TITLE_ID.to_be_bytes());
+        cia[ticket_body + 0x9C..ticket_body + 0xA4].copy_from_slice(&TITLE_ID.to_be_bytes());
 
         cia[tmd_offset..tmd_offset + 4].copy_from_slice(&0x0001_0004u32.to_be_bytes());
         let tmd_body = tmd_offset + 0x140;
-        cia[tmd_body + 0x4C..tmd_body + 0x54]
-            .copy_from_slice(&TITLE_ID.to_be_bytes());
+        cia[tmd_body + 0x4C..tmd_body + 0x54].copy_from_slice(&TITLE_ID.to_be_bytes());
         cia[tmd_body + 0x9E..tmd_body + 0xA0].copy_from_slice(&1u16.to_be_bytes());
         cia[tmd_body + 0xA0..tmd_body + 0xA2].copy_from_slice(&0u16.to_be_bytes());
 
@@ -3075,11 +3072,9 @@ mod tests {
         info_record[0x00..0x02].copy_from_slice(&0u16.to_be_bytes());
         info_record[0x02..0x04].copy_from_slice(&1u16.to_be_bytes());
         info_record[0x04..0x24].copy_from_slice(&sha256_digest(&content_record));
-        cia[info_table_start..info_table_start + info_record.len()]
-            .copy_from_slice(&info_record);
+        cia[info_table_start..info_table_start + info_record.len()].copy_from_slice(&info_record);
         let info_table = &cia[info_table_start..content_records_start];
-        cia[tmd_body + 0xA4..tmd_body + 0xC4]
-            .copy_from_slice(&sha256_digest(info_table));
+        cia[tmd_body + 0xA4..tmd_body + 0xC4].copy_from_slice(&sha256_digest(info_table));
 
         cia[content_offset..content_offset + content.len()].copy_from_slice(&content);
         cia
@@ -3087,8 +3082,8 @@ mod tests {
 
     #[test]
     fn loads_clear_no_crypto_cia_boot_content_into_arm11_session() {
-        let path = std::env::temp_dir()
-            .join(format!("aceris-clear-cia-{}.cia", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("aceris-clear-cia-{}.cia", std::process::id()));
         std::fs::write(&path, clear_cia_archive_fixture()).unwrap();
 
         let mut system = System::new();
