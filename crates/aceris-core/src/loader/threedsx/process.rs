@@ -326,11 +326,10 @@ impl ThreeDsxPreparedProcess {
 
     /// Revalidates the public layout and buffers before they are installed in a process address space.
     ///
-    /// The fields of this type are public so loaders and frontends can inspect
-    /// the prepared image. Callers must not treat that as a guarantee that the
-    /// values remained unchanged after preparation. This method checks segment
-    /// sizes, addresses, permissions, overlap, BSS placement, entry point,
-    /// stack pointer and zero-filled regions as one atomic precondition.
+    /// The public API exposes the layout and backing only through immutable
+    /// references. This method still checks segment sizes, addresses,
+    /// permissions, overlap, BSS placement, entry point, stack pointer and
+    /// zero-filled regions as one atomic precondition before installation.
     pub fn validate(&self) -> io::Result<()> {
         if self.layout != self.validation_layout {
             return Err(invalid_data(
