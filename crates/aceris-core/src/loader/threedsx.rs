@@ -67,6 +67,15 @@ pub struct ThreeDsxSegmentRelocations {
     pub relative: ThreeDsxRelocationTable,
 }
 
+/// Word positions referenced by the two standard relocation tables of one segment.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThreeDsxSegmentRelocationWordOffsets {
+    /// Word indices named by the absolute relocation table.
+    pub absolute: Vec<u32>,
+    /// Word indices named by the relative relocation table.
+    pub relative: Vec<u32>,
+}
+
 /// Structurally validated 3DSX layout.
 ///
 /// The code segment starts at the executable entry point. The data segment's
@@ -267,6 +276,47 @@ impl ThreeDsxImage {
         })
     }
 
+    /// Expands relocation skip/patch runs into word indices for all three segments.
+    ///
+    /// This method only decodes table positions. It does not interpret the
+    /// relocated words, calculate target addresses, or apply patches. The
+    /// caller provides a global cap to prevent hostile files from requesting
+    /// an unbounded amount of host memory.
+    pub fn read_relocation_word_offsets<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+        maximum_patched_words: usize,
+    ) -> io::Result<[ThreeDsxSegmentRelocationWordOffsets; SEGMENT_COUNT]> {
+        let segments = [self.code, self.rodata, self.data];
+        let mut total_patched_words = 0usize;
+        let mut offsets = std::array::from_fn(|_| ThreeDsxSegmentRelocationWordOffsets::default());
+
+        for (index, segment) in segments.into_iter().enumerate() {
+            let tables = self.relocations[index];
+            offsets[index].absolute = read_relocation_word_offsets(
+                reader,
+                tables.absolute,
+                segment.memory_size_bytes,
+                maximum_patched_words.saturating_sub(total_patched_words),
+            )?;
+            total_patched_words = total_patched_words
+                .checked_add(offsets[index].absolute.len())
+                .ok_or_else(|| invalid_data("3DSX relocation patch count overflows"))?;
+
+            offsets[index].relative = read_relocation_word_offsets(
+                reader,
+                tables.relative,
+                segment.memory_size_bytes,
+                maximum_patched_words.saturating_sub(total_patched_words),
+            )?;
+            total_patched_words = total_patched_words
+                .checked_add(offsets[index].relative.len())
+                .ok_or_else(|| invalid_data("3DSX relocation patch count overflows"))?;
+        }
+
+        Ok(offsets)
+    }
+
     /// Reads all file-backed segments and allocates a zero-filled BSS tail.
     ///
     /// The caller supplies a total memory limit for the executable's code,
@@ -306,6 +356,54 @@ impl ThreeDsxImage {
             bss,
         })
     }
+}
+
+fn read_relocation_word_offsets<R: Read + Seek>(
+    reader: &mut R,
+    table: ThreeDsxRelocationTable,
+    segment_size_bytes: u64,
+    remaining_patch_budget: usize,
+) -> io::Result<Vec<u32>> {
+    let segment_word_count = segment_size_bytes / WORD_SIZE;
+    reader.seek(SeekFrom::Start(table.offset_bytes))?;
+
+    let mut offsets = Vec::new();
+    let mut current_word = 0u64;
+    for _ in 0..table.entry_count {
+        let mut bytes = [0u8; WORD_SIZE as usize];
+        reader.read_exact(&mut bytes)?;
+        let skip_words = u64::from(read_u16(&bytes, 0));
+        let patch_words = usize::from(read_u16(&bytes, 2));
+        current_word = current_word
+            .checked_add(skip_words)
+            .ok_or_else(|| invalid_data("3DSX relocation word offset overflows"))?;
+        let patch_end = current_word
+            .checked_add(patch_words as u64)
+            .ok_or_else(|| invalid_data("3DSX relocation patch range overflows"))?;
+        if patch_end > segment_word_count {
+            return Err(invalid_data("3DSX relocation patch range exceeds its segment"));
+        }
+        let new_len = offsets
+            .len()
+            .checked_add(patch_words)
+            .ok_or_else(|| invalid_data("3DSX relocation patch count overflows"))?;
+        if new_len > remaining_patch_budget {
+            return Err(invalid_data(format!(
+                "3DSX relocation patch count exceeds the remaining limit of {remaining_patch_budget}"
+            )));
+        }
+        offsets
+            .try_reserve(patch_words)
+            .map_err(|error| io::Error::other(format!("could not allocate relocation indices: {error}")))?;
+        for word in current_word..patch_end {
+            offsets.push(u32::try_from(word).map_err(|_| {
+                invalid_data("3DSX relocation word index does not fit in u32")
+            })?);
+        }
+        current_word = patch_end;
+    }
+
+    Ok(offsets)
 }
 
 fn read_segment<R: Read + Seek>(
@@ -541,6 +639,41 @@ mod tests {
         let mut image = minimal_image(HEADER_SIZE as u16, None);
         put_u32(&mut image, 28, 9);
         assert!(ThreeDsxImage::parse_reader(&mut Cursor::new(image)).is_err());
+    }
+
+    #[test]
+    fn expands_absolute_and_relative_relocation_runs_to_word_indices() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        put_u16(&mut image, 68, 0);
+        put_u16(&mut image, 70, 1);
+        put_u16(&mut image, 72, 0);
+        put_u16(&mut image, 74, 1);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let offsets = parsed
+            .read_relocation_word_offsets(&mut Cursor::new(&image), 2)
+            .unwrap();
+
+        assert_eq!(offsets[0].absolute, [0]);
+        assert!(offsets[0].relative.is_empty());
+        assert!(offsets[1].absolute.is_empty());
+        assert_eq!(offsets[1].relative, [0]);
+        assert!(offsets[2].absolute.is_empty());
+        assert!(offsets[2].relative.is_empty());
+    }
+
+    #[test]
+    fn rejects_relocation_word_expansion_above_caller_limit() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        put_u16(&mut image, 68, 0);
+        put_u16(&mut image, 70, 1);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let error = parsed
+            .read_relocation_word_offsets(&mut Cursor::new(&image), 0)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
