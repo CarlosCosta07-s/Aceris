@@ -3355,6 +3355,30 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires ACERIS_TEST_CIA to point to a local clear CIA file"]
+    fn loads_external_cia_and_executes_one_arm11_instruction() {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("ACERIS_TEST_CIA")
+                .expect("set ACERIS_TEST_CIA to the local CIA path"),
+        );
+        let mut system = System::new();
+
+        assert_eq!(
+            system.load_executable_file(&path).unwrap(),
+            ImageFormat::Cia
+        );
+        assert_eq!(system.image(), Some(ImageFormat::Cia));
+        assert_eq!(system.cpu().pc(), 0x0010_0000);
+
+        let report = system.run_instructions(1).unwrap();
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+    }
+
+    #[test]
     fn inspects_ncsd_partition_metadata_from_both_3ds_and_cci_paths() {
         for extension in ["3ds", "cci"] {
             let path = std::env::temp_dir()
