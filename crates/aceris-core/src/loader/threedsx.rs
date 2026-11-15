@@ -110,6 +110,8 @@ pub struct ThreeDsxLoadedSegments {
     pub data: Vec<u8>,
     /// Zero-filled BSS tail of the writable data segment.
     pub bss: Vec<u8>,
+    /// True only after the relocation phase completed successfully.
+    relocations_applied: bool,
 }
 
 impl ThreeDsxImage {
@@ -351,6 +353,9 @@ impl ThreeDsxImage {
         segment_bases: [u32; SEGMENT_COUNT],
         maximum_patched_words: usize,
     ) -> io::Result<usize> {
+        if loaded.relocations_applied {
+            return Err(invalid_data("3DSX relocations have already been applied"));
+        }
         validate_loaded_segments(self, loaded)?;
 
         let segment_memory_sizes = [
@@ -436,6 +441,7 @@ impl ThreeDsxImage {
                 .copy_from_slice(&relocated_word.to_le_bytes());
         }
 
+        loaded.relocations_applied = true;
         Ok(patches.len())
     }
 
@@ -476,6 +482,7 @@ impl ThreeDsxImage {
             rodata,
             data,
             bss,
+            relocations_applied: false,
         })
     }
 }
