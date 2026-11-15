@@ -84,6 +84,19 @@ pub struct ThreeDsxImage {
     pub trailing_data_offset_bytes: u64,
 }
 
+/// Materialized 3DSX segments, with the uninitialized data tail zero-filled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreeDsxLoadedSegments {
+    /// File-backed executable code bytes.
+    pub code: Vec<u8>,
+    /// File-backed read-only data bytes.
+    pub rodata: Vec<u8>,
+    /// Initialized writable data bytes, excluding BSS.
+    pub data: Vec<u8>,
+    /// Zero-filled BSS tail of the writable data segment.
+    pub bss: Vec<u8>,
+}
+
 impl ThreeDsxImage {
     /// Parses and bounds-checks a 3DSX file from a seekable reader.
     ///
@@ -253,6 +266,68 @@ impl ThreeDsxImage {
             trailing_data_offset_bytes: relocation_cursor,
         })
     }
+
+    /// Reads all file-backed segments and allocates a zero-filled BSS tail.
+    ///
+    /// The caller supplies a total memory limit for the executable's code,
+    /// read-only data, initialized data and BSS. Relocations are validated by
+    /// the parser but are not applied here.
+    pub fn load_segments<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+        maximum_memory_size_bytes: u64,
+    ) -> io::Result<ThreeDsxLoadedSegments> {
+        let total_memory_size_bytes = self
+            .code
+            .memory_size_bytes
+            .checked_add(self.rodata.memory_size_bytes)
+            .and_then(|size| size.checked_add(self.data.memory_size_bytes))
+            .ok_or_else(|| invalid_data("3DSX total segment memory size overflows"))?;
+        if total_memory_size_bytes > maximum_memory_size_bytes {
+            return Err(invalid_data(format!(
+                "3DSX requires {total_memory_size_bytes} bytes of segment memory, exceeding the {maximum_memory_size_bytes}-byte limit"
+            )));
+        }
+
+        let code = read_segment(reader, self.code, "code")?;
+        let rodata = read_segment(reader, self.rodata, "rodata")?;
+        let data = read_segment(reader, self.data, "data")?;
+        let bss_size_bytes = self
+            .data
+            .memory_size_bytes
+            .checked_sub(self.data.file_size_bytes)
+            .ok_or_else(|| invalid_data("3DSX BSS size exceeds the data segment"))?;
+        let bss = allocate_zeroed_bytes(bss_size_bytes, "BSS")?;
+
+        Ok(ThreeDsxLoadedSegments {
+            code,
+            rodata,
+            data,
+            bss,
+        })
+    }
+}
+
+fn read_segment<R: Read + Seek>(
+    reader: &mut R,
+    segment: ThreeDsxSegment,
+    name: &'static str,
+) -> io::Result<Vec<u8>> {
+    let mut bytes = allocate_zeroed_bytes(segment.file_size_bytes, name)?;
+    reader.seek(SeekFrom::Start(segment.offset_bytes))?;
+    reader.read_exact(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn allocate_zeroed_bytes(size_bytes: u64, name: &'static str) -> io::Result<Vec<u8>> {
+    let size = usize::try_from(size_bytes)
+        .map_err(|_| invalid_data(format!("3DSX {name} size does not fit in host memory")))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size)
+        .map_err(|error| io::Error::other(format!("could not allocate 3DSX {name}: {error}")))?;
+    bytes.resize(size, 0);
+    Ok(bytes)
 }
 
 /// Validates the skip/patch word runs in one relocation table without applying them.
@@ -466,6 +541,31 @@ mod tests {
         let mut image = minimal_image(HEADER_SIZE as u16, None);
         put_u32(&mut image, 28, 9);
         assert!(ThreeDsxImage::parse_reader(&mut Cursor::new(image)).is_err());
+    }
+
+    #[test]
+    fn loads_file_segments_and_zero_fills_bss_within_memory_limit() {
+        let image = minimal_image(HEADER_SIZE as u16, None);
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let loaded = parsed
+            .load_segments(&mut Cursor::new(&image), 16)
+            .unwrap();
+
+        assert_eq!(loaded.code, [0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(loaded.rodata, [0x55, 0x66, 0x77, 0x88]);
+        assert_eq!(loaded.data, [0x99, 0xAA, 0xBB, 0xCC]);
+        assert_eq!(loaded.bss, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn rejects_segment_materialization_above_memory_limit() {
+        let image = minimal_image(HEADER_SIZE as u16, None);
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let error = parsed
+            .load_segments(&mut Cursor::new(&image), 15)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
