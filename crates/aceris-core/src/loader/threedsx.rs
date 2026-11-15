@@ -547,9 +547,7 @@ mod tests {
     fn loads_file_segments_and_zero_fills_bss_within_memory_limit() {
         let image = minimal_image(HEADER_SIZE as u16, None);
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
-        let loaded = parsed
-            .load_segments(&mut Cursor::new(&image), 16)
-            .unwrap();
+        let loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
 
         assert_eq!(loaded.code, [0x11, 0x22, 0x33, 0x44]);
         assert_eq!(loaded.rodata, [0x55, 0x66, 0x77, 0x88]);
