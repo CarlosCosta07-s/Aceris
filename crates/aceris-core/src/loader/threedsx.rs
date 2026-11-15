@@ -389,7 +389,9 @@ fn read_relocation_word_offsets<R: Read + Seek>(
             .checked_add(patch_words as u64)
             .ok_or_else(|| invalid_data("3DSX relocation patch range overflows"))?;
         if patch_end > segment_word_count {
-            return Err(invalid_data("3DSX relocation patch range exceeds its segment"));
+            return Err(invalid_data(
+                "3DSX relocation patch range exceeds its segment",
+            ));
         }
         let new_len = offsets
             .len()
@@ -400,13 +402,14 @@ fn read_relocation_word_offsets<R: Read + Seek>(
                 "3DSX relocation patch count exceeds the remaining limit of {remaining_patch_budget}"
             )));
         }
-        offsets
-            .try_reserve(patch_words)
-            .map_err(|error| io::Error::other(format!("could not allocate relocation indices: {error}")))?;
+        offsets.try_reserve(patch_words).map_err(|error| {
+            io::Error::other(format!("could not allocate relocation indices: {error}"))
+        })?;
         for word in current_word..patch_end {
-            offsets.push(u32::try_from(word).map_err(|_| {
-                invalid_data("3DSX relocation word index does not fit in u32")
-            })?);
+            offsets.push(
+                u32::try_from(word)
+                    .map_err(|_| invalid_data("3DSX relocation word index does not fit in u32"))?,
+            );
         }
         current_word = patch_end;
     }
