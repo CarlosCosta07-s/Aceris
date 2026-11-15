@@ -1142,3 +1142,9 @@ Contrato atualmente implementado:
 - Commit `fed2fb8` acrescenta `ThreeDsxProcessPreparationRequest` e `ThreeDsxImage::load_and_prepare_process()`. O request exige bases de Code/ROData/Data, stack, limite de memória e orçamento máximo de words relocacionadas.
 - O método executa load → apply relocations → prepare e somente retorna o processo quando todas as etapas são concluídas. Também chama a etapa de relocation quando as tabelas estão vazias para manter a mesma regra de estado.
 - Testes cobrem o caminho completo relocacionado e a rejeição quando o orçamento de patches é insuficiente. Isso é pipeline sintético de preparação, não sessão ARM11 nem homebrew real.
+
+## 3DSX — pré-validação antes de alocar buffers (15/11/2026)
+
+- Commit `f317b04` extrai `plan_process_memory()` para validar bases, page alignment, overlap da stack e limite de memória total antes de ler os segmentos no caminho `load_and_prepare_process()`.
+- `prepare_process()` reutiliza o mesmo planner antes de alocar Code/ROData/Data/Stack, eliminando divergência entre preflight e materialização.
+- O teste `load_and_prepare_process_enforces_page_aligned_memory_limit` confirma que um limite suficiente para bytes crus, mas menor que o total page-aligned + stack, falha antes de avançar o reader.
