@@ -314,7 +314,7 @@ impl ThreeDsxImage {
             offsets[index].relative = read_relocation_word_offsets(
                 reader,
                 tables.relative,
-                segment.memory_size_bytes,
+                segment.file_size_bytes,
                 maximum_patched_words.saturating_sub(total_patched_words),
             )?;
             total_patched_words = total_patched_words
