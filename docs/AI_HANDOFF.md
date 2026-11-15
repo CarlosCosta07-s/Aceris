@@ -1114,3 +1114,11 @@ Contrato atualmente implementado:
 - Testes novos verificam ordem, endereços, tamanhos, permissões, bytes iniciais e zeros, além de garantir que a API rejeita layout modificado.
 - A interface ainda não instala memória nem cria `Arm11CodeAddressSpace`/sessão. Ela fornece um contrato de dados estável ao adaptador que deve pertencer ao responsável pelo espaço ARM11.
 - Atualizados `docs/THREEDSX_ARM11_INTEGRATION.md` e `docs/ROADMAP.md` para refletir a nova fronteira.
+
+## 3DSX — manifesto de inicialização (15/11/2026)
+
+- Commit `68cf40f` acrescenta `ThreeDsxProcessMemoryManifest<'a>` e `ThreeDsxPreparedProcess::memory_manifest()`. O manifesto agrupa os quatro descritores emprestados, o entry point, o SP inicial e a faixa exata de BSS.
+- A API parte de `memory_mappings()`, que chama `validate()`; portanto não expõe metadados de inicialização de um processo cujo layout ou backing foi alterado. O Data permanece como uma única região RW que contém Data inicializado, BSS e padding zerado.
+- Dois testes verificam o BSS no offset exato dentro do Data e a rejeição de um backing alterado. A primeira execução de CI apontou somente um ajuste de Rustfmt no teste, corrigido no commit `43d8c75`; aguardar o resultado dessa execução antes de declarar a etapa aprovada.
+- Para o responsável pelo espaço ARM11: este manifesto é a fronteira de entrada do lado 3DSX. Não criar um `NcchExtendedHeader` fictício nem separar artificialmente BSS. Não editar `loader/ncsd/process.rs` ou `loader/ncsd/session.rs` sem autorização expressa do mantenedor; preservar o trabalho atribuído ao outro agente.
+- O manifesto ainda não cria ou instala páginas, não conecta backing físico, não inicia scheduler/SVC e não significa que homebrew 3DSX já esteja executável.
