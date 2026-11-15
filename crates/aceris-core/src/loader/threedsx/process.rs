@@ -669,9 +669,7 @@ mod tests {
     fn memory_mappings_preserve_empty_rodata_and_data_without_fake_pages() {
         let image = code_only_image();
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
-        let loaded = parsed
-            .load_segments(&mut Cursor::new(&image), 4)
-            .unwrap();
+        let loaded = parsed.load_segments(&mut Cursor::new(&image), 4).unwrap();
         let prepared = parsed
             .prepare_process(
                 loaded,
