@@ -76,7 +76,9 @@ pub fn identify_file(path: &Path) -> Result<ImageFormat> {
     let mut file = File::open(path)?;
     let file_len = file.metadata()?.len();
     let mut header = Vec::with_capacity(PROBE_LEN);
-    (&mut file).take(PROBE_LEN as u64).read_to_end(&mut header)?;
+    (&mut file)
+        .take(PROBE_LEN as u64)
+        .read_to_end(&mut header)?;
 
     let format = detect_format(&header).ok_or(Error::UnsupportedFormat)?;
     match format {
@@ -154,10 +156,8 @@ mod tests {
 
     #[test]
     fn identify_file_validates_a_standard_3dsx_container() {
-        let path = std::env::temp_dir().join(format!(
-            "aceris-valid-homebrew-{}.3dsx",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("aceris-valid-homebrew-{}.3dsx", std::process::id()));
         std::fs::write(&path, minimal_3dsx()).unwrap();
 
         let result = identify_file(&path);
