@@ -3358,8 +3358,7 @@ mod tests {
     #[ignore = "requires ACERIS_TEST_CIA to point to a local clear CIA file"]
     fn loads_external_cia_and_executes_one_arm11_instruction() {
         let path = std::path::PathBuf::from(
-            std::env::var_os("ACERIS_TEST_CIA")
-                .expect("set ACERIS_TEST_CIA to the local CIA path"),
+            std::env::var_os("ACERIS_TEST_CIA").expect("set ACERIS_TEST_CIA to the local CIA path"),
         );
         let mut system = System::new();
 
