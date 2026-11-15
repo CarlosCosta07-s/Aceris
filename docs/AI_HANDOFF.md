@@ -1066,8 +1066,8 @@ Contrato atualmente implementado:
 
 ### Estado de CI
 
-- Workflow 43663288985 concluiu com sucesso para o primeiro commit de preparação de memória (f10f605), incluindo Linux/Windows/macOS e Android arm64-v8a.
-- Workflow 43663540460 para o estado com marcador de relocation e ordem de preparação (af445da) estava em andamento na última consulta. Linux, macOS e Android arm64-v8a já haviam concluído com sucesso; Windows ainda estava executando cargo test --workspace. Não declarar a matriz atual aprovada até consultar o resultado final.
+- Workflow [43663672991](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43663672991), associado ao HEAD `8614b2a5c9e10da0011df657e0dea375fc98fc67`, concluiu com sucesso em Linux, Windows, macOS e Android `arm64-v8a`.
+- A branch `main` foi confirmada nesse mesmo commit. Os workflows anteriores 43663288985, 43663540460 e 43663506572 também validaram estados anteriores do loader/preparação; o workflow do HEAD é a referência atual.
 
 ### Limites e próximo ponto de integração
 
@@ -1075,3 +1075,12 @@ Contrato atualmente implementado:
 - Não foi fabricado NcchExtendedHeader, CodeSetInfo, stack size, memory type ou metadado de NCCH. A stack é explicitamente solicitada pelo chamador; os defaults/requisitos corretos ainda precisam ser definidos pelo alvo homebrew escolhido.
 - Não alterar process.rs ou session.rs do NCSD sem autorização expressa do mantenedor, pois contêm trabalho de Claude. Próximo passo é desenhar com o mantenedor/Claude um contrato genérico para mapear buffers com bases/permissões explícitas e criar uma sessão ARM11 sem degradar a rota NCCH.
 - Ainda não há um arquivo homebrew real fornecido/testado. Identificação, materialização, relocation e preparação de layout não equivalem a execução nem a compatibilidade de homebrew.
+
+## 3DSX — contrato de integração com ARM11 (15/11/2026)
+
+- Foi inspecionado o contrato existente sem modificar `loader/ncsd/process.rs`, `loader/ncsd/session.rs`, GPU ou Thumb.
+- A revisão confirmou que `Arm11CodeAddressSpace::from_prepared` aceita `PreparedArm11Image`/NCCH, enquanto `Arm11ProcessSession::from_address_space` é o construtor comum de sessão após existir um espaço de endereçamento.
+- Há uma incompatibilidade de layout que impede conversão direta: o prepared 3DSX contém Data e BSS contíguos no mesmo mapeamento RW; o caminho NCCH atual modela a cauda BSS como região separada e também depende de memory type e stack size vindos do extended header.
+- Criado `docs/THREEDSX_ARM11_INTEGRATION.md` (commit `a9b9c10`) com contrato proposto para uma imagem genérica de processo, preservação de permissões/endereço/BSS, configuração runtime explicitamente fornecida, integração com sessão e testes de aceitação.
+- Esta entrega é documentação de arquitetura, não execução 3DSX. O próximo código requer alinhamento com o responsável pelos arquivos de processo/sessão para que a rota NCCH seja adaptada sem perda de semântica.
+- CI do HEAD verificada no workflow [43663672991](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43663672991): Linux, Windows, macOS e Android ARM64 aprovados.
