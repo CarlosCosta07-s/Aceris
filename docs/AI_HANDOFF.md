@@ -1104,3 +1104,13 @@ Contrato atualmente implementado:
 - Referências de documentação consultadas: 3dbrew [Memory map](https://www.3dbrew.org/wiki/Memory_map) descreve a stack principal em `0x10000000 - StackSize`, usualmente `0x4000`; a API pública libctru [svc.h](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/svc.h) expõe `StartupInfo.stack_size` e documenta o alinhamento de 8 bytes para stack top em `svcCreateThread`. Nenhum código de outro emulador foi consultado nem incorporado.
 - `036077b` atualiza `docs/THREEDSX_ARM11_INTEGRATION.md` e o roadmap com o validador e o perfil convencional; essa documentação não transforma o perfil em requisito universal de todo 3DSX.
 - Limite atual: ainda não existe adaptador para `Arm11CodeAddressSpace`/sessão, nenhum homebrew real foi executado e o tamanho/base da stack devem continuar configuráveis.
+
+
+## 3DSX — manifesto imutável de mapeamentos de processo (15/11/2026)
+
+- Commit `6c3cd38` adiciona `ThreeDsxProcessMemoryKind`, `ThreeDsxProcessMemoryMapping<'a>` e `ThreeDsxPreparedProcess::memory_mappings()`.
+- A API devolve um array fixo de quatro visões emprestadas, em ordem Code/ROData/Data/Stack, incluindo endereço virtual, tamanho inicializado, tamanho mapeado, backing bytes e permissões explícitas R/W/X. Não aloca nem copia os buffers.
+- `memory_mappings()` executa `validate()` antes de expor qualquer descritor. Uma alteração de layout posterior às relocations é rejeitada. ROData e Data vazios podem ser representados com tamanho zero; um adaptador deve ignorar esses ranges em vez de criar uma página artificial.
+- Testes novos verificam ordem, endereços, tamanhos, permissões, bytes iniciais e zeros, além de garantir que a API rejeita layout modificado.
+- A interface ainda não instala memória nem cria `Arm11CodeAddressSpace`/sessão. Ela fornece um contrato de dados estável ao adaptador que deve pertencer ao responsável pelo espaço ARM11.
+- Atualizados `docs/THREEDSX_ARM11_INTEGRATION.md` e `docs/ROADMAP.md` para refletir a nova fronteira.
