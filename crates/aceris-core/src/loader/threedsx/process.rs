@@ -8,6 +8,11 @@ use std::io;
 
 use super::{ThreeDsxImage, ThreeDsxLoadedSegments};
 
+/// Conventional top address used by the main thread stack in 3DS userland.
+pub const CONVENTIONAL_3DSX_STACK_TOP: u32 = 0x1000_0000;
+/// Common main-thread stack size in 3DS userland; 3DSX does not encode this value.
+pub const CONVENTIONAL_3DSX_STACK_SIZE_BYTES: u32 = 0x4000;
+
 /// Caller-supplied main stack reservation for a 3DSX process.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThreeDsxStackRequest {
@@ -15,6 +20,22 @@ pub struct ThreeDsxStackRequest {
     pub base_address: u32,
     /// Requested stack bytes; the mapped size is rounded up to a 0x1000 page.
     pub size_bytes: u32,
+}
+
+impl ThreeDsxStackRequest {
+    /// Returns a conventional 3DS homebrew main-thread stack request.
+    ///
+    /// The main-thread stack normally ends at 0x10000000, and 0x4000 bytes is
+    /// a commonly documented size. These values are a runtime profile, not
+    /// fields from the 3DSX file; callers may choose a different reservation.
+    ///
+    /// Reference: <https://www.3dbrew.org/wiki/Memory_map>.
+    pub const fn conventional_3ds_homebrew() -> Self {
+        Self {
+            base_address: CONVENTIONAL_3DSX_STACK_TOP - CONVENTIONAL_3DSX_STACK_SIZE_BYTES,
+            size_bytes: CONVENTIONAL_3DSX_STACK_SIZE_BYTES,
+        }
+    }
 }
 
 /// One virtual mapping in a prepared 3DSX process.
@@ -711,6 +732,26 @@ mod tests {
             u32::from_le_bytes(prepared.code[..4].try_into().unwrap()),
             0x0020_0000
         );
+    }
+
+    #[test]
+    fn conventional_homebrew_stack_has_the_documented_top_and_size() {
+        let stack = ThreeDsxStackRequest::conventional_3ds_homebrew();
+        assert_eq!(stack.base_address, 0x0FFF_C000);
+        assert_eq!(stack.size_bytes, 0x4000);
+        assert_eq!(
+            stack.base_address + stack.size_bytes,
+            CONVENTIONAL_3DSX_STACK_TOP
+        );
+        assert_eq!(stack.base_address % 0x1000, 0);
+        assert_eq!(CONVENTIONAL_3DSX_STACK_TOP % 8, 0);
+
+        let prepared = prepare(stack, 0x5000).unwrap();
+        assert_eq!(
+            prepared.layout.initial_stack_pointer,
+            CONVENTIONAL_3DSX_STACK_TOP
+        );
+        prepared.validate().unwrap();
     }
 
     #[test]
