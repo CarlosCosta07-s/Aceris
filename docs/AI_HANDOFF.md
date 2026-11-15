@@ -1084,3 +1084,11 @@ Contrato atualmente implementado:
 - Criado `docs/THREEDSX_ARM11_INTEGRATION.md` (commit `a9b9c10`) com contrato proposto para uma imagem genérica de processo, preservação de permissões/endereço/BSS, configuração runtime explicitamente fornecida, integração com sessão e testes de aceitação.
 - Esta entrega é documentação de arquitetura, não execução 3DSX. O próximo código requer alinhamento com o responsável pelos arquivos de processo/sessão para que a rota NCCH seja adaptada sem perda de semântica.
 - CI do HEAD verificada no workflow [43663672991](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43663672991): Linux, Windows, macOS e Android ARM64 aprovados.
+
+
+### Verificação adicional do contrato de mapeamento (15/11/2026)
+
+- O commit `a5a21a7` adicionou `prepared_segments_preserve_the_complete_3dsx_mapping_contract`: valida que os quatro buffers têm o tamanho declarado no layout, verifica permissões Code RX / ROData R / Data RW / Stack RW, confirma o início/endereço do BSS dentro do Data contíguo e compara o total mapeado com a soma das regiões.
+- `9bfa895` aplicou o formato solicitado por Rustfmt; `ecebd93` removeu a conversão redundante apontada por Clippy.
+- Workflow [43664492854](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43664492854), para o commit `ecebd9364ba2f6113c09cba95f602cb5ca6fd9c1`, concluiu com sucesso em Linux, Windows, macOS e Android `arm64-v8a` (fmt, build, Clippy, testes e build release Android).
+- A regressão cobre a estrutura de memória preparada, não a instalação em um `Arm11CodeAddressSpace` nem a execução de um homebrew. Esses itens continuam pendentes do contrato genérico descrito em `docs/THREEDSX_ARM11_INTEGRATION.md`.
