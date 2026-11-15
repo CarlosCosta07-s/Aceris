@@ -797,10 +797,7 @@ mod tests {
             .iter()
             .find(|mapping| mapping.kind == ThreeDsxProcessMemoryKind::Data)
             .unwrap();
-        let bss_offset = usize::try_from(
-            manifest.bss_address - u64::from(data.address),
-        )
-        .unwrap();
+        let bss_offset = usize::try_from(manifest.bss_address - u64::from(data.address)).unwrap();
         let bss_end = bss_offset + manifest.bss_size_bytes as usize;
 
         assert_eq!(bss_offset, data.initialized_size_bytes as usize);
