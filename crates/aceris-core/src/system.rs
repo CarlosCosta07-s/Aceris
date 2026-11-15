@@ -3221,9 +3221,7 @@ mod tests {
         // Mark the boot content as outer-CIA encrypted and refresh the TMD
         // content-info hashes without changing the SHA-256 of cleartext data.
         let mut content_record = [0u8; 0x30];
-        content_record.copy_from_slice(
-            &cia[content_records_start..content_records_start + content_record.len()],
-        );
+        content_record.copy_from_slice(&cia[content_records_start..content_records_start + 0x30]);
         content_record[0x06..0x08].copy_from_slice(&1u16.to_be_bytes());
         cia[content_records_start..content_records_start + content_record.len()]
             .copy_from_slice(&content_record);
