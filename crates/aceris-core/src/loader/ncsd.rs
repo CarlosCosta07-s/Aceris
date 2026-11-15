@@ -458,114 +458,20 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
 
     /// Prepares the verified ARM11 code image from this NCSD program partition.
     ///
-    /// The caller supplies the menu-info and content AES-128 keys. For NCCH
-    /// NoCrypto images they are not used; cleartext integrity readers are used
-    /// instead. The extended header and ExeFS .code hashes are always checked.
-    ///
-    /// If the extended-header compression flag is set, .code is decompressed
-    /// using the bounded backwards-LZ decoder. The resulting bytes are split
-    /// into page-aligned text, read-only, and initialized-data vectors. BSS is
-    /// not part of .code and remains described by extended_header.bss_size_bytes.
-    ///
-    /// This prepares the image only; it does not map memory, configure the
-    /// ARM11 process, or start CPU execution.
+    /// The caller supplies the menu-info and content AES-128 keys. NoCrypto
+    /// images use cleartext integrity readers; encrypted NCCH regions use the
+    /// supplied keys. The extended header and ExeFS .code hashes are checked.
     pub fn prepare_arm11_executable_image(
-        mut self,
+        self,
         menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
         content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
     ) -> std::result::Result<PreparedArm11Image, NcsdExecutableLoadError> {
-        let is_cleartext = self.header.declares_no_crypto();
-
-        let extended_header = if is_cleartext {
-            let mut reader = self
-                .header
-                .open_verified_extended_header_reader(&mut self.reader)
-                .map_err(NcsdExecutableLoadError::ExtendedHeaderIntegrity)?
-                .ok_or(NcsdExecutableLoadError::MissingExtendedHeader)?;
-            ncch::extended_header::NcchExtendedHeader::parse_reader(&mut reader)
-                .map_err(NcsdExecutableLoadError::ExtendedHeaderParse)?
-        } else {
-            let mut reader = self
-                .header
-                .open_decrypted_verified_extended_header_reader(&mut self.reader, menu_info_key)
-                .map_err(NcsdExecutableLoadError::ExtendedHeaderIntegrity)?
-                .ok_or(NcsdExecutableLoadError::MissingExtendedHeader)?;
-            ncch::extended_header::NcchExtendedHeader::parse_reader(&mut reader)
-                .map_err(NcsdExecutableLoadError::ExtendedHeaderParse)?
-        };
-
-        let layout = extended_header
-            .code_file_layout()
-            .filter(|layout| layout.total_size_bytes != 0)
-            .ok_or(NcsdExecutableLoadError::InvalidCodeLayout)?;
-        let maximum_size = ncch::blz::MAX_DECOMPRESSED_SIZE;
-        if layout.total_size_bytes > maximum_size {
-            return Err(NcsdExecutableLoadError::CodeImageTooLarge {
-                requested_size: layout.total_size_bytes,
-                maximum_size,
-            });
-        }
-
-        let stored_code = if is_cleartext {
-            let mut reader = self
-                .header
-                .open_verified_exefs_file_reader(&mut self.reader, ".code")
-                .map_err(NcsdExecutableLoadError::ExeFs)?
-                .ok_or_else(|| {
-                    NcsdExecutableLoadError::ExeFs(ncch::exefs::ExeFsError::FileNotFound(
-                        ".code".to_owned(),
-                    ))
-                })?;
-            read_verified_code_file(&mut reader, maximum_size)?
-        } else {
-            let mut reader = self
-                .header
-                .open_decrypted_verified_exefs_file_reader(
-                    &mut self.reader,
-                    ".code",
-                    menu_info_key,
-                    content_key,
-                )
-                .map_err(NcsdExecutableLoadError::ExeFs)?
-                .ok_or_else(|| {
-                    NcsdExecutableLoadError::ExeFs(ncch::exefs::ExeFsError::FileNotFound(
-                        ".code".to_owned(),
-                    ))
-                })?;
-            read_verified_code_file(&mut reader, maximum_size)?
-        };
-
-        let mut code = if extended_header.compresses_exefs_code() {
-            ncch::blz::decompress(&stored_code, layout.total_size_bytes)
-                .map_err(NcsdExecutableLoadError::Blz)?
-        } else {
-            if stored_code.len() != layout.total_size_bytes {
-                return Err(NcsdExecutableLoadError::CodeFileSizeMismatch {
-                    expected_size: layout.total_size_bytes,
-                    actual_size: stored_code.len(),
-                });
-            }
-            stored_code
-        };
-
-        let text_end = layout.text_size_bytes;
-        let read_only_end = text_end
-            .checked_add(layout.read_only_size_bytes)
-            .ok_or(NcsdExecutableLoadError::InvalidCodeLayout)?;
-        if code.len() != layout.total_size_bytes || read_only_end > code.len() {
-            return Err(NcsdExecutableLoadError::InvalidCodeLayout);
-        }
-
-        let data = code.split_off(read_only_end);
-        let read_only = code.split_off(text_end);
-        let text = code;
-
-        Ok(PreparedArm11Image {
-            extended_header,
-            text,
-            read_only,
-            data,
-        })
+        prepare_arm11_executable_image_from_ncch(
+            self.header,
+            self.reader,
+            menu_info_key,
+            content_key,
+        )
     }
 
     /// Loads the verified executable image into a bootstrap ARM11 address space.
@@ -1026,6 +932,103 @@ fn read_verified_code_file<R: Read + Seek>(
         .read_exact(&mut code)
         .map_err(|error| NcsdExecutableLoadError::ReaderFailure(error.to_string()))?;
     Ok(code)
+}
+
+/// Shared NCCH-to-ARM11 preparation used by cartridge and CIA content readers.
+pub(crate) fn prepare_arm11_executable_image_from_ncch<R: Read + Seek>(
+    header: ncch::NcchHeader,
+    mut reader: R,
+    menu_info_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+    content_key: [u8; ncch::crypto::AES_BLOCK_SIZE],
+) -> std::result::Result<PreparedArm11Image, NcsdExecutableLoadError> {
+    let is_cleartext = header.declares_no_crypto();
+
+    let extended_header = if is_cleartext {
+        let mut extended_header_reader = header
+            .open_verified_extended_header_reader(&mut reader)
+            .map_err(NcsdExecutableLoadError::ExtendedHeaderIntegrity)?
+            .ok_or(NcsdExecutableLoadError::MissingExtendedHeader)?;
+        ncch::extended_header::NcchExtendedHeader::parse_reader(&mut extended_header_reader)
+            .map_err(NcsdExecutableLoadError::ExtendedHeaderParse)?
+    } else {
+        let mut extended_header_reader = header
+            .open_decrypted_verified_extended_header_reader(&mut reader, menu_info_key)
+            .map_err(NcsdExecutableLoadError::ExtendedHeaderIntegrity)?
+            .ok_or(NcsdExecutableLoadError::MissingExtendedHeader)?;
+        ncch::extended_header::NcchExtendedHeader::parse_reader(&mut extended_header_reader)
+            .map_err(NcsdExecutableLoadError::ExtendedHeaderParse)?
+    };
+
+    let layout = extended_header
+        .code_file_layout()
+        .filter(|layout| layout.total_size_bytes != 0)
+        .ok_or(NcsdExecutableLoadError::InvalidCodeLayout)?;
+    let maximum_size = ncch::blz::MAX_DECOMPRESSED_SIZE;
+    if layout.total_size_bytes > maximum_size {
+        return Err(NcsdExecutableLoadError::CodeImageTooLarge {
+            requested_size: layout.total_size_bytes,
+            maximum_size,
+        });
+    }
+
+    let stored_code = if is_cleartext {
+        let mut code_reader = header
+            .open_verified_exefs_file_reader(&mut reader, ".code")
+            .map_err(NcsdExecutableLoadError::ExeFs)?
+            .ok_or_else(|| {
+                NcsdExecutableLoadError::ExeFs(ncch::exefs::ExeFsError::FileNotFound(
+                    ".code".to_owned(),
+                ))
+            })?;
+        read_verified_code_file(&mut code_reader, maximum_size)?
+    } else {
+        let mut code_reader = header
+            .open_decrypted_verified_exefs_file_reader(
+                &mut reader,
+                ".code",
+                menu_info_key,
+                content_key,
+            )
+            .map_err(NcsdExecutableLoadError::ExeFs)?
+            .ok_or_else(|| {
+                NcsdExecutableLoadError::ExeFs(ncch::exefs::ExeFsError::FileNotFound(
+                    ".code".to_owned(),
+                ))
+            })?;
+        read_verified_code_file(&mut code_reader, maximum_size)?
+    };
+
+    let mut code = if extended_header.compresses_exefs_code() {
+        ncch::blz::decompress(&stored_code, layout.total_size_bytes)
+            .map_err(NcsdExecutableLoadError::Blz)?
+    } else {
+        if stored_code.len() != layout.total_size_bytes {
+            return Err(NcsdExecutableLoadError::CodeFileSizeMismatch {
+                expected_size: layout.total_size_bytes,
+                actual_size: stored_code.len(),
+            });
+        }
+        stored_code
+    };
+
+    let text_end = layout.text_size_bytes;
+    let read_only_end = text_end
+        .checked_add(layout.read_only_size_bytes)
+        .ok_or(NcsdExecutableLoadError::InvalidCodeLayout)?;
+    if code.len() != layout.total_size_bytes || read_only_end > code.len() {
+        return Err(NcsdExecutableLoadError::InvalidCodeLayout);
+    }
+
+    let data = code.split_off(read_only_end);
+    let read_only = code.split_off(text_end);
+    let text = code;
+
+    Ok(PreparedArm11Image {
+        extended_header,
+        text,
+        read_only,
+        data,
+    })
 }
 
 #[cfg(test)]
