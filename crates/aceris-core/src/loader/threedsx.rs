@@ -230,6 +230,16 @@ impl ThreeDsxImage {
             relocation_cursor = relative_end;
         }
 
+        let segment_sizes = [
+            code.memory_size_bytes,
+            rodata.memory_size_bytes,
+            data.memory_size_bytes,
+        ];
+        for (index, segment_size_bytes) in segment_sizes.into_iter().enumerate() {
+            validate_relocation_table(reader, relocations[index].absolute, segment_size_bytes)?;
+            validate_relocation_table(reader, relocations[index].relative, segment_size_bytes)?;
+        }
+
         validate_extended_sections(extended_header, relocation_cursor, file_len)?;
 
         Ok(Self {
@@ -243,6 +253,39 @@ impl ThreeDsxImage {
             trailing_data_offset_bytes: relocation_cursor,
         })
     }
+}
+
+/// Validates the skip/patch word runs in one relocation table without applying them.
+fn validate_relocation_table<R: Read + Seek>(
+    reader: &mut R,
+    table: ThreeDsxRelocationTable,
+    segment_size_bytes: u64,
+) -> io::Result<()> {
+    let segment_word_count = segment_size_bytes / WORD_SIZE;
+    reader.seek(SeekFrom::Start(table.offset_bytes))?;
+    let mut current_word = 0u64;
+
+    for _ in 0..table.entry_count {
+        let mut bytes = [0u8; WORD_SIZE as usize];
+        reader.read_exact(&mut bytes)?;
+        let skip_words = u64::from(read_u16(&bytes, 0));
+        let patch_words = u64::from(read_u16(&bytes, 2));
+        current_word = current_word
+            .checked_add(skip_words)
+            .ok_or_else(|| invalid_data("3DSX relocation word offset overflows"))?;
+        let patch_end = current_word
+            .checked_add(patch_words)
+            .ok_or_else(|| invalid_data("3DSX relocation patch range overflows"))?;
+
+        if patch_end > segment_word_count {
+            return Err(invalid_data(format!(
+                "3DSX relocation range {current_word}..{patch_end} exceeds segment word count {segment_word_count}"
+            )));
+        }
+        current_word = patch_end;
+    }
+
+    Ok(())
 }
 
 fn validate_extended_sections(
@@ -423,6 +466,26 @@ mod tests {
         let mut image = minimal_image(HEADER_SIZE as u16, None);
         put_u32(&mut image, 28, 9);
         assert!(ThreeDsxImage::parse_reader(&mut Cursor::new(image)).is_err());
+    }
+
+    #[test]
+    fn rejects_relocation_runs_that_extend_past_the_segment() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        // The code segment is one word; skip one word and then request another.
+        put_u16(&mut image, 68, 1);
+        put_u16(&mut image, 70, 1);
+
+        assert!(ThreeDsxImage::parse_reader(&mut Cursor::new(image)).is_err());
+    }
+
+    #[test]
+    fn accepts_relocation_runs_ending_at_the_segment_boundary() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        // One patched word exactly covers the four-byte code segment.
+        put_u16(&mut image, 68, 0);
+        put_u16(&mut image, 70, 1);
+
+        assert!(ThreeDsxImage::parse_reader(&mut Cursor::new(image)).is_ok());
     }
 
     #[test]
