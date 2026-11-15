@@ -1296,3 +1296,35 @@ Sobre o `main` `f4d7e8f`: `cargo fmt --all --check`, `cargo clippy --workspace -
 1. Ligar `PicaResolvedVertex` ao `GeometryPipeline::draw_triangle` e ao `SoftwareRasterizer` para fechar o caminho draw → pixels.
 2. Clipping/culling com semântica confirmada; interpolação de texcoord quando houver texturas.
 3. Ampliar o executor com CMP/MOVA/a0 e fluxo de controle.
+
+## PICA200 — caminho draw → pixels (15/11/2026)
+
+### Arquivos
+
+- `crates/aceris-core/src/gpu/render.rs` (novo) — `GeometryPipeline::draw_shaded`, `Pica200::render_draw_request`, `PicaRenderReport`, `PicaRenderError`. 6 testes, um deles do trigger de desenho aos pixels sem shading escrito à mão.
+- `crates/aceris-core/src/gpu/mod.rs` — módulo e reexportações.
+
+### Contrato
+
+- As saídas do shader são coordenadas de clip; use um `GeometryPipeline` com transformação identidade, a menos que o vértice de entrada ainda precise de uma matriz. A faixa de profundidade (`ClipDepthRange`) e o viewport são escolhas do chamador; a faixa real do PICA200 não está confirmada.
+- Cada vértice passa pelo output map uma vez; os triângulos são rasterizados na ordem do draw. Não há culling de face: os dois sentidos são desenhados. A primeira falha interrompe o draw e deixa no rasterizador o que já foi desenhado.
+- `render_draw_request` lê layout de vértices, entrypoint e output map dos registradores vivos; chame antes que a command list os altere.
+
+### Armadilha de codificação (custou duas tentativas)
+
+No registrador de formato de atributos, cada nibble é **tipo (2 bits) + largura em bits (2 bits)**, não contagem de componentes. A contagem de componentes de um atributo é o número de entradas do array (`ATTRIBBUFFERi_CONFIG2` bits 28–31) que o referenciam pelo mapa em `CONFIG1`. Para `(x, y)` em `u8`: formato `0x1`, duas entradas apontando para o atributo 0, `CONFIG1 = 0`, `CONFIG2 = (2 << 16) | (2 << 28)`. O valor `0x5` seria `u8` com largura de 16 bits.
+
+### Verificação realmente executada
+
+Sobre o `main` `9beaf77`: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` (1300 testes, 0 falhas), todos com saída 0 neste ambiente. O CI remoto não foi consultado.
+
+### Limites
+
+- Só cor por vértice. Sem textura, iluminação, blending, stencil, culling nem formatos reais de framebuffer.
+- O teste ponta a ponta usa um triângulo de 8x8 pixels e confere dois pixels e uma cota mínima de cobertura; não valida regras de rasterização do hardware.
+
+### Próximas tarefas
+
+1. Culling e regras de winding com fonte independente.
+2. Interpolação de texcoord e unidade de textura.
+3. Escrever o resultado no framebuffer do GSP (formato e endereço reais) em vez do buffer de software.
