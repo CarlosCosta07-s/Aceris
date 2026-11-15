@@ -9,6 +9,7 @@ mod gsp_interrupt;
 mod gsp_queue;
 mod index;
 mod input_fetch;
+mod output_map;
 mod physical_memory;
 mod pica200;
 mod rasterizer;
@@ -51,6 +52,10 @@ pub use gsp_queue::{
 pub use index::{
     IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
     PicaIndexInputState, REG_INDEXBUFFER_CONFIG, REG_NUMVERTICES, REG_VERTEX_OFFSET,
+};
+pub use output_map::{
+    OUTMAP_REGISTER_COUNT, PicaOutputGroup, PicaOutputMapError, PicaResolvedVertex,
+    PicaVertexOutputMap, REG_SH_OUTMAP_O0, REG_VSH_ENTRYPOINT,
 };
 pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,

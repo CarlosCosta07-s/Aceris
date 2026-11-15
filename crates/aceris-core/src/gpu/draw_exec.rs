@@ -143,6 +143,23 @@ fn shader_input_vector(attribute: &NumericVertexAttribute) -> [f32; 4] {
 }
 
 impl Pica200 {
+    /// Like `shade_draw`, but starts at the entrypoint held in GPUREG_VSH_ENTRYPOINT.
+    pub fn shade_draw_at_registered_entrypoint(
+        &self,
+        request: &PicaDrawRequest,
+        memory: &GpuPhysicalMemory,
+        resolved_physical_byte_base: u32,
+        program: &PicaVertexShaderProgram,
+    ) -> Result<PicaShadedDraw, PicaDrawExecError> {
+        self.shade_draw(
+            request,
+            memory,
+            resolved_physical_byte_base,
+            program,
+            self.vertex_shader_entrypoint(),
+        )
+    }
+
     /// Shades every distinct vertex referenced by the draw's triangles.
     ///
     /// `resolved_physical_byte_base` is the caller-translated physical address
@@ -525,6 +542,44 @@ mod tests {
             gpu.shade_draw(&request, &memory, BASE, &program, 0),
             Err(PicaDrawExecError::DuplicateShaderRegister { register: 0 })
         );
+    }
+
+    #[test]
+    fn registered_entrypoint_and_output_map_produce_geometry_vertices() {
+        use crate::gpu::{REG_SH_OUTMAP_O0, REG_VSH_ENTRYPOINT};
+
+        let mut gpu = gpu_with_byte_vertices();
+        // Code layout: [0] = END (skipped), [1] = MOV o0, v0, [2] = END.
+        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0).unwrap();
+        for word in [END, MOV_O0_V0, END] {
+            gpu.write_register(REG_VSH_CODETRANSFER_DATA0, word)
+                .unwrap();
+        }
+        gpu.write_register(REG_VSH_ENTRYPOINT, 1).unwrap();
+        // o0 carries the position; every other output register is unused.
+        for index in 0..7u16 {
+            gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
+                .unwrap();
+        }
+        gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+
+        let request = draw_arrays(&mut gpu, 3);
+        let memory = memory_with(&[10, 20, 30], None);
+        let program = gpu.vertex_shader_program();
+        let draw = gpu
+            .shade_draw_at_registered_entrypoint(&request, &memory, BASE, &program)
+            .unwrap();
+
+        let map = gpu.vertex_output_map().unwrap();
+        let vertices: Vec<_> = draw
+            .vertices
+            .iter()
+            .map(|vertex| vertex.resolve(&map).unwrap().to_geometry_vertex([255; 4]))
+            .collect();
+        assert_eq!(vertices[0].position, [10.0, 0.0, 0.0, 1.0]);
+        assert_eq!(vertices[2].position, [30.0, 0.0, 0.0, 1.0]);
+        assert_eq!(vertices[1].color, [255; 4]);
+        assert_eq!(draw.triangles, vec![[0, 1, 2]]);
     }
 
     #[test]
