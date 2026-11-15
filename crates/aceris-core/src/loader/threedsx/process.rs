@@ -86,14 +86,8 @@ impl ThreeDsxPreparedProcess {
             ));
         }
         let layout = &self.layout;
-        let code_end = validate_prepared_segment(
-            "Code",
-            layout.code,
-            &self.code,
-            false,
-            true,
-            false,
-        )?;
+        let code_end =
+            validate_prepared_segment("Code", layout.code, &self.code, false, true, false)?;
         let read_only_end = validate_prepared_segment(
             "ROData",
             layout.read_only,
@@ -102,29 +96,15 @@ impl ThreeDsxPreparedProcess {
             false,
             true,
         )?;
-        let data_end = validate_prepared_segment(
-            "Data",
-            layout.data,
-            &self.data,
-            true,
-            false,
-            true,
-        )?;
-        let stack_end = validate_prepared_segment(
-            "Stack",
-            layout.stack,
-            &self.stack,
-            true,
-            false,
-            false,
-        )?;
+        let data_end =
+            validate_prepared_segment("Data", layout.data, &self.data, true, false, true)?;
+        let stack_end =
+            validate_prepared_segment("Stack", layout.stack, &self.stack, true, false, false)?;
 
         if layout.code.initialized_size_bytes == 0 {
             return Err(invalid_data("3DSX Code segment is empty"));
         }
-        if layout.entry_point != layout.code.address
-            || u64::from(layout.entry_point) >= code_end
-        {
+        if layout.entry_point != layout.code.address || u64::from(layout.entry_point) >= code_end {
             return Err(invalid_data(
                 "3DSX entry point is outside the executable Code mapping",
             ));
@@ -159,11 +139,7 @@ impl ThreeDsxPreparedProcess {
 
         let mut ranges = [
             (u64::from(layout.code.address), code_end, "Code"),
-            (
-                u64::from(layout.read_only.address),
-                read_only_end,
-                "ROData",
-            ),
+            (u64::from(layout.read_only.address), read_only_end, "ROData"),
             (u64::from(layout.data.address), data_end, "Data"),
             (u64::from(layout.stack.address), stack_end, "Stack"),
         ];
