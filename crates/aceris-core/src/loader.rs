@@ -1,14 +1,16 @@
 //! Game image identification.
 //!
 //! This module recognises supported containers and performs structural
-//! validation for NCSD cartridge images and CIA installable archives before
-//! returning them to the system.
+//! validation for NCSD cartridge images, CIA installable archives and standard
+//! 3DSX homebrew executables before returning them to the system.
 
 use aceris_common::{Error, Result};
 use std::{fs::File, io::Read, path::Path};
 
 pub mod cia;
 pub mod ncsd;
+/// Structural parser for 3DSX homebrew executables.
+pub mod threedsx;
 
 /// Bytes read from the start of a file. The CIA header is larger than NCSD.
 const PROBE_LEN: usize = cia::HEADER_SIZE;
@@ -67,14 +69,14 @@ pub fn detect_format(data: &[u8]) -> Option<ImageFormat> {
 
 /// Reads the start of the file at the given path and identifies its format.
 ///
-/// NCSD and CIA images receive structural validation of their public
-/// container headers and declared byte ranges. Signature verification,
-/// decryption and executable validation are not performed.
+/// NCSD, CIA and 3DSX images receive structural validation of their public
+/// headers and declared byte ranges. Signature verification, decryption,
+/// relocation and executable execution are not performed.
 pub fn identify_file(path: &Path) -> Result<ImageFormat> {
-    let file = File::open(path)?;
+    let mut file = File::open(path)?;
     let file_len = file.metadata()?.len();
     let mut header = Vec::with_capacity(PROBE_LEN);
-    file.take(PROBE_LEN as u64).read_to_end(&mut header)?;
+    (&mut file).take(PROBE_LEN as u64).read_to_end(&mut header)?;
 
     let format = detect_format(&header).ok_or(Error::UnsupportedFormat)?;
     match format {
@@ -83,6 +85,9 @@ pub fn identify_file(path: &Path) -> Result<ImageFormat> {
         }
         ImageFormat::Cia => {
             cia::CiaHeader::parse(&header, file_len)?;
+        }
+        ImageFormat::ThreeDsx => {
+            threedsx::ThreeDsxImage::parse_reader(&mut file)?;
         }
         _ => {}
     }
@@ -134,6 +139,47 @@ mod tests {
         assert_eq!(detect_format(&[0u8; 0x200]), None);
         assert_eq!(detect_format(&[]), None);
         assert_eq!(detect_format(b"NC"), None);
+    }
+
+    fn minimal_3dsx() -> Vec<u8> {
+        let mut image = vec![0u8; 32];
+        image[..4].copy_from_slice(b"3DSX");
+        image[4..6].copy_from_slice(&32u16.to_le_bytes());
+        image[6..8].copy_from_slice(&8u16.to_le_bytes());
+        image[16..20].copy_from_slice(&4u32.to_le_bytes());
+        image.extend_from_slice(&[0; 24]);
+        image.extend_from_slice(&[0x00, 0x00, 0xA0, 0xE1]);
+        image
+    }
+
+    #[test]
+    fn identify_file_validates_a_standard_3dsx_container() {
+        let path = std::env::temp_dir().join(format!(
+            "aceris-valid-homebrew-{}.3dsx",
+            std::process::id()
+        ));
+        std::fs::write(&path, minimal_3dsx()).unwrap();
+
+        let result = identify_file(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(result.unwrap(), ImageFormat::ThreeDsx);
+    }
+
+    #[test]
+    fn identify_file_rejects_truncated_3dsx_segments() {
+        let path = std::env::temp_dir().join(format!(
+            "aceris-truncated-homebrew-{}.3dsx",
+            std::process::id()
+        ));
+        let mut image = minimal_3dsx();
+        image.truncate(image.len() - 1);
+        std::fs::write(&path, image).unwrap();
+
+        let result = identify_file(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(matches!(result, Err(Error::Io(_))));
     }
 
     #[test]
