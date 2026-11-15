@@ -1232,3 +1232,37 @@ Com a autorização de continuidade do mantenedor, o ChatGPT estendeu o contrato
 - As assinaturas RSA/ECDSA de ticket/TMD continuam sem verificação; a API não habilita instalação persistente de títulos.
 - A matriz de CI deste commit deve ser consultada antes de declarar formatação, Clippy, testes e build Android aprovados.
 
+
+## PICA200 — estágio de vértices de um draw (`shade_draw`) (15/11/2026)
+
+Claude ligou os triggers de desenho ao executor de vertex shader. Trabalho pedido por Carlos Costa, restrito ao módulo `gpu`.
+
+### Arquivos
+
+- `crates/aceris-core/src/gpu/draw_exec.rs` (novo) — `Pica200::shade_draw`, `PicaShadedDraw`, `PicaShadedVertex`, `PicaDrawExecError`. 13 testes.
+- `crates/aceris-core/src/gpu/mod.rs` — declara o módulo e reexporta os três tipos.
+- `docs/ROADMAP.md` — item dos triggers atualizado.
+
+### Contrato
+
+- `shade_draw(request, memory, resolved_physical_byte_base, program, shader_entry)`: índices, contagem, offset e modo de primitiva vêm do `PicaDrawRequest` (capturado no trigger). O layout de vértices e as permutações de entrada do shader vêm do banco de registradores **vivo**; chame antes que a command list os altere.
+- O chamador resolve o endereço físico base e informa o entrypoint, porque nenhum registrador de entrypoint é decodificado.
+- Cada vértice distinto é shadeado uma vez; os triângulos referenciam `vertices` por índice e preservam o winding da montagem.
+- Saídas o0–o15 são devolvidas sem output map; quem decide qual registrador é a posição é a etapa seguinte.
+- Erros explícitos: índice fora do u32 após o offset, fixed attribute sem valor, dois atributos no mesmo registrador (precedência não documentada), registrador acima de v15, falha de fetch e falha do shader com o índice do vértice.
+
+### Verificação realmente executada
+
+Neste ambiente (Rust 1.97), sobre o `main` `bd64b41`: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` (1285 testes, 0 falhas). O CI remoto não foi consultado.
+
+### Premissas não verificadas contra hardware
+
+- `GPUREG_VERTEX_OFFSET` é um inteiro com sinal somado a todo índice, em draws de arrays e de elements.
+- Componentes que o formato do atributo não fornece valem (0, 0, 0, 1).
+- Os testes montam registradores a partir do mesmo layout documentado que o código usa; provam consistência interna, não compatibilidade.
+
+### Próximas tarefas
+
+1. Decodificar o entrypoint do shader e o output map (o0–o15 → posição, cor, texcoord).
+2. Converter as saídas em `GeometryVertex`/`RasterVertex` e ligar ao `GeometryPipeline`.
+3. Clipping/culling com semântica confirmada, depois fluxo de controle e CMP/MOVA no executor.
