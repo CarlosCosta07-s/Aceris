@@ -1148,3 +1148,21 @@ Contrato atualmente implementado:
 - Commit `f317b04` extrai `plan_process_memory()` para validar bases, page alignment, overlap da stack e limite de memória total antes de ler os segmentos no caminho `load_and_prepare_process()`.
 - `prepare_process()` reutiliza o mesmo planner antes de alocar Code/ROData/Data/Stack, eliminando divergência entre preflight e materialização.
 - O teste `load_and_prepare_process_enforces_page_aligned_memory_limit` confirma que um limite suficiente para bytes crus, mas menor que o total page-aligned + stack, falha antes de avançar o reader.
+
+## Integração 3DSX à sessão ARM11 e aos frontends (15/11/2026)
+
+Esta etapa foi autorizada pelo mantenedor ao solicitar a continuação do desenvolvimento até o primeiro marco de homebrew executável. O trabalho foi feito na branch `main`, sem criar branches e sem importar código ou assets de emuladores de terceiros.
+
+- Commit `208191b` conecta o processo 3DSX preparado ao `Arm11CodeAddressSpace`, à sessão ARM11 existente e ao `System`; acrescenta um perfil inicial explícito de endereçamento, stack e limites de segurança.
+- Commit `288aa42` aplica Rustfmt aos arquivos do adaptador.
+- Commit `36a0498` expõe `System::load_executable_file` pelo ABI Android com `aceris_system_load_executable_file`, conserva a API NCSD antiga e atualiza a documentação.
+- Desktop e Android agora encaminham 3DSX e NCSD sem criptografia ao mesmo core/scheduler. O suporte de carregamento não deve ser duplicado em um frontend.
+- `crates/aceris-core/tests/three_dsx_launch.rs` monta uma fixture 3DSX sintética, executa três instruções ARM e verifica registradores/PC; outro teste garante que uma imagem inválida não substitui a sessão ativa. O teste do ABI Android também carrega uma fixture sintética e verifica a execução/PC.
+- CI do commit `288aa42`, workflow `43754731119`: Rustfmt, build locked, Clippy e testes passaram em Linux, Windows e macOS; build release Android `arm64-v8a` passou.
+- CI do commit `36a0498`, workflow `43754894087`: matriz completa aprovada em Linux, Windows e macOS (Rustfmt, build locked, Clippy e testes) e build release Android `arm64-v8a` aprovado.
+
+**Limite obrigatório de interpretação:** os testes atuais executam bytes de instruções fabricados para fixtures sintéticas. Eles comprovam a integração do parser/preparador 3DSX com a sessão ARM11 e os frontends, mas não comprovam que um homebrew de terceiros, não modificado, inicialize, use seus serviços ou produza gráficos/áudio. Não marcar M2 como concluído até executar um arquivo homebrew real, fornecido legalmente pelo mantenedor, e registrar uma saída observável e reproduzível.
+
+**Próxima etapa:** obter do mantenedor um arquivo `.3dsx` homebrew que ele tenha direito de usar. Executá-lo sem alterar o binário, registrar loader/entry PC/CPSR, instruções executadas e primeiro motivo de parada; depois implementar somente o primeiro SVC/serviço ausente demonstrado pelos logs. Manter o trabalho limitado ao necessário para esse alvo. Não introduzir dependências, firmware, chaves, jogos, dumps ou assets protegidos no repositório.
+
+**Preservação da colaboração:** o adaptador 3DSX foi integrado aos arquivos compartilhados `loader/ncsd/process.rs` e `loader/ncsd/session.rs` por autorização explícita do mantenedor nesta etapa. Isso não concede autorização geral para modificar ou reescrever trabalho de outro agente. Ler o diff e preservar as alterações de terceiros; não tocar em `cpu/thumb.rs` ou em outras frentes atribuídas sem autorização específica.
