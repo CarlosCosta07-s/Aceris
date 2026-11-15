@@ -547,6 +547,14 @@ mod tests {
         image
     }
 
+    fn code_only_image() -> Vec<u8> {
+        let mut image = minimal_image();
+        image[20..24].fill(0);
+        image[24..32].fill(0);
+        image.truncate(60);
+        image
+    }
+
     fn relocatable_image() -> Vec<u8> {
         let mut image = minimal_image();
         image[32..36].copy_from_slice(&1u32.to_le_bytes());
@@ -655,6 +663,35 @@ mod tests {
                 .iter()
                 .all(|byte| *byte == 0)
         );
+    }
+
+    #[test]
+    fn memory_mappings_preserve_empty_rodata_and_data_without_fake_pages() {
+        let image = code_only_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let loaded = parsed
+            .load_segments(&mut Cursor::new(&image), 4)
+            .unwrap();
+        let prepared = parsed
+            .prepare_process(
+                loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                ThreeDsxStackRequest {
+                    base_address: 0x0400_0000,
+                    size_bytes: 0x1000,
+                },
+                0x2000,
+            )
+            .unwrap();
+
+        let mappings = prepared.memory_mappings().unwrap();
+        assert_eq!(mappings[0].mapped_size_bytes, 0x1000);
+        assert_eq!(mappings[1].mapped_size_bytes, 0);
+        assert!(mappings[1].bytes.is_empty());
+        assert_eq!(mappings[2].mapped_size_bytes, 0);
+        assert!(mappings[2].bytes.is_empty());
+        assert_eq!(mappings[3].mapped_size_bytes, 0x1000);
+        assert_eq!(prepared.layout.total_mapped_size_bytes, 0x2000);
     }
 
     #[test]
