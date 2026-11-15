@@ -1,7 +1,9 @@
-//! Structural parser for Nintendo 3DS homebrew executable files.
+//! Loader and process-memory preparation for Nintendo 3DS homebrew executables.
 //!
-//! This parser validates the standard 3DSX container layout. It does not
-//! relocate segments, create an ARM11 process, or claim executable support.
+//! This module validates the standard 3DSX container, materializes segments,
+//! applies supported absolute/relative relocations and prepares a validated
+//! process-memory layout. It does not create an ARM11 session or claim that a
+//! homebrew executable can yet be launched by the emulator.
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -112,6 +114,13 @@ pub struct ThreeDsxLoadedSegments {
     pub bss: Vec<u8>,
     /// True only after the relocation phase completed successfully.
     relocations_applied: bool,
+}
+
+impl ThreeDsxLoadedSegments {
+    /// Returns whether the relocation phase completed successfully.
+    pub const fn relocations_applied(&self) -> bool {
+        self.relocations_applied
+    }
 }
 
 impl ThreeDsxImage {
