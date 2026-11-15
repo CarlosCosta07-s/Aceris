@@ -10,6 +10,9 @@ const EXTENDED_HEADER_SIZE: usize = 0x2C;
 const STANDARD_RELOCATION_HEADER_SIZE: u16 = 8;
 const SEGMENT_COUNT: usize = 3;
 const WORD_SIZE: u64 = 4;
+const PAGE_SIZE: u64 = 0x1000;
+const RELOCATION_OFFSET_MASK: u32 = 0x0FFF_FFFF;
+const MAX_RELOCATION_IMAGE_SIZE_BYTES: u64 = 0x1000_0000;
 
 /// Fixed fields from a 3DSX header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -325,6 +328,101 @@ impl ThreeDsxImage {
         Ok(offsets)
     }
 
+    /// Applies the standard absolute and relative relocation tables to loaded segments.
+    ///
+    /// Segment bases are supplied by the caller and must be page-aligned,
+    /// non-overlapping 32-bit virtual ranges. Image offsets in relocation words
+    /// address the page-rounded Code, ROData and Data mappings in that order.
+    /// The Data mapping includes its BSS tail, so relocations may point into
+    /// BSS, but relocation *sites* must always be backed by file bytes.
+    ///
+    /// Absolute relocations accept subtype 0. Relative relocations accept
+    /// subtype 0 (signed 32-bit place-relative) and subtype 1 (signed PREL31).
+    /// Unknown subtypes and overlapping absolute/relative patch sites are
+    /// rejected. The loaded segment buffers are modified only after all
+    /// layout and table-offset checks succeed.
+    pub fn apply_relocations<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+        loaded: &mut ThreeDsxLoadedSegments,
+        segment_bases: [u32; SEGMENT_COUNT],
+        maximum_patched_words: usize,
+    ) -> io::Result<usize> {
+        validate_loaded_segments(self, loaded)?;
+
+        let segment_memory_sizes = [
+            self.code.memory_size_bytes,
+            self.rodata.memory_size_bytes,
+            self.data.memory_size_bytes,
+        ];
+        let aligned_sizes = segment_memory_sizes.map(align_to_page);
+        let aligned_sizes = [
+            aligned_sizes[0]?,
+            aligned_sizes[1]?,
+            aligned_sizes[2]?,
+        ];
+        validate_segment_bases(segment_bases, aligned_sizes)?;
+
+        let total_image_size = aligned_sizes
+            .into_iter()
+            .try_fold(0u64, |total, size| total.checked_add(size))
+            .ok_or_else(|| invalid_data("3DSX aligned image size overflows"))?;
+        if total_image_size > MAX_RELOCATION_IMAGE_SIZE_BYTES {
+            return Err(invalid_data(
+                "3DSX aligned image exceeds the 28-bit relocation offset space",
+            ));
+        }
+
+        let offsets = self.read_relocation_word_offsets(reader, maximum_patched_words)?;
+        for segment_offsets in &offsets {
+            if segment_offsets
+                .absolute
+                .iter()
+                .any(|offset| segment_offsets.relative.binary_search(offset).is_ok())
+            {
+                return Err(invalid_data(
+                    "3DSX word is listed in both absolute and relative relocation tables",
+                ));
+            }
+        }
+
+        let mut patched_words = 0usize;
+        let mut segment_bytes: [&mut [u8]; SEGMENT_COUNT] = [
+            &mut loaded.code,
+            &mut loaded.rodata,
+            &mut loaded.data,
+        ];
+
+        for segment_index in 0..SEGMENT_COUNT {
+            let bytes = &mut segment_bytes[segment_index];
+            let source_base = segment_bases[segment_index];
+
+            apply_relocation_words(
+                bytes,
+                &offsets[segment_index].absolute,
+                RelocationTableKind::Absolute,
+                source_base,
+                segment_bases,
+                aligned_sizes,
+            )?;
+            apply_relocation_words(
+                bytes,
+                &offsets[segment_index].relative,
+                RelocationTableKind::Relative,
+                source_base,
+                segment_bases,
+                aligned_sizes,
+            )?;
+
+            patched_words = patched_words
+                .checked_add(offsets[segment_index].absolute.len())
+                .and_then(|count| count.checked_add(offsets[segment_index].relative.len()))
+                .ok_or_else(|| invalid_data("3DSX patched-word count overflows"))?;
+        }
+
+        Ok(patched_words)
+    }
+
     /// Reads all file-backed segments and allocates a zero-filled BSS tail.
     ///
     /// The caller supplies a total memory limit for the executable's code,
@@ -415,6 +513,204 @@ fn read_relocation_word_offsets<R: Read + Seek>(
     }
 
     Ok(offsets)
+}
+
+#[derive(Clone, Copy)]
+enum RelocationTableKind {
+    Absolute,
+    Relative,
+}
+
+fn align_to_page(size_bytes: u64) -> io::Result<u64> {
+    size_bytes
+        .checked_add(PAGE_SIZE - 1)
+        .map(|size| size & !(PAGE_SIZE - 1))
+        .ok_or_else(|| invalid_data("3DSX aligned segment size overflows"))
+}
+
+fn validate_loaded_segments(
+    image: &ThreeDsxImage,
+    loaded: &ThreeDsxLoadedSegments,
+) -> io::Result<()> {
+    let expected = [
+        image.code.file_size_bytes,
+        image.rodata.file_size_bytes,
+        image.data.file_size_bytes,
+        image
+            .data
+            .memory_size_bytes
+            .checked_sub(image.data.file_size_bytes)
+            .ok_or_else(|| invalid_data("3DSX BSS size exceeds Data memory size"))?,
+    ];
+    let actual = [
+        loaded.code.len(),
+        loaded.rodata.len(),
+        loaded.data.len(),
+        loaded.bss.len(),
+    ];
+
+    for (name, expected_bytes, actual_bytes) in [
+        ("Code", expected[0], actual[0]),
+        ("ROData", expected[1], actual[1]),
+        ("Data", expected[2], actual[2]),
+        ("BSS", expected[3], actual[3]),
+    ] {
+        if expected_bytes != actual_bytes as u64 {
+            return Err(invalid_data(format!(
+                "loaded 3DSX {name} has {actual_bytes} bytes, expected {expected_bytes}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_segment_bases(
+    bases: [u32; SEGMENT_COUNT],
+    sizes: [u64; SEGMENT_COUNT],
+) -> io::Result<()> {
+    let mut ranges = [(0u64, 0u64, 0usize); SEGMENT_COUNT];
+    for index in 0..SEGMENT_COUNT {
+        if u64::from(bases[index]) % PAGE_SIZE != 0 {
+            return Err(invalid_data(format!(
+                "3DSX segment {index} base is not page-aligned"
+            )));
+        }
+        let end = u64::from(bases[index])
+            .checked_add(sizes[index])
+            .ok_or_else(|| invalid_data("3DSX segment virtual range overflows"))?;
+        if end > 0x1_0000_0000 {
+            return Err(invalid_data(
+                "3DSX segment virtual range exceeds the 32-bit address space",
+            ));
+        }
+        ranges[index] = (u64::from(bases[index]), end, index);
+    }
+
+    ranges.sort_unstable_by_key(|range| range.0);
+    for pair in ranges.windows(2) {
+        if pair[0].1 > pair[1].0 {
+            return Err(invalid_data(format!(
+                "3DSX virtual segments {} and {} overlap",
+                pair[0].2, pair[1].2
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_image_offset(
+    image_offset: u32,
+    segment_bases: [u32; SEGMENT_COUNT],
+    aligned_sizes: [u64; SEGMENT_COUNT],
+) -> io::Result<u32> {
+    let image_offset = u64::from(image_offset);
+    let code_end = aligned_sizes[0];
+    let rodata_end = code_end
+        .checked_add(aligned_sizes[1])
+        .ok_or_else(|| invalid_data("3DSX ROData image offset overflows"))?;
+    let data_end = rodata_end
+        .checked_add(aligned_sizes[2])
+        .ok_or_else(|| invalid_data("3DSX Data image offset overflows"))?;
+
+    let (segment_index, segment_offset) = if image_offset < code_end {
+        (0, image_offset)
+    } else if image_offset < rodata_end {
+        (1, image_offset - code_end)
+    } else if image_offset < data_end {
+        (2, image_offset - rodata_end)
+    } else {
+        return Err(invalid_data(format!(
+            "3DSX relocation target {image_offset:#x} is outside the aligned image"
+        )));
+    };
+
+    let address = u64::from(segment_bases[segment_index])
+        .checked_add(segment_offset)
+        .ok_or_else(|| invalid_data("3DSX relocated target address overflows"))?;
+    u32::try_from(address)
+        .map_err(|_| invalid_data("3DSX relocated target exceeds the 32-bit address space"))
+}
+
+fn apply_relocation_words(
+    source_bytes: &mut [u8],
+    word_offsets: &[u32],
+    table_kind: RelocationTableKind,
+    source_base: u32,
+    segment_bases: [u32; SEGMENT_COUNT],
+    aligned_sizes: [u64; SEGMENT_COUNT],
+) -> io::Result<()> {
+    for &word_index in word_offsets {
+        let byte_offset_u64 = u64::from(word_index)
+            .checked_mul(WORD_SIZE)
+            .ok_or_else(|| invalid_data("3DSX relocation site offset overflows"))?;
+        let byte_offset = usize::try_from(byte_offset_u64)
+            .map_err(|_| invalid_data("3DSX relocation site does not fit host memory"))?;
+        let end = byte_offset
+            .checked_add(WORD_SIZE as usize)
+            .ok_or_else(|| invalid_data("3DSX relocation site range overflows"))?;
+        let word_bytes = source_bytes
+            .get_mut(byte_offset..end)
+            .ok_or_else(|| invalid_data("3DSX relocation site is outside loaded segment bytes"))?;
+
+        let original_word = u32::from_le_bytes(
+            word_bytes
+                .try_into()
+                .map_err(|_| invalid_data("3DSX relocation site is not a complete word"))?,
+        );
+        let subtype = original_word >> 28;
+        let image_offset = original_word & RELOCATION_OFFSET_MASK;
+        let target_address =
+            resolve_image_offset(image_offset, segment_bases, aligned_sizes)?;
+
+        let source_address = u64::from(source_base)
+            .checked_add(byte_offset_u64)
+            .ok_or_else(|| invalid_data("3DSX relocation source address overflows"))?;
+        let source_address = u32::try_from(source_address)
+            .map_err(|_| invalid_data("3DSX relocation source exceeds the 32-bit address space"))?;
+
+        let relocated_word = match table_kind {
+            RelocationTableKind::Absolute => {
+                if subtype != 0 {
+                    return Err(invalid_data(format!(
+                        "unsupported 3DSX absolute relocation subtype {subtype}"
+                    )));
+                }
+                target_address
+            }
+            RelocationTableKind::Relative => {
+                let difference = i64::from(target_address) - i64::from(source_address);
+                match subtype {
+                    0 => {
+                        let signed = i32::try_from(difference).map_err(|_| {
+                            invalid_data("3DSX relative relocation does not fit signed 32-bit range")
+                        })?;
+                        signed as u32
+                    }
+                    1 => {
+                        const PREL31_MIN: i64 = -(1i64 << 30);
+                        const PREL31_MAX: i64 = (1i64 << 30) - 1;
+                        if !(PREL31_MIN..=PREL31_MAX).contains(&difference) {
+                            return Err(invalid_data(
+                                "3DSX PREL31 relocation does not fit signed 31-bit range",
+                            ));
+                        }
+                        (difference as i32 as u32) & 0x7FFF_FFFF
+                    }
+                    _ => {
+                        return Err(invalid_data(format!(
+                            "unsupported 3DSX relative relocation subtype {subtype}"
+                        )));
+                    }
+                }
+            }
+        };
+
+        word_bytes.copy_from_slice(&relocated_word.to_le_bytes());
+    }
+
+    Ok(())
 }
 
 fn read_segment<R: Read + Seek>(
