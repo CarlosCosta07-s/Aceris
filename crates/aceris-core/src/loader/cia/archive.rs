@@ -11,12 +11,10 @@ use crate::loader::ncsd::ncch::crypto::{
     AES_BLOCK_SIZE, NcchCtrReader, NcchCtrReaderError, NcchCtrRegion,
 };
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
-use crate::loader::ncsd::{
-    self, process::Arm11CodeAddressSpace, NcsdExecutableLoadError,
-};
 use crate::loader::ncsd::ncch::{
     HEADER_SIZE as NCCH_HEADER_SIZE, NcchError, NcchHeader, NcchIntegrityError,
 };
+use crate::loader::ncsd::{self, NcsdExecutableLoadError, process::Arm11CodeAddressSpace};
 
 use super::crypto::{Aes128CbcReader, TitleKey, cia_content_iv};
 use super::ticket::{MAX_TICKET_SIZE_BYTES, TicketError, TicketHeader};
