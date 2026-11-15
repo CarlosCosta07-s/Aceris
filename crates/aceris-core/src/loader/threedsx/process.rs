@@ -385,40 +385,40 @@ impl ThreeDsxImage {
             .ok_or_else(|| invalid_data("3DSX BSS virtual address overflows"))?;
 
         let layout = ThreeDsxProcessLayout {
-                entry_point: segment_bases[0],
-                code: ThreeDsxProcessMemorySegment {
-                    address: segment_bases[0],
-                    initialized_size_bytes: code_initialized_size,
-                    mapped_size_bytes: code_mapped_size,
-                    writable: false,
-                    executable: true,
-                },
-                read_only: ThreeDsxProcessMemorySegment {
-                    address: segment_bases[1],
-                    initialized_size_bytes: read_only_initialized_size,
-                    mapped_size_bytes: read_only_mapped_size,
-                    writable: false,
-                    executable: false,
-                },
-                data: ThreeDsxProcessMemorySegment {
-                    address: segment_bases[2],
-                    initialized_size_bytes: data_initialized_size,
-                    mapped_size_bytes: data_mapped_size,
-                    writable: true,
-                    executable: false,
-                },
-                bss_address,
-                bss_size_bytes: self.header.bss_size_bytes,
-                stack: ThreeDsxProcessMemorySegment {
-                    address: stack_request.base_address,
-                    initialized_size_bytes: 0,
-                    mapped_size_bytes: stack_mapped_size,
-                    writable: true,
-                    executable: false,
-                },
-                initial_stack_pointer: stack_end as u32,
-                total_mapped_size_bytes,
-            };
+            entry_point: segment_bases[0],
+            code: ThreeDsxProcessMemorySegment {
+                address: segment_bases[0],
+                initialized_size_bytes: code_initialized_size,
+                mapped_size_bytes: code_mapped_size,
+                writable: false,
+                executable: true,
+            },
+            read_only: ThreeDsxProcessMemorySegment {
+                address: segment_bases[1],
+                initialized_size_bytes: read_only_initialized_size,
+                mapped_size_bytes: read_only_mapped_size,
+                writable: false,
+                executable: false,
+            },
+            data: ThreeDsxProcessMemorySegment {
+                address: segment_bases[2],
+                initialized_size_bytes: data_initialized_size,
+                mapped_size_bytes: data_mapped_size,
+                writable: true,
+                executable: false,
+            },
+            bss_address,
+            bss_size_bytes: self.header.bss_size_bytes,
+            stack: ThreeDsxProcessMemorySegment {
+                address: stack_request.base_address,
+                initialized_size_bytes: 0,
+                mapped_size_bytes: stack_mapped_size,
+                writable: true,
+                executable: false,
+            },
+            initial_stack_pointer: stack_end as u32,
+            total_mapped_size_bytes,
+        };
         let prepared = ThreeDsxPreparedProcess {
             validation_layout: layout.clone(),
             layout,
@@ -669,8 +669,8 @@ mod tests {
         )
         .unwrap();
         prepared.layout.stack.address = prepared.layout.data.address;
-        prepared.layout.initial_stack_pointer = prepared.layout.data.address
-            + prepared.layout.data.mapped_size_bytes;
+        prepared.layout.initial_stack_pointer =
+            prepared.layout.data.address + prepared.layout.data.mapped_size_bytes;
 
         assert_eq!(
             prepared.validate().unwrap_err().kind(),
