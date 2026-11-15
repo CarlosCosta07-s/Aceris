@@ -23,6 +23,7 @@ use crate::loader::ncsd::session::{
 };
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::threedsx::ThreeDsxImage;
+use crate::loader::cia::CiaArchiveReader;
 use crate::loader::{self, ImageFormat};
 use crate::video::{DualScreenDisplay, LcdController};
 use aceris_common::{Error, Result};
@@ -201,16 +202,83 @@ impl System {
 
     /// Loads an executable format supported by the current launch path.
     ///
-    /// NCSD cartridges without encryption and standard 3DSX homebrew files
-    /// share the same ARM11 session, scheduler and frame execution path.
+    /// NoCrypto NCSD cartridges, clear CIA boot contents and standard 3DSX
+    /// homebrew files share the same ARM11 session and frame execution path.
     pub fn load_executable_file(&mut self, path: &Path) -> Result<ImageFormat> {
         match loader::identify_file(path)? {
             ImageFormat::Ncsd => self.load_ncsd_no_crypto_file(path),
+            ImageFormat::Cia => self.load_cia_no_crypto_file(path),
             ImageFormat::ThreeDsx => self.load_3dsx_file(path),
             _ => Err(Error::Unimplemented(
                 "execution loading is not implemented for this image format",
             )),
         }
+    }
+
+    /// Loads the boot NCCH from a CIA when both CIA and NCCH content are clear.
+    ///
+    /// The selected TMD content hash, NCCH extended-header hash, ExeFS
+    /// superblock and .code digest are verified before replacing the active
+    /// process. Ticket/TMD signatures and encrypted CIA/NCCH content are not
+    /// supported by this bootstrap path; no title is persistently installed.
+    pub fn load_cia_no_crypto_file(&mut self, path: &Path) -> Result<ImageFormat> {
+        let mut archive = CiaArchiveReader::open(File::open(path)?).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not open CIA archive: {error}"),
+            ))
+        })?;
+        let title_id = archive.title_metadata().title_id;
+        let boot_content_index = archive.title_metadata().boot_content_index;
+
+        let ncch = archive
+            .open_verified_ncch_content_reader(boot_content_index)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("could not verify CIA boot content: {error}"),
+                ))
+            })?
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CIA boot content is not selected by its content-index bitmap",
+                ))
+            })?;
+
+        if ncch.header().program_id != title_id {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "CIA TMD title ID {title_id:#018x} does not match NCCH program ID {:#018x}",
+                    ncch.header().program_id
+                ),
+            )));
+        }
+        if !ncch.header().declares_no_crypto() {
+            return Err(Error::Unimplemented(
+                "CIA boot content uses NCCH encryption; caller-supplied NCCH keys are required",
+            ));
+        }
+
+        let address_space = ncch
+            .load_arm11_address_space([0; AES_BLOCK_SIZE], [0; AES_BLOCK_SIZE])
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("could not prepare ARM11 process from CIA: {error}"),
+                ))
+            })?;
+        let mut session = Arm11ProcessSession::from_address_space(address_space);
+
+        self.reset_gpu_linear_memory();
+        session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        self.cpu = session.core().clone();
+        self.image = Some(ImageFormat::Cia);
+        self.ncsd_session = Some(session);
+        self.gsp_service = GspServiceRegistry::new();
+        self.pending_gsp_acquires.clear();
+        Ok(ImageFormat::Cia)
     }
 
     /// Inspects and returns the validated public header of an NCSD cartridge.
@@ -2951,6 +3019,90 @@ mod tests {
         image[exefs_start..exefs_start + EXEFS_SIZE].copy_from_slice(&exefs);
 
         image
+    }
+
+    fn clear_cia_archive_fixture() -> Vec<u8> {
+        const CIA_HEADER_SIZE: usize = 0x2020;
+        const TICKET_SIZE: usize = 0x350;
+        const TMD_SIZE: usize = 0xB34;
+        const CONTENT_SIZE: usize = 0x8000;
+        const TITLE_ID: u64 = 0x0004_0000_0000_0001;
+
+        let cartridge = clear_ncsd_cartridge_fixture();
+        let mut content = cartridge[0x4000..0x4000 + CONTENT_SIZE].to_vec();
+        content[0x118..0x120].copy_from_slice(&TITLE_ID.to_le_bytes());
+
+        let ticket_offset = 0x2040usize;
+        let tmd_offset = (ticket_offset + TICKET_SIZE + 0x3F) & !0x3F;
+        let content_offset = (tmd_offset + TMD_SIZE + 0x3F) & !0x3F;
+        let mut cia = vec![0u8; content_offset + content.len()];
+
+        write_u32(&mut cia, 0x00, CIA_HEADER_SIZE as u32);
+        cia[0x04..0x06].copy_from_slice(&0u16.to_le_bytes());
+        cia[0x06..0x08].copy_from_slice(&0u16.to_le_bytes());
+        write_u32(&mut cia, 0x08, 0);
+        write_u32(&mut cia, 0x0C, TICKET_SIZE as u32);
+        write_u32(&mut cia, 0x10, TMD_SIZE as u32);
+        write_u32(&mut cia, 0x14, 0);
+        cia[0x18..0x20].copy_from_slice(&(CONTENT_SIZE as u64).to_le_bytes());
+        cia[0x20] = 0x80;
+
+        cia[ticket_offset..ticket_offset + 4]
+            .copy_from_slice(&0x0001_0004u32.to_be_bytes());
+        let ticket_body = ticket_offset + 0x140;
+        cia[ticket_body + 0x9C..ticket_body + 0xA4]
+            .copy_from_slice(&TITLE_ID.to_be_bytes());
+
+        cia[tmd_offset..tmd_offset + 4].copy_from_slice(&0x0001_0004u32.to_be_bytes());
+        let tmd_body = tmd_offset + 0x140;
+        cia[tmd_body + 0x4C..tmd_body + 0x54]
+            .copy_from_slice(&TITLE_ID.to_be_bytes());
+        cia[tmd_body + 0x9E..tmd_body + 0xA0].copy_from_slice(&1u16.to_be_bytes());
+        cia[tmd_body + 0xA0..tmd_body + 0xA2].copy_from_slice(&0u16.to_be_bytes());
+
+        let info_table_start = tmd_body + 0xC4;
+        let content_records_start = info_table_start + 64 * 0x24;
+        let mut content_record = [0u8; 0x30];
+        content_record[0x00..0x04].copy_from_slice(&1u32.to_be_bytes());
+        content_record[0x04..0x06].copy_from_slice(&0u16.to_be_bytes());
+        content_record[0x06..0x08].copy_from_slice(&0u16.to_be_bytes());
+        content_record[0x08..0x10].copy_from_slice(&(CONTENT_SIZE as u64).to_be_bytes());
+        content_record[0x10..0x30].copy_from_slice(&sha256_digest(&content));
+        cia[content_records_start..content_records_start + content_record.len()]
+            .copy_from_slice(&content_record);
+
+        let mut info_record = [0u8; 0x24];
+        info_record[0x00..0x02].copy_from_slice(&0u16.to_be_bytes());
+        info_record[0x02..0x04].copy_from_slice(&1u16.to_be_bytes());
+        info_record[0x04..0x24].copy_from_slice(&sha256_digest(&content_record));
+        cia[info_table_start..info_table_start + info_record.len()]
+            .copy_from_slice(&info_record);
+        let info_table = &cia[info_table_start..content_records_start];
+        cia[tmd_body + 0xA4..tmd_body + 0xC4]
+            .copy_from_slice(&sha256_digest(info_table));
+
+        cia[content_offset..content_offset + content.len()].copy_from_slice(&content);
+        cia
+    }
+
+    #[test]
+    fn loads_clear_no_crypto_cia_boot_content_into_arm11_session() {
+        let path = std::env::temp_dir()
+            .join(format!("aceris-clear-cia-{}.cia", std::process::id()));
+        std::fs::write(&path, clear_cia_archive_fixture()).unwrap();
+
+        let mut system = System::new();
+        let result = system.load_executable_file(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(result.unwrap(), ImageFormat::Cia);
+        assert_eq!(system.image(), Some(ImageFormat::Cia));
+        assert_eq!(system.cpu().pc(), 0x0010_0000);
+
+        let report = system.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(system.cpu().regs[0], 7);
+        assert_eq!(system.cpu().regs[1], 5);
     }
 
     #[test]
