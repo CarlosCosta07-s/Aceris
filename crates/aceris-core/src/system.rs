@@ -3202,7 +3202,9 @@ mod tests {
         assert_eq!(system.cpu().regs[1], 5);
     }
 
-    fn encrypted_cia_archive_fixture() -> (Vec<u8>, [u8; 16]) {
+    fn encrypted_cia_archive_fixture(
+        encrypt_ncch_regions: bool,
+    ) -> (Vec<u8>, [u8; 16], [u8; 16], [u8; 16]) {
         const TICKET_OFFSET: usize = 0x2040;
         const TICKET_SIZE: usize = 0x350;
         const TMD_SIZE: usize = 0xB34;
@@ -3210,6 +3212,8 @@ mod tests {
         const TITLE_ID: u64 = 0x0004_0000_0000_0001;
         const TITLE_KEY: [u8; 16] = [0x82; 16];
         const NORMAL_KEY: [u8; 16] = [0x71; 16];
+        const MENU_INFO_KEY: [u8; 16] = [0x63; 16];
+        const CONTENT_KEY: [u8; 16] = [0x64; 16];
 
         let mut cia = clear_cia_archive_fixture();
         let tmd_offset = (TICKET_OFFSET + TICKET_SIZE + 0x3F) & !0x3F;
@@ -3217,12 +3221,57 @@ mod tests {
         let tmd_body = tmd_offset + 0x140;
         let info_table_start = tmd_body + 0xC4;
         let content_records_start = info_table_start + 64 * 0x24;
+        let mut clear_content = cia[content_offset..content_offset + CONTENT_SIZE].to_vec();
 
-        // Mark the boot content as outer-CIA encrypted and refresh the TMD
-        // content-info hashes without changing the SHA-256 of cleartext data.
+        if encrypt_ncch_regions {
+            // Remove NoCrypto and encrypt the extended header and .code with
+            // their distinct NCCH AES-CTR key groups before wrapping the CIA.
+            clear_content[0x18F] &= !0x04;
+            let ncch_header = ncch::NcchHeader::parse(
+                &clear_content[..ncch::HEADER_SIZE],
+                clear_content.len() as u64,
+            )
+            .unwrap();
+
+            let extended_header_counter = ncch_header
+                .initial_ctr_for_region(ncch::crypto::NcchCtrRegion::ExtendedHeader)
+                .unwrap();
+            let mut extended_header = clear_content[0x200..0x600].to_vec();
+            ncch::crypto::Aes128Ctr::new(MENU_INFO_KEY, extended_header_counter)
+                .apply_keystream(&mut extended_header)
+                .unwrap();
+            clear_content[0x200..0x600].copy_from_slice(&extended_header);
+
+            let exefs_region = ncch_header.exefs.unwrap();
+            let exefs_start = usize::try_from(exefs_region.offset_bytes).unwrap();
+            let exefs_size = usize::try_from(exefs_region.size_bytes).unwrap();
+            let mut exefs = clear_content[exefs_start..exefs_start + exefs_size].to_vec();
+            let code_size =
+                usize::try_from(u32::from_le_bytes(exefs[12..16].try_into().unwrap())).unwrap();
+            assert!(code_size <= exefs.len() - 0x200);
+
+            let exefs_counter = ncch_header
+                .initial_ctr_for_region(ncch::crypto::NcchCtrRegion::ExeFs)
+                .unwrap();
+            ncch::crypto::Aes128Ctr::new(MENU_INFO_KEY, exefs_counter)
+                .apply_keystream(&mut exefs[..0x200])
+                .unwrap();
+            ncch::crypto::Aes128Ctr::apply_keystream_at_offset(
+                CONTENT_KEY,
+                exefs_counter,
+                0x200,
+                &mut exefs[0x200..0x200 + code_size],
+            )
+            .unwrap();
+            clear_content[exefs_start..exefs_start + exefs_size].copy_from_slice(&exefs);
+        }
+
+        // Mark the boot content as outer-CIA encrypted and hash the exact
+        // NCCH bytes stored after optional inner AES-CTR encryption.
         let mut content_record = [0u8; 0x30];
         content_record.copy_from_slice(&cia[content_records_start..content_records_start + 0x30]);
         content_record[0x06..0x08].copy_from_slice(&1u16.to_be_bytes());
+        content_record[0x10..0x30].copy_from_slice(&sha256_digest(&clear_content));
         cia[content_records_start..content_records_start + content_record.len()]
             .copy_from_slice(&content_record);
 
@@ -3243,10 +3292,9 @@ mod tests {
         let ticket_body = TICKET_OFFSET + 0x140;
         cia[ticket_body + 0x7F..ticket_body + 0x8F].copy_from_slice(&encrypted_title_key);
 
-        // Encrypt the complete boot content with the ticket title key.
+        // Encrypt the complete CIA content with the ticket title key.
         let cipher = crate::loader::ncsd::ncch::crypto::Aes128::new(TITLE_KEY);
         let mut previous = crate::loader::cia::cia_content_iv(0);
-        let clear_content = cia[content_offset..content_offset + CONTENT_SIZE].to_vec();
         let mut encrypted_content = Vec::with_capacity(CONTENT_SIZE);
         for chunk in clear_content.chunks_exact(16) {
             let mut block: [u8; 16] = chunk.try_into().unwrap();
@@ -3259,12 +3307,12 @@ mod tests {
         }
         cia[content_offset..content_offset + CONTENT_SIZE].copy_from_slice(&encrypted_content);
 
-        (cia, NORMAL_KEY)
+        (cia, NORMAL_KEY, MENU_INFO_KEY, CONTENT_KEY)
     }
 
     #[test]
     fn loads_encrypted_cia_boot_content_with_caller_supplied_ticket_keys() {
-        let (cia, normal_key) = encrypted_cia_archive_fixture();
+        let (cia, normal_key, _, _) = encrypted_cia_archive_fixture(false);
         let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
         keys.set_normal_key(0, normal_key).unwrap();
 
@@ -3274,6 +3322,31 @@ mod tests {
             &keys,
             [0; AES_BLOCK_SIZE],
             [0; AES_BLOCK_SIZE],
+        );
+
+        assert_eq!(result.unwrap(), ImageFormat::Cia);
+        assert_eq!(system.image(), Some(ImageFormat::Cia));
+        assert_eq!(system.cpu().pc(), 0x0010_0000);
+
+        let report = system.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(system.cpu().regs[0], 7);
+        assert_eq!(system.cpu().regs[1], 5);
+    }
+
+    #[test]
+    fn loads_encrypted_cia_and_encrypted_ncch_into_arm11_session() {
+        let (cia, normal_key, menu_info_key, content_key) =
+            encrypted_cia_archive_fixture(true);
+        let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
+        keys.set_normal_key(0, normal_key).unwrap();
+
+        let mut system = System::new();
+        let result = system.load_cia_with_keys(
+            std::io::Cursor::new(cia),
+            &keys,
+            menu_info_key,
+            content_key,
         );
 
         assert_eq!(result.unwrap(), ImageFormat::Cia);
