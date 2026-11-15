@@ -1029,7 +1029,10 @@ mod tests {
             request.segment_bases[1]
         );
         assert_eq!(manifest.initial_stack_pointer(), 0x0400_2000);
-        assert_eq!(manifest.bss_address(), u64::from(request.segment_bases[2]) + 4);
+        assert_eq!(
+            manifest.bss_address(),
+            u64::from(request.segment_bases[2]) + 4
+        );
         assert_eq!(manifest.bss_offset_bytes(), 4);
     }
 
