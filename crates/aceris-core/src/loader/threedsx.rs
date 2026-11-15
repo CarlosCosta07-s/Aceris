@@ -252,14 +252,22 @@ impl ThreeDsxImage {
             relocation_cursor = relative_end;
         }
 
-        let segment_sizes = [
-            code.memory_size_bytes,
-            rodata.memory_size_bytes,
-            data.memory_size_bytes,
+        let segment_file_sizes = [
+            code.file_size_bytes,
+            rodata.file_size_bytes,
+            data.file_size_bytes,
         ];
-        for (index, segment_size_bytes) in segment_sizes.into_iter().enumerate() {
-            validate_relocation_table(reader, relocations[index].absolute, segment_size_bytes)?;
-            validate_relocation_table(reader, relocations[index].relative, segment_size_bytes)?;
+        for (index, segment_file_size_bytes) in segment_file_sizes.into_iter().enumerate() {
+            validate_relocation_table(
+                reader,
+                relocations[index].absolute,
+                segment_file_size_bytes,
+            )?;
+            validate_relocation_table(
+                reader,
+                relocations[index].relative,
+                segment_file_size_bytes,
+            )?;
         }
 
         validate_extended_sections(extended_header, relocation_cursor, file_len)?;
@@ -296,7 +304,7 @@ impl ThreeDsxImage {
             offsets[index].absolute = read_relocation_word_offsets(
                 reader,
                 tables.absolute,
-                segment.memory_size_bytes,
+                segment.file_size_bytes,
                 maximum_patched_words.saturating_sub(total_patched_words),
             )?;
             total_patched_words = total_patched_words
@@ -638,6 +646,18 @@ mod tests {
     fn rejects_bss_larger_than_the_data_segment() {
         let mut image = minimal_image(HEADER_SIZE as u16, None);
         put_u32(&mut image, 28, 9);
+        assert!(ThreeDsxImage::parse_reader(&mut Cursor::new(image)).is_err());
+    }
+
+    #[test]
+    fn rejects_relocation_runs_that_target_uninitialized_bss() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        // The data segment has one file-backed word and one BSS word.
+        // Its relocation table must not patch the second (zero-filled) word.
+        put_u32(&mut image, 48, 1);
+        image.extend_from_slice(&1u16.to_le_bytes());
+        image.extend_from_slice(&1u16.to_le_bytes());
+
         assert!(ThreeDsxImage::parse_reader(&mut Cursor::new(image)).is_err());
     }
 
