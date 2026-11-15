@@ -73,22 +73,56 @@ pub enum ThreeDsxProcessMemoryKind {
 /// reconstructing permissions from the original file format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThreeDsxProcessMemoryMapping<'a> {
-    /// Semantic role of this mapping.
-    pub kind: ThreeDsxProcessMemoryKind,
-    /// First virtual address of the mapping.
-    pub address: u32,
-    /// Number of bytes initialized from the 3DSX image; zero for Stack.
-    pub initialized_size_bytes: u32,
-    /// Total page-aligned virtual size.
-    pub mapped_size_bytes: u32,
-    /// Borrowed, fully materialized mapping bytes, including zero-filled tails.
-    pub bytes: &'a [u8],
-    /// All current 3DSX process mappings are readable.
-    pub readable: bool,
-    /// Whether user-mode writes are permitted.
-    pub writable: bool,
-    /// Whether instruction fetch is permitted.
-    pub executable: bool,
+    kind: ThreeDsxProcessMemoryKind,
+    address: u32,
+    initialized_size_bytes: u32,
+    mapped_size_bytes: u32,
+    bytes: &'a [u8],
+    readable: bool,
+    writable: bool,
+    executable: bool,
+}
+
+impl<'a> ThreeDsxProcessMemoryMapping<'a> {
+    /// Returns the semantic role of this mapping.
+    pub const fn kind(&self) -> ThreeDsxProcessMemoryKind {
+        self.kind
+    }
+
+    /// Returns the first virtual address of the mapping.
+    pub const fn address(&self) -> u32 {
+        self.address
+    }
+
+    /// Returns the number of bytes initialized from the 3DSX image.
+    pub const fn initialized_size_bytes(&self) -> u32 {
+        self.initialized_size_bytes
+    }
+
+    /// Returns the total page-aligned virtual size.
+    pub const fn mapped_size_bytes(&self) -> u32 {
+        self.mapped_size_bytes
+    }
+
+    /// Returns the immutable, fully materialized mapping bytes.
+    pub const fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Returns whether user-mode reads are permitted.
+    pub const fn readable(&self) -> bool {
+        self.readable
+    }
+
+    /// Returns whether user-mode writes are permitted.
+    pub const fn writable(&self) -> bool {
+        self.writable
+    }
+
+    /// Returns whether instruction fetch is permitted.
+    pub const fn executable(&self) -> bool {
+        self.executable
+    }
 }
 
 /// Complete, validated startup view of a prepared 3DSX process.
@@ -98,16 +132,44 @@ pub struct ThreeDsxProcessMemoryMapping<'a> {
 /// Mapping bytes are borrowed; constructing the manifest does not copy memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThreeDsxProcessMemoryManifest<'a> {
-    /// Address of the first executable instruction.
-    pub entry_point: u32,
-    /// Initial SP for the main thread.
-    pub initial_stack_pointer: u32,
-    /// Exact virtual start of BSS inside the contiguous Data mapping.
-    pub bss_address: u64,
-    /// Exact number of BSS bytes declared by the 3DSX header.
-    pub bss_size_bytes: u32,
-    /// Code, ROData, Data and Stack mappings in deterministic order.
-    pub mappings: [ThreeDsxProcessMemoryMapping<'a>; 4],
+    entry_point: u32,
+    initial_stack_pointer: u32,
+    bss_address: u64,
+    bss_size_bytes: u32,
+    bss_offset_bytes: u32,
+    mappings: [ThreeDsxProcessMemoryMapping<'a>; 4],
+}
+
+impl<'a> ThreeDsxProcessMemoryManifest<'a> {
+    /// Returns the address of the first executable instruction.
+    pub const fn entry_point(&self) -> u32 {
+        self.entry_point
+    }
+
+    /// Returns the initial SP for the main thread.
+    pub const fn initial_stack_pointer(&self) -> u32 {
+        self.initial_stack_pointer
+    }
+
+    /// Returns the exact virtual start of BSS inside the contiguous Data mapping.
+    pub const fn bss_address(&self) -> u64 {
+        self.bss_address
+    }
+
+    /// Returns the exact number of BSS bytes declared by the 3DSX header.
+    pub const fn bss_size_bytes(&self) -> u32 {
+        self.bss_size_bytes
+    }
+
+    /// Returns the BSS offset from the start of the Data mapping.
+    pub const fn bss_offset_bytes(&self) -> u32 {
+        self.bss_offset_bytes
+    }
+
+    /// Returns Code, ROData, Data and Stack mappings in deterministic order.
+    pub const fn mappings(&self) -> &[ThreeDsxProcessMemoryMapping<'a>; 4] {
+        &self.mappings
+    }
 }
 
 /// Validated 3DSX virtual layout, including the implicit entry point and BSS.
@@ -213,11 +275,18 @@ impl ThreeDsxPreparedProcess {
     /// prepared process. BSS remains part of the writable Data mapping.
     pub fn memory_manifest(&self) -> io::Result<ThreeDsxProcessMemoryManifest<'_>> {
         let mappings = self.memory_mappings()?;
+        let bss_offset_bytes = self
+            .layout
+            .bss_address
+            .checked_sub(u64::from(mappings[2].address()))
+            .and_then(|offset| u32::try_from(offset).ok())
+            .ok_or_else(|| invalid_data("3DSX BSS offset does not fit its Data mapping"))?;
         Ok(ThreeDsxProcessMemoryManifest {
             entry_point: self.layout.entry_point,
             initial_stack_pointer: self.layout.initial_stack_pointer,
             bss_address: self.layout.bss_address,
             bss_size_bytes: self.layout.bss_size_bytes,
+            bss_offset_bytes,
             mappings,
         })
     }
@@ -719,12 +788,12 @@ mod tests {
             .unwrap();
 
         let mappings = prepared.memory_mappings().unwrap();
-        assert_eq!(mappings[0].mapped_size_bytes, 0x1000);
-        assert_eq!(mappings[1].mapped_size_bytes, 0);
-        assert!(mappings[1].bytes.is_empty());
-        assert_eq!(mappings[2].mapped_size_bytes, 0);
-        assert!(mappings[2].bytes.is_empty());
-        assert_eq!(mappings[3].mapped_size_bytes, 0x1000);
+        assert_eq!(mappings[0].mapped_size_bytes(), 0x1000);
+        assert_eq!(mappings[1].mapped_size_bytes(), 0);
+        assert!(mappings[1].bytes().is_empty());
+        assert_eq!(mappings[2].mapped_size_bytes(), 0);
+        assert!(mappings[2].bytes().is_empty());
+        assert_eq!(mappings[3].mapped_size_bytes(), 0x1000);
         assert_eq!(prepared.layout.total_mapped_size_bytes, 0x2000);
     }
 
@@ -741,7 +810,7 @@ mod tests {
 
         let mappings = prepared.memory_mappings().unwrap();
         assert_eq!(
-            mappings.map(|mapping| mapping.kind),
+            mappings.map(|mapping| mapping.kind()),
             [
                 ThreeDsxProcessMemoryKind::Code,
                 ThreeDsxProcessMemoryKind::ReadOnly,
@@ -750,29 +819,29 @@ mod tests {
             ]
         );
 
-        assert_eq!(mappings[0].address, 0x0010_0000);
-        assert_eq!(mappings[0].initialized_size_bytes, 4);
-        assert_eq!(mappings[0].mapped_size_bytes, 0x1000);
-        assert_eq!(&mappings[0].bytes[..4], &[0x11, 0x22, 0x33, 0x44]);
-        assert!(mappings[0].readable);
-        assert!(!mappings[0].writable);
-        assert!(mappings[0].executable);
+        assert_eq!(mappings[0].address(), 0x0010_0000);
+        assert_eq!(mappings[0].initialized_size_bytes(), 4);
+        assert_eq!(mappings[0].mapped_size_bytes(), 0x1000);
+        assert_eq!(&mappings[0].bytes()[..4], &[0x11, 0x22, 0x33, 0x44]);
+        assert!(mappings[0].readable());
+        assert!(!mappings[0].writable());
+        assert!(mappings[0].executable());
 
-        assert_eq!(mappings[1].address, 0x0020_0000);
-        assert!(!mappings[1].writable);
-        assert!(!mappings[1].executable);
+        assert_eq!(mappings[1].address(), 0x0020_0000);
+        assert!(!mappings[1].writable());
+        assert!(!mappings[1].executable());
 
-        assert_eq!(mappings[2].address, 0x0030_0000);
-        assert_eq!(mappings[2].initialized_size_bytes, 4);
-        assert!(mappings[2].writable);
-        assert!(!mappings[2].executable);
-        assert!(mappings[2].bytes[4..].iter().all(|byte| *byte == 0));
+        assert_eq!(mappings[2].address(), 0x0030_0000);
+        assert_eq!(mappings[2].initialized_size_bytes(), 4);
+        assert!(mappings[2].writable());
+        assert!(!mappings[2].executable());
+        assert!(mappings[2].bytes()[4..].iter().all(|byte| *byte == 0));
 
-        assert_eq!(mappings[3].address, 0x0400_0000);
-        assert_eq!(mappings[3].initialized_size_bytes, 0);
-        assert!(mappings[3].writable);
-        assert!(!mappings[3].executable);
-        assert!(mappings[3].bytes.iter().all(|byte| *byte == 0));
+        assert_eq!(mappings[3].address(), 0x0400_0000);
+        assert_eq!(mappings[3].initialized_size_bytes(), 0);
+        assert!(mappings[3].writable());
+        assert!(!mappings[3].executable());
+        assert!(mappings[3].bytes().iter().all(|byte| *byte == 0));
     }
 
     #[test]
@@ -787,23 +856,27 @@ mod tests {
         .unwrap();
 
         let manifest = prepared.memory_manifest().unwrap();
-        assert_eq!(manifest.entry_point, 0x0010_0000);
-        assert_eq!(manifest.initial_stack_pointer, 0x0400_2000);
-        assert_eq!(manifest.bss_address, 0x0030_0004);
-        assert_eq!(manifest.bss_size_bytes, 4);
+        assert_eq!(manifest.entry_point(), 0x0010_0000);
+        assert_eq!(manifest.initial_stack_pointer(), 0x0400_2000);
+        assert_eq!(manifest.bss_address(), 0x0030_0004);
+        assert_eq!(manifest.bss_size_bytes(), 4);
 
         let data = manifest
             .mappings
             .iter()
-            .find(|mapping| mapping.kind == ThreeDsxProcessMemoryKind::Data)
+            .find(|mapping| mapping.kind() == ThreeDsxProcessMemoryKind::Data)
             .unwrap();
-        let bss_offset = usize::try_from(manifest.bss_address - u64::from(data.address)).unwrap();
-        let bss_end = bss_offset + manifest.bss_size_bytes as usize;
+        let bss_offset = manifest.bss_offset_bytes() as usize;
+        let bss_end = bss_offset + manifest.bss_size_bytes() as usize;
+        assert_eq!(
+            u64::from(data.address()) + u64::from(manifest.bss_offset_bytes()),
+            manifest.bss_address()
+        );
 
         assert_eq!(bss_offset, data.initialized_size_bytes as usize);
         assert_eq!(data.bytes.get(bss_offset..bss_end), Some(&[0; 4][..]));
-        assert_eq!(manifest.mappings[3].kind, ThreeDsxProcessMemoryKind::Stack);
-        assert_eq!(manifest.mappings[3].address, 0x0400_0000);
+        assert_eq!(manifest.mappings()[3].kind(), ThreeDsxProcessMemoryKind::Stack);
+        assert_eq!(manifest.mappings()[3].address(), 0x0400_0000);
     }
 
     #[test]
