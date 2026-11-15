@@ -355,11 +355,12 @@ impl ThreeDsxImage {
             self.rodata.memory_size_bytes,
             self.data.memory_size_bytes,
         ];
-        let aligned_sizes = segment_memory_sizes.map(align_to_page);
+        let [code_aligned_size, rodata_aligned_size, data_aligned_size] =
+            segment_memory_sizes.map(align_to_page);
         let aligned_sizes = [
-            aligned_sizes[0]?,
-            aligned_sizes[1]?,
-            aligned_sizes[2]?,
+            code_aligned_size?,
+            rodata_aligned_size?,
+            data_aligned_size?,
         ];
         validate_segment_bases(segment_bases, aligned_sizes)?;
 
@@ -386,41 +387,53 @@ impl ThreeDsxImage {
             }
         }
 
-        let mut patched_words = 0usize;
-        let mut segment_bytes: [&mut [u8]; SEGMENT_COUNT] = [
-            &mut loaded.code,
-            &mut loaded.rodata,
-            &mut loaded.data,
-        ];
+        let source_segments: [&[u8]; SEGMENT_COUNT] =
+            [&loaded.code, &loaded.rodata, &loaded.data];
+        let relocation_count = offsets.iter().try_fold(0usize, |total, tables| {
+            total
+                .checked_add(tables.absolute.len())
+                .and_then(|count| count.checked_add(tables.relative.len()))
+        }).ok_or_else(|| invalid_data("3DSX patched-word count overflows"))?;
+        let mut patches = Vec::new();
+        patches
+            .try_reserve_exact(relocation_count)
+            .map_err(|error| io::Error::other(format!("could not allocate 3DSX patch list: {error}")))?;
 
         for segment_index in 0..SEGMENT_COUNT {
-            let bytes = &mut segment_bytes[segment_index];
-            let source_base = segment_bases[segment_index];
-
-            apply_relocation_words(
-                bytes,
+            prepare_relocation_words(
+                source_segments[segment_index],
+                segment_index,
                 &offsets[segment_index].absolute,
                 RelocationTableKind::Absolute,
-                source_base,
                 segment_bases,
                 aligned_sizes,
+                &mut patches,
             )?;
-            apply_relocation_words(
-                bytes,
+            prepare_relocation_words(
+                source_segments[segment_index],
+                segment_index,
                 &offsets[segment_index].relative,
                 RelocationTableKind::Relative,
-                source_base,
                 segment_bases,
                 aligned_sizes,
+                &mut patches,
             )?;
-
-            patched_words = patched_words
-                .checked_add(offsets[segment_index].absolute.len())
-                .and_then(|count| count.checked_add(offsets[segment_index].relative.len()))
-                .ok_or_else(|| invalid_data("3DSX patched-word count overflows"))?;
         }
 
-        Ok(patched_words)
+        // All metadata, sites, targets and subtypes have been validated. The
+        // following writes therefore cannot fail halfway through relocation.
+        for (segment_index, byte_offset, relocated_word) in &patches {
+            let target = match segment_index {
+                0 => &mut loaded.code,
+                1 => &mut loaded.rodata,
+                2 => &mut loaded.data,
+                _ => unreachable!("relocation segment index is bounded by SEGMENT_COUNT"),
+            };
+            target[*byte_offset..*byte_offset + WORD_SIZE as usize]
+                .copy_from_slice(&relocated_word.to_le_bytes());
+        }
+
+        Ok(patches.len())
     }
 
     /// Reads all file-backed segments and allocates a zero-filled BSS tail.
@@ -569,7 +582,7 @@ fn validate_segment_bases(
     bases: [u32; SEGMENT_COUNT],
     sizes: [u64; SEGMENT_COUNT],
 ) -> io::Result<()> {
-    let mut ranges = [(0u64, 0u64, 0usize); SEGMENT_COUNT];
+    let mut ranges = Vec::with_capacity(SEGMENT_COUNT);
     for index in 0..SEGMENT_COUNT {
         if u64::from(bases[index]) % PAGE_SIZE != 0 {
             return Err(invalid_data(format!(
@@ -584,7 +597,9 @@ fn validate_segment_bases(
                 "3DSX segment virtual range exceeds the 32-bit address space",
             ));
         }
-        ranges[index] = (u64::from(bases[index]), end, index);
+        if sizes[index] != 0 {
+            ranges.push((u64::from(bases[index]), end, index));
+        }
     }
 
     ranges.sort_unstable_by_key(|range| range.0);
@@ -633,13 +648,14 @@ fn resolve_image_offset(
         .map_err(|_| invalid_data("3DSX relocated target exceeds the 32-bit address space"))
 }
 
-fn apply_relocation_words(
-    source_bytes: &mut [u8],
+fn prepare_relocation_words(
+    source_bytes: &[u8],
+    source_segment_index: usize,
     word_offsets: &[u32],
     table_kind: RelocationTableKind,
-    source_base: u32,
     segment_bases: [u32; SEGMENT_COUNT],
     aligned_sizes: [u64; SEGMENT_COUNT],
+    patches: &mut Vec<(usize, usize, u32)>,
 ) -> io::Result<()> {
     for &word_index in word_offsets {
         let byte_offset_u64 = u64::from(word_index)
@@ -651,20 +667,21 @@ fn apply_relocation_words(
             .checked_add(WORD_SIZE as usize)
             .ok_or_else(|| invalid_data("3DSX relocation site range overflows"))?;
         let word_bytes = source_bytes
-            .get_mut(byte_offset..end)
+            .get(byte_offset..end)
             .ok_or_else(|| invalid_data("3DSX relocation site is outside loaded segment bytes"))?;
+        let original_word = u32::from_le_bytes([
+            word_bytes[0],
+            word_bytes[1],
+            word_bytes[2],
+            word_bytes[3],
+        ]);
 
-        let original_word = u32::from_le_bytes(
-            word_bytes
-                .try_into()
-                .map_err(|_| invalid_data("3DSX relocation site is not a complete word"))?,
-        );
         let subtype = original_word >> 28;
         let image_offset = original_word & RELOCATION_OFFSET_MASK;
         let target_address =
             resolve_image_offset(image_offset, segment_bases, aligned_sizes)?;
 
-        let source_address = u64::from(source_base)
+        let source_address = u64::from(segment_bases[source_segment_index])
             .checked_add(byte_offset_u64)
             .ok_or_else(|| invalid_data("3DSX relocation source address overflows"))?;
         let source_address = u32::try_from(source_address)
@@ -707,7 +724,7 @@ fn apply_relocation_words(
             }
         };
 
-        word_bytes.copy_from_slice(&relocated_word.to_le_bytes());
+        patches.push((source_segment_index, byte_offset, relocated_word));
     }
 
     Ok(())
