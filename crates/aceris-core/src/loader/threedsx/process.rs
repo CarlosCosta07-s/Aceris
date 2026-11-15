@@ -69,6 +69,206 @@ pub struct ThreeDsxPreparedProcess {
     pub stack: Vec<u8>,
 }
 
+impl ThreeDsxPreparedProcess {
+    /// Revalidates the public layout and buffers before they are installed in a process address space.
+    ///
+    /// The fields of this type are public so loaders and frontends can inspect
+    /// the prepared image. Callers must not treat that as a guarantee that the
+    /// values remained unchanged after preparation. This method checks segment
+    /// sizes, addresses, permissions, overlap, BSS placement, entry point,
+    /// stack pointer and zero-filled regions as one atomic precondition.
+    pub fn validate(&self) -> io::Result<()> {
+        let layout = &self.layout;
+        let code_end = validate_prepared_segment(
+            "Code",
+            layout.code,
+            &self.code,
+            false,
+            true,
+            false,
+        )?;
+        let read_only_end = validate_prepared_segment(
+            "ROData",
+            layout.read_only,
+            &self.read_only,
+            false,
+            false,
+            true,
+        )?;
+        let data_end = validate_prepared_segment(
+            "Data",
+            layout.data,
+            &self.data,
+            true,
+            false,
+            true,
+        )?;
+        let stack_end = validate_prepared_segment(
+            "Stack",
+            layout.stack,
+            &self.stack,
+            true,
+            false,
+            false,
+        )?;
+
+        if layout.code.initialized_size_bytes == 0 {
+            return Err(invalid_data("3DSX Code segment is empty"));
+        }
+        if layout.entry_point != layout.code.address
+            || u64::from(layout.entry_point) >= code_end
+        {
+            return Err(invalid_data(
+                "3DSX entry point is outside the executable Code mapping",
+            ));
+        }
+        if layout.initial_stack_pointer as u64 != stack_end
+            || layout.initial_stack_pointer % 8 != 0
+        {
+            return Err(invalid_data(
+                "3DSX initial stack pointer does not match the aligned stack top",
+            ));
+        }
+
+        let expected_bss_address = u64::from(layout.data.address)
+            .checked_add(u64::from(layout.data.initialized_size_bytes))
+            .ok_or_else(|| invalid_data("3DSX BSS address overflows"))?;
+        if layout.bss_address != expected_bss_address {
+            return Err(invalid_data(
+                "3DSX BSS does not immediately follow initialized Data",
+            ));
+        }
+        let bss_end = layout
+            .bss_address
+            .checked_add(u64::from(layout.bss_size_bytes))
+            .ok_or_else(|| invalid_data("3DSX BSS range overflows"))?;
+        if bss_end > data_end {
+            return Err(invalid_data(
+                "3DSX BSS extends beyond the Data memory mapping",
+            ));
+        }
+
+        let mut ranges = [
+            (u64::from(layout.code.address), code_end, "Code"),
+            (
+                u64::from(layout.read_only.address),
+                read_only_end,
+                "ROData",
+            ),
+            (u64::from(layout.data.address), data_end, "Data"),
+            (u64::from(layout.stack.address), stack_end, "Stack"),
+        ];
+        ranges.sort_unstable_by_key(|range| range.0);
+        let mut previous: Option<(u64, &str)> = None;
+        for (start, end, name) in ranges {
+            if start == end {
+                continue;
+            }
+            if let Some((previous_end, previous_name)) = previous {
+                if start < previous_end {
+                    return Err(invalid_data(format!(
+                        "3DSX {previous_name} and {name} mappings overlap",
+                    )));
+                }
+            }
+            previous = Some((end, name));
+        }
+
+        let expected_total = [
+            layout.code.mapped_size_bytes,
+            layout.read_only.mapped_size_bytes,
+            layout.data.mapped_size_bytes,
+            layout.stack.mapped_size_bytes,
+        ]
+        .into_iter()
+        .try_fold(0u64, |total, size| total.checked_add(u64::from(size)))
+        .ok_or_else(|| invalid_data("3DSX mapped memory total overflows"))?;
+        if layout.total_mapped_size_bytes != expected_total {
+            return Err(invalid_data(
+                "3DSX mapped memory total does not match its segments",
+            ));
+        }
+
+        ensure_zeroed_tail("Code", &self.code, layout.code.initialized_size_bytes)?;
+        ensure_zeroed_tail(
+            "ROData",
+            &self.read_only,
+            layout.read_only.initialized_size_bytes,
+        )?;
+        ensure_zeroed_tail("Data", &self.data, layout.data.initialized_size_bytes)?;
+        ensure_zeroed_tail("Stack", &self.stack, 0)?;
+
+        Ok(())
+    }
+}
+
+fn validate_prepared_segment(
+    name: &'static str,
+    segment: ThreeDsxProcessMemorySegment,
+    bytes: &[u8],
+    writable: bool,
+    executable: bool,
+    allow_empty: bool,
+) -> io::Result<u64> {
+    if u64::from(segment.address) % super::PAGE_SIZE != 0 {
+        return Err(invalid_data(format!(
+            "3DSX {name} base is not page-aligned",
+        )));
+    }
+    if u64::from(segment.mapped_size_bytes) % super::PAGE_SIZE != 0 {
+        return Err(invalid_data(format!(
+            "3DSX {name} mapping size is not page-aligned",
+        )));
+    }
+    if !allow_empty && segment.mapped_size_bytes == 0 {
+        return Err(invalid_data(format!("3DSX {name} mapping is empty")));
+    }
+    if segment.initialized_size_bytes > segment.mapped_size_bytes {
+        return Err(invalid_data(format!(
+            "3DSX {name} initialized size exceeds its mapping",
+        )));
+    }
+    if bytes.len() != segment.mapped_size_bytes as usize {
+        return Err(invalid_data(format!(
+            "3DSX {name} buffer has {} bytes, expected {}",
+            bytes.len(),
+            segment.mapped_size_bytes,
+        )));
+    }
+    if segment.writable != writable || segment.executable != executable {
+        return Err(invalid_data(format!(
+            "3DSX {name} mapping permissions are invalid",
+        )));
+    }
+
+    let end = u64::from(segment.address)
+        .checked_add(u64::from(segment.mapped_size_bytes))
+        .ok_or_else(|| invalid_data(format!("3DSX {name} address range overflows")))?;
+    if end > 0x1_0000_0000 {
+        return Err(invalid_data(format!(
+            "3DSX {name} mapping exceeds the 32-bit address space",
+        )));
+    }
+    Ok(end)
+}
+
+fn ensure_zeroed_tail(
+    name: &'static str,
+    bytes: &[u8],
+    initialized_size_bytes: u32,
+) -> io::Result<()> {
+    let initialized_size = initialized_size_bytes as usize;
+    let tail = bytes
+        .get(initialized_size..)
+        .ok_or_else(|| invalid_data(format!("3DSX {name} initialized size exceeds its buffer")))?;
+    if tail.iter().any(|byte| *byte != 0) {
+        return Err(invalid_data(format!(
+            "3DSX {name} zero-filled tail contains non-zero bytes",
+        )));
+    }
+    Ok(())
+}
+
 impl ThreeDsxImage {
     /// Creates a page-aligned process image from loaded and (when present) relocated segments.
     ///
@@ -175,7 +375,7 @@ impl ThreeDsxImage {
             .checked_add(self.data.file_size_bytes)
             .ok_or_else(|| invalid_data("3DSX BSS virtual address overflows"))?;
 
-        Ok(ThreeDsxPreparedProcess {
+        let prepared = ThreeDsxPreparedProcess {
             layout: ThreeDsxProcessLayout {
                 entry_point: segment_bases[0],
                 code: ThreeDsxProcessMemorySegment {
@@ -215,7 +415,9 @@ impl ThreeDsxImage {
             read_only,
             data,
             stack,
-        })
+        };
+        prepared.validate()?;
+        Ok(prepared)
     }
 }
 
