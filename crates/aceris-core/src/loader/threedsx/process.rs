@@ -138,9 +138,7 @@ impl ThreeDsxPreparedProcess {
     /// carry explicit R/W/X permissions, and preserve the exact virtual layout.
     /// Empty ROData or Data mappings are represented with zero length; adapters
     /// may skip installing those empty ranges.
-    pub fn memory_mappings(
-        &self,
-    ) -> io::Result<[ThreeDsxProcessMemoryMapping<'_>; 4]> {
+    pub fn memory_mappings(&self) -> io::Result<[ThreeDsxProcessMemoryMapping<'_>; 4]> {
         self.validate()?;
         let layout = &self.layout;
 
