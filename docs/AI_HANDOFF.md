@@ -1266,3 +1266,33 @@ Neste ambiente (Rust 1.97), sobre o `main` `bd64b41`: `cargo fmt --all --check`,
 1. Decodificar o entrypoint do shader e o output map (o0–o15 → posição, cor, texcoord).
 2. Converter as saídas em `GeometryVertex`/`RasterVertex` e ligar ao `GeometryPipeline`.
 3. Clipping/culling com semântica confirmada, depois fluxo de controle e CMP/MOVA no executor.
+
+## PICA200 — entrypoint e output map do vertex shader (15/11/2026)
+
+### Arquivos
+
+- `crates/aceris-core/src/gpu/output_map.rs` (novo) — `REG_VSH_ENTRYPOINT` (0x2BA), `REG_SH_OUTMAP_O0` (0x050, sete registradores), `PicaVertexOutputMap`, `PicaResolvedVertex`, `PicaOutputMapError`, `Pica200::vertex_shader_entrypoint` e `Pica200::vertex_output_map`. 8 testes.
+- `crates/aceris-core/src/gpu/draw_exec.rs` — `shade_draw_at_registered_entrypoint` e um teste ponta a ponta (draw → shader → output map → `GeometryVertex`).
+- `crates/aceris-core/src/gpu/mod.rs` — módulo e reexportações.
+
+### Contrato
+
+- O mapa é decodificado só pelos bytes de semântica; o registrador de contagem de saídas não é consultado. O estado de energia (todos os registradores em zero) mapeia `position.x` quatro vezes e por isso é rejeitado como `DuplicateSemantic`: programe o mapa antes de resolver.
+- Cada grupo (posição, cor, texcoord0/1/2) é tudo-ou-nada; semântica repetida e ausência de posição são erros, sem completar lanes com padrões inventados.
+- `to_geometry_vertex(default_color)` limita a cor a 0..=1, arredonda para 8 bits e trata NaN como 0; sem cor mapeada, usa a cor informada pelo chamador.
+- Quaternion (0x04–0x07), view (0x12–0x14) e texcoord0.w (0x10) são aceitos e ignorados.
+
+### Verificação realmente executada
+
+Sobre o `main` `f4d7e8f`: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` (1294 testes, 0 falhas), todos com saída 0 neste ambiente. O CI remoto não foi consultado.
+
+### Premissas não verificadas
+
+- Os números de semântica, o endereço dos registradores e o uso dos bits 0–15 do entrypoint vêm de documentação pública recordada de memória, e os testes usam essa mesma numeração. Confirme com uma fonte independente antes de depender deles.
+- A conversão de cor para 8 bits (clamp e arredondamento) é uma escolha de bring-up, não comportamento confirmado do hardware.
+
+### Próximas tarefas
+
+1. Ligar `PicaResolvedVertex` ao `GeometryPipeline::draw_triangle` e ao `SoftwareRasterizer` para fechar o caminho draw → pixels.
+2. Clipping/culling com semântica confirmada; interpolação de texcoord quando houver texturas.
+3. Ampliar o executor com CMP/MOVA/a0 e fluxo de controle.
