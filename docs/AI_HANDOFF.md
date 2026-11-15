@@ -1328,3 +1328,33 @@ Sobre o `main` `9beaf77`: `cargo fmt --all --check`, `cargo clippy --workspace -
 1. Culling e regras de winding com fonte independente.
 2. Interpolação de texcoord e unidade de textura.
 3. Escrever o resultado no framebuffer do GSP (formato e endereço reais) em vez do buffer de software.
+
+## PICA200 → LCD — apresentação do buffer de cor (15/11/2026)
+
+### Arquivos
+
+- `crates/aceris-core/src/video/present.rs` (novo) — `present_to_framebuffer`, `minimum_framebuffer_stride`, `FramebufferWriteError`. 11 testes.
+- `crates/aceris-core/src/video/lcd.rs` — apenas visibilidade: `LcdPixelFormat::bytes_per_pixel` e `expand_4/5/6` passaram a `pub(super)`.
+- `crates/aceris-core/src/video.rs` — declara o módulo e reexporta os três nomes.
+
+### Contrato
+
+- É o inverso exato de `decode_row` do scanout: `RGBA8` grava `[A, B, G, R]`, `RGB8` grava `[B, G, R]` (sem alfa), os formatos de 16 bits são little-endian com os campos na ordem que o scanout lê. A redução para 4/5/6 bits arredonda ao mais próximo e `reduce(expand_n(x)) == x` para todos os níveis (teste exaustivo); RGB5A1 usa alfa >= 128 como bit ligado.
+- O stride precisa ser não nulo, múltiplo de 8, sem o bit 31 e pelo menos uma linha. Use `minimum_framebuffer_stride` para imagem compacta. Os bytes entre linhas (quando o stride é maior) não são tocados.
+- O intervalo inteiro é validado antes de escrever, então uma falha não deixa quadro pela metade.
+- Convenção deste repo: linhas `width × height`, sem a rotação e sem o tiling do hardware real. O rasterizador deve ter o tamanho do painel (400x240 no topo, 320x240 embaixo) para o scanout ler a imagem inteira.
+
+### Verificação realmente executada
+
+Sobre o `main` `198429c`: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` (1311 testes, 0 falhas), todos com saída 0 neste ambiente. O Clippy pegou um import usado só em testes na primeira rodada e foi corrigido antes do commit. O CI remoto não foi consultado.
+
+### Limites
+
+- Nada chama `present_to_framebuffer` ainda: falta decidir de onde vêm o endereço, o formato e o stride (registradores de render target do PICA200 ou `DisplayTransfer` do GSP) e quando apresentar dentro de `System::run_frame_with_budget`.
+- O `DisplayTransfer` real converte um render target em tiles 8x8 e grava rotacionado; isso não está modelado e o layout daqui pode precisar mudar se o scanout passar a seguir o hardware.
+
+### Próximas tarefas
+
+1. Decodificar os registradores de render target (endereço, formato, dimensões) e fazer o draw escrever neles.
+2. Ligar `present_to_framebuffer` (ou o `DisplayTransfer`) ao ciclo de frame, para a saída aparecer no frontend.
+3. Alinhar o layout de scanout com o hardware (tiling e rotação) com fonte independente.
