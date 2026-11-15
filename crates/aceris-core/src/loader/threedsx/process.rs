@@ -91,6 +91,25 @@ pub struct ThreeDsxProcessMemoryMapping<'a> {
     pub executable: bool,
 }
 
+/// Complete, validated startup view of a prepared 3DSX process.
+///
+/// The manifest binds the executable entry point and initial stack pointer to
+/// the exact memory mappings and BSS range from the same validated layout.
+/// Mapping bytes are borrowed; constructing the manifest does not copy memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThreeDsxProcessMemoryManifest<'a> {
+    /// Address of the first executable instruction.
+    pub entry_point: u32,
+    /// Initial SP for the main thread.
+    pub initial_stack_pointer: u32,
+    /// Exact virtual start of BSS inside the contiguous Data mapping.
+    pub bss_address: u64,
+    /// Exact number of BSS bytes declared by the 3DSX header.
+    pub bss_size_bytes: u32,
+    /// Code, ROData, Data and Stack mappings in deterministic order.
+    pub mappings: [ThreeDsxProcessMemoryMapping<'a>; 4],
+}
+
 /// Validated 3DSX virtual layout, including the implicit entry point and BSS.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreeDsxProcessLayout {
@@ -184,6 +203,23 @@ impl ThreeDsxPreparedProcess {
                 executable: layout.stack.executable,
             },
         ])
+    }
+
+    /// Returns one validated startup manifest for an ARM11 memory adapter.
+    ///
+    /// In addition to the borrowed memory mappings, the manifest includes the
+    /// entry point, initial SP and exact BSS range. This prevents consumers
+    /// from accidentally pairing mappings with startup metadata from another
+    /// prepared process. BSS remains part of the writable Data mapping.
+    pub fn memory_manifest(&self) -> io::Result<ThreeDsxProcessMemoryManifest<'_>> {
+        let mappings = self.memory_mappings()?;
+        Ok(ThreeDsxProcessMemoryManifest {
+            entry_point: self.layout.entry_point,
+            initial_stack_pointer: self.layout.initial_stack_pointer,
+            bss_address: self.layout.bss_address,
+            bss_size_bytes: self.layout.bss_size_bytes,
+            mappings,
+        })
     }
 
     /// Revalidates the public layout and buffers before they are installed in a process address space.
@@ -737,6 +773,58 @@ mod tests {
         assert!(mappings[3].writable);
         assert!(!mappings[3].executable);
         assert!(mappings[3].bytes.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn memory_manifest_bundles_startup_state_and_exact_bss_range() {
+        let prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+
+        let manifest = prepared.memory_manifest().unwrap();
+        assert_eq!(manifest.entry_point, 0x0010_0000);
+        assert_eq!(manifest.initial_stack_pointer, 0x0400_2000);
+        assert_eq!(manifest.bss_address, 0x0030_0004);
+        assert_eq!(manifest.bss_size_bytes, 4);
+
+        let data = manifest
+            .mappings
+            .iter()
+            .find(|mapping| mapping.kind == ThreeDsxProcessMemoryKind::Data)
+            .unwrap();
+        let bss_offset = usize::try_from(
+            manifest.bss_address - u64::from(data.address),
+        )
+        .unwrap();
+        let bss_end = bss_offset + manifest.bss_size_bytes as usize;
+
+        assert_eq!(bss_offset, data.initialized_size_bytes as usize);
+        assert_eq!(data.bytes.get(bss_offset..bss_end), Some(&[0; 4][..]));
+        assert_eq!(manifest.mappings[3].kind, ThreeDsxProcessMemoryKind::Stack);
+        assert_eq!(manifest.mappings[3].address, 0x0400_0000);
+    }
+
+    #[test]
+    fn memory_manifest_revalidates_before_exposing_startup_metadata() {
+        let mut prepared = prepare(
+            ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x2000,
+            },
+            0x5000,
+        )
+        .unwrap();
+        prepared.data[4] = 0xA5;
+
+        assert_eq!(
+            prepared.memory_manifest().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
