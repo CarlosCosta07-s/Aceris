@@ -181,6 +181,44 @@ pub unsafe extern "C" fn aceris_system_load_no_crypto_file(
     }
 }
 
+/// Loads an executable supported by the shared core from a UTF-8 path.
+///
+/// Currently accepts standard 3DSX homebrew and unencrypted NCSD
+/// cartridge images (.3ds/.cci). Encrypted NCSD still uses the explicit-key
+/// entry point below.
+///
+/// # Safety
+/// handle must be a live system instance. path must be a readable,
+/// NUL-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_load_executable_file(
+    handle: *mut AcerisSystemHandle,
+    path: *const c_char,
+) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    if path.is_null() {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+    // SAFETY: The caller guarantees a readable NUL-terminated string.
+    let path = unsafe { CStr::from_ptr(path) };
+    let Ok(path) = path.to_str() else {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    };
+    match handle.system.load_executable_file(Path::new(path)) {
+        Ok(_) => {
+            handle.last_error = None;
+            ACERIS_STATUS_OK
+        }
+        Err(error) => {
+            handle.last_error = Some(error.to_string());
+            ACERIS_STATUS_LOAD_FAILED
+        }
+    }
+}
+
 /// Loads an NCSD image using 16-byte menu-info and content keys from the caller.
 ///
 /// Aceris copies the keys for the operation and does not persist or discover them.
@@ -444,6 +482,64 @@ mod tests {
         assert!(!message.is_empty());
 
         // SAFETY: handle is live, unique and destroyed exactly once.
+        unsafe { aceris_system_destroy(handle) };
+    }
+
+    fn minimal_3dsx_fixture() -> Vec<u8> {
+        let instructions = [0xE3A0_0007u32, 0xE3A0_1005, 0xE080_2001];
+        let code_size = instructions.len() * 4;
+        let mut image = vec![0u8; 0x20 + 3 * 8 + code_size];
+        image[..4].copy_from_slice(b"3DSX");
+        image[0x04..0x06].copy_from_slice(&0x20u16.to_le_bytes());
+        image[0x06..0x08].copy_from_slice(&8u16.to_le_bytes());
+        image[0x10..0x14].copy_from_slice(&(code_size as u32).to_le_bytes());
+        for (index, instruction) in instructions.into_iter().enumerate() {
+            let offset = 0x20 + 3 * 8 + index * 4;
+            image[offset..offset + 4].copy_from_slice(&instruction.to_le_bytes());
+        }
+        image
+    }
+
+    #[test]
+    fn android_abi_loads_and_executes_3dsx_homebrew() {
+        let handle = aceris_system_create();
+        assert!(!handle.is_null());
+        let path = std::env::temp_dir().join(format!(
+            "aceris-android-homebrew-{}.3dsx",
+            std::process::id()
+        ));
+        std::fs::write(&path, minimal_3dsx_fixture()).unwrap();
+        let path = CString::new(path.to_str().unwrap()).unwrap();
+
+        // SAFETY: handle is live and path is a readable NUL-terminated string.
+        assert_eq!(
+            unsafe { aceris_system_load_executable_file(handle, path.as_ptr()) },
+            ACERIS_STATUS_OK
+        );
+
+        let mut before = AcerisCpuState::default();
+        // SAFETY: handle is live and before is writable.
+        assert_eq!(
+            unsafe { aceris_system_get_cpu_state(handle, &mut before) },
+            ACERIS_STATUS_OK
+        );
+        assert_eq!(before.program_counter, 0x0010_0000);
+
+        // SAFETY: handle is live and the instruction budget is a valid small value.
+        assert_eq!(
+            unsafe { aceris_system_run_frame(handle, 3) },
+            ACERIS_STATUS_OK
+        );
+
+        let mut after = AcerisCpuState::default();
+        // SAFETY: handle is live and after is writable.
+        assert_eq!(
+            unsafe { aceris_system_get_cpu_state(handle, &mut after) },
+            ACERIS_STATUS_OK
+        );
+        assert_eq!(after.program_counter, 0x0010_000C);
+
+        // SAFETY: handle is live, uniquely owned and destroyed exactly once.
         unsafe { aceris_system_destroy(handle) };
     }
 

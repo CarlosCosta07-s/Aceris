@@ -95,7 +95,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Formatos e conteúdo
 
 - [x] Parser estrutural NCSD para imagens `.3DS` e `.CCI`, com tabela de até oito partições, limites e validação de sobreposição
-- [~] 3DSX: parser, materialização, relocations absolutas/relativas/PREL31, buffers page-aligned, permissões e BSS contíguo implementados; `validate()` revalida o processo, `ThreeDsxPreparedProcess` mantém layout e backing privados e oferece views imutáveis, `memory_mappings()` expõe descritores R/W/X emprestados e `memory_manifest()` agrupa mapeamentos, entry point, SP, faixa e offset exatos do BSS em uma única visão imutável, sem cópia dos buffers. `ThreeDsxImage::load_and_prepare_process()` centraliza leitura, relocations e preparação usando bases, stack, limite de memória e orçamento de patches explícitos; pré-valida endereços, sobreposição, páginas e memória total antes de ler os segmentos. Há testes sintéticos do pipeline relocacionado e dos segmentos vazios. Stack convencional configurável (topo `0x10000000`, `0x4000` bytes). Integração com o espaço ARM11/sessão e execução de homebrew real ainda pendentes.
+- [~] 3DSX: parser, materialização, relocations absolutas/relativas/PREL31, buffers page-aligned, permissões e BSS contíguo implementados; `validate()` revalida o processo, `ThreeDsxPreparedProcess` mantém layout e backing privados e oferece views imutáveis, `memory_mappings()` expõe descritores R/W/X emprestados e `memory_manifest()` agrupa mapeamentos, entry point, SP, faixa e offset exatos do BSS em uma única visão imutável, sem cópia dos buffers. `ThreeDsxImage::load_and_prepare_process()` centraliza leitura, relocations e preparação usando bases, stack, limite de memória e orçamento de patches explícitos; pré-valida endereços, sobreposição, páginas e memória total antes de ler os segmentos. O adaptador `Arm11CodeAddressSpace::from_3dsx_prepared` preserva Code/ROData/Data+BSS/Stack e cria uma sessão ARM11; `System::load_executable_file` e o ABI Android aceitam 3DSX. Testes sintéticos exercitam a execução de instruções no core e o ABI Android. Stack convencional configurável (topo `0x10000000`, `0x4000` bytes). Homebrew externo real e seus serviços/dependências ainda não foram validados.
 - [~] Parser NCCH com leitura de cabeçalho, regiões declaradas e leitores limitados por intervalo
 - [~] ExeFS: leitura das entradas, extração do código e verificação de hashes implementadas em partes; assinatura RSA e todos os cenários de crypto ainda precisam de validação ponta a ponta
 - [~] RomFS: cabeçalho IVFC, leitor de Level 3, cadeia SHA-256 e verificação de integridade presentes; descriptografia e todos os caminhos de instalação/uso ainda exigem validação integrada
@@ -110,10 +110,10 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [x] Mapeamento inicial de código, BSS, pilha, memória dinâmica e TLS do processo
 - [x] Sessão ARM11 preparada com contexto inicial, threads, execução de instruções e dispatch de SVCs suportados
 - [x] Testes sintéticos carregam NCSD/NCCH sem crypto, iniciam um processo de teste e executam instruções ARM
-- [~] A execução demonstrada atualmente usa fixtures sintéticas e caminhos controlados; isso não comprova inicialização de homebrew comercialmente distribuído nem de jogos
+- [~] A execução demonstrada atualmente inclui uma fixture 3DSX sintética carregada pela API comum e executada por instruções ARM11; isso valida a integração do loader com o core, não a compatibilidade geral do formato nem o boot de uma aplicação homebrew externa
 - [ ] Definir um alvo homebrew mínimo, legalmente fornecido pelo usuário, e documentar exatamente o subconjunto de sistema necessário
-- [ ] Concluir carregamento de executáveis, argumentos, dependências, permissões, serviços e preparação do processo para esse alvo
-- [ ] Executar um homebrew real até produzir resultado observável, com logs e diagnóstico de falhas
+- [~] Carregamento 3DSX, relocations, layout e sessão ARM11 conectados; ainda faltam argumentos, dependências, permissões por alvo e serviços necessários ao homebrew escolhido
+- [ ] Executar um homebrew externo real até produzir resultado observável, com logs e diagnóstico de falhas
 
 ## 3. Kernel ARM11 e serviços HLE
 
@@ -212,14 +212,14 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 - [~] Binário Rust de diagnóstico/linha de comando e autoteste; `--dump-lcd` exporta as telas como PNG após o quadro. A carga de `.3DS`/`.CCI` sem criptografia agora prepara o processo ARM11 pelo mesmo método do Android; o primeiro quadro registra instruções, motivo de parada, PC/CPSR e atividade GPU/LCD.
 - [~] Janela X11 (Linux) sem crates: Xlib carregada por `dlopen` e FFI própria; `aceris <JOGO> --window [--scale N]` compõe as duas LCDs (400x480, escala inteira) e roda quadros a ~60 Hz até fechar a janela; validada sob Xvfb com captura de tela. Windows (Win32) e macOS (Cocoa) ainda não têm backend; sem entrada de teclado/toque, áudio nem redimensionamento
-- [ ] Biblioteca/importação de jogos para `.3DS`, `.CCI` e `.CIA`
+- [~] Biblioteca desktop reconhece `.3DSX` e imagens `.3DS`/`.CCI`; importação/instalação de `.CIA` continua pendente
 - [ ] Configurações de vídeo, áudio, controles, caminhos e armazenamento
 - [~] Diagnóstico inicial no CLI: mensagens de erro do loader e resumo da primeira execução; logs contínuos, relatórios persistentes e diagnóstico de compatibilidade continuam pendentes.
 - [ ] Save data e gerenciamento de arquivos de usuário
 
 ### Android
 
-- [~] Crate Rust `cdylib` para ARM64; mantém o carregamento NCSD sem criptografia compartilhado com o desktop. O ABI expõe PC/CPSR e permite consultar a mensagem completa de falhas de load/frame; o workflow compila `arm64-v8a`.
+- [~] Crate Rust `cdylib` para ARM64; o ABI oferece `aceris_system_load_executable_file` para o caminho comum 3DSX e NCSD sem criptografia, além da função NCSD específica com chaves explícitas. Expõe PC/CPSR e permite consultar a mensagem completa de falhas de load/frame; o workflow compila `arm64-v8a`. Teste ABI sintético executa três instruções 3DSX; ainda falta validação em dispositivo físico.
 - [ ] Aplicativo Android instalável, com interface implementada em Rust
 - [ ] Integração de superfície, ciclo de vida, entrada, áudio e permissões
 - [ ] Biblioteca de jogos, configurações e armazenamento
@@ -229,7 +229,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Regra de implementação
 
 - [x] A implementação do produto permanece exclusivamente em Rust
-- [x] Desktop e Android chamam o mesmo `aceris-core` e usam o contrato comum `System::load_ncsd_no_crypto_file` para preparar NCSD sem criptografia (`.3DS`/`.CCI`)
+- [x] Desktop e Android chamam o mesmo `aceris-core` e usam `System::load_executable_file` para o caminho de execução NCSD sem criptografia (`.3DS`/`.CCI`) e 3DSX; NCSD criptografado continua no contrato de chave explícita
 - [ ] Cada novo marco funcional deve avançar PC e Android em paralelo; nenhum marco é considerado concluído até a validação correspondente nas duas plataformas
 - [ ] Toda integração de plataforma deve continuar como ponte/host, sem deslocar lógica do emulador para Kotlin, Java, C, C++ ou outra linguagem
 

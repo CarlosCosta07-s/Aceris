@@ -39,7 +39,7 @@ Frontend
 
 O produto permanece implementado em Rust e usa somente crates internos do workspace, conforme as regras do repositório.
 
-Para o primeiro bring-up de uma imagem real, desktop e Android usam o mesmo contrato do núcleo: ambos chamam `System::load_ncsd_no_crypto_file` para preparar o processo ARM11 de contêineres NCSD sem criptografia, incluindo arquivos `.3ds` e `.cci`. O desktop registra PC, CPSR e o motivo de parada do primeiro quadro; o ABI Android expõe PC/CPSR e permite recuperar a mensagem original de falhas de carregamento ou execução. Imagens criptografadas continuam exigindo chaves fornecidas explicitamente pelo host; o Aceris não as procura nem as armazena.
+O primeiro caminho de execução de homebrew agora passa pelo mesmo contrato do núcleo nos dois frontends: `System::load_executable_file` prepara executáveis 3DSX padrão e NCSD sem criptografia em uma sessão ARM11 compartilhada. O desktop usa esse contrato diretamente; o ABI Android o expõe por `aceris_system_load_executable_file`. A execução 3DSX já tem testes de integração sintéticos; ainda não há comprovação com um homebrew externo real. O desktop registra PC, CPSR e o motivo de parada do primeiro quadro; o ABI Android expõe PC/CPSR e permite recuperar a mensagem original de falhas de carregamento ou execução. Imagens NCSD criptografadas continuam exigindo chaves fornecidas explicitamente pelo host; o Aceris não as procura nem as armazena.
 
 Da mesma forma, o ciclo de execução e o dispatcher SVC/IPC/GSP são implementados no `aceris-core`; os frontends PC e Android devem integrar e validar essas mesmas funções em paralelo, sem manter caminhos funcionais diferentes.
 

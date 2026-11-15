@@ -30,6 +30,10 @@ O conversor não é incorporado ao Aceris. O emulador apenas lê os quadros que 
 
 No PC, a orientação é fixa: as duas telas nunca são empilhadas. Quando um jogo é aberto, a janela X11 muda para um canvas de 736x240: a tela superior (400x240) fica à esquerda e a tela inferior (320x240) à direita, separadas por uma margem de 16 pixels. O fator `--scale` amplia as duas telas juntas. Ao retornar à biblioteca, a janela volta ao canvas de interface 400x480. O formato da janela não altera a disposição horizontal das telas durante o jogo.
 
+## Android: carregamento de executáveis
+
+`aceris_system_load_executable_file(handle, path)` usa o mesmo `System::load_executable_file` do desktop. O contrato atual aceita homebrew 3DSX padrão e imagens NCSD sem criptografia (`.3ds`/`.cci`); imagens NCSD criptografadas continuam usando a função com chaves explícitas. O ABI preserva o texto do erro para consulta pelo host. O carregamento 3DSX foi coberto por teste sintético do ABI, mas ainda não foi validado com um homebrew externo real nem em dispositivo físico.
+
 ## Android: orientação e telas
 
 O crate nativo expõe um contrato C ABI para o host Android:
@@ -64,7 +68,7 @@ A camada gráfica e o hit-test estão disponíveis. A ligação final desses bit
 ## Estado e limites atuais
 
 - PC: biblioteca animada e fundos em sequência RGBA estão integrados ao frontend X11. Durante o jogo, o canvas é 736x240 com as telas lado a lado; a janela redimensiona ao entrar e sair do jogo.
-- Android: ABI nativa para renderização animada, fundos fornecidos pelo host, orientação, geometria de telas e controles virtuais.
+- Android: ABI nativa para carregamento compartilhado de NCSD sem criptografia e 3DSX, diagnóstico PC/CPSR, renderização animada, fundos fornecidos pelo host, orientação, geometria de telas e controles virtuais.
 - Android: ainda falta o host/Activity instalável que apresente as telas, solicite rotação do sistema, faça seleção de mídia e mantenha o ciclo de vida da superfície.
 - Windows/macOS: os backends de janela ainda não foram implementados.
 - Áudio e integração dos botões virtuais com o HID do núcleo continuam pendentes.
