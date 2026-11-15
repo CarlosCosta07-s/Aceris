@@ -159,8 +159,7 @@ impl ThreeDsxImage {
         )?;
 
         reader.seek(SeekFrom::Start(relocation_headers_start))?;
-        let mut relocation_headers =
-            [ThreeDsxRelocationHeader::default(); SEGMENT_COUNT];
+        let mut relocation_headers = [ThreeDsxRelocationHeader::default(); SEGMENT_COUNT];
         for entry in &mut relocation_headers {
             let mut bytes = [0u8; STANDARD_RELOCATION_HEADER_SIZE as usize];
             reader.read_exact(&mut bytes)?;
@@ -170,18 +169,15 @@ impl ThreeDsxImage {
 
         let code_file_size = u64::from(header.code_size_bytes);
         let rodata_file_size = u64::from(header.rodata_size_bytes);
-        let data_file_size =
-            u64::from(header.data_size_bytes - header.bss_size_bytes);
+        let data_file_size = u64::from(header.data_size_bytes - header.bss_size_bytes);
         let code_end = checked_file_end(
             relocation_headers_end,
             code_file_size,
             file_len,
             "code segment",
         )?;
-        let rodata_end =
-            checked_file_end(code_end, rodata_file_size, file_len, "rodata segment")?;
-        let data_end =
-            checked_file_end(rodata_end, data_file_size, file_len, "data segment")?;
+        let rodata_end = checked_file_end(code_end, rodata_file_size, file_len, "rodata segment")?;
+        let data_end = checked_file_end(rodata_end, data_file_size, file_len, "data segment")?;
 
         let code = ThreeDsxSegment {
             offset_bytes: relocation_headers_end,
