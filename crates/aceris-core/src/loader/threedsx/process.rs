@@ -883,6 +883,34 @@ mod tests {
     }
 
     #[test]
+    fn memory_manifest_handles_empty_data_and_zero_length_bss() {
+        let image = code_only_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let loaded = parsed.load_segments(&mut Cursor::new(&image), 4).unwrap();
+        let prepared = parsed
+            .prepare_process(
+                loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                ThreeDsxStackRequest {
+                    base_address: 0x0400_0000,
+                    size_bytes: 0x1000,
+                },
+                0x2000,
+            )
+            .unwrap();
+
+        let manifest = prepared.memory_manifest().unwrap();
+        let data = &manifest.mappings()[2];
+
+        assert_eq!(manifest.bss_address(), u64::from(data.address()));
+        assert_eq!(manifest.bss_offset_bytes(), 0);
+        assert_eq!(manifest.bss_size_bytes(), 0);
+        assert_eq!(data.initialized_size_bytes(), 0);
+        assert_eq!(data.mapped_size_bytes(), 0);
+        assert!(data.bytes().is_empty());
+    }
+
+    #[test]
     fn memory_manifest_revalidates_before_exposing_startup_metadata() {
         let mut prepared = prepare(
             ThreeDsxStackRequest {
