@@ -1034,3 +1034,44 @@ Continuação isolada do loader 3DSX, sem alterações no trabalho de Thumb, GPU
 3. Só depois criar um objeto preparado de segmentos com tamanhos virtuais alinhados, entrypoint e permissões explícitas; não fabricar NcchExtendedHeader para reaproveitar o caminho NCCH.
 4. Revisar o ownership de process.rs antes de alterar qualquer construtor existente, pois contém trabalho anterior de Claude.
 5. Integrar o processo ao caminho de sessão e testar com um arquivo homebrew legalmente fornecido pelo mantenedor.
+## 3DSX — aplicação de relocations e preparação de layout de processo (15/11/2026)
+
+Esta etapa continua isolada nos módulos novos de 3DSX. Não foi alterado crates/aceris-core/src/loader/ncsd/process.rs nem crates/aceris-core/src/loader/ncsd/session.rs, preservando o trabalho anterior de Claude em memória, scheduler e serviços.
+
+### Relocations aplicadas
+
+- 0c00380 — adiciona a primeira implementação de apply_relocations; essa tentativa não passou CI por formato/compilação e foi substituída pelos commits seguintes.
+- 8cefc2f — altera a aplicação para preparar todos os patches numa lista temporária, validando sites, destinos e tipos antes de modificar qualquer segmento. Um erro não deixa o processo parcialmente relocacionado.
+- 4cb6ec2 — adiciona testes para relocação absoluta, relativa de 32 bits, PREL31, destino na região BSS, subtype desconhecido, destino externo, bases desalinhadas/sobrepostas e atomicidade.
+- d3d1e13 e 8a832af — corrigem Rustfmt; 8a832af é o commit que passou a matriz completa de CI para a aplicação de relocations (workflow 43663135550).
+
+Contrato atualmente implementado:
+
+- A chamada recebe três bases virtuais explicitamente fornecidas, que devem ser page-aligned, não sobrepostas e dentro do espaço de 32 bits.
+- O image offset de 28 bits é resolvido contra Code, ROData e Data após alinhamento de página; o destino pode apontar para BSS e page padding.
+- Tabela absoluta aceita subtype 0; tabela relativa aceita subtype 0 como diferença assinada de 32 bits e subtype 1 como PREL31, preservando/zerando o bit reservado conforme ABI.
+- Subtipos não suportados, overflow, alvo fora da imagem e bases inválidas são rejeitados. Os patches são staged e aplicados apenas depois de todas as validações.
+- ThreeDsxLoadedSegments registra internamente se relocations terminaram com sucesso. A API recusa segunda aplicação. A preparação de processo exige que as tabelas sejam aplicadas quando o arquivo declara relocations.
+
+### Preparação da memória de processo 3DSX
+
+- f10f605 — adiciona crates/aceris-core/src/loader/threedsx/process.rs com ThreeDsxStackRequest, ThreeDsxProcessLayout, ThreeDsxProcessMemorySegment e ThreeDsxPreparedProcess; expõe o módulo em threedsx::process.
+- O construtor recebe explicitamente bases de Code/ROData/Data, pedido de stack e limite agregado de memória; valida alinhamento, ranges, sobreposição de stack, limites de 32 bits e limite total.
+- Cria buffers page-aligned: Code RX, ROData R, Data RW incluindo BSS zerado e padding, além de stack RW zerada. Entry point é Code base; SP inicial é o topo da stack solicitada.
+- beeae90 / 91e645e — introduzem estado privado de conclusão das relocations e exigem que o processo não seja preparado a partir de segmentos ainda não relocacionados quando há tabelas.
+- a97ef3e — adiciona testes para exigência de relocations e rejeição de uma segunda passada. O commit precisou apenas de uma correção de formato após o primeiro CI.
+- 06d5d3b — corrige o Rustfmt do guard de relocations.
+- af445da — atualiza a documentação do módulo e adiciona getter read-only relocations_applied().
+- 296ae54 — atualiza o roadmap.
+
+### Estado de CI
+
+- Workflow 43663288985 concluiu com sucesso para o primeiro commit de preparação de memória (f10f605), incluindo Linux/Windows/macOS e Android arm64-v8a.
+- Workflow 43663540460 para o estado com marcador de relocation e ordem de preparação (af445da) estava em andamento na última consulta. Linux, macOS e Android arm64-v8a já haviam concluído com sucesso; Windows ainda estava executando cargo test --workspace. Não declarar a matriz atual aprovada até consultar o resultado final.
+
+### Limites e próximo ponto de integração
+
+- ThreeDsxPreparedProcess é um layout e conjunto de buffers validados; não é Bus, Arm11CodeAddressSpace, Arm11ProcessSession nem contexto ARM11 executável.
+- Não foi fabricado NcchExtendedHeader, CodeSetInfo, stack size, memory type ou metadado de NCCH. A stack é explicitamente solicitada pelo chamador; os defaults/requisitos corretos ainda precisam ser definidos pelo alvo homebrew escolhido.
+- Não alterar process.rs ou session.rs do NCSD sem autorização expressa do mantenedor, pois contêm trabalho de Claude. Próximo passo é desenhar com o mantenedor/Claude um contrato genérico para mapear buffers com bases/permissões explícitas e criar uma sessão ARM11 sem degradar a rota NCCH.
+- Ainda não há um arquivo homebrew real fornecido/testado. Identificação, materialização, relocation e preparação de layout não equivalem a execução nem a compatibilidade de homebrew.
