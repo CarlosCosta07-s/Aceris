@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn parses_extended_header_and_bounds_optional_sections() {
-        let mut image = minimal_image(EXTENDED_HEADER_SIZE as u16, Some((76, 4, 80)));
+        let mut image = minimal_image(EXTENDED_HEADER_SIZE as u16, Some((88, 4, 92)));
         image.extend_from_slice(&[1, 2, 3, 4]); // SMDH
         image.extend_from_slice(&[5, 6, 7, 8]); // RomFS
 
