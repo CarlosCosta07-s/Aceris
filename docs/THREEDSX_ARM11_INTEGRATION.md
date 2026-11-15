@@ -161,3 +161,9 @@ A API não instala mapeamentos, não cria permissões de MMU e não instancia se
 - endereço virtual e tamanho exato do BSS dentro do mapeamento Data.
 
 O método chama `validate()` antes de devolver o manifesto. Seus campos e os dos descritores são privados, com accessors somente de leitura; o consumidor não pode substituir entry point, SP, endereços, permissões ou fatias por valores arbitrários. Além do endereço e tamanho do BSS, `bss_offset_bytes()` fornece o deslocamento já validado dentro de Data. `ThreeDsxPreparedProcess` também mantém privados seu layout e os quatro buffers de backing, oferecendo somente referências imutáveis por `layout()`, `code_bytes()`, `read_only_bytes()`, `data_bytes()` e `stack_bytes()`. Assim, um consumidor externo não consegue trocar instruções ou dados após a preparação e continuar usando o objeto como imagem validada. O manifesto não copia os buffers, não reserva memória e não altera o espaço ARM11. O BSS continua dentro do Data contínuo, imediatamente após os bytes inicializados, e não deve ser instalado como uma região independente.
+
+## 12. Pipeline único de carga e preparação
+
+`ThreeDsxImage::load_and_prepare_process(reader, request)` centraliza a sequência de leitura de segmentos, aplicação das tabelas de relocation e materialização do processo. `ThreeDsxProcessPreparationRequest` exige que o chamador informe as três bases virtuais, a reserva de stack, o limite total de memória e o limite de words de relocation.
+
+A API reduz o risco de um frontend esquecer a etapa de relocations ou usar limites implícitos. Ela sempre executa a etapa de relocation, inclusive quando as tabelas não têm entradas, e só devolve `ThreeDsxPreparedProcess` se toda a sequência terminar com sucesso. O método não reserva páginas MMU nem cria `Arm11ProcessSession`.
