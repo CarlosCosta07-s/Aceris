@@ -881,6 +881,18 @@ mod tests {
         bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
+    fn enable_code_absolute_relocation(image: &mut [u8], image_offset: u32) {
+        put_u32(image, 56, image_offset);
+        put_u16(image, 68, 0);
+        put_u16(image, 70, 1);
+    }
+
+    fn enable_rodata_relative_relocation(image: &mut [u8], image_offset: u32) {
+        put_u32(image, 60, image_offset);
+        put_u16(image, 72, 0);
+        put_u16(image, 74, 1);
+    }
+
     fn minimal_image(header_size: u16, smdh: Option<(u32, u32, u32)>) -> Vec<u8> {
         let mut image = vec![0u8; usize::from(header_size)];
         image[..4].copy_from_slice(b"3DSX");
@@ -1010,6 +1022,160 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn applies_absolute_relocation_to_rodata_virtual_address() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        enable_code_absolute_relocation(&mut image, 0x1000);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        let patched = parsed
+            .apply_relocations(
+                &mut Cursor::new(&image),
+                &mut loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                1,
+            )
+            .unwrap();
+
+        assert_eq!(patched, 1);
+        assert_eq!(
+            u32::from_le_bytes(loaded.code[..4].try_into().unwrap()),
+            0x0020_0000
+        );
+    }
+
+    #[test]
+    fn applies_relative_32_relocation_between_segments() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        enable_rodata_relative_relocation(&mut image, 0x2000);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        let patched = parsed
+            .apply_relocations(
+                &mut Cursor::new(&image),
+                &mut loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                1,
+            )
+            .unwrap();
+
+        assert_eq!(patched, 1);
+        assert_eq!(
+            u32::from_le_bytes(loaded.rodata[..4].try_into().unwrap()),
+            0x0010_0000
+        );
+    }
+
+    #[test]
+    fn applies_prel31_relocation_and_keeps_the_reserved_bit_clear() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        enable_rodata_relative_relocation(&mut image, 0x1000_0000);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        parsed
+            .apply_relocations(
+                &mut Cursor::new(&image),
+                &mut loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                1,
+            )
+            .unwrap();
+
+        assert_eq!(
+            u32::from_le_bytes(loaded.rodata[..4].try_into().unwrap()),
+            0x7FF0_0000
+        );
+    }
+
+    #[test]
+    fn absolute_relocation_can_target_the_zero_filled_bss_tail() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        enable_code_absolute_relocation(&mut image, 0x2004);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        parsed
+            .apply_relocations(
+                &mut Cursor::new(&image),
+                &mut loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                1,
+            )
+            .unwrap();
+
+        assert_eq!(
+            u32::from_le_bytes(loaded.code[..4].try_into().unwrap()),
+            0x0030_0004
+        );
+        assert_eq!(loaded.bss, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn rejects_unknown_subtypes_without_partially_applying_prior_patches() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        enable_code_absolute_relocation(&mut image, 0x1000);
+        enable_rodata_relative_relocation(&mut image, 0x2000);
+        put_u32(&mut image, 60, 0x2000_2000);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        let original_code = loaded.code.clone();
+        let result = parsed.apply_relocations(
+            &mut Cursor::new(&image),
+            &mut loaded,
+            [0x0010_0000, 0x0020_0000, 0x0030_0000],
+            2,
+        );
+
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(loaded.code, original_code);
+    }
+
+    #[test]
+    fn rejects_relocation_targets_outside_the_aligned_image() {
+        let mut image = minimal_image(HEADER_SIZE as u16, None);
+        enable_code_absolute_relocation(&mut image, 0x0FFF_FFFF);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        let error = parsed
+            .apply_relocations(
+                &mut Cursor::new(&image),
+                &mut loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                1,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_unaligned_and_overlapping_segment_bases() {
+        let image = minimal_image(HEADER_SIZE as u16, None);
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+
+        let unaligned = parsed.apply_relocations(
+            &mut Cursor::new(&image),
+            &mut loaded,
+            [0x0010_0000, 0x0020_0001, 0x0030_0000],
+            2,
+        );
+        assert_eq!(unaligned.unwrap_err().kind(), io::ErrorKind::InvalidData);
+
+        let overlapping = parsed.apply_relocations(
+            &mut Cursor::new(&image),
+            &mut loaded,
+            [0x0010_0000, 0x0010_0800, 0x0030_0000],
+            2,
+        );
+        assert_eq!(overlapping.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
