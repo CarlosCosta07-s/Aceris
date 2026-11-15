@@ -873,9 +873,12 @@ mod tests {
             manifest.bss_address()
         );
 
-        assert_eq!(bss_offset, data.initialized_size_bytes as usize);
+        assert_eq!(bss_offset, data.initialized_size_bytes() as usize);
         assert_eq!(data.bytes().get(bss_offset..bss_end), Some(&[0; 4][..]));
-        assert_eq!(manifest.mappings()[3].kind(), ThreeDsxProcessMemoryKind::Stack);
+        assert_eq!(
+            manifest.mappings()[3].kind(),
+            ThreeDsxProcessMemoryKind::Stack
+        );
         assert_eq!(manifest.mappings()[3].address(), 0x0400_0000);
     }
 
