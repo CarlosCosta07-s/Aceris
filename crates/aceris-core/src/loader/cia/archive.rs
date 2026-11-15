@@ -11,6 +11,9 @@ use crate::loader::ncsd::ncch::crypto::{
     AES_BLOCK_SIZE, NcchCtrReader, NcchCtrReaderError, NcchCtrRegion,
 };
 use crate::loader::ncsd::ncch::romfs::sha256::Sha256;
+use crate::loader::ncsd::{
+    self, process::Arm11CodeAddressSpace, NcsdExecutableLoadError,
+};
 use crate::loader::ncsd::ncch::{
     HEADER_SIZE as NCCH_HEADER_SIZE, NcchError, NcchHeader, NcchIntegrityError,
 };
@@ -997,6 +1000,29 @@ impl<'a, R: Read + Seek> CiaContentNcchReader<'a, R> {
     /// Returns the bounded reader, positioned at the beginning of the NCCH.
     pub fn reader_mut<'b>(&'b mut self) -> &'b mut CiaContentReader<'a, R> {
         &mut self.reader
+    }
+
+    /// Prepares the verified NCCH content as an ARM11 process address space.
+    ///
+    /// The enclosing CIA content must first be opened through
+    /// `open_verified_ncch_content_reader`, which checks its TMD SHA-256.
+    /// This method then verifies the NCCH extended header and ExeFS code,
+    /// applies optional BLZ decompression, and builds the shared process layout.
+    /// Caller-supplied keys are used only for internally encrypted NCCH regions.
+    pub fn load_arm11_address_space(
+        self,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<Arm11CodeAddressSpace, NcsdExecutableLoadError> {
+        let Self { header, reader, .. } = self;
+        let prepared = ncsd::prepare_arm11_executable_image_from_ncch(
+            header,
+            reader,
+            menu_info_key,
+            content_key,
+        )?;
+        Arm11CodeAddressSpace::from_prepared(prepared)
+            .map_err(NcsdExecutableLoadError::ProcessLayout)
     }
 
     /// Opens one encrypted NCCH region from this TMD-verified CIA content.
