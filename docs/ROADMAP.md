@@ -99,7 +99,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Parser NCCH com leitura de cabeçalho, regiões declaradas e leitores limitados por intervalo
 - [~] ExeFS: leitura das entradas, extração do código e verificação de hashes implementadas em partes; assinatura RSA e todos os cenários de crypto ainda precisam de validação ponta a ponta
 - [~] RomFS: cabeçalho IVFC, leitor de Level 3, cadeia SHA-256 e verificação de integridade presentes; descriptografia e todos os caminhos de instalação/uso ainda exigem validação integrada
-- [~] CIA: parsers de cabeçalho, seções, ticket/TMD e leitores de conteúdo presentes; fluxo completo de instalação, seleção de conteúdo e preparação de executável ainda não é um caminho de compatibilidade concluído
+- [~] CIA: parsers de cabeçalho, seções, ticket/TMD e leitores de conteúdo presentes; `System::load_executable_file` seleciona o boot content pelo TMD, verifica seu SHA-256, confere o program ID do NCCH e prepara uma sessão ARM11 quando o conteúdo CIA e o NCCH são NoCrypto. Um teste sintético carrega o pacote e executa instruções ARM. Ainda faltam validação de assinaturas ticket/TMD, descriptografia de conteúdo CIA/NCCH, instalação persistente e registro de títulos, gerenciamento de saves e validação com pacotes externos reais.
 - [~] Rotinas próprias de AES e SHA-256, AES-CBC/AES-CTR e descompressão BLZ presentes; a criptografia usa material fornecido explicitamente pelo usuário e não inclui chaves no repositório
 - [ ] Validar assinaturas, hashes, tamanhos, alinhamentos, regiões, múltiplos conteúdos e arquivos malformados em todas as combinações relevantes
 - [ ] Completar o caminho de conteúdo criptografado com chaves do usuário, sem descoberta, armazenamento ou distribuição de chaves pelo projeto
@@ -212,7 +212,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 - [~] Binário Rust de diagnóstico/linha de comando e autoteste; `--dump-lcd` exporta as telas como PNG após o quadro. A carga de `.3DS`/`.CCI` sem criptografia agora prepara o processo ARM11 pelo mesmo método do Android; o primeiro quadro registra instruções, motivo de parada, PC/CPSR e atividade GPU/LCD.
 - [~] Janela X11 (Linux) sem crates: Xlib carregada por `dlopen` e FFI própria; `aceris <JOGO> --window [--scale N]` compõe as duas LCDs (400x480, escala inteira) e roda quadros a ~60 Hz até fechar a janela; validada sob Xvfb com captura de tela. Windows (Win32) e macOS (Cocoa) ainda não têm backend; sem entrada de teclado/toque, áudio nem redimensionamento
-- [~] Biblioteca desktop reconhece `.3DSX` e imagens `.3DS`/`.CCI`; importação/instalação de `.CIA` continua pendente
+- [~] Desktop e ABI Android usam `System::load_executable_file` para 3DSX, NCSD (`.3ds`/`.cci`) e CIA cujo boot content seja claro e NCCH NoCrypto; instalação persistente e gerenciamento de títulos CIA continuam pendentes.
 - [ ] Configurações de vídeo, áudio, controles, caminhos e armazenamento
 - [~] Diagnóstico inicial no CLI: mensagens de erro do loader e resumo da primeira execução; logs contínuos, relatórios persistentes e diagnóstico de compatibilidade continuam pendentes.
 - [ ] Save data e gerenciamento de arquivos de usuário
