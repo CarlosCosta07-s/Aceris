@@ -1136,3 +1136,9 @@ Contrato atualmente implementado:
 - Commit `ea067be` também torna privado o layout e expõe `layout()` como referência somente de leitura. A validação já rejeitava alterações no layout, mas o backing inicial podia ser alterado publicamente sem invalidar o objeto; esta alteração fecha essa brecha na API externa.
 - Os testes internos continuam podendo fabricar objetos adulterados para validar a rejeição de dados fora do contrato; consumidores externos não recebem acesso mutável às estruturas.
 - Commits `8724ad6` e `ae1dfd3` acrescentam casos sintéticos de segmentos vazios e de execução do pipeline parse → relocation → prepare → manifesto. Nenhum deles constitui teste de homebrew real.
+
+## 3DSX — pipeline único de preparação (15/11/2026)
+
+- Commit `fed2fb8` acrescenta `ThreeDsxProcessPreparationRequest` e `ThreeDsxImage::load_and_prepare_process()`. O request exige bases de Code/ROData/Data, stack, limite de memória e orçamento máximo de words relocacionadas.
+- O método executa load → apply relocations → prepare e somente retorna o processo quando todas as etapas são concluídas. Também chama a etapa de relocation quando as tabelas estão vazias para manter a mesma regra de estado.
+- Testes cobrem o caminho completo relocacionado e a rejeição quando o orçamento de patches é insuficiente. Isso é pipeline sintético de preparação, não sessão ARM11 nem homebrew real.
