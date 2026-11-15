@@ -746,7 +746,7 @@ mod tests {
         assert_eq!(stack.base_address % 0x1000, 0);
         assert_eq!(CONVENTIONAL_3DSX_STACK_TOP % 8, 0);
 
-        let prepared = prepare(stack, 0x5000).unwrap();
+        let prepared = prepare(stack, 0x7000).unwrap();
         assert_eq!(
             prepared.layout.initial_stack_pointer,
             CONVENTIONAL_3DSX_STACK_TOP
