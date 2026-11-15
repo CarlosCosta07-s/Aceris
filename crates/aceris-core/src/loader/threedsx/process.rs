@@ -8,6 +8,13 @@ use std::io;
 
 use super::{ThreeDsxImage, ThreeDsxLoadedSegments};
 
+/// Base address used by Aceris for the first 3DSX Code mapping.
+pub const DEFAULT_3DSX_CODE_BASE: u32 = 0x0010_0000;
+/// Defensive upper bound for a prepared homebrew image and its main stack.
+pub const DEFAULT_3DSX_MAX_PROCESS_MEMORY_SIZE_BYTES: u64 = 0x1000_0000;
+/// Maximum relocation words applied by the built-in 3DSX launch profile.
+pub const DEFAULT_3DSX_MAX_RELOCATION_PATCH_WORDS: usize = 1_048_576;
+
 /// Conventional top address used by the main thread stack in 3DS userland.
 pub const CONVENTIONAL_3DSX_STACK_TOP: u32 = 0x1000_0000;
 /// Common main-thread stack size in 3DS userland; 3DSX does not encode this value.
@@ -258,6 +265,25 @@ impl ThreeDsxPreparedProcess {
     /// Returns the zero-initialized main-thread stack backing.
     pub fn stack_bytes(&self) -> &[u8] {
         &self.stack
+    }
+
+    /// Transfers validated, owned memory buffers to the ARM11 runtime adapter.
+    ///
+    /// The caller must validate the process before consuming it. Keeping this
+    /// operation crate-private prevents external callers from bypassing the
+    /// public validation contract.
+    pub(crate) fn into_runtime_parts(
+        self,
+    ) -> (ThreeDsxProcessLayout, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let Self {
+            layout,
+            code,
+            read_only,
+            data,
+            stack,
+            validation_layout: _,
+        } = self;
+        (layout, code, read_only, data, stack)
     }
 }
 
@@ -592,6 +618,37 @@ fn plan_process_memory(
 }
 
 impl ThreeDsxImage {
+    /// Builds Aceris' conservative runtime profile for a standard 3DSX image.
+    ///
+    /// Code starts at 0x00100000. ROData and Data follow at page-aligned
+    /// boundaries. The 3DSX format does not encode these virtual bases, the
+    /// stack size, or host safety limits; this profile makes those choices
+    /// explicit and replaceable by a future title-specific loader.
+    pub fn conventional_process_request(
+        &self,
+    ) -> io::Result<ThreeDsxProcessPreparationRequest> {
+        let code_size = super::align_to_page(self.code.memory_size_bytes)?;
+        let read_only_size = super::align_to_page(self.rodata.memory_size_bytes)?;
+        let code_size = u32::try_from(code_size)
+            .map_err(|_| invalid_data("3DSX Code mapping does not fit the ARM11 address space"))?;
+        let read_only_size = u32::try_from(read_only_size).map_err(|_| {
+            invalid_data("3DSX ROData mapping does not fit the ARM11 address space")
+        })?;
+        let read_only_base = DEFAULT_3DSX_CODE_BASE
+            .checked_add(code_size)
+            .ok_or_else(|| invalid_data("3DSX ROData base address overflows"))?;
+        let data_base = read_only_base
+            .checked_add(read_only_size)
+            .ok_or_else(|| invalid_data("3DSX Data base address overflows"))?;
+
+        Ok(ThreeDsxProcessPreparationRequest {
+            segment_bases: [DEFAULT_3DSX_CODE_BASE, read_only_base, data_base],
+            stack_request: ThreeDsxStackRequest::conventional_3ds_homebrew(),
+            maximum_memory_size_bytes: DEFAULT_3DSX_MAX_PROCESS_MEMORY_SIZE_BYTES,
+            maximum_patched_words: DEFAULT_3DSX_MAX_RELOCATION_PATCH_WORDS,
+        })
+    }
+
     /// Loads, relocates and prepares a 3DSX image as one bounded operation.
     ///
     /// The reader is reused for segment loading and relocation-table access.

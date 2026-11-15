@@ -16,6 +16,9 @@ use crate::gpu::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
     OLD_LINEAR_END,
 };
+use crate::loader::threedsx::process::{
+    ThreeDsxPreparedProcess, ThreeDsxProcessMemorySegment,
+};
 use crate::memory::Bus;
 use aceris_common::{Error, Result as BusResult};
 
@@ -707,6 +710,93 @@ impl Arm11CodeAddressSpace {
             read_only: prepared.read_only,
             data: prepared.data,
             bss,
+            stack,
+            dynamic_regions: Vec::new(),
+            shared_regions: Vec::new(),
+            linear_regions: Vec::new(),
+            gpu_memory: None,
+            exclusive_versions: BTreeMap::new(),
+            tls_slots_in_use: Vec::new(),
+            ipc_temporary_regions: Vec::new(),
+        })
+    }
+
+    /// Creates an ARM11 address space from a validated, relocated 3DSX process.
+    ///
+    /// 3DSX Data and its BSS tail are one contiguous mapping. The adapter keeps
+    /// that backing as a single writable Data region so byte addresses and
+    /// relocation results remain unchanged; the exact BSS boundary and size
+    /// remain available in the process layout metadata.
+    pub fn from_3dsx_prepared(
+        prepared: ThreeDsxPreparedProcess,
+    ) -> std::result::Result<Self, Arm11ProcessLayoutError> {
+        prepared
+            .validate()
+            .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
+
+        let (source_layout, text, read_only, data, stack) = prepared.into_runtime_parts();
+        let to_segment = |segment: ThreeDsxProcessMemorySegment| Arm11MemorySegment {
+            address: segment.address,
+            initialized_size_bytes: segment.initialized_size_bytes,
+            mapped_size_bytes: segment.mapped_size_bytes,
+            writable: segment.writable,
+            executable: segment.executable,
+        };
+
+        let text_segment = to_segment(source_layout.code);
+        let read_only_segment = to_segment(source_layout.read_only);
+        let data_segment = to_segment(source_layout.data);
+        let stack_segment = to_segment(source_layout.stack);
+        let initialized_total = usize::try_from(source_layout.code.initialized_size_bytes)
+            .ok()
+            .and_then(|code_size| {
+                usize::try_from(source_layout.read_only.initialized_size_bytes)
+                    .ok()
+                    .and_then(|read_only_size| code_size.checked_add(read_only_size))
+            })
+            .and_then(|total| {
+                usize::try_from(source_layout.data.initialized_size_bytes)
+                    .ok()
+                    .and_then(|data_size| total.checked_add(data_size))
+            })
+            .ok_or(Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
+        let code_file_layout = CodeFileLayout {
+            text_size_bytes: source_layout.code.initialized_size_bytes as usize,
+            read_only_size_bytes: source_layout.read_only.initialized_size_bytes as usize,
+            data_size_bytes: source_layout.data.initialized_size_bytes as usize,
+            data_memory_size_bytes: source_layout.data.mapped_size_bytes as usize,
+            total_size_bytes: initialized_total,
+        };
+
+        let layout = Arm11ProcessLayout {
+            // The 3DSX header has no application-title identifier.
+            application_title: [0; 8],
+            entry_point: source_layout.entry_point,
+            text: text_segment,
+            read_only: read_only_segment,
+            data: data_segment,
+            // BSS bytes are already contiguous inside the writable Data buffer.
+            bss: Arm11MemorySegment {
+                address: source_layout.data.address,
+                initialized_size_bytes: 0,
+                mapped_size_bytes: 0,
+                writable: true,
+                executable: false,
+            },
+            bss_size_bytes: source_layout.bss_size_bytes,
+            stack: stack_segment,
+            initial_stack_pointer: source_layout.initial_stack_pointer,
+            stack_size_bytes: source_layout.stack.mapped_size_bytes,
+            code_file_layout,
+        };
+
+        Ok(Self {
+            layout,
+            memory_type: Arm11MemoryType::Application,
+            text,
+            read_only,
+            data,
+            bss: Vec::new(),
             stack,
             dynamic_regions: Vec::new(),
             shared_regions: Vec::new(),

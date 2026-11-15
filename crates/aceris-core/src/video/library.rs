@@ -50,8 +50,9 @@ pub struct Library {
     status: Option<String>,
 }
 
-/// Lists the cartridge images (`.3ds`, `.cci`) directly inside `directory`,
-/// sorted by title. A missing or unreadable directory yields an empty list.
+/// Lists supported executable images (`.3ds`, `.cci`, `.3dsx`) directly
+/// inside `directory`, sorted by title. A missing or unreadable directory
+/// yields an empty list.
 pub fn scan_games(directory: &Path) -> Vec<Entry> {
     let Ok(read) = fs::read_dir(directory) else {
         return Vec::new();
@@ -65,7 +66,9 @@ pub fn scan_games(directory: &Path) -> Vec<Entry> {
                     .extension()
                     .and_then(|ext| ext.to_str())
                     .is_some_and(|ext| {
-                        ext.eq_ignore_ascii_case("3ds") || ext.eq_ignore_ascii_case("cci")
+                        ext.eq_ignore_ascii_case("3ds")
+                            || ext.eq_ignore_ascii_case("cci")
+                            || ext.eq_ignore_ascii_case("3dsx")
                     })
         })
         .map(|path| Entry {
@@ -297,7 +300,7 @@ impl Library {
         let text = rgb(brand::TEXT);
         let lines = [
             "NENHUM JOGO ENCONTRADO".to_string(),
-            "COLOQUE ARQUIVOS .3DS OU .CCI EM:".to_string(),
+            "COLOQUE .3DS, .CCI OU .3DSX EM:".to_string(),
         ];
         for (i, line) in lines.iter().enumerate() {
             draw_text(
@@ -437,11 +440,11 @@ mod tests {
     fn scan_lists_only_cartridge_images_sorted() {
         let dir = std::env::temp_dir().join(format!("aceris-lib-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        for name in ["b.3ds", "A.CCI", "notes.txt", "c.cia"] {
+        for name in ["b.3ds", "A.CCI", "homebrew.3dsx", "notes.txt", "c.cia"] {
             fs::write(dir.join(name), b"x").unwrap();
         }
         let titles: Vec<String> = scan_games(&dir).into_iter().map(|e| e.title).collect();
-        assert_eq!(titles, ["A", "b"]);
+        assert_eq!(titles, ["A", "b", "homebrew"]);
         fs::remove_dir_all(&dir).unwrap();
         assert!(scan_games(&dir).is_empty());
     }

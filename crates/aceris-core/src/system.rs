@@ -22,6 +22,7 @@ use crate::loader::ncsd::session::{
     RESULT_INVALID_ADDRESS, RESULT_INVALID_ENUM, RESULT_INVALID_HANDLE, RESULT_OUT_OF_MEMORY,
 };
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
+use crate::loader::threedsx::ThreeDsxImage;
 use crate::loader::{self, ImageFormat};
 use crate::video::{DualScreenDisplay, LcdController};
 use aceris_common::{Error, Result};
@@ -164,6 +165,52 @@ impl System {
         self.pending_gsp_acquires.clear();
         self.cpu = Arm11Core::new();
         Ok(format)
+    }
+
+    /// Loads a 3DSX homebrew executable into the shared ARM11 process runtime.
+    ///
+    /// The 3DSX parser chooses the conservative built-in memory profile,
+    /// applies relocations, and prepares all segments before the current
+    /// process is replaced. A malformed image therefore leaves the old
+    /// session intact.
+    pub fn load_3dsx_reader<R: Read + Seek>(&mut self, mut reader: R) -> Result<ImageFormat> {
+        let image = ThreeDsxImage::parse_reader(&mut reader)?;
+        let request = image.conventional_process_request()?;
+        let prepared = image.load_and_prepare_process(&mut reader, request)?;
+        let mut session = Arm11ProcessSession::from_3dsx_prepared(prepared).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not map 3DSX image into ARM11 memory: {error}"),
+            ))
+        })?;
+
+        self.reset_gpu_linear_memory();
+        session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        self.cpu = session.core().clone();
+        self.image = Some(ImageFormat::ThreeDsx);
+        self.ncsd_session = Some(session);
+        self.gsp_service = GspServiceRegistry::new();
+        self.pending_gsp_acquires.clear();
+        Ok(ImageFormat::ThreeDsx)
+    }
+
+    /// Opens and prepares a 3DSX homebrew executable.
+    pub fn load_3dsx_file(&mut self, path: &Path) -> Result<ImageFormat> {
+        self.load_3dsx_reader(File::open(path)?)
+    }
+
+    /// Loads an executable format supported by the current launch path.
+    ///
+    /// NCSD cartridges without encryption and standard 3DSX homebrew files
+    /// share the same ARM11 session, scheduler and frame execution path.
+    pub fn load_executable_file(&mut self, path: &Path) -> Result<ImageFormat> {
+        match loader::identify_file(path)? {
+            ImageFormat::Ncsd => self.load_ncsd_no_crypto_file(path),
+            ImageFormat::ThreeDsx => self.load_3dsx_file(path),
+            _ => Err(Error::Unimplemented(
+                "execution loading is not implemented for this image format",
+            )),
+        }
     }
 
     /// Inspects and returns the validated public header of an NCSD cartridge.
@@ -485,7 +532,7 @@ impl System {
                 .ncsd_session
                 .as_mut()
                 .ok_or(Error::Unimplemented(
-                    "an NCSD ARM11 process session has not been prepared",
+                    "an ARM11 process session has not been prepared",
                 ))?
                 .run_instructions(remaining)?;
             instructions_executed =

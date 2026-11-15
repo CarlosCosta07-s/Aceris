@@ -27,8 +27,10 @@ use crate::gpu::{
 use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::ncch::extended_header::Arm11MemoryType;
 use crate::loader::ncsd::process::{
-    Arm11CodeAddressSpace, Arm11DynamicMemoryError, SharedMemoryBacking,
+    Arm11CodeAddressSpace, Arm11DynamicMemoryError, Arm11ProcessLayoutError,
+    SharedMemoryBacking,
 };
+use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::memory::Bus;
 use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError, ServiceSessionKind};
@@ -247,6 +249,17 @@ impl Arm11ProcessSession {
             gpu_address_space: None,
             instruction_count: 0,
         }
+    }
+
+    /// Creates an ARM11 process session from a validated 3DSX homebrew image.
+    ///
+    /// The same scheduler, main-thread context, TLS allocation and SVC
+    /// dispatcher used by NCCH processes are used for 3DSX programs.
+    pub fn from_3dsx_prepared(
+        prepared: ThreeDsxPreparedProcess,
+    ) -> std::result::Result<Self, Arm11ProcessLayoutError> {
+        let address_space = Arm11CodeAddressSpace::from_3dsx_prepared(prepared)?;
+        Ok(Self::from_address_space(address_space))
     }
 
     /// Loads partition zero from an NCSD image and initializes its ARM11 session.

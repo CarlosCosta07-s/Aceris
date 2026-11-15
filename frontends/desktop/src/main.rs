@@ -48,7 +48,7 @@ fn print_usage() {
     println!("                     Folder of 400x480 .rgba frames for an animated home background");
     println!("        --background-fps <N>");
     println!("                     Source rate for background frames, 1-60 (default 24)");
-    println!("                     Folder with .3ds/.cci games for the library (default:");
+    println!("                     Folder with .3ds/.cci/.3dsx executables (default:");
     println!("                     $ACERIS_GAMES or ~/Aceris/Games)");
     println!("        --skip-intro Do not play the start-up animation when the emulator opens");
     println!("        --dump-intro <DIR>");
@@ -84,11 +84,11 @@ fn dump_lcd(display: &DualScreenDisplay, dir: &Path) -> io::Result<()> {
 /// Loads the same NoCrypto NCSD execution path exposed by the Android frontend.
 fn load_game(system: &mut System, game: &Path) -> Result<(), String> {
     let format = system
-        .load_ncsd_no_crypto_file(game)
+        .load_executable_file(game)
         .map_err(|err| format!("could not prepare {}: {err}", game.display()))?;
 
     println!(
-        "Cartridge prepared: {format:?}; ARM11 entry PC={:#010X}, CPSR={:#010X}",
+        "Executable prepared: {format:?}; ARM11 entry PC={:#010X}, CPSR={:#010X}",
         system.cpu().pc(),
         system.cpu().cpsr.0
     );
