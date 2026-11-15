@@ -1,8 +1,7 @@
 # Contrato de integração 3DSX com a sessão ARM11
 
-**Status:** especificação de integração; ainda não implementada  
-**Base verificada:** `main` em `8614b2a5c9e10da0011df657e0dea375fc98fc67`  
-**CI dessa base:** workflow [43663672991](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43663672991), aprovado em Linux, Windows, macOS e Android `arm64-v8a`.
+**Status:** especificação de integração; validação do objeto preparado implementada; adaptador ARM11 ainda pendente  
+**Base do contrato:** `main`; execução 3DSX ainda não é suportada pela sessão ARM11.
 
 ## 1. Objetivo
 
@@ -18,7 +17,10 @@ O caminho 3DSX já dispõe de:
 - materialização de Code, ROData, Data e BSS;
 - aplicação atômica das relocations absolutas, relativas de 32 bits e PREL31;
 - preparação de buffers e endereços virtuais page-aligned, permissões RX/R/RW, stack RW zerada e limite de memória explícito;
-- controle de estado que impede preparar o processo antes das relocations exigidas ou aplicá-las duas vezes.
+- controle de estado que impede preparar o processo antes das relocations exigidas ou aplicá-las duas vezes;
+- `ThreeDsxPreparedProcess::validate()`, que revalida tamanhos dos buffers, alinhamento, limites de 32 bits, permissões, sobreposições, entry point, SP, posição do BSS e regiões zeradas;
+- cópia privada do layout preparado, que rejeita alterações posteriores de endereços/permissões depois da aplicação das relocations;
+- helper `ThreeDsxStackRequest::conventional_3ds_homebrew()` para o perfil de stack convencional, mantendo a possibilidade de configuração explícita.
 
 O resultado é `ThreeDsxPreparedProcess`, definido em `loader/threedsx/process.rs`. Ele contém layout e buffers, mas ainda não é um `Bus`, `Arm11CodeAddressSpace` ou `Arm11ProcessSession`.
 
@@ -33,7 +35,13 @@ A implementação NCCH recebe `PreparedArm11Image` e usa `NcchExtendedHeader` pa
 
 O construtor `Arm11CodeAddressSpace::from_prepared` deriva o layout NCCH e cria regiões separadas de Data e BSS. Em contraste, o layout 3DSX produzido atualmente representa o Data gravável como uma região contínua que já contém os bytes inicializados, a cauda BSS zerada e o padding da página. O formato 3DSX também não declara os metadados NCCH acima.
 
-Portanto, não se deve criar `NcchExtendedHeader`, `CodeSetInfo`, title ID, stack size ou qualquer metadado NCCH fictício para reutilizar o construtor existente. Também não se deve mover o início do BSS para depois de uma região Data arredondada se isso alterar o layout virtual já preparado pelo 3DSX.
+Portanto, não se deve criar `NcchExtendedHeader`, `CodeSetInfo`, title ID ou qualquer metadado NCCH fictício para reutilizar o construtor existente. O stack size continua sendo configuração do runtime, não dado do 3DSX. Também não se deve mover o início do BSS para depois de uma região Data arredondada se isso alterar o layout virtual já preparado pelo 3DSX.
+
+### Perfil convencional da stack
+
+A documentação pública do mapa ARM11 userland registra a stack principal com topo usual em `0x10000000` e stack size comum de `0x4000` bytes. A API `StartupInfo` do libctru expõe o stack size da thread principal, enquanto a documentação de `svcCreateThread` exige topo de stack alinhado em oito bytes. Como o formato 3DSX não armazena stack size, o Aceris oferece `ThreeDsxStackRequest::conventional_3ds_homebrew()` como perfil explícito e substituível: base `0x0FFFC000`, tamanho `0x4000`, SP inicial `0x10000000`. Isso é uma convenção de runtime, não uma garantia para todo arquivo 3DSX.
+
+Referências públicas: [3DS userland memory map](https://www.3dbrew.org/wiki/Memory_map), [libctru StartupInfo e SVC API](https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/svc.h).
 
 ## 4. Contrato genérico necessário
 
@@ -111,3 +119,19 @@ A declaração de primeiro suporte de execução depende de um 3DSX real forneci
 5. Validar com um homebrew real fornecido legalmente e registrar os serviços ainda ausentes.
 
 Até a conclusão desses passos, o estado correto continua sendo: **3DSX validado, relocacionado e preparado em memória; não executável pela sessão ARM11 ainda.**
+
+
+## 9. Validação do objeto preparado e perfil de stack
+
+A validação adicional fica isolada no módulo 3DSX e é chamada pelo próprio `prepare_process` antes de devolver o objeto:
+
+- cada buffer precisa corresponder ao tamanho mapeado e à página declarada;
+- Code, ROData, Data e Stack precisam manter as permissões esperadas;
+- o entry point deve permanecer dentro do Code executável;
+- o topo da stack deve corresponder ao SP, alinhado em oito bytes e representável como endereço ARM11;
+- BSS precisa começar imediatamente após Data inicializado e terminar dentro do mapping Data;
+- os mapeamentos não podem se sobrepor e a soma total precisa ser consistente;
+- padding, BSS e stack inicial precisam permanecer zerados;
+- o snapshot privado do layout rejeita mudanças posteriores de bases e metadados, protegendo a coerência com as relocations calculadas.
+
+O helper de stack convencional não fixa a base dos segmentos. A seleção das bases Code/ROData/Data continua explícita até que o perfil completo do primeiro alvo homebrew seja fechado e testado.
