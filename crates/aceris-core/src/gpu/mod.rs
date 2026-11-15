@@ -13,6 +13,7 @@ mod output_map;
 mod physical_memory;
 mod pica200;
 mod rasterizer;
+mod render;
 mod shader_exec;
 mod shader_input;
 mod vertex;
@@ -73,6 +74,7 @@ pub use pica200::{
 pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
+pub use render::{PicaRenderError, PicaRenderReport};
 pub use shader_exec::{
     PicaShaderExecError, PicaShaderOpcode, PicaVertexShaderOutput, PicaVertexShaderProgram,
     SHADER_INPUT_REGISTERS, SHADER_OUTPUT_REGISTERS, SHADER_TEMPORARY_REGISTERS,
