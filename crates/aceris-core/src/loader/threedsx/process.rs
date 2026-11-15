@@ -202,8 +202,7 @@ pub struct ThreeDsxProcessLayout {
 /// fully zero-initialized.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThreeDsxPreparedProcess {
-    /// Validated virtual layout. Mutations are detected by validate().
-    pub layout: ThreeDsxProcessLayout,
+    layout: ThreeDsxProcessLayout,
     code: Vec<u8>,
     read_only: Vec<u8>,
     data: Vec<u8>,
@@ -213,6 +212,11 @@ pub struct ThreeDsxPreparedProcess {
 }
 
 impl ThreeDsxPreparedProcess {
+    /// Returns the validated virtual layout without allowing external mutation.
+    pub fn layout(&self) -> &ThreeDsxProcessLayout {
+        &self.layout
+    }
+
     /// Returns the fully materialized executable Code mapping.
     ///
     /// The returned slice is immutable so callers cannot modify instructions
@@ -770,9 +774,10 @@ mod tests {
             Some(&[0x99, 0xAA, 0xBB, 0xCC][..])
         );
         assert!(prepared.stack_bytes().iter().all(|byte| *byte == 0));
+        assert_eq!(prepared.layout().entry_point, 0x0010_0000);
         assert_eq!(
             prepared.code_bytes().len(),
-            prepared.layout.code.mapped_size_bytes as usize
+            prepared.layout().code.mapped_size_bytes as usize
         );
         assert_eq!(
             prepared.read_only_bytes().len(),
