@@ -1188,5 +1188,5 @@ Esta etapa foi autorizada pelo mantenedor ao solicitar a continuação do desenv
 - Não há verificação criptográfica das assinaturas RSA do ticket/TMD nesta etapa.
 - CIA com conteúdo AES-CBC ou NCCH com regiões AES-CTR ainda não é aceito por `load_cia_no_crypto_file()`; não há descoberta nem armazenamento automático de chaves.
 - Ainda não existe instalação persistente, catálogo/registro de títulos, gestão de tickets, atualização de títulos, save data ou remoção de títulos. O caminho atual prepara e inicia diretamente o boot content a partir do CIA; não deve ser descrito como instalação concluída.
-- A CI do commit `c172997`, workflow `43757473749`, aprovou Rustfmt, build, Clippy e testes em Linux e macOS, além do build Android `arm64-v8a`; no momento do registro, o job de testes Windows ainda estava em execução.
+- A CI do commit `c172997`, workflow `43757473749`, aprovou Rustfmt, build locked, Clippy e `cargo test --workspace` em Linux, Windows e macOS, além do build release Android `arm64-v8a`.
 - Próxima etapa: concluir a validação da matriz Windows; em seguida executar a amostra local pelo caminho Rust sem adicioná-la ao repositório e registrar exatamente em qual verificação ela passa ou falha. Só depois disso avançar para instalação persistente e suporte criptográfico explícito.
