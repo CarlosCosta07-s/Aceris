@@ -1190,3 +1190,23 @@ Esta etapa foi autorizada pelo mantenedor ao solicitar a continuação do desenv
 - Ainda não existe instalação persistente, catálogo/registro de títulos, gestão de tickets, atualização de títulos, save data ou remoção de títulos. O caminho atual prepara e inicia diretamente o boot content a partir do CIA; não deve ser descrito como instalação concluída.
 - A CI do commit `c172997`, workflow `43757473749`, aprovou Rustfmt, build locked, Clippy e `cargo test --workspace` em Linux, Windows e macOS, além do build release Android `arm64-v8a`.
 - Próxima etapa: concluir a validação da matriz Windows; em seguida executar a amostra local pelo caminho Rust sem adicioná-la ao repositório e registrar exatamente em qual verificação ela passa ou falha. Só depois disso avançar para instalação persistente e suporte criptográfico explícito.
+
+
+## CIA — suporte explícito a conteúdo AES-CBC por chaves fornecidas (15/11/2026)
+
+Esta seção atualiza o estado do trabalho depois do primeiro carregamento CIA sem criptografia descrito acima.
+
+- Commit `33cf04c` acrescenta `CiaDecryptedContentNcchReader::load_arm11_address_space()`. O leitor já removeu a camada AES-CBC externa e verificou o SHA-256 do conteúdo contra o TMD; a preparação NCCH compartilhada valida extended header, ExeFS e `.code`, aplica BLZ quando declarado e recebe as chaves NCCH do chamador.
+- O mesmo commit acrescenta `System::load_cia_with_keys()` e `System::load_cia_file_with_keys()`. O sistema seleciona o boot content, obtém a title key por `TicketCommonKeyStore::decrypt_ticket_title_key()`, verifica o conteúdo CBC e confere NCCH program ID contra o TMD title ID. A sessão ativa só é substituída depois da preparação completa.
+- O chamador deve configurar explicitamente `TicketCommonKeyStore` e fornecer `menu_info_key` e `content_key`. Não há descoberta automática, chaves embutidas nem persistência automática de material criptográfico. `load_executable_file()` permanece no caminho simples sem chaves; o novo caminho requer chamada explícita pela API do núcleo.
+- O teste `loads_encrypted_cia_boot_content_with_caller_supplied_ticket_keys` cria um CIA sintético com ticket title key criptografada, conteúdo CIA AES-CBC criptografado e hashes TMD coerentes; verifica o carregamento e executa duas instruções ARM11. O NCCH dessa fixture declara NoCrypto: o teste valida o ticket, a camada CBC externa, o hash TMD e a execução ARM11, mas ainda não combina a camada CIA CBC com um executável NCCH internamente AES-CTR em um único teste de ponta a ponta. Os testes de leitor NCCH continuam cobrindo descriptografia CTR separadamente.
+- O workflow [43758558735](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43758558735), no commit `8b1c6c4`, passou integralmente: `cargo fmt --all --check`, `cargo build --locked --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` em Linux, Windows e macOS, além do build release Android `arm64-v8a`.
+
+### Limites atualizados e próximos passos
+
+- As assinaturas RSA/ECDSA do ticket e do TMD ainda não são verificadas. Hashes e consistência estrutural não substituem autenticação criptográfica dessas assinaturas.
+- A nova API é do núcleo Rust; ela ainda não foi ligada ao ABI Android ou à interface desktop, nem existe fluxo seguro de configuração/armazenamento de chaves na interface.
+- O caminho testado de ponta a ponta cobre conteúdo CIA AES-CBC com NCCH NoCrypto. Ainda falta um teste integrado de boot que combine conteúdo CIA AES-CBC com extended header/ExeFS internamente criptografados por AES-CTR.
+- Ainda não existe instalação persistente, catálogo/registro de títulos, gestão de tickets instalados, atualização de títulos, save data ou remoção de títulos.
+- A amostra Cookie Clicker enviada pelo mantenedor foi analisada estruturalmente, mas não foi executada através do carregador Rust. Ela não foi copiada para o repositório.
+- Próxima etapa: acrescentar a fixture integrada com as duas camadas criptográficas; depois executar a amostra fornecida pelo caminho Rust e registrar as verificações exatas; em seguida desenhar a integração de chaves e a verificação de assinaturas antes de avançar para instalação persistente.
