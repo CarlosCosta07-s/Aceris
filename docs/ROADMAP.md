@@ -95,7 +95,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 ### Formatos e conteúdo
 
 - [x] Parser estrutural NCSD para imagens `.3DS` e `.CCI`, com tabela de até oito partições, limites e validação de sobreposição
-- [~] 3DSX: parser estrutural valida cabeçalho padrão/estendido, segmentos, BSS, tabelas padrão de relocação e limites opcionais SMDH/RomFS; valida os intervalos skip/patch, expande as posições de palavras com limite global e materializa Code/ROData/Data com BSS zerado sob limite de memória explícito. Relocations ainda não são aplicadas; os segmentos não são mapeados em um processo ARM11 nem executados.
+- [~] 3DSX: parser estrutural valida cabeçalho padrão/estendido, segmentos, BSS, tabelas skip/patch e limites opcionais SMDH/RomFS; materializa Code/ROData/Data, aplica relocations absolutas, relativas de 32 bits e PREL31 com validação de bases/overflow e prepara um layout virtual page-aligned com permissões, BSS e stack zerada sob limite de memória explícito. Ainda falta adaptar esse layout à sessão ARM11 real, fornecer/definir stack e requisitos de runtime para um alvo homebrew, e executar um artefato real fornecido legalmente.
 - [~] Parser NCCH com leitura de cabeçalho, regiões declaradas e leitores limitados por intervalo
 - [~] ExeFS: leitura das entradas, extração do código e verificação de hashes implementadas em partes; assinatura RSA e todos os cenários de crypto ainda precisam de validação ponta a ponta
 - [~] RomFS: cabeçalho IVFC, leitor de Level 3, cadeia SHA-256 e verificação de integridade presentes; descriptografia e todos os caminhos de instalação/uso ainda exigem validação integrada
