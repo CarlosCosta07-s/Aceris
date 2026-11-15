@@ -1036,6 +1036,56 @@ mod tests {
     }
 
     #[test]
+    fn load_and_prepare_process_handles_no_relocations_and_empty_segments() {
+        let image = code_only_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let request = ThreeDsxProcessPreparationRequest {
+            segment_bases: [0x0010_0000, 0x0020_0000, 0x0030_0000],
+            stack_request: ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x1000,
+            },
+            maximum_memory_size_bytes: 0x2000,
+            maximum_patched_words: 0,
+        };
+
+        let prepared = parsed
+            .load_and_prepare_process(&mut Cursor::new(&image), request)
+            .unwrap();
+        let manifest = prepared.memory_manifest().unwrap();
+
+        assert_eq!(manifest.entry_point(), 0x0010_0000);
+        assert!(manifest.mappings()[0].executable());
+        assert_eq!(manifest.mappings()[1].mapped_size_bytes(), 0);
+        assert_eq!(manifest.mappings()[2].mapped_size_bytes(), 0);
+        assert_eq!(manifest.bss_address(), 0x0030_0000);
+        assert_eq!(manifest.bss_offset_bytes(), 0);
+        assert_eq!(manifest.bss_size_bytes(), 0);
+        assert_eq!(manifest.initial_stack_pointer(), 0x0400_1000);
+    }
+
+    #[test]
+    fn load_and_prepare_process_enforces_page_aligned_memory_limit() {
+        let image = code_only_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let request = ThreeDsxProcessPreparationRequest {
+            segment_bases: [0x0010_0000, 0x0020_0000, 0x0030_0000],
+            stack_request: ThreeDsxStackRequest {
+                base_address: 0x0400_0000,
+                size_bytes: 0x1000,
+            },
+            maximum_memory_size_bytes: 0x1FFF,
+            maximum_patched_words: 0,
+        };
+
+        let error = parsed
+            .load_and_prepare_process(&mut Cursor::new(&image), request)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
     fn load_and_prepare_process_enforces_relocation_patch_budget() {
         let image = relocatable_image();
         let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
