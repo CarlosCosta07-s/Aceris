@@ -9,8 +9,8 @@ use std::ffi::{CStr, c_char};
 use std::path::Path;
 use std::slice;
 
-use aceris_core::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use aceris_core::loader::cia::{COMMON_KEY_COUNT, TicketCommonKeyStore};
+use aceris_core::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use aceris_core::video::{BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH, ScreenSurface};
 use aceris_core::{DEFAULT_FRAME_INSTRUCTION_BUDGET, System};
 
@@ -307,11 +307,7 @@ pub unsafe extern "C" fn aceris_system_load_cia_file_with_keys(
     let Some(handle) = (unsafe { handle.as_mut() }) else {
         return ACERIS_STATUS_INVALID_HANDLE;
     };
-    if path.is_null()
-        || common_key.is_null()
-        || menu_info_key.is_null()
-        || content_key.is_null()
-    {
+    if path.is_null() || common_key.is_null() || menu_info_key.is_null() || content_key.is_null() {
         return ACERIS_STATUS_INVALID_ARGUMENT;
     }
 
@@ -372,12 +368,10 @@ pub unsafe extern "C" fn aceris_system_load_cia_file_with_keys(
         return ACERIS_STATUS_INVALID_ARGUMENT;
     };
 
-    match handle.system.load_cia_file_with_keys(
-        Path::new(path),
-        &key_store,
-        menu_key,
-        content_key,
-    ) {
+    match handle
+        .system
+        .load_cia_file_with_keys(Path::new(path), &key_store, menu_key, content_key)
+    {
         Ok(_) => {
             handle.last_error = None;
             ACERIS_STATUS_OK
