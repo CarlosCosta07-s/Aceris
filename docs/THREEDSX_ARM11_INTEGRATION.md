@@ -151,3 +151,13 @@ O helper de stack convencional não fixa a base dos segmentos. A seleção das b
 Cada `ThreeDsxProcessMemoryMapping` contém endereço, tamanho inicializado, tamanho mapeado e uma fatia imutável dos bytes completos. Nenhum buffer é copiado pela enumeração. Regiões ROData ou Data vazias são descritas com tamanho zero para o adaptador poder ignorá-las sem inventar uma página.
 
 A API não instala mapeamentos, não cria permissões de MMU e não instancia sessão ARM11. O proprietário do espaço de endereçamento ainda precisa validar o manifesto inteiro antes de instalar o primeiro segmento.
+
+## 11. Manifesto de inicialização
+
+`ThreeDsxPreparedProcess::memory_manifest()` oferece uma visão única e emprestada de tudo que um adaptador precisa para construir o espaço ARM11 desse processo:
+
+- entry point e SP inicial;
+- os quatro mapeamentos Code/ROData/Data/Stack, com endereços, bytes e permissões R/W/X;
+- endereço virtual e tamanho exato do BSS dentro do mapeamento Data.
+
+O método chama `validate()` antes de devolver o manifesto. Assim, os endereços de inicialização, a faixa de BSS e os buffers pertencem ao mesmo objeto preparado validado. O manifesto não copia os buffers, não reserva memória e não altera o espaço ARM11. O BSS continua dentro do Data contínuo, imediatamente após os bytes inicializados, e não deve ser instalado como uma região independente.
