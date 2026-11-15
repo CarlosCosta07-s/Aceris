@@ -972,3 +972,33 @@ Workflow 43661529636 (https://github.com/CarlosCosta07-s/Aceris/actions/runs/436
 2. Implementar leitura/posicionamento dos segmentos, reserva do address space e aplicação testada das relocações; zerar BSS e validar entrypoint.
 3. Só depois conectar a imagem 3DSX à criação da sessão ARM11 e produzir um resultado observável com um arquivo real fornecido legalmente pelo usuário.
 4. Manter claro no README/CLI que identificação e parser 3DSX não significam compatibilidade ou execução do formato.
+## 3DSX — validação de relocations e materialização de segmentos (14/11/2026)
+
+Continuação da contribuição do ChatGPT, ainda restrita ao loader 3DSX. Não foram alterados arquivos de GPU, Thumb, CPU, sessão ou espaço de endereçamento.
+
+### Alterações adicionais
+
+- 9d0cd13 — valida os runs skip/patch das tabelas absolutas e relativas de cada segmento, rejeitando qualquer intervalo que ultrapasse o número de words do segmento. Isso verifica limites, não aplica relocations.
+- f92479e — adiciona ThreeDsxImage::load_segments, que lê os bytes file-backed de Code, ROData e Data, calcula o limite combinado de memória e cria a cauda BSS zerada.
+- a256c18 — aplica Rustfmt à nova rotina e aos testes.
+- 21e09ce — atualiza o roadmap com o estado exato dessa etapa.
+
+### Contrato e limites atuais
+
+- A materialização recebe um leitor seekable e um limite de memória definido pelo chamador; rejeita o tamanho agregado superior ao limite antes de alocar os segmentos.
+- Code, ROData e Data são lidos nos offsets validados pelo parser; BSS é materializado em separado como bytes zero. A rotina não escolhe endereços virtuais nem mapeia permissões.
+- Entradas de relocation continuam sem interpretação/aplicação semântica. O parser só valida os dois campos de contagem e se as sequências skip/patch não ultrapassam o segmento.
+- ThreeDsxLoadedSegments ainda não é PreparedArm11Image e não deve ser convertido criando metadados NCCH fictícios. O próximo desenho deve fornecer uma entrada genérica e validada para segmentos de processo, sem enfraquecer as garantias existentes de NCCH.
+- O frontend desktop e System continuam com o caminho de execução NCSD; reconhecer/ler `.3dsx` não significa que o formato já esteja carregável pela aplicação.
+- Não executar um `.3DSX` nem declarar suporte até existirem aplicação de relocations validada, endereços/entrypoint, memória/permissões/BSS, integração com a sessão ARM11 e um teste de homebrew real fornecido legalmente pelo mantenedor.
+
+### Verificação
+
+Workflow 43661943563 (https://github.com/CarlosCosta07-s/Aceris/actions/runs/43661943563) concluído com sucesso em Linux, Windows e macOS: Rustfmt, build locked, Clippy com -D warnings e testes do workspace. O build release Android arm64-v8a também passou.
+
+### Próximo trabalho recomendado
+
+1. Definir o contrato de carregamento 3DSX para os segmentos e o entrypoint, mantendo a distinção entre bytes do arquivo, tamanho virtual e tamanho de memória.
+2. Implementar e testar a aplicação de cada tipo de relocation suportado a partir da especificação pública, rejeitando tipos desconhecidos em vez de adivinhar.
+3. Preparar um construtor genérico de processo/AddressSpace para segmentos com endereços e permissões explícitos. Revisar a propriedade de process.rs antes de editar; a implementação existente contém trabalho anterior de Claude.
+4. Conectar a criação de sessão e executar um artefato homebrew mínimo, legalmente fornecido pelo mantenedor, com saída reproduzível e diagnóstico de SVCs/serviços faltantes.
