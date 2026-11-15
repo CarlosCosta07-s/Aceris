@@ -243,6 +243,15 @@ mod tests {
         image
     }
 
+    fn relocatable_image() -> Vec<u8> {
+        let mut image = minimal_image();
+        image[32..36].copy_from_slice(&1u32.to_le_bytes());
+        image[56..60].copy_from_slice(&0x0000_1000u32.to_le_bytes());
+        image.extend_from_slice(&0u16.to_le_bytes());
+        image.extend_from_slice(&1u16.to_le_bytes());
+        image
+    }
+
     fn prepare(
         stack: ThreeDsxStackRequest,
         maximum_memory_size_bytes: u64,
@@ -288,6 +297,65 @@ mod tests {
         assert_eq!(&prepared.data[..4], &[0x99, 0xAA, 0xBB, 0xCC]);
         assert!(prepared.data[4..].iter().all(|byte| *byte == 0));
         assert!(prepared.stack.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn requires_relocations_before_preparing_a_process() {
+        let image = relocatable_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+
+        let error = parsed
+            .prepare_process(
+                loaded,
+                [0x0010_0000, 0x0020_0000, 0x0030_0000],
+                ThreeDsxStackRequest {
+                    base_address: 0x0400_0000,
+                    size_bytes: 0x2000,
+                },
+                0x5000,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn prepares_relocated_image_and_rejects_a_second_relocation_pass() {
+        let image = relocatable_image();
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let mut loaded = parsed.load_segments(&mut Cursor::new(&image), 16).unwrap();
+        let bases = [0x0010_0000, 0x0020_0000, 0x0030_0000];
+
+        assert_eq!(
+            parsed
+                .apply_relocations(&mut Cursor::new(&image), &mut loaded, bases, 1)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            parsed
+                .apply_relocations(&mut Cursor::new(&image), &mut loaded, bases, 1)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let prepared = parsed
+            .prepare_process(
+                loaded,
+                bases,
+                ThreeDsxStackRequest {
+                    base_address: 0x0400_0000,
+                    size_bytes: 0x2000,
+                },
+                0x5000,
+            )
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(prepared.code[..4].try_into().unwrap()),
+            0x0020_0000
+        );
     }
 
     #[test]
