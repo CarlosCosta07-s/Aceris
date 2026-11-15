@@ -408,9 +408,9 @@ mod tests {
         assert_eq!(
             parsed.extended_header,
             Some(ThreeDsxExtendedHeader {
-                smdh_offset_bytes: 76,
+                smdh_offset_bytes: 88,
                 smdh_size_bytes: 4,
-                romfs_offset_bytes: 80,
+                romfs_offset_bytes: 92,
             })
         );
     }
