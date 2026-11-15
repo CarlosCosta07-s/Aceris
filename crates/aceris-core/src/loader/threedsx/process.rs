@@ -333,7 +333,7 @@ mod tests {
         assert!(layout.stack.writable);
 
         assert_eq!(
-            u64::from(layout.bss_address),
+            layout.bss_address,
             u64::from(layout.data.address) + u64::from(layout.data.initialized_size_bytes)
         );
         let bss_end = layout.bss_address + u64::from(layout.bss_size_bytes);
