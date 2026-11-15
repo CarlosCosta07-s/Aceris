@@ -939,3 +939,36 @@ Neste ambiente, com Rust 1.97: `cargo fmt --all --check`, `cargo clippy --worksp
 1. Consumir `PicaDrawRequest`: resolver a base de vértices, aplicar `raw_vertex_offset`, buscar atributos/índices, ligar `v0–v15` via `PicaVertexShaderInputBindings` e rodar `PicaVertexShaderProgram::run` por vértice.
 2. Encaminhar os triângulos montados ao `GeometryPipeline` e ao rasterizador.
 3. Ampliar o executor com CMP/condition codes, MOVA e a0/a1/aL, depois fluxo de controle, sempre com testes por instrução.
+
+## 3DSX — validação estrutural inicial (14/11/2026)
+
+O ChatGPT adicionou um primeiro estágio de leitura estrutural de executáveis homebrew 3DSX, restrito ao módulo de loader. Esta contribuição não altera GPU, Thumb, CPU ou o sistema de processos.
+
+### Commits publicados em main
+
+- e21dc24 — adiciona crates/aceris-core/src/loader/threedsx.rs, com parser de cabeçalho, cabeçalho estendido, segmentos, BSS, cabeçalhos/tabelas padrão de relocação e limites de SMDH/RomFS.
+- 1e2631f e 3f2a7a5 — corrigem os offsets usados pelo teste de cabeçalho estendido.
+- 7bc8170 — conecta a validação 3DSX a loader::identify_file; a identificação deixa de aceitar um arquivo apenas pelo magic sem validar a estrutura declarada.
+- 5cfabee e 560161d — aplicam Rustfmt ao parser e à integração.
+- 6bf70f7 — registra o estado parcial no roadmap.
+
+### Contrato e limites
+
+- O parser aceita o cabeçalho base de 0x20 bytes e o bloco estendido conhecido de 0x2C bytes ou maior, valida três cabeçalhos de relocação de 8 bytes e confere os limites dos segmentos e das tabelas.
+- O tamanho de arquivo do segmento Data é calculado como data_size - bss_size; o tamanho de memória inclui a cauda BSS que o loader deverá zerar.
+- O parser descreve as tabelas absolutas e relativas, mas **não interpreta nem aplica suas entradas**.
+- A validação estrutural não cria PreparedArm11Image, não reserva memória, não configura a sessão ARM11 e não executa um homebrew.
+- O parser atualmente exige o layout padrão de 8 bytes para cada cabeçalho de relocação. Não amplie esse suporte sem especificação e testes próprios.
+- Nenhuma imagem de jogo, firmware, chave, conteúdo extraído ou executável de terceiros foi adicionado ao repositório. A implementação usa Rust e não incorpora código ou assets de outro emulador.
+- Os arquivos modificados nesta contribuição são crates/aceris-core/src/loader/threedsx.rs, crates/aceris-core/src/loader.rs e a documentação de estado; não alterar arquivos do módulo GPU nem o trabalho Thumb sem autorização expressa do mantenedor.
+
+### Verificação
+
+Workflow 43661529636 (https://github.com/CarlosCosta07-s/Aceris/actions/runs/43661529636) concluído com sucesso: cargo fmt --all --check, cargo build --locked --workspace, Clippy com -D warnings e cargo test --workspace em Linux, Windows e macOS; build release Android arm64-v8a também aprovado.
+
+### Próximos passos
+
+1. Definir e documentar um alvo homebrew mínimo, legalmente fornecido pelo usuário, e o subconjunto de sistema que ele requer.
+2. Implementar leitura/posicionamento dos segmentos, reserva do address space e aplicação testada das relocações; zerar BSS e validar entrypoint.
+3. Só depois conectar a imagem 3DSX à criação da sessão ARM11 e produzir um resultado observável com um arquivo real fornecido legalmente pelo usuário.
+4. Manter claro no README/CLI que identificação e parser 3DSX não significam compatibilidade ou execução do formato.
