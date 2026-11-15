@@ -318,7 +318,10 @@ mod tests {
             layout.read_only.mapped_size_bytes as usize
         );
         assert_eq!(prepared.data.len(), layout.data.mapped_size_bytes as usize);
-        assert_eq!(prepared.stack.len(), layout.stack.mapped_size_bytes as usize);
+        assert_eq!(
+            prepared.stack.len(),
+            layout.stack.mapped_size_bytes as usize
+        );
 
         assert!(layout.code.executable);
         assert!(!layout.code.writable);
@@ -331,12 +334,10 @@ mod tests {
 
         assert_eq!(
             u64::from(layout.bss_address),
-            u64::from(layout.data.address)
-                + u64::from(layout.data.initialized_size_bytes)
+            u64::from(layout.data.address) + u64::from(layout.data.initialized_size_bytes)
         );
         let bss_end = layout.bss_address + u64::from(layout.bss_size_bytes);
-        let data_end =
-            u64::from(layout.data.address) + u64::from(layout.data.mapped_size_bytes);
+        let data_end = u64::from(layout.data.address) + u64::from(layout.data.mapped_size_bytes);
         assert!(bss_end <= data_end);
         assert_eq!(
             layout.total_mapped_size_bytes,
@@ -345,9 +346,11 @@ mod tests {
                 + u64::from(layout.data.mapped_size_bytes)
                 + u64::from(layout.stack.mapped_size_bytes)
         );
-        assert!(prepared.data[layout.data.initialized_size_bytes as usize..]
-            .iter()
-            .all(|byte| *byte == 0));
+        assert!(
+            prepared.data[layout.data.initialized_size_bytes as usize..]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
     }
 
     #[test]
