@@ -399,6 +399,14 @@ impl Arm11ProcessSession {
         self.address_space.drain_arm11_write_buffer()
     }
 
+    /// Applies the process data-memory barrier ordering point (DMB).
+    ///
+    /// The current backing model completes all older buffered stores before
+    /// the call returns. The CP15 DSB path uses the same completion primitive.
+    pub fn data_memory_barrier(&mut self) -> Result<()> {
+        crate::memory::Bus::data_memory_barrier(&mut self.address_space)
+    }
+
     /// Number of D-cache writeback entries still waiting for physical memory.
     pub fn pending_write_buffer_entries(&self) -> usize {
         self.address_space.pending_write_buffer_entries()
