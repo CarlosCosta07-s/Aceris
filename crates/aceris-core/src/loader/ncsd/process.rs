@@ -17,7 +17,7 @@ use crate::gpu::{
     OLD_LINEAR_END,
 };
 use crate::loader::threedsx::process::{ThreeDsxPreparedProcess, ThreeDsxProcessMemorySegment};
-use crate::memory::Bus;
+use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
@@ -1721,6 +1721,19 @@ impl Arm11CodeAddressSpace {
             });
         }
 
+        // A translated ARM11 access reaches this bus with its physical
+        // address. Resolve registered linear FCRAM backing in both directions
+        // so MMU-enabled CPU accesses and device accesses share the same cache.
+        if let Some((index, region)) = self.linear_regions.iter().enumerate().find(|(_, region)| {
+            address >= region.physical_base
+                && u64::from(address) < u64::from(region.physical_base) + u64::from(region.size)
+        }) {
+            return Some(MemoryLocation::Physical {
+                index,
+                address,
+            });
+        }
+
         if let Some((index, region)) = self.shared_regions.iter().enumerate().find(|(_, region)| {
             address >= region.address
                 && region
@@ -1854,6 +1867,15 @@ impl Arm11CodeAddressSpace {
     }
 
     fn write_bytes(&mut self, address: u32, bytes: &[u8]) -> BusResult<()> {
+        self.write_bytes_with_cache_policy(address, bytes, CachePolicy::WriteBack)
+    }
+
+    fn write_bytes_with_cache_policy(
+        &mut self,
+        address: u32,
+        bytes: &[u8],
+        policy: CachePolicy,
+    ) -> BusResult<()> {
         let mut locations = Vec::with_capacity(bytes.len());
 
         for index in 0..bytes.len() {
@@ -1896,9 +1918,17 @@ impl Arm11CodeAddressSpace {
                 MemoryLocation::Physical {
                     address: physical_address,
                     ..
-                } => {
-                    self.write_cached_physical_byte(physical_address, *byte)?;
-                }
+                } => match policy {
+                    CachePolicy::NonCacheable => {
+                        self.write_uncached_physical_byte(physical_address, *byte)?;
+                    }
+                    CachePolicy::WriteThrough => {
+                        self.write_through_physical_byte(physical_address, *byte)?;
+                    }
+                    CachePolicy::WriteBack => {
+                        self.write_cached_physical_byte(physical_address, *byte)?;
+                    }
+                },
             }
         }
 
@@ -1967,6 +1997,45 @@ impl Arm11CodeAddressSpace {
             }
         }
         self.data_cache.remove(&line_base)
+    }
+
+    fn read_uncached_physical_byte(&self, address: u32) -> BusResult<u8> {
+        let mut byte = [0u8; 1];
+        self.gpu_memory
+            .as_ref()
+            .ok_or(Error::InvalidAccess { addr: address })?
+            .read(address, &mut byte)
+            .map_err(|_| Error::InvalidAccess { addr: address })?;
+        Ok(byte[0])
+    }
+
+    fn write_uncached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
+        self.gpu_memory
+            .as_mut()
+            .ok_or(Error::InvalidAccess { addr: address })?
+            .write(address, &[value])
+            .map_err(|_| Error::InvalidAccess { addr: address })
+    }
+
+    /// A write-through store updates backing memory immediately. If a line is
+    /// already resident, update that copy and clean it; do not allocate on a miss.
+    fn write_through_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
+        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+        let offset = (address - line_base) as usize;
+        if let Some(line) = self.data_cache.get_mut(&line_base) {
+            line.bytes[offset] = value;
+            let bytes = line.bytes;
+            self.gpu_memory
+                .as_mut()
+                .ok_or(Error::InvalidAccess { addr: address })?
+                .write(line_base, &bytes)
+                .map_err(|_| Error::InvalidAccess { addr: address })?;
+            line.dirty = false;
+            self.touch_data_cache_line(line_base);
+            Ok(())
+        } else {
+            self.write_uncached_physical_byte(address, value)
+        }
     }
 
     fn read_cached_physical_byte(&mut self, address: u32) -> BusResult<u8> {
@@ -2202,6 +2271,14 @@ impl Arm11CodeAddressSpace {
 
 impl Bus for Arm11CodeAddressSpace {
     fn read8(&mut self, address: u32) -> BusResult<u8> {
+        self.read8_with_cache_policy(address, CachePolicy::WriteBack)
+    }
+
+    fn read8_with_cache_policy(
+        &mut self,
+        address: u32,
+        policy: CachePolicy,
+    ) -> BusResult<u8> {
         let location = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -2223,7 +2300,12 @@ impl Bus for Arm11CodeAddressSpace {
             MemoryLocation::Physical {
                 address: physical_address,
                 ..
-            } => self.read_cached_physical_byte(physical_address),
+            } => match policy {
+                CachePolicy::NonCacheable => self.read_uncached_physical_byte(physical_address),
+                CachePolicy::WriteThrough | CachePolicy::WriteBack => {
+                    self.read_cached_physical_byte(physical_address)
+                }
+            },
             MemoryLocation::Static { offset, .. } => self
                 .bytes_for_location(location)
                 .get(offset)
@@ -2234,6 +2316,15 @@ impl Bus for Arm11CodeAddressSpace {
 
     fn write8(&mut self, address: u32, value: u8) -> BusResult<()> {
         self.write_bytes(address, &[value])
+    }
+
+    fn write8_with_cache_policy(
+        &mut self,
+        address: u32,
+        value: u8,
+        policy: CachePolicy,
+    ) -> BusResult<()> {
+        self.write_bytes_with_cache_policy(address, &[value], policy)
     }
 
     fn write16(&mut self, address: u32, value: u16) -> BusResult<()> {
