@@ -32,7 +32,10 @@ use crate::loader::ncsd::process::{
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
-use kernel::{Arm11KernelObjectTable, EventResetType, KernelHandleError, ServiceSessionKind};
+use kernel::{
+    Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, EventResetType, KernelHandleError,
+    ServiceSessionKind,
+};
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
     SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
@@ -2109,7 +2112,7 @@ impl Arm11ProcessSession {
             .core(caller)
             .expect("caller context exists")
             .regs;
-        if registers[0] != 0xFFFF_8001 {
+        if registers[0] != CURRENT_PROCESS_HANDLE {
             return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
         }
         let result = match operation {
