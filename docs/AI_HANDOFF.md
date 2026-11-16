@@ -1626,3 +1626,12 @@ Escopo: somente o módulo `gpu` (decisão do mantenedor: item 3 da ordem de prio
 
 Verificado localmente sobre `main` em 71ea686: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` com saída 0. A CI remota não foi consultada.
 
+### Integração em `system.rs` (autorizada pelo mantenedor, 16/11/2026)
+
+- `System::set_pica_rendering(Option<PicaRenderSettings>)` e `System::last_pica_render_report()`. Com `None` (padrão) nada muda: a lista é só interpretada e os draws vão para a fila.
+- Com `Some`, `submit_pica_command_list_from_physical_memory` (usado pelo GSP `ProcessCommandList` e pelas submissões diretas) chama `execute_command_list_rendering`. A base dos vértices vem de `(GPUREG_ATTRIBBUFFERS_LOC & 0x0FFF_FFFF) << 3` (endereço físico), suposição do encoding de hardware **não validada**.
+- Teste: `gsp_process_command_list_renders_a_draw_into_the_tiled_target_when_enabled` percorre fila GX → flush de cache → render → leitura do alvo tiled.
+- Alteração restrita ao caminho de submissão, ao struct `System` (dois campos novos) e a testes; cache/DMA/outros caminhos intocados.
+
+Verificado localmente sobre `main` em 3150e76: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
+

@@ -8,9 +8,9 @@ use crate::gpu::{
     GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspDisplayTransfer,
     GspDmaRequest, GspFlushCacheRegions, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, TextureCopyError,
-    TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
-    execute_display_transfer, execute_texture_copy,
+    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, PicaRenderReport,
+    PicaRenderSettings, REG_ATTRIBBUFFERS_LOC, TextureCopyError, TextureCopyRequest, VRAM_BASE,
+    VRAM_SIZE, display_transfer_buffer_sizes, execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -82,6 +82,9 @@ pub struct System {
     gsp_service: GspServiceRegistry,
     pending_gsp_acquires: Vec<PendingGspAcquire>,
     gpu: Pica200,
+    /// When set, submitted command lists are rendered, not only parsed.
+    pica_render_settings: Option<PicaRenderSettings>,
+    last_pica_render_report: Option<PicaRenderReport>,
     physical_memory: GpuPhysicalMemory,
     gpu_address_space: GpuDmaAddressSpace,
     lcd: LcdController,
@@ -1463,12 +1466,50 @@ impl System {
             );
         }
 
+        if let Some(settings) = self.pica_render_settings {
+            // GPUREG_ATTRIBBUFFERS_LOC holds the physical base address >> 3
+            // (28 bits); this is the documented hardware encoding, applied here
+            // without independent validation against hardware.
+            let (report, render) = self
+                .gpu
+                .execute_command_list_rendering(
+                    &words,
+                    &mut self.physical_memory,
+                    settings,
+                    |pica, _| {
+                        pica.register(REG_ATTRIBBUFFERS_LOC)
+                            .map(|raw| (raw & 0x0FFF_FFFF) << 3)
+                    },
+                )
+                .map_err(|error| {
+                    Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("PICA200 command list rendering failed: {error}"),
+                    ))
+                })?;
+            self.last_pica_render_report = Some(render);
+            return Ok(report);
+        }
+
         self.gpu.execute_command_list(&words).map_err(|error| {
             Error::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid PICA200 command list: {error}"),
             ))
         })
+    }
+
+    /// Enables (or disables with `None`) rendering of submitted command lists.
+    ///
+    /// Disabled by default, which keeps the parser-only behavior. When enabled,
+    /// each draw is rendered into the live tiled render target at trigger time.
+    pub fn set_pica_rendering(&mut self, settings: Option<PicaRenderSettings>) {
+        self.pica_render_settings = settings;
+    }
+
+    /// Totals of the most recent rendered command list, if rendering is enabled.
+    pub const fn last_pica_render_report(&self) -> Option<PicaRenderReport> {
+        self.last_pica_render_report
     }
 
     /// Resolves a process-linear command-list address through the registered DMA map.
@@ -4079,6 +4120,145 @@ mod tests {
                 .unwrap(),
             0xCAFE_BABE
         );
+    }
+
+    #[test]
+    fn gsp_process_command_list_renders_a_draw_into_the_tiled_target_when_enabled() {
+        use crate::gpu::{
+            ClipDepthRange, DepthFunction, GeometryPipeline, Matrix4, PicaRenderTargetConfig,
+            Viewport,
+        };
+
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let (command_list_address, _) = map_test_linear_fcram(&mut system, 0x1000);
+        let vertex_base = system
+            .physical_memory_mut()
+            .allocate_linear_fcram(0x1000)
+            .unwrap();
+        let target_base = system
+            .physical_memory_mut()
+            .allocate_linear_fcram(0x1000)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write(vertex_base, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+
+        use crate::gpu::{
+            REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32,
+            REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
+            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
+            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX,
+        };
+        let gpu = system.gpu_mut();
+        for (register, value) in [
+            (REG_ATTRIBBUFFERS_LOC, vertex_base >> 3),
+            (REG_ATTRIBBUFFERS_FORMAT_LOW, 0x1),
+            (REG_ATTRIBBUFFERS_FORMAT_HIGH, 0),
+            (REG_ATTRIBBUFFER0_OFFSET, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 1, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 2, (2 << 16) | (2 << 28)),
+            (REG_VSH_INPUTBUFFER_CONFIG, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
+            (REG_VSH_OPDESCS_INDEX, 0),
+            (
+                REG_VSH_OPDESCS_DATA0,
+                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
+            ),
+            (REG_VSH_CODETRANSFER_INDEX, 0),
+            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
+            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+            (REG_VSH_ENTRYPOINT, 0),
+            (REG_NUMVERTICES, 3),
+            (REG_COLORBUFFER_LOC, target_base >> 3),
+            (REG_COLORBUFFER_FORMAT, 2),
+            (REG_FRAMEBUFFER_BLOCK32, 0),
+            (REG_FRAMEBUFFER_DIM, (7 << 12) | 8),
+        ] {
+            gpu.write_register(register, value).unwrap();
+        }
+        for index in 0..7u16 {
+            gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
+                .unwrap();
+        }
+        gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+
+        system.set_pica_rendering(Some(crate::gpu::PicaRenderSettings {
+            pipeline: GeometryPipeline::new(
+                Matrix4::from_column_major([
+                    0.25, 0.0, 0.0, 0.0, //
+                    0.0, 0.25, 0.0, 0.0, //
+                    0.0, 0.0, 1.0, 0.0, //
+                    -1.0, -1.0, 0.0, 1.0,
+                ])
+                .unwrap(),
+                Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+                ClipDepthRange::NegativeOneToOne,
+            ),
+            default_color: [200, 100, 50, 255],
+            depth_function: DepthFunction::Less,
+        }));
+
+        // One DRAWARRAYS trigger (register 0x22E, all byte lanes).
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_u32(command_list_address, 1)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_u32(command_list_address + 4, 0x000F_022E)
+            .unwrap();
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[0] = 0;
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&command_list_address.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&1u32.to_le_bytes());
+        queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+
+        assert!(report.error.is_none(), "{:?}", report.error);
+        assert_eq!(report.command_lists_submitted, 1);
+        let render = system.last_pica_render_report().unwrap();
+        assert_eq!(render.triangles_submitted, 1);
+        assert!(render.pixels_written >= 28);
+
+        let config =
+            PicaRenderTargetConfig::from_registers(target_base >> 3, 2, 0, (7 << 12) | 8).unwrap();
+        let pixels = config.read_rgba8(system.physical_memory()).unwrap();
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * 8 + x) * 4;
+            [
+                pixels[offset],
+                pixels[offset + 1],
+                pixels[offset + 2],
+                pixels[offset + 3],
+            ]
+        };
+        assert_eq!(pixel(1, 6), [200, 100, 50, 255]);
+        assert_eq!(pixel(6, 1), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn command_lists_are_only_parsed_when_rendering_is_not_enabled() {
+        let system = System::new();
+        assert!(system.last_pica_render_report().is_none());
     }
 
     #[test]
