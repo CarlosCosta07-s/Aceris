@@ -362,6 +362,11 @@ impl Arm11ProcessSession {
         self.address_space.flush_data_cache_range(address, size_bytes)
     }
 
+    /// Cleans dirty process data-cache lines while retaining them as clean.
+    pub fn store_process_data_cache(&mut self, address: u32, size_bytes: u32) -> Result<usize> {
+        self.address_space.store_data_cache_range(address, size_bytes)
+    }
+
     /// Invalidates process data-cache lines without writing dirty data back.
     pub fn invalidate_process_data_cache(&mut self, address: u32, size_bytes: u32) -> Result<usize> {
         self.address_space.invalidate_data_cache_range(address, size_bytes)
@@ -1836,6 +1841,9 @@ impl Arm11ProcessSession {
             SVC_MAP_MEMORY_BLOCK => self.svc_map_memory_block(caller),
             SVC_UNMAP_MEMORY_BLOCK => self.svc_unmap_memory_block(caller),
             SVC_QUERY_MEMORY => self.svc_query_memory(caller),
+            0x52 => self.svc_invalidate_process_data_cache(caller),
+            0x53 => self.svc_store_process_data_cache(caller),
+            0x54 => self.svc_flush_process_data_cache(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
             SVC_CREATE_MUTEX => self.svc_create_mutex(caller),
             SVC_RELEASE_MUTEX => self.svc_release_mutex(caller),
@@ -2075,6 +2083,34 @@ impl Arm11ProcessSession {
             .map(|()| 0)
             .unwrap_or_else(kernel_handle_result_code);
         self.write_svc_result(caller, result)
+    }
+
+    /// Handles InvalidateProcessDataCache (0x52), StoreProcessDataCache (0x53),
+    /// and FlushProcessDataCache (0x54) for the current-process pseudo-handle.
+    fn svc_cache_maintenance(&mut self, caller: ThreadId, operation: u8) -> SvcRunDisposition {
+        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        if registers[0] != 0xFFFF_8001 {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
+        let result = match operation {
+            0x52 => self.invalidate_process_data_cache(registers[1], registers[2]),
+            0x53 => self.store_process_data_cache(registers[1], registers[2]),
+            0x54 => self.flush_process_data_cache(registers[1], registers[2]),
+            _ => unreachable!("cache maintenance operation is selected by its SVC number"),
+        };
+        self.write_svc_result(caller, result.map(|_| 0).unwrap_or(RESULT_INVALID_ADDRESS))
+    }
+
+    fn svc_invalidate_process_data_cache(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        self.svc_cache_maintenance(caller, 0x52)
+    }
+
+    fn svc_store_process_data_cache(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        self.svc_cache_maintenance(caller, 0x53)
+    }
+
+    fn svc_flush_process_data_cache(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        self.svc_cache_maintenance(caller, 0x54)
     }
 
     /// Handles QueryMemory: r2 is the queried address; r0-r5 receive result and region.
