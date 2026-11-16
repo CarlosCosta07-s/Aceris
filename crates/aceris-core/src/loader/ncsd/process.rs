@@ -1408,7 +1408,7 @@ impl Arm11CodeAddressSpace {
             .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
         self.dynamic_regions.push(DynamicMemoryRegion {
             address,
-            backing: DynamicMemoryBacking::Private(bytes),
+            backing: DynamicMemoryBacking::Private(SharedMemoryBacking::from_vec(bytes)),
         });
         self.dynamic_regions.sort_by_key(|region| region.address);
 
@@ -1440,7 +1440,9 @@ impl Arm11CodeAddressSpace {
                     })?;
                     self.dynamic_regions.push(DynamicMemoryRegion {
                         address,
-                        backing: DynamicMemoryBacking::Private(vec![0; PAGE_SIZE as usize]),
+                        backing: DynamicMemoryBacking::Private(SharedMemoryBacking::zeroed(PAGE_SIZE as usize).map_err(|error| {
+                            Arm11DynamicMemoryError::AllocationFailure(error)
+                        })?),
                     });
                     self.dynamic_regions.sort_by_key(|region| region.address);
                 }
