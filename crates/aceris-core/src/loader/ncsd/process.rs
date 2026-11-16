@@ -1997,63 +1997,40 @@ impl Arm11CodeAddressSpace {
     ) -> BusResult<()> {
         let mut locations = Vec::with_capacity(bytes.len());
 
+        // Validate the complete range before mutating cache state or backing.
         for index in 0..bytes.len() {
-            let offset =
-                u32::try_from(index).map_err(|_| Error::InvalidAccess { addr: address })?;
+            let offset = u32::try_from(index).map_err(|_| Error::InvalidAccess { addr: address })?;
             let current_address = address
                 .checked_add(offset)
                 .ok_or(Error::InvalidAccess { addr: address })?;
             let location = self.locate(current_address).ok_or(Error::InvalidAccess {
                 addr: current_address,
             })?;
-
             if !self.location_is_writable(location) {
                 return Err(Error::InvalidAccess {
                     addr: current_address,
                 });
             }
-
             locations.push(location);
         }
 
         for (byte, location) in bytes.iter().zip(locations) {
-            match location {
-                MemoryLocation::Static { kind, offset } => {
-                    self.bytes_for_mut(kind)[offset] = *byte;
+            let (key, target, byte_offset) = self
+                .cache_location(location)
+                .ok_or(Error::InvalidAccess { addr: address })?;
+            match policy {
+                CachePolicy::NonCacheable => {
+                    self.write_uncached_byte(&target, key, byte_offset, *byte)?;
                 }
-                MemoryLocation::Dynamic { index, offset } => {
-                    if !self.dynamic_regions[index]
-                        .backing
-                        .write_byte(offset, *byte)
-                    {
-                        return Err(Error::InvalidAccess { addr: address });
-                    }
+                CachePolicy::NormalNonCacheable | CachePolicy::WriteThrough => {
+                    self.write_normal_buffered_byte(&target, key, byte_offset, *byte)?;
                 }
-                MemoryLocation::Shared { index, offset } => {
-                    if !self.shared_regions[index].backing.write_byte(offset, *byte) {
-                        return Err(Error::InvalidAccess { addr: address });
-                    }
+                CachePolicy::WriteBack => {
+                    self.write_cached_byte(&target, key, byte_offset, *byte)?;
                 }
-                MemoryLocation::Physical {
-                    address: physical_address,
-                    ..
-                } => match policy {
-                    CachePolicy::NonCacheable => {
-                        self.write_uncached_physical_byte(physical_address, *byte)?;
-                    }
-                    CachePolicy::NormalNonCacheable => {
-                        self.write_normal_buffered_physical_byte(physical_address, *byte)?;
-                    }
-                    CachePolicy::WriteThrough => {
-                        self.write_through_physical_byte(physical_address, *byte)?;
-                    }
-                    CachePolicy::WriteBack => {
-                        self.write_cached_physical_byte(physical_address, *byte)?;
-                    }
-                    CachePolicy::WriteBackNoAllocate => {
-                        self.write_back_no_allocate_physical_byte(physical_address, *byte)?;
-                    }
-                },
+                CachePolicy::WriteBackNoAllocate => {
+                    self.write_back_no_allocate_byte(&target, key, byte_offset, *byte)?;
+                }
             }
         }
 
@@ -2061,33 +2038,206 @@ impl Arm11CodeAddressSpace {
         Ok(())
     }
 
-    fn cache_set_index(line_base: u32) -> usize {
-        (line_base as usize / ARM11_DATA_CACHE_LINE_SIZE) % ARM11_DATA_CACHE_SET_COUNT
-    }
-
-    fn touch_data_cache_line(&mut self, line_base: u32) {
-        let set_index = Self::cache_set_index(line_base);
-        if let Some(set) = self.data_cache_lru.get_mut(set_index) {
-            if let Some(position) = set.iter().position(|entry| *entry == line_base) {
-                set.remove(position);
-            }
-            set.push_back(line_base);
+    fn static_backing_slot(kind: Arm11SegmentKind) -> usize {
+        match kind {
+            Arm11SegmentKind::Text => 0,
+            Arm11SegmentKind::ReadOnly => 1,
+            Arm11SegmentKind::Data => 2,
+            Arm11SegmentKind::Bss => 3,
+            Arm11SegmentKind::Stack => 4,
         }
     }
 
+    /// Resolves a virtual or physical location to an identity that survives
+    /// aliases, process mappings and shared-memory views.
+    fn cache_location(
+        &self,
+        location: MemoryLocation,
+    ) -> Option<(DataCacheKey, DataCacheTarget, usize)> {
+        match location {
+            MemoryLocation::Static { kind, offset } => {
+                let line_offset = offset & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
+                let key = DataCacheKey {
+                    backing_id: self.static_backing_ids[Self::static_backing_slot(kind)],
+                    line_offset: line_offset as u64,
+                };
+                Some((
+                    key,
+                    DataCacheTarget::Static {
+                        kind,
+                        offset: line_offset,
+                    },
+                    offset - line_offset,
+                ))
+            }
+            MemoryLocation::Dynamic { index, offset } => {
+                let backing = self.dynamic_regions.get(index)?.backing.backing_handle();
+                self.cache_location_for_backing(backing, offset)
+            }
+            MemoryLocation::Shared { index, offset } => {
+                let backing = self.shared_regions.get(index)?.backing.clone();
+                self.cache_location_for_backing(backing, offset)
+            }
+            MemoryLocation::Physical {
+                address: physical_address,
+                ..
+            } => {
+                let memory = self.gpu_memory.as_ref()?.clone();
+                let line_address =
+                    physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+                let key = DataCacheKey {
+                    backing_id: memory.backing_id(),
+                    line_offset: u64::from(line_address),
+                };
+                Some((
+                    key,
+                    DataCacheTarget::Physical {
+                        memory,
+                        address: line_address,
+                    },
+                    (physical_address - line_address) as usize,
+                ))
+            }
+        }
+    }
+
+    fn cache_location_for_backing(
+        &self,
+        backing: SharedMemoryBacking,
+        offset: usize,
+    ) -> Option<(DataCacheKey, DataCacheTarget, usize)> {
+        let root_offset = backing.root_offset(offset)?;
+        let root_line = root_offset & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
+        let view_line = root_line.checked_sub(backing.root_base_offset())?;
+        let key = DataCacheKey {
+            backing_id: backing.backing_id(),
+            line_offset: root_line as u64,
+        };
+        Some((
+            key,
+            DataCacheTarget::Backing {
+                backing,
+                offset: view_line,
+            },
+            root_offset - root_line,
+        ))
+    }
+
+    fn cache_set_index(key: DataCacheKey) -> usize {
+        ((key.backing_id ^ (key.line_offset / ARM11_DATA_CACHE_LINE_SIZE as u64)) as usize)
+            & (ARM11_DATA_CACHE_SET_COUNT - 1)
+    }
+
+    fn touch_data_cache_line(&mut self, key: DataCacheKey) {
+        let set_index = Self::cache_set_index(key);
+        if let Some(set) = self.data_cache_lru.get_mut(set_index) {
+            if let Some(position) = set.iter().position(|entry| *entry == key) {
+                set.remove(position);
+            }
+            set.push_back(key);
+        }
+    }
+
+    fn cache_target_generation(&self, target: &DataCacheTarget, key: DataCacheKey) -> u64 {
+        match target {
+            DataCacheTarget::Static { .. } => self
+                .static_cache_generations
+                .get(&key)
+                .copied()
+                .unwrap_or(0),
+            DataCacheTarget::Backing { backing, offset } => backing.cache_generation(*offset),
+            DataCacheTarget::Physical { memory, address } => {
+                memory.cache_generation(*address)
+            }
+        }
+    }
+
+    fn read_cache_target_line(
+        &self,
+        target: &DataCacheTarget,
+    ) -> BusResult<[u8; ARM11_DATA_CACHE_LINE_SIZE]> {
+        let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
+        match target {
+            DataCacheTarget::Static { kind, offset } => {
+                let source = self
+                    .bytes_for(*kind)
+                    .get(*offset..*offset + ARM11_DATA_CACHE_LINE_SIZE)
+                    .ok_or(Error::InvalidAccess { addr: 0 })?;
+                bytes.copy_from_slice(source);
+            }
+            DataCacheTarget::Backing { backing, offset } => {
+                if !backing.read_range(*offset, &mut bytes) {
+                    return Err(Error::InvalidAccess { addr: 0 });
+                }
+            }
+            DataCacheTarget::Physical { memory, address } => {
+                memory
+                    .read(*address, &mut bytes)
+                    .map_err(|_| Error::InvalidAccess { addr: *address })?;
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn write_cache_target_range(
+        &mut self,
+        target: &DataCacheTarget,
+        key: DataCacheKey,
+        start: usize,
+        bytes: &[u8],
+    ) -> BusResult<()> {
+        match target {
+            DataCacheTarget::Static { kind, offset } => {
+                let begin = offset
+                    .checked_add(start)
+                    .ok_or(Error::InvalidAccess { addr: 0 })?;
+                let end = begin
+                    .checked_add(bytes.len())
+                    .ok_or(Error::InvalidAccess { addr: 0 })?;
+                let destination = self
+                    .bytes_for_mut(*kind)
+                    .get_mut(begin..end)
+                    .ok_or(Error::InvalidAccess { addr: 0 })?;
+                destination.copy_from_slice(bytes);
+                let generation = self.static_cache_generations.entry(key).or_insert(0);
+                *generation = generation.wrapping_add(1);
+            }
+            DataCacheTarget::Backing { backing, offset } => {
+                let begin = offset
+                    .checked_add(start)
+                    .ok_or(Error::InvalidAccess { addr: 0 })?;
+                if !backing.write_range(begin, bytes) {
+                    return Err(Error::InvalidAccess { addr: 0 });
+                }
+            }
+            DataCacheTarget::Physical { memory, address } => {
+                let physical_address = address
+                    .checked_add(start as u32)
+                    .ok_or(Error::InvalidAccess { addr: *address })?;
+                let mut memory = memory.clone();
+                memory
+                    .write(physical_address, bytes)
+                    .map_err(|_| Error::InvalidAccess {
+                        addr: physical_address,
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
     /// Inserts a line into the four-way set-associative cache. Dirty victims
-    /// are written back before their slot is reused.
+    /// are written back through the backing identity retained by the line.
     fn insert_data_cache_line(
         &mut self,
-        line_base: u32,
+        key: DataCacheKey,
         line: Arm11DataCacheLine,
     ) -> BusResult<()> {
-        let set_index = Self::cache_set_index(line_base);
+        let set_index = Self::cache_set_index(key);
         let victim = {
             let set = self
                 .data_cache_lru
                 .get_mut(set_index)
-                .ok_or(Error::InvalidAccess { addr: line_base })?;
+                .ok_or(Error::InvalidAccess { addr: 0 })?;
             if set.len() >= ARM11_DATA_CACHE_WAYS {
                 set.pop_front()
             } else {
@@ -2095,79 +2245,86 @@ impl Arm11CodeAddressSpace {
             }
         };
 
-        if let Some(victim_base) = victim {
-            if let Some(victim_line) = self.data_cache.remove(&victim_base) {
+        if let Some(victim_key) = victim {
+            if let Some(victim_line) = self.data_cache.remove(&victim_key) {
                 if victim_line.dirty {
-                    self.enqueue_data_cache_writeback(victim_base, victim_line.bytes)?;
+                    self.enqueue_data_cache_writeback(
+                        victim_key,
+                        victim_line.target,
+                        victim_line.bytes,
+                    )?;
                 }
             }
         }
 
         if let Some(set) = self.data_cache_lru.get_mut(set_index) {
-            set.push_back(line_base);
+            set.push_back(key);
         }
-        self.data_cache.insert(line_base, line);
+        self.data_cache.insert(key, line);
         Ok(())
     }
 
-    fn remove_data_cache_line(&mut self, line_base: u32) -> Option<Arm11DataCacheLine> {
-        let set_index = Self::cache_set_index(line_base);
+    fn remove_data_cache_line(&mut self, key: DataCacheKey) -> Option<Arm11DataCacheLine> {
+        let set_index = Self::cache_set_index(key);
         if let Some(set) = self.data_cache_lru.get_mut(set_index) {
-            if let Some(position) = set.iter().position(|entry| *entry == line_base) {
+            if let Some(position) = set.iter().position(|entry| *entry == key) {
                 set.remove(position);
             }
         }
-        self.data_cache.remove(&line_base)
+        self.data_cache.remove(&key)
     }
 
-    fn overlay_write_buffer(&self, address: u32, output: &mut [u8]) {
-        let output_start = u64::from(address);
-        let output_end = output_start + output.len() as u64;
+    fn overlay_write_buffer(&self, key: DataCacheKey, output: &mut [u8]) {
         for entry in &self.write_buffer {
-            let entry_start = u64::from(entry.address);
-            let entry_end = entry_start + u64::from(entry.length);
-            let overlap_start = output_start.max(entry_start);
-            let overlap_end = output_end.min(entry_end);
-            if overlap_start >= overlap_end {
+            if entry.key != key {
                 continue;
             }
-            let source_start = (overlap_start - entry_start) as usize;
-            let destination_start = (overlap_start - output_start) as usize;
-            let length = (overlap_end - overlap_start) as usize;
-            output[destination_start..destination_start + length]
-                .copy_from_slice(&entry.bytes[source_start..source_start + length]);
+            let start = usize::from(entry.start);
+            let length = usize::from(entry.length);
+            let end = start.saturating_add(length).min(output.len());
+            if start >= end {
+                continue;
+            }
+            output[start..end].copy_from_slice(&entry.bytes[..end - start]);
         }
     }
 
     fn enqueue_data_cache_writeback(
         &mut self,
-        address: u32,
+        key: DataCacheKey,
+        target: DataCacheTarget,
         bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
     ) -> BusResult<()> {
         if self.write_buffer.len() >= ARM11_WRITE_BUFFER_CAPACITY {
             self.drain_write_buffer_entries(1)?;
         }
         self.write_buffer.push_back(Arm11WriteBufferEntry {
-            address,
+            key,
+            target,
+            start: 0,
             bytes,
             length: ARM11_DATA_CACHE_LINE_SIZE as u8,
         });
         Ok(())
     }
 
-    /// Queues one bufferable Normal-memory store, merging adjacent bytes that
-    /// belong to the same 32-byte region. A full queue completes its oldest
-    /// entry before accepting more data.
-    fn enqueue_buffered_normal_store(&mut self, address: u32, value: u8) -> BusResult<()> {
+    /// Queues one bufferable Normal-memory store. Adjacent stores coalesce only
+    /// when they target the same backing line and occupy consecutive bytes.
+    fn enqueue_buffered_normal_store(
+        &mut self,
+        key: DataCacheKey,
+        target: DataCacheTarget,
+        offset: usize,
+        value: u8,
+    ) -> BusResult<()> {
         if let Some(entry) = self.write_buffer.back_mut() {
+            let start = usize::from(entry.start);
             let length = usize::from(entry.length);
-            let same_line = (entry.address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1))
-                == (address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
-            if length < ARM11_DATA_CACHE_LINE_SIZE
-                && same_line
-                && u64::from(entry.address) + length as u64 == u64::from(address)
+            if entry.key == key
+                && length < ARM11_DATA_CACHE_LINE_SIZE
+                && start + length == offset
             {
-                entry.bytes[length] = value;
+                entry.bytes[offset] = value;
                 entry.length += 1;
                 return Ok(());
             }
@@ -2177,9 +2334,11 @@ impl Arm11CodeAddressSpace {
             self.drain_write_buffer_entries(1)?;
         }
         let mut bytes = [0; ARM11_DATA_CACHE_LINE_SIZE];
-        bytes[0] = value;
+        bytes[offset] = value;
         self.write_buffer.push_back(Arm11WriteBufferEntry {
-            address,
+            key,
+            target,
+            start: offset as u8,
             bytes,
             length: 1,
         });
@@ -2192,22 +2351,21 @@ impl Arm11CodeAddressSpace {
             let Some(entry) = self.write_buffer.front().cloned() else {
                 break;
             };
-            self.gpu_memory
-                .as_mut()
-                .ok_or(Error::InvalidAccess {
-                    addr: entry.address,
-                })?
-                .write(entry.address, &entry.bytes[..usize::from(entry.length)])
-                .map_err(|_| Error::InvalidAccess {
-                    addr: entry.address,
-                })?;
+            let start = usize::from(entry.start);
+            let end = start + usize::from(entry.length);
+            self.write_cache_target_range(
+                &entry.target,
+                entry.key,
+                start,
+                &entry.bytes[start..end],
+            )?;
             self.write_buffer.pop_front();
             drained += 1;
         }
         Ok(drained)
     }
 
-    /// Completes queued ARM11 D-cache writebacks in FIFO order.
+    /// Completes queued ARM11 D-cache writebacks and bufferable stores in FIFO order.
     pub fn drain_arm11_write_buffer(&mut self) -> BusResult<usize> {
         self.drain_write_buffer_entries(usize::MAX)
     }
@@ -2217,154 +2375,173 @@ impl Arm11CodeAddressSpace {
         self.write_buffer.len()
     }
 
-    fn read_normal_buffered_physical_byte(&self, address: u32) -> BusResult<u8> {
-        let mut byte = [0u8; 1];
-        self.gpu_memory
-            .as_ref()
-            .ok_or(Error::InvalidAccess { addr: address })?
-            .read(address, &mut byte)
-            .map_err(|_| Error::InvalidAccess { addr: address })?;
-        self.overlay_write_buffer(address, &mut byte);
-        Ok(byte[0])
+    fn read_normal_buffered_byte(
+        &self,
+        target: &DataCacheTarget,
+        key: DataCacheKey,
+        offset: usize,
+    ) -> BusResult<u8> {
+        let mut bytes = self.read_cache_target_line(target)?;
+        self.overlay_write_buffer(key, &mut bytes);
+        bytes
+            .get(offset)
+            .copied()
+            .ok_or(Error::InvalidAccess { addr: 0 })
     }
 
     /// Device/Strongly Ordered reads do not forward from Normal-memory stores:
     /// older buffered writes must complete before the read reaches the bus.
-    fn read_ordered_physical_byte(&mut self, address: u32) -> BusResult<u8> {
+    fn read_ordered_byte(
+        &mut self,
+        target: &DataCacheTarget,
+        offset: usize,
+    ) -> BusResult<u8> {
         self.drain_arm11_write_buffer()?;
-        let mut byte = [0u8; 1];
-        self.gpu_memory
-            .as_ref()
-            .ok_or(Error::InvalidAccess { addr: address })?
-            .read(address, &mut byte)
-            .map_err(|_| Error::InvalidAccess { addr: address })?;
-        Ok(byte[0])
+        self.read_cache_target_line(target)?
+            .get(offset)
+            .copied()
+            .ok_or(Error::InvalidAccess { addr: 0 })
     }
 
-    fn write_uncached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
-        // Device/Strongly Ordered stores cannot pass older buffered Normal writes.
+    fn write_uncached_byte(
+        &mut self,
+        target: &DataCacheTarget,
+        key: DataCacheKey,
+        offset: usize,
+        value: u8,
+    ) -> BusResult<()> {
         self.drain_arm11_write_buffer()?;
-        self.gpu_memory
-            .as_mut()
-            .ok_or(Error::InvalidAccess { addr: address })?
-            .write(address, &[value])
-            .map_err(|_| Error::InvalidAccess { addr: address })
+        self.write_cache_target_range(target, key, offset, &[value])
     }
 
-    /// Queues a bufferable Normal-memory store. If a cache line is resident,
-    /// keep its CPU view coherent; a dirty resident line is queued as a full
-    /// writeback so older bytes cannot later overwrite this store.
-    fn write_normal_buffered_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
-        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
-        let offset = (address - line_base) as usize;
-        let resident = if let Some(line) = self.data_cache.get_mut(&line_base) {
+    /// Queues a bufferable Normal-memory store. A resident line is updated
+    /// immediately for this CPU, while other agents see it only after drain.
+    fn write_normal_buffered_byte(
+        &mut self,
+        target: &DataCacheTarget,
+        key: DataCacheKey,
+        offset: usize,
+        value: u8,
+    ) -> BusResult<()> {
+        let generation = self.cache_target_generation(target, key);
+        let stale_clean = self
+            .data_cache
+            .get(&key)
+            .is_some_and(|line| !line.dirty && line.generation != generation);
+        if stale_clean {
+            self.remove_data_cache_line(key);
+        }
+
+        let resident = if let Some(line) = self.data_cache.get_mut(&key) {
             let was_dirty = line.dirty;
             line.bytes[offset] = value;
             line.dirty = true;
-            Some((was_dirty, line.bytes))
+            Some((was_dirty, line.bytes, line.target.clone()))
         } else {
             None
         };
 
-        if let Some((was_dirty, bytes)) = resident {
-            // Keep the resident copy dirty until the corresponding queue entry
-            // has been accepted, so a failed enqueue cannot lose modified data.
+        if let Some((was_dirty, bytes, line_target)) = resident {
             if was_dirty {
-                self.enqueue_data_cache_writeback(line_base, bytes)?;
+                self.enqueue_data_cache_writeback(key, line_target, bytes)?;
             } else {
-                self.enqueue_buffered_normal_store(address, value)?;
+                self.enqueue_buffered_normal_store(key, target.clone(), offset, value)?;
             }
-            if let Some(line) = self.data_cache.get_mut(&line_base) {
+            if let Some(line) = self.data_cache.get_mut(&key) {
                 line.dirty = false;
             }
-            self.touch_data_cache_line(line_base);
+            self.touch_data_cache_line(key);
             Ok(())
         } else {
-            self.enqueue_buffered_normal_store(address, value)
+            self.enqueue_buffered_normal_store(key, target.clone(), offset, value)
         }
     }
 
-    /// Write-through stores are bufferable Normal-memory transactions. Misses
-    /// do not allocate; resident lines are updated before the store is queued.
-    fn write_through_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
-        self.write_normal_buffered_physical_byte(address, value)
-    }
+    fn read_cached_byte(
+        &mut self,
+        target: &DataCacheTarget,
+        key: DataCacheKey,
+        offset: usize,
+    ) -> BusResult<u8> {
+        let generation = self.cache_target_generation(target, key);
+        let stale_clean = self
+            .data_cache
+            .get(&key)
+            .is_some_and(|line| !line.dirty && line.generation != generation);
+        if stale_clean {
+            self.remove_data_cache_line(key);
+        }
 
-    fn read_cached_physical_byte(&mut self, address: u32) -> BusResult<u8> {
-        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
-        if self.data_cache.contains_key(&line_base) {
-            self.touch_data_cache_line(line_base);
+        if self.data_cache.contains_key(&key) {
+            self.touch_data_cache_line(key);
         } else {
-            let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
-            self.gpu_memory
-                .as_ref()
-                .ok_or(Error::InvalidAccess { addr: address })?
-                .read(line_base, &mut bytes)
-                .map_err(|_| Error::InvalidAccess { addr: address })?;
-            self.overlay_write_buffer(line_base, &mut bytes);
+            let mut bytes = self.read_cache_target_line(target)?;
+            self.overlay_write_buffer(key, &mut bytes);
             self.insert_data_cache_line(
-                line_base,
+                key,
                 Arm11DataCacheLine {
                     bytes,
                     dirty: false,
+                    generation,
+                    target: target.clone(),
                 },
             )?;
         }
 
-        let offset = (address - line_base) as usize;
         self.data_cache
-            .get(&line_base)
+            .get(&key)
             .and_then(|line| line.bytes.get(offset).copied())
-            .ok_or(Error::InvalidAccess { addr: address })
+            .ok_or(Error::InvalidAccess { addr: 0 })
     }
 
-    fn write_back_no_allocate_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
-        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
-        let offset = (address - line_base) as usize;
-        if let Some(line) = self.data_cache.get_mut(&line_base) {
-            line.bytes[offset] = value;
-            line.dirty = true;
-            self.touch_data_cache_line(line_base);
-            Ok(())
-        } else {
-            self.enqueue_buffered_normal_store(address, value)
-        }
-    }
-
-    fn write_cached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
-        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
-        if self.data_cache.contains_key(&line_base) {
-            self.touch_data_cache_line(line_base);
-        } else {
-            let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
-            self.gpu_memory
-                .as_ref()
-                .ok_or(Error::InvalidAccess { addr: address })?
-                .read(line_base, &mut bytes)
-                .map_err(|_| Error::InvalidAccess { addr: address })?;
-            self.insert_data_cache_line(
-                line_base,
-                Arm11DataCacheLine {
-                    bytes,
-                    dirty: false,
-                },
-            )?;
-        }
-
+    fn write_cached_byte(
+        &mut self,
+        target: &DataCacheTarget,
+        key: DataCacheKey,
+        offset: usize,
+        value: u8,
+    ) -> BusResult<()> {
+        let _ = self.read_cached_byte(target, key, offset)?;
         let line = self
             .data_cache
-            .get_mut(&line_base)
-            .ok_or(Error::InvalidAccess { addr: address })?;
-        line.bytes[(address - line_base) as usize] = value;
+            .get_mut(&key)
+            .ok_or(Error::InvalidAccess { addr: 0 })?;
+        line.bytes[offset] = value;
         line.dirty = true;
         Ok(())
+    }
+
+    fn write_back_no_allocate_byte(
+        &mut self,
+        target: &DataCacheTarget,
+        key: DataCacheKey,
+        offset: usize,
+        value: u8,
+    ) -> BusResult<()> {
+        let generation = self.cache_target_generation(target, key);
+        let stale_clean = self
+            .data_cache
+            .get(&key)
+            .is_some_and(|line| !line.dirty && line.generation != generation);
+        if stale_clean {
+            self.remove_data_cache_line(key);
+        }
+
+        if let Some(line) = self.data_cache.get_mut(&key) {
+            line.bytes[offset] = value;
+            line.dirty = true;
+            self.touch_data_cache_line(key);
+            Ok(())
+        } else {
+            self.enqueue_buffered_normal_store(key, target.clone(), offset, value)
+        }
     }
 
     fn cache_lines_for_range(
         &self,
         address: u32,
         size_bytes: u32,
-    ) -> BusResult<std::collections::BTreeSet<u32>> {
+    ) -> BusResult<std::collections::BTreeSet<DataCacheKey>> {
         let mut lines = std::collections::BTreeSet::new();
         if size_bytes == 0 {
             return Ok(lines);
@@ -2395,21 +2572,16 @@ impl Arm11CodeAddressSpace {
                 });
             }
 
-            if let MemoryLocation::Physical {
-                address: physical_address,
-                ..
-            } = location
-            {
-                let physical_end = u64::from(physical_address) + (region_end - current);
-                let mut line_base = physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
-                while u64::from(line_base) < physical_end {
-                    lines.insert(line_base);
-                    line_base = line_base
-                        .checked_add(ARM11_DATA_CACHE_LINE_SIZE as u32)
-                        .ok_or(Error::InvalidAccess {
-                            addr: current_address,
-                        })?;
-                }
+            let (mut key, _target, mut offset) = self
+                .cache_location(location)
+                .ok_or(Error::InvalidAccess { addr: current_address })?;
+            let mut remaining = region_end - current;
+            while remaining > 0 {
+                lines.insert(key);
+                let covered = remaining.min((ARM11_DATA_CACHE_LINE_SIZE - offset) as u64);
+                remaining -= covered;
+                offset = 0;
+                key.line_offset += ARM11_DATA_CACHE_LINE_SIZE as u64;
             }
 
             current = region_end;
@@ -2424,14 +2596,17 @@ impl Arm11CodeAddressSpace {
         let lines = self.cache_lines_for_range(address, size_bytes)?;
         let mut written_back = 0usize;
 
-        for line_base in lines {
-            if let Some(line) = self.data_cache.get(&line_base) {
-                if line.dirty {
-                    self.enqueue_data_cache_writeback(line_base, line.bytes)?;
+        for key in lines {
+            let pending = self.data_cache.get(&key).map(|line| {
+                (line.dirty, line.bytes, line.target.clone())
+            });
+            if let Some((dirty, bytes, target)) = pending {
+                if dirty {
+                    self.enqueue_data_cache_writeback(key, target, bytes)?;
                     written_back += 1;
                 }
+                self.remove_data_cache_line(key);
             }
-            self.remove_data_cache_line(line_base);
         }
 
         Ok(written_back)
@@ -2442,15 +2617,15 @@ impl Arm11CodeAddressSpace {
         let lines = self.cache_lines_for_range(address, size_bytes)?;
         let mut written_back = 0usize;
 
-        for line_base in lines {
-            let dirty_bytes = self
+        for key in lines {
+            let dirty = self
                 .data_cache
-                .get(&line_base)
+                .get(&key)
                 .filter(|line| line.dirty)
-                .map(|line| line.bytes);
-            if let Some(bytes) = dirty_bytes {
-                self.enqueue_data_cache_writeback(line_base, bytes)?;
-                if let Some(line) = self.data_cache.get_mut(&line_base) {
+                .map(|line| (line.bytes, line.target.clone()));
+            if let Some((bytes, target)) = dirty {
+                self.enqueue_data_cache_writeback(key, target, bytes)?;
+                if let Some(line) = self.data_cache.get_mut(&key) {
                     line.dirty = false;
                 }
                 written_back += 1;
@@ -2460,7 +2635,7 @@ impl Arm11CodeAddressSpace {
         Ok(written_back)
     }
 
-    /// Invalidates cache lines without writing dirty data back to physical memory.
+    /// Invalidates cache lines without writing dirty data back to their backing.
     pub fn invalidate_data_cache_range(
         &mut self,
         address: u32,
@@ -2469,8 +2644,8 @@ impl Arm11CodeAddressSpace {
         let lines = self.cache_lines_for_range(address, size_bytes)?;
         let mut evicted = 0usize;
 
-        for line_base in lines {
-            if self.remove_data_cache_line(line_base).is_some() {
+        for key in lines {
+            if self.remove_data_cache_line(key).is_some() {
                 evicted += 1;
             }
         }
@@ -2483,11 +2658,7 @@ impl Arm11CodeAddressSpace {
         self.data_cache.len()
     }
 
-    /// Reservation token for `address`: CPU-side stores bump the virtual
-    /// generation, and stores by any agent to shared physical backing (DMA, GPU,
-    /// LCD, other processes' aliases) bump the physical one. The sum changes
-    /// whenever either does.
-    fn exclusive_version(&self, address: u32) -> u64 {
+        fn exclusive_version(&self, address: u32) -> u64 {
         let virtual_version = self
             .exclusive_versions
             .get(&(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1)))
