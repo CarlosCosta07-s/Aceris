@@ -288,33 +288,66 @@ impl SharedMemoryBacking {
     }
 
     fn cache_generation(&self, offset: usize) -> u64 {
-        let Some(root_offset) = self.root_offset(offset) else { return 0; };
+        let Some(root_offset) = self.root_offset(offset) else {
+            return 0;
+        };
         let line = root_offset & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
-        self.cache_generations.lock().ok()
-            .and_then(|generations| generations.get(&line).copied()).unwrap_or(0)
+        self.cache_generations
+            .lock()
+            .ok()
+            .and_then(|generations| generations.get(&line).copied())
+            .unwrap_or(0)
     }
 
     fn exclusive_version(&self, offset: usize) -> u64 {
-        let Some(root_offset) = self.root_offset(offset) else { return 0; };
-        let granule = (root_offset as u32) & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
-        self.exclusive_versions.lock().ok()
-            .and_then(|versions| versions.get(&granule).copied()).unwrap_or(0)
+        let Some(root_offset) = self.root_offset(offset) else {
+            return 0;
+        };
+        let granule =
+            (root_offset as u32) & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
+        self.exclusive_versions
+            .lock()
+            .ok()
+            .and_then(|versions| versions.get(&granule).copied())
+            .unwrap_or(0)
     }
 
     fn read_range(&self, offset: usize, output: &mut [u8]) -> bool {
-        let Some(start) = self.root_offset(offset) else { return false; };
-        if offset.checked_add(output.len()).is_none_or(|end| end > self.length) { return false; }
-        let Ok(bytes) = self.bytes.lock() else { return false; };
-        let Some(source) = bytes.get(start..start + output.len()) else { return false; };
+        let Some(start) = self.root_offset(offset) else {
+            return false;
+        };
+        if offset
+            .checked_add(output.len())
+            .is_none_or(|end| end > self.length)
+        {
+            return false;
+        }
+        let Ok(bytes) = self.bytes.lock() else {
+            return false;
+        };
+        let Some(source) = bytes.get(start..start + output.len()) else {
+            return false;
+        };
         output.copy_from_slice(source);
         true
     }
 
     fn write_range(&self, offset: usize, input: &[u8]) -> bool {
-        let Some(start) = self.root_offset(offset) else { return false; };
-        if offset.checked_add(input.len()).is_none_or(|end| end > self.length) { return false; }
-        let Ok(mut bytes) = self.bytes.lock() else { return false; };
-        let Some(destination) = bytes.get_mut(start..start + input.len()) else { return false; };
+        let Some(start) = self.root_offset(offset) else {
+            return false;
+        };
+        if offset
+            .checked_add(input.len())
+            .is_none_or(|end| end > self.length)
+        {
+            return false;
+        }
+        let Ok(mut bytes) = self.bytes.lock() else {
+            return false;
+        };
+        let Some(destination) = bytes.get_mut(start..start + input.len()) else {
+            return false;
+        };
         destination.copy_from_slice(input);
         drop(bytes);
 
@@ -1454,9 +1487,11 @@ impl Arm11CodeAddressSpace {
                     })?;
                     self.dynamic_regions.push(DynamicMemoryRegion {
                         address,
-                        backing: DynamicMemoryBacking::Private(SharedMemoryBacking::zeroed(PAGE_SIZE as usize).map_err(|error| {
-                            Arm11DynamicMemoryError::AllocationFailure(error)
-                        })?),
+                        backing: DynamicMemoryBacking::Private(
+                            SharedMemoryBacking::zeroed(PAGE_SIZE as usize).map_err(|error| {
+                                Arm11DynamicMemoryError::AllocationFailure(error)
+                            })?,
+                        ),
                     });
                     self.dynamic_regions.sort_by_key(|region| region.address);
                 }
@@ -2330,10 +2365,7 @@ impl Arm11CodeAddressSpace {
         if let Some(entry) = self.write_buffer.back_mut() {
             let start = usize::from(entry.start);
             let length = usize::from(entry.length);
-            if entry.key == key
-                && length < ARM11_DATA_CACHE_LINE_SIZE
-                && start + length == offset
-            {
+            if entry.key == key && length < ARM11_DATA_CACHE_LINE_SIZE && start + length == offset {
                 entry.bytes[offset] = value;
                 entry.length += 1;
                 return Ok(());
@@ -2401,11 +2433,7 @@ impl Arm11CodeAddressSpace {
 
     /// Device/Strongly Ordered reads do not forward from Normal-memory stores:
     /// older buffered writes must complete before the read reaches the bus.
-    fn read_ordered_byte(
-        &mut self,
-        target: &DataCacheTarget,
-        offset: usize,
-    ) -> BusResult<u8> {
+    fn read_ordered_byte(&mut self, target: &DataCacheTarget, offset: usize) -> BusResult<u8> {
         self.drain_arm11_write_buffer()?;
         self.read_cache_target_line(target)?
             .get(offset)
@@ -2582,9 +2610,10 @@ impl Arm11CodeAddressSpace {
                 });
             }
 
-            let (mut key, _target, mut offset) = self
-                .cache_location(location)
-                .ok_or(Error::InvalidAccess { addr: current_address })?;
+            let (mut key, _target, mut offset) =
+                self.cache_location(location).ok_or(Error::InvalidAccess {
+                    addr: current_address,
+                })?;
             let mut remaining = region_end - current;
             while remaining > 0 {
                 lines.insert(key);
@@ -2607,9 +2636,10 @@ impl Arm11CodeAddressSpace {
         let mut written_back = 0usize;
 
         for key in lines {
-            let pending = self.data_cache.get(&key).map(|line| {
-                (line.dirty, line.bytes, line.target.clone())
-            });
+            let pending = self
+                .data_cache
+                .get(&key)
+                .map(|line| (line.dirty, line.bytes, line.target.clone()));
             if let Some((dirty, bytes, target)) = pending {
                 if dirty {
                     self.enqueue_data_cache_writeback(key, target, bytes)?;
@@ -2668,14 +2698,16 @@ impl Arm11CodeAddressSpace {
         self.data_cache.len()
     }
 
-        fn exclusive_version(&self, address: u32) -> u64 {
+    fn exclusive_version(&self, address: u32) -> u64 {
         let virtual_version = self
             .exclusive_versions
             .get(&(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1)))
             .copied()
             .unwrap_or(0);
         let backing_version = match self.locate(address) {
-            Some(MemoryLocation::Physical { address: physical, .. }) => self
+            Some(MemoryLocation::Physical {
+                address: physical, ..
+            }) => self
                 .gpu_memory
                 .as_ref()
                 .map_or(0, |memory| memory.exclusive_version(physical)),
@@ -2683,10 +2715,11 @@ impl Arm11CodeAddressSpace {
                 .shared_regions
                 .get(index)
                 .map_or(0, |region| region.backing.exclusive_version(offset)),
-            Some(MemoryLocation::Dynamic { index, offset }) => self
-                .dynamic_regions
-                .get(index)
-                .map_or(0, |region| region.backing.backing_handle().exclusive_version(offset)),
+            Some(MemoryLocation::Dynamic { index, offset }) => {
+                self.dynamic_regions.get(index).map_or(0, |region| {
+                    region.backing.backing_handle().exclusive_version(offset)
+                })
+            }
             Some(MemoryLocation::Static { .. }) | None => 0,
         };
         virtual_version.wrapping_add(backing_version)
@@ -2731,9 +2764,7 @@ impl Bus for Arm11CodeAddressSpace {
             .ok_or(Error::InvalidAccess { addr: address })?;
         match policy {
             CachePolicy::NonCacheable => self.read_ordered_byte(&target, offset),
-            CachePolicy::NormalNonCacheable => {
-                self.read_normal_buffered_byte(&target, key, offset)
-            }
+            CachePolicy::NormalNonCacheable => self.read_normal_buffered_byte(&target, key, offset),
             CachePolicy::WriteThrough
             | CachePolicy::WriteBack
             | CachePolicy::WriteBackNoAllocate => self.read_cached_byte(&target, key, offset),
