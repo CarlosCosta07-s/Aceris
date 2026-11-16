@@ -1415,3 +1415,20 @@ A implementação está publicada na branch `main` no commit `d4d76e71f117894654
 ## Integração GSP framebuffer-info → PDC — 15/11/2026
 
 Após GX DisplayTransfer (ID 0x03), o caminho real de fila com contexto do cliente lê as estruturas compartilhadas top/bottom, valida índice, flags, stride e formato, traduz os endereços de framebuffer por DMA/VRAM, grava o endereço no slot A/B selecionado, configura formato/stride/status do PDC e limpa o bit de dados novos. Painéis sem metadata nova alternam o seletor de próximo buffer. A integração ocorre antes da entrega de PPF; o scanout continua no ciclo de frame existente. Não declarar compatibilidade com jogos sem teste real.
+
+
+## GSP GX TextureCopy — cópia raw com gaps (16/11/2026)
+
+O ChatGPT implementou o comando GX TextureCopy (ID 0x04) na área de integração GSP já autorizada, sem modificar CPU/Thumb nem os módulos de draw/shader atribuídos ao Claude.
+
+- GspGxCommand::texture_copy decodifica origem, destino, tamanho, parâmetros de linha/gap e flags.
+- O novo gpu/texture_copy.rs realiza cópia sem conversão de pixels. Sem gap mode, copia um span contínuo; com bit 2, copia linhas e aplica gaps separados na origem e no destino. Os campos de largura/gap usam unidades de 16 bytes.
+- O backend exige bit 3 para selecionar o modo TextureCopy, valida alinhamento de 8 bytes, tamanhos mínimos documentados e limite defensivo de 64 MiB.
+- Todos os spans de linha são resolvidos e validados antes da primeira escrita; os bytes de origem são armazenados temporariamente para preservar cópias sobrepostas.
+- O dispatcher exige rendering rights, incrementa texture_copies_completed e emite PPF somente após concluir a cópia.
+- Limite explícito: a implementação exige a mesma largura de bytes copiados por linha na origem e no destino; larguras diferentes são recusadas para não inventar semântica. Cache flush e temporização assíncrona não são simulados.
+- Testes adicionados cobrem decode, cópia contígua, gaps independentes, alias VRAM, overlap, rejeição de larguras diferentes, alinhamento e validação de todas as linhas antes de modificar o destino. Um teste de integração cobre a fila GSP, a escrita de bytes e o PPF.
+
+Arquivos alterados nesta etapa: crates/aceris-core/src/gpu/texture_copy.rs (novo), crates/aceris-core/src/gpu/gsp_queue.rs, crates/aceris-core/src/gpu/mod.rs, crates/aceris-core/src/system.rs, docs/ROADMAP.md, docs/ARCHITECTURE.md e este registro.
+
+A CI de main precisa confirmar Rustfmt, build, Clippy com -D warnings, cargo test --workspace em Linux/Windows/macOS e build Android ARM64 antes de considerar a etapa aprovada. Não houve verificação local: o ambiente desta sessão não possui Rust/Cargo.
