@@ -4906,18 +4906,17 @@ mod tests {
         let (old_virtual_base, physical_base) = map_test_linear_fcram(&mut system, 0x1000);
         let new_virtual_base = 0x3000_0000 + (physical_base - FCRAM_BASE);
         system
-            .gpu_address_space_mut()
-            .map_linear_region(new_virtual_base, 0x1000)
-            .unwrap();
-        system
             .ncsd_session_mut()
             .unwrap()
             .map_linear_memory_region(new_virtual_base, physical_base, 0x1000)
             .unwrap();
 
         let source_address = VRAM_BASE + 0x3000;
-        let destination_address = new_virtual_base + 0x200;
         let destination_old_alias = old_virtual_base + 0x200;
+        let destination_new_alias = new_virtual_base + 0x200;
+        // The GPU DMA map resolves the registered old alias; the process
+        // address space independently exposes both aliases to the CPU.
+        let destination_address = destination_old_alias;
         let expected: [u8; 16] = [
             0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87, 0x98, 0xA9, 0xBA, 0xCB, 0xDC, 0xED,
             0xFE, 0x0F,
@@ -4936,7 +4935,7 @@ mod tests {
         system
             .ncsd_session_mut()
             .unwrap()
-            .read_memory_bytes(destination_address, &mut cached_destination)
+            .read_memory_bytes(destination_new_alias, &mut cached_destination)
             .unwrap();
         assert_eq!(cached_destination, [0; 16]);
         assert_eq!(
@@ -5011,7 +5010,7 @@ mod tests {
             system
                 .ncsd_session_mut()
                 .unwrap()
-                .invalidate_process_data_cache(destination_address, expected.len() as u32)
+                .invalidate_process_data_cache(destination_new_alias, expected.len() as u32)
                 .unwrap(),
             1
         );
