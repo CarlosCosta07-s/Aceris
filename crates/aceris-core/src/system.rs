@@ -3796,14 +3796,16 @@ mod tests {
             )
             .unwrap();
 
-        let command_list_address = VRAM_BASE + 0x1000;
-        system
-            .physical_memory_mut()
-            .write_u32(command_list_address, 0xDEAD_BEEF)
+        let command_list_address = 0x1400_0000;
+        system.gpu_address_space_mut().map_linear_region(command_list_address, 0x1000).unwrap();
+        system.ncsd_session_mut().unwrap()
+            .map_linear_memory_region(command_list_address, crate::gpu::FCRAM_BASE, 0x1000)
             .unwrap();
-        system
-            .physical_memory_mut()
-            .write_u32(command_list_address + 4, 0x000F_0100)
+        system.ncsd_session_mut().unwrap()
+            .write_memory_u32(command_list_address, 0xDEAD_BEEF)
+            .unwrap();
+        system.ncsd_session_mut().unwrap()
+            .write_memory_u32(command_list_address + 4, 0x000F_0100)
             .unwrap();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
