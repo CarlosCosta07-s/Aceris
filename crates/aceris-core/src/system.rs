@@ -3649,6 +3649,117 @@ mod tests {
     }
 
     #[test]
+    fn cpu_dsb_dma_and_lcd_scanout_share_one_physical_framebuffer() {
+        use crate::video::{
+            LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
+            PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT,
+            PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_HEIGHT, TOP_SCREEN_WIDTH,
+        };
+
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (source_virtual, source_physical) = map_test_linear_fcram(&mut system, 0x1000);
+        let framebuffer_size = (TOP_SCREEN_WIDTH * TOP_SCREEN_HEIGHT * 4) as u32;
+        let framebuffer_allocation_size = (framebuffer_size + 0xFFF) & !0xFFF;
+        let (framebuffer_virtual, framebuffer_physical) =
+            map_test_linear_fcram(&mut system, framebuffer_allocation_size);
+
+        // A CPU write starts dirty and is not yet visible in the physical
+        // backing that the DMA engine and LCD consume.
+        let source_pixel = [0x44, 0x33, 0x22, 0x11];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_bytes(source_virtual, &source_pixel)
+            .unwrap();
+        let mut physical_before = [0u8; 4];
+        system
+            .physical_memory()
+            .read(source_physical, &mut physical_before)
+            .unwrap();
+        assert_eq!(physical_before, [0; 4]);
+
+        // Clean the CPU line, then execute the process bus DMB/DSB completion
+        // point before the external DMA transaction is allowed to read it.
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            assert_eq!(
+                session.flush_process_data_cache(source_virtual, 4).unwrap(),
+                1
+            );
+            session.data_memory_barrier().unwrap();
+            assert_eq!(session.pending_write_buffer_entries(), 0);
+        }
+        let mut physical_after_dsb = [0u8; 4];
+        system
+            .physical_memory()
+            .read(source_physical, &mut physical_after_dsb)
+            .unwrap();
+        assert_eq!(physical_after_dsb, source_pixel);
+
+        // Queue a synchronous GSP RequestDMA from the committed source into
+        // the physical framebuffer that will be scanned out by the LCD.
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12]
+            .copy_from_slice(&framebuffer_virtual.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&4u32.to_le_bytes());
+        queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let dma_report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(dma_report.dma_requests_completed, 1);
+        assert!(dma_report.flush_source_requested);
+        assert!(dma_report.error.is_none());
+
+        let mut dma_destination = [0u8; 4];
+        system
+            .physical_memory()
+            .read(framebuffer_physical, &mut dma_destination)
+            .unwrap();
+        assert_eq!(dma_destination, source_pixel);
+
+        // Configure both top LCD eyes to scan the same linear framebuffer.
+        for (register, value) in [
+            (PDC_FRAMEBUFFER_A_FIRST, framebuffer_physical),
+            (PDC_FRAMEBUFFER_A_SECOND, framebuffer_physical),
+            (PDC_FRAMEBUFFER_B_FIRST, framebuffer_physical),
+            (PDC_FRAMEBUFFER_B_SECOND, framebuffer_physical),
+            (PDC_FRAMEBUFFER_FORMAT, 0),
+            (PDC_FRAMEBUFFER_STRIDE, (TOP_SCREEN_WIDTH * 4) as u32),
+            (PDC_CONTROL, 0x0001_0001),
+        ] {
+            system
+                .lcd_controller_mut()
+                .write_register(LcdPanel::Top, register, value)
+                .unwrap();
+        }
+
+        // The normal frame path invokes the same explicit physical scanout.
+        let frame = system.run_frame_with_budget(0).unwrap();
+        assert_eq!(frame.lcd_screens_scanned_out, 2);
+        assert_eq!(
+            &system.display().top_left().pixels()[..4],
+            &[0x11, 0x22, 0x33, 0x44]
+        );
+        assert_eq!(
+            &system.display().top_right().pixels()[..4],
+            &[0x11, 0x22, 0x33, 0x44]
+        );
+    }
+
+    #[test]
     fn gsp_gx_request_dma_requires_cpu_invalidation_after_device_write() {
         let mut system = System::new();
         system
