@@ -818,7 +818,7 @@ mod tests {
             .unwrap();
         assert_eq!(rasterizer.color_at(0, 0), Some([7; 4]));
     }
-}
+
 
 
     /// End-to-end output path: PICA200 draw -> tiled color target ->
@@ -958,7 +958,9 @@ mod tests {
             ("top-right", display.top_right().pixels()),
             ("bottom", display.bottom().pixels()),
         ] {
-            let inside = (180 * if name == "bottom" { BOTTOM_SCREEN_WIDTH } else { TOP_SCREEN_WIDTH } + 40) * 4;
+            let width = if name == "bottom" { BOTTOM_SCREEN_WIDTH } else { TOP_SCREEN_WIDTH };
+            let inside = (180 * width + 40) * 4;
             assert_eq!(&pixels[inside..inside + 4], &[200, 100, 50, 255], "{name}");
         }
     }
+}
