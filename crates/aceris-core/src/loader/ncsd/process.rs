@@ -1907,10 +1907,13 @@ impl Arm11CodeAddressSpace {
                 .ok_or(Error::InvalidAccess { addr: address })?
                 .read(line_base, &mut bytes)
                 .map_err(|_| Error::InvalidAccess { addr: address })?;
-            self.data_cache.insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
+            self.data_cache
+                .insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
         }
+
         let offset = (address - line_base) as usize;
-        self.data_cache.get(&line_base)
+        self.data_cache
+            .get(&line_base)
             .and_then(|line| line.bytes.get(offset).copied())
             .ok_or(Error::InvalidAccess { addr: address })
     }
@@ -1924,93 +1927,148 @@ impl Arm11CodeAddressSpace {
                 .ok_or(Error::InvalidAccess { addr: address })?
                 .read(line_base, &mut bytes)
                 .map_err(|_| Error::InvalidAccess { addr: address })?;
-            self.data_cache.insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
+            self.data_cache
+                .insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
         }
-        let line = self.data_cache.get_mut(&line_base).ok_or(Error::InvalidAccess { addr: address })?;
+
+        let line = self
+            .data_cache
+            .get_mut(&line_base)
+            .ok_or(Error::InvalidAccess { addr: address })?;
         line.bytes[(address - line_base) as usize] = value;
         line.dirty = true;
         Ok(())
     }
 
+    fn cache_lines_for_range(
+        &self,
+        address: u32,
+        size_bytes: u32,
+    ) -> BusResult<std::collections::BTreeSet<u32>> {
+        let mut lines = std::collections::BTreeSet::new();
+        if size_bytes == 0 {
+            return Ok(lines);
+        }
+
+        let end = u64::from(address) + u64::from(size_bytes);
+        if end > u64::from(u32::MAX) + 1 {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+
+        let mut current = u64::from(address);
+        while current < end {
+            let current_address =
+                u32::try_from(current).map_err(|_| Error::InvalidAccess { addr: address })?;
+            let location = self
+                .locate(current_address)
+                .ok_or(Error::InvalidAccess { addr: current_address })?;
+            if !self.location_is_readable(location) {
+                return Err(Error::InvalidAccess { addr: current_address });
+            }
+
+            let region_end = self
+                .location_end(location)
+                .unwrap_or(end)
+                .min(end);
+            if region_end <= current {
+                return Err(Error::InvalidAccess { addr: current_address });
+            }
+
+            if let MemoryLocation::Physical {
+                address: physical_address,
+                ..
+            } = location
+            {
+                let physical_end =
+                    u64::from(physical_address) + (region_end - current);
+                let mut line_base =
+                    physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+                while u64::from(line_base) < physical_end {
+                    lines.insert(line_base);
+                    line_base = line_base
+                        .checked_add(ARM11_DATA_CACHE_LINE_SIZE as u32)
+                        .ok_or(Error::InvalidAccess { addr: current_address })?;
+                }
+            }
+
+            current = region_end;
+        }
+
+        Ok(lines)
+    }
+
     /// Cleans and invalidates every cache line intersecting a process virtual range.
     /// The complete range is checked before any line is written back or evicted.
     pub fn flush_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
-        if size_bytes == 0 { return Ok(0); }
-        let end = u64::from(address) + u64::from(size_bytes);
-        if end > u64::from(u32::MAX) + 1 { return Err(Error::InvalidAccess { addr: address }); }
-        let mut lines = std::collections::BTreeSet::new();
-        for offset in 0..size_bytes {
-            let current = address.checked_add(offset).ok_or(Error::InvalidAccess { addr: address })?;
-            let location = self.locate(current).ok_or(Error::InvalidAccess { addr: current })?;
-            if !self.location_is_readable(location) { return Err(Error::InvalidAccess { addr: current }); }
-            if let MemoryLocation::Physical { address: physical, .. } = location {
-                lines.insert(physical & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
-            }
-        }
+        let lines = self.cache_lines_for_range(address, size_bytes)?;
         let mut written_back = 0usize;
+
         for line_base in lines {
-            if let Some(line) = self.data_cache.remove(&line_base) {
+            if let Some(line) = self.data_cache.get(&line_base) {
                 if line.dirty {
-                    self.gpu_memory.as_mut().ok_or(Error::InvalidAccess { addr: address })?
+                    self.gpu_memory
+                        .as_mut()
+                        .ok_or(Error::InvalidAccess { addr: address })?
                         .write(line_base, &line.bytes)
                         .map_err(|_| Error::InvalidAccess { addr: address })?;
                     written_back += 1;
                 }
             }
+            self.data_cache.remove(&line_base);
         }
+
         Ok(written_back)
     }
 
     /// Writes dirty lines back while keeping the lines resident and clean.
     pub fn store_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
-        if size_bytes == 0 { return Ok(0); }
-        let end = u64::from(address) + u64::from(size_bytes);
-        if end > u64::from(u32::MAX) + 1 { return Err(Error::InvalidAccess { addr: address }); }
-        let mut lines = std::collections::BTreeSet::new();
-        for offset in 0..size_bytes {
-            let current = address.checked_add(offset).ok_or(Error::InvalidAccess { addr: address })?;
-            let location = self.locate(current).ok_or(Error::InvalidAccess { addr: current })?;
-            if !self.location_is_readable(location) { return Err(Error::InvalidAccess { addr: current }); }
-            if let MemoryLocation::Physical { address: physical, .. } = location {
-                lines.insert(physical & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
-            }
-        }
-        let mut written_back = 0;
+        let lines = self.cache_lines_for_range(address, size_bytes)?;
+        let mut written_back = 0usize;
+
         for line_base in lines {
-            if let Some(line) = self.data_cache.get_mut(&line_base) {
-                if line.dirty {
-                    self.gpu_memory.as_mut().ok_or(Error::InvalidAccess { addr: address })?
-                        .write(line_base, &line.bytes)
-                        .map_err(|_| Error::InvalidAccess { addr: address })?;
+            let dirty_bytes = self
+                .data_cache
+                .get(&line_base)
+                .filter(|line| line.dirty)
+                .map(|line| line.bytes);
+            if let Some(bytes) = dirty_bytes {
+                self.gpu_memory
+                    .as_mut()
+                    .ok_or(Error::InvalidAccess { addr: address })?
+                    .write(line_base, &bytes)
+                    .map_err(|_| Error::InvalidAccess { addr: address })?;
+                if let Some(line) = self.data_cache.get_mut(&line_base) {
                     line.dirty = false;
-                    written_back += 1;
                 }
+                written_back += 1;
             }
         }
+
         Ok(written_back)
     }
 
     /// Invalidates cache lines without writing dirty data back to physical memory.
-    pub fn invalidate_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
-        if size_bytes == 0 { return Ok(0); }
-        let end = u64::from(address) + u64::from(size_bytes);
-        if end > u64::from(u32::MAX) + 1 { return Err(Error::InvalidAccess { addr: address }); }
-        let mut lines = std::collections::BTreeSet::new();
-        for offset in 0..size_bytes {
-            let current = address.checked_add(offset).ok_or(Error::InvalidAccess { addr: address })?;
-            let location = self.locate(current).ok_or(Error::InvalidAccess { addr: current })?;
-            if !self.location_is_readable(location) { return Err(Error::InvalidAccess { addr: current }); }
-            if let MemoryLocation::Physical { address: physical, .. } = location {
-                lines.insert(physical & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
+    pub fn invalidate_data_cache_range(
+        &mut self,
+        address: u32,
+        size_bytes: u32,
+    ) -> BusResult<usize> {
+        let lines = self.cache_lines_for_range(address, size_bytes)?;
+        let mut evicted = 0usize;
+
+        for line_base in lines {
+            if self.data_cache.remove(&line_base).is_some() {
+                evicted += 1;
             }
         }
-        let mut evicted = 0;
-        for line in lines { if self.data_cache.remove(&line).is_some() { evicted += 1; } }
+
         Ok(evicted)
     }
 
     /// Number of resident ARM11 data-cache lines (useful for diagnostics/tests).
-    pub fn data_cache_line_count(&self) -> usize { self.data_cache.len() }
+    pub fn data_cache_line_count(&self) -> usize {
+        self.data_cache.len()
+    }
 
     fn exclusive_version(&self, address: u32) -> u64 {"
         let virtual_version = self
