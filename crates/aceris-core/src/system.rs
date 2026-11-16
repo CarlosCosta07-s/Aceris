@@ -3464,6 +3464,98 @@ mod tests {
     }
 
     #[test]
+    fn gsp_gx_request_dma_requires_cpu_invalidation_after_device_write() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (source_virtual, source_physical) = map_test_linear_fcram(&mut system, 0x1000);
+        let (destination_virtual, destination_physical) =
+            map_test_linear_fcram(&mut system, 0x1000);
+        let source_address = source_virtual + 0x100;
+        let destination_address = destination_virtual + 0x100;
+        let expected = 0xA1B2_C3D4u32;
+
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            session
+                .write_memory_u32(source_address, expected)
+                .unwrap();
+            // Prime a clean CPU cache line for the DMA destination before the
+            // device writes it. The line must remain stale until invalidated.
+            assert_eq!(session.read_memory_u32(destination_address).unwrap(), 0);
+        }
+
+        let (shared_memory_base, event_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            assert_eq!(stack.address & 0xFFF, 0);
+            assert!(stack.mapped_size_bytes as usize >= GSP_SHARED_MEMORY_SIZE);
+            session
+                .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (stack.address, event_handle)
+        };
+        system
+            .register_gsp_client(0, shared_memory_base, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_address.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination_address.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&4u32.to_le_bytes());
+        queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.dma_requests_completed, 1);
+        assert!(report.flush_source_requested);
+        assert!(report.error.is_none());
+
+        // The source flush makes the CPU's dirty bytes visible to DMA.
+        assert_eq!(
+            system.physical_memory().read_u32(source_physical + 0x100).unwrap(),
+            expected
+        );
+        // DMA commits the destination to shared physical memory.
+        assert_eq!(
+            system
+                .physical_memory()
+                .read_u32(destination_physical + 0x100)
+                .unwrap(),
+            expected
+        );
+
+        let session = system.ncsd_session_mut().unwrap();
+        // Device writes do not snoop or silently invalidate the CPU's clean line.
+        assert_eq!(session.read_memory_u32(destination_address).unwrap(), 0);
+        assert_eq!(
+            session
+                .invalidate_process_data_cache(destination_address, 4)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            session.read_memory_u32(destination_address).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
     fn gsp_gx_request_dma_is_consumed_without_rendering_rights() {
         let mut system = System::new();
         system
