@@ -2946,7 +2946,7 @@ mod tests {
                 .unwrap(),
             0x44
         );
-        address_space.drain_arm11_write_buffer().unwrap();
+        address_space.data_memory_barrier().unwrap();
         assert_eq!(memory.read_u32(physical_base).unwrap(), 0x1122_3344);
         assert_eq!(address_space.pending_write_buffer_entries(), 0);
         assert_eq!(address_space.data_cache_line_count(), 1);
@@ -2983,6 +2983,64 @@ mod tests {
         );
         address_space.drain_arm11_write_buffer().unwrap();
         assert_eq!(memory.read_u32(physical_base).unwrap(), 0x5566_7788);
+    }
+
+    #[test]
+    fn arm11_write_buffer_is_bounded_fifo_and_dmb_completes_all_writebacks() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        // Dirty nine distinct lines and clean them in ascending address order.
+        for line in 0..(ARM11_WRITE_BUFFER_CAPACITY + 1) {
+            address_space
+                .write8(
+                    virtual_base + (line * ARM11_DATA_CACHE_LINE_SIZE) as u32,
+                    (line + 1) as u8,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            address_space
+                .flush_data_cache_range(
+                    virtual_base,
+                    ((ARM11_WRITE_BUFFER_CAPACITY + 1) * ARM11_DATA_CACHE_LINE_SIZE) as u32,
+                )
+                .unwrap(),
+            ARM11_WRITE_BUFFER_CAPACITY + 1
+        );
+
+        // The ninth enqueue applies back-pressure by completing the oldest line.
+        assert_eq!(
+            address_space.pending_write_buffer_entries(),
+            ARM11_WRITE_BUFFER_CAPACITY
+        );
+        let mut first = [0u8; 1];
+        let mut second = [0u8; 1];
+        memory.read(physical_base, &mut first).unwrap();
+        memory.read(physical_base + ARM11_DATA_CACHE_LINE_SIZE as u32, &mut second)
+            .unwrap();
+        assert_eq!(first, [1]);
+        assert_eq!(second, [0]);
+
+        // A DMB makes all older queued writebacks visible to physical agents.
+        address_space.data_memory_barrier().unwrap();
+        assert_eq!(address_space.pending_write_buffer_entries(), 0);
+        for line in 0..(ARM11_WRITE_BUFFER_CAPACITY + 1) {
+            let mut actual = [0u8; 1];
+            memory
+                .read(
+                    physical_base + (line * ARM11_DATA_CACHE_LINE_SIZE) as u32,
+                    &mut actual,
+                )
+                .unwrap();
+            assert_eq!(actual, [(line + 1) as u8]);
+        }
     }
 
     #[test]
