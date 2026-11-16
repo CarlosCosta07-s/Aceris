@@ -4278,6 +4278,166 @@ mod tests {
     }
 
     #[test]
+    fn gsp_render_transfer_and_lcd_scanout_form_one_complete_frame() {
+        use crate::gpu::{
+            ClipDepthRange, DepthFunction, GeometryPipeline, GSP_GX_COMMAND_DISPLAY_TRANSFER,
+            GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
+            GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, Matrix4,
+            PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
+            REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
+            REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
+            REG_SH_OUTMAP_O0, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
+            REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_CODETRANSFER_DATA0,
+            REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
+            REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, VRAM_BASE, Viewport,
+        };
+        use crate::video::{
+            LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
+            PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT,
+            PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_WIDTH,
+        };
+
+        const WIDTH: usize = 400;
+        const HEIGHT: usize = 240;
+        const COMMAND_LIST: u32 = VRAM_BASE + 0x10_000;
+        const VERTICES: u32 = VRAM_BASE + 0x20_000;
+        const TILED_TARGET: u32 = VRAM_BASE + 0x40_000;
+        const LINEAR_FRAMEBUFFER: u32 = VRAM_BASE + 0xA0_000;
+
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let gpu = system.gpu_mut();
+        for (register, value) in [
+            (REG_ATTRIBBUFFERS_LOC, VERTICES >> 3),
+            (REG_ATTRIBBUFFERS_FORMAT_LOW, 0x1),
+            (REG_ATTRIBBUFFERS_FORMAT_HIGH, 0),
+            (REG_ATTRIBBUFFER0_OFFSET, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 1, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 2, (2 << 16) | (2 << 28)),
+            (REG_VSH_INPUTBUFFER_CONFIG, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
+            (REG_VSH_OPDESCS_INDEX, 0),
+            (
+                REG_VSH_OPDESCS_DATA0,
+                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
+            ),
+            (REG_VSH_CODETRANSFER_INDEX, 0),
+            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
+            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+            (REG_VSH_ENTRYPOINT, 0),
+            (REG_NUMVERTICES, 3),
+            (REG_COLORBUFFER_LOC, TILED_TARGET >> 3),
+            (REG_COLORBUFFER_FORMAT, 2),
+            (REG_FRAMEBUFFER_BLOCK32, 0),
+            (
+                REG_FRAMEBUFFER_DIM,
+                (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
+            ),
+        ] {
+            gpu.write_register(register, value).unwrap();
+        }
+        for index in 0..7u16 {
+            gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
+                .unwrap();
+        }
+        gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+
+        system.set_pica_rendering(Some(PicaRenderSettings {
+            pipeline: GeometryPipeline::new(
+                Matrix4::from_column_major([
+                    0.25, 0.0, 0.0, 0.0, //
+                    0.0, 0.25, 0.0, 0.0, //
+                    0.0, 0.0, 1.0, 0.0, //
+                    -1.0, -1.0, 0.0, 1.0,
+                ])
+                .unwrap(),
+                Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
+                ClipDepthRange::NegativeOneToOne,
+            ),
+            default_color: [200, 100, 50, 255],
+            depth_function: DepthFunction::Less,
+        }));
+
+        system
+            .physical_memory_mut()
+            .write(VERTICES, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(COMMAND_LIST, 1)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write_u32(COMMAND_LIST + 4, 0x000F_022E)
+            .unwrap();
+
+        let mut queue_bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 2;
+
+        let command_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[command_entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
+        queue_bytes[command_entry + 4..command_entry + 8]
+            .copy_from_slice(&COMMAND_LIST.to_le_bytes());
+        queue_bytes[command_entry + 8..command_entry + 12]
+            .copy_from_slice(&8u32.to_le_bytes());
+
+        let transfer_entry = command_entry + GSP_GX_COMMAND_ENTRY_SIZE;
+        queue_bytes[transfer_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        queue_bytes[transfer_entry + 4..transfer_entry + 8]
+            .copy_from_slice(&TILED_TARGET.to_le_bytes());
+        queue_bytes[transfer_entry + 8..transfer_entry + 12]
+            .copy_from_slice(&LINEAR_FRAMEBUFFER.to_le_bytes());
+        let dimensions = ((HEIGHT as u32) << 16) | WIDTH as u32;
+        queue_bytes[transfer_entry + 12..transfer_entry + 16]
+            .copy_from_slice(&dimensions.to_le_bytes());
+        queue_bytes[transfer_entry + 16..transfer_entry + 20]
+            .copy_from_slice(&dimensions.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert!(report.error.is_none(), "{:?}", report.error);
+        assert_eq!(report.commands_consumed, 2);
+        assert_eq!(report.command_lists_submitted, 1);
+        assert_eq!(report.display_transfers_completed, 1);
+        let render = system.last_pica_render_report().unwrap();
+        assert_eq!(render.triangles_submitted, 1);
+        assert!(render.pixels_written > 0);
+
+        let lcd = system.lcd_controller_mut();
+        for (register, value) in [
+            (PDC_FRAMEBUFFER_A_FIRST, LINEAR_FRAMEBUFFER),
+            (PDC_FRAMEBUFFER_A_SECOND, LINEAR_FRAMEBUFFER),
+            (PDC_FRAMEBUFFER_B_FIRST, LINEAR_FRAMEBUFFER),
+            (PDC_FRAMEBUFFER_B_SECOND, LINEAR_FRAMEBUFFER),
+            (PDC_FRAMEBUFFER_FORMAT, 0),
+            (PDC_FRAMEBUFFER_STRIDE, (TOP_SCREEN_WIDTH * 4) as u32),
+            (PDC_CONTROL, 0x1_0001),
+        ] {
+            lcd.write_register(LcdPanel::Top, register, value).unwrap();
+        }
+
+        let frame = system.run_frame_with_budget(0).unwrap();
+        assert_eq!(frame.lcd_screens_scanned_out, 2);
+        let sample = (180 * WIDTH + 40) * 4;
+        assert_eq!(
+            &system.display().top_left().pixels()[sample..sample + 4],
+            &[200, 100, 50, 255]
+        );
+        assert_eq!(
+            &system.display().top_right().pixels()[sample..sample + 4],
+            &[200, 100, 50, 255]
+        );
+    }
+
+    #[test]
     fn gsp_process_command_list_renders_a_draw_into_the_tiled_target_when_enabled() {
         let mut system = System::new();
         let fixture = render_fixture(&mut system);
