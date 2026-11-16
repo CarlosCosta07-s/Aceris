@@ -9,7 +9,8 @@ use crate::gpu::{
     GspDmaRequest, GspFlushCacheRegions, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
     GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, PicaRenderReport,
-    PicaRenderSettings, REG_ATTRIBBUFFERS_LOC, TextureCopyError, TextureCopyRequest, VRAM_BASE,
+    PicaRenderSession, PicaRenderSettings, REG_ATTRIBBUFFERS_LOC, TextureCopyError,
+    TextureCopyRequest, VRAM_BASE,
     VRAM_SIZE, display_transfer_buffer_sizes, execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
@@ -84,6 +85,8 @@ pub struct System {
     gpu: Pica200,
     /// When set, submitted command lists are rendered, not only parsed.
     pica_render_settings: Option<PicaRenderSettings>,
+    /// Persistent state for the enabled software PICA200 rendering path.
+    pica_render_session: Option<PicaRenderSession>,
     last_pica_render_report: Option<PicaRenderReport>,
     physical_memory: GpuPhysicalMemory,
     gpu_address_space: GpuDmaAddressSpace,
@@ -1469,24 +1472,40 @@ impl System {
         if let Some(settings) = self.pica_render_settings {
             // GPUREG_ATTRIBBUFFERS_LOC holds the physical base address >> 3
             // (28 bits); this is the documented hardware encoding, applied here
-            // without independent validation against hardware.
-            let (report, render) = self
-                .gpu
-                .execute_command_list_rendering(
+            // without independent validation against hardware. Keep one render
+            // session across GSP submissions so color/depth state survives.
+            let (result, flushed) = {
+                let session = self
+                    .pica_render_session
+                    .get_or_insert_with(|| PicaRenderSession::new(settings));
+                let result = session.execute_command_list(
+                    &mut self.gpu,
                     &words,
                     &mut self.physical_memory,
-                    settings,
                     |pica, _| {
                         pica.register(REG_ATTRIBBUFFERS_LOC)
                             .map(|raw| (raw & 0x0FFF_FFFF) << 3)
                     },
-                )
-                .map_err(|error| {
-                    Error::Io(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("PICA200 command list rendering failed: {error}"),
-                    ))
-                })?;
+                );
+                // GSP may submit DisplayTransfer immediately after this
+                // command. Make the render target visible in physical memory
+                // before returning, while retaining the in-memory depth state.
+                let flushed = session.flush(&mut self.physical_memory);
+                (result, flushed)
+            };
+
+            let (report, render) = result.map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("PICA200 command list rendering failed: {error}"),
+                ))
+            })?;
+            flushed.map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("PICA200 render-target flush failed: {error}"),
+                ))
+            })?;
             self.last_pica_render_report = Some(render);
             return Ok(report);
         }
@@ -1505,6 +1524,8 @@ impl System {
     /// each draw is rendered into the live tiled render target at trigger time.
     pub fn set_pica_rendering(&mut self, settings: Option<PicaRenderSettings>) {
         self.pica_render_settings = settings;
+        self.pica_render_session = settings.map(PicaRenderSession::new);
+        self.last_pica_render_report = None;
     }
 
     /// Totals of the most recent rendered command list, if rendering is enabled.
