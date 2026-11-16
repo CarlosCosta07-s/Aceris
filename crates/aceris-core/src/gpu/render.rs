@@ -12,7 +12,7 @@ use super::{
     GpuPhysicalMemory, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDrawExecError,
     PicaDrawRequest, PicaOutputMapError, PicaRenderTargetConfig, PicaRenderTargetError,
     PicaShadedDraw, PicaVertexOutputMap, PicaVertexShaderProgram, RasterizerError,
-    SoftwareRasterizer,
+    SoftwareRasterizer, Viewport,
 };
 
 /// Totals for one rendered draw.
@@ -180,6 +180,7 @@ impl std::error::Error for PicaRenderSessionError {}
 /// kept) and written back by `flush`/`finish` and whenever the target changes.
 /// Depth is not stored in memory by this model: it starts at 1.0 when a target
 /// is loaded and is discarded when the target changes.
+#[derive(Debug)]
 pub struct PicaRenderSession {
     settings: PicaRenderSettings,
     active: Option<(PicaRenderTargetConfig, SoftwareRasterizer)>,
@@ -221,6 +222,20 @@ impl PicaRenderSession {
             .render_target_config()
             .map_err(PicaRenderSessionError::Target)?;
         self.select_target(config, memory)?;
+        let configured_viewport = self.settings.pipeline.viewport();
+        let target_pipeline = GeometryPipeline::new(
+            self.settings.pipeline.transform(),
+            Viewport::new(
+                configured_viewport.x,
+                configured_viewport.y,
+                config.width as f32,
+                config.height as f32,
+            )
+            .map_err(|error| {
+                PicaRenderSessionError::Render(PicaRenderError::Geometry(error))
+            })?,
+            self.settings.pipeline.depth_range(),
+        );
         let program = pica.vertex_shader_program();
         let rasterizer = &mut self.active.as_mut().expect("target selected above").1;
         // Mark dirty first: triangles drawn before an error stay in the buffer.
@@ -231,7 +246,7 @@ impl PicaRenderSession {
                 memory,
                 vertex_base,
                 &program,
-                &self.settings.pipeline,
+                &target_pipeline,
                 self.settings.default_color,
                 rasterizer,
                 self.settings.depth_function,
@@ -244,6 +259,42 @@ impl PicaRenderSession {
         self.totals.depth_rejected_pixels += report.depth_rejected_pixels;
         self.totals.executed_instructions += report.executed_instructions;
         Ok(report)
+    }
+
+    /// Executes one command list through this persistent render session.
+    ///
+    /// Keeping the session alive across submissions preserves the active
+    /// color/depth buffers instead of recreating the depth buffer for every
+    /// GSP ProcessCommandList request. The returned render report contains only
+    /// work performed by this command list.
+    pub fn execute_command_list(
+        &mut self,
+        pica: &mut Pica200,
+        words: &[u32],
+        memory: &mut GpuPhysicalMemory,
+        mut resolve_vertex_base: impl FnMut(&Pica200, &PicaDrawRequest) -> Option<u32>,
+    ) -> Result<
+        (PicaCommandListReport, PicaRenderReport),
+        PicaCommandListRunError<PicaRenderSessionError>,
+    > {
+        let before = self.totals;
+        let command_report = pica.execute_command_list_with_draws(words, |pica, request| {
+            let vertex_base = resolve_vertex_base(pica, request);
+            self.draw(pica, request, memory, vertex_base).map(|_| ())
+        })?;
+        let after = self.totals;
+        let render_delta = PicaRenderReport {
+            triangles_submitted: after.triangles_submitted.saturating_sub(before.triangles_submitted),
+            output_triangles: after.output_triangles.saturating_sub(before.output_triangles),
+            pixels_written: after.pixels_written.saturating_sub(before.pixels_written),
+            depth_rejected_pixels: after
+                .depth_rejected_pixels
+                .saturating_sub(before.depth_rejected_pixels),
+            executed_instructions: after
+                .executed_instructions
+                .saturating_sub(before.executed_instructions),
+        };
+        Ok((command_report, render_delta))
     }
 
     /// Writes pending pixels to the target memory; the target stays loaded.
@@ -324,16 +375,13 @@ impl Pica200 {
         mut resolve_vertex_base: impl FnMut(&Pica200, &PicaDrawRequest) -> Option<u32>,
     ) -> Result<(PicaCommandListReport, PicaRenderReport), PicaRenderingRunError> {
         let mut session = PicaRenderSession::new(settings);
-        let result = self.execute_command_list_with_draws(words, |pica, request| {
-            let base = resolve_vertex_base(pica, request);
-            session.draw(pica, request, memory, base).map(|_| ())
-        });
+        let result =
+            session.execute_command_list(self, words, memory, &mut resolve_vertex_base);
         let flushed = session.flush(memory);
-        let totals = session.totals();
         match result {
             Err(error) => Err(PicaRenderingRunError::Run(error)),
-            Ok(report) => flushed
-                .map(|()| (report, totals))
+            Ok(reports) => flushed
+                .map(|()| reports)
                 .map_err(PicaRenderingRunError::Flush),
         }
     }
