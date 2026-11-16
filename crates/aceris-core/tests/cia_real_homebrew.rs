@@ -61,3 +61,41 @@ fn validates_real_super_mario_64_luigi_cia_and_reports_inner_ncch_encryption() {
         location.content_index, location.size_bytes
     );
 }
+
+#[test]
+#[ignore = "requires ACERIS_REAL_CIA and a local 32-byte ACERIS_NCCH_KEYS_FILE"]
+fn boots_real_super_mario_64_luigi_cia_with_local_ncch_keys_for_one_frame() {
+    let path = std::env::var_os("ACERIS_REAL_CIA")
+        .map(PathBuf::from)
+        .expect("set ACERIS_REAL_CIA to the local .cia path");
+    let keys_path = std::env::var_os("ACERIS_NCCH_KEYS_FILE")
+        .map(PathBuf::from)
+        .expect("set ACERIS_NCCH_KEYS_FILE to a local 32-byte key file");
+    let key_material = std::fs::read(keys_path).expect("could not read the local NCCH key file");
+    assert_eq!(
+        key_material.len(),
+        32,
+        "key file must contain 16 menu-info bytes followed by 16 content-key bytes"
+    );
+    let menu_info_key: [u8; 16] = key_material[..16].try_into().unwrap();
+    let content_key: [u8; 16] = key_material[16..].try_into().unwrap();
+
+    let mut system = System::new();
+    assert_eq!(
+        system
+            .load_cia_file_with_ncch_keys(&path, menu_info_key, content_key)
+            .unwrap(),
+        aceris_core::loader::ImageFormat::Cia
+    );
+    assert_eq!(system.image(), Some(aceris_core::loader::ImageFormat::Cia));
+
+    let frame = system.run_frame_with_budget(50_000).unwrap();
+    assert!(frame.instructions_executed > 0);
+    eprintln!(
+        "Real homebrew frame: instructions={}, CPU stop={:?}, GSP command lists={}, LCD scanouts={}",
+        frame.instructions_executed,
+        frame.cpu_stop_reason,
+        frame.gpu_command_lists_submitted,
+        frame.lcd_screens_scanned_out
+    );
+}
