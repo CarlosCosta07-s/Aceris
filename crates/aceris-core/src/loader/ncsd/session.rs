@@ -2793,7 +2793,7 @@ fn thread_scheduler_result_code(error: ThreadSchedulerError) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::kernel::CURRENT_THREAD_HANDLE;
+    use super::kernel::{CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE};
     use super::*;
     use crate::loader::ncsd::PreparedArm11Image;
     use crate::loader::ncsd::ncch::extended_header::{CodeSetInfo, NcchExtendedHeader};
@@ -2879,7 +2879,7 @@ mod tests {
             .unwrap();
         assert_eq!(memory.read_u32(physical).unwrap(), 0);
 
-        session.set_current_register(0, 0xFFFF_8001);
+        session.set_current_register(0, CURRENT_PROCESS_HANDLE);
         session.set_current_register(1, virtual_address);
         session.set_current_register(2, 4);
         session.dispatch_svc(0x54);
@@ -2887,6 +2887,52 @@ mod tests {
         assert_eq!(session.current_registers().unwrap()[0], 0);
         assert_eq!(memory.read_u32(physical).unwrap(), 0x7856_3412);
         assert_eq!(session.data_cache_line_count(), 0);
+    }
+
+    #[test]
+    fn store_and_invalidate_process_data_cache_svcs_have_distinct_effects() {
+        let mut session = test_session();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_address = physical - 0x0C00_0000;
+        session.address_space.attach_gpu_memory(memory.clone());
+        session
+            .address_space
+            .map_linear_memory_region(virtual_address, physical, 0x1000)
+            .unwrap();
+
+        session
+            .write_memory_bytes(virtual_address, &[0x10, 0x20, 0x30, 0x40])
+            .unwrap();
+        session.set_current_register(0, CURRENT_PROCESS_HANDLE);
+        session.set_current_register(1, virtual_address);
+        session.set_current_register(2, 4);
+        session.dispatch_svc(0x53); // StoreProcessDataCache
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(memory.read_u32(physical).unwrap(), 0x4030_2010);
+        assert_eq!(session.data_cache_line_count(), 1);
+
+        // A device write is hidden by the still-resident clean CPU line.
+        memory.write_u32(physical, 0xAABB_CCDD).unwrap();
+        assert_eq!(session.read_memory_u32(virtual_address).unwrap(), 0x4030_2010);
+
+        session.set_current_register(0, CURRENT_PROCESS_HANDLE);
+        session.set_current_register(1, virtual_address);
+        session.set_current_register(2, 4);
+        session.dispatch_svc(0x52); // InvalidateProcessDataCache
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(session.data_cache_line_count(), 0);
+        assert_eq!(session.read_memory_u32(virtual_address).unwrap(), 0xAABB_CCDD);
+
+        // The current-process pseudo-handle is checked, not silently ignored.
+        session.set_current_register(0, CURRENT_THREAD_HANDLE);
+        session.set_current_register(1, virtual_address);
+        session.set_current_register(2, 4);
+        session.dispatch_svc(0x54);
+        assert_eq!(
+            session.current_registers().unwrap()[0],
+            RESULT_INVALID_HANDLE
+        );
     }
 
     #[test]
