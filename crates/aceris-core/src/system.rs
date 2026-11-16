@@ -2277,14 +2277,18 @@ impl System {
             if region.size_bytes == 0 {
                 break;
             }
-            self.resolve_gsp_physical_range(region.address, region.size_bytes as usize)
+            let physical = self.resolve_gsp_physical_range(region.address, region.size_bytes as usize)
                 .map_err(|_| GspGxCommandQueueError::InvalidCacheRegionRange {
                     address: region.address,
                     size_bytes: region.size_bytes,
                 })?;
-            if let Some(session) = self.ncsd_session.as_mut() {
-                session.flush_process_data_cache(region.address, region.size_bytes)
-                    .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+            let is_vram = physical >= VRAM_BASE
+                && u64::from(physical) < u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
+            if !is_vram {
+                if let Some(session) = self.ncsd_session.as_mut() {
+                    session.flush_process_data_cache(region.address, region.size_bytes)
+                        .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+                }
             }
             report.cache_regions_validated =
                 report.cache_regions_validated.saturating_add(1);
@@ -2466,7 +2470,9 @@ impl System {
                     .physical_address
             };
 
-        if command.flush_buffer {
+        let command_list_is_vram = physical_address >= VRAM_BASE
+            && u64::from(physical_address) < u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
+        if command.flush_buffer && !command_list_is_vram {
             if let Some(session) = self.ncsd_session.as_mut() {
                 session.flush_process_data_cache(address, size_bytes)
                     .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
