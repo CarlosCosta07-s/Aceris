@@ -2368,6 +2368,11 @@ impl System {
                 session
                     .flush_process_data_cache(command.source_address, command.size_bytes)
                     .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+                // DMA is an external observer: finish the CPU writeback queue
+                // before staging the source bytes from physical memory.
+                session
+                    .drain_write_buffer()
+                    .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
             }
         }
 
@@ -2449,6 +2454,11 @@ impl System {
                 if let Some(session) = self.ncsd_session.as_mut() {
                     session
                         .flush_process_data_cache(region.address, region.size_bytes)
+                        .map_err(|error| {
+                            GspGxCommandQueueError::ProcessMemory(error.to_string())
+                        })?;
+                    session
+                        .drain_write_buffer()
                         .map_err(|error| {
                             GspGxCommandQueueError::ProcessMemory(error.to_string())
                         })?;
@@ -2635,6 +2645,9 @@ impl System {
             if let Some(session) = self.ncsd_session.as_mut() {
                 session
                     .flush_process_data_cache(address, size_bytes)
+                    .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+                session
+                    .drain_write_buffer()
                     .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
             }
         }
