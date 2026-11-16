@@ -4893,6 +4893,167 @@ mod tests {
     }
 
     #[test]
+    fn gsp_gx_texture_copy_to_fcram_requires_cpu_invalidation() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (old_virtual_base, physical_base) = map_test_linear_fcram(&mut system, 0x1000);
+        let new_virtual_base = 0x3000_0000 + (physical_base - FCRAM_BASE);
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(new_virtual_base, 0x1000)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .map_linear_memory_region(new_virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        let source_address = VRAM_BASE + 0x3000;
+        let destination_address = new_virtual_base + 0x200;
+        let destination_old_alias = old_virtual_base + 0x200;
+        let expected: [u8; 16] = [
+            0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87, 0x98, 0xA9, 0xBA, 0xCB, 0xDC, 0xED,
+            0xFE, 0x0F,
+        ];
+        system
+            .physical_memory_mut()
+            .write(source_address, &expected)
+            .unwrap();
+
+        let baseline_cache_lines = system
+            .ncsd_session()
+            .unwrap()
+            .address_space()
+            .data_cache_line_count();
+        let mut cached_destination = [0xFF; 16];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(destination_address, &mut cached_destination)
+            .unwrap();
+        assert_eq!(cached_destination, [0; 16]);
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines + 1
+        );
+
+        let (shared_memory_base, event_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            session
+                .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (stack.address, event_handle)
+        };
+        system
+            .register_gsp_client(0, shared_memory_base, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_TEXTURE_COPY;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_address.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination_address.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&(expected.len() as u32).to_le_bytes());
+        queue_bytes[entry + 24..entry + 28].copy_from_slice(&0x08u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.texture_copies_completed, 1);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.halted);
+        assert!(report.error.is_none());
+
+        let mut physical_destination = [0u8; 16];
+        system
+            .physical_memory()
+            .read(physical_base + 0x200, &mut physical_destination)
+            .unwrap();
+        assert_eq!(physical_destination, expected);
+
+        // TextureCopy writes the physical FCRAM backing directly. The clean
+        // CPU line remains stale through both virtual aliases until invalidated.
+        let mut stale_destination = [0xFF; 16];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(destination_old_alias, &mut stale_destination)
+            .unwrap();
+        assert_eq!(stale_destination, [0; 16]);
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines + 1
+        );
+
+        assert_eq!(
+            system
+                .ncsd_session_mut()
+                .unwrap()
+                .invalidate_process_data_cache(destination_address, expected.len() as u32)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines
+        );
+        let mut refreshed_destination = [0u8; 16];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(destination_old_alias, &mut refreshed_destination)
+            .unwrap();
+        assert_eq!(refreshed_destination, expected);
+
+        let interrupt_queue_address =
+            shared_memory_base + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn gsp_gx_flush_cache_regions_cleans_and_invalidates_fcram_ranges() {
         let mut system = System::new();
         system
