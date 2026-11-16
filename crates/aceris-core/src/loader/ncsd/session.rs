@@ -2900,6 +2900,7 @@ mod tests {
             .address_space
             .map_linear_memory_region(virtual_address, physical, 0x1000)
             .unwrap();
+        let baseline_cache_lines = session.data_cache_line_count();
         session
             .write_memory_bytes(virtual_address, &[0x12, 0x34, 0x56, 0x78])
             .unwrap();
@@ -2912,7 +2913,7 @@ mod tests {
 
         assert_eq!(session.current_registers().unwrap()[0], 0);
         assert_eq!(memory.read_u32(physical).unwrap(), 0x7856_3412);
-        assert_eq!(session.data_cache_line_count(), 0);
+        assert_eq!(session.data_cache_line_count(), baseline_cache_lines);
     }
 
     #[test]
@@ -2927,6 +2928,7 @@ mod tests {
             .map_linear_memory_region(virtual_address, physical, 0x1000)
             .unwrap();
 
+        let baseline_cache_lines = session.data_cache_line_count();
         session
             .write_memory_bytes(virtual_address, &[0x10, 0x20, 0x30, 0x40])
             .unwrap();
@@ -2936,7 +2938,7 @@ mod tests {
         session.dispatch_svc(0x53); // StoreProcessDataCache
         assert_eq!(session.current_registers().unwrap()[0], 0);
         assert_eq!(memory.read_u32(physical).unwrap(), 0x4030_2010);
-        assert_eq!(session.data_cache_line_count(), 1);
+        assert_eq!(session.data_cache_line_count(), baseline_cache_lines + 1);
 
         // A device write is hidden by the still-resident clean CPU line.
         memory.write_u32(physical, 0xAABB_CCDD).unwrap();
@@ -2950,7 +2952,7 @@ mod tests {
         session.set_current_register(2, 4);
         session.dispatch_svc(0x52); // InvalidateProcessDataCache
         assert_eq!(session.current_registers().unwrap()[0], 0);
-        assert_eq!(session.data_cache_line_count(), 0);
+        assert_eq!(session.data_cache_line_count(), baseline_cache_lines);
         assert_eq!(
             session.read_memory_u32(virtual_address).unwrap(),
             0xAABB_CCDD
