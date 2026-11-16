@@ -1503,3 +1503,19 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 - Os testes foram adicionados/atualizados, mas não executados nesta sessão: o ambiente não possui `cargo`, `rustc` ou `rustfmt`. Confirme CI de `main` para fmt, build, Clippy, testes Linux/Windows/macOS e Android ARM64 antes de considerar a etapa aprovada.
 
 Referências técnicas consultadas: [ARM11 MPCore Technical Reference Manual — CTR/DSize](https://documentation-service.arm.com/static/5e8e1cd9fd977155116a4a7a) para 16 KiB, quatro vias e linhas de oito words; [3dbrew SVC](https://www.3dbrew.org/wiki/SVC) para os serviços 0x52/0x53/0x54 e suas assinaturas.
+
+## RequestDMA — regressão de coerência no destino FCRAM (16/11/2026)
+
+O ChatGPT acrescentou um teste de integração em `system.rs` para cobrir a visibilidade de uma escrita DMA no destino FCRAM:
+
+- A CPU escreve dados dirty na origem; `RequestDMA.flush_source` deve torná-los visíveis ao agente DMA.
+- A CPU primeiro lê o destino e mantém uma linha clean residente.
+- O DMA grava o destino pelo backing físico compartilhado.
+- A CPU continua lendo o valor antigo até executar `InvalidateProcessDataCache`.
+- Após a invalidação, a CPU relê o valor gravado pelo DMA.
+
+Commit `2f2baa3` adiciona a regressão; `eee8918` aplica a formatação exigida pela CI. Commit `2ac2bb5` corrige o comentário de módulo em `gpu/gsp_queue.rs`, que ainda afirmava incorretamente que FlushCacheRegions apenas validava faixas.
+
+Arquivos alterados nesta etapa: `crates/aceris-core/src/system.rs`, `crates/aceris-core/src/gpu/gsp_queue.rs` e este registro.
+
+**Limites preservados:** nenhuma alteração foi feita nos módulos de CPU/Thumb ou draw/shader reservados ao Claude. Não há implementação de coerência snoop automática; o teste confirma a visibilidade explícita por flush/invalidação. A aprovação final depende da CI de `main` no commit `eee8918`.
