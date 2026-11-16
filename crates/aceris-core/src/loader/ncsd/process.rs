@@ -2962,6 +2962,13 @@ mod tests {
         assert_eq!(second.read32(0x0900_0000).unwrap(), 0);
         first.flush_data_cache_range(0x0800_0000, 4).unwrap();
         first.drain_arm11_write_buffer().unwrap();
+        // The peer's clean line remains stale until that process invalidates
+        // its own cache entry using its own virtual mapping.
+        assert_eq!(second.read32(0x0900_0000).unwrap(), 0);
+        assert_eq!(
+            second.invalidate_data_cache_range(0x0900_0000, 4).unwrap(),
+            1
+        );
         assert_eq!(second.read32(0x0900_0000).unwrap(), 0x1234_5678);
         assert!(!second.is_writable_range(0x0900_0000, 4));
         assert!(second.write32(0x0900_0000, 0xFFFF_FFFF).is_err());
@@ -3008,7 +3015,13 @@ mod tests {
         first.flush_data_cache_range(0x0800_0000, 4).unwrap();
         first.data_memory_barrier().unwrap();
 
-        // Backing generation changes invalidate the second process' clean line.
+        // Publication updates the shared backing, but the peer owns a separate
+        // cache and must invalidate it explicitly before observing the update.
+        assert_eq!(second.read32(0x0900_0000).unwrap(), 0);
+        assert_eq!(
+            second.invalidate_data_cache_range(0x0900_0000, 4).unwrap(),
+            1
+        );
         assert_eq!(second.read32(0x0900_0000).unwrap(), 0xA1B2_C3D4);
         assert_eq!(second.data_cache_line_count(), 1);
     }
@@ -3030,6 +3043,8 @@ mod tests {
         assert_eq!(peer.read32(0x0900_0080).unwrap(), 0);
         owner.flush_data_cache_range(heap + 0x80, 4).unwrap();
         owner.data_memory_barrier().unwrap();
+        assert_eq!(peer.read32(0x0900_0080).unwrap(), 0);
+        peer.invalidate_data_cache_range(0x0900_0080, 4).unwrap();
         assert_eq!(peer.read32(0x0900_0080).unwrap(), 0x5566_7788);
     }
 
