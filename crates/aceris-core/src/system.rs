@@ -4660,6 +4660,12 @@ mod tests {
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x2000)
             .unwrap();
+        system.ncsd_session_mut().unwrap()
+            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
+            .unwrap();
+        system.ncsd_session_mut().unwrap()
+            .write_memory_bytes(0x1400_0100, &[0xCA, 0xFE, 0xBA, 0xBE])
+            .unwrap();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
@@ -4688,6 +4694,9 @@ mod tests {
         assert_eq!(report.pending_commands, 0);
         assert!(report.error.is_none());
         assert_eq!(report.last_result, 0);
+        let mut flushed = [0u8; 4];
+        system.physical_memory().read(crate::gpu::FCRAM_BASE + 0x100, &mut flushed).unwrap();
+        assert_eq!(flushed, [0xCA, 0xFE, 0xBA, 0xBE]);
     }
 
 
@@ -4704,6 +4713,9 @@ mod tests {
         system
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x2000)
+            .unwrap();
+        system.ncsd_session_mut().unwrap()
+            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
             .unwrap();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
@@ -4745,6 +4757,9 @@ mod tests {
         system
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x2000)
+            .unwrap();
+        system.ncsd_session_mut().unwrap()
+            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
             .unwrap();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
