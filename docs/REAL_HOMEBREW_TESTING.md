@@ -59,17 +59,47 @@ pois o arquivo do mantenedor não faz parte do repositório nem dos runners.
 
 ## Próxima etapa para executar o jogo
 
-O caminho de sistema `System::load_cia_with_keys` já existe. Ele recebe um
-`TicketCommonKeyStore` fornecido pelo chamador, além das chaves NCCH de menu
-info e conteúdo. O projeto não descobre, extrai, baixa, incorpora ou persiste
-essas chaves automaticamente.
+O caminho de sistema `System::load_cia_with_ncch_keys` agora cobre este formato
+de arquivo: conteúdo CIA claro com regiões NCCH internamente criptografadas.
+Ele recebe as chaves NCCH menu-info e conteúdo diretamente do chamador, sem
+precisar descriptografar a chave do ticket quando o TMD não marca o conteúdo
+como AES-CBC criptografado.
 
-Para prosseguir com este título, o ambiente local precisa configurar as chaves
-legítimas obtidas pelo próprio mantenedor. O material deve ficar fora do
-repositório, do CI, de logs e de releases. Não coloque chaves em issues ou
-mensagens públicas. Depois disso, o teste real poderá avançar da validação do
-contêiner para a preparação ARM11 e, então, registrar os serviços ausentes
-durante a execução.
+Para repetir um teste de um frame com o arquivo real, crie localmente um
+arquivo binário de exatamente 32 bytes: os primeiros 16 bytes são a chave
+NCCH menu-info e os 16 seguintes são a chave NCCH de conteúdo. Informe os
+caminhos em `ACERIS_REAL_CIA` e `ACERIS_NCCH_KEYS_FILE`.
+
+Linux/macOS:
+
+```sh
+export ACERIS_REAL_CIA="/caminho/local/para/Super Mario 64 Luigi.cia"
+export ACERIS_NCCH_KEYS_FILE="/caminho/local/para/keys.bin"
+cargo test -p aceris-core --test cia_real_homebrew boots_real_super_mario_64_luigi_cia_with_local_ncch_keys_for_one_frame -- --ignored --nocapture
+```
+
+PowerShell:
+
+```powershell
+$env:ACERIS_REAL_CIA = "C:\caminho\para\Super Mario 64 Luigi.cia"
+$env:ACERIS_NCCH_KEYS_FILE = "C:\caminho\para\keys.bin"
+cargo test -p aceris-core --test cia_real_homebrew boots_real_super_mario_64_luigi_cia_with_local_ncch_keys_for_one_frame -- --ignored --nocapture
+```
+
+O smoke test tenta carregar o CIA, preparar a sessão ARM11 e executar um frame
+com limite de 50.000 instruções. Ele registra o número de instruções, motivo de
+parada da CPU, listas de comandos GSP e scanouts LCD. Passar esse teste confirma
+a preparação e o avanço inicial do guest, não a compatibilidade completa nem
+uma imagem visualmente correta.
+
+O caminho alternativo `System::load_cia_with_keys` continua disponível para
+arquivos cujo conteúdo CIA externo esteja marcado como AES-CBC criptografado.
+Ele usa um `TicketCommonKeyStore` fornecido pelo chamador, além das chaves
+NCCH menu-info e conteúdo.
+
+O projeto não descobre, extrai, baixa, incorpora ou persiste chaves
+automaticamente. O arquivo de chaves deve ficar fora do repositório, do CI, de
+logs e de releases. Não coloque chaves em issues ou mensagens públicas.
 
 ## Limites do resultado
 
