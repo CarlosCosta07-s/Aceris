@@ -2,16 +2,15 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_MEMORY_FILL,
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_GX_COMMAND_REQUEST_DMA,
-    GSP_GX_COMMAND_TEXTURE_COPY, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+    DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+    GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
+    GSP_GX_COMMAND_QUEUE_SIZE, GSP_GX_COMMAND_REQUEST_DMA, GSP_GX_COMMAND_TEXTURE_COPY,
     GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
-    GspDisplayTransfer, GspDmaRequest, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
-    GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, GspTextureCopy, GspFlushCacheRegions, MAX_GSP_DMA_BYTES, Pica200,
-    TextureCopyError,
-    TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
-    execute_display_transfer, execute_texture_copy,
+    GspDisplayTransfer, GspDmaRequest, GspFlushCacheRegions, GspGxCommandQueue,
+    GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue,
+    GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, GspTextureCopy,
+    MAX_GSP_DMA_BYTES, Pica200, TextureCopyError, TextureCopyRequest, VRAM_BASE, VRAM_SIZE,
+    display_transfer_buffer_sizes, execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -1858,11 +1857,11 @@ impl System {
                         }
                         GspGxCommandQueueError::InvalidCacheRegionRange { .. }
                         | GspGxCommandQueueError::InvalidCommandListAddress { .. }
-                            | GspGxCommandQueueError::InvalidCommandListSize { .. }
-                            | GspGxCommandQueueError::InvalidMemoryFillRange { .. }
-                            | GspGxCommandQueueError::InvalidDisplayTransferAddress { .. }
-                            | GspGxCommandQueueError::InvalidDmaRange { .. }
-                            | GspGxCommandQueueError::InvalidTextureCopyAddress { .. } => {
+                        | GspGxCommandQueueError::InvalidCommandListSize { .. }
+                        | GspGxCommandQueueError::InvalidMemoryFillRange { .. }
+                        | GspGxCommandQueueError::InvalidDisplayTransferAddress { .. }
+                        | GspGxCommandQueueError::InvalidDmaRange { .. }
+                        | GspGxCommandQueueError::InvalidTextureCopyAddress { .. } => {
                             Some(GSP_INVALID_ADDRESS_RESULT)
                         }
                         _ => None,
@@ -4616,7 +4615,7 @@ mod tests {
 
 
     #[test]
-    fn gsp_gx_flush_cache_regions_validates_ranges_and_skips_zero_sizes() {
+    fn gsp_gx_flush_cache_regions_validates_all_three_nonzero_ranges() {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
@@ -4770,5 +4769,4 @@ mod tests {
         assert_eq!(report.last_result, RESULT_GSP_NO_RIGHT);
         assert!(report.halted);
     }
-
 }
