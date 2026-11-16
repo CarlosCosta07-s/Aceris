@@ -1434,7 +1434,7 @@ Arquivos alterados nesta etapa: crates/aceris-core/src/gpu/texture_copy.rs (novo
 A CI de main precisa confirmar Rustfmt, build, Clippy com -D warnings, cargo test --workspace em Linux/Windows/macOS e build Android ARM64 antes de considerar a etapa aprovada. Não houve verificação local: o ambiente desta sessão não possui Rust/Cargo.
 
 
-## GSP GX FlushCacheRegions — validação parcial de regiões (16/11/2026)
+## GSP GX FlushCacheRegions — implementação inicial somente de validação (histórico, 16/11/2026)
 
 O ChatGPT implementou a decodificação e o despacho parcial do comando GX FlushCacheRegions (ID 0x05), sem alterar módulos de CPU/Thumb nem os módulos de draw/shader atribuídos ao Claude.
 
@@ -1448,7 +1448,7 @@ Testes adicionados: decode dos três pares; três faixas válidas; região de ta
 
 Arquivos alterados: `crates/aceris-core/src/gpu/gsp_queue.rs`, `crates/aceris-core/src/gpu/mod.rs`, `crates/aceris-core/src/system.rs`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md` e este registro.
 
-A CI de `main` precisa confirmar Rustfmt, build, Clippy com `-D warnings`, `cargo test --workspace` em Linux/Windows/macOS e build Android ARM64 antes de considerar a etapa aprovada. O ambiente desta sessão não possui `cargo` nem `rustc`; os testes foram adicionados, mas não executados localmente.
+Este registro descreve apenas a etapa inicial de validação de endereços. Foi supersedido pela seção seguinte, que implementa o cache ARM11 e executa o writeback/invalidate de regiões FCRAM.
 
 
 ## ARM11 data cache e coerência CPU/GPU/DMA (16/11/2026)
