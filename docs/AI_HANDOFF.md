@@ -1486,21 +1486,22 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 ### Contrato atual
 
 - Geometria do D-cache modelado: 16 KiB, 4 vias, 128 conjuntos, 32 bytes por linha e 512 slots no total. Os campos DSize do CTR ARM11 documentam 16 KiB, 4 vias e 8 words por linha; Aceris usa LRU aproximado como política de substituição do software model.
-- A chave é o endereço físico alinhado, de modo que aliases virtuais para a mesma linha compartilham o estado dentro da sessão. Em colisão de conjunto, a vítima menos recentemente usada é removida; se dirty, seus 32 bytes são escritos de volta antes de reutilizar a via.
-- Os aliases linear antigo e novo podem mapear a mesma FCRAM física no mesmo processo; a regressão verifica que loads, Store e Invalidate por VAs diferentes atuam na mesma linha física.
+- A chave é `(backing_id, line_offset)`, não o endereço virtual: aliases para o mesmo trecho de backing convergem na mesma linha. Backings físicos FCRAM, SharedMemory (incluindo views do heap dinâmico) e cada segmento estático privado têm identidades distintas e estáveis. Em colisão de conjunto, a vítima LRU aproximada é escrita de volta pelo destino associado à linha antes de reutilizar a via.
+- Aliases lineares antigo/novo, aliases virtuais de um mesmo SharedMemory e views de heap dinâmico convergem para a mesma identidade e offset de backing. As regressões cobrem também dois processos com mapas em VAs diferentes.
 - O cache é write-back: CPU store deixa a linha dirty; CPU load da mesma linha observa o valor local.
 - StoreProcessDataCache limpa dirty lines e mantém as linhas residentes. InvalidateProcessDataCache remove as linhas sem writeback. FlushProcessDataCache faz writeback e remove as linhas.
 - Os três serviços SVC aceitam apenas `CURRENT_PROCESS_HANDLE` (`0xFFFF8001`); handles de outros processos ainda não são suportados.
-- GSP RequestDMA executa flush da origem quando solicitado e quando a origem resolve para FCRAM. ProcessCommandList executa flush do buffer quando solicitado e o buffer resolve para FCRAM. FlushCacheRegions executa flush das regiões FCRAM válidas na ordem documentada, interrompendo em tamanho zero ou erro. VRAM não é cacheada por este modelo.
-- A manutenção valida o intervalo completo antes de writeback/evicção. O writeback usa o backing físico compartilhado com DMA/GPU/LCD.
+- GSP RequestDMA executa flush da origem quando solicitado; ProcessCommandList executa flush do command buffer quando solicitado; FlushCacheRegions aplica manutenção aos intervalos mapeados. Stores de CPU sujos precisam ser publicados antes da leitura externa. DMA/GPU escrevem no backing comum e incrementam a geração da linha, permitindo que caches de outros processos descartem linhas limpas stale na próxima leitura. VRAM ainda é acessada diretamente sem D-cache ARM11.
+- A manutenção valida o intervalo completo antes de writeback/evicção. O writeback usa o destino retido na linha: segmento estático, backing dinâmico/shared ou FCRAM físico. A LCD lê explicitamente o backing físico já comprometido por `System::scanout_lcd`; ela não faz snooping nem drena filas da CPU.
 - Ao liberar uma alocação linear, a sessão invalida as linhas associadas antes do unmap e do free físico; dirty data da alocação que está sendo liberada é descartada, não escrita de volta em páginas que podem ser reutilizadas.
 
 ### Limites e validação pendente
 
-- O modelo cobre os aliases lineares físicos tratados como cacheáveis pelo caminho atual. Regiões estáticas, heap host-side e shared memory sem PA observável ainda não têm linhas cacheadas próprias; atributos ARM C/B/S e a seleção de memória Normal/Device precisam ser ligados ao cache.
-- A associatividade e capacidade declaradas (16 KiB, 4-way, 32 bytes) são representadas; regressões verificam ocupação simultânea dos 512 slots e writeback de vítima dirty na colisão seguinte. Um segundo teste cruza o limite entre duas linhas, confirma que faixa inválida não provoca writeback/evicção parcial e verifica o flush válido das duas linhas. A política LRU é apenas aproximação de replacement de hardware. Latência, prefetch, write buffer, barreiras e concorrência/coerência multicore não estão modelados.
+- A cache de backing abrange segmentos estáticos do processo, heap dinâmico, Shared Memory e FCRAM físico linear. SharedMemory mantém geração por linha e versão de monitor exclusivo compartilhadas entre clones/views; FCRAM mantém geração por linha no backing físico. Quando outro processo/dispositivo publica uma escrita, linhas locais limpas detectam a geração divergente e são descartadas sob demanda. Linhas dirty não são sobrescritas nem expostas por snooping automático: a publicação exige clean/writeback e barreira.
+- A LCD consome somente o backing físico via scanout explícito. Um framebuffer ainda pendente na FIFO da CPU não aparece na LCD até o writeback ser drenado. O teste de integração exercita CPU write → FlushProcessDataCache → DMB/DSB → GSP RequestDMA → framebuffer físico → scanout LCD.
+- A associatividade e capacidade declaradas (16 KiB, 4-way, 32 bytes) são representadas; LRU é apenas aproximação de replacement de hardware. Latência, prefetch, outer cache, temporização do barramento, concorrência assíncrona e snooping multicore não estão modelados.
 - Invalidate de uma linha dirty descarta deliberadamente os dados não escritos, conforme a semântica de invalidação sem clean.
-- Os testes foram adicionados/atualizados, mas não executados nesta sessão: o ambiente não possui `cargo`, `rustc` ou `rustfmt`. Confirme CI de `main` para fmt, build, Clippy, testes Linux/Windows/macOS e Android ARM64 antes de considerar a etapa aprovada.
+- Os testes de backing aliases, dois processos, heap dinâmico, segmentos estáticos e cadeia DMA/LCD estão na suíte do workspace. A CI do HEAD deve confirmar fmt, build, Clippy, testes Linux/Windows/macOS e build Android ARM64 antes de declarar a etapa aprovada.
 
 Referências técnicas consultadas: [ARM11 MPCore Technical Reference Manual — CTR/DSize](https://documentation-service.arm.com/static/5e8e1cd9fd977155116a4a7a) para 16 KiB, quatro vias e linhas de oito words; [3dbrew SVC](https://www.3dbrew.org/wiki/SVC) para os serviços 0x52/0x53/0x54 e suas assinaturas.
 
@@ -1647,6 +1648,26 @@ Ordem do mantenedor, item 1. Só testes em `system.rs` (fixture `render_fixture`
 
 Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
 
+## Identidade de backing, Shared Memory e LCD — 16/11/2026
+
+### Implementação publicada
+
+- `memory.rs`: identidade monotônica para novas alocações de backing.
+- `gpu/physical_memory.rs`: identidade estável por backing FCRAM compartilhado entre clones e geração por linha de 32 bytes; gravações por DMA/GPU/LCD incrementam essa geração.
+- `loader/ncsd/process.rs`: `SharedMemoryBacking` compartilha identidade, gerações de linha e versões de monitor exclusivo entre clones/views. Backings do heap dinâmico passam a ter identidade desde a alocação, preservando-a quando viram Shared Memory.
+- A D-cache usa `DataCacheKey { backing_id, line_offset }` e retém um alvo de writeback. Cache e FIFO passam a operar sobre segmentos estáticos, heap dinâmico, Shared Memory e FCRAM físico, sem tratar endereços virtuais de aliases como backings diferentes.
+- Uma escrita publicada em SharedMemory/FCRAM atualiza a geração da linha. Ao ler, cada processo invalida uma linha limpa cuja geração ficou desatualizada; linhas dirty alheias continuam invisíveis até clean/writeback explícito. Isso é coerência por geração/invalidação sob demanda, não hardware snooping.
+- Unmap de regiões Shared, linear e heap drena writebacks antes de retirar o mapa/backing.
+- `Arm11ProcessSession::data_memory_barrier` expõe a drenagem DMB/DSB da sessão.
+- `System::scanout_lcd` define a fronteira explícita da leitura LCD. O scanout lê somente memória física já comprometida e não limpa D-cache nem drena o write buffer da CPU.
+- Testes de regressão: aliases Shared na mesma sessão; processo separado com cache limpa stale; heap dinâmico convertido em view compartilhada; segmentos estáticos; CPU → Flush/DMB/DSB → RequestDMA → framebuffer físico → LCD.
+
+### Limites explícitos
+
+- Gerações só invalidam cópias limpas quando uma escrita chega ao backing. Uma linha dirty de outra sessão não é snoopada e permanece privada até sua publicação.
+- A execução de DMA e LCD continua síncrona/determinística neste estágio. Ainda não modela concorrência real de barramento, latências, outer cache, write combining físico ou snooping multicore.
+- A matriz CI iniciada no HEAD após as alterações de formatação deve confirmar build, Clippy e testes desktop, além do build Android ARM64. Não declarar a etapa aprovada antes do resultado final da execução.
+
 ## ARM11 write buffer e barreiras CP15 — 16/11/2026
 
 ### Alterações publicadas
@@ -1682,8 +1703,8 @@ Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `carg
 
 ### Próximas ações
 
-1. Validar a CI do HEAD mais recente e corrigir qualquer falha antes de adicionar semântica adicional.
-2. Expandir as tags D-cache para memória dinâmica/estática/shared com identidade de backing e invalidação segura entre sessões.
-3. Estender a identidade de backing, tags de cache e buffering para memória estática, heap dinâmico e shared, sem atrasar Strongly Ordered/Device.
-4. Acrescentar integração LCD explícita (além da memória física compartilhada) e casos end-to-end CPU → DMB/DSB → DMA/GPU → LCD.
-5. Manter documentado o limite entre os efeitos observáveis modelados e as temporizações físicas ainda aproximadas.
+1. Confirmar a CI completa do HEAD que contém as novas tags por backing e a regressão end-to-end antes de marcar esta etapa como aprovada.
+2. Ampliar a matriz de testes para atributos TEX/C/B/S e PRRR/NMRR nas diferentes categorias de backing, mantendo explícita a diferença entre Device/Strongly Ordered e Normal.
+3. Conectar IMB/I-cache e validar os efeitos de manutenção de instruções sem inventar pipeline ou temporização ainda inexistentes.
+4. Projetar testes de interleavings concorrentes reais entre processos e dispositivos; não confundir gerações sob demanda com snooping automático.
+5. Evoluir os modelos de outer cache, temporização e arbitração apenas quando houver comportamento arquitetural documentado e fixtures reproduzíveis.
