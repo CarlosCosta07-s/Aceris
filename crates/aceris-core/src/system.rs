@@ -3,11 +3,14 @@
 use crate::cpu::Arm11Core;
 use crate::gpu::{
     DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_MEMORY_FILL,
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_REQUEST_DMA,
+    GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
     GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspDisplayTransfer,
-    GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult,
-    GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, Pica200,
-    VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes, execute_display_transfer,
+    GspDmaRequest, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
+    GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
+    GspProcessCommandList, Pica200,
+    MAX_GSP_DMA_BYTES, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
+    execute_display_transfer,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -80,6 +83,11 @@ pub struct GspGxCommandQueueReport {
     pub command_lists_submitted: u8,
     /// Number of MemoryFill buffer operations completed.
     pub memory_fills_completed: u8,
+    /// Number of RequestDMA commands completed by the synchronous software backend.
+    pub dma_requests_completed: u8,
+    /// Whether a guest RequestDMA requested a source cache flush.
+    /// The current coherent backing has no separate data-cache model to flush.
+    pub flush_source_requested: bool,
     /// Number of DisplayTransfer commands completed by the synchronous software backend.
     pub display_transfers_completed: u8,
     /// Number of entries still pending after this dispatch.
@@ -1642,6 +1650,8 @@ impl System {
             commands_consumed: 0,
             command_lists_submitted: 0,
             memory_fills_completed: 0,
+            dma_requests_completed: 0,
+            flush_source_requested: false,
             display_transfers_completed: 0,
             pending_commands: queue.command_count(),
             cache_flush_requested: false,
@@ -1659,6 +1669,25 @@ impl System {
                 report.busy_check_requested |= command.fail_if_busy;
 
                 let dispatch_result = match command.command_id {
+                    GSP_GX_COMMAND_REQUEST_DMA => {
+                        let arguments = command
+                            .request_dma()
+                            .expect("command ID was checked immediately above");
+                        report.flush_source_requested |= arguments.flush_source;
+                        if client_has_rendering_right {
+                            self.dispatch_gsp_dma_request(arguments).and_then(|()| {
+                                report.dma_requests_completed =
+                                    report.dma_requests_completed.saturating_add(1);
+                                self.dispatch_gsp_interrupt(GspInterruptId::Dma)
+                                    .map(|_| ())
+                                    .map_err(|error| {
+                                        GspGxCommandQueueError::ProcessMemory(error.to_string())
+                                    })
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    }
                     GSP_GX_COMMAND_PROCESS_COMMAND_LIST => {
                         let arguments = command
                             .process_command_list()
@@ -1738,6 +1767,7 @@ impl System {
                             | GspGxCommandQueueError::InvalidCommandListSize { .. }
                             | GspGxCommandQueueError::InvalidMemoryFillRange { .. }
                             | GspGxCommandQueueError::InvalidDisplayTransferAddress { .. }
+                            | GspGxCommandQueueError::InvalidDmaRange { .. }
                     )
                     .then_some(GSP_INVALID_ADDRESS_RESULT);
                     queue.mark_error(result);
@@ -1792,6 +1822,59 @@ impl System {
             .validate_range(physical_address, length)
             .map_err(|_| GspGxCommandQueueError::InvalidDisplayTransferAddress { address })?;
         Ok(physical_address)
+    }
+
+    /// Executes one bounded GX RequestDMA operation.
+    ///
+    /// Both complete ranges are translated and validated before any memory is
+    /// changed. Staging the source gives overlapping copies deterministic
+    /// memmove semantics. The shared physical-memory backend is coherent in this
+    /// model, so flush_source is reported but cannot perform a real cache flush.
+    fn dispatch_gsp_dma_request(
+        &mut self,
+        command: GspDmaRequest,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        if command.size_bytes == 0 {
+            return Err(GspGxCommandQueueError::InvalidDmaRange {
+                source_address: command.source_address,
+                destination_address: command.destination_address,
+                size_bytes: command.size_bytes,
+            });
+        }
+        let size_bytes = command.size_bytes as usize;
+        if size_bytes > MAX_GSP_DMA_BYTES {
+            return Err(GspGxCommandQueueError::DmaTooLarge {
+                size_bytes: command.size_bytes,
+                maximum_bytes: MAX_GSP_DMA_BYTES,
+            });
+        }
+
+        let source_physical = self
+            .resolve_gsp_physical_range(command.source_address, size_bytes)
+            .map_err(|_| GspGxCommandQueueError::InvalidDmaRange {
+                source_address: command.source_address,
+                destination_address: command.destination_address,
+                size_bytes: command.size_bytes,
+            })?;
+        let destination_physical = self
+            .resolve_gsp_physical_range(command.destination_address, size_bytes)
+            .map_err(|_| GspGxCommandQueueError::InvalidDmaRange {
+                source_address: command.source_address,
+                destination_address: command.destination_address,
+                size_bytes: command.size_bytes,
+            })?;
+
+        let mut staged = Vec::new();
+        staged
+            .try_reserve_exact(size_bytes)
+            .map_err(|_| GspGxCommandQueueError::DmaAllocationFailed { size_bytes })?;
+        staged.resize(size_bytes, 0);
+        self.physical_memory
+            .read(source_physical, &mut staged)
+            .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+        self.physical_memory
+            .write(destination_physical, &staged)
+            .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))
     }
 
     /// Executes one basic DisplayTransfer operation.
@@ -2846,6 +2929,136 @@ mod tests {
         let queue = GspInterruptRelayQueue::parse(&bytes).unwrap();
         assert!(queue.ignores_pdc());
         assert!(queue.pending_interrupts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn gsp_gx_request_dma_copies_linear_memory_to_vram_and_signals_dma() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        // RequestDMA accepts byte-granular spans. The legacy linear alias maps
+        // to the same FCRAM backing used by the ARM11 process and GPU.
+        let source_virtual = 0x1400_0011;
+        let source_physical = crate::gpu::FCRAM_BASE + 0x11;
+        let destination_virtual = VRAM_BASE + 0x20_003;
+        let expected = [
+            0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x17, 0x28, 0x39, 0x4A, 0x5B, 0x6C, 0x7D,
+        ];
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(0x1400_0000, 0x1000)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write(source_physical, &expected)
+            .unwrap();
+
+        let (shared_memory_base, event_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            assert_eq!(stack.address & 0xFFF, 0);
+            assert!(stack.mapped_size_bytes as usize >= GSP_SHARED_MEMORY_SIZE);
+            session
+                .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (stack.address, event_handle)
+        };
+        system
+            .register_gsp_client(0, shared_memory_base, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12]
+            .copy_from_slice(&destination_virtual.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16]
+            .copy_from_slice(&(expected.len() as u32).to_le_bytes());
+        queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.dma_requests_completed, 1);
+        assert!(report.flush_source_requested);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.halted);
+        assert!(report.error.is_none());
+
+        let mut actual = [0u8; 13];
+        system
+            .physical_memory()
+            .read(destination_virtual, &mut actual)
+            .unwrap();
+        assert_eq!(actual, expected);
+
+        // DMA is signaled only after the staged destination write completes.
+        let interrupt_queue_address =
+            shared_memory_base + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Dma]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn gsp_gx_request_dma_is_consumed_without_rendering_rights() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let destination = VRAM_BASE + 0x20_000;
+        let before = [0xCC; 8];
+        system.physical_memory_mut().write(destination, &before).unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&0x1400_0000u32.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&8u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, false);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.dma_requests_completed, 0);
+        assert!(report.error.is_none());
+
+        let mut after = [0u8; 8];
+        system.physical_memory().read(destination, &mut after).unwrap();
+        assert_eq!(after, before);
     }
 
     #[test]

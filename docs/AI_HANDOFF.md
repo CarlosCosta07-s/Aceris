@@ -1394,3 +1394,19 @@ A CI deste commit precisa passar em Linux, Windows e macOS, além do build Andro
 ### Verificação do PPF
 
 O teste de integração `gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion` agora registra um cliente GSP com event handle OneShot, adquire os direitos de renderização e verifica o PPF na relay queue real (`GspInterruptRelayQueue`) além do estado sinalizado do objeto kernel. A verificação cobre a ordem de conclusão → enfileiramento → sinalização; continua sendo um backend síncrono de CPU, não uma medição da latência real do hardware.
+
+
+## GSP GX — RequestDMA síncrono e limitado (16/11/2026)
+
+O ChatGPT implementou o comando GX RequestDMA (ID 0x00) na colaboração autorizada de serviços GSP, sem modificar os arquivos de CPU/Thumb nem os módulos de draw/shader de Claude:
+
+- `GSP_GX_COMMAND_REQUEST_DMA` e `GspDmaRequest` decodificam origem (word 1), destino (word 2), tamanho em bytes (word 3) e o pedido de flush da origem (word 7).
+- `System::dispatch_gsp_dma_request` resolve os dois intervalos completos por meio da rota comum de GSP (VRAM física/alias ou mapeamentos lineares registrados), valida origem e destino antes de alterar memória e usa um buffer temporário para preservar a semântica de cópia quando os intervalos se sobrepõem.
+- O backend aceita tamanhos de 1 a 64 MiB. Não impõe alinhamento de endereço/tamanho, porque RequestDMA é uma exceção às restrições de alinhamento descritas para os outros comandos GX.
+- A chamada só é executada quando o cliente tem rendering rights. Após a escrita de destino, despacha a interrupção `DMA` (ID 6) para o cliente que mantém os direitos. Sem direitos, o comando é consumido sem modificar memória.
+- `flush_source` é exposto no decoder e em `GspGxCommandQueueReport::flush_source_requested`; o Aceris ainda não tem um modelo de cache de dados separado, portanto o pedido é observado, mas não causa um flush real. Não há temporização assíncrona, semáforo CDMA, QTM nem Break equivalente para falhas.
+- Testes adicionados: decodificação de campos byte-granulares; cópia de um endereço linear legado para VRAM com span não alinhado de 13 bytes e validação da relay queue/event handle `DMA`; consumo sem direitos sem alteração do destino.
+
+### Verificação
+
+O código e os testes foram preparados para publicação na branch `main`. Não declare a etapa aprovada até a CI do commit correspondente terminar em verde nos jobs desktop Linux/Windows/macOS e Android ARM64. A verificação local com Cargo não estava disponível nesta sessão.

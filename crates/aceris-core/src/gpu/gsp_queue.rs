@@ -21,6 +21,10 @@ pub const GSP_GX_COMMAND_QUEUE_HEADER_SIZE: usize = 8;
 pub const GSP_GX_COMMAND_ENTRY_SIZE: usize = 0x20;
 /// Maximum number of commands in the ring.
 pub const GSP_GX_COMMAND_QUEUE_CAPACITY: u8 = 15;
+/// GX command ID for RequestDMA.
+pub const GSP_GX_COMMAND_REQUEST_DMA: u8 = 0x00;
+/// Maximum byte count accepted by the defensive software RequestDMA backend.
+pub const MAX_GSP_DMA_BYTES: usize = 64 * 1024 * 1024;
 /// GX command ID for ProcessCommandList.
 pub const GSP_GX_COMMAND_PROCESS_COMMAND_LIST: u8 = 0x01;
 /// GX command ID for MemoryFill.
@@ -74,6 +78,19 @@ impl GspGxCommand {
         }
     }
 
+    /// Decodes one RequestDMA command (ID 0x00).
+    pub const fn request_dma(self) -> Option<GspDmaRequest> {
+        if self.command_id != GSP_GX_COMMAND_REQUEST_DMA {
+            return None;
+        }
+        Some(GspDmaRequest {
+            source_address: self.arguments[0],
+            destination_address: self.arguments[1],
+            size_bytes: self.arguments[2],
+            flush_source: self.arguments[6] != 0,
+        })
+    }
+
     /// ProcessCommandList's documented command fields.
     pub const fn process_command_list(self) -> Option<GspProcessCommandList> {
         if self.command_id != GSP_GX_COMMAND_PROCESS_COMMAND_LIST {
@@ -123,6 +140,16 @@ impl GspGxCommand {
             ],
         })
     }
+}
+
+/// Decoded arguments for GX command ID 0x00.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspDmaRequest {
+    pub source_address: u32,
+    pub destination_address: u32,
+    pub size_bytes: u32,
+    /// Requests a source data-cache flush before transfer.
+    pub flush_source: bool,
 }
 
 /// Decoded arguments for GX command ID 0x01.
@@ -222,6 +249,18 @@ pub enum GspGxCommandQueueError {
     },
     InvalidDisplayTransferAddress {
         address: u32,
+    },
+    InvalidDmaRange {
+        source_address: u32,
+        destination_address: u32,
+        size_bytes: u32,
+    },
+    DmaTooLarge {
+        size_bytes: u32,
+        maximum_bytes: usize,
+    },
+    DmaAllocationFailed {
+        size_bytes: usize,
     },
     DisplayTransfer(String),
     UnsupportedMemoryFillWidth {
@@ -408,6 +447,33 @@ mod tests {
             let offset = start + 4 + index * 4;
             bytes[offset..offset + 4].copy_from_slice(&argument.to_le_bytes());
         }
+    }
+
+    #[test]
+    fn decodes_request_dma_source_destination_size_and_flush_flag() {
+        let mut bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        bytes[1] = 1;
+        write_command(
+            &mut bytes,
+            0,
+            GSP_GX_COMMAND_REQUEST_DMA,
+            true,
+            false,
+            [0x1400_0011, 0x1800_2003, 13, 0, 0, 0, 1],
+        );
+        let queue = GspGxCommandQueue::parse(&bytes).unwrap();
+        let command = queue.next_command().unwrap();
+        assert_eq!(command.command_id, GSP_GX_COMMAND_REQUEST_DMA);
+        assert_eq!(
+            command.request_dma(),
+            Some(GspDmaRequest {
+                source_address: 0x1400_0011,
+                destination_address: 0x1800_2003,
+                size_bytes: 13,
+                flush_source: true,
+            })
+        );
+        assert!(command.stop_after);
     }
 
     #[test]
