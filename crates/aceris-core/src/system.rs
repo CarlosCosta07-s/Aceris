@@ -3,14 +3,14 @@
 use crate::cpu::Arm11Core;
 use crate::gpu::{
     DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
-    GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
-    GSP_GX_COMMAND_QUEUE_SIZE, GSP_GX_COMMAND_REQUEST_DMA, GSP_GX_COMMAND_TEXTURE_COPY,
-    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
-    GspDisplayTransfer, GspDmaRequest, GspFlushCacheRegions, GspGxCommandQueue,
-    GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult, GspInterruptRelayQueue,
-    GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, GspTextureCopy,
-    MAX_GSP_DMA_BYTES, Pica200, TextureCopyError, TextureCopyRequest, VRAM_BASE, VRAM_SIZE,
-    display_transfer_buffer_sizes, execute_display_transfer, execute_texture_copy,
+    GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
+    GSP_GX_COMMAND_REQUEST_DMA, GSP_GX_COMMAND_TEXTURE_COPY, GSP_INTERRUPT_QUEUE_SIZE,
+    GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspDisplayTransfer,
+    GspDmaRequest, GspFlushCacheRegions, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
+    GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
+    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, TextureCopyError,
+    TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
+    execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -1850,9 +1850,7 @@ impl System {
 
                 if let Err(error) = dispatch_result {
                     let result = match &error {
-                        GspGxCommandQueueError::RenderingRightRequired => {
-                            Some(RESULT_GSP_NO_RIGHT)
-                        }
+                        GspGxCommandQueueError::RenderingRightRequired => Some(RESULT_GSP_NO_RIGHT),
                         GspGxCommandQueueError::InvalidCacheRegionRange { .. }
                         | GspGxCommandQueueError::InvalidCommandListAddress { .. }
                         | GspGxCommandQueueError::InvalidCommandListSize { .. }
@@ -2286,11 +2284,12 @@ impl System {
                 if let Some(session) = self.ncsd_session.as_mut() {
                     session
                         .flush_process_data_cache(region.address, region.size_bytes)
-                        .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+                        .map_err(|error| {
+                            GspGxCommandQueueError::ProcessMemory(error.to_string())
+                        })?;
                 }
             }
-            report.cache_regions_validated =
-                report.cache_regions_validated.saturating_add(1);
+            report.cache_regions_validated = report.cache_regions_validated.saturating_add(1);
         }
         Ok(())
     }
@@ -2312,22 +2311,18 @@ impl System {
             destination_line_width_and_gap: command.destination_line_width_and_gap,
             flags: command.flags,
         };
-        execute_texture_copy(
-            &mut self.physical_memory,
-            &self.gpu_address_space,
-            request,
-        )
-        .map(|_| ())
-        .map_err(|error| match error {
-            TextureCopyError::InvalidAddress { address }
-            | TextureCopyError::MisalignedAddress { address } => {
-                GspGxCommandQueueError::InvalidTextureCopyAddress { address }
-            }
-            TextureCopyError::AddressOverflow { base, .. } => {
-                GspGxCommandQueueError::InvalidTextureCopyAddress { address: base }
-            }
-            other => GspGxCommandQueueError::TextureCopy(other.to_string()),
-        })
+        execute_texture_copy(&mut self.physical_memory, &self.gpu_address_space, request)
+            .map(|_| ())
+            .map_err(|error| match error {
+                TextureCopyError::InvalidAddress { address }
+                | TextureCopyError::MisalignedAddress { address } => {
+                    GspGxCommandQueueError::InvalidTextureCopyAddress { address }
+                }
+                TextureCopyError::AddressOverflow { base, .. } => {
+                    GspGxCommandQueueError::InvalidTextureCopyAddress { address: base }
+                }
+                other => GspGxCommandQueueError::TextureCopy(other.to_string()),
+            })
     }
 
     /// Executes the two optional buffers of one GX MemoryFill command.
@@ -3377,10 +3372,14 @@ mod tests {
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x1000)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x1000)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .write_memory_bytes(source_virtual, &expected)
             .unwrap();
         // The source bytes are dirty in the ARM11 cache; RequestDMA's flush flag
@@ -4612,8 +4611,7 @@ mod tests {
         queue_bytes[entry] = GSP_GX_COMMAND_TEXTURE_COPY;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
-        queue_bytes[entry + 8..entry + 12]
-            .copy_from_slice(&destination_physical.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination_physical.to_le_bytes());
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&192u32.to_le_bytes());
         queue_bytes[entry + 16..entry + 20].copy_from_slice(&0x0001_0002u32.to_le_bytes());
         queue_bytes[entry + 20..entry + 24].copy_from_slice(&0x0000_0002u32.to_le_bytes());
@@ -4653,7 +4651,6 @@ mod tests {
             [GspInterruptId::Ppf]
         );
     }
-
 
     #[test]
     fn gsp_gx_flush_cache_regions_validates_all_three_nonzero_ranges() {
@@ -4715,7 +4712,6 @@ mod tests {
         assert_eq!(flushed, [0xCA, 0xFE, 0xBA, 0xBE]);
     }
 
-
     #[test]
     fn gsp_gx_flush_cache_regions_zero_size_stops_later_regions() {
         let mut system = System::new();
@@ -4730,7 +4726,9 @@ mod tests {
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x2000)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
             .unwrap();
 
@@ -4738,15 +4736,7 @@ mod tests {
         queue_bytes[1] = 1;
         let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
-        let arguments = [
-            0x1400_0100u32,
-            0x20,
-            0xDEAD_BEEF,
-            0,
-            0x1400_1800,
-            0x40,
-            0,
-        ];
+        let arguments = [0x1400_0100u32, 0x20, 0xDEAD_BEEF, 0, 0x1400_1800, 0x40, 0];
         for (index, value) in arguments.into_iter().enumerate() {
             let offset = entry + 4 + index * 4;
             queue_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
@@ -4774,7 +4764,9 @@ mod tests {
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x2000)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
             .unwrap();
 
