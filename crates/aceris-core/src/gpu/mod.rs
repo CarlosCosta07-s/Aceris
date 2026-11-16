@@ -27,8 +27,9 @@ pub use address_space::{
     NEW_LINEAR_END, OLD_LINEAR_BASE, OLD_LINEAR_END, ResolvedGpuRange,
 };
 pub use draw::{
-    MAX_ASSEMBLED_VERTICES, MAX_PENDING_DRAW_REQUESTS, PicaDrawError, PicaDrawKind,
-    PicaDrawRequest, PicaPrimitiveMode, REG_DRAWARRAYS, REG_DRAWELEMENTS, REG_PRIMITIVE_CONFIG,
+    MAX_ASSEMBLED_VERTICES, MAX_PENDING_DRAW_REQUESTS, PicaCommandListRunError, PicaDrawError,
+    PicaDrawKind, PicaDrawRequest, PicaPrimitiveMode, REG_DRAWARRAYS, REG_DRAWELEMENTS,
+    REG_PRIMITIVE_CONFIG,
 };
 pub use draw_exec::{PicaDrawExecError, PicaShadedDraw, PicaShadedVertex};
 pub use fixed_attribute::{
@@ -79,7 +80,10 @@ pub use pica200::{
 pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
-pub use render::{PicaRenderError, PicaRenderReport};
+pub use render::{
+    PicaRenderError, PicaRenderReport, PicaRenderSession, PicaRenderSessionError,
+    PicaRenderSettings, PicaRenderingRunError,
+};
 pub use render_target::{
     PicaColorBufferFormat, PicaRenderBlockMode, PicaRenderTargetConfig, PicaRenderTargetError,
     PicaRenderTargetWriteReport, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,

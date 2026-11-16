@@ -12,6 +12,7 @@
 
 use super::index::{IndexBufferLayout, REG_INDEXBUFFER_CONFIG, REG_NUMVERTICES, REG_VERTEX_OFFSET};
 use super::pica200::REGISTER_COUNT;
+use std::fmt;
 
 /// Trigger register for non-indexed draws.
 pub const REG_DRAWARRAYS: u16 = 0x22E;
@@ -152,6 +153,32 @@ impl std::fmt::Display for PicaDrawError {
 }
 
 impl std::error::Error for PicaDrawError {}
+
+/// Failure while executing a command list with a draw observer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PicaCommandListRunError<E> {
+    /// The command list itself is malformed.
+    Command(super::pica200::PicaCommandError),
+    /// The draw observer rejected a draw and stopped the list.
+    Draw(E),
+}
+
+impl<E> From<super::pica200::PicaCommandError> for PicaCommandListRunError<E> {
+    fn from(error: super::pica200::PicaCommandError) -> Self {
+        Self::Command(error)
+    }
+}
+
+impl<E: fmt::Display> fmt::Display for PicaCommandListRunError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Command(error) => write!(formatter, "command list failed: {error:?}"),
+            Self::Draw(error) => write!(formatter, "draw failed: {error}"),
+        }
+    }
+}
+
+impl<E: fmt::Debug + fmt::Display> std::error::Error for PicaCommandListRunError<E> {}
 
 #[cfg(test)]
 mod tests {

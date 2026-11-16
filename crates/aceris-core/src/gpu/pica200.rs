@@ -7,8 +7,11 @@
 use std::fmt;
 
 use super::draw::{
-    MAX_PENDING_DRAW_REQUESTS, PicaDrawKind, PicaDrawRequest, REG_DRAWARRAYS, REG_DRAWELEMENTS,
+    MAX_PENDING_DRAW_REQUESTS, PicaCommandListRunError, PicaDrawKind, PicaDrawRequest,
+    REG_DRAWARRAYS, REG_DRAWELEMENTS,
 };
+
+type DrawObserver<'a, E> = dyn FnMut(&Pica200, &PicaDrawRequest) -> Result<(), E> + 'a;
 use super::fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
     REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
@@ -246,27 +249,34 @@ impl Pica200 {
     /// bit-0 condition follows the documented "write 1 to draw" behavior; the
     /// effect of other trigger values is not documented and is ignored.
     fn apply_draw_trigger_register_write(&mut self, id: u16, written_mask: u8) {
+        if let Some(request) = self.capture_draw_trigger(id, written_mask) {
+            if self.pending_draws.len() >= MAX_PENDING_DRAW_REQUESTS {
+                self.draws_dropped = self.draws_dropped.saturating_add(1);
+            } else {
+                self.pending_draws.push(request);
+            }
+        }
+    }
+
+    /// Counts an accepted trigger and captures its request without queueing it.
+    fn capture_draw_trigger(&mut self, id: u16, written_mask: u8) -> Option<PicaDrawRequest> {
         let kind = match id {
             REG_DRAWARRAYS => PicaDrawKind::Arrays,
             REG_DRAWELEMENTS => PicaDrawKind::Elements,
-            _ => return,
+            _ => return None,
         };
         let value = self.registers[usize::from(id)];
         if written_mask & 1 == 0 || value & 1 == 0 {
-            return;
+            return None;
         }
         let sequence = self.draws_triggered;
         self.draws_triggered = self.draws_triggered.saturating_add(1);
-        if self.pending_draws.len() >= MAX_PENDING_DRAW_REQUESTS {
-            self.draws_dropped = self.draws_dropped.saturating_add(1);
-            return;
-        }
-        self.pending_draws.push(PicaDrawRequest::capture(
+        Some(PicaDrawRequest::capture(
             kind,
             value,
             &self.registers,
             sequence,
-        ));
+        ))
     }
 
     /// Returns the three packed data words for a fixed vertex attribute.
@@ -477,6 +487,37 @@ impl Pica200 {
         &mut self,
         words: &[u32],
     ) -> Result<PicaCommandListReport, PicaCommandError> {
+        match self.run_command_list(
+            words,
+            None::<&mut DrawObserver<'_, std::convert::Infallible>>,
+        ) {
+            Ok(report) => Ok(report),
+            Err(PicaCommandListRunError::Command(error)) => Err(error),
+            Err(PicaCommandListRunError::Draw(never)) => match never {},
+        }
+    }
+
+    /// Executes a command list and hands every accepted draw trigger to `on_draw`.
+    ///
+    /// `on_draw` runs at the instant of the trigger write with the register
+    /// file, shader program and uniforms exactly as the draw sees them, so a
+    /// list that reprograms state between draws renders each draw correctly.
+    /// Draws handled this way are not added to the `take_draw_requests` queue.
+    /// The first `Err` from `on_draw` stops the list: writes made so far stay
+    /// applied, but the list is not counted as submitted.
+    pub fn execute_command_list_with_draws<E>(
+        &mut self,
+        words: &[u32],
+        mut on_draw: impl FnMut(&Pica200, &PicaDrawRequest) -> Result<(), E>,
+    ) -> Result<PicaCommandListReport, PicaCommandListRunError<E>> {
+        self.run_command_list(words, Some(&mut on_draw))
+    }
+
+    fn run_command_list<E>(
+        &mut self,
+        words: &[u32],
+        mut observer: Option<&mut DrawObserver<'_, E>>,
+    ) -> Result<PicaCommandListReport, PicaCommandListRunError<E>> {
         validate_command_list(words)?;
         let mut report = PicaCommandListReport::default();
         let mut cursor = 0usize;
@@ -486,7 +527,8 @@ impl Pica200 {
             if words.len() - cursor < 2 {
                 return Err(PicaCommandError::IncompleteCommandHeader {
                     word_offset: command_offset,
-                });
+                }
+                .into());
             }
 
             let first_parameter = words[cursor];
@@ -504,7 +546,8 @@ impl Pica200 {
                     word_offset: command_offset,
                     required_words: command_words,
                     remaining_words,
-                });
+                }
+                .into());
             }
 
             let final_register = if consecutive {
@@ -516,7 +559,8 @@ impl Pica200 {
                 return Err(PicaCommandError::InvalidRegister {
                     register: final_register,
                     parameter_index: extra_parameters,
-                });
+                }
+                .into());
             }
 
             for parameter_index in 0..parameter_count {
@@ -533,7 +577,15 @@ impl Pica200 {
                 apply_byte_mask(&mut self.registers[register as usize], value, byte_mask);
                 self.apply_fixed_attribute_register_write(register as u16);
                 self.apply_vertex_shader_register_write(register as u16);
-                self.apply_draw_trigger_register_write(register as u16, byte_mask);
+                match observer.as_deref_mut() {
+                    Some(on_draw) => {
+                        if let Some(request) = self.capture_draw_trigger(register as u16, byte_mask)
+                        {
+                            on_draw(&*self, &request).map_err(PicaCommandListRunError::Draw)?;
+                        }
+                    }
+                    None => self.apply_draw_trigger_register_write(register as u16, byte_mask),
+                }
                 report.register_writes = report.register_writes.saturating_add(1);
             }
 

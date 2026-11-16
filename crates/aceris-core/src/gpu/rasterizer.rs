@@ -194,6 +194,21 @@ impl SoftwareRasterizer {
         self.depth.get(y * self.width + x).copied()
     }
 
+    /// Replaces the color buffer with tightly packed RGBA8 pixels.
+    ///
+    /// Depth is left untouched. A slice whose length is not `width * height * 4`
+    /// is rejected as `InvalidDimensions` before anything is modified.
+    pub fn load_color_rgba8(&mut self, rgba: &[u8]) -> Result<(), RasterizerError> {
+        if rgba.len() != self.color.len() {
+            return Err(RasterizerError::InvalidDimensions {
+                width: self.width,
+                height: self.height,
+            });
+        }
+        self.color.copy_from_slice(rgba);
+        Ok(())
+    }
+
     /// Clears color and depth after validating the depth value.
     pub fn clear(&mut self, color: [u8; 4], depth: f32) -> Result<(), RasterizerError> {
         if !depth.is_finite() || !(0.0..=1.0).contains(&depth) {

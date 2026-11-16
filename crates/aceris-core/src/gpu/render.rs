@@ -9,8 +9,10 @@
 
 use super::{
     DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex,
-    GpuPhysicalMemory, Pica200, PicaDrawExecError, PicaDrawRequest, PicaOutputMapError,
-    PicaShadedDraw, PicaVertexOutputMap, PicaVertexShaderProgram, SoftwareRasterizer,
+    GpuPhysicalMemory, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDrawExecError,
+    PicaDrawRequest, PicaOutputMapError, PicaRenderTargetConfig, PicaRenderTargetError,
+    PicaShadedDraw, PicaVertexOutputMap, PicaVertexShaderProgram, RasterizerError,
+    SoftwareRasterizer,
 };
 
 /// Totals for one rendered draw.
@@ -137,6 +139,203 @@ impl Pica200 {
         )?;
         let map = self.vertex_output_map()?;
         pipeline.draw_shaded(&shaded, &map, default_color, rasterizer, depth_function)
+    }
+}
+
+/// Fixed (non-register) inputs of a render session.
+#[derive(Clone, Copy, Debug)]
+pub struct PicaRenderSettings {
+    pub pipeline: GeometryPipeline,
+    pub default_color: [u8; 4],
+    pub depth_function: DepthFunction,
+}
+
+/// Failure while rendering into the live render target.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PicaRenderSessionError {
+    Target(PicaRenderTargetError),
+    Rasterizer(RasterizerError),
+    Render(PicaRenderError),
+    /// The caller could not translate the draw's vertex base address.
+    UnresolvedVertexBase,
+}
+
+impl std::fmt::Display for PicaRenderSessionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Target(error) => write!(formatter, "render target failed: {error}"),
+            Self::Rasterizer(error) => write!(formatter, "rasterizer failed: {error}"),
+            Self::Render(error) => write!(formatter, "{error}"),
+            Self::UnresolvedVertexBase => write!(formatter, "vertex base address not resolved"),
+        }
+    }
+}
+
+impl std::error::Error for PicaRenderSessionError {}
+
+/// Renders the draws of a command list into the tiled render target.
+///
+/// The target registers are re-read for every draw. The color buffer is loaded
+/// from physical memory when a target is first used (so earlier content is
+/// kept) and written back by `flush`/`finish` and whenever the target changes.
+/// Depth is not stored in memory by this model: it starts at 1.0 when a target
+/// is loaded and is discarded when the target changes.
+pub struct PicaRenderSession {
+    settings: PicaRenderSettings,
+    active: Option<(PicaRenderTargetConfig, SoftwareRasterizer)>,
+    dirty: bool,
+    totals: PicaRenderReport,
+    draws_rendered: u64,
+}
+
+impl PicaRenderSession {
+    pub fn new(settings: PicaRenderSettings) -> Self {
+        Self {
+            settings,
+            active: None,
+            dirty: false,
+            totals: PicaRenderReport::default(),
+            draws_rendered: 0,
+        }
+    }
+
+    pub fn totals(&self) -> PicaRenderReport {
+        self.totals
+    }
+
+    pub fn draws_rendered(&self) -> u64 {
+        self.draws_rendered
+    }
+
+    /// Renders one draw using the GPU's live state. `vertex_base` is the
+    /// caller-translated physical byte base of the vertex data.
+    pub fn draw(
+        &mut self,
+        pica: &Pica200,
+        request: &PicaDrawRequest,
+        memory: &mut GpuPhysicalMemory,
+        vertex_base: Option<u32>,
+    ) -> Result<PicaRenderReport, PicaRenderSessionError> {
+        let vertex_base = vertex_base.ok_or(PicaRenderSessionError::UnresolvedVertexBase)?;
+        let config = pica
+            .render_target_config()
+            .map_err(PicaRenderSessionError::Target)?;
+        self.select_target(config, memory)?;
+        let program = pica.vertex_shader_program();
+        let rasterizer = &mut self.active.as_mut().expect("target selected above").1;
+        // Mark dirty first: triangles drawn before an error stay in the buffer.
+        self.dirty = true;
+        let report = pica
+            .render_draw_request(
+                request,
+                memory,
+                vertex_base,
+                &program,
+                &self.settings.pipeline,
+                self.settings.default_color,
+                rasterizer,
+                self.settings.depth_function,
+            )
+            .map_err(PicaRenderSessionError::Render)?;
+        self.draws_rendered += 1;
+        self.totals.triangles_submitted += report.triangles_submitted;
+        self.totals.output_triangles += report.output_triangles;
+        self.totals.pixels_written += report.pixels_written;
+        self.totals.depth_rejected_pixels += report.depth_rejected_pixels;
+        self.totals.executed_instructions += report.executed_instructions;
+        Ok(report)
+    }
+
+    /// Writes pending pixels to the target memory; the target stays loaded.
+    pub fn flush(&mut self, memory: &mut GpuPhysicalMemory) -> Result<(), PicaRenderSessionError> {
+        if self.dirty {
+            if let Some((config, rasterizer)) = &self.active {
+                config
+                    .write_rasterizer(rasterizer, memory)
+                    .map_err(PicaRenderSessionError::Target)?;
+            }
+            self.dirty = false;
+        }
+        Ok(())
+    }
+
+    /// Flushes and returns the accumulated totals.
+    pub fn finish(
+        mut self,
+        memory: &mut GpuPhysicalMemory,
+    ) -> Result<PicaRenderReport, PicaRenderSessionError> {
+        self.flush(memory)?;
+        Ok(self.totals)
+    }
+
+    fn select_target(
+        &mut self,
+        config: PicaRenderTargetConfig,
+        memory: &mut GpuPhysicalMemory,
+    ) -> Result<(), PicaRenderSessionError> {
+        if matches!(&self.active, Some((current, _)) if *current == config) {
+            return Ok(());
+        }
+        self.flush(memory)?;
+        let mut rasterizer = SoftwareRasterizer::new(config.width as usize, config.height as usize)
+            .map_err(PicaRenderSessionError::Rasterizer)?;
+        let pixels = config
+            .read_rgba8(memory)
+            .map_err(PicaRenderSessionError::Target)?;
+        rasterizer
+            .load_color_rgba8(&pixels)
+            .map_err(PicaRenderSessionError::Rasterizer)?;
+        self.active = Some((config, rasterizer));
+        Ok(())
+    }
+}
+
+/// Failure of `execute_command_list_rendering`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PicaRenderingRunError {
+    Run(PicaCommandListRunError<PicaRenderSessionError>),
+    /// The list ran but the final write-back failed.
+    Flush(PicaRenderSessionError),
+}
+
+impl std::fmt::Display for PicaRenderingRunError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Run(error) => write!(formatter, "{error}"),
+            Self::Flush(error) => write!(formatter, "render flush failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for PicaRenderingRunError {}
+
+impl Pica200 {
+    /// Executes a command list and renders every draw at the moment it triggers.
+    ///
+    /// `resolve_vertex_base` maps the live GPU state and the draw to the
+    /// physical byte base of the vertex data (the attribute-buffer address
+    /// encoding is translated by the caller). Pixels drawn before an error are
+    /// still written back; the original error is the one reported.
+    pub fn execute_command_list_rendering(
+        &mut self,
+        words: &[u32],
+        memory: &mut GpuPhysicalMemory,
+        settings: PicaRenderSettings,
+        mut resolve_vertex_base: impl FnMut(&Pica200, &PicaDrawRequest) -> Option<u32>,
+    ) -> Result<(PicaCommandListReport, PicaRenderReport), PicaRenderingRunError> {
+        let mut session = PicaRenderSession::new(settings);
+        let result = self.execute_command_list_with_draws(words, |pica, request| {
+            let base = resolve_vertex_base(pica, request);
+            session.draw(pica, request, memory, base).map(|_| ())
+        });
+        let flushed = session.flush(memory);
+        let totals = session.totals();
+        match result {
+            Err(error) => Err(PicaRenderingRunError::Run(error)),
+            Ok(report) => flushed
+                .map(|()| (report, totals))
+                .map_err(PicaRenderingRunError::Flush),
+        }
     }
 }
 
@@ -397,5 +596,226 @@ mod tests {
         assert!(report.pixels_written >= 28, "{report:?}");
         assert_eq!(rasterizer.color_at(1, 6), Some([200, 100, 50, 255]));
         assert_eq!(rasterizer.color_at(6, 1), Some(CLEAR));
+    }
+
+    // ---- render session / command-list integration ----
+
+    const VERTEX_BASE: u32 = FCRAM_BASE + 0x1000;
+    const TARGET_A: u32 = FCRAM_BASE + 0x2000;
+    const TARGET_B: u32 = FCRAM_BASE + 0x4000;
+
+    fn session_settings() -> PicaRenderSettings {
+        let transform = Matrix4::from_column_major([
+            0.25, 0.0, 0.0, 0.0, //
+            0.0, 0.25, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            -1.0, -1.0, 0.0, 1.0,
+        ])
+        .unwrap();
+        PicaRenderSettings {
+            pipeline: GeometryPipeline::new(
+                transform,
+                viewport(),
+                ClipDepthRange::NegativeOneToOne,
+            ),
+            default_color: [200, 100, 50, 255],
+            depth_function: DepthFunction::Less,
+        }
+    }
+
+    fn configure_vertex_path(gpu: &mut Pica200) {
+        const MOV_O0_V0: u32 = 0x13 << 26;
+        const END: u32 = 0x22 << 26;
+        for (register, value) in [
+            (REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000),
+            (REG_ATTRIBBUFFERS_FORMAT_LOW, 0x1),
+            (REG_ATTRIBBUFFERS_FORMAT_HIGH, 0),
+            (REG_ATTRIBBUFFER0_OFFSET, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 1, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 2, (2 << 16) | (2 << 28)),
+            (REG_VSH_INPUTBUFFER_CONFIG, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
+            (REG_VSH_OPDESCS_INDEX, 0),
+            (
+                REG_VSH_OPDESCS_DATA0,
+                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
+            ),
+            (REG_VSH_CODETRANSFER_INDEX, 0),
+            (REG_VSH_CODETRANSFER_DATA0, MOV_O0_V0),
+            (REG_VSH_CODETRANSFER_DATA0, END),
+        ] {
+            gpu.write_register(register, value).unwrap();
+        }
+        for index in 0..7u16 {
+            gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
+                .unwrap();
+        }
+        gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+        gpu.write_register(REG_NUMVERTICES, 3).unwrap();
+    }
+
+    fn point_target(gpu: &mut Pica200, address: u32) {
+        gpu.write_register(crate::gpu::REG_COLORBUFFER_LOC, address >> 3)
+            .unwrap();
+        gpu.write_register(crate::gpu::REG_COLORBUFFER_FORMAT, 2)
+            .unwrap();
+        gpu.write_register(crate::gpu::REG_FRAMEBUFFER_BLOCK32, 0)
+            .unwrap();
+        gpu.write_register(
+            crate::gpu::REG_FRAMEBUFFER_DIM,
+            (((SIZE as u32) - 1) << 12) | SIZE as u32,
+        )
+        .unwrap();
+    }
+
+    /// Command list: one param+header write of DRAWARRAYS (reg 0x22E, mask 0xF).
+    const DRAW_LIST: [u32; 2] = [1, 0x000F_022E];
+
+    fn target_pixel(memory: &GpuPhysicalMemory, address: u32, x: usize, y: usize) -> [u8; 4] {
+        let config = PicaRenderTargetConfig::from_registers(
+            address >> 3,
+            2,
+            0,
+            (((SIZE as u32) - 1) << 12) | SIZE as u32,
+        )
+        .unwrap();
+        let pixels = config.read_rgba8(memory).unwrap();
+        let offset = (y * SIZE + x) * 4;
+        [
+            pixels[offset],
+            pixels[offset + 1],
+            pixels[offset + 2],
+            pixels[offset + 3],
+        ]
+    }
+
+    fn memory_with_triangle() -> GpuPhysicalMemory {
+        let mut memory = GpuPhysicalMemory::new();
+        memory.write(VERTEX_BASE, &[0, 0, 8, 0, 0, 8]).unwrap();
+        memory
+    }
+
+    #[test]
+    fn command_list_draw_lands_in_the_tiled_target() {
+        let mut gpu = Pica200::new();
+        configure_vertex_path(&mut gpu);
+        point_target(&mut gpu, TARGET_A);
+        let mut memory = memory_with_triangle();
+
+        let (list, render) = gpu
+            .execute_command_list_rendering(&DRAW_LIST, &mut memory, session_settings(), |_, _| {
+                Some(VERTEX_BASE)
+            })
+            .unwrap();
+
+        assert_eq!(list.commands, 1);
+        assert_eq!(render.triangles_submitted, 1);
+        assert!(render.pixels_written >= 28);
+        assert_eq!(target_pixel(&memory, TARGET_A, 1, 6), [200, 100, 50, 255]);
+        assert_eq!(target_pixel(&memory, TARGET_A, 6, 1), [0, 0, 0, 0]);
+        // Handled draws are not also queued for later.
+        assert!(gpu.take_draw_requests().is_empty());
+        assert_eq!(gpu.draw_requests_triggered(), 1);
+    }
+
+    #[test]
+    fn existing_target_content_is_preserved_by_a_later_list() {
+        let mut gpu = Pica200::new();
+        configure_vertex_path(&mut gpu);
+        point_target(&mut gpu, TARGET_A);
+        let mut memory = memory_with_triangle();
+        let settings = session_settings();
+        gpu.execute_command_list_rendering(&DRAW_LIST, &mut memory, settings, |_, _| {
+            Some(VERTEX_BASE)
+        })
+        .unwrap();
+        let mut second = settings;
+        second.default_color = [1, 2, 3, 255];
+        // Mirror triangle on the upper right: only the first one's pixels exist so far.
+        memory.write(VERTEX_BASE, &[8, 8, 0, 8, 8, 0]).unwrap();
+        gpu.execute_command_list_rendering(&DRAW_LIST, &mut memory, second, |_, _| {
+            Some(VERTEX_BASE)
+        })
+        .unwrap();
+        assert_eq!(target_pixel(&memory, TARGET_A, 1, 6), [200, 100, 50, 255]);
+        assert_eq!(target_pixel(&memory, TARGET_A, 6, 1), [1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn a_list_that_changes_the_target_between_draws_renders_each_draw_correctly() {
+        let mut gpu = Pica200::new();
+        configure_vertex_path(&mut gpu);
+        point_target(&mut gpu, TARGET_A);
+        let mut memory = memory_with_triangle();
+        // draw, then COLORBUFFER_LOC := TARGET_B>>3, then draw again.
+        let list = [
+            1,
+            0x000F_022E,
+            TARGET_B >> 3,
+            0x000F_0000 | u32::from(crate::gpu::REG_COLORBUFFER_LOC),
+            1,
+            0x000F_022E,
+        ];
+        let (report, render) = gpu
+            .execute_command_list_rendering(&list, &mut memory, session_settings(), |_, _| {
+                Some(VERTEX_BASE)
+            })
+            .unwrap();
+        assert_eq!(report.commands, 3);
+        assert_eq!(render.triangles_submitted, 2);
+        assert_eq!(target_pixel(&memory, TARGET_A, 1, 6), [200, 100, 50, 255]);
+        assert_eq!(target_pixel(&memory, TARGET_B, 1, 6), [200, 100, 50, 255]);
+    }
+
+    #[test]
+    fn an_unresolved_vertex_base_aborts_without_counting_the_list() {
+        let mut gpu = Pica200::new();
+        configure_vertex_path(&mut gpu);
+        point_target(&mut gpu, TARGET_A);
+        let mut memory = memory_with_triangle();
+        let before = gpu.command_lists_submitted();
+        let error = gpu
+            .execute_command_list_rendering(&DRAW_LIST, &mut memory, session_settings(), |_, _| {
+                None
+            })
+            .unwrap_err();
+        assert_eq!(
+            error,
+            PicaRenderingRunError::Run(PicaCommandListRunError::Draw(
+                PicaRenderSessionError::UnresolvedVertexBase
+            ))
+        );
+        assert_eq!(gpu.command_lists_submitted(), before);
+    }
+
+    #[test]
+    fn a_malformed_list_reports_a_command_error() {
+        let mut gpu = Pica200::new();
+        let mut memory = GpuPhysicalMemory::new();
+        let error = gpu
+            .execute_command_list_rendering(&[1], &mut memory, session_settings(), |_, _| None)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PicaRenderingRunError::Run(PicaCommandListRunError::Command(_))
+        ));
+    }
+
+    #[test]
+    fn plain_execute_command_list_still_queues_draws() {
+        let mut gpu = Pica200::new();
+        gpu.execute_command_list(&DRAW_LIST).unwrap();
+        assert_eq!(gpu.take_draw_requests().len(), 1);
+    }
+
+    #[test]
+    fn load_color_rgba8_rejects_a_wrong_length() {
+        let mut rasterizer = cleared_rasterizer();
+        assert!(rasterizer.load_color_rgba8(&[0; 3]).is_err());
+        rasterizer
+            .load_color_rgba8(&vec![7; SIZE * SIZE * 4])
+            .unwrap();
+        assert_eq!(rasterizer.color_at(0, 0), Some([7; 4]));
     }
 }

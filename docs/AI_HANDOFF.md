@@ -1612,3 +1612,17 @@ O teste cobre a ordenação explícita de manutenção antes de o mecanismo de c
 
 A primeira CI do teste `gsp_gx_texture_copy_to_fcram_requires_cpu_invalidation` (commit `58898f1`) detectou que a fixture tentava registrar o mesmo intervalo físico duas vezes no mapa DMA/GPU, operação rejeitada por `OverlappingPhysicalMapping`. O teste foi corrigido em `c1730d1`: o mapa GSP mantém somente o alias linear já registrado, enquanto a sessão ARM11 expõe ambos os aliases para as leituras e para a invalidação. O novo CI precisa confirmar a correção e a suíte completa.
 
+## PICA200 — draws renderizados no render target (Claude, 16/11/2026)
+
+Escopo: somente o módulo `gpu` (decisão do mantenedor: item 3 da ordem de prioridades). Não toquei `cpu/`, `memory.rs` nem `system.rs`.
+
+- `Pica200::execute_command_list_with_draws(words, on_draw)`: chama `on_draw(&Pica200, &PicaDrawRequest)` no instante de cada trigger aceito. Erro do observer interrompe a lista; as escritas anteriores permanecem e a lista não conta como submetida. Draws tratados assim **não** entram na fila de `take_draw_requests`. `execute_command_list` mantém o comportamento anterior (enfileira).
+- `PicaRenderSession` / `Pica200::execute_command_list_rendering(words, memory, settings, resolve_vertex_base)`: relê `render_target_config()` por draw, carrega o buffer de cor da memória ao selecionar o alvo, renderiza com o shader/uniforms vivos e grava no flush (fim da lista, erro ou troca de alvo). Pixels desenhados antes de um erro são gravados; o erro original é o reportado.
+- `SoftwareRasterizer::load_color_rgba8` (método aditivo em `rasterizer.rs`, arquivo de outro agente).
+- Profundidade começa em 1.0 ao carregar um alvo e é descartada na troca; formatos estreitos perdem precisão no ciclo ler→desenhar→gravar.
+- `ATTRIBBUFFERS_LOC` bruto não tem semântica confirmada: o chamador devolve a base física dos vértices.
+
+**Para quem mantém `system.rs`:** o caminho `ProcessCommandList` pode chamar `execute_command_list_rendering` com um resolvedor que traduza o endereço pelo mapa DMA/GPU. Não alterei esse caminho.
+
+Verificado localmente sobre `main` em 71ea686: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` com saída 0. A CI remota não foi consultada.
+
