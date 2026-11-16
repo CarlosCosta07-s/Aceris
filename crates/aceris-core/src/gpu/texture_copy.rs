@@ -334,6 +334,23 @@ mod tests {
     }
 
     #[test]
+    fn requires_texture_copy_engine_mode_flag() {
+        let mut memory = GpuPhysicalMemory::new();
+        let request = TextureCopyRequest {
+            source_address: 0x1400_0000,
+            destination_address: 0x1400_1000,
+            size_bytes: 16,
+            source_line_width_and_gap: 0,
+            destination_line_width_and_gap: 0,
+            flags: 0,
+        };
+        assert!(matches!(
+            execute_texture_copy(&mut memory, &GpuDmaAddressSpace::new(), request),
+            Err(TextureCopyError::TextureCopyModeNotEnabled)
+        ));
+    }
+
+    #[test]
     fn contiguous_copy_transfers_raw_bytes_without_format_conversion() {
         let mut memory = GpuPhysicalMemory::new();
         let address_space = mapped_linear_memory();
