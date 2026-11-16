@@ -2869,6 +2869,79 @@ mod tests {
     }
 
     #[test]
+    fn arm11_data_cache_obeys_noncacheable_and_write_through_mmu_policies() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        memory.write(physical_base, &[0x11]).unwrap();
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(virtual_base, CachePolicy::WriteBack)
+                .unwrap(),
+            0x11
+        );
+        assert_eq!(address_space.data_cache_line_count(), 1);
+
+        // Non-cacheable aliases bypass the resident D-cache line. The cached
+        // alias remains stale until software explicitly invalidates it.
+        memory.write(physical_base, &[0x22]).unwrap();
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(physical_base, CachePolicy::NonCacheable)
+                .unwrap(),
+            0x22
+        );
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(virtual_base, CachePolicy::WriteBack)
+                .unwrap(),
+            0x11
+        );
+
+        address_space
+            .invalidate_data_cache_range(virtual_base, 1)
+            .unwrap();
+        assert_eq!(address_space.data_cache_line_count(), 0);
+
+        // Write-through stores reach physical memory immediately and do not
+        // allocate a line on a write miss.
+        address_space
+            .write8_with_cache_policy(virtual_base, 0x33, CachePolicy::WriteThrough)
+            .unwrap();
+        let mut backing = [0u8; 1];
+        memory.read(physical_base, &mut backing).unwrap();
+        assert_eq!(backing, [0x33]);
+        assert_eq!(address_space.data_cache_line_count(), 0);
+
+        // A write-through read may allocate a clean line; later stores update
+        // both that resident line and the physical backing.
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(physical_base, CachePolicy::WriteThrough)
+                .unwrap(),
+            0x33
+        );
+        address_space
+            .write8_with_cache_policy(virtual_base, 0x44, CachePolicy::WriteThrough)
+            .unwrap();
+        memory.read(physical_base, &mut backing).unwrap();
+        assert_eq!(backing, [0x44]);
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(physical_base, CachePolicy::WriteThrough)
+                .unwrap(),
+            0x44
+        );
+        assert_eq!(address_space.data_cache_line_count(), 1);
+    }
+
+    #[test]
     fn arm11_data_cache_uses_four_ways_and_writes_back_lru_victims() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
