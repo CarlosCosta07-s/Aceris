@@ -2044,19 +2044,20 @@ impl Arm11CodeAddressSpace {
         while current < end {
             let current_address =
                 u32::try_from(current).map_err(|_| Error::InvalidAccess { addr: address })?;
-            let location = self
-                .locate(current_address)
-                .ok_or(Error::InvalidAccess { addr: current_address })?;
+            let location = self.locate(current_address).ok_or(Error::InvalidAccess {
+                addr: current_address,
+            })?;
             if !self.location_is_readable(location) {
-                return Err(Error::InvalidAccess { addr: current_address });
+                return Err(Error::InvalidAccess {
+                    addr: current_address,
+                });
             }
 
-            let region_end = self
-                .location_end(location)
-                .unwrap_or(end)
-                .min(end);
+            let region_end = self.location_end(location).unwrap_or(end).min(end);
             if region_end <= current {
-                return Err(Error::InvalidAccess { addr: current_address });
+                return Err(Error::InvalidAccess {
+                    addr: current_address,
+                });
             }
 
             if let MemoryLocation::Physical {
@@ -2064,15 +2065,15 @@ impl Arm11CodeAddressSpace {
                 ..
             } = location
             {
-                let physical_end =
-                    u64::from(physical_address) + (region_end - current);
-                let mut line_base =
-                    physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+                let physical_end = u64::from(physical_address) + (region_end - current);
+                let mut line_base = physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
                 while u64::from(line_base) < physical_end {
                     lines.insert(line_base);
                     line_base = line_base
                         .checked_add(ARM11_DATA_CACHE_LINE_SIZE as u32)
-                        .ok_or(Error::InvalidAccess { addr: current_address })?;
+                        .ok_or(Error::InvalidAccess {
+                            addr: current_address,
+                        })?;
                 }
             }
 
@@ -2222,9 +2223,7 @@ impl Bus for Arm11CodeAddressSpace {
             MemoryLocation::Physical {
                 address: physical_address,
                 ..
-            } => {
-                self.read_cached_physical_byte(physical_address)
-            }
+            } => self.read_cached_physical_byte(physical_address),
             MemoryLocation::Static { offset, .. } => self
                 .bytes_for_location(location)
                 .get(offset)
@@ -2744,7 +2743,12 @@ mod tests {
         assert_eq!(address_space.data_cache_line_count(), 1);
 
         // StoreProcessDataCache writes back but retains a clean resident line.
-        assert_eq!(address_space.store_data_cache_range(virtual_base, 4).unwrap(), 1);
+        assert_eq!(
+            address_space
+                .store_data_cache_range(virtual_base, 4)
+                .unwrap(),
+            1
+        );
         assert_eq!(memory.read_u32(physical_base).unwrap(), 0x1122_3344);
         assert_eq!(address_space.data_cache_line_count(), 1);
 
@@ -2753,12 +2757,22 @@ mod tests {
         assert_eq!(address_space.read32(virtual_base).unwrap(), 0x1122_3344);
 
         // Invalidate discards the stale clean line; the next CPU read refills from GPU memory.
-        assert_eq!(address_space.invalidate_data_cache_range(virtual_base, 4).unwrap(), 1);
+        assert_eq!(
+            address_space
+                .invalidate_data_cache_range(virtual_base, 4)
+                .unwrap(),
+            1
+        );
         assert_eq!(address_space.read32(virtual_base).unwrap(), 0xAABB_CCDD);
 
         // FlushProcessDataCache writes back dirty data and invalidates the line.
         address_space.write32(virtual_base, 0x5566_7788).unwrap();
-        assert_eq!(address_space.flush_data_cache_range(virtual_base, 4).unwrap(), 1);
+        assert_eq!(
+            address_space
+                .flush_data_cache_range(virtual_base, 4)
+                .unwrap(),
+            1
+        );
         assert_eq!(memory.read_u32(physical_base).unwrap(), 0x5566_7788);
         assert_eq!(address_space.data_cache_line_count(), 0);
     }
@@ -2785,9 +2799,9 @@ mod tests {
 
         // Touch way 0 to make way 1 the least-recently-used dirty victim.
         assert_eq!(address_space.read8(virtual_base).unwrap(), 0xA0);
-        let fifth_offset =
-            (ARM11_DATA_CACHE_WAYS * ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE)
-                as u32;
+        let fifth_offset = (ARM11_DATA_CACHE_WAYS
+            * ARM11_DATA_CACHE_SET_COUNT
+            * ARM11_DATA_CACHE_LINE_SIZE) as u32;
         address_space
             .write8(virtual_base + fifth_offset, 0xA4)
             .unwrap();
@@ -2849,9 +2863,7 @@ mod tests {
             ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE
         );
         assert_eq!(
-            address_space
-                .read8(virtual_base + overflow_offset)
-                .unwrap(),
+            address_space.read8(virtual_base + overflow_offset).unwrap(),
             0xEE
         );
 
