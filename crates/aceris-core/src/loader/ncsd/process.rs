@@ -283,6 +283,10 @@ impl SharedMemoryBacking {
         self.offset.checked_add(offset)
     }
 
+    fn root_base_offset(&self) -> usize {
+        self.offset
+    }
+
     fn cache_generation(&self, offset: usize) -> u64 {
         let Some(root_offset) = self.root_offset(offset) else { return 0; };
         let line = root_offset & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
@@ -782,6 +786,8 @@ pub struct Arm11CodeAddressSpace {
     gpu_memory: Option<GpuPhysicalMemory>,
     /// Stable identities for the process' private static segments.
     static_backing_ids: [u64; 5],
+    /// Generations for direct writes to private static backing.
+    static_cache_generations: BTreeMap<DataCacheKey, u64>,
     /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
     data_cache: BTreeMap<DataCacheKey, Arm11DataCacheLine>,
     /// Per-set least-recently-used order, oldest line first.
@@ -835,6 +841,7 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
+            static_cache_generations: BTreeMap::new(),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
@@ -928,6 +935,7 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
+            static_cache_generations: BTreeMap::new(),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
