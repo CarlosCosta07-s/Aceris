@@ -3712,8 +3712,7 @@ mod tests {
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
-        queue_bytes[entry + 8..entry + 12]
-            .copy_from_slice(&framebuffer_virtual.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&framebuffer_virtual.to_le_bytes());
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&4u32.to_le_bytes());
         queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
 
