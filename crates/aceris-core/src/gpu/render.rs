@@ -819,3 +819,146 @@ mod tests {
         assert_eq!(rasterizer.color_at(0, 0), Some([7; 4]));
     }
 }
+
+
+    /// End-to-end output path: PICA200 draw -> tiled color target ->
+    /// GSP DisplayTransfer -> linear PDC buffers -> all three LCD surfaces.
+    #[test]
+    fn pica_draw_reaches_top_stereo_and_bottom_lcd_surfaces() {
+        use crate::gpu::{
+            execute_display_transfer, DisplayTransferRequest, REG_COLORBUFFER_FORMAT,
+            REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
+        };
+        use crate::video::{
+            DualScreenDisplay, LcdController, LcdPanel, PDC_CONTROL,
+            PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_FORMAT,
+            PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_HEIGHT, TOP_SCREEN_WIDTH,
+            BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH,
+        };
+
+        const TOP_TILED: u32 = FCRAM_BASE + 0x20_0000;
+        const BOTTOM_TILED: u32 = FCRAM_BASE + 0x30_0000;
+        const TOP_LINEAR: u32 = FCRAM_BASE + 0x40_0000;
+        const BOTTOM_LINEAR: u32 = FCRAM_BASE + 0x50_0000;
+
+        fn settings_for(width: usize, height: usize) -> PicaRenderSettings {
+            let transform = Matrix4::from_column_major([
+                0.25, 0.0, 0.0, 0.0,
+                0.0, 0.25, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                -1.0, -1.0, 0.0, 1.0,
+            ])
+            .unwrap();
+            PicaRenderSettings {
+                pipeline: GeometryPipeline::new(
+                    transform,
+                    Viewport::new(0.0, 0.0, width as f32, height as f32).unwrap(),
+                    ClipDepthRange::NegativeOneToOne,
+                ),
+                default_color: [200, 100, 50, 255],
+                depth_function: DepthFunction::Less,
+            }
+        }
+
+        fn configure_target(gpu: &mut Pica200, address: u32, width: usize, height: usize) {
+            gpu.write_register(REG_COLORBUFFER_LOC, address >> 3).unwrap();
+            gpu.write_register(REG_COLORBUFFER_FORMAT, 2).unwrap();
+            gpu.write_register(REG_FRAMEBUFFER_BLOCK32, 0).unwrap();
+            gpu.write_register(
+                REG_FRAMEBUFFER_DIM,
+                (((height as u32) - 1) << 12) | width as u32,
+            )
+            .unwrap();
+        }
+
+        fn transfer(
+            memory: &mut GpuPhysicalMemory,
+            source: u32,
+            destination: u32,
+            width: usize,
+            height: usize,
+        ) {
+            execute_display_transfer(
+                memory,
+                DisplayTransferRequest {
+                    input_address: source,
+                    output_address: destination,
+                    input_width: width as u16,
+                    input_height: height as u16,
+                    output_width: width as u16,
+                    output_height: height as u16,
+                    flags: 0, // tiled RGBA8 to linear RGBA8
+                },
+            )
+            .unwrap();
+        }
+
+        let mut gpu = Pica200::new();
+        configure_vertex_path(&mut gpu);
+        let mut memory = memory_with_triangle();
+
+        configure_target(&mut gpu, TOP_TILED, TOP_SCREEN_WIDTH, TOP_SCREEN_HEIGHT);
+        gpu.execute_command_list_rendering(
+            &DRAW_LIST,
+            &mut memory,
+            settings_for(TOP_SCREEN_WIDTH, TOP_SCREEN_HEIGHT),
+            |_, _| Some(VERTEX_BASE),
+        )
+        .unwrap();
+
+        configure_target(&mut gpu, BOTTOM_TILED, BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT);
+        gpu.execute_command_list_rendering(
+            &DRAW_LIST,
+            &mut memory,
+            settings_for(BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT),
+            |_, _| Some(VERTEX_BASE),
+        )
+        .unwrap();
+
+        transfer(
+            &mut memory,
+            TOP_TILED,
+            TOP_LINEAR,
+            TOP_SCREEN_WIDTH,
+            TOP_SCREEN_HEIGHT,
+        );
+        transfer(
+            &mut memory,
+            BOTTOM_TILED,
+            BOTTOM_LINEAR,
+            BOTTOM_SCREEN_WIDTH,
+            BOTTOM_SCREEN_HEIGHT,
+        );
+
+        let mut lcd = LcdController::new();
+        for (register, value) in [
+            (PDC_FRAMEBUFFER_A_FIRST, TOP_LINEAR),
+            (PDC_FRAMEBUFFER_B_FIRST, TOP_LINEAR),
+            (PDC_FRAMEBUFFER_FORMAT, 0),
+            (PDC_FRAMEBUFFER_STRIDE, (TOP_SCREEN_WIDTH * 4) as u32),
+            (PDC_CONTROL, 0x1_0001),
+        ] {
+            lcd.write_register(LcdPanel::Top, register, value).unwrap();
+        }
+        for (register, value) in [
+            (PDC_FRAMEBUFFER_A_FIRST, BOTTOM_LINEAR),
+            (PDC_FRAMEBUFFER_FORMAT, 0),
+            (PDC_FRAMEBUFFER_STRIDE, (BOTTOM_SCREEN_WIDTH * 4) as u32),
+            (PDC_CONTROL, 0x1_0001),
+        ] {
+            lcd.write_register(LcdPanel::Bottom, register, value).unwrap();
+        }
+
+        let mut display = DualScreenDisplay::new().unwrap();
+        let report = lcd.scanout(&memory, &mut display).unwrap();
+        assert_eq!(report.screens_updated, 3);
+
+        for (name, pixels) in [
+            ("top-left", display.top_left().pixels()),
+            ("top-right", display.top_right().pixels()),
+            ("bottom", display.bottom().pixels()),
+        ] {
+            let inside = (180 * if name == "bottom" { BOTTOM_SCREEN_WIDTH } else { TOP_SCREEN_WIDTH } + 40) * 4;
+            assert_eq!(&pixels[inside..inside + 4], &[200, 100, 50, 255], "{name}");
+        }
+    }
