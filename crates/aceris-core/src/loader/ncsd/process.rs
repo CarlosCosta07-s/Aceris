@@ -2914,6 +2914,48 @@ mod tests {
     }
 
     #[test]
+    fn arm11_data_cache_is_shared_by_old_and_new_virtual_aliases() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let old_virtual_base = physical_base - 0x0C00_0000;
+        let new_virtual_base = NEW_LINEAR_BASE + (physical_base - FCRAM_BASE);
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(old_virtual_base, physical_base, 0x1000)
+            .unwrap();
+        address_space
+            .map_linear_memory_region(new_virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        // Both virtual windows must resolve to the same physically tagged line.
+        address_space.write8(old_virtual_base, 0xAB).unwrap();
+        assert_eq!(address_space.read8(new_virtual_base).unwrap(), 0xAB);
+        assert_eq!(address_space.data_cache_line_count(), 1);
+        assert_eq!(memory.read_u8(physical_base).unwrap(), 0);
+
+        // Cache maintenance through the new alias cleans the line created via the old alias.
+        assert_eq!(
+            address_space
+                .store_data_cache_range(new_virtual_base, 1)
+                .unwrap(),
+            1
+        );
+        assert_eq!(memory.read_u8(physical_base).unwrap(), 0xAB);
+
+        // A device-side write remains stale in both CPU aliases until invalidation.
+        memory.write(physical_base, &[0xCD]).unwrap();
+        assert_eq!(address_space.read8(old_virtual_base).unwrap(), 0xAB);
+        assert_eq!(
+            address_space
+                .invalidate_data_cache_range(new_virtual_base, 1)
+                .unwrap(),
+            1
+        );
+        assert_eq!(address_space.read8(old_virtual_base).unwrap(), 0xCD);
+    }
+
+    #[test]
     fn device_writes_to_linear_memory_invalidate_cpu_exclusive_reservations() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
