@@ -1635,3 +1635,15 @@ Verificado localmente sobre `main` em 71ea686: `cargo fmt --all --check`, `cargo
 
 Verificado localmente sobre `main` em 3150e76: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
 
+## Coerência cache/memória — render de draws (Claude, 16/11/2026)
+
+Ordem do mantenedor, item 1. Só testes em `system.rs` (fixture `render_fixture` compartilhada) e docs; nenhum comportamento novo. Os testes confirmam que o modelo explícito (sem snooping) vale também para o caminho de render:
+
+- `gpu_render_into_fcram_is_not_snooped_by_a_clean_cpu_line`: a GPU escreve a memória física; a CPU vê linhas limpas antigas até `InvalidateProcessDataCache`.
+- `unflushed_cpu_vertex_data_is_not_seen_by_the_gpu_but_flushed_data_is`: vértices sujos sem flush chegam zerados à GPU; com flush, o mesmo draw os vê.
+- `a_dirty_cpu_line_flushed_after_the_draw_overwrites_the_gpu_pixels` e `invalidating_a_dirty_cpu_line_before_the_draw_preserves_the_gpu_pixels`: o write-back de linhas sujas depois do draw destrói a saída; invalidar antes a preserva.
+
+**Ainda pendente neste item (não implementado):** DisplayTransfer com origem/destino FCRAM não tem teste de coerência; atributos CP15 C/B/TEX não selecionam a política do D-cache; regiões fora dos aliases lineares FCRAM, barreiras e write buffers não são modelados; cache por processo. O item 1 portanto **não está concluído**, apenas ampliado no caminho de render.
+
+Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
+

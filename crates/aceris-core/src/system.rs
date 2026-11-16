@@ -4122,14 +4122,30 @@ mod tests {
         );
     }
 
-    #[test]
-    fn gsp_process_command_list_renders_a_draw_into_the_tiled_target_when_enabled() {
+    /// Guest-mapped buffers for a one-triangle draw through the GSP queue.
+    struct RenderFixture {
+        command_list_address: u32,
+        vertex_address: u32,
+        vertex_physical: u32,
+        target_address: u32,
+        target_physical: u32,
+    }
+
+    const RENDER_TARGET_REGISTERS: (u32, u32) = (2, (7 << 12) | 8);
+
+    /// Loads a process, maps linear FCRAM buffers and programs the GPU for a
+    /// triangle covering the lower-left half of an 8x8 RGBA8 target.
+    fn render_fixture(system: &mut System) -> RenderFixture {
         use crate::gpu::{
-            ClipDepthRange, DepthFunction, GeometryPipeline, Matrix4, PicaRenderTargetConfig,
-            Viewport,
+            ClipDepthRange, DepthFunction, GeometryPipeline, Matrix4, PicaRenderSettings,
+            REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32,
+            REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
+            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
+            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
         };
 
-        let mut system = System::new();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
@@ -4137,31 +4153,13 @@ mod tests {
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
-        let (command_list_address, _) = map_test_linear_fcram(&mut system, 0x1000);
-        let vertex_base = system
-            .physical_memory_mut()
-            .allocate_linear_fcram(0x1000)
-            .unwrap();
-        let target_base = system
-            .physical_memory_mut()
-            .allocate_linear_fcram(0x1000)
-            .unwrap();
-        system
-            .physical_memory_mut()
-            .write(vertex_base, &[0, 0, 8, 0, 0, 8])
-            .unwrap();
+        let (command_list_address, _) = map_test_linear_fcram(system, 0x1000);
+        let (vertex_address, vertex_physical) = map_test_linear_fcram(system, 0x1000);
+        let (target_address, target_physical) = map_test_linear_fcram(system, 0x1000);
 
-        use crate::gpu::{
-            REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32,
-            REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
-            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
-            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX,
-        };
         let gpu = system.gpu_mut();
         for (register, value) in [
-            (REG_ATTRIBBUFFERS_LOC, vertex_base >> 3),
+            (REG_ATTRIBBUFFERS_LOC, vertex_physical >> 3),
             (REG_ATTRIBBUFFERS_FORMAT_LOW, 0x1),
             (REG_ATTRIBBUFFERS_FORMAT_HIGH, 0),
             (REG_ATTRIBBUFFER0_OFFSET, 0),
@@ -4180,10 +4178,10 @@ mod tests {
             (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
-            (REG_COLORBUFFER_LOC, target_base >> 3),
-            (REG_COLORBUFFER_FORMAT, 2),
+            (REG_COLORBUFFER_LOC, target_physical >> 3),
+            (REG_COLORBUFFER_FORMAT, RENDER_TARGET_REGISTERS.0),
             (REG_FRAMEBUFFER_BLOCK32, 0),
-            (REG_FRAMEBUFFER_DIM, (7 << 12) | 8),
+            (REG_FRAMEBUFFER_DIM, RENDER_TARGET_REGISTERS.1),
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -4193,7 +4191,7 @@ mod tests {
         }
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
-        system.set_pica_rendering(Some(crate::gpu::PicaRenderSettings {
+        system.set_pica_rendering(Some(PicaRenderSettings {
             pipeline: GeometryPipeline::new(
                 Matrix4::from_column_major([
                     0.25, 0.0, 0.0, 0.0, //
@@ -4208,51 +4206,247 @@ mod tests {
             default_color: [200, 100, 50, 255],
             depth_function: DepthFunction::Less,
         }));
+        RenderFixture {
+            command_list_address,
+            vertex_address,
+            vertex_physical,
+            target_address,
+            target_physical,
+        }
+    }
 
-        // One DRAWARRAYS trigger (register 0x22E, all byte lanes).
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .write_memory_u32(command_list_address, 1)
-            .unwrap();
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .write_memory_u32(command_list_address + 4, 0x000F_022E)
-            .unwrap();
+    /// Writes one DRAWARRAYS trigger from the CPU and runs it through the GX
+    /// queue with a command-list flush. Returns the queue report.
+    fn run_draw_through_gsp(
+        system: &mut System,
+        fixture: &RenderFixture,
+    ) -> GspGxCommandQueueReport {
+        let list = fixture.command_list_address;
+        let session = system.ncsd_session_mut().unwrap();
+        session.write_memory_u32(list, 1).unwrap();
+        session.write_memory_u32(list + 4, 0x000F_022E).unwrap();
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
-        queue_bytes[0] = 0;
         queue_bytes[1] = 1;
         let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[entry + 2] = 1;
-        queue_bytes[entry + 4..entry + 8].copy_from_slice(&command_list_address.to_le_bytes());
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&list.to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&1u32.to_le_bytes());
         queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
-        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true)
+    }
+
+    fn rendered_pixel(system: &System, target_physical: u32, x: usize, y: usize) -> [u8; 4] {
+        let config = crate::gpu::PicaRenderTargetConfig::from_registers(
+            target_physical >> 3,
+            RENDER_TARGET_REGISTERS.0,
+            0,
+            RENDER_TARGET_REGISTERS.1,
+        )
+        .unwrap();
+        let pixels = config.read_rgba8(system.physical_memory()).unwrap();
+        let offset = (y * 8 + x) * 4;
+        [
+            pixels[offset],
+            pixels[offset + 1],
+            pixels[offset + 2],
+            pixels[offset + 3],
+        ]
+    }
+
+    #[test]
+    fn gsp_process_command_list_renders_a_draw_into_the_tiled_target_when_enabled() {
+        let mut system = System::new();
+        let fixture = render_fixture(&mut system);
+        system
+            .physical_memory_mut()
+            .write(fixture.vertex_physical, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+
+        let report = run_draw_through_gsp(&mut system, &fixture);
 
         assert!(report.error.is_none(), "{:?}", report.error);
         assert_eq!(report.command_lists_submitted, 1);
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
         assert!(render.pixels_written >= 28);
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 1, 6),
+            [200, 100, 50, 255]
+        );
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 6, 1),
+            [0; 4]
+        );
+    }
 
-        let config =
-            PicaRenderTargetConfig::from_registers(target_base >> 3, 2, 0, (7 << 12) | 8).unwrap();
-        let pixels = config.read_rgba8(system.physical_memory()).unwrap();
-        let pixel = |x: usize, y: usize| {
-            let offset = (y * 8 + x) * 4;
-            [
-                pixels[offset],
-                pixels[offset + 1],
-                pixels[offset + 2],
-                pixels[offset + 3],
-            ]
-        };
-        assert_eq!(pixel(1, 6), [200, 100, 50, 255]);
-        assert_eq!(pixel(6, 1), [0, 0, 0, 0]);
+    /// Reads every word of the 256-byte tiled target through the CPU alias.
+    fn cpu_target_words(system: &mut System, fixture: &RenderFixture) -> Vec<u32> {
+        let session = system.ncsd_session_mut().unwrap();
+        (0..64)
+            .map(|word| {
+                session
+                    .read_memory_u32(fixture.target_address + word * 4)
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    fn physical_target_words(system: &System, fixture: &RenderFixture) -> Vec<u32> {
+        (0..64)
+            .map(|word| {
+                system
+                    .physical_memory()
+                    .read_u32(fixture.target_physical + word * 4)
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn gpu_render_into_fcram_is_not_snooped_by_a_clean_cpu_line() {
+        let mut system = System::new();
+        let fixture = render_fixture(&mut system);
+        system
+            .physical_memory_mut()
+            .write(fixture.vertex_physical, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+        // Prime clean CPU lines over the whole (zeroed) target.
+        assert!(
+            cpu_target_words(&mut system, &fixture)
+                .iter()
+                .all(|w| *w == 0)
+        );
+
+        let report = run_draw_through_gsp(&mut system, &fixture);
+        assert!(report.error.is_none(), "{:?}", report.error);
+
+        let physical = physical_target_words(&system, &fixture);
+        assert!(
+            physical.iter().any(|word| *word != 0),
+            "the draw must have written pixels"
+        );
+        // The CPU keeps seeing its stale lines until it invalidates them.
+        assert!(
+            cpu_target_words(&mut system, &fixture)
+                .iter()
+                .all(|w| *w == 0)
+        );
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .invalidate_process_data_cache(fixture.target_address, 256)
+            .unwrap();
+        assert_eq!(cpu_target_words(&mut system, &fixture), physical);
+    }
+
+    #[test]
+    fn a_dirty_cpu_line_flushed_after_the_draw_overwrites_the_gpu_pixels() {
+        let mut system = System::new();
+        let fixture = render_fixture(&mut system);
+        system
+            .physical_memory_mut()
+            .write(fixture.vertex_physical, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+        // The CPU clears the target; the zeros stay dirty in the D-cache.
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_bytes(fixture.target_address, &[0u8; 256])
+            .unwrap();
+
+        let report = run_draw_through_gsp(&mut system, &fixture);
+        assert!(report.error.is_none(), "{:?}", report.error);
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 1, 6),
+            [200, 100, 50, 255]
+        );
+
+        // Writing the stale dirty lines back destroys the GPU output...
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .store_process_data_cache(fixture.target_address, 256)
+            .unwrap();
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 1, 6),
+            [0; 4]
+        );
+    }
+
+    #[test]
+    fn invalidating_a_dirty_cpu_line_before_the_draw_preserves_the_gpu_pixels() {
+        let mut system = System::new();
+        let fixture = render_fixture(&mut system);
+        system
+            .physical_memory_mut()
+            .write(fixture.vertex_physical, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_bytes(fixture.target_address, &[0u8; 256])
+            .unwrap();
+        // ...while discarding them first keeps it.
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .invalidate_process_data_cache(fixture.target_address, 256)
+            .unwrap();
+
+        let report = run_draw_through_gsp(&mut system, &fixture);
+        assert!(report.error.is_none(), "{:?}", report.error);
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .store_process_data_cache(fixture.target_address, 256)
+            .unwrap();
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 1, 6),
+            [200, 100, 50, 255]
+        );
+    }
+
+    #[test]
+    fn unflushed_cpu_vertex_data_is_not_seen_by_the_gpu_but_flushed_data_is() {
+        let mut system = System::new();
+        let fixture = render_fixture(&mut system);
+        // The CPU writes the vertices; they sit dirty in the D-cache.
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_bytes(fixture.vertex_address, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+        assert_eq!(
+            system
+                .physical_memory()
+                .read_u32(fixture.vertex_physical)
+                .unwrap(),
+            0
+        );
+
+        // Without a flush the GPU reads zeros: a degenerate triangle.
+        let report = run_draw_through_gsp(&mut system, &fixture);
+        assert!(report.error.is_none(), "{:?}", report.error);
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 1, 6),
+            [0; 4]
+        );
+
+        // After an explicit flush the same draw sees the CPU's data.
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .flush_process_data_cache(fixture.vertex_address, 8)
+            .unwrap();
+        let report = run_draw_through_gsp(&mut system, &fixture);
+        assert!(report.error.is_none(), "{:?}", report.error);
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 1, 6),
+            [200, 100, 50, 255]
+        );
     }
 
     #[test]
