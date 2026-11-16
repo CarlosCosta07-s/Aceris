@@ -1,8 +1,8 @@
 //! CP15 system control coprocessor state for the ARM11 core.
 //!
 //! CP15 owns system-control state and queues TLB-maintenance operations for the
-//! ARMv6 MMU. Cache maintenance and some barriers still have no modeled memory
-//! effect and remain explicit limitations.
+//! ARMv6 MMU. ARMv6 c7 ordering operations are dispatched to the memory bus;
+//! deferred write-buffer and instruction-cache backends provide their effects.
 
 /// TLB maintenance requested by a privileged MCR to CP15 c8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
