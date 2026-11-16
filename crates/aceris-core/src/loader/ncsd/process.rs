@@ -2317,11 +2317,7 @@ impl Arm11CodeAddressSpace {
             };
             let start = usize::from(entry.start);
             let end = start + usize::from(entry.length);
-            self.write_cache_target_range(
-                &entry.target,
-                start,
-                &entry.bytes[start..end],
-            )?;
+            self.write_cache_target_range(&entry.target, start, &entry.bytes[start..end])?;
             self.write_buffer.pop_front();
             drained += 1;
         }
