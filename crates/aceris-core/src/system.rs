@@ -4811,6 +4811,11 @@ mod tests {
             .unwrap()
             .store_process_data_cache(fixture.target_address, 256)
             .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .drain_write_buffer()
+            .unwrap();
         assert_eq!(
             rendered_pixel(&system, fixture.target_physical, 1, 6),
             [0; 4]
@@ -4843,6 +4848,11 @@ mod tests {
             .ncsd_session_mut()
             .unwrap()
             .store_process_data_cache(fixture.target_address, 256)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .drain_write_buffer()
             .unwrap();
         assert_eq!(
             rendered_pixel(&system, fixture.target_physical, 1, 6),
@@ -4881,6 +4891,11 @@ mod tests {
             .ncsd_session_mut()
             .unwrap()
             .flush_process_data_cache(fixture.vertex_address, 8)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .drain_write_buffer()
             .unwrap();
         let report = run_draw_through_gsp(&mut system, &fixture);
         assert!(report.error.is_none(), "{:?}", report.error);
