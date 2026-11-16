@@ -1468,19 +1468,28 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 - `92007bb` — otimiza a validação de intervalos para percorrer spans mapeados e linhas de 32 bytes, evitando varredura byte a byte em buffers DMA grandes; preserva validação completa antes da manutenção.
 - `c43363a` — adiciona teste guest-side do SVC `FlushProcessDataCache` com o pseudo-handle `0xFFFF8001`, verificando o retorno e o writeback físico.
 - `a247fc2`, `93c97fb`, `ad54df4`, `fa7a285` — atualizam comentários e formatação das integrações.
+- `f8f0077` — substitui o mapa ilimitado por D-cache de 16 KiB, 4 vias, 128 conjuntos e linhas de 32 bytes, com LRU aproximado por conjunto e writeback de vítimas dirty.
+- `ce653ea` — testa quatro vias, colisão de conjunto, atualização da recência e writeback da linha dirty expulsa.
+- `05e34c6` — invalida as linhas residentes antes de remover uma alocação linear e liberar as páginas FCRAM, evitando que uma linha dirty antiga sobrescreva uma alocação física reutilizada.
+- `c4e8ee4` — atualiza o teste de ControlMemory para diferenciar visibilidade de CPU cacheada, Store, escrita externa, Invalidate e descarte de dirty lines na liberação.
+- `98b74ad`, `a37e4fe` — centralizam o pseudo-handle do processo atual (`CURRENT_PROCESS_HANDLE`) e removem o literal do handler.
+- `a02aecc` — testa os SVCs Store (0x53) e Invalidate (0x52), além da rejeição do pseudo-handle errado.
+- `d7fd2d4`, `d6701fb` — atualizam arquitetura e roadmap para a geometria bounded do cache.
 
 ### Contrato atual
 
-- Tamanho da linha modelada: 32 bytes. A chave é o endereço físico alinhado, de modo que aliases virtuais para a mesma linha compartilham o estado dentro da sessão.
+- Geometria do D-cache modelado: 16 KiB, 4 vias, 128 conjuntos e linha de 32 bytes. Os campos DSize do CTR ARM11 documentam 16 KiB, 4 vias e 8 words por linha; Aceris usa LRU aproximado como política de substituição do software model.
+- A chave é o endereço físico alinhado, de modo que aliases virtuais para a mesma linha compartilham o estado dentro da sessão. Em colisão de conjunto, a vítima menos recentemente usada é removida; se dirty, seus 32 bytes são escritos de volta antes de reutilizar a via.
 - O cache é write-back: CPU store deixa a linha dirty; CPU load da mesma linha observa o valor local.
 - StoreProcessDataCache limpa dirty lines e mantém as linhas residentes. InvalidateProcessDataCache remove as linhas sem writeback. FlushProcessDataCache faz writeback e remove as linhas.
-- Os três serviços SVC aceitam apenas o pseudo-handle current-process `0xFFFF8001`; handles de outros processos ainda não são suportados.
+- Os três serviços SVC aceitam apenas `CURRENT_PROCESS_HANDLE` (`0xFFFF8001`); handles de outros processos ainda não são suportados.
 - GSP RequestDMA executa flush da origem quando solicitado e quando a origem resolve para FCRAM. ProcessCommandList executa flush do buffer quando solicitado e o buffer resolve para FCRAM. FlushCacheRegions executa flush das regiões FCRAM válidas na ordem documentada, interrompendo em tamanho zero ou erro. VRAM não é cacheada por este modelo.
 - A manutenção valida o intervalo completo antes de writeback/evicção. O writeback usa o backing físico compartilhado com DMA/GPU/LCD.
+- Ao liberar uma alocação linear, a sessão invalida as linhas associadas antes do unmap e do free físico; dirty data da alocação que está sendo liberada é descartada, não escrita de volta em páginas que podem ser reutilizadas.
 
 ### Limites e validação pendente
 
 - O modelo cobre os aliases lineares físicos tratados como cacheáveis pelo caminho atual. Regiões estáticas, heap host-side e shared memory sem PA observável ainda não têm linhas cacheadas próprias; atributos ARM C/B/S e a seleção de memória Normal/Device precisam ser ligados ao cache.
-- A linha de 32 bytes e os estados clean/dirty são uma abstração funcional; associatividade, substituição, latência, prefetch, write buffer, barreiras e concorrência multicore não estão modelados.
+- A associatividade e capacidade declaradas (16 KiB, 4-way, 32 bytes) são representadas; a política LRU é apenas aproximação de replacement de hardware. Latência, prefetch, write buffer, barreiras e concorrência/coerência multicore não estão modelados.
 - Invalidate de uma linha dirty descarta deliberadamente os dados não escritos, conforme a semântica de invalidação sem clean.
 - Os testes foram adicionados/atualizados, mas não executados nesta sessão: o ambiente não possui `cargo`, `rustc` ou `rustfmt`. Confirme CI de `main` para fmt, build, Clippy, testes Linux/Windows/macOS e Android ARM64 antes de considerar a etapa aprovada.
