@@ -3569,6 +3569,89 @@ mod tests {
     }
 
     #[test]
+    fn arm11_cache_eviction_keeps_dirty_victim_when_writeback_drain_fails() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let backing = SharedMemoryBacking::zeroed(0x2000).unwrap();
+
+        // Poison the shared backing lock so the oldest pending write cannot
+        // complete. This makes the bounded write-buffer back-pressure fail.
+        let poison = backing.clone();
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = poison.bytes.lock().unwrap();
+                panic!("intentional backing lock poison for writeback regression");
+            })
+            .join()
+            .is_err()
+        );
+
+        let victim_key = DataCacheKey {
+            backing_id: backing.backing_id(),
+            line_offset: 0,
+        };
+        let victim_target = DataCacheTarget::Backing {
+            backing: backing.clone(),
+            offset: 0,
+        };
+        let set_index = Arm11CodeAddressSpace::cache_set_index(victim_key);
+        address_space.data_cache.insert(
+            victim_key,
+            Arm11DataCacheLine {
+                bytes: [0xA5; ARM11_DATA_CACHE_LINE_SIZE],
+                dirty: true,
+                target: victim_target.clone(),
+            },
+        );
+        address_space.data_cache_lru[set_index].push_back(victim_key);
+
+        for value in 0..ARM11_WRITE_BUFFER_CAPACITY {
+            let mut bytes = [0; ARM11_DATA_CACHE_LINE_SIZE];
+            bytes[0] = value as u8;
+            address_space.write_buffer.push_back(Arm11WriteBufferEntry {
+                key: victim_key,
+                target: victim_target.clone(),
+                start: 0,
+                bytes,
+                length: 1,
+            });
+        }
+
+        // The second key is one full set-span away, so it collides with the
+        // dirty victim while still identifying another line of the same block.
+        let replacement_key = DataCacheKey {
+            backing_id: victim_key.backing_id,
+            line_offset: ARM11_DATA_CACHE_SET_COUNT as u64
+                * ARM11_DATA_CACHE_LINE_SIZE as u64,
+        };
+        let replacement_target = DataCacheTarget::Backing {
+            backing,
+            offset: (ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE),
+        };
+
+        assert!(matches!(
+            address_space.insert_data_cache_line(
+                replacement_key,
+                Arm11DataCacheLine {
+                    bytes: [0; ARM11_DATA_CACHE_LINE_SIZE],
+                    dirty: false,
+                    target: replacement_target,
+                }
+            ),
+            Err(Error::InvalidAccess { .. })
+        ));
+        assert!(address_space.data_cache.contains_key(&victim_key));
+        assert!(address_space.data_cache[&victim_key].dirty);
+        assert_eq!(
+            address_space.data_cache_lru[set_index].front(),
+            Some(&victim_key)
+        );
+        assert_eq!(
+            address_space.write_buffer.len(),
+            ARM11_WRITE_BUFFER_CAPACITY
+        );
+    }
+
+    #[test]
     fn arm11_data_cache_uses_four_ways_and_writes_back_lru_victims() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
