@@ -1474,6 +1474,7 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 - `c4e8ee4` — atualiza o teste de ControlMemory para diferenciar visibilidade de CPU cacheada, Store, escrita externa, Invalidate e descarte de dirty lines na liberação.
 - `98b74ad`, `a37e4fe` — centralizam o pseudo-handle do processo atual (`CURRENT_PROCESS_HANDLE`) e removem o literal do handler.
 - `a02aecc` — testa os SVCs Store (0x53) e Invalidate (0x52), além da rejeição do pseudo-handle errado.
+- `dd40e16` — estende o teste SVC para verificar também que Invalidate descarta dirty data sem fazer writeback.
 - `d7fd2d4`, `d6701fb` — atualizam arquitetura e roadmap para a geometria bounded do cache.
 
 ### Contrato atual
