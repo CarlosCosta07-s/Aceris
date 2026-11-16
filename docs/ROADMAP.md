@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 16/11/2026. A implementação parcial de GX RequestDMA descrita abaixo está integrada ao dispatcher; aguarda a verificação CI do commit desta etapa.
+> Estado revisado em 16/11/2026, com base no commit `d4d76e71f11789465441e9a03476b83204b22e51`. A CI `43789709791` terminou com sucesso em Ubuntu, macOS, Windows e Android ARM64. RequestDMA continua parcial, conforme as limitações descritas abaixo.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 

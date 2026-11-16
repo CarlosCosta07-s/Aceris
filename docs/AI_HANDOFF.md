@@ -1409,7 +1409,7 @@ O ChatGPT implementou o comando GX RequestDMA (ID 0x00) na colaboração autoriz
 
 ### Verificação
 
-O código e os testes foram preparados para publicação na branch `main`. Não declare a etapa aprovada até a CI do commit correspondente terminar em verde nos jobs desktop Linux/Windows/macOS e Android ARM64. A verificação local com Cargo não estava disponível nesta sessão.
+A implementação está publicada na branch `main` no commit `d4d76e71f11789465441e9a03476b83204b22e51`. A CI [43789709791](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43789709791) terminou com sucesso: format, build, Clippy e testes do workspace em Ubuntu/macOS/Windows, além do build Android ARM64. A verificação local com Cargo não estava disponível nesta sessão.
 
 
 ## Integração GSP framebuffer-info → PDC — 15/11/2026
