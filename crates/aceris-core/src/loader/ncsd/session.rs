@@ -2296,6 +2296,13 @@ impl Arm11ProcessSession {
             return Err(RESULT_INVALID_ADDRESS);
         }
 
+        // A released physical allocation may be reused at the same address.
+        // Discard its resident cache lines before removing the alias and freeing
+        // the backing, so a dirty victim cannot later overwrite the new owner.
+        self.address_space
+            .invalidate_data_cache_range(virtual_base, size)
+            .map_err(|_| RESULT_INVALID_ADDRESS)?;
+
         self.address_space
             .unmap_linear_memory_region(virtual_base, mapping.physical_base(), size)
             .map_err(dynamic_memory_result_code)?;
