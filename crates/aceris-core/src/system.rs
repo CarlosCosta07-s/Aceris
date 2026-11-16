@@ -2861,6 +2861,26 @@ mod tests {
             )
             .unwrap();
 
+        let (shared_memory_base, event_handle) = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            assert_eq!(stack.address & 0xFFF, 0);
+            assert!(stack.mapped_size_bytes as usize >= GSP_SHARED_MEMORY_SIZE);
+            session
+                .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(
+                    crate::loader::ncsd::session::kernel::EventResetType::OneShot,
+                )
+                .unwrap();
+            (stack.address, event_handle)
+        };
+        system
+            .register_gsp_client(0, shared_memory_base, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
         let linear_source = VRAM_BASE + 0x20_000;
         let tiled_source = VRAM_BASE + 0x40_000;
         let linear_output = VRAM_BASE + 0x60_000;
@@ -2913,6 +2933,31 @@ mod tests {
         assert_eq!(report.pending_commands, 0);
         assert!(report.halted);
         assert!(report.error.is_none());
+
+        // DisplayTransfer completion must enqueue PPF for the rights owner
+        // and signal that client's registered process-local event.
+        let interrupt_queue_address = shared_memory_base
+            + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .kernel_objects
+                .event_is_signaled(event_handle),
+            Some(true)
+        );
 
         let mut actual = vec![0u8; expected.len()];
         system

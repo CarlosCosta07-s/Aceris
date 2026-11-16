@@ -1390,3 +1390,7 @@ A CI deste commit precisa passar em Linux, Windows e macOS, além do build Andro
 - Após a conversão, o dispatcher emite PPF. O `GspGxCommandQueueReport` conta `display_transfers_completed`. Sem rendering rights, a entrada é consumida mas não executada.
 - Os testes de integração validam tiled 8x8→linear em VRAM, bytes de saída, relatório de conclusão e consumo sem direitos de renderização.
 - Limite temporal: a cópia CPU é síncrona, com PPF imediato após conclusão; não representa latência assíncrona/ciclo-a-ciclo do transfer engine real.
+
+### Verificação do PPF
+
+O teste de integração `gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion` agora registra um cliente GSP com event handle OneShot, adquire os direitos de renderização e verifica o PPF na relay queue real (`GspInterruptRelayQueue`) além do estado sinalizado do objeto kernel. A verificação cobre a ordem de conclusão → enfileiramento → sinalização; continua sendo um backend síncrono de CPU, não uma medição da latência real do hardware.
