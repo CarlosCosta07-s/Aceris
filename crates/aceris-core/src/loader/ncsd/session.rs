@@ -3374,11 +3374,22 @@ mod tests {
         peer.map_memory_block(peer_handle, 0x0900_0000, 1, 3)
             .unwrap();
 
+        // The imported process has its own cache. The owner's dirty line is
+        // not visible until the owner cleans and drains its write buffer.
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0);
+        owner.flush_process_data_cache(0x0800_0000, 4).unwrap();
+        owner.drain_write_buffer().unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0);
+        peer.invalidate_process_data_cache(0x0900_0000, 4).unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0xCAFE_BABE);
         assert!(!peer.address_space.is_writable_range(0x0900_0000, 4));
         assert!(peer.write_memory_u32(0x0900_0000, 0xDEAD_BEEF).is_err());
 
         owner.write_memory_u32(0x0800_0000, 0x1234_5678).unwrap();
+        owner.flush_process_data_cache(0x0800_0000, 4).unwrap();
+        owner.drain_write_buffer().unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0xCAFE_BABE);
+        peer.invalidate_process_data_cache(0x0900_0000, 4).unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0x1234_5678);
 
         assert_eq!(
@@ -3407,9 +3418,18 @@ mod tests {
 
         peer.map_memory_block(peer_handle, 0x0900_0000, 1, 3)
             .unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0);
+        owner.flush_process_data_cache(0x0800_0000, 4).unwrap();
+        owner.drain_write_buffer().unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0);
+        peer.invalidate_process_data_cache(0x0900_0000, 4).unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0xCAFE_BABE);
 
         owner.write_memory_u32(0x0800_0000, 0x1234_5678).unwrap();
+        owner.flush_process_data_cache(0x0800_0000, 4).unwrap();
+        owner.drain_write_buffer().unwrap();
+        assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0xCAFE_BABE);
+        peer.invalidate_process_data_cache(0x0900_0000, 4).unwrap();
         assert_eq!(peer.read_memory_u32(0x0900_0000).unwrap(), 0x1234_5678);
         assert!(!peer.address_space.is_writable_range(0x0900_0000, 0x1000));
     }
