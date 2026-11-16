@@ -2644,7 +2644,9 @@ mod tests {
         let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
         let virtual_base = physical_base - 0x0C00_0000;
         address_space.attach_gpu_memory(memory.clone());
-        address_space.map_linear_memory_region(virtual_base, physical_base, 0x1000).unwrap();
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x1000)
+            .unwrap();
 
         // CPU stores remain dirty in its private cache until a clean/flush.
         address_space.write32(virtual_base, 0x1122_3344).unwrap();
