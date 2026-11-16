@@ -1553,9 +1553,10 @@ impl System {
     /// The caller supplies the registered 0x1000-byte shared-memory base and
     /// the client slot (0..4). Each trigger clears the queue halt latch before
     /// processing. The supported synchronous subset includes RequestDMA,
-    /// ProcessCommandList, MemoryFill, DisplayTransfer and TextureCopy; each
-    /// operation that accesses GPU resources requires rendering rights.
-    /// Busy arbitration, cache maintenance and asynchronous timing remain pending.
+    /// ProcessCommandList, MemoryFill, DisplayTransfer, TextureCopy and
+    /// FlushCacheRegions. FlushCacheRegions currently validates guest ranges only;
+    /// a separate ARM data-cache model is not implemented. Busy arbitration and
+    /// asynchronous device timing remain pending.
     pub fn process_gsp_gx_command_queue(
         &mut self,
         shared_memory_base: u32,
