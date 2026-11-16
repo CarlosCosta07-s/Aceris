@@ -97,18 +97,20 @@ pub(super) struct MemoryAttributes {
 
 impl MemoryAttributes {
     /// Resolves the inner ARM11 D-cache behavior from the effective memory
-    /// attributes. NMRR encodings are 00 non-cacheable, 01 write-back,
-    /// 10 write-through and 11 write-back (no write allocate).
+    /// attributes. Normal non-cacheable memory still permits buffered stores;
+    /// Device and Strongly Ordered memory does not.
     fn data_cache_policy(self, enabled: bool) -> CachePolicy {
-        if !enabled || self.memory_type != MemoryType::Normal {
+        if self.memory_type != MemoryType::Normal {
             return CachePolicy::NonCacheable;
         }
+        if !enabled || self.inner == 0 {
+            return CachePolicy::NormalNonCacheable;
+        }
         match self.inner {
-            0 => CachePolicy::NonCacheable,
-            2 => CachePolicy::WriteThrough,
             1 => CachePolicy::WriteBack,
+            2 => CachePolicy::WriteThrough,
             3 => CachePolicy::WriteBackNoAllocate,
-            _ => CachePolicy::NonCacheable,
+            _ => CachePolicy::NormalNonCacheable,
         }
     }
 
@@ -1398,7 +1400,7 @@ mod tests {
 
         assert_eq!(
             attributes(MemoryType::Normal, 0).data_cache_policy(true),
-            CachePolicy::NonCacheable
+            CachePolicy::NormalNonCacheable
         );
         assert_eq!(
             attributes(MemoryType::Normal, 1).data_cache_policy(true),
@@ -1414,7 +1416,7 @@ mod tests {
         );
         assert_eq!(
             attributes(MemoryType::Normal, 3).data_cache_policy(false),
-            CachePolicy::NonCacheable
+            CachePolicy::NormalNonCacheable
         );
         assert_eq!(
             attributes(MemoryType::Device, 3).data_cache_policy(true),
