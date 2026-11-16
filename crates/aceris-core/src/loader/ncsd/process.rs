@@ -2159,7 +2159,7 @@ impl Arm11CodeAddressSpace {
     /// generation, and stores by any agent to shared physical backing (DMA, GPU,
     /// LCD, other processes' aliases) bump the physical one. The sum changes
     /// whenever either does.
-    fn exclusive_version(&self, address: u32) -> u64 {"
+    fn exclusive_version(&self, address: u32) -> u64 {
         let virtual_version = self
             .exclusive_versions
             .get(&(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1)))
