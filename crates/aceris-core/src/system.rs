@@ -4303,6 +4303,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn consecutive_gsp_command_lists_share_the_pica_depth_buffer() {
+        let mut system = System::new();
+        let fixture = render_fixture(&mut system);
+        system
+            .physical_memory_mut()
+            .write(fixture.vertex_physical, &[0, 0, 8, 0, 0, 8])
+            .unwrap();
+
+        let first_queue = run_draw_through_gsp(&mut system, &fixture);
+        assert!(first_queue.error.is_none(), "{:?}", first_queue.error);
+        let first_render = system.last_pica_render_report().unwrap();
+        assert_eq!(first_render.triangles_submitted, 1);
+        assert!(first_render.pixels_written > 0);
+
+        // A second identical draw at the same depth must be rejected. This
+        // proves System retained the render session between independent GSP
+        // ProcessCommandList submissions rather than resetting depth to 1.0.
+        let second_queue = run_draw_through_gsp(&mut system, &fixture);
+        assert!(second_queue.error.is_none(), "{:?}", second_queue.error);
+        let second_render = system.last_pica_render_report().unwrap();
+        assert_eq!(second_render.triangles_submitted, 1);
+        assert_eq!(second_render.pixels_written, 0);
+        assert!(second_render.depth_rejected_pixels > 0);
+        assert_eq!(
+            rendered_pixel(&system, fixture.target_physical, 1, 6),
+            [200, 100, 50, 255]
+        );
+    }
+
     /// Reads every word of the 256-byte tiled target through the CPU alias.
     fn cpu_target_words(system: &mut System, fixture: &RenderFixture) -> Vec<u32> {
         let session = system.ncsd_session_mut().unwrap();
