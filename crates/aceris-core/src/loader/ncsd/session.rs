@@ -353,6 +353,25 @@ impl Arm11ProcessSession {
         Ok(())
     }
 
+    /// Performs the ARM11 FlushProcessDataCache operation for this process.
+    ///
+    /// Dirty lines intersecting the virtual range are written back to shared
+    /// physical memory and then invalidated. The full range is validated before
+    /// any cache line is modified.
+    pub fn flush_process_data_cache(&mut self, address: u32, size_bytes: u32) -> Result<usize> {
+        self.address_space.flush_data_cache_range(address, size_bytes)
+    }
+
+    /// Invalidates process data-cache lines without writing dirty data back.
+    pub fn invalidate_process_data_cache(&mut self, address: u32, size_bytes: u32) -> Result<usize> {
+        self.address_space.invalidate_data_cache_range(address, size_bytes)
+    }
+
+    /// Returns the number of resident data-cache lines for diagnostics/tests.
+    pub fn data_cache_line_count(&self) -> usize {
+        self.address_space.data_cache_line_count()
+    }
+
     /// Returns the current thread's TLS base, as exposed by CP15 TPIDRURO.
     pub fn current_tls_address(&self) -> Option<u32> {
         let thread = self.scheduler.current_thread_id()?;
