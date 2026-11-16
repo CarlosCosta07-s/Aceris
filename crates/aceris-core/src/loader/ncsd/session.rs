@@ -4364,6 +4364,7 @@ mod tests {
 
         let physical_base = virtual_base + OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET;
         assert!(memory.has_linear_fcram_allocation(physical_base, 0x2000));
+        let baseline_cache_lines = session.data_cache_line_count();
         session
             .write_memory_u32(virtual_base + 0x100, 0xCAFE_BABE)
             .unwrap();
@@ -4414,7 +4415,7 @@ mod tests {
         assert!(dma.mappings().is_empty());
         assert!(!memory.has_linear_fcram_allocation(physical_base, 0x2000));
         assert!(!session.address_space.is_writable_range(virtual_base, 4));
-        assert_eq!(session.data_cache_line_count(), 0);
+        assert_eq!(session.data_cache_line_count(), baseline_cache_lines);
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
         assert_eq!(memory.read_u32(physical_base + 0x108).unwrap(), 0);
     }
