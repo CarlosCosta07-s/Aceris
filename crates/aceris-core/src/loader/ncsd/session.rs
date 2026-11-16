@@ -275,6 +275,17 @@ impl Arm11ProcessSession {
         Ok(Self::from_address_space(address_space))
     }
 
+    /// Adds the process-side alias for a physical linear-memory allocation.
+    /// System-level ControlMemory normally updates both this map and the GPU DMA map.
+    pub fn map_linear_memory_region(
+        &mut self,
+        virtual_base: u32,
+        physical_base: u32,
+        size: u32,
+    ) -> std::result::Result<(), Arm11DynamicMemoryError> {
+        self.address_space.map_linear_memory_region(virtual_base, physical_base, size)
+    }
+
     /// Connects this process to the shared physical memory and GPU DMA map.
     ///
     /// Cloned handles share their backing state, so ARM11 loads/stores, GPU
