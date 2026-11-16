@@ -11,6 +11,8 @@ use crate::loader::ncsd::process::SharedMemoryBacking;
 
 /// Pseudo-handle that always identifies the calling thread.
 pub const CURRENT_THREAD_HANDLE: u32 = 0xFFFF_8000;
+/// Pseudo-handle that always identifies the calling process.
+pub const CURRENT_PROCESS_HANDLE: u32 = 0xFFFF_8001;
 
 const FIRST_HANDLE: u32 = 0x100;
 
