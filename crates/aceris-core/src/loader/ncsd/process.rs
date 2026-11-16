@@ -30,15 +30,42 @@ const ARM11_DATA_CACHE_SET_COUNT: usize =
 // deterministic back-pressure model, not a claim about undocumented silicon depth.
 const ARM11_WRITE_BUFFER_CAPACITY: usize = 8;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct DataCacheKey {
+    backing_id: u64,
+    line_offset: u64,
+}
+
+#[derive(Clone, Debug)]
+enum DataCacheTarget {
+    Static {
+        kind: Arm11SegmentKind,
+        offset: usize,
+    },
+    Backing {
+        backing: SharedMemoryBacking,
+        offset: usize,
+    },
+    Physical {
+        memory: GpuPhysicalMemory,
+        address: u32,
+    },
+}
+
 #[derive(Clone, Debug)]
 struct Arm11DataCacheLine {
     bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
     dirty: bool,
+    generation: u64,
+    target: DataCacheTarget,
 }
 
 #[derive(Clone, Debug)]
 struct Arm11WriteBufferEntry {
-    address: u32,
+    key: DataCacheKey,
+    target: DataCacheTarget,
+    /// Byte offset within the aligned 32-byte line.
+    start: u8,
     bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
     /// Number of valid bytes; cache-line writebacks use the full 32 bytes.
     length: u8,
@@ -179,6 +206,9 @@ pub struct SharedMemoryBacking {
     bytes: Arc<Mutex<Vec<u8>>>,
     offset: usize,
     length: usize,
+    backing_id: u64,
+    cache_generations: Arc<Mutex<BTreeMap<usize, u64>>>,
+    exclusive_versions: Arc<Mutex<BTreeMap<u32, u64>>>,
 }
 
 impl SharedMemoryBacking {
@@ -198,6 +228,9 @@ impl SharedMemoryBacking {
             bytes: Arc::new(Mutex::new(bytes)),
             offset: 0,
             length,
+            backing_id: crate::memory::next_memory_backing_id(),
+            cache_generations: Arc::new(Mutex::new(BTreeMap::new())),
+            exclusive_versions: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -211,6 +244,9 @@ impl SharedMemoryBacking {
             bytes: self.bytes.clone(),
             offset: self.offset.checked_add(offset)?,
             length,
+            backing_id: self.backing_id,
+            cache_generations: self.cache_generations.clone(),
+            exclusive_versions: self.exclusive_versions.clone(),
         })
     }
 
@@ -236,6 +272,71 @@ impl SharedMemoryBacking {
             && self.length == other.length
     }
 
+    /// Stable identity shared by clones and views of this allocation.
+    fn backing_id(&self) -> u64 {
+        self.backing_id
+    }
+
+    /// Absolute byte offset within the root allocation.
+    fn root_offset(&self, offset: usize) -> Option<usize> {
+        if offset > self.length { return None; }
+        self.offset.checked_add(offset)
+    }
+
+    fn cache_generation(&self, offset: usize) -> u64 {
+        let Some(root_offset) = self.root_offset(offset) else { return 0; };
+        let line = root_offset & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
+        self.cache_generations.lock().ok()
+            .and_then(|generations| generations.get(&line).copied()).unwrap_or(0)
+    }
+
+    fn exclusive_version(&self, offset: usize) -> u64 {
+        let Some(root_offset) = self.root_offset(offset) else { return 0; };
+        let granule = (root_offset as u32) & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
+        self.exclusive_versions.lock().ok()
+            .and_then(|versions| versions.get(&granule).copied()).unwrap_or(0)
+    }
+
+    fn read_range(&self, offset: usize, output: &mut [u8]) -> bool {
+        let Some(start) = self.root_offset(offset) else { return false; };
+        if offset.checked_add(output.len()).is_none_or(|end| end > self.length) { return false; }
+        let Ok(bytes) = self.bytes.lock() else { return false; };
+        let Some(source) = bytes.get(start..start + output.len()) else { return false; };
+        output.copy_from_slice(source);
+        true
+    }
+
+    fn write_range(&self, offset: usize, input: &[u8]) -> bool {
+        let Some(start) = self.root_offset(offset) else { return false; };
+        if offset.checked_add(input.len()).is_none_or(|end| end > self.length) { return false; }
+        let Ok(mut bytes) = self.bytes.lock() else { return false; };
+        let Some(destination) = bytes.get_mut(start..start + input.len()) else { return false; };
+        destination.copy_from_slice(input);
+        drop(bytes);
+
+        if !input.is_empty() {
+            let absolute_end = start + input.len();
+            if let Ok(mut generations) = self.cache_generations.lock() {
+                let mut line = start & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
+                while line < absolute_end {
+                    let generation = generations.entry(line).or_insert(0);
+                    *generation = generation.wrapping_add(1);
+                    line += ARM11_DATA_CACHE_LINE_SIZE;
+                }
+            }
+            if let Ok(mut versions) = self.exclusive_versions.lock() {
+                let granule_size = crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize;
+                let mut granule = start & !(granule_size - 1);
+                while granule < absolute_end {
+                    let version = versions.entry(granule as u32).or_insert(0);
+                    *version = version.wrapping_add(1);
+                    granule += granule_size;
+                }
+            }
+        }
+        true
+    }
+
     fn read_byte(&self, offset: usize) -> Option<u8> {
         if offset >= self.length {
             return None;
@@ -248,21 +349,7 @@ impl SharedMemoryBacking {
     }
 
     fn write_byte(&self, offset: usize, value: u8) -> bool {
-        if offset >= self.length {
-            return false;
-        }
-        let Ok(mut bytes) = self.bytes.lock() else {
-            return false;
-        };
-        let Some(byte) = self
-            .offset
-            .checked_add(offset)
-            .and_then(|absolute| bytes.get_mut(absolute))
-        else {
-            return false;
-        };
-        *byte = value;
-        true
+        self.write_range(offset, &[value])
     }
 }
 
@@ -274,45 +361,41 @@ impl PartialEq for SharedMemoryBacking {
 
 impl Eq for SharedMemoryBacking {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum DynamicMemoryBacking {
-    Private(Vec<u8>),
+    Private(SharedMemoryBacking),
     Shared(SharedMemoryBacking),
 }
 
 impl DynamicMemoryBacking {
     fn len(&self) -> usize {
         match self {
-            Self::Private(bytes) => bytes.len(),
-            Self::Shared(backing) => backing.length,
+            Self::Private(backing) | Self::Shared(backing) => backing.length,
         }
     }
 
     fn read_byte(&self, offset: usize) -> Option<u8> {
         match self {
-            Self::Private(bytes) => bytes.get(offset).copied(),
-            Self::Shared(backing) => backing.read_byte(offset),
+            Self::Private(backing) | Self::Shared(backing) => backing.read_byte(offset),
         }
     }
 
     fn write_byte(&mut self, offset: usize, value: u8) -> bool {
         match self {
-            Self::Private(bytes) => {
-                let Some(byte) = bytes.get_mut(offset) else {
-                    return false;
-                };
-                *byte = value;
-                true
-            }
-            Self::Shared(backing) => backing.write_byte(offset, value),
+            Self::Private(backing) | Self::Shared(backing) => backing.write_byte(offset, value),
+        }
+    }
+
+    fn backing_handle(&self) -> SharedMemoryBacking {
+        match self {
+            Self::Private(backing) | Self::Shared(backing) => backing.clone(),
         }
     }
 
     /// Promotes the allocation to shareable backing and returns a bounded view.
     fn shared_view(&mut self, offset: usize, length: usize) -> Option<SharedMemoryBacking> {
-        if let Self::Private(bytes) = self {
-            let bytes = std::mem::take(bytes);
-            *self = Self::Shared(SharedMemoryBacking::from_vec(bytes));
+        if let Self::Private(backing) = self {
+            *self = Self::Shared(backing.clone());
         }
         match self {
             Self::Private(_) => None,
@@ -697,10 +780,12 @@ pub struct Arm11CodeAddressSpace {
     /// Linear CPU mappings that alias the GPU-visible physical FCRAM backing.
     linear_regions: Vec<LinearMemoryRegion>,
     gpu_memory: Option<GpuPhysicalMemory>,
-    /// Write-back ARM11 data-cache lines, keyed by aligned physical address.
-    data_cache: BTreeMap<u32, Arm11DataCacheLine>,
+    /// Stable identities for the process' private static segments.
+    static_backing_ids: [u64; 5],
+    /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
+    data_cache: BTreeMap<DataCacheKey, Arm11DataCacheLine>,
     /// Per-set least-recently-used order, oldest line first.
-    data_cache_lru: Vec<VecDeque<u32>>,
+    data_cache_lru: Vec<VecDeque<DataCacheKey>>,
     /// FIFO of dirty D-cache lines awaiting visibility in physical memory.
     write_buffer: VecDeque<Arm11WriteBufferEntry>,
     /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
@@ -749,6 +834,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
@@ -841,6 +927,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
