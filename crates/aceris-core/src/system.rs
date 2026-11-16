@@ -4,11 +4,13 @@ use crate::cpu::Arm11Core;
 use crate::gpu::{
     DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_MEMORY_FILL,
     GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_GX_COMMAND_REQUEST_DMA,
+    GSP_GX_COMMAND_TEXTURE_COPY,
     GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
     GspDisplayTransfer, GspDmaRequest, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, MAX_GSP_DMA_BYTES, Pica200, VRAM_BASE, VRAM_SIZE,
-    display_transfer_buffer_sizes, execute_display_transfer,
+    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, TextureCopyError,
+    TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
+    execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -119,6 +121,8 @@ pub struct GspGxCommandQueueReport {
     pub flush_source_requested: bool,
     /// Number of DisplayTransfer commands completed by the synchronous software backend.
     pub display_transfers_completed: u8,
+    /// Number of TextureCopy commands completed by the synchronous backend.
+    pub texture_copies_completed: u8,
     /// Number of entries still pending after this dispatch.
     pub pending_commands: u8,
     /// Requests observed but not independently emulated by this GSP layer.
@@ -1695,6 +1699,7 @@ impl System {
             dma_requests_completed: 0,
             flush_source_requested: false,
             display_transfers_completed: 0,
+            texture_copies_completed: 0,
             pending_commands: queue.command_count(),
             cache_flush_requested: false,
             gas_blend_update_requested: false,
@@ -1805,6 +1810,24 @@ impl System {
                             Ok(())
                         }
                     }
+                    GSP_GX_COMMAND_TEXTURE_COPY => {
+                        let arguments = command
+                            .texture_copy()
+                            .expect("command ID was checked immediately above");
+                        if client_has_rendering_right {
+                            self.dispatch_gsp_texture_copy(arguments).and_then(|()| {
+                                report.texture_copies_completed =
+                                    report.texture_copies_completed.saturating_add(1);
+                                self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
+                                    .map(|_| ())
+                                    .map_err(|error| {
+                                        GspGxCommandQueueError::TextureCopy(error.to_string())
+                                    })
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    }
                     command_id => Err(GspGxCommandQueueError::UnsupportedCommand { command_id }),
                 };
 
@@ -1816,6 +1839,7 @@ impl System {
                             | GspGxCommandQueueError::InvalidMemoryFillRange { .. }
                             | GspGxCommandQueueError::InvalidDisplayTransferAddress { .. }
                             | GspGxCommandQueueError::InvalidDmaRange { .. }
+                            | GspGxCommandQueueError::InvalidTextureCopyAddress { .. }
                     )
                     .then_some(GSP_INVALID_ADDRESS_RESULT);
                     queue.mark_error(result);
@@ -2203,6 +2227,40 @@ impl System {
         execute_display_transfer(&mut self.physical_memory, request)
             .map(|_| ())
             .map_err(|error| GspGxCommandQueueError::DisplayTransfer(error.to_string()))
+    }
+
+    /// Executes one raw GSP TextureCopy operation.
+    ///
+    /// The transfer engine copies bytes without format conversion. Gap mode
+    /// is limited to equal per-row copy widths; unsupported or unmapped spans
+    /// fail before destination memory is modified.
+    fn dispatch_gsp_texture_copy(
+        &mut self,
+        command: GspTextureCopy,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        let request = TextureCopyRequest {
+            source_address: command.source_address,
+            destination_address: command.destination_address,
+            size_bytes: command.size_bytes,
+            source_line_width_and_gap: command.source_line_width_and_gap,
+            destination_line_width_and_gap: command.destination_line_width_and_gap,
+            flags: command.flags,
+        };
+        execute_texture_copy(
+            &mut self.physical_memory,
+            &self.gpu_address_space,
+            request,
+        )
+        .map(|_| ())
+        .map_err(|error| match error {
+            TextureCopyError::InvalidAddress { address } => {
+                GspGxCommandQueueError::InvalidTextureCopyAddress { address }
+            }
+            TextureCopyError::AddressOverflow { base, .. } => {
+                GspGxCommandQueueError::InvalidTextureCopyAddress { address: base }
+            }
+            other => GspGxCommandQueueError::TextureCopy(other.to_string()),
+        })
     }
 
     /// Executes the two optional buffers of one GX MemoryFill command.
@@ -4409,4 +4467,99 @@ mod tests {
         assert!(system.load(Path::new("no/such/game.3ds")).is_err());
         assert_eq!(system.image(), None);
     }
+
+    #[test]
+    fn gsp_gx_texture_copy_copies_gapped_rows_and_signals_ppf() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let source_virtual = 0x1400_0200;
+        let source_physical = crate::gpu::FCRAM_BASE + 0x200;
+        let destination_physical = VRAM_BASE + 0x2000;
+        let source_bytes: Vec<u8> = (0..272).map(|value| value as u8).collect();
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(0x1400_0000, 0x1000)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write(source_physical, &source_bytes)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write(destination_physical, &[0xCC; 192])
+            .unwrap();
+
+        let (shared_memory_base, event_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            assert_eq!(stack.address & 0xFFF, 0);
+            assert!(stack.mapped_size_bytes as usize >= GSP_SHARED_MEMORY_SIZE);
+            session
+                .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (stack.address, event_handle)
+        };
+        system
+            .register_gsp_client(0, shared_memory_base, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_TEXTURE_COPY;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12]
+            .copy_from_slice(&destination_physical.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&192u32.to_le_bytes());
+        queue_bytes[entry + 16..entry + 20].copy_from_slice(&0x0001_0002u32.to_le_bytes());
+        queue_bytes[entry + 20..entry + 24].copy_from_slice(&0x0000_0002u32.to_le_bytes());
+        queue_bytes[entry + 24..entry + 28].copy_from_slice(&0x0Cu32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.texture_copies_completed, 1);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.halted);
+        assert!(report.error.is_none());
+
+        let mut actual = [0u8; 192];
+        system
+            .physical_memory()
+            .read(destination_physical, &mut actual)
+            .unwrap();
+        let mut expected = Vec::new();
+        for row in 0..6 {
+            let start = row * 48;
+            expected.extend_from_slice(&source_bytes[start..start + 32]);
+        }
+        assert_eq!(actual.as_slice(), expected.as_slice());
+
+        let interrupt_queue_address =
+            shared_memory_base + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf]
+        );
+    }
+
 }
