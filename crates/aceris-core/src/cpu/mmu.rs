@@ -1039,6 +1039,18 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         Ok(())
     }
 
+    fn drain_write_buffer(&mut self) -> Result<()> {
+        self.inner.drain_write_buffer()
+    }
+
+    fn data_memory_barrier(&mut self) -> Result<()> {
+        self.inner.data_memory_barrier()
+    }
+
+    fn instruction_sync_barrier(&mut self) -> Result<()> {
+        self.inner.instruction_sync_barrier()
+    }
+
     fn exclusive_read(&mut self, addr: u32, size: usize) -> Result<(u64, u64)> {
         let physical = self.map(addr, Access::Read)?;
         self.inner.exclusive_read(physical, size)
