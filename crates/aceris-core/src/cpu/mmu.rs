@@ -15,8 +15,9 @@
 //! The unified software TLB supports ASID/global matching, eight ARM11
 //! lockdown slots, and CP15 c8 invalidation operations. Set-associative
 //! replacement remains a bounded software approximation. Resolved TEX/C/B/S
-//! memory attributes are retained in TLB entries and exposed to the CPU for
-//! ARMv6 unaligned-access eligibility; cache behavior is not yet modeled. A
+//! and PRRR/NMRR attributes are retained in TLB entries and select the modeled
+//! inner D-cache policy on data accesses. Outer-cache behavior and buffered
+//! write timing remain incomplete. A
 //! translation fault is reported as `Error::InvalidAccess` with the virtual
 //! address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
 
