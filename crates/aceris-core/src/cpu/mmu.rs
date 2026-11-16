@@ -912,7 +912,7 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn read8(&mut self, addr: u32) -> Result<u8> {
         let (physical, attributes) =
-                self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
+            self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
         self.inner.read8_with_cache_policy(
             physical,
             attributes.data_cache_policy(self.params.data_cache_enabled),
@@ -921,7 +921,7 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn write8(&mut self, addr: u32, value: u8) -> Result<()> {
         let (physical, attributes) =
-                self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
+            self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
         self.inner.write8_with_cache_policy(
             physical,
             value,
