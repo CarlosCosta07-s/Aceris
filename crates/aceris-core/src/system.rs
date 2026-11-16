@@ -13,7 +13,7 @@ use crate::gpu::{
     TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
     execute_display_transfer, execute_texture_copy,
 };
-use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
+use crate::loader::cia::{tmd::CONTENT_TYPE_ENCRYPTED, CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::gsp_service::{
     GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE, GspClientUnregistration,
@@ -332,6 +332,102 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.pending_gsp_acquires.clear();
         Ok(ImageFormat::Cia)
+    }
+
+    /// Loads a CIA whose outer content is clear but whose NCCH regions may be encrypted.
+    ///
+    /// The CIA content is verified against its TMD before the NCCH is opened.
+    /// The caller supplies the NCCH menu-info and content keys; no ticket
+    /// common key or title-key decryption is needed when the TMD marks the
+    /// content as clear. Encrypted outer CIA content must use
+    /// `load_cia_with_keys` instead.
+    ///
+    /// The active process is replaced only after all content and executable
+    /// checks succeed.
+    pub fn load_cia_with_ncch_keys<R: Read + Seek>(
+        &mut self,
+        reader: R,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<ImageFormat> {
+        let mut archive = CiaArchiveReader::open(reader).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not open CIA archive: {error}"),
+            ))
+        })?;
+        let title_id = archive.title_metadata().title_id;
+        let boot_content_index = archive.title_metadata().boot_content_index;
+        let location = archive.content_location(boot_content_index).ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CIA boot content is not selected by its content-index bitmap",
+            ))
+        })?;
+
+        if location.content_type & CONTENT_TYPE_ENCRYPTED != 0 {
+            return Err(Error::Unimplemented(
+                "CIA boot content uses outer AES-CBC encryption; use load_cia_with_keys with caller-supplied ticket keys",
+            ));
+        }
+
+        let ncch = archive
+            .open_verified_ncch_content_reader(boot_content_index)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("could not verify CIA boot content: {error}"),
+                ))
+            })?
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CIA boot content is not selected by its content-index bitmap",
+                ))
+            })?;
+
+        if ncch.header().program_id != title_id {
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "CIA TMD title ID {title_id:#018x} does not match NCCH program ID {:#018x}",
+                    ncch.header().program_id
+                ),
+            )));
+        }
+
+        let address_space = ncch
+            .load_arm11_address_space(menu_info_key, content_key)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("could not prepare ARM11 process from CIA NCCH: {error}"),
+                ))
+            })?;
+        let mut session = Arm11ProcessSession::from_address_space(address_space);
+
+        self.reset_gpu_linear_memory();
+        session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        self.cpu = session.core().clone();
+        self.image = Some(ImageFormat::Cia);
+        self.ncsd_session = Some(session);
+        self.gsp_service = GspServiceRegistry::new();
+        self.pending_gsp_acquires.clear();
+        Ok(ImageFormat::Cia)
+    }
+
+    /// Opens and launches a clear-content CIA using caller-supplied NCCH keys.
+    pub fn load_cia_file_with_ncch_keys(
+        &mut self,
+        path: &Path,
+        menu_info_key: [u8; AES_BLOCK_SIZE],
+        content_key: [u8; AES_BLOCK_SIZE],
+    ) -> Result<ImageFormat> {
+        if loader::identify_file(path)? != ImageFormat::Cia {
+            return Err(Error::UnsupportedFormat);
+        }
+
+        self.load_cia_with_ncch_keys(File::open(path)?, menu_info_key, content_key)
     }
 
     /// Loads the boot NCCH from an encrypted CIA using caller-supplied keys.
@@ -5184,6 +5280,88 @@ mod tests {
         cia[content_offset..content_offset + CONTENT_SIZE].copy_from_slice(&encrypted_content);
 
         (cia, NORMAL_KEY, MENU_INFO_KEY, CONTENT_KEY)
+    }
+
+    fn clear_outer_encrypted_ncch_cia_fixture() -> (Vec<u8>, [u8; 16], [u8; 16]) {
+        const TICKET_SIZE: usize = 0x350;
+        const TMD_SIZE: usize = 0xB34;
+        const CONTENT_SIZE: usize = 0x8000;
+
+        // Reuse the fixture's internally encrypted NCCH, then remove only its
+        // outer CIA AES-CBC layer to model a clear CIA containing encrypted NCCH.
+        let (mut cia, _, menu_info_key, content_key) = encrypted_cia_archive_fixture(true);
+        let tmd_offset = (0x2040 + TICKET_SIZE + 0x3F) & !0x3F;
+        let content_offset = (tmd_offset + TMD_SIZE + 0x3F) & !0x3F;
+        let tmd_body = tmd_offset + 0x140;
+        let info_table_start = tmd_body + 0xC4;
+        let content_records_start = info_table_start + 64 * 0x24;
+
+        let encrypted_bytes = cia[content_offset..content_offset + CONTENT_SIZE].to_vec();
+        let mut decrypted = crate::loader::cia::Aes128CbcReader::new_seekable(
+            std::io::Cursor::new(encrypted_bytes),
+            [0x82; AES_BLOCK_SIZE],
+            crate::loader::cia::cia_content_iv(0),
+            CONTENT_SIZE as u64,
+        )
+        .unwrap();
+        let mut clear_content = Vec::new();
+        decrypted.read_to_end(&mut clear_content).unwrap();
+        assert_eq!(clear_content.len(), CONTENT_SIZE);
+        cia[content_offset..content_offset + CONTENT_SIZE].copy_from_slice(&clear_content);
+
+        // The content record's SHA-256 already describes this clear outer
+        // content. Change its encryption flag and refresh the TMD table hashes.
+        let mut content_record = [0u8; 0x30];
+        content_record
+            .copy_from_slice(&cia[content_records_start..content_records_start + 0x30]);
+        content_record[0x06..0x08].copy_from_slice(&0u16.to_be_bytes());
+        cia[content_records_start..content_records_start + content_record.len()]
+            .copy_from_slice(&content_record);
+
+        let mut info_table = cia[info_table_start..content_records_start].to_vec();
+        info_table[0x04..0x24].copy_from_slice(&sha256_digest(&content_record));
+        cia[info_table_start..content_records_start].copy_from_slice(&info_table);
+        cia[tmd_body + 0xA4..tmd_body + 0xC4].copy_from_slice(&sha256_digest(&info_table));
+
+        (cia, menu_info_key, content_key)
+    }
+
+    #[test]
+    fn loads_clear_cia_with_encrypted_ncch_boot_content_using_ncch_keys() {
+        let (cia, menu_info_key, content_key) = clear_outer_encrypted_ncch_cia_fixture();
+        let mut system = System::new();
+
+        let result = system.load_cia_with_ncch_keys(
+            std::io::Cursor::new(cia),
+            menu_info_key,
+            content_key,
+        );
+
+        assert_eq!(result.unwrap(), ImageFormat::Cia);
+        assert_eq!(system.image(), Some(ImageFormat::Cia));
+        assert_eq!(system.cpu().pc(), 0x0010_0000);
+
+        let report = system.run_instructions(2).unwrap();
+        assert_eq!(report.instructions_executed, 2);
+        assert_eq!(system.cpu().regs[0], 7);
+        assert_eq!(system.cpu().regs[1], 5);
+    }
+
+    #[test]
+    fn clear_ncch_key_path_rejects_outer_encrypted_cia_without_replacing_process() {
+        let (cia, _, _, _) = encrypted_cia_archive_fixture(false);
+        let mut system = System::new();
+
+        let error = system
+            .load_cia_with_ncch_keys(
+                std::io::Cursor::new(cia),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, Error::Unimplemented(_)));
+        assert_eq!(system.image(), None);
     }
 
     #[test]
