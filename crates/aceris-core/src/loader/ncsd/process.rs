@@ -2664,16 +2664,22 @@ impl Arm11CodeAddressSpace {
             .get(&(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1)))
             .copied()
             .unwrap_or(0);
-        let physical_version = match (self.locate(address), self.gpu_memory.as_ref()) {
-            (
-                Some(MemoryLocation::Physical {
-                    address: physical, ..
-                }),
-                Some(memory),
-            ) => memory.exclusive_version(physical),
-            _ => 0,
+        let backing_version = match self.locate(address) {
+            Some(MemoryLocation::Physical { address: physical, .. }) => self
+                .gpu_memory
+                .as_ref()
+                .map_or(0, |memory| memory.exclusive_version(physical)),
+            Some(MemoryLocation::Shared { index, offset }) => self
+                .shared_regions
+                .get(index)
+                .map_or(0, |region| region.backing.exclusive_version(offset)),
+            Some(MemoryLocation::Dynamic { index, offset }) => self
+                .dynamic_regions
+                .get(index)
+                .map_or(0, |region| region.backing.backing_handle().exclusive_version(offset)),
+            Some(MemoryLocation::Static { .. }) | None => 0,
         };
-        virtual_version.wrapping_add(physical_version)
+        virtual_version.wrapping_add(backing_version)
     }
 
     fn invalidate_exclusive_range(&mut self, address: u32, size: usize) {
@@ -2707,40 +2713,20 @@ impl Bus for Arm11CodeAddressSpace {
         let location = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
-        match location {
-            MemoryLocation::Dynamic { index, offset } => self.dynamic_regions[index]
-                .backing
-                .read_byte(offset)
-                .ok_or(Error::InvalidAccess { addr: address }),
-            MemoryLocation::Shared { index, offset } => {
-                let region = &self.shared_regions[index];
-                if region.permissions & 1 == 0 {
-                    return Err(Error::InvalidAccess { addr: address });
-                }
-                region
-                    .backing
-                    .read_byte(offset)
-                    .ok_or(Error::InvalidAccess { addr: address })
+        if !self.location_is_readable(location) {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+        let (key, target, offset) = self
+            .cache_location(location)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        match policy {
+            CachePolicy::NonCacheable => self.read_ordered_byte(&target, offset),
+            CachePolicy::NormalNonCacheable => {
+                self.read_normal_buffered_byte(&target, key, offset)
             }
-            MemoryLocation::Physical {
-                address: physical_address,
-                ..
-            } => match policy {
-                CachePolicy::NonCacheable => self.read_ordered_physical_byte(physical_address),
-                CachePolicy::NormalNonCacheable => {
-                    self.read_normal_buffered_physical_byte(physical_address)
-                }
-                CachePolicy::WriteThrough
-                | CachePolicy::WriteBack
-                | CachePolicy::WriteBackNoAllocate => {
-                    self.read_cached_physical_byte(physical_address)
-                }
-            },
-            MemoryLocation::Static { offset, .. } => self
-                .bytes_for_location(location)
-                .get(offset)
-                .copied()
-                .ok_or(Error::InvalidAccess { addr: address }),
+            CachePolicy::WriteThrough
+            | CachePolicy::WriteBack
+            | CachePolicy::WriteBackNoAllocate => self.read_cached_byte(&target, key, offset),
         }
     }
 
