@@ -1476,10 +1476,13 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 - `a02aecc` — testa os SVCs Store (0x53) e Invalidate (0x52), além da rejeição do pseudo-handle errado.
 - `dd40e16` — estende o teste SVC para verificar também que Invalidate descarta dirty data sem fazer writeback.
 - `d7fd2d4`, `d6701fb` — atualizam arquitetura e roadmap para a geometria bounded do cache.
+- `5435a7d` — adiciona teste de capacidade total: ocupa os 128 conjuntos com quatro linhas dirty cada, confirma 512 linhas residentes e verifica writeback quando a 513ª linha colide com o conjunto zero.
+- `0d48007` — ajusta a fixture de capacidade para reservar FCRAM em múltiplos de página (0x5000), sem reduzir os 0x4020 bytes efetivamente exercitados.
+- `10d6caa`, `12ab466` — documentam a capacidade de 512 linhas e corrigem o roadmap: `FlushCacheRegions` já executa writeback+invalidação nas faixas FCRAM mapeadas.
 
 ### Contrato atual
 
-- Geometria do D-cache modelado: 16 KiB, 4 vias, 128 conjuntos e linha de 32 bytes. Os campos DSize do CTR ARM11 documentam 16 KiB, 4 vias e 8 words por linha; Aceris usa LRU aproximado como política de substituição do software model.
+- Geometria do D-cache modelado: 16 KiB, 4 vias, 128 conjuntos, 32 bytes por linha e 512 slots no total. Os campos DSize do CTR ARM11 documentam 16 KiB, 4 vias e 8 words por linha; Aceris usa LRU aproximado como política de substituição do software model.
 - A chave é o endereço físico alinhado, de modo que aliases virtuais para a mesma linha compartilham o estado dentro da sessão. Em colisão de conjunto, a vítima menos recentemente usada é removida; se dirty, seus 32 bytes são escritos de volta antes de reutilizar a via.
 - O cache é write-back: CPU store deixa a linha dirty; CPU load da mesma linha observa o valor local.
 - StoreProcessDataCache limpa dirty lines e mantém as linhas residentes. InvalidateProcessDataCache remove as linhas sem writeback. FlushProcessDataCache faz writeback e remove as linhas.
@@ -1491,7 +1494,7 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 ### Limites e validação pendente
 
 - O modelo cobre os aliases lineares físicos tratados como cacheáveis pelo caminho atual. Regiões estáticas, heap host-side e shared memory sem PA observável ainda não têm linhas cacheadas próprias; atributos ARM C/B/S e a seleção de memória Normal/Device precisam ser ligados ao cache.
-- A associatividade e capacidade declaradas (16 KiB, 4-way, 32 bytes) são representadas; a política LRU é apenas aproximação de replacement de hardware. Latência, prefetch, write buffer, barreiras e concorrência/coerência multicore não estão modelados.
+- A associatividade e capacidade declaradas (16 KiB, 4-way, 32 bytes) são representadas; regressões verificam ocupação simultânea dos 512 slots e writeback de vítima dirty na colisão seguinte. Um segundo teste cruza o limite entre duas linhas, confirma que faixa inválida não provoca writeback/evicção parcial e verifica o flush válido das duas linhas. A política LRU é apenas aproximação de replacement de hardware. Latência, prefetch, write buffer, barreiras e concorrência/coerência multicore não estão modelados.
 - Invalidate de uma linha dirty descarta deliberadamente os dados não escritos, conforme a semântica de invalidação sem clean.
 - Os testes foram adicionados/atualizados, mas não executados nesta sessão: o ambiente não possui `cargo`, `rustc` ou `rustfmt`. Confirme CI de `main` para fmt, build, Clippy, testes Linux/Windows/macOS e Android ARM64 antes de considerar a etapa aprovada.
 
