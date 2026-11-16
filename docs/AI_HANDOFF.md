@@ -1572,3 +1572,12 @@ O teste `gsp_gx_request_dma_cache_coherence_uses_physical_identity_across_aliase
 
 A nova asserção integra a suíte; a validação completa continua dependente da CI de `main`. Não há concorrência real nem snooping automático neste teste.
 
+## CI confirmado — aliases FCRAM e FlushCacheRegions (16/11/2026)
+
+A execução [43947785182](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43947785182), para o commit `e6a000a65d26de7bc554ea1085b10216de469b0c`, terminou com sucesso em toda a matriz:
+
+- Linux, Windows e macOS: `cargo fmt --all --check`, `cargo build --locked --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` aprovados.
+- Android `arm64-v8a`: `cargo ndk -t arm64-v8a build -p aceris-android --release` aprovado.
+
+Essa execução cobre a regressão de coerência por aliases FCRAM e o teste que comprova clean+invalidate em `FlushCacheRegions`. Ela não inclui as alterações posteriores de `ProcessCommandList` (commit `73d3bf2`) nem a asserção adicional de invalidação da origem `RequestDMA` (commit `4890e91`); estas permanecem dependentes da CI mais recente.
+
