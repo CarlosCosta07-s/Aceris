@@ -13,7 +13,7 @@ use crate::gpu::{
     TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
     execute_display_transfer, execute_texture_copy,
 };
-use crate::loader::cia::{tmd::CONTENT_TYPE_ENCRYPTED, CiaArchiveReader, TicketCommonKeyStore};
+use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore, tmd::CONTENT_TYPE_ENCRYPTED};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::gsp_service::{
     GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE, GspClientUnregistration,
@@ -358,12 +358,14 @@ impl System {
         })?;
         let title_id = archive.title_metadata().title_id;
         let boot_content_index = archive.title_metadata().boot_content_index;
-        let location = archive.content_location(boot_content_index).ok_or_else(|| {
-            Error::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "CIA boot content is not selected by its content-index bitmap",
-            ))
-        })?;
+        let location = archive
+            .content_location(boot_content_index)
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CIA boot content is not selected by its content-index bitmap",
+                ))
+            })?;
 
         if location.content_type & CONTENT_TYPE_ENCRYPTED != 0 {
             return Err(Error::Unimplemented(
@@ -5312,8 +5314,7 @@ mod tests {
         // The content record's SHA-256 already describes this clear outer
         // content. Change its encryption flag and refresh the TMD table hashes.
         let mut content_record = [0u8; 0x30];
-        content_record
-            .copy_from_slice(&cia[content_records_start..content_records_start + 0x30]);
+        content_record.copy_from_slice(&cia[content_records_start..content_records_start + 0x30]);
         content_record[0x06..0x08].copy_from_slice(&0u16.to_be_bytes());
         cia[content_records_start..content_records_start + content_record.len()]
             .copy_from_slice(&content_record);
@@ -5331,11 +5332,8 @@ mod tests {
         let (cia, menu_info_key, content_key) = clear_outer_encrypted_ncch_cia_fixture();
         let mut system = System::new();
 
-        let result = system.load_cia_with_ncch_keys(
-            std::io::Cursor::new(cia),
-            menu_info_key,
-            content_key,
-        );
+        let result =
+            system.load_cia_with_ncch_keys(std::io::Cursor::new(cia), menu_info_key, content_key);
 
         assert_eq!(result.unwrap(), ImageFormat::Cia);
         assert_eq!(system.image(), Some(ImageFormat::Cia));
