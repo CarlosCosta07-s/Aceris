@@ -2932,7 +2932,9 @@ mod tests {
         address_space.write8(old_virtual_base, 0xAB).unwrap();
         assert_eq!(address_space.read8(new_virtual_base).unwrap(), 0xAB);
         assert_eq!(address_space.data_cache_line_count(), 1);
-        assert_eq!(memory.read_u8(physical_base).unwrap(), 0);
+        let mut backing_byte = [0xFF; 1];
+        memory.read(physical_base, &mut backing_byte).unwrap();
+        assert_eq!(backing_byte, [0]);
 
         // Cache maintenance through the new alias cleans the line created via the old alias.
         assert_eq!(
@@ -2941,7 +2943,8 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert_eq!(memory.read_u8(physical_base).unwrap(), 0xAB);
+        memory.read(physical_base, &mut backing_byte).unwrap();
+        assert_eq!(backing_byte, [0xAB]);
 
         // A device-side write remains stale in both CPU aliases until invalidation.
         memory.write(physical_base, &[0xCD]).unwrap();
