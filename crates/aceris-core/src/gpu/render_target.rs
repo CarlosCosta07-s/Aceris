@@ -57,10 +57,7 @@ impl PicaColorBufferFormat {
             (0, 2) => Ok(Self::Rgb5A1),
             (0, 3) => Ok(Self::Rgb565),
             (0, 4) => Ok(Self::Rgba4),
-            _ => Err(PicaRenderTargetError::UnsupportedColorFormat {
-                pixel_size,
-                format,
-            }),
+            _ => Err(PicaRenderTargetError::UnsupportedColorFormat { pixel_size, format }),
         }
     }
 }
@@ -164,8 +161,7 @@ impl PicaRenderTargetConfig {
         for y in 0..self.height as usize {
             for x in 0..self.width as usize {
                 let source_offset = (y * self.width as usize + x) * 4;
-                let destination_offset =
-                    tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
+                let destination_offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
                 self.format.encode_pixel(
                     [
                         source[source_offset],
@@ -207,10 +203,7 @@ impl PicaRenderTargetConfig {
     }
 
     /// Reads and untile-decodes the color target into tightly packed RGBA8.
-    pub fn read_rgba8(
-        self,
-        memory: &GpuPhysicalMemory,
-    ) -> Result<Vec<u8>, PicaRenderTargetError> {
+    pub fn read_rgba8(self, memory: &GpuPhysicalMemory) -> Result<Vec<u8>, PicaRenderTargetError> {
         self.ensure_supported_block_mode()?;
         let storage_size = self.tiled_storage_size()?;
         memory.validate_range(self.color_buffer_address, storage_size)?;
@@ -236,12 +229,11 @@ impl PicaRenderTargetConfig {
         let bytes_per_pixel = self.format.bytes_per_pixel();
         for y in 0..self.height as usize {
             for x in 0..self.width as usize {
-                let source_offset =
-                    tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
+                let source_offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
                 let destination_offset = (y * self.width as usize + x) * 4;
-                let pixel = self.format.decode_pixel(
-                    &tiled[source_offset..source_offset + bytes_per_pixel],
-                );
+                let pixel = self
+                    .format
+                    .decode_pixel(&tiled[source_offset..source_offset + bytes_per_pixel]);
                 rgba[destination_offset..destination_offset + 4].copy_from_slice(&pixel);
             }
         }
@@ -252,8 +244,7 @@ impl PicaRenderTargetConfig {
         self,
         rasterizer: &SoftwareRasterizer,
     ) -> Result<(), PicaRenderTargetError> {
-        if rasterizer.width() != self.width as usize
-            || rasterizer.height() != self.height as usize
+        if rasterizer.width() != self.width as usize || rasterizer.height() != self.height as usize
         {
             return Err(PicaRenderTargetError::RasterizerDimensionsMismatch {
                 target_width: self.width,
@@ -267,9 +258,7 @@ impl PicaRenderTargetConfig {
 
     fn ensure_supported_block_mode(self) -> Result<(), PicaRenderTargetError> {
         if self.block_mode != PicaRenderBlockMode::Blocks8x8 {
-            return Err(PicaRenderTargetError::UnsupportedBlockMode {
-                value: 32,
-            });
+            return Err(PicaRenderTargetError::UnsupportedBlockMode { value: 32 });
         }
         Ok(())
     }
@@ -277,9 +266,7 @@ impl PicaRenderTargetConfig {
 
 impl Pica200 {
     /// Decodes the live color render-target configuration.
-    pub fn render_target_config(
-        &self,
-    ) -> Result<PicaRenderTargetConfig, PicaRenderTargetError> {
+    pub fn render_target_config(&self) -> Result<PicaRenderTargetConfig, PicaRenderTargetError> {
         let read = |register| {
             self.register(register)
                 .ok_or(PicaRenderTargetError::MissingRegister { register })
@@ -722,7 +709,9 @@ mod tests {
             Err(PicaRenderTargetError::RasterizerDimensionsMismatch { .. })
         ));
         let mut bytes = [0xA5; 4];
-        memory.read(target.color_buffer_address, &mut bytes).unwrap();
+        memory
+            .read(target.color_buffer_address, &mut bytes)
+            .unwrap();
         assert_eq!(bytes, [0; 4]);
     }
 }
