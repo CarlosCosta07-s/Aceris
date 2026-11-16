@@ -1,9 +1,9 @@
 //! GSP GX shared-memory command queue decoding.
 //!
 //! This module models the documented queue header and the 15-entry ring.
-//! The system dispatcher consumes ProcessCommandList and MemoryFill entries
-//! through the guest TriggerCmdReqQueue path. Other GX command families,
-//! busy arbitration and cache maintenance remain incomplete.
+//! The system dispatcher consumes RequestDMA, ProcessCommandList, MemoryFill,
+//! DisplayTransfer and TextureCopy entries through the guest TriggerCmdReqQueue
+//! path. Busy arbitration and cache maintenance remain incomplete.
 
 use std::fmt;
 
