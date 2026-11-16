@@ -1561,3 +1561,14 @@ A regressão foi adicionada, mas aguarda Rustfmt, Clippy, `cargo test --workspac
 **Limites preservados:** a alteração ficou em testes de integração `system.rs` e documentação. Nenhum módulo de CPU/Thumb ou draw/shader reservado ao Claude foi tocado.
 
 A CI de `ProcessCommandList` no commit `73d3bf2` detectou somente uma divergência Rustfmt em uma chamada de escrita. O ajuste de estilo foi publicado em `5ccfe18`; a CI deste HEAD precisa confirmar a validação completa antes de marcar o teste como aprovado.
+
+## RequestDMA — assert de clean+invalidate da origem (16/11/2026)
+
+O teste `gsp_gx_request_dma_cache_coherence_uses_physical_identity_across_aliases` foi ampliado no commit `4890e91`:
+
+- Após `RequestDMA` com `flush_source=1`, verifica que a linha dirty da origem foi removida da D-cache.
+- Confirma que a linha clean do destino continua residente e stale através dos dois aliases até `InvalidateProcessDataCache`.
+- Confirma que a invalidação pelo alias novo remove a linha física compartilhada e que as duas VAs passam a observar o destino DMA atualizado.
+
+A nova asserção integra a suíte; a validação completa continua dependente da CI de `main`. Não há concorrência real nem snooping automático neste teste.
+
