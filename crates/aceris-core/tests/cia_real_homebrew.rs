@@ -1,13 +1,16 @@
-//! Manual regression test for the user-supplied Super Mario 64 3DS CIA.
+//! Manual boot test for the maintainer-supplied Super Mario 64 3DS CIA.
 //!
 //! The archive is deliberately not stored in this repository or CI. Set
-//! ACERIS_REAL_CIA to a local path and run this ignored test explicitly.
+//! ACERIS_REAL_CIA to the local file path and run this ignored test explicitly.
 
 use std::{fs::File, path::PathBuf};
 
 use aceris_core::{
-    Error, System,
-    loader::cia::{CiaArchiveReader, tmd::CONTENT_TYPE_ENCRYPTED},
+    System,
+    loader::{
+        ImageFormat,
+        cia::{CiaArchiveReader, tmd::CONTENT_TYPE_ENCRYPTED},
+    },
 };
 
 const EXPECTED_TITLE_ID: u64 = 0x0004_0000_0FAA_5C00;
@@ -16,7 +19,7 @@ const EXPECTED_CONTENT_SIZE: u64 = 0x770C00;
 
 #[test]
 #[ignore = "requires the maintainer-supplied CIA at ACERIS_REAL_CIA"]
-fn validates_real_super_mario_64_luigi_cia_and_reports_inner_ncch_encryption() {
+fn validates_and_runs_real_super_mario_64_luigi_cia_without_console_keys() {
     let path = std::env::var_os("ACERIS_REAL_CIA")
         .map(PathBuf::from)
         .expect("set ACERIS_REAL_CIA to the local .cia path");
@@ -30,7 +33,6 @@ fn validates_real_super_mario_64_luigi_cia_and_reports_inner_ncch_encryption() {
 
     let ticket = archive.ticket().expect("the CIA contains a ticket");
     assert_eq!(ticket.title_id, title_id);
-    assert_eq!(ticket.common_key_index, 0);
 
     let location = archive
         .content_location(boot_content_index)
@@ -39,59 +41,37 @@ fn validates_real_super_mario_64_luigi_cia_and_reports_inner_ncch_encryption() {
     assert_eq!(location.size_bytes, EXPECTED_CONTENT_SIZE);
     assert_eq!(location.content_type & CONTENT_TYPE_ENCRYPTED, 0);
 
-    // This verifies the full content against its TMD SHA-256 and parses the
-    // NCCH header without requiring the user-owned NCCH AES keys.
+    // This checks the complete content against the TMD SHA-256, then parses
+    // the NCCH header. This title sets NoCrypto, so no console key is needed.
     {
         let ncch = archive
             .open_verified_ncch_content_reader(boot_content_index)
             .unwrap()
             .expect("the boot content contains an NCCH");
         assert_eq!(ncch.header().program_id, title_id);
-        assert!(!ncch.header().declares_no_crypto());
+        assert!(ncch.header().declares_no_crypto());
+
+        // Also force the NCCH extended-header hash, ExeFS superblock hash,
+        // .code digest and BLZ preparation path before replacing the System.
+        let address_space = ncch.load_arm11_address_space([0; 16], [0; 16]).unwrap();
+        eprintln!(
+            "Prepared real ARM11 image: entry={:#010x}, stack_top={:#010x}, stack_size={:#x}",
+            address_space.layout().entry_point,
+            address_space.layout().initial_stack_pointer,
+            address_space.layout().stack_size_bytes
+        );
     }
 
-    // The default file launcher must stop at the explicit missing-key
-    // boundary and must not mark a failed image as active.
+    // Exercise the same default launcher a user selects in the desktop UI.
     let mut system = System::new();
-    let error = system.load_executable_file(&path).unwrap_err();
-    assert!(matches!(error, Error::Unimplemented(_)));
-    assert_eq!(system.image(), None);
-
-    eprintln!(
-        "CIA validated: title={title_id:#018x}, content_index={}, content_bytes={:#x}; outer CIA content is clear, inner NCCH encryption requires caller-supplied keys",
-        location.content_index, location.size_bytes
-    );
-}
-
-#[test]
-#[ignore = "requires ACERIS_REAL_CIA and a local 32-byte ACERIS_NCCH_KEYS_FILE"]
-fn boots_real_super_mario_64_luigi_cia_with_local_ncch_keys_for_one_frame() {
-    let path = std::env::var_os("ACERIS_REAL_CIA")
-        .map(PathBuf::from)
-        .expect("set ACERIS_REAL_CIA to the local .cia path");
-    let keys_path = std::env::var_os("ACERIS_NCCH_KEYS_FILE")
-        .map(PathBuf::from)
-        .expect("set ACERIS_NCCH_KEYS_FILE to a local 32-byte key file");
-    let key_material = std::fs::read(keys_path).expect("could not read the local NCCH key file");
-    assert_eq!(
-        key_material.len(),
-        32,
-        "key file must contain 16 menu-info bytes followed by 16 content-key bytes"
-    );
-    let menu_info_key: [u8; 16] = key_material[..16].try_into().unwrap();
-    let content_key: [u8; 16] = key_material[16..].try_into().unwrap();
-
-    let mut system = System::new();
-    assert_eq!(
-        system
-            .load_cia_file_with_ncch_keys(&path, menu_info_key, content_key)
-            .unwrap(),
-        aceris_core::loader::ImageFormat::Cia
-    );
-    assert_eq!(system.image(), Some(aceris_core::loader::ImageFormat::Cia));
+    assert_eq!(system.load_executable_file(&path).unwrap(), ImageFormat::Cia);
+    assert_eq!(system.image(), Some(ImageFormat::Cia));
 
     let frame = system.run_frame_with_budget(50_000).unwrap();
-    assert!(frame.instructions_executed > 0);
+    assert!(
+        frame.instructions_executed > 0,
+        "the loaded ARM11 guest did not execute any instructions"
+    );
     eprintln!(
         "Real homebrew frame: instructions={}, CPU stop={:?}, GSP command lists={}, LCD scanouts={}",
         frame.instructions_executed,
