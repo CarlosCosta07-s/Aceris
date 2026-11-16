@@ -41,13 +41,14 @@ fn validates_real_super_mario_64_luigi_cia_and_reports_inner_ncch_encryption() {
 
     // This verifies the full content against its TMD SHA-256 and parses the
     // NCCH header without requiring the user-owned NCCH AES keys.
-    let ncch = archive
-        .open_verified_ncch_content_reader(boot_content_index)
-        .unwrap()
-        .expect("the boot content contains an NCCH");
-    assert_eq!(ncch.header().program_id, title_id);
-    assert!(!ncch.header().declares_no_crypto());
-    drop(ncch);
+    {
+        let ncch = archive
+            .open_verified_ncch_content_reader(boot_content_index)
+            .unwrap()
+            .expect("the boot content contains an NCCH");
+        assert_eq!(ncch.header().program_id, title_id);
+        assert!(!ncch.header().declares_no_crypto());
+    }
 
     // The default file launcher must stop at the explicit missing-key
     // boundary and must not mark a failed image as active.
