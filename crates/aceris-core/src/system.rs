@@ -4064,10 +4064,7 @@ mod tests {
         // back. A later device-side update must be visible on the next load.
         system
             .physical_memory_mut()
-            .write(
-                command_list_physical_base,
-                &0xCAFE_BABEu32.to_le_bytes(),
-            )
+            .write(command_list_physical_base, &0xCAFE_BABEu32.to_le_bytes())
             .unwrap();
         assert_eq!(
             system
