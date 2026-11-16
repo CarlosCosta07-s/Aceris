@@ -3924,13 +3924,24 @@ mod tests {
 
         assert_eq!(translated, vec![(0, destination_physical_base)]);
         assert_eq!(
+            destination.read_memory_u32(0x1400_1000).unwrap(),
+            physical_base + 0x100
+        );
+        assert_eq!(destination.read_memory_u32(0x1400_1004).unwrap(), 0x40);
+
+        // The receiver's CPU writes are write-back cached until it stores the range.
+        assert_eq!(memory.read_u32(destination_physical_base).unwrap(), 0);
+        assert_eq!(
+            destination
+                .store_process_data_cache(0x1400_1000, 8)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
             memory.read_u32(destination_physical_base).unwrap(),
             physical_base + 0x100
         );
-        assert_eq!(
-            memory.read_u32(destination_physical_base + 4).unwrap(),
-            0x40
-        );
+        assert_eq!(memory.read_u32(destination_physical_base + 4).unwrap(), 0x40);
     }
 
     #[test]
