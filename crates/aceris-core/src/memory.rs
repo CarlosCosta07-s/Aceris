@@ -11,11 +11,16 @@ pub const EXCLUSIVE_RESERVATION_GRANULE: u32 = 8;
 
 /// Effective data-side cache policy selected by the ARM11 MMU.
 ///
-/// The emulator currently models the inner data cache. Outer-cache attributes
-/// remain available in the MMU translation result but have no separate device.
+/// The emulator currently models the inner data cache and the ordering of
+/// buffered Normal-memory stores. Device and Strongly Ordered accesses bypass
+/// the write buffer; Normal non-cacheable accesses bypass the cache but remain
+/// eligible for write buffering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CachePolicy {
+    /// Device, Strongly Ordered, or otherwise non-bufferable memory.
     NonCacheable,
+    /// Normal memory without D-cache allocation but with buffered stores.
+    NormalNonCacheable,
     WriteThrough,
     WriteBack,
     WriteBackNoAllocate,
