@@ -23,7 +23,7 @@
 use super::arm::{bit, bits};
 use super::cp15::TlbMaintenance;
 use super::{ARM_INSTRUCTION_SIZE, Arm11Core, PC, StepEvent, THUMB_INSTRUCTION_SIZE};
-use crate::memory::Bus;
+use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +53,7 @@ pub(super) struct Params {
     pub sctlr_s: bool,
     pub sctlr_r: bool,
     pub tre: bool,
+    pub data_cache_enabled: bool,
     pub primary_remap: u32,
     pub normal_remap: u32,
     pub tlb_preserve: bool,
@@ -95,6 +96,21 @@ pub(super) struct MemoryAttributes {
 }
 
 impl MemoryAttributes {
+    /// Resolves the inner ARM11 D-cache behavior from the effective memory
+    /// attributes. NMRR encodings are 00 non-cacheable, 01 write-back,
+    /// 10 write-through and 11 write-back (no write allocate).
+    fn data_cache_policy(self, enabled: bool) -> CachePolicy {
+        if !enabled || self.memory_type != MemoryType::Normal {
+            return CachePolicy::NonCacheable;
+        }
+        match self.inner {
+            0 => CachePolicy::NonCacheable,
+            2 => CachePolicy::WriteThrough,
+            1 | 3 => CachePolicy::WriteBack,
+            _ => CachePolicy::NonCacheable,
+        }
+    }
+
     fn strongly_ordered() -> Self {
         Self {
             memory_type: MemoryType::StronglyOrdered,
@@ -895,29 +911,46 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
     }
 
     fn read8(&mut self, addr: u32) -> Result<u8> {
-        let physical = self.map(addr, Access::Read)?;
-        self.inner.read8(physical)
+        let (physical, attributes) = self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
+        self.inner.read8_with_cache_policy(
+            physical,
+            attributes.data_cache_policy(self.params.data_cache_enabled),
+        )
     }
 
     fn write8(&mut self, addr: u32, value: u8) -> Result<()> {
-        let physical = self.map(addr, Access::Write)?;
-        self.inner.write8(physical, value)
+        let (physical, attributes) = self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
+        self.inner.write8_with_cache_policy(
+            physical,
+            value,
+            attributes.data_cache_policy(self.params.data_cache_enabled),
+        )
     }
 
     fn read8_unprivileged(&mut self, addr: u32) -> Result<u8> {
-        let (physical, _) = self.map_with_privilege(addr, Access::Read, false)?;
-        self.inner.read8(physical)
+        let (physical, attributes) = self.map_with_privilege(addr, Access::Read, false)?;
+        self.inner.read8_with_cache_policy(
+            physical,
+            attributes.data_cache_policy(self.params.data_cache_enabled),
+        )
     }
 
     fn write8_unprivileged(&mut self, addr: u32, value: u8) -> Result<()> {
-        let (physical, _) = self.map_with_privilege(addr, Access::Write, false)?;
-        self.inner.write8(physical, value)
+        let (physical, attributes) = self.map_with_privilege(addr, Access::Write, false)?;
+        self.inner.write8_with_cache_policy(
+            physical,
+            value,
+            attributes.data_cache_policy(self.params.data_cache_enabled),
+        )
     }
 
     fn read32_unprivileged(&mut self, addr: u32) -> Result<u32> {
         if addr & 0xFFF <= 0xFFC {
-            let (physical, _) = self.map_with_privilege(addr, Access::Read, false)?;
-            return self.inner.read32(physical);
+            let (physical, attributes) = self.map_with_privilege(addr, Access::Read, false)?;
+            return self.inner.read32_with_cache_policy(
+                physical,
+                attributes.data_cache_policy(self.params.data_cache_enabled),
+            );
         }
         let mut bytes = [0u8; 4];
         for (index, byte) in bytes.iter_mut().enumerate() {
@@ -928,8 +961,12 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn write32_unprivileged(&mut self, addr: u32, value: u32) -> Result<()> {
         if addr & 0xFFF <= 0xFFC {
-            let (physical, _) = self.map_with_privilege(addr, Access::Write, false)?;
-            return self.inner.write32(physical, value);
+            let (physical, attributes) = self.map_with_privilege(addr, Access::Write, false)?;
+            return self.inner.write32_with_cache_policy(
+                physical,
+                value,
+                attributes.data_cache_policy(self.params.data_cache_enabled),
+            );
         }
         for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
             self.write8_unprivileged(addr.wrapping_add(index as u32), byte)?;
@@ -939,8 +976,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn read16(&mut self, addr: u32) -> Result<u16> {
         if addr & 0xFFF <= 0xFFE {
-            let physical = self.map(addr, Access::Read)?;
-            return self.inner.read16(physical);
+            let (physical, attributes) = self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
+            return self.inner.read16_with_cache_policy(
+                physical,
+                attributes.data_cache_policy(self.params.data_cache_enabled),
+            );
         }
         let lo = self.read8(addr)?;
         let hi = self.read8(addr.wrapping_add(1))?;
@@ -949,8 +989,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn read32(&mut self, addr: u32) -> Result<u32> {
         if addr & 0xFFF <= 0xFFC {
-            let physical = self.map(addr, Access::Read)?;
-            return self.inner.read32(physical);
+            let (physical, attributes) = self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
+            return self.inner.read32_with_cache_policy(
+                physical,
+                attributes.data_cache_policy(self.params.data_cache_enabled),
+            );
         }
         let mut bytes = [0u8; 4];
         for (i, byte) in bytes.iter_mut().enumerate() {
@@ -961,8 +1004,12 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn write16(&mut self, addr: u32, value: u16) -> Result<()> {
         if addr & 0xFFF <= 0xFFE {
-            let physical = self.map(addr, Access::Write)?;
-            return self.inner.write16(physical, value);
+            let (physical, attributes) = self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
+            return self.inner.write16_with_cache_policy(
+                physical,
+                value,
+                attributes.data_cache_policy(self.params.data_cache_enabled),
+            );
         }
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
             self.write8(addr.wrapping_add(i as u32), byte)?;
@@ -972,8 +1019,12 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<()> {
         if addr & 0xFFF <= 0xFFC {
-            let physical = self.map(addr, Access::Write)?;
-            return self.inner.write32(physical, value);
+            let (physical, attributes) = self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
+            return self.inner.write32_with_cache_policy(
+                physical,
+                value,
+                attributes.data_cache_policy(self.params.data_cache_enabled),
+            );
         }
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
             self.write8(addr.wrapping_add(i as u32), byte)?;
@@ -1020,6 +1071,7 @@ impl Arm11Core {
             sctlr_s: self.cp15.legacy_sctlr_s(),
             sctlr_r: self.cp15.legacy_sctlr_r(),
             tre: self.cp15.memory_region_remap_enabled(),
+            data_cache_enabled: self.cp15.sctlr() & (1 << 2) != 0,
             primary_remap: self.cp15.primary_memory_remap(),
             normal_remap: self.cp15.normal_memory_remap(),
             tlb_preserve: self.cp15.tlb_preserve(),
@@ -1083,6 +1135,7 @@ impl Arm11Core {
             sctlr_s: self.cp15.legacy_sctlr_s(),
             sctlr_r: self.cp15.legacy_sctlr_r(),
             tre: self.cp15.memory_region_remap_enabled(),
+            data_cache_enabled: self.cp15.sctlr() & (1 << 2) != 0,
             primary_remap: self.cp15.primary_memory_remap(),
             normal_remap: self.cp15.normal_memory_remap(),
             tlb_preserve: self.cp15.tlb_preserve(),
@@ -1193,6 +1246,7 @@ mod tests {
             sctlr_s: cpu.cp15.legacy_sctlr_s(),
             sctlr_r: cpu.cp15.legacy_sctlr_r(),
             tre: cpu.cp15.memory_region_remap_enabled(),
+            data_cache_enabled: cpu.cp15.sctlr() & (1 << 2) != 0,
             primary_remap: cpu.cp15.primary_memory_remap(),
             normal_remap: cpu.cp15.normal_memory_remap(),
             tlb_preserve: cpu.cp15.tlb_preserve(),
