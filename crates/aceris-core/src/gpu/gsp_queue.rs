@@ -562,10 +562,21 @@ mod tests {
             GSP_GX_COMMAND_TEXTURE_COPY,
             true,
             false,
-            [0x1400_1000, 0x1800_2000, 192, 0x0001_0002, 0x0000_0002, 0x0C, 0],
+            [
+                0x1400_1000,
+                0x1800_2000,
+                192,
+                0x0001_0002,
+                0x0000_0002,
+                0x0C,
+                0,
+            ],
         );
 
-        let command = GspGxCommandQueue::parse(&bytes).unwrap().next_command().unwrap();
+        let command = GspGxCommandQueue::parse(&bytes)
+            .unwrap()
+            .next_command()
+            .unwrap();
         assert_eq!(command.command_id, GSP_GX_COMMAND_TEXTURE_COPY);
         assert!(command.stop_after);
         assert_eq!(
