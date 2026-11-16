@@ -835,7 +835,7 @@ mod tests {
             ]
         };
         assert_eq!(pixel(9, 6), [200, 100, 50, 255]);
-        assert_eq!(pixel(13, 1), [0, 0, 0, 255]);
+        assert_eq!(pixel(13, 1), [0; 4]);
     }
 
     #[test]
