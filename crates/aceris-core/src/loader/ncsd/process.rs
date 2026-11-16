@@ -2145,7 +2145,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn write_uncached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
-        // A synchronous uncached store cannot pass older D-cache writebacks.
+        // Device/Strongly Ordered stores cannot pass older buffered Normal writes.
         self.drain_arm11_write_buffer()?;
         self.gpu_memory
             .as_mut()
@@ -3189,8 +3189,8 @@ mod tests {
         );
         assert_eq!(address_space.data_cache_line_count(), 1);
 
-        // Non-cacheable aliases bypass the resident D-cache line. The cached
-        // alias remains stale until software explicitly invalidates it.
+        // Device/Strongly Ordered aliases bypass the resident D-cache line.
+        // The cached Normal-memory alias remains stale until invalidated.
         memory.write(physical_base, &[0x22]).unwrap();
         assert_eq!(
             address_space
@@ -3210,18 +3210,19 @@ mod tests {
             .unwrap();
         assert_eq!(address_space.data_cache_line_count(), 0);
 
-        // Write-through stores reach physical memory immediately and do not
-        // allocate a line on a write miss.
+        // Write-through stores are buffered Normal-memory transactions and do
+        // not allocate a line on a write miss.
         address_space
             .write8_with_cache_policy(virtual_base, 0x33, CachePolicy::WriteThrough)
             .unwrap();
         let mut backing = [0u8; 1];
         memory.read(physical_base, &mut backing).unwrap();
-        assert_eq!(backing, [0x33]);
+        assert_eq!(backing, [0x22]);
         assert_eq!(address_space.data_cache_line_count(), 0);
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
 
-        // A write-through read may allocate a clean line; later stores update
-        // both that resident line and the physical backing.
+        // A write-through read may allocate a clean line and forwards pending
+        // stores; subsequent writes update that resident line and queue order.
         assert_eq!(
             address_space
                 .read8_with_cache_policy(physical_base, CachePolicy::WriteThrough)
@@ -3232,7 +3233,7 @@ mod tests {
             .write8_with_cache_policy(virtual_base, 0x44, CachePolicy::WriteThrough)
             .unwrap();
         memory.read(physical_base, &mut backing).unwrap();
-        assert_eq!(backing, [0x44]);
+        assert_eq!(backing, [0x22]);
         assert_eq!(
             address_space
                 .read8_with_cache_policy(physical_base, CachePolicy::WriteThrough)
@@ -3240,9 +3241,14 @@ mod tests {
             0x44
         );
         assert_eq!(address_space.data_cache_line_count(), 1);
+        assert_eq!(address_space.pending_write_buffer_entries(), 2);
+        address_space.data_memory_barrier().unwrap();
+        memory.read(physical_base, &mut backing).unwrap();
+        assert_eq!(backing, [0x44]);
+        assert_eq!(address_space.pending_write_buffer_entries(), 0);
 
-        // Write-back/no-write-allocate writes straight to backing on a miss,
-        // but a hit updates the resident line and remains dirty until cleaned.
+        // Write-back/no-write-allocate queues a store on a miss without
+        // allocating a line. A subsequent read forwards it into the cache.
         address_space
             .invalidate_data_cache_range(virtual_base, 1)
             .unwrap();
@@ -3250,8 +3256,9 @@ mod tests {
             .write8_with_cache_policy(virtual_base, 0x55, CachePolicy::WriteBackNoAllocate)
             .unwrap();
         memory.read(physical_base, &mut backing).unwrap();
-        assert_eq!(backing, [0x55]);
+        assert_eq!(backing, [0x44]);
         assert_eq!(address_space.data_cache_line_count(), 0);
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
 
         assert_eq!(
             address_space
@@ -3263,16 +3270,16 @@ mod tests {
             .write8_with_cache_policy(virtual_base, 0x66, CachePolicy::WriteBackNoAllocate)
             .unwrap();
         memory.read(physical_base, &mut backing).unwrap();
-        assert_eq!(backing, [0x55]);
+        assert_eq!(backing, [0x44]);
         assert_eq!(
             address_space
                 .store_data_cache_range(virtual_base, 1)
                 .unwrap(),
             1
         );
-        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        assert_eq!(address_space.pending_write_buffer_entries(), 2);
         memory.read(physical_base, &mut backing).unwrap();
-        assert_eq!(backing, [0x55]);
+        assert_eq!(backing, [0x44]);
         address_space.drain_arm11_write_buffer().unwrap();
         memory.read(physical_base, &mut backing).unwrap();
         assert_eq!(backing, [0x66]);
