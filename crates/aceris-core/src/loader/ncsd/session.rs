@@ -3952,6 +3952,9 @@ mod tests {
                 .unwrap(),
             1
         );
+        // The direct session helper enqueues a writeback; drain it before
+        // asserting visibility to the independent physical-memory observer.
+        destination.drain_write_buffer().unwrap();
         assert_eq!(
             memory.read_u32(destination_physical_base).unwrap(),
             physical_base + 0x100
@@ -4339,6 +4342,8 @@ mod tests {
         session
             .store_process_data_cache(virtual_base + 0x100, 4)
             .unwrap();
+        // The helper enqueues the writeback; drain it before the device reads.
+        session.drain_write_buffer().unwrap();
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0xCAFE_BABE);
 
         // An external DMA/GPU write does not snoop the resident CPU line.
