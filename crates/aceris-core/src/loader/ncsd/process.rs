@@ -2930,14 +2930,25 @@ mod tests {
         assert_eq!(memory.read_u32(physical_base).unwrap(), 0);
         assert_eq!(address_space.data_cache_line_count(), 1);
 
-        // StoreProcessDataCache writes back but retains a clean resident line.
+        // StoreProcessDataCache enqueues a writeback but retains a clean resident line.
         assert_eq!(
             address_space
                 .store_data_cache_range(virtual_base, 4)
                 .unwrap(),
             1
         );
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0);
+        assert_eq!(address_space.read32(virtual_base).unwrap(), 0x1122_3344);
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(virtual_base, CachePolicy::NonCacheable)
+                .unwrap(),
+            0x44
+        );
+        address_space.drain_arm11_write_buffer().unwrap();
         assert_eq!(memory.read_u32(physical_base).unwrap(), 0x1122_3344);
+        assert_eq!(address_space.pending_write_buffer_entries(), 0);
         assert_eq!(address_space.data_cache_line_count(), 1);
 
         // A GPU/DMA write changes physical memory, while the CPU keeps its cached view.
@@ -2961,8 +2972,17 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert_eq!(memory.read_u32(physical_base).unwrap(), 0x5566_7788);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0xAABB_CCDD);
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
         assert_eq!(address_space.data_cache_line_count(), 0);
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(virtual_base, CachePolicy::NonCacheable)
+                .unwrap(),
+            0x88
+        );
+        address_space.drain_arm11_write_buffer().unwrap();
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0x5566_7788);
     }
 
     #[test]
@@ -3066,6 +3086,10 @@ mod tests {
                 .unwrap(),
             1
         );
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        memory.read(physical_base, &mut backing).unwrap();
+        assert_eq!(backing, [0x55]);
+        address_space.drain_arm11_write_buffer().unwrap();
         memory.read(physical_base, &mut backing).unwrap();
         assert_eq!(backing, [0x66]);
     }
@@ -3100,10 +3124,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(address_space.data_cache_line_count(), ARM11_DATA_CACHE_WAYS);
-        // Way 1 was evicted and its dirty byte was written back.
+        // Way 1 was evicted into the write buffer; the device-visible backing is still old.
         let way_one_physical =
             physical_base + (ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE) as u32;
         let mut evicted_value = [0u8; 1];
+        memory.read(way_one_physical, &mut evicted_value).unwrap();
+        assert_eq!(evicted_value, [0]);
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        address_space.drain_arm11_write_buffer().unwrap();
         memory.read(way_one_physical, &mut evicted_value).unwrap();
         assert_eq!(evicted_value, [0xA1]);
 
@@ -3160,8 +3188,12 @@ mod tests {
             0xEE
         );
 
-        // The evicted first line was dirty and therefore reached physical memory.
+        // The evicted first line is pending until the write buffer is drained.
         let mut evicted_value = [0u8; 1];
+        memory.read(physical_base, &mut evicted_value).unwrap();
+        assert_eq!(evicted_value, [0]);
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        address_space.drain_arm11_write_buffer().unwrap();
         memory.read(physical_base, &mut evicted_value).unwrap();
         assert_eq!(evicted_value, [1]);
     }
@@ -3211,7 +3243,13 @@ mod tests {
             2
         );
         assert_eq!(address_space.data_cache_line_count(), 0);
+        assert_eq!(address_space.pending_write_buffer_entries(), 2);
         let mut backing_after_flush = [0; 4];
+        memory
+            .read(backing_address, &mut backing_after_flush)
+            .unwrap();
+        assert_eq!(backing_after_flush, [0, 0, 0, 0]);
+        address_space.drain_arm11_write_buffer().unwrap();
         memory
             .read(backing_address, &mut backing_after_flush)
             .unwrap();
@@ -3248,6 +3286,10 @@ mod tests {
                 .unwrap(),
             1
         );
+        memory.read(physical_base, &mut backing_byte).unwrap();
+        assert_eq!(backing_byte, [0]);
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        address_space.drain_arm11_write_buffer().unwrap();
         memory.read(physical_base, &mut backing_byte).unwrap();
         assert_eq!(backing_byte, [0xAB]);
 
@@ -3322,13 +3364,16 @@ mod tests {
         );
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
 
-        // Store writes the dirty line to FCRAM but leaves a clean CPU copy resident.
+        // Store queues the dirty line while leaving a clean CPU copy resident.
         assert_eq!(
             address_space
                 .store_data_cache_range(virtual_base + 0x100, 4)
                 .unwrap(),
             1
         );
+        assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        address_space.drain_arm11_write_buffer().unwrap();
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0xCAFE_BABE);
 
         // A device write to the same line does not snoop the resident CPU copy.
