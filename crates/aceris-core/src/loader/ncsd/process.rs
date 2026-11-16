@@ -21,6 +21,13 @@ use crate::memory::Bus;
 use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
+const ARM11_DATA_CACHE_LINE_SIZE: usize = 32;
+
+#[derive(Clone, Debug)]
+struct Arm11DataCacheLine {
+    bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
+    dirty: bool,
+}
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
 const MAIN_STACK_TOP: u32 = 0x1000_0000;
 const APPLICATION_HEAP_BASE: u32 = 0x0800_0000;
@@ -667,6 +674,8 @@ pub struct Arm11CodeAddressSpace {
     /// Linear CPU mappings that alias the GPU-visible physical FCRAM backing.
     linear_regions: Vec<LinearMemoryRegion>,
     gpu_memory: Option<GpuPhysicalMemory>,
+    /// Write-back ARM11 data-cache lines, keyed by aligned physical address.
+    data_cache: BTreeMap<u32, Arm11DataCacheLine>,
     /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
     exclusive_versions: BTreeMap<u32, u64>,
     /// Occupancy of each 0x200-byte thread-local-storage slot.
@@ -713,6 +722,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            data_cache: BTreeMap::new(),
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
@@ -1874,13 +1884,7 @@ impl Arm11CodeAddressSpace {
                     address: physical_address,
                     ..
                 } => {
-                    let memory = self
-                        .gpu_memory
-                        .as_mut()
-                        .ok_or(Error::InvalidAccess { addr: address })?;
-                    memory
-                        .write(physical_address, &[*byte])
-                        .map_err(|_| Error::InvalidAccess { addr: address })?;
+                    self.write_cached_physical_byte(physical_address, *byte)?;
                 }
             }
         }
@@ -1893,7 +1897,92 @@ impl Arm11CodeAddressSpace {
     /// generation, and stores by any agent to shared physical backing (DMA, GPU,
     /// LCD, other processes' aliases) bump the physical one. The sum changes
     /// whenever either does.
-    fn exclusive_version(&self, address: u32) -> u64 {
+    fn read_cached_physical_byte(&mut self, address: u32) -> BusResult<u8> {
+        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+        if !self.data_cache.contains_key(&line_base) {
+            let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
+            self.gpu_memory
+                .as_ref()
+                .ok_or(Error::InvalidAccess { addr: address })?
+                .read(line_base, &mut bytes)
+                .map_err(|_| Error::InvalidAccess { addr: address })?;
+            self.data_cache.insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
+        }
+        let offset = (address - line_base) as usize;
+        self.data_cache.get(&line_base)
+            .and_then(|line| line.bytes.get(offset).copied())
+            .ok_or(Error::InvalidAccess { addr: address })
+    }
+
+    fn write_cached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
+        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+        if !self.data_cache.contains_key(&line_base) {
+            let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
+            self.gpu_memory
+                .as_ref()
+                .ok_or(Error::InvalidAccess { addr: address })?
+                .read(line_base, &mut bytes)
+                .map_err(|_| Error::InvalidAccess { addr: address })?;
+            self.data_cache.insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
+        }
+        let line = self.data_cache.get_mut(&line_base).ok_or(Error::InvalidAccess { addr: address })?;
+        line.bytes[(address - line_base) as usize] = value;
+        line.dirty = true;
+        Ok(())
+    }
+
+    /// Cleans and invalidates every cache line intersecting a process virtual range.
+    /// The complete range is checked before any line is written back or evicted.
+    pub fn flush_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
+        if size_bytes == 0 { return Ok(0); }
+        let end = u64::from(address) + u64::from(size_bytes);
+        if end > u64::from(u32::MAX) + 1 { return Err(Error::InvalidAccess { addr: address }); }
+        let mut lines = std::collections::BTreeSet::new();
+        for offset in 0..size_bytes {
+            let current = address.checked_add(offset).ok_or(Error::InvalidAccess { addr: address })?;
+            let location = self.locate(current).ok_or(Error::InvalidAccess { addr: current })?;
+            if !self.location_is_readable(location) { return Err(Error::InvalidAccess { addr: current }); }
+            if let MemoryLocation::Physical { address: physical, .. } = location {
+                lines.insert(physical & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
+            }
+        }
+        let mut written_back = 0usize;
+        for line_base in lines {
+            if let Some(line) = self.data_cache.remove(&line_base) {
+                if line.dirty {
+                    self.gpu_memory.as_mut().ok_or(Error::InvalidAccess { addr: address })?
+                        .write(line_base, &line.bytes)
+                        .map_err(|_| Error::InvalidAccess { addr: address })?;
+                    written_back += 1;
+                }
+            }
+        }
+        Ok(written_back)
+    }
+
+    /// Invalidates cache lines without writing dirty data back to physical memory.
+    pub fn invalidate_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
+        if size_bytes == 0 { return Ok(0); }
+        let end = u64::from(address) + u64::from(size_bytes);
+        if end > u64::from(u32::MAX) + 1 { return Err(Error::InvalidAccess { addr: address }); }
+        let mut lines = std::collections::BTreeSet::new();
+        for offset in 0..size_bytes {
+            let current = address.checked_add(offset).ok_or(Error::InvalidAccess { addr: address })?;
+            let location = self.locate(current).ok_or(Error::InvalidAccess { addr: current })?;
+            if !self.location_is_readable(location) { return Err(Error::InvalidAccess { addr: current }); }
+            if let MemoryLocation::Physical { address: physical, .. } = location {
+                lines.insert(physical & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
+            }
+        }
+        let mut evicted = 0;
+        for line in lines { if self.data_cache.remove(&line).is_some() { evicted += 1; } }
+        Ok(evicted)
+    }
+
+    /// Number of resident ARM11 data-cache lines (useful for diagnostics/tests).
+    pub fn data_cache_line_count(&self) -> usize { self.data_cache.len() }
+
+    fn exclusive_version(&self, address: u32) -> u64 {"
         let virtual_version = self
             .exclusive_versions
             .get(&(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1)))
@@ -1957,13 +2046,7 @@ impl Bus for Arm11CodeAddressSpace {
                 address: physical_address,
                 ..
             } => {
-                let mut byte = [0u8; 1];
-                self.gpu_memory
-                    .as_ref()
-                    .ok_or(Error::InvalidAccess { addr: address })?
-                    .read(physical_address, &mut byte)
-                    .map_err(|_| Error::InvalidAccess { addr: address })?;
-                Ok(byte[0])
+                self.read_cached_physical_byte(physical_address)
             }
             MemoryLocation::Static { offset, .. } => self
                 .bytes_for_location(location)
