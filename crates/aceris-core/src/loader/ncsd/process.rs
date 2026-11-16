@@ -3063,6 +3063,12 @@ mod tests {
             .unwrap();
 
         first.write32(0x0800_0000, 0x1234_5678).unwrap();
+        assert_eq!(first.read32(0x0800_0000).unwrap(), 0x1234_5678);
+        // The second process has an independent D-cache and cannot see the
+        // first process' dirty line until it is explicitly cleaned and drained.
+        assert_eq!(second.read32(0x0900_0000).unwrap(), 0);
+        first.flush_data_cache_range(0x0800_0000, 4).unwrap();
+        first.drain_arm11_write_buffer().unwrap();
         assert_eq!(second.read32(0x0900_0000).unwrap(), 0x1234_5678);
         assert!(!second.is_writable_range(0x0900_0000, 4));
         assert!(second.write32(0x0900_0000, 0xFFFF_FFFF).is_err());
@@ -3079,6 +3085,70 @@ mod tests {
         assert!(second.read32(0x0900_0000).is_err());
         assert_eq!(first.read32(0x0800_0000).unwrap(), 0x1234_5678);
         assert!(first.shared_mapping_matches(0x0800_0000, &backing));
+    }
+
+    #[test]
+    fn shared_memory_cache_uses_one_tag_for_aliases_and_invalidates_other_processes() {
+        let backing = SharedMemoryBacking::zeroed(0x1000).unwrap();
+        let mut first = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut second = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        first.map_shared_memory_region(0x0800_0000, backing.clone(), 3).unwrap();
+        first.map_shared_memory_region(0x0A00_0000, backing.clone(), 3).unwrap();
+        second.map_shared_memory_region(0x0900_0000, backing.clone(), 3).unwrap();
+
+        first.write32(0x0800_0000, 0xA1B2_C3D4).unwrap();
+        // Two virtual aliases in one process resolve to the same backing line.
+        assert_eq!(first.read32(0x0A00_0000).unwrap(), 0xA1B2_C3D4);
+        assert_eq!(first.data_cache_line_count(), 1);
+
+        // Prime a clean stale line in the other process.
+        assert_eq!(second.read32(0x0900_0000).unwrap(), 0);
+        assert_eq!(second.data_cache_line_count(), 1);
+
+        first.flush_data_cache_range(0x0800_0000, 4).unwrap();
+        first.data_memory_barrier().unwrap();
+
+        // Backing generation changes invalidate the second process' clean line.
+        assert_eq!(second.read32(0x0900_0000).unwrap(), 0xA1B2_C3D4);
+        assert_eq!(second.data_cache_line_count(), 1);
+    }
+
+    #[test]
+    fn dynamic_heap_backing_is_shared_with_mapped_views_and_cache_generations() {
+        let mut owner = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut peer = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let heap = owner.allocate_application_heap_region(0x0800_0000, 0x1000).unwrap();
+        let backing = owner.shared_memory_backing_for_heap_range(heap, 0x1000).unwrap();
+        peer.map_shared_memory_region(0x0900_0000, backing, 3).unwrap();
+
+        owner.write32(heap + 0x80, 0x5566_7788).unwrap();
+        assert_eq!(peer.read32(0x0900_0080).unwrap(), 0);
+        owner.flush_data_cache_range(heap + 0x80, 4).unwrap();
+        owner.data_memory_barrier().unwrap();
+        assert_eq!(peer.read32(0x0900_0080).unwrap(), 0x5566_7788);
+    }
+
+    #[test]
+    fn static_segments_use_backing_cache_and_publish_only_after_clean() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let data_address = address_space.layout.data.address;
+
+        address_space.write32(data_address, 0xDEAD_BEEF).unwrap();
+        assert_eq!(address_space.read32(data_address).unwrap(), 0xDEAD_BEEF);
+        assert_eq!(
+            &address_space.segment_bytes(Arm11SegmentKind::Data)[..4],
+            &[0x33; 4]
+        );
+        assert_eq!(address_space.data_cache_line_count(), 1);
+
+        address_space.flush_data_cache_range(data_address, 4).unwrap();
+        address_space.data_memory_barrier().unwrap();
+        assert_eq!(
+            &address_space.segment_bytes(Arm11SegmentKind::Data)[..4],
+            &0xDEAD_BEEFu32.to_le_bytes()
+        );
+        assert_eq!(address_space.data_cache_line_count(), 0);
     }
 
     #[test]
