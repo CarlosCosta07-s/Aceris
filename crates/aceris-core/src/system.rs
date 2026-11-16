@@ -4134,6 +4134,119 @@ mod tests {
     }
 
     #[test]
+    fn gsp_gx_display_transfer_to_fcram_requires_cpu_invalidation() {
+        use crate::gpu::{DISPLAY_TRANSFER_LINEAR_TO_TILED, execute_display_transfer};
+
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        const WIDTH: u16 = 64;
+        const HEIGHT: u16 = 64;
+        const BUFFER_SIZE: usize = WIDTH as usize * HEIGHT as usize * 4;
+        let (output_virtual, output_physical) =
+            map_test_linear_fcram(&mut system, BUFFER_SIZE as u32);
+
+        // Prime a clean ARM11 cache copy of the destination before the
+        // DisplayTransfer engine writes the shared physical backing.
+        let zeros = vec![0u8; BUFFER_SIZE];
+        system
+            .physical_memory_mut()
+            .write(output_physical, &zeros)
+            .unwrap();
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            let mut cached = vec![0u8; BUFFER_SIZE];
+            session
+                .read_memory_bytes(output_virtual, &mut cached)
+                .unwrap();
+            assert_eq!(cached, zeros);
+        }
+
+        let mut expected = vec![0u8; BUFFER_SIZE];
+        for y in 0..HEIGHT as usize {
+            for x in 0..WIDTH as usize {
+                let offset = (y * WIDTH as usize + x) * 4;
+                expected[offset..offset + 4].copy_from_slice(&[
+                    x as u8,
+                    y as u8,
+                    (x ^ y) as u8,
+                    255,
+                ]);
+            }
+        }
+
+        let linear_source = VRAM_BASE + 0x20_000;
+        let tiled_source = VRAM_BASE + 0x40_000;
+        system
+            .physical_memory_mut()
+            .write(linear_source, &expected)
+            .unwrap();
+        execute_display_transfer(
+            system.physical_memory_mut(),
+            DisplayTransferRequest {
+                input_address: linear_source,
+                output_address: tiled_source,
+                input_width: WIDTH,
+                input_height: HEIGHT,
+                output_width: WIDTH,
+                output_height: HEIGHT,
+                flags: DISPLAY_TRANSFER_LINEAR_TO_TILED,
+            },
+        )
+        .unwrap();
+
+        let mut queue_bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&tiled_source.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&output_virtual.to_le_bytes());
+        let dimensions = (u32::from(HEIGHT) << 16) | u32::from(WIDTH);
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&dimensions.to_le_bytes());
+        queue_bytes[entry + 16..entry + 20].copy_from_slice(&dimensions.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.display_transfers_completed, 1);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.error.is_none());
+
+        // The transfer engine writes the shared backing, but it does not
+        // snoop or silently evict the CPU's clean cache copy.
+        let mut physical = vec![0u8; BUFFER_SIZE];
+        system
+            .physical_memory()
+            .read(output_physical, &mut physical)
+            .unwrap();
+        assert_eq!(physical, expected);
+
+        let session = system.ncsd_session_mut().unwrap();
+        let mut stale = vec![0u8; BUFFER_SIZE];
+        session.read_memory_bytes(output_virtual, &mut stale).unwrap();
+        assert_eq!(stale, zeros);
+
+        assert!(
+            session
+                .invalidate_process_data_cache(output_virtual, BUFFER_SIZE as u32)
+                .unwrap()
+                > 0
+        );
+        let mut visible = vec![0u8; BUFFER_SIZE];
+        session
+            .read_memory_bytes(output_virtual, &mut visible)
+            .unwrap();
+        assert_eq!(visible, expected);
+    }
+
+    #[test]
     fn gsp_gx_display_transfer_is_consumed_without_rendering_rights() {
         let mut system = System::new();
         system
