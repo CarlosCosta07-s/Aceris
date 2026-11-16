@@ -2811,7 +2811,8 @@ mod tests {
     fn arm11_data_cache_reaches_its_full_capacity_across_all_sets() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
-        let mapped_size = ARM11_DATA_CACHE_CAPACITY_BYTES + ARM11_DATA_CACHE_LINE_SIZE;
+        // Linear FCRAM allocations are page-sized; 0x5000 covers 0x4020 bytes used here.
+        let mapped_size = 0x5000usize;
         let physical_base = memory.allocate_linear_fcram(mapped_size as u32).unwrap();
         let virtual_base = physical_base - 0x0C00_0000;
         address_space.attach_gpu_memory(memory.clone());
