@@ -254,6 +254,11 @@ impl LcdController {
 
     /// Reads enabled physical framebuffers and atomically updates the LCD surfaces.
     ///
+    /// LCD scanout is a physical-device read. It observes only bytes already
+    /// committed to the GPU-visible physical backing; it does not snoop, clean,
+    /// or invalidate ARM11 D-cache lines, nor does it drain a process write
+    /// buffer. The guest must publish framebuffer writes before scanout.
+    ///
     /// The entire source image for each enabled panel is converted before any
     /// display surface is changed. A bad right-eye or bottom framebuffer
     /// therefore cannot leave only the left eye updated for the same frame.
