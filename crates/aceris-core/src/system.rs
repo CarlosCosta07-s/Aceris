@@ -2457,11 +2457,9 @@ impl System {
                         .map_err(|error| {
                             GspGxCommandQueueError::ProcessMemory(error.to_string())
                         })?;
-                    session
-                        .drain_write_buffer()
-                        .map_err(|error| {
-                            GspGxCommandQueueError::ProcessMemory(error.to_string())
-                        })?;
+                    session.drain_write_buffer().map_err(|error| {
+                        GspGxCommandQueueError::ProcessMemory(error.to_string())
+                    })?;
                 }
             }
             report.cache_regions_validated = report.cache_regions_validated.saturating_add(1);
