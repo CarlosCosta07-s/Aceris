@@ -1925,6 +1925,9 @@ impl Arm11CodeAddressSpace {
                     CachePolicy::WriteBack => {
                         self.write_cached_physical_byte(physical_address, *byte)?;
                     }
+                    CachePolicy::WriteBackNoAllocate => {
+                        self.write_back_no_allocate_physical_byte(physical_address, *byte)?;
+                    }
                 },
             }
         }
@@ -2060,6 +2063,23 @@ impl Arm11CodeAddressSpace {
             .get(&line_base)
             .and_then(|line| line.bytes.get(offset).copied())
             .ok_or(Error::InvalidAccess { addr: address })
+    }
+
+    fn write_back_no_allocate_physical_byte(
+        &mut self,
+        address: u32,
+        value: u8,
+    ) -> BusResult<()> {
+        let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+        let offset = (address - line_base) as usize;
+        if let Some(line) = self.data_cache.get_mut(&line_base) {
+            line.bytes[offset] = value;
+            line.dirty = true;
+            self.touch_data_cache_line(line_base);
+            Ok(())
+        } else {
+            self.write_uncached_physical_byte(address, value)
+        }
     }
 
     fn write_cached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
@@ -2932,6 +2952,38 @@ mod tests {
             0x44
         );
         assert_eq!(address_space.data_cache_line_count(), 1);
+
+        // Write-back/no-write-allocate writes straight to backing on a miss,
+        // but a hit updates the resident line and remains dirty until cleaned.
+        address_space
+            .invalidate_data_cache_range(virtual_base, 1)
+            .unwrap();
+        address_space
+            .write8_with_cache_policy(virtual_base, 0x55, CachePolicy::WriteBackNoAllocate)
+            .unwrap();
+        memory.read(physical_base, &mut backing).unwrap();
+        assert_eq!(backing, [0x55]);
+        assert_eq!(address_space.data_cache_line_count(), 0);
+
+        assert_eq!(
+            address_space
+                .read8_with_cache_policy(virtual_base, CachePolicy::WriteBackNoAllocate)
+                .unwrap(),
+            0x55
+        );
+        address_space
+            .write8_with_cache_policy(virtual_base, 0x66, CachePolicy::WriteBackNoAllocate)
+            .unwrap();
+        memory.read(physical_base, &mut backing).unwrap();
+        assert_eq!(backing, [0x55]);
+        assert_eq!(
+            address_space
+                .store_data_cache_range(virtual_base, 1)
+                .unwrap(),
+            1
+        );
+        memory.read(physical_base, &mut backing).unwrap();
+        assert_eq!(backing, [0x66]);
     }
 
     #[test]
