@@ -231,9 +231,7 @@ impl PicaRenderSession {
                 config.width as f32,
                 config.height as f32,
             )
-            .map_err(|error| {
-                PicaRenderSessionError::Render(PicaRenderError::Geometry(error))
-            })?,
+            .map_err(|error| PicaRenderSessionError::Render(PicaRenderError::Geometry(error)))?,
             self.settings.pipeline.depth_range(),
         );
         let program = pica.vertex_shader_program();
@@ -284,8 +282,12 @@ impl PicaRenderSession {
         })?;
         let after = self.totals;
         let render_delta = PicaRenderReport {
-            triangles_submitted: after.triangles_submitted.saturating_sub(before.triangles_submitted),
-            output_triangles: after.output_triangles.saturating_sub(before.output_triangles),
+            triangles_submitted: after
+                .triangles_submitted
+                .saturating_sub(before.triangles_submitted),
+            output_triangles: after
+                .output_triangles
+                .saturating_sub(before.output_triangles),
             pixels_written: after.pixels_written.saturating_sub(before.pixels_written),
             depth_rejected_pixels: after
                 .depth_rejected_pixels
@@ -375,8 +377,7 @@ impl Pica200 {
         mut resolve_vertex_base: impl FnMut(&Pica200, &PicaDrawRequest) -> Option<u32>,
     ) -> Result<(PicaCommandListReport, PicaRenderReport), PicaRenderingRunError> {
         let mut session = PicaRenderSession::new(settings);
-        let result =
-            session.execute_command_list(self, words, memory, &mut resolve_vertex_base);
+        let result = session.execute_command_list(self, words, memory, &mut resolve_vertex_base);
         let flushed = session.flush(memory);
         match result {
             Err(error) => Err(PicaRenderingRunError::Run(error)),
