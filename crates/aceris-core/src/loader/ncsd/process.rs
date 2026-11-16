@@ -40,6 +40,8 @@ struct Arm11DataCacheLine {
 struct Arm11WriteBufferEntry {
     address: u32,
     bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
+    /// Number of valid bytes; cache-line writebacks use the full 32 bytes.
+    length: u8,
 }
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
 const MAIN_STACK_TOP: u32 = 0x1000_0000;
@@ -1942,6 +1944,9 @@ impl Arm11CodeAddressSpace {
                     CachePolicy::NonCacheable => {
                         self.write_uncached_physical_byte(physical_address, *byte)?;
                     }
+                    CachePolicy::NormalNonCacheable => {
+                        self.write_normal_buffered_physical_byte(physical_address, *byte)?;
+                    }
                     CachePolicy::WriteThrough => {
                         self.write_through_physical_byte(physical_address, *byte)?;
                     }
@@ -2023,7 +2028,7 @@ impl Arm11CodeAddressSpace {
         let output_end = output_start + output.len() as u64;
         for entry in &self.write_buffer {
             let entry_start = u64::from(entry.address);
-            let entry_end = entry_start + ARM11_DATA_CACHE_LINE_SIZE as u64;
+            let entry_end = entry_start + u64::from(entry.length);
             let overlap_start = output_start.max(entry_start);
             let overlap_end = output_end.min(entry_end);
             if overlap_start >= overlap_end {
@@ -2045,8 +2050,42 @@ impl Arm11CodeAddressSpace {
         if self.write_buffer.len() >= ARM11_WRITE_BUFFER_CAPACITY {
             self.drain_write_buffer_entries(1)?;
         }
-        self.write_buffer
-            .push_back(Arm11WriteBufferEntry { address, bytes });
+        self.write_buffer.push_back(Arm11WriteBufferEntry {
+            address,
+            bytes,
+            length: ARM11_DATA_CACHE_LINE_SIZE as u8,
+        });
+        Ok(())
+    }
+
+    /// Queues one bufferable Normal-memory store, merging adjacent bytes that
+    /// belong to the same 32-byte region. A full queue completes its oldest
+    /// entry before accepting more data.
+    fn enqueue_buffered_normal_store(&mut self, address: u32, value: u8) -> BusResult<()> {
+        if let Some(entry) = self.write_buffer.back_mut() {
+            let length = usize::from(entry.length);
+            let same_line = (entry.address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1))
+                == (address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
+            if length < ARM11_DATA_CACHE_LINE_SIZE
+                && same_line
+                && u64::from(entry.address) + length as u64 == u64::from(address)
+            {
+                entry.bytes[length] = value;
+                entry.length += 1;
+                return Ok(());
+            }
+        }
+
+        if self.write_buffer.len() >= ARM11_WRITE_BUFFER_CAPACITY {
+            self.drain_write_buffer_entries(1)?;
+        }
+        let mut bytes = [0; ARM11_DATA_CACHE_LINE_SIZE];
+        bytes[0] = value;
+        self.write_buffer.push_back(Arm11WriteBufferEntry {
+            address,
+            bytes,
+            length: 1,
+        });
         Ok(())
     }
 
@@ -2061,7 +2100,7 @@ impl Arm11CodeAddressSpace {
                 .ok_or(Error::InvalidAccess {
                     addr: entry.address,
                 })?
-                .write(entry.address, &entry.bytes)
+                .write(entry.address, &entry.bytes[..usize::from(entry.length)])
                 .map_err(|_| Error::InvalidAccess {
                     addr: entry.address,
                 })?;
@@ -2076,12 +2115,12 @@ impl Arm11CodeAddressSpace {
         self.drain_write_buffer_entries(usize::MAX)
     }
 
-    /// Number of dirty cache-line writebacks currently waiting for physical memory.
+    /// Number of queued Normal-memory stores and dirty cache-line writebacks.
     pub fn pending_write_buffer_entries(&self) -> usize {
         self.write_buffer.len()
     }
 
-    fn read_uncached_physical_byte(&self, address: u32) -> BusResult<u8> {
+    fn read_normal_buffered_physical_byte(&self, address: u32) -> BusResult<u8> {
         let mut byte = [0u8; 1];
         self.gpu_memory
             .as_ref()
@@ -2089,6 +2128,19 @@ impl Arm11CodeAddressSpace {
             .read(address, &mut byte)
             .map_err(|_| Error::InvalidAccess { addr: address })?;
         self.overlay_write_buffer(address, &mut byte);
+        Ok(byte[0])
+    }
+
+    /// Device/Strongly Ordered reads do not forward from Normal-memory stores:
+    /// older buffered writes must complete before the read reaches the bus.
+    fn read_ordered_physical_byte(&mut self, address: u32) -> BusResult<u8> {
+        self.drain_arm11_write_buffer()?;
+        let mut byte = [0u8; 1];
+        self.gpu_memory
+            .as_ref()
+            .ok_or(Error::InvalidAccess { addr: address })?
+            .read(address, &mut byte)
+            .map_err(|_| Error::InvalidAccess { addr: address })?;
         Ok(byte[0])
     }
 
@@ -2102,26 +2154,39 @@ impl Arm11CodeAddressSpace {
             .map_err(|_| Error::InvalidAccess { addr: address })
     }
 
-    /// A write-through store updates backing memory immediately. If a line is
-    /// already resident, update that copy and clean it; do not allocate on a miss.
-    fn write_through_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
-        self.drain_arm11_write_buffer()?;
+    /// Queues a bufferable Normal-memory store. If a cache line is resident,
+    /// keep its CPU view coherent; a dirty resident line is queued as a full
+    /// writeback so older bytes cannot later overwrite this store.
+    fn write_normal_buffered_physical_byte(
+        &mut self,
+        address: u32,
+        value: u8,
+    ) -> BusResult<()> {
         let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
         let offset = (address - line_base) as usize;
-        if let Some(line) = self.data_cache.get_mut(&line_base) {
+        let resident = if let Some(line) = self.data_cache.get_mut(&line_base) {
+            let was_dirty = line.dirty;
             line.bytes[offset] = value;
             let bytes = line.bytes;
-            self.gpu_memory
-                .as_mut()
-                .ok_or(Error::InvalidAccess { addr: address })?
-                .write(line_base, &bytes)
-                .map_err(|_| Error::InvalidAccess { addr: address })?;
             line.dirty = false;
-            self.touch_data_cache_line(line_base);
-            Ok(())
+            Some((was_dirty, bytes))
         } else {
-            self.write_uncached_physical_byte(address, value)
+            None
+        };
+
+        if let Some((was_dirty, bytes)) = resident {
+            self.touch_data_cache_line(line_base);
+            if was_dirty {
+                return self.enqueue_data_cache_writeback(line_base, bytes);
+            }
         }
+        self.enqueue_buffered_normal_store(address, value)
+    }
+
+    /// Write-through stores are bufferable Normal-memory transactions. Misses
+    /// do not allocate; resident lines are updated before the store is queued.
+    fn write_through_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
+        self.write_normal_buffered_physical_byte(address, value)
     }
 
     fn read_cached_physical_byte(&mut self, address: u32) -> BusResult<u8> {
@@ -2161,7 +2226,7 @@ impl Arm11CodeAddressSpace {
             self.touch_data_cache_line(line_base);
             Ok(())
         } else {
-            self.write_uncached_physical_byte(address, value)
+            self.enqueue_buffered_normal_store(address, value)
         }
     }
 
@@ -2389,7 +2454,10 @@ impl Bus for Arm11CodeAddressSpace {
                 address: physical_address,
                 ..
             } => match policy {
-                CachePolicy::NonCacheable => self.read_uncached_physical_byte(physical_address),
+                CachePolicy::NonCacheable => self.read_ordered_physical_byte(physical_address),
+                CachePolicy::NormalNonCacheable => {
+                    self.read_normal_buffered_physical_byte(physical_address)
+                }
                 CachePolicy::WriteThrough
                 | CachePolicy::WriteBack
                 | CachePolicy::WriteBackNoAllocate => {
@@ -2948,7 +3016,7 @@ mod tests {
         assert_eq!(address_space.read32(virtual_base).unwrap(), 0x1122_3344);
         assert_eq!(
             address_space
-                .read8_with_cache_policy(virtual_base, CachePolicy::NonCacheable)
+                .read8_with_cache_policy(virtual_base, CachePolicy::NormalNonCacheable)
                 .unwrap(),
             0x44
         );
@@ -2983,12 +3051,60 @@ mod tests {
         assert_eq!(address_space.data_cache_line_count(), 0);
         assert_eq!(
             address_space
-                .read8_with_cache_policy(virtual_base, CachePolicy::NonCacheable)
+                .read8_with_cache_policy(virtual_base, CachePolicy::NormalNonCacheable)
                 .unwrap(),
             0x88
         );
         address_space.drain_arm11_write_buffer().unwrap();
         assert_eq!(memory.read_u32(physical_base).unwrap(), 0x5566_7788);
+    }
+
+    #[test]
+    fn arm11_normal_noncacheable_stores_are_buffered_but_device_stores_are_synchronous() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        // Four byte stores from the default wide-access helper coalesce into one
+        // pending transaction without allocating a D-cache line.
+        address_space
+            .write32_with_cache_policy(
+                virtual_base,
+                0x1122_3344,
+                CachePolicy::NormalNonCacheable,
+            )
+            .unwrap();
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        assert_eq!(address_space.data_cache_line_count(), 0);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0);
+
+        // A CPU read forwards its own buffered Normal-memory stores.
+        assert_eq!(
+            address_space
+                .read32_with_cache_policy(virtual_base, CachePolicy::NormalNonCacheable)
+                .unwrap(),
+            0x1122_3344
+        );
+        assert_eq!(address_space.pending_write_buffer_entries(), 1);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0);
+
+        // DMB completes the buffered Normal-memory transaction for other agents.
+        address_space.data_memory_barrier().unwrap();
+        assert_eq!(address_space.pending_write_buffer_entries(), 0);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0x1122_3344);
+
+        // Device/Strongly Ordered stores remain synchronous and do not enter
+        // the Normal-memory write buffer.
+        address_space
+            .write32_with_cache_policy(virtual_base + 4, 0xAABB_CCDD, CachePolicy::NonCacheable)
+            .unwrap();
+        assert_eq!(memory.read_u32(physical_base + 4).unwrap(), 0xAABB_CCDD);
+        assert_eq!(address_space.pending_write_buffer_entries(), 0);
     }
 
     #[test]
