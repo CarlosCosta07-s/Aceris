@@ -375,20 +375,6 @@ impl SharedMemoryBacking {
         true
     }
 
-    fn read_byte(&self, offset: usize) -> Option<u8> {
-        if offset >= self.length {
-            return None;
-        }
-        self.bytes
-            .lock()
-            .ok()?
-            .get(self.offset.checked_add(offset)?)
-            .copied()
-    }
-
-    fn write_byte(&self, offset: usize, value: u8) -> bool {
-        self.write_range(offset, &[value])
-    }
 }
 
 impl PartialEq for SharedMemoryBacking {
@@ -409,18 +395,6 @@ impl DynamicMemoryBacking {
     fn len(&self) -> usize {
         match self {
             Self::Private(backing) | Self::Shared(backing) => backing.length,
-        }
-    }
-
-    fn read_byte(&self, offset: usize) -> Option<u8> {
-        match self {
-            Self::Private(backing) | Self::Shared(backing) => backing.read_byte(offset),
-        }
-    }
-
-    fn write_byte(&mut self, offset: usize, value: u8) -> bool {
-        match self {
-            Self::Private(backing) | Self::Shared(backing) => backing.write_byte(offset, value),
         }
     }
 
@@ -1942,17 +1916,6 @@ impl Arm11CodeAddressSpace {
             Arm11SegmentKind::Data => &mut self.data,
             Arm11SegmentKind::Bss => &mut self.bss,
             Arm11SegmentKind::Stack => &mut self.stack,
-        }
-    }
-
-    fn bytes_for_location(&self, location: MemoryLocation) -> &[u8] {
-        match location {
-            MemoryLocation::Static { kind, .. } => self.bytes_for(kind),
-            MemoryLocation::Dynamic { .. }
-            | MemoryLocation::Shared { .. }
-            | MemoryLocation::Physical { .. } => {
-                unreachable!("dynamic, shared and physical locations are read from their backing")
-            }
         }
     }
 
