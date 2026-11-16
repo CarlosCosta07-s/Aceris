@@ -453,21 +453,30 @@ impl fmt::Display for PicaRenderTargetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingRegister { register } => {
-                write!(formatter, "PICA200 render-target register {register:#05x} is unavailable")
+                write!(
+                    formatter,
+                    "PICA200 render-target register {register:#05x} is unavailable"
+                )
             }
             Self::InvalidColorLocationRegister(value) => write!(
                 formatter,
                 "PICA200 color-buffer location {value:#010x} has reserved high bits set"
             ),
             Self::InvalidDimensions { width, height } => {
-                write!(formatter, "PICA200 render target has invalid dimensions {width}x{height}")
+                write!(
+                    formatter,
+                    "PICA200 render target has invalid dimensions {width}x{height}"
+                )
             }
             Self::UnsupportedColorFormat { pixel_size, format } => write!(
                 formatter,
                 "unsupported PICA200 color-buffer format: pixel-size {pixel_size}, format {format}"
             ),
             Self::UnsupportedBlockMode { value } => {
-                write!(formatter, "PICA200 {value}x{value} render blocks are not supported")
+                write!(
+                    formatter,
+                    "PICA200 {value}x{value} render blocks are not supported"
+                )
             }
             Self::RasterizerDimensionsMismatch {
                 target_width,
@@ -483,7 +492,10 @@ impl fmt::Display for PicaRenderTargetError {
                 formatter.write_str("could not allocate PICA200 color-buffer staging storage")
             }
             Self::PhysicalMemory(error) => {
-                write!(formatter, "PICA200 color-buffer memory access failed: {error}")
+                write!(
+                    formatter,
+                    "PICA200 color-buffer memory access failed: {error}"
+                )
             }
         }
     }
@@ -554,10 +566,12 @@ mod tests {
     fn decodes_live_render_target_registers() {
         let address = FCRAM_BASE + 0x20_000;
         let mut gpu = Pica200::new();
-        gpu.write_register(REG_COLORBUFFER_LOC, address >> 3).unwrap();
+        gpu.write_register(REG_COLORBUFFER_LOC, address >> 3)
+            .unwrap();
         gpu.write_register(REG_COLORBUFFER_FORMAT, 2).unwrap();
         gpu.write_register(REG_FRAMEBUFFER_BLOCK32, 0).unwrap();
-        gpu.write_register(REG_FRAMEBUFFER_DIM, ((240 - 1) << 12) | 400).unwrap();
+        gpu.write_register(REG_FRAMEBUFFER_DIM, ((240 - 1) << 12) | 400)
+            .unwrap();
 
         let target = gpu.render_target_config().unwrap();
         assert_eq!(target.color_buffer_address, address);
@@ -660,7 +674,10 @@ mod tests {
                         "{format:?}: {source:?} -> {round_trip:?}"
                     );
                 }
-                if matches!(format, PicaColorBufferFormat::Rgb5A1 | PicaColorBufferFormat::Rgb565) {
+                if matches!(
+                    format,
+                    PicaColorBufferFormat::Rgb5A1 | PicaColorBufferFormat::Rgb565
+                ) {
                     assert_eq!(round_trip[3], 255);
                 }
             }
@@ -683,7 +700,9 @@ mod tests {
             Err(PicaRenderTargetError::UnsupportedBlockMode { value: 32 })
         );
         let mut bytes = [0xA5; 4];
-        memory.read(target.color_buffer_address, &mut bytes).unwrap();
+        memory
+            .read(target.color_buffer_address, &mut bytes)
+            .unwrap();
         assert_eq!(bytes, [0; 4]);
     }
 
