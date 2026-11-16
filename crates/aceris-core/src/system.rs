@@ -1481,6 +1481,23 @@ impl System {
         &mut self.display
     }
 
+    /// Performs one physical LCD scanout from committed GPU-visible memory.
+    ///
+    /// This is a device read boundary: it does not snoop ARM11 D-cache lines or
+    /// complete pending CPU writebacks. The guest must clean the framebuffer
+    /// and execute the appropriate DMB/DSB before scanout.
+    pub fn scanout_lcd(&mut self) -> Result<u8> {
+        self.lcd
+            .scanout(&self.physical_memory, &mut self.display)
+            .map(|report| report.screens_updated)
+            .map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    error.to_string(),
+                ))
+            })
+    }
+
     /// Reads and submits a PICA200 command list from physical FCRAM/VRAM.
     ///
     /// The guest address must be four-byte aligned and the requested size is
@@ -2680,15 +2697,7 @@ impl System {
         }
 
         let gpu_command_lists_submitted = self.process_pending_pica_command_buffers()?;
-        let lcd_report = self
-            .lcd
-            .scanout(&self.physical_memory, &mut self.display)
-            .map_err(|error| {
-                Error::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    error.to_string(),
-                ))
-            })?;
+        let lcd_screens_scanned_out = self.scanout_lcd()?;
         let frame_number = self.display.present();
         self.lcd.advance_vblank();
         let gsp_interrupt_deliveries = self.dispatch_frame_vblank_interrupts()?;
@@ -2697,7 +2706,7 @@ impl System {
             instructions_executed: cpu_report.instructions_executed,
             cpu_stop_reason: cpu_report.stop_reason,
             gpu_command_lists_submitted,
-            lcd_screens_scanned_out: lcd_report.screens_updated,
+            lcd_screens_scanned_out,
             elapsed_virtual_time_ns: NOMINAL_FRAME_DURATION_NS,
             gsp_interrupt_deliveries,
         })
