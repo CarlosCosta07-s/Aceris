@@ -2924,6 +2924,19 @@ mod tests {
         assert_eq!(session.data_cache_line_count(), 0);
         assert_eq!(session.read_memory_u32(virtual_address).unwrap(), 0xAABB_CCDD);
 
+        // Invalidating a dirty line discards it rather than writing it back.
+        session
+            .write_memory_u32(virtual_address, 0xDEAD_BEEF)
+            .unwrap();
+        assert_eq!(memory.read_u32(physical).unwrap(), 0xAABB_CCDD);
+        session.set_current_register(0, CURRENT_PROCESS_HANDLE);
+        session.set_current_register(1, virtual_address);
+        session.set_current_register(2, 4);
+        session.dispatch_svc(0x52);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(memory.read_u32(physical).unwrap(), 0xAABB_CCDD);
+        assert_eq!(session.read_memory_u32(virtual_address).unwrap(), 0xAABB_CCDD);
+
         // The current-process pseudo-handle is checked, not silently ignored.
         session.set_current_register(0, CURRENT_THREAD_HANDLE);
         session.set_current_register(1, virtual_address);
