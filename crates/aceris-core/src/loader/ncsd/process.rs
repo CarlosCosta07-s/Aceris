@@ -2808,6 +2808,107 @@ mod tests {
     }
 
     #[test]
+    fn arm11_data_cache_reaches_its_full_capacity_across_all_sets() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let mapped_size = ARM11_DATA_CACHE_CAPACITY_BYTES + ARM11_DATA_CACHE_LINE_SIZE;
+        let physical_base = memory.allocate_linear_fcram(mapped_size as u32).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, mapped_size as u32)
+            .unwrap();
+
+        // Fill all 128 sets with four distinct dirty lines apiece.
+        for line_index in 0..(ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE) {
+            let offset = (line_index * ARM11_DATA_CACHE_LINE_SIZE) as u32;
+            address_space
+                .write8(virtual_base + offset, (line_index as u8).wrapping_add(1))
+                .unwrap();
+        }
+
+        assert_eq!(
+            address_space.data_cache_line_count(),
+            ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE
+        );
+        assert!(
+            address_space
+                .data_cache_lru
+                .iter()
+                .all(|set| set.len() == ARM11_DATA_CACHE_WAYS)
+        );
+
+        // The next line collides with set zero and must evict exactly one line.
+        let overflow_offset = ARM11_DATA_CACHE_CAPACITY_BYTES as u32;
+        address_space
+            .write8(virtual_base + overflow_offset, 0xEE)
+            .unwrap();
+        assert_eq!(
+            address_space.data_cache_line_count(),
+            ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE
+        );
+        assert_eq!(address_space.read8(virtual_base + overflow_offset).unwrap(), 0xEE);
+
+        // The evicted first line was dirty and therefore reached physical memory.
+        let mut evicted_value = [0u8; 1];
+        memory.read(physical_base, &mut evicted_value).unwrap();
+        assert_eq!(evicted_value, [1]);
+    }
+
+    #[test]
+    fn arm11_data_cache_maintenance_handles_cross_line_ranges_atomically() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        // A 32-bit store beginning at byte 30 dirties two adjacent cache lines.
+        let crossing_address = virtual_base + (ARM11_DATA_CACHE_LINE_SIZE as u32) - 2;
+        address_space
+            .write32(crossing_address, 0x1122_3344)
+            .unwrap();
+        assert_eq!(address_space.data_cache_line_count(), 2);
+
+        let mut backing_before = [0xFF; 4];
+        memory
+            .read(physical_base + (ARM11_DATA_CACHE_LINE_SIZE as u32) - 2, &mut backing_before)
+            .unwrap();
+        assert_eq!(backing_before, [0, 0, 0, 0]);
+
+        // The invalid tail range touches the first line but extends past the mapping.
+        // Validation must fail before either dirty line is written back or evicted.
+        assert!(
+            address_space
+                .flush_data_cache_range(virtual_base + 0x0FFF, 2)
+                .is_err()
+        );
+        assert_eq!(address_space.data_cache_line_count(), 2);
+        let mut backing_after_rejection = [0xFF; 4];
+        memory
+            .read(physical_base + (ARM11_DATA_CACHE_LINE_SIZE as u32) - 2, &mut backing_after_rejection)
+            .unwrap();
+        assert_eq!(backing_after_rejection, [0, 0, 0, 0]);
+
+        // The valid cross-line range cleans and invalidates both resident lines.
+        assert_eq!(
+            address_space
+                .flush_data_cache_range(crossing_address, 4)
+                .unwrap(),
+            2
+        );
+        assert_eq!(address_space.data_cache_line_count(), 0);
+        let mut backing_after_flush = [0; 4];
+        memory
+            .read(physical_base + (ARM11_DATA_CACHE_LINE_SIZE as u32) - 2, &mut backing_after_flush)
+            .unwrap();
+        assert_eq!(backing_after_flush, [0x44, 0x33, 0x22, 0x11]);
+    }
+
+    #[test]
     fn device_writes_to_linear_memory_invalidate_cpu_exclusive_reservations() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
