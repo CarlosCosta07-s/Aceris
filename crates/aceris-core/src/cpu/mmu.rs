@@ -96,20 +96,26 @@ pub(super) struct MemoryAttributes {
 }
 
 impl MemoryAttributes {
-    /// Resolves the inner ARM11 D-cache behavior from the effective memory
-    /// attributes. Normal non-cacheable memory still permits buffered stores;
-    /// Device and Strongly Ordered memory does not.
+    /// Resolves the inner ARM11 MPCore L1 D-cache behavior from the effective
+    /// memory attributes. The MP11 cache is write-back/write-allocate only:
+    /// inner write-through is treated as non-cacheable and inner write-back
+    /// without allocate is treated as write-allocate. Normal non-cacheable
+    /// memory still permits buffered stores; Device/Strongly Ordered does not.
+    ///
+    /// The separate Shared + SMP + SCU cache-eligibility rule is not modeled
+    /// yet; this is not a claim of hardware snooping support.
     fn data_cache_policy(self, enabled: bool) -> CachePolicy {
         if self.memory_type != MemoryType::Normal {
             return CachePolicy::NonCacheable;
         }
-        if !enabled || self.inner == 0 {
+        // The MP11 L1 D-cache supports write-back/write-allocate only.
+        // Inner write-through (10) is treated as non-cacheable; write-back
+        // no-write-allocate (11) is treated as write-allocate by this core.
+        if !enabled || matches!(self.inner, 0 | 2) {
             return CachePolicy::NormalNonCacheable;
         }
         match self.inner {
-            1 => CachePolicy::WriteBack,
-            2 => CachePolicy::WriteThrough,
-            3 => CachePolicy::WriteBackNoAllocate,
+            1 | 3 => CachePolicy::WriteBack,
             _ => CachePolicy::NormalNonCacheable,
         }
     }
@@ -1408,11 +1414,11 @@ mod tests {
         );
         assert_eq!(
             attributes(MemoryType::Normal, 2).data_cache_policy(true),
-            CachePolicy::WriteThrough
+            CachePolicy::NormalNonCacheable
         );
         assert_eq!(
             attributes(MemoryType::Normal, 3).data_cache_policy(true),
-            CachePolicy::WriteBackNoAllocate
+            CachePolicy::WriteBack
         );
         assert_eq!(
             attributes(MemoryType::Normal, 3).data_cache_policy(false),
