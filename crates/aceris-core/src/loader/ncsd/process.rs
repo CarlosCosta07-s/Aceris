@@ -374,7 +374,6 @@ impl SharedMemoryBacking {
         }
         true
     }
-
 }
 
 impl PartialEq for SharedMemoryBacking {
@@ -3055,9 +3054,15 @@ mod tests {
         let mut first = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut second = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
 
-        first.map_shared_memory_region(0x0800_0000, backing.clone(), 3).unwrap();
-        first.map_shared_memory_region(0x0A00_0000, backing.clone(), 3).unwrap();
-        second.map_shared_memory_region(0x0900_0000, backing.clone(), 3).unwrap();
+        first
+            .map_shared_memory_region(0x0800_0000, backing.clone(), 3)
+            .unwrap();
+        first
+            .map_shared_memory_region(0x0A00_0000, backing.clone(), 3)
+            .unwrap();
+        second
+            .map_shared_memory_region(0x0900_0000, backing.clone(), 3)
+            .unwrap();
 
         first.write32(0x0800_0000, 0xA1B2_C3D4).unwrap();
         // Two virtual aliases in one process resolve to the same backing line.
@@ -3080,9 +3085,14 @@ mod tests {
     fn dynamic_heap_backing_is_shared_with_mapped_views_and_cache_generations() {
         let mut owner = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut peer = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
-        let heap = owner.allocate_application_heap_region(0x0800_0000, 0x1000).unwrap();
-        let backing = owner.shared_memory_backing_for_heap_range(heap, 0x1000).unwrap();
-        peer.map_shared_memory_region(0x0900_0000, backing, 3).unwrap();
+        let heap = owner
+            .allocate_application_heap_region(0x0800_0000, 0x1000)
+            .unwrap();
+        let backing = owner
+            .shared_memory_backing_for_heap_range(heap, 0x1000)
+            .unwrap();
+        peer.map_shared_memory_region(0x0900_0000, backing, 3)
+            .unwrap();
 
         owner.write32(heap + 0x80, 0x5566_7788).unwrap();
         assert_eq!(peer.read32(0x0900_0080).unwrap(), 0);
@@ -3104,7 +3114,9 @@ mod tests {
         );
         assert_eq!(address_space.data_cache_line_count(), 1);
 
-        address_space.flush_data_cache_range(data_address, 4).unwrap();
+        address_space
+            .flush_data_cache_range(data_address, 4)
+            .unwrap();
         address_space.data_memory_barrier().unwrap();
         assert_eq!(
             &address_space.segment_bytes(Arm11SegmentKind::Data)[..4],
