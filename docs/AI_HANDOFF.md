@@ -1560,3 +1560,4 @@ A regressão foi adicionada, mas aguarda Rustfmt, Clippy, `cargo test --workspac
 
 **Limites preservados:** a alteração ficou em testes de integração `system.rs` e documentação. Nenhum módulo de CPU/Thumb ou draw/shader reservado ao Claude foi tocado.
 
+A CI de `ProcessCommandList` no commit `73d3bf2` detectou somente uma divergência Rustfmt em uma chamada de escrita. O ajuste de estilo foi publicado em `5ccfe18`; a CI deste HEAD precisa confirmar a validação completa antes de marcar o teste como aprovado.
