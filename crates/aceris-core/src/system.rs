@@ -2200,6 +2200,15 @@ impl System {
                 size_bytes: command.size_bytes,
             })?;
 
+        let source_is_vram = source_physical >= VRAM_BASE
+            && u64::from(source_physical) < u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
+        if command.flush_source && !source_is_vram {
+            if let Some(session) = self.ncsd_session.as_mut() {
+                session.flush_process_data_cache(command.source_address, command.size_bytes)
+                    .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+            }
+        }
+
         let mut staged = Vec::new();
         staged
             .try_reserve_exact(size_bytes)
@@ -2260,7 +2269,7 @@ impl System {
     /// this path enforces rendering rights, range validity and documented skip/order
     /// semantics without claiming that cache maintenance occurred.
     fn validate_gsp_cache_regions(
-        &self,
+        &mut self,
         command: GspFlushCacheRegions,
         report: &mut GspGxCommandQueueReport,
     ) -> std::result::Result<(), GspGxCommandQueueError> {
@@ -2273,6 +2282,10 @@ impl System {
                     address: region.address,
                     size_bytes: region.size_bytes,
                 })?;
+            if let Some(session) = self.ncsd_session.as_mut() {
+                session.flush_process_data_cache(region.address, region.size_bytes)
+                    .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+            }
             report.cache_regions_validated =
                 report.cache_regions_validated.saturating_add(1);
         }
@@ -2452,6 +2465,13 @@ impl System {
                     })?
                     .physical_address
             };
+
+        if command.flush_buffer {
+            if let Some(session) = self.ncsd_session.as_mut() {
+                session.flush_process_data_cache(address, size_bytes)
+                    .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
+            }
+        }
 
         self.submit_pica_command_list_from_physical_memory(physical_address, word_count)
             .map_err(|error| GspGxCommandQueueError::CommandListSubmission {
