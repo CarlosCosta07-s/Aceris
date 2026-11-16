@@ -4852,7 +4852,7 @@ mod tests {
     }
 
     #[test]
-    fn gsp_gx_flush_cache_regions_validates_all_three_nonzero_ranges() {
+    fn gsp_gx_flush_cache_regions_cleans_and_invalidates_fcram_ranges() {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
@@ -4863,11 +4863,24 @@ mod tests {
             .unwrap();
         let (linear_virtual_base, linear_physical_base) =
             map_test_linear_fcram(&mut system, 0x2000);
+        let baseline_cache_lines = system
+            .ncsd_session()
+            .unwrap()
+            .address_space()
+            .data_cache_line_count();
         system
             .ncsd_session_mut()
             .unwrap()
             .write_memory_bytes(linear_virtual_base + 0x100, &[0xCA, 0xFE, 0xBA, 0xBE])
             .unwrap();
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines + 1
+        );
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
@@ -4902,6 +4915,29 @@ mod tests {
             .read(linear_physical_base + 0x100, &mut flushed)
             .unwrap();
         assert_eq!(flushed, [0xCA, 0xFE, 0xBA, 0xBE]);
+
+        // FlushCacheRegions must remove the clean line as well as write back
+        // its dirty bytes. A later device write must therefore be visible
+        // to the next CPU load without a separate invalidate operation.
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines
+        );
+        system
+            .physical_memory_mut()
+            .write(linear_physical_base + 0x100, &[0x11, 0x22, 0x33, 0x44])
+            .unwrap();
+        let mut cpu_observed = [0u8; 4];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(linear_virtual_base + 0x100, &mut cpu_observed)
+            .unwrap();
+        assert_eq!(cpu_observed, [0x11, 0x22, 0x33, 0x44]);
     }
 
     #[test]
