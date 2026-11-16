@@ -74,8 +74,6 @@ struct GpuPhysicalMemoryInner {
     /// Write generation per exclusive-reservation granule, bumped by every
     /// physical write so CPU exclusive monitors observe DMA/GPU/LCD stores.
     exclusive_versions: BTreeMap<u32, u64>,
-    /// Generation per 32-byte data-cache line, shared by all physical-memory clones.
-    cache_generations: BTreeMap<u32, u64>,
 }
 
 impl Default for GpuPhysicalMemoryInner {
@@ -85,7 +83,6 @@ impl Default for GpuPhysicalMemoryInner {
             pages: BTreeMap::new(),
             linear_allocations: BTreeMap::new(),
             exclusive_versions: BTreeMap::new(),
-            cache_generations: BTreeMap::new(),
         }
     }
 }
@@ -106,18 +103,6 @@ impl GpuPhysicalMemory {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .backing_id
-    }
-
-    /// Generation of the 32-byte line containing `address`.
-    pub(crate) fn cache_generation(&self, address: u32) -> u64 {
-        let line = address & !0x1F;
-        self.inner
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .cache_generations
-            .get(&line)
-            .copied()
-            .unwrap_or(0)
     }
 
     /// Number of 4 KiB backing pages currently materialized.
@@ -269,12 +254,6 @@ impl GpuPhysicalMemory {
             .pages
             .retain(|page, _| *page < first_page || *page >= end_page);
         let end = u64::from(address) + u64::from(size);
-        let mut line = address & !0x1F;
-        while u64::from(line) < end {
-            let generation = inner.cache_generations.entry(line).or_insert(0);
-            *generation = generation.wrapping_add(1);
-            line = line.saturating_add(32);
-        }
         let granule_size = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
         let mut granule = address & !(granule_size - 1);
         while u64::from(granule) < end {
@@ -366,12 +345,6 @@ impl GpuPhysicalMemory {
                 current += u64::from(granule);
             }
 
-            let mut line = address & !0x1F;
-            while u64::from(line) < end {
-                let generation = inner.cache_generations.entry(line).or_insert(0);
-                *generation = generation.wrapping_add(1);
-                line = line.saturating_add(32);
-            }
         }
         Ok(())
     }
