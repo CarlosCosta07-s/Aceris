@@ -3377,6 +3377,9 @@ mod tests {
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x1000)
             .unwrap();
+        system.ncsd_session_mut().unwrap()
+            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x1000)
+            .unwrap();
         system
             .physical_memory_mut()
             .write(source_physical, &expected)
