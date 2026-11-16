@@ -3877,11 +3877,15 @@ mod tests {
 
         {
             let session = system.ncsd_session_mut().unwrap();
+            let baseline_cache_lines = session.address_space().data_cache_line_count();
             session.write_memory_u32(source_address, expected).unwrap();
             // Prime the destination through the new alias. Both aliases must
             // resolve to one physical cache line in the ARM11 data cache.
             assert_eq!(session.read_memory_u32(destination_new_alias).unwrap(), 0);
-            assert_eq!(session.address_space().data_cache_line_count(), 2);
+            assert_eq!(
+                session.address_space().data_cache_line_count(),
+                baseline_cache_lines + 2
+            );
         }
 
         let (shared_memory_base, event_handle) = {
@@ -3899,6 +3903,11 @@ mod tests {
             .register_gsp_client(0, shared_memory_base, event_handle)
             .unwrap();
         assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+        let cache_lines_before_dma = system
+            .ncsd_session()
+            .unwrap()
+            .address_space()
+            .data_cache_line_count();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
@@ -3935,7 +3944,10 @@ mod tests {
         let session = system.ncsd_session_mut().unwrap();
         // RequestDMA's flush_source writes back and removes the dirty source
         // line. The unrelated destination line remains resident and clean.
-        assert_eq!(session.address_space().data_cache_line_count(), 1);
+        assert_eq!(
+            session.address_space().data_cache_line_count(),
+            cache_lines_before_dma - 1
+        );
         // The DMA write is visible through physical backing, but the clean
         // destination line remains stale regardless of which alias reads it.
         assert_eq!(session.read_memory_u32(destination_old_alias).unwrap(), 0);
@@ -3946,7 +3958,10 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert_eq!(session.address_space().data_cache_line_count(), 0);
+        assert_eq!(
+            session.address_space().data_cache_line_count(),
+            cache_lines_before_dma - 2
+        );
         // Invalidating through one alias exposes the DMA write through both.
         assert_eq!(
             session.read_memory_u32(destination_old_alias).unwrap(),
@@ -3956,7 +3971,10 @@ mod tests {
             session.read_memory_u32(destination_new_alias).unwrap(),
             expected
         );
-        assert_eq!(session.address_space().data_cache_line_count(), 1);
+        assert_eq!(
+            session.address_space().data_cache_line_count(),
+            cache_lines_before_dma - 1
+        );
     }
 
     #[test]
@@ -6141,6 +6159,11 @@ mod tests {
             .register_gsp_client(0, shared_memory_base, event_handle)
             .unwrap();
         assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+        let cache_lines_before_dispatch = system
+            .ncsd_session()
+            .unwrap()
+            .address_space()
+            .data_cache_line_count();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 2;
@@ -6193,7 +6216,7 @@ mod tests {
                 .unwrap()
                 .address_space()
                 .data_cache_line_count(),
-            baseline_cache_lines
+            cache_lines_before_dispatch - 1
         );
 
         let interrupt_queue_address =
