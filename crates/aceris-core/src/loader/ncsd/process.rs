@@ -810,6 +810,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            data_cache: BTreeMap::new(),
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
