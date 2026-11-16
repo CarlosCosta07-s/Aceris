@@ -170,10 +170,18 @@ pub struct GspDisplayTransfer {
 }
 
 impl GspDisplayTransfer {
-    pub const fn input_width(self) -> u16 { self.input_dimensions as u16 }
-    pub const fn input_height(self) -> u16 { (self.input_dimensions >> 16) as u16 }
-    pub const fn output_width(self) -> u16 { self.output_dimensions as u16 }
-    pub const fn output_height(self) -> u16 { (self.output_dimensions >> 16) as u16 }
+    pub const fn input_width(self) -> u16 {
+        self.input_dimensions as u16
+    }
+    pub const fn input_height(self) -> u16 {
+        (self.input_dimensions >> 16) as u16
+    }
+    pub const fn output_width(self) -> u16 {
+        self.output_dimensions as u16
+    }
+    pub const fn output_height(self) -> u16 {
+        (self.output_dimensions >> 16) as u16
+    }
 }
 
 /// Decoded arguments for GX command ID 0x02.
@@ -212,7 +220,9 @@ pub enum GspGxCommandQueueError {
         start_address: u32,
         end_address: u32,
     },
-    InvalidDisplayTransferAddress { address: u32 },
+    InvalidDisplayTransferAddress {
+        address: u32,
+    },
     DisplayTransfer(String),
     UnsupportedMemoryFillWidth {
         control: u16,

@@ -2,14 +2,12 @@
 
 use crate::cpu::Arm11Core;
 use crate::gpu::{
-    GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
-    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
-    GspDisplayTransfer, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
-    GspInterruptQueuePushResult,
+    DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_MEMORY_FILL,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
+    GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspDisplayTransfer,
+    GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult,
     GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, Pica200,
-    DisplayTransferRequest, display_transfer_buffer_sizes, execute_display_transfer,
-    GSP_GX_COMMAND_DISPLAY_TRANSFER,
-    VRAM_BASE, VRAM_SIZE,
+    VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes, execute_display_transfer,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -1714,15 +1712,18 @@ impl System {
                             .display_transfer()
                             .expect("command ID was checked immediately above");
                         if client_has_rendering_right {
-                            self.dispatch_gsp_display_transfer(arguments).and_then(|()| {
-                                report.display_transfers_completed =
-                                    report.display_transfers_completed.saturating_add(1);
-                                self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
-                                    .map(|_| ())
-                                    .map_err(|error| {
-                                        GspGxCommandQueueError::DisplayTransfer(error.to_string())
-                                    })
-                            })
+                            self.dispatch_gsp_display_transfer(arguments)
+                                .and_then(|()| {
+                                    report.display_transfers_completed =
+                                        report.display_transfers_completed.saturating_add(1);
+                                    self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
+                                        .map(|_| ())
+                                        .map_err(|error| {
+                                            GspGxCommandQueueError::DisplayTransfer(
+                                                error.to_string(),
+                                            )
+                                        })
+                                })
                         } else {
                             Ok(())
                         }
@@ -1821,10 +1822,8 @@ impl System {
             output_height: command.output_height(),
             flags: command.flags,
         };
-        let (source_length, destination_length) =
-            display_transfer_buffer_sizes(request).map_err(|error| {
-                GspGxCommandQueueError::DisplayTransfer(error.to_string())
-            })?;
+        let (source_length, destination_length) = display_transfer_buffer_sizes(request)
+            .map_err(|error| GspGxCommandQueueError::DisplayTransfer(error.to_string()))?;
         request.input_address =
             self.resolve_gsp_physical_range(command.input_address, source_length)?;
         request.output_address =
@@ -2851,7 +2850,7 @@ mod tests {
 
     #[test]
     fn gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion() {
-        use crate::gpu::{execute_display_transfer, DisplayTransferRequest};
+        use crate::gpu::{DisplayTransferRequest, execute_display_transfer};
 
         let mut system = System::new();
         system
@@ -2869,8 +2868,12 @@ mod tests {
         for y in 0..64usize {
             for x in 0..64usize {
                 let offset = (y * 64 + x) * 4;
-                expected[offset..offset + 4]
-                    .copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
+                expected[offset..offset + 4].copy_from_slice(&[
+                    x as u8,
+                    y as u8,
+                    (x ^ y) as u8,
+                    255,
+                ]);
             }
         }
         system
@@ -2934,10 +2937,8 @@ mod tests {
         queue_bytes[1] = 1;
         let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
-        queue_bytes[entry + 4..entry + 8]
-            .copy_from_slice(&(VRAM_BASE + 0x20_000).to_le_bytes());
-        queue_bytes[entry + 8..entry + 12]
-            .copy_from_slice(&(VRAM_BASE + 0x40_000).to_le_bytes());
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&(VRAM_BASE + 0x20_000).to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&(VRAM_BASE + 0x40_000).to_le_bytes());
         let dimensions = (64u32 << 16) | 64;
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&dimensions.to_le_bytes());
         queue_bytes[entry + 16..entry + 20].copy_from_slice(&dimensions.to_le_bytes());

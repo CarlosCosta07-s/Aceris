@@ -104,10 +104,8 @@ impl DisplayTransferFormat {
                 output.copy_from_slice(&value.to_le_bytes());
             }
             Self::Rgba4 => {
-                let value = (reduce(r, 4) << 12)
-                    | (reduce(g, 4) << 8)
-                    | (reduce(b, 4) << 4)
-                    | reduce(a, 4);
+                let value =
+                    (reduce(r, 4) << 12) | (reduce(g, 4) << 8) | (reduce(b, 4) << 4) | reduce(a, 4);
                 output.copy_from_slice(&value.to_le_bytes());
             }
         }
@@ -150,21 +148,29 @@ pub struct DisplayTransferReport {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DisplayTransferError {
-    MisalignedAddress { address: u32 },
+    MisalignedAddress {
+        address: u32,
+    },
     InvalidDimensions {
         input_width: u16,
         input_height: u16,
         output_width: u16,
         output_height: u16,
     },
-    OutputDimensionsTooSmall { width: u16, height: u16 },
+    OutputDimensionsTooSmall {
+        width: u16,
+        height: u16,
+    },
     UnsupportedFormat(u8),
     UnsupportedScaling(u8),
     UnsupportedBlock32,
     UnsupportedTextureCopyMode,
     UnsupportedTiledToTiledMode,
     SizeOverflow,
-    TransferTooLarge { bytes: usize, maximum: usize },
+    TransferTooLarge {
+        bytes: usize,
+        maximum: usize,
+    },
     AllocationFailed,
     PhysicalMemory(GpuPhysicalMemoryError),
 }
@@ -173,7 +179,10 @@ impl fmt::Display for DisplayTransferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MisalignedAddress { address } => {
-                write!(f, "DisplayTransfer address {address:#010x} is not 8-byte aligned")
+                write!(
+                    f,
+                    "DisplayTransfer address {address:#010x} is not 8-byte aligned"
+                )
             }
             Self::InvalidDimensions {
                 input_width,
@@ -202,7 +211,10 @@ impl fmt::Display for DisplayTransferError {
             }
             Self::SizeOverflow => f.write_str("DisplayTransfer buffer size overflows"),
             Self::TransferTooLarge { bytes, maximum } => {
-                write!(f, "DisplayTransfer requires {bytes} bytes; limit is {maximum}")
+                write!(
+                    f,
+                    "DisplayTransfer requires {bytes} bytes; limit is {maximum}"
+                )
             }
             Self::AllocationFailed => f.write_str("DisplayTransfer staging allocation failed"),
             Self::PhysicalMemory(error) => write!(f, "DisplayTransfer memory failed: {error}"),
@@ -319,10 +331,7 @@ pub fn execute_display_transfer(
             let src = pixel_offset(x, source_y, width, tiles_x, source_bpp, source_layout)?;
             let dst = pixel_offset(x, y, width, tiles_x, destination_bpp, destination_layout)?;
             let rgba = source_format.decode(&source[src..src + source_bpp]);
-            destination_format.encode(
-                rgba,
-                &mut output[dst..dst + destination_bpp],
-            );
+            destination_format.encode(rgba, &mut output[dst..dst + destination_bpp]);
         }
     }
 
@@ -354,9 +363,7 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
             output_height: request.output_height,
         });
     }
-    if request.output_width < MIN_OUTPUT_DIMENSION
-        || request.output_height < MIN_OUTPUT_DIMENSION
-    {
+    if request.output_width < MIN_OUTPUT_DIMENSION || request.output_height < MIN_OUTPUT_DIMENSION {
         return Err(DisplayTransferError::OutputDimensionsTooSmall {
             width: request.output_width,
             height: request.output_height,
@@ -474,8 +481,7 @@ mod tests {
         for y in 0..usize::from(HEIGHT) {
             for x in 0..usize::from(WIDTH) {
                 let offset = (y * usize::from(WIDTH) + x) * 4;
-                bytes[offset..offset + 4]
-                    .copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
+                bytes[offset..offset + 4].copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
             }
         }
         bytes
@@ -508,7 +514,8 @@ mod tests {
     fn tiled_to_linear_round_trips_the_morton_grid() {
         let mut memory = GpuPhysicalMemory::new();
         let expected = make_tiled(&mut memory);
-        let report = execute_display_transfer(&mut memory, request(DESTINATION, SOURCE, 0)).unwrap();
+        let report =
+            execute_display_transfer(&mut memory, request(DESTINATION, SOURCE, 0)).unwrap();
         let mut actual = vec![0; expected.len()];
         memory.read(SOURCE, &mut actual).unwrap();
         assert_eq!(actual, expected);
@@ -567,7 +574,9 @@ mod tests {
             DISPLAY_TRANSFER_TEXTURE_COPY,
             1 << 24,
         ] {
-            assert!(execute_display_transfer(&mut memory, request(SOURCE, DESTINATION, flags)).is_err());
+            assert!(
+                execute_display_transfer(&mut memory, request(SOURCE, DESTINATION, flags)).is_err()
+            );
             let mut actual = [0; 16];
             memory.read(DESTINATION, &mut actual).unwrap();
             assert_eq!(actual, sentinel);
