@@ -81,6 +81,27 @@ pub trait Bus {
         Ok(())
     }
 
+    /// Completes all writes accepted by this bus before the barrier instruction.
+    ///
+    /// Synchronous buses may keep the default implementation because each store
+    /// is already committed before returning. A bus with a deferred write queue
+    /// must drain that queue here and propagate device errors.
+    fn drain_write_buffer(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Orders prior data accesses before subsequent data accesses.
+    /// Deferred or asynchronous buses should implement this as an ordering point.
+    fn data_memory_barrier(&mut self) -> Result<()> {
+        self.drain_write_buffer()
+    }
+
+    /// Makes prior code writes visible to subsequent instruction fetches.
+    /// Instruction-cache implementations should synchronize/invalidate fetch state.
+    fn instruction_sync_barrier(&mut self) -> Result<()> {
+        self.drain_write_buffer()
+    }
+
     /// Reads an exclusive value and returns an opaque monitor-generation token.
     fn exclusive_read(&mut self, addr: u32, size: usize) -> Result<(u64, u64)> {
         let _ = (addr, size);
