@@ -47,16 +47,17 @@ fn validates_real_super_mario_64_luigi_cia_and_reports_inner_ncch_encryption() {
         .expect("the boot content contains an NCCH");
     assert_eq!(ncch.header().program_id, title_id);
     assert!(!ncch.header().declares_no_crypto());
+    drop(ncch);
 
     // The default file launcher must stop at the explicit missing-key
-    // boundary. It must not replace an existing process on this failure.
+    // boundary and must not mark a failed image as active.
     let mut system = System::new();
     let error = system.load_executable_file(&path).unwrap_err();
     assert!(matches!(error, Error::Unimplemented(_)));
     assert_eq!(system.image(), None);
 
     eprintln!(
-        "CIA validated: title={title_id:#018x}, content_index={}, content_bytes={:#x};          outer CIA content is clear, inner NCCH encryption requires caller-supplied keys",
+        "CIA validated: title={title_id:#018x}, content_index={}, content_bytes={:#x}; outer CIA content is clear, inner NCCH encryption requires caller-supplied keys",
         location.content_index,
         location.size_bytes
     );
