@@ -1596,3 +1596,17 @@ A regressão foi publicada em `main`; validar Rustfmt, build, Clippy, testes de 
 
 **Limites preservados:** a alteração ficou no teste de integração em `system.rs` e nesta nota. Nenhum módulo de CPU/Thumb ou draw/shader atribuído ao Claude foi modificado.
 
+## GSP FlushCacheRegions → TextureCopy — ordenação CPU→GPU (16/11/2026)
+
+O ChatGPT acrescentou `gsp_gx_flush_then_texture_copy_reads_dirty_cpu_fcram_data` em `crates/aceris-core/src/system.rs` (commit `77d5cad`).
+
+- A CPU escreve 16 bytes na região FCRAM linear; o teste confirma que a linha D-cache fica dirty enquanto o backing físico ainda contém zeros.
+- Uma única GX queue contém dois comandos ordenados: `FlushCacheRegions` para a faixa de origem e, imediatamente depois, `TextureCopy` de FCRAM linear para VRAM.
+- O relatório precisa mostrar dois comandos consumidos, uma região limpa/invalida e uma cópia concluída, sem erro.
+- O backing FCRAM precisa conter os bytes CPU originais após o flush; a VRAM de destino precisa conter a mesma sequência após TextureCopy.
+- A linha D-cache deve ter sido removida, e a conclusão da cópia deve enfileirar PPF e sinalizar o event handle OneShot.
+
+O teste cobre a ordenação explícita de manutenção antes de o mecanismo de cópia ler FCRAM. Ele não atribui um flush implícito ao TextureCopy, nem representa temporização assíncrona ou concorrência host-side. A CI de `main` precisa validar Rustfmt, build, Clippy, testes Linux/Windows/macOS e Android ARM64.
+
+**Limites preservados:** somente testes de integração em `system.rs` e esta nota foram alterados. Nenhum módulo de CPU/Thumb ou draw/shader reservado ao Claude foi modificado.
+
