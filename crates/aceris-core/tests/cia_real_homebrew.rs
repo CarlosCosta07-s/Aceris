@@ -64,7 +64,10 @@ fn validates_and_runs_real_super_mario_64_luigi_cia_without_console_keys() {
 
     // Exercise the same default launcher a user selects in the desktop UI.
     let mut system = System::new();
-    assert_eq!(system.load_executable_file(&path).unwrap(), ImageFormat::Cia);
+    assert_eq!(
+        system.load_executable_file(&path).unwrap(),
+        ImageFormat::Cia
+    );
     assert_eq!(system.image(), Some(ImageFormat::Cia));
 
     let frame = system.run_frame_with_budget(50_000).unwrap();
