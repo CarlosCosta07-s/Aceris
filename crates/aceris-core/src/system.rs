@@ -1280,6 +1280,11 @@ impl System {
     /// This is used when replacing the active process so stale process mappings
     /// cannot be reused by the next title.
     fn reset_gpu_linear_memory(&mut self) {
+        // A process replacement must not inherit the previous title's active
+        // color/depth target or the last draw's diagnostics.
+        self.pica_render_session = self.pica_render_settings.map(PicaRenderSession::new);
+        self.last_pica_render_report = None;
+
         let mappings = self.gpu_address_space.mappings();
         for mapping in mappings {
             let _ = self
