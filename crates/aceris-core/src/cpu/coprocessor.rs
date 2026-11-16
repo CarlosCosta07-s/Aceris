@@ -211,7 +211,11 @@ mod tests {
         run_on_barrier_bus(
             &mut cpu,
             &mut bus,
-            &[DRAIN_WRITE_BUFFER, DATA_MEMORY_BARRIER, INSTRUCTION_SYNC_BARRIER],
+            &[
+                DRAIN_WRITE_BUFFER,
+                DATA_MEMORY_BARRIER,
+                INSTRUCTION_SYNC_BARRIER,
+            ],
         )
         .unwrap();
 
