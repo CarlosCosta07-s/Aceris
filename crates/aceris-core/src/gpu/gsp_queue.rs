@@ -3,7 +3,8 @@
 //! This module models the documented queue header and the 15-entry ring.
 //! The system dispatcher consumes RequestDMA, ProcessCommandList, MemoryFill,
 //! DisplayTransfer, TextureCopy and FlushCacheRegions entries through the guest
-//! TriggerCmdReqQueue path. Busy arbitration and physical cache modelling remain incomplete.
+//! TriggerCmdReqQueue path. FlushCacheRegions currently validates ranges only;
+//! physical cache maintenance and busy arbitration remain incomplete.
 
 use std::fmt;
 
