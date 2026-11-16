@@ -96,10 +96,10 @@ pub trait Bus {
         self.drain_write_buffer()
     }
 
-    /// Makes prior code writes visible to subsequent instruction fetches.
-    /// Instruction-cache implementations should synchronize/invalidate fetch state.
+    /// Synchronizes the instruction stream after code or execution-context changes.
+    /// The interpreter has no independently cached/pipelined instruction stream by default.
     fn instruction_sync_barrier(&mut self) -> Result<()> {
-        self.drain_write_buffer()
+        Ok(())
     }
 
     /// Reads an exclusive value and returns an opaque monitor-generation token.
