@@ -1215,6 +1215,10 @@ impl Arm11CodeAddressSpace {
         else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
+        self.flush_data_cache_range(address, size)
+            .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
+        self.drain_arm11_write_buffer()
+            .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.invalidate_exclusive_range(address, size as usize);
         Ok(self.shared_regions.remove(index).backing)
     }
@@ -1345,6 +1349,8 @@ impl Arm11CodeAddressSpace {
                 size,
             });
         };
+        self.flush_data_cache_range(virtual_base, size)
+            .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.drain_arm11_write_buffer()
             .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.invalidate_exclusive_range(virtual_base, size as usize);
@@ -1532,6 +1538,10 @@ impl Arm11CodeAddressSpace {
         else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
+        self.flush_data_cache_range(address, size)
+            .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
+        self.drain_arm11_write_buffer()
+            .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.invalidate_exclusive_range(address, size as usize);
         self.dynamic_regions.remove(index);
         Ok(())
