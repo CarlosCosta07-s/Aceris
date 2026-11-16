@@ -820,20 +820,18 @@ mod tests {
     }
 
 
-
     /// End-to-end output path: PICA200 draw -> tiled color target ->
     /// GSP DisplayTransfer -> linear PDC buffers -> all three LCD surfaces.
     #[test]
     fn pica_draw_reaches_top_stereo_and_bottom_lcd_surfaces() {
         use crate::gpu::{
-            execute_display_transfer, DisplayTransferRequest, REG_COLORBUFFER_FORMAT,
-            REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
+            DisplayTransferRequest, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
+            REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, execute_display_transfer,
         };
         use crate::video::{
-            DualScreenDisplay, LcdController, LcdPanel, PDC_CONTROL,
-            PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_FORMAT,
+            BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH, DualScreenDisplay, LcdController, LcdPanel,
+            PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_FORMAT,
             PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_HEIGHT, TOP_SCREEN_WIDTH,
-            BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH,
         };
 
         const TOP_TILED: u32 = FCRAM_BASE + 0x20_0000;
@@ -843,10 +841,7 @@ mod tests {
 
         fn settings_for(width: usize, height: usize) -> PicaRenderSettings {
             let transform = Matrix4::from_column_major([
-                0.25, 0.0, 0.0, 0.0,
-                0.0, 0.25, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                -1.0, -1.0, 0.0, 1.0,
+                0.25, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0,
             ])
             .unwrap();
             PicaRenderSettings {
@@ -861,7 +856,8 @@ mod tests {
         }
 
         fn configure_target(gpu: &mut Pica200, address: u32, width: usize, height: usize) {
-            gpu.write_register(REG_COLORBUFFER_LOC, address >> 3).unwrap();
+            gpu.write_register(REG_COLORBUFFER_LOC, address >> 3)
+                .unwrap();
             gpu.write_register(REG_COLORBUFFER_FORMAT, 2).unwrap();
             gpu.write_register(REG_FRAMEBUFFER_BLOCK32, 0).unwrap();
             gpu.write_register(
@@ -906,7 +902,12 @@ mod tests {
         )
         .unwrap();
 
-        configure_target(&mut gpu, BOTTOM_TILED, BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT);
+        configure_target(
+            &mut gpu,
+            BOTTOM_TILED,
+            BOTTOM_SCREEN_WIDTH,
+            BOTTOM_SCREEN_HEIGHT,
+        );
         gpu.execute_command_list_rendering(
             &DRAW_LIST,
             &mut memory,
@@ -946,7 +947,8 @@ mod tests {
             (PDC_FRAMEBUFFER_STRIDE, (BOTTOM_SCREEN_WIDTH * 4) as u32),
             (PDC_CONTROL, 0x1_0001),
         ] {
-            lcd.write_register(LcdPanel::Bottom, register, value).unwrap();
+            lcd.write_register(LcdPanel::Bottom, register, value)
+                .unwrap();
         }
 
         let mut display = DualScreenDisplay::new().unwrap();
@@ -958,7 +960,11 @@ mod tests {
             ("top-right", display.top_right().pixels()),
             ("bottom", display.bottom().pixels()),
         ] {
-            let width = if name == "bottom" { BOTTOM_SCREEN_WIDTH } else { TOP_SCREEN_WIDTH };
+            let width = if name == "bottom" {
+                BOTTOM_SCREEN_WIDTH
+            } else {
+                TOP_SCREEN_WIDTH
+            };
             let inside = (180 * width + 40) * 4;
             assert_eq!(&pixels[inside..inside + 4], &[200, 100, 50, 255], "{name}");
         }
