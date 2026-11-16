@@ -17,8 +17,7 @@
 //! replacement remains a bounded software approximation. Resolved TEX/C/B/S
 //! and PRRR/NMRR attributes are retained in TLB entries and select the modeled
 //! inner D-cache policy on data accesses. Outer-cache behavior and buffered
-//! write timing remain incomplete. A
-//! translation fault is reported as `Error::InvalidAccess` with the virtual
+//! write timing remain incomplete. Translation faults is reported as `Error::InvalidAccess` with the virtual
 //! address, and DFSR/DFAR (or IFSR/IFAR) are latched in CP15.
 
 use super::arm::{bit, bits};
