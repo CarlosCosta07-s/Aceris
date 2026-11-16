@@ -1494,3 +1494,5 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 - A associatividade e capacidade declaradas (16 KiB, 4-way, 32 bytes) são representadas; a política LRU é apenas aproximação de replacement de hardware. Latência, prefetch, write buffer, barreiras e concorrência/coerência multicore não estão modelados.
 - Invalidate de uma linha dirty descarta deliberadamente os dados não escritos, conforme a semântica de invalidação sem clean.
 - Os testes foram adicionados/atualizados, mas não executados nesta sessão: o ambiente não possui `cargo`, `rustc` ou `rustfmt`. Confirme CI de `main` para fmt, build, Clippy, testes Linux/Windows/macOS e Android ARM64 antes de considerar a etapa aprovada.
+
+Referências técnicas consultadas: [ARM11 MPCore Technical Reference Manual — CTR/DSize](https://documentation-service.arm.com/static/5e8e1cd9fd977155116a4a7a) para 16 KiB, quatro vias e linhas de oito words; [3dbrew SVC](https://www.3dbrew.org/wiki/SVC) para os serviços 0x52/0x53/0x54 e suas assinaturas.
