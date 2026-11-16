@@ -1432,3 +1432,20 @@ O ChatGPT implementou o comando GX TextureCopy (ID 0x04) na área de integraçã
 Arquivos alterados nesta etapa: crates/aceris-core/src/gpu/texture_copy.rs (novo), crates/aceris-core/src/gpu/gsp_queue.rs, crates/aceris-core/src/gpu/mod.rs, crates/aceris-core/src/system.rs, docs/ROADMAP.md, docs/ARCHITECTURE.md e este registro.
 
 A CI de main precisa confirmar Rustfmt, build, Clippy com -D warnings, cargo test --workspace em Linux/Windows/macOS e build Android ARM64 antes de considerar a etapa aprovada. Não houve verificação local: o ambiente desta sessão não possui Rust/Cargo.
+
+
+## GSP GX FlushCacheRegions — validação parcial de regiões (16/11/2026)
+
+O ChatGPT implementou a decodificação e o despacho parcial do comando GX FlushCacheRegions (ID 0x05), sem alterar módulos de CPU/Thumb nem os módulos de draw/shader atribuídos ao Claude.
+
+- `GSP_GX_COMMAND_FLUSH_CACHE_REGIONS` e `GspGxCommand::flush_cache_regions` decodificam os três pares `{address, size_bytes}` dos words 1–6.
+- O dispatcher só processa o comando quando o cliente possui rendering rights. Sem o direito, interrompe a fila e grava `0xD8202A06` (GSP no-right).
+- Cada região com tamanho zero é ignorada sem validar seu endereço. As regiões não vazias são processadas em ordem; a primeira faixa que não puder ser resolvida pelo mapa GPU linear/VRAM interrompe o comando e registra `GSP_INVALID_ADDRESS_RESULT`. Regiões posteriores não são processadas.
+- `GspGxCommandQueueReport::cache_regions_validated` conta apenas as faixas não vazias que passaram pela validação; `cache_flush_requested` registra a solicitação.
+- **Limite deliberado:** isto não executa `svcFlushProcessDataCache` nem um flush físico. O Aceris ainda não possui um modelo independente de data cache ARM11/dirty lines. Não interpretar `cache_regions_validated` como bytes efetivamente escritos de volta ou invalidados.
+
+Testes adicionados: decode dos três pares; duas faixas válidas com uma faixa de tamanho zero cujo endereço é deliberadamente inválido; interrupção na primeira região não mapeada sem processar a terceira; rejeição sem rendering rights com o resultado GSP correspondente.
+
+Arquivos alterados: `crates/aceris-core/src/gpu/gsp_queue.rs`, `crates/aceris-core/src/gpu/mod.rs`, `crates/aceris-core/src/system.rs`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md` e este registro.
+
+A CI de `main` precisa confirmar Rustfmt, build, Clippy com `-D warnings`, `cargo test --workspace` em Linux/Windows/macOS e build Android ARM64 antes de considerar a etapa aprovada. O ambiente desta sessão não possui `cargo` nem `rustc`; os testes foram adicionados, mas não executados localmente.
