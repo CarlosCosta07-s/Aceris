@@ -3363,7 +3363,6 @@ mod tests {
         // RequestDMA accepts byte-granular spans. The legacy linear alias maps
         // to the same FCRAM backing used by the ARM11 process and GPU.
         let source_virtual: u32 = 0x1400_0011;
-        let source_physical = crate::gpu::FCRAM_BASE + 0x11;
         let destination_virtual: u32 = VRAM_BASE + 0x20_003;
         let expected = [
             0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x17, 0x28, 0x39, 0x4A, 0x5B, 0x6C, 0x7D,
@@ -4570,7 +4569,7 @@ mod tests {
             )
             .unwrap();
 
-        let source_virtual = 0x1400_0200;
+        let source_virtual: u32 = 0x1400_0200;
         let source_physical = crate::gpu::FCRAM_BASE + 0x200;
         let destination_physical = VRAM_BASE + 0x2000;
         let source_bytes: Vec<u8> = (0..272).map(|value| value as u8).collect();
