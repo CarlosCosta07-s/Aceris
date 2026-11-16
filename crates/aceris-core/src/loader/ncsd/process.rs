@@ -3023,11 +3023,31 @@ mod tests {
         address_space
             .write32(virtual_base + 0x100, 0xCAFE_BABE)
             .unwrap();
+        assert_eq!(address_space.read32(virtual_base + 0x100).unwrap(), 0xCAFE_BABE);
+        assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
+
+        // Store writes the dirty line to FCRAM but leaves a clean CPU copy resident.
+        assert_eq!(
+            address_space
+                .store_data_cache_range(virtual_base + 0x100, 4)
+                .unwrap(),
+            1
+        );
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0xCAFE_BABE);
 
+        // A device write to the same line does not snoop the resident CPU copy.
         memory
             .write_u32(physical_base + 0x104, 0x1234_5678)
             .unwrap();
+        assert_eq!(address_space.read32(virtual_base + 0x104).unwrap(), 0);
+
+        // Invalidation through the process alias exposes the device's new bytes.
+        assert_eq!(
+            address_space
+                .invalidate_data_cache_range(virtual_base + 0x104, 4)
+                .unwrap(),
+            1
+        );
         assert_eq!(
             address_space.read32(virtual_base + 0x104).unwrap(),
             0x1234_5678
