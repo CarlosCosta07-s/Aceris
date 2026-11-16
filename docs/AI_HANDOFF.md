@@ -1610,3 +1610,5 @@ O teste cobre a ordenação explícita de manutenção antes de o mecanismo de c
 
 **Limites preservados:** somente testes de integração em `system.rs` e esta nota foram alterados. Nenhum módulo de CPU/Thumb ou draw/shader reservado ao Claude foi modificado.
 
+A primeira CI do teste `gsp_gx_texture_copy_to_fcram_requires_cpu_invalidation` (commit `58898f1`) detectou que a fixture tentava registrar o mesmo intervalo físico duas vezes no mapa DMA/GPU, operação rejeitada por `OverlappingPhysicalMapping`. O teste foi corrigido em `c1730d1`: o mapa GSP mantém somente o alias linear já registrado, enquanto a sessão ARM11 expõe ambos os aliases para as leituras e para a invalidação. O novo CI precisa confirmar a correção e a suíte completa.
+
