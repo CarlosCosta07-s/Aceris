@@ -2202,7 +2202,8 @@ impl System {
             && u64::from(source_physical) < u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
         if command.flush_source && !source_is_vram {
             if let Some(session) = self.ncsd_session.as_mut() {
-                session.flush_process_data_cache(command.source_address, command.size_bytes)
+                session
+                    .flush_process_data_cache(command.source_address, command.size_bytes)
                     .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
             }
         }
@@ -2273,7 +2274,8 @@ impl System {
             if region.size_bytes == 0 {
                 break;
             }
-            let physical = self.resolve_gsp_physical_range(region.address, region.size_bytes as usize)
+            let physical = self
+                .resolve_gsp_physical_range(region.address, region.size_bytes as usize)
                 .map_err(|_| GspGxCommandQueueError::InvalidCacheRegionRange {
                     address: region.address,
                     size_bytes: region.size_bytes,
@@ -2282,7 +2284,8 @@ impl System {
                 && u64::from(physical) < u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
             if !is_vram {
                 if let Some(session) = self.ncsd_session.as_mut() {
-                    session.flush_process_data_cache(region.address, region.size_bytes)
+                    session
+                        .flush_process_data_cache(region.address, region.size_bytes)
                         .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
                 }
             }
@@ -2470,7 +2473,8 @@ impl System {
             && u64::from(physical_address) < u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
         if command.flush_buffer && !command_list_is_vram {
             if let Some(session) = self.ncsd_session.as_mut() {
-                session.flush_process_data_cache(address, size_bytes)
+                session
+                    .flush_process_data_cache(address, size_bytes)
                     .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))?;
             }
         }
@@ -3793,14 +3797,23 @@ mod tests {
             .unwrap();
 
         let command_list_address = 0x1400_0000;
-        system.gpu_address_space_mut().map_linear_region(command_list_address, 0x1000).unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(command_list_address, 0x1000)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .map_linear_memory_region(command_list_address, crate::gpu::FCRAM_BASE, 0x1000)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .write_memory_u32(command_list_address, 0xDEAD_BEEF)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .write_memory_u32(command_list_address + 4, 0x000F_0100)
             .unwrap();
 
@@ -4656,10 +4669,14 @@ mod tests {
             .gpu_address_space_mut()
             .map_linear_region(0x1400_0000, 0x2000)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
             .unwrap();
-        system.ncsd_session_mut().unwrap()
+        system
+            .ncsd_session_mut()
+            .unwrap()
             .write_memory_bytes(0x1400_0100, &[0xCA, 0xFE, 0xBA, 0xBE])
             .unwrap();
 
@@ -4691,7 +4708,10 @@ mod tests {
         assert!(report.error.is_none());
         assert_eq!(report.last_result, 0);
         let mut flushed = [0u8; 4];
-        system.physical_memory().read(crate::gpu::FCRAM_BASE + 0x100, &mut flushed).unwrap();
+        system
+            .physical_memory()
+            .read(crate::gpu::FCRAM_BASE + 0x100, &mut flushed)
+            .unwrap();
         assert_eq!(flushed, [0xCA, 0xFE, 0xBA, 0xBE]);
     }
 
