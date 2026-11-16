@@ -3611,8 +3611,7 @@ mod tests {
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_address.to_le_bytes());
-        queue_bytes[entry + 8..entry + 12]
-            .copy_from_slice(&destination_old_alias.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination_old_alias.to_le_bytes());
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&4u32.to_le_bytes());
         queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
 
@@ -3650,8 +3649,14 @@ mod tests {
             1
         );
         // Invalidating through one alias exposes the DMA write through both.
-        assert_eq!(session.read_memory_u32(destination_old_alias).unwrap(), expected);
-        assert_eq!(session.read_memory_u32(destination_new_alias).unwrap(), expected);
+        assert_eq!(
+            session.read_memory_u32(destination_old_alias).unwrap(),
+            expected
+        );
+        assert_eq!(
+            session.read_memory_u32(destination_new_alias).unwrap(),
+            expected
+        );
     }
 
     #[test]
