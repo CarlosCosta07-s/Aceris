@@ -3,14 +3,12 @@
 use crate::cpu::Arm11Core;
 use crate::gpu::{
     DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_MEMORY_FILL,
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_REQUEST_DMA,
-    GSP_GX_COMMAND_QUEUE_SIZE, GSP_INTERRUPT_QUEUE_SIZE,
-    GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspDisplayTransfer,
-    GspDmaRequest, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
+    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_GX_COMMAND_REQUEST_DMA,
+    GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
+    GspDisplayTransfer, GspDmaRequest, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, Pica200,
-    MAX_GSP_DMA_BYTES, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
-    execute_display_transfer,
+    GspProcessCommandList, Pica200, MAX_GSP_DMA_BYTES, VRAM_BASE, VRAM_SIZE,
+    display_transfer_buffer_sizes, execute_display_transfer,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -3271,10 +3269,8 @@ mod tests {
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
-        queue_bytes[entry + 8..entry + 12]
-            .copy_from_slice(&destination_virtual.to_le_bytes());
-        queue_bytes[entry + 12..entry + 16]
-            .copy_from_slice(&(expected.len() as u32).to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination_virtual.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&(expected.len() as u32).to_le_bytes());
         queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
 
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
@@ -3328,7 +3324,10 @@ mod tests {
             .unwrap();
         let destination = VRAM_BASE + 0x20_000;
         let before = [0xCC; 8];
-        system.physical_memory_mut().write(destination, &before).unwrap();
+        system
+            .physical_memory_mut()
+            .write(destination, &before)
+            .unwrap();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
@@ -3345,7 +3344,10 @@ mod tests {
         assert!(report.error.is_none());
 
         let mut after = [0u8; 8];
-        system.physical_memory().read(destination, &mut after).unwrap();
+        system
+            .physical_memory()
+            .read(destination, &mut after)
+            .unwrap();
         assert_eq!(after, before);
     }
 
