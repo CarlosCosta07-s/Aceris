@@ -770,11 +770,27 @@ mod tests {
         );
         assert_eq!(before.program_counter, 0x0010_0000);
 
+        let mut frame_number = u64::MAX;
+        // SAFETY: handle is live and frame_number is writable.
+        assert_eq!(
+            unsafe { aceris_system_get_frame_number(handle, &mut frame_number) },
+            ACERIS_STATUS_OK
+        );
+        assert_eq!(frame_number, 0);
+
         // SAFETY: handle is live and the instruction budget is a valid small value.
         assert_eq!(
             unsafe { aceris_system_run_frame(handle, 3) },
             ACERIS_STATUS_OK
         );
+
+        // A successful frame must advance the presentation counter exactly once.
+        // SAFETY: handle is live and frame_number is writable.
+        assert_eq!(
+            unsafe { aceris_system_get_frame_number(handle, &mut frame_number) },
+            ACERIS_STATUS_OK
+        );
+        assert_eq!(frame_number, 1);
 
         let mut after = AcerisCpuState::default();
         // SAFETY: handle is live and after is writable.
