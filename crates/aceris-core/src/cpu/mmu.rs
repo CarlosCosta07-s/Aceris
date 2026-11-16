@@ -1396,6 +1396,60 @@ mod tests {
     }
 
     #[test]
+    fn tre_maps_every_documented_prrr_nmrr_index() {
+        let (cpu, _mem) = machine();
+        let mut parameters = params(&cpu);
+        parameters.tre = true;
+
+        // TR6 is not implemented by ARM11 MPCore: PRRR[13:12] is SBZ/RAZ.
+        // Exercise the seven documented entries, including the high NMRR
+        // fields for index 7, and keep index 6 out of the expected-value table.
+        let primary_types = [0u32, 1, 2, 3, 2, 1, 0, 2];
+        let inner_attributes = [0u32, 0, 1, 0, 2, 0, 0, 3];
+        let outer_attributes = [0u32, 0, 3, 0, 2, 0, 0, 1];
+        let shareable = [false, false, true, true, false, true, false, true];
+
+        let mut primary_remap = (1 << 16) | (1 << 19);
+        let mut normal_remap = 0u32;
+        for index in [0u32, 1, 2, 3, 4, 5, 7] {
+            primary_remap |= primary_types[index as usize] << (index * 2);
+            normal_remap |= inner_attributes[index as usize] << (index * 2);
+            normal_remap |= outer_attributes[index as usize] << (16 + index * 2);
+        }
+        parameters.primary_remap = primary_remap;
+        parameters.normal_remap = normal_remap;
+
+        let expected = [
+            (0, MemoryType::StronglyOrdered, true, 0, 0),
+            (1, MemoryType::Device, true, 0, 0),
+            (2, MemoryType::Normal, true, 1, 3),
+            (3, MemoryType::Reserved, false, 0, 0),
+            (4, MemoryType::Normal, false, 2, 2),
+            (5, MemoryType::Device, false, 0, 0),
+            (7, MemoryType::Normal, true, 3, 1),
+        ];
+
+        for (index, memory_type, is_shareable, inner, outer) in expected {
+            let descriptor = DescriptorMemoryAttributes {
+                tex: (index >> 2) as u8,
+                cacheable: index & 0b010 != 0,
+                bufferable: index & 0b001 != 0,
+                shareable: shareable[index as usize],
+            };
+            assert_eq!(
+                descriptor.resolve(&parameters),
+                MemoryAttributes {
+                    memory_type,
+                    shareable: is_shareable,
+                    inner,
+                    outer,
+                },
+                "unexpected remapped attributes for index {index:03b}",
+            );
+        }
+    }
+
+    #[test]
     fn resolved_inner_attributes_select_dcache_policy_and_respect_sctlr_c() {
         let attributes = |memory_type, inner| MemoryAttributes {
             memory_type,
