@@ -18,6 +18,7 @@ pub enum CachePolicy {
     NonCacheable,
     WriteThrough,
     WriteBack,
+    WriteBackNoAllocate,
 }
 
 pub trait Bus {
