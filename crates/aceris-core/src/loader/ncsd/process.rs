@@ -1728,10 +1728,7 @@ impl Arm11CodeAddressSpace {
             address >= region.physical_base
                 && u64::from(address) < u64::from(region.physical_base) + u64::from(region.size)
         }) {
-            return Some(MemoryLocation::Physical {
-                index,
-                address,
-            });
+            return Some(MemoryLocation::Physical { index, address });
         }
 
         if let Some((index, region)) = self.shared_regions.iter().enumerate().find(|(_, region)| {
@@ -2274,11 +2271,7 @@ impl Bus for Arm11CodeAddressSpace {
         self.read8_with_cache_policy(address, CachePolicy::WriteBack)
     }
 
-    fn read8_with_cache_policy(
-        &mut self,
-        address: u32,
-        policy: CachePolicy,
-    ) -> BusResult<u8> {
+    fn read8_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u8> {
         let location = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
