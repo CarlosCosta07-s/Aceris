@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 16/11/2026, com base no código publicado até `71013253b68ee6f0bf726e2a04d7843c617e8f89`. A CI da etapa TextureCopy ainda precisa ser confirmada; não considerar os novos testes aprovados até o workflow de `main` terminar.
+> Estado revisado em 16/11/2026, com base no código publicado até `8329fac3afb0782f864a7f79b50822b4dadac335`. A CI da etapa TextureCopy ainda precisa ser confirmada; não considerar os novos testes aprovados até o workflow de `main` terminar.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
