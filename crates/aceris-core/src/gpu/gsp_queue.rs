@@ -25,6 +25,8 @@ pub const GSP_GX_COMMAND_QUEUE_CAPACITY: u8 = 15;
 pub const GSP_GX_COMMAND_PROCESS_COMMAND_LIST: u8 = 0x01;
 /// GX command ID for MemoryFill.
 pub const GSP_GX_COMMAND_MEMORY_FILL: u8 = 0x02;
+/// GX command ID for DisplayTransfer.
+pub const GSP_GX_COMMAND_DISPLAY_TRANSFER: u8 = 0x03;
 /// GSP result for an invalid GPU-visible address.
 pub const GSP_INVALID_ADDRESS_RESULT: u32 = 0xE0E0_2BF5;
 
@@ -82,6 +84,20 @@ impl GspGxCommand {
             buffer_size_bytes: self.arguments[1],
             update_gas_blend: self.arguments[2] != 0,
             flush_buffer: self.arguments[6] != 0,
+        })
+    }
+
+    /// Decodes the input/output addresses, dimensions and flags for DisplayTransfer.
+    pub const fn display_transfer(self) -> Option<GspDisplayTransfer> {
+        if self.command_id != GSP_GX_COMMAND_DISPLAY_TRANSFER {
+            return None;
+        }
+        Some(GspDisplayTransfer {
+            input_address: self.arguments[0],
+            output_address: self.arguments[1],
+            input_dimensions: self.arguments[2],
+            output_dimensions: self.arguments[3],
+            flags: self.arguments[4],
         })
     }
 
@@ -143,6 +159,23 @@ impl GspMemoryFillBuffer {
     }
 }
 
+/// Decoded arguments for GX command ID 0x03.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspDisplayTransfer {
+    pub input_address: u32,
+    pub output_address: u32,
+    pub input_dimensions: u32,
+    pub output_dimensions: u32,
+    pub flags: u32,
+}
+
+impl GspDisplayTransfer {
+    pub const fn input_width(self) -> u16 { self.input_dimensions as u16 }
+    pub const fn input_height(self) -> u16 { (self.input_dimensions >> 16) as u16 }
+    pub const fn output_width(self) -> u16 { self.output_dimensions as u16 }
+    pub const fn output_height(self) -> u16 { (self.output_dimensions >> 16) as u16 }
+}
+
 /// Decoded arguments for GX command ID 0x02.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GspMemoryFill {
@@ -179,6 +212,8 @@ pub enum GspGxCommandQueueError {
         start_address: u32,
         end_address: u32,
     },
+    InvalidDisplayTransferAddress { address: u32 },
+    DisplayTransfer(String),
     UnsupportedMemoryFillWidth {
         control: u16,
     },

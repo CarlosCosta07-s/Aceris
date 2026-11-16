@@ -15,6 +15,7 @@ mod pica200;
 mod rasterizer;
 mod render;
 mod render_target;
+mod transfer;
 mod shader_exec;
 mod shader_input;
 mod vertex;
@@ -47,9 +48,9 @@ pub use gsp_queue::{
     GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
     GSP_GX_COMMAND_QUEUE_CAPACITY, GSP_GX_COMMAND_QUEUE_CLIENT_COUNT,
     GSP_GX_COMMAND_QUEUE_CLIENT_STRIDE, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
-    GSP_GX_COMMAND_QUEUE_OFFSET, GSP_GX_COMMAND_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT,
-    GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList,
+    GSP_GX_COMMAND_QUEUE_OFFSET, GSP_GX_COMMAND_QUEUE_SIZE, GSP_GX_COMMAND_DISPLAY_TRANSFER,
+    GSP_INVALID_ADDRESS_RESULT, GspDisplayTransfer, GspGxCommand, GspGxCommandQueue,
+    GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList,
 };
 pub use index::{
     IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
@@ -80,6 +81,13 @@ pub use render_target::{
     PicaColorBufferFormat, PicaRenderBlockMode, PicaRenderTargetConfig, PicaRenderTargetError,
     PicaRenderTargetWriteReport, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
     REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
+};
+pub use transfer::{
+    DISPLAY_TRANSFER_BLOCKS_32X32, DISPLAY_TRANSFER_CROP, DISPLAY_TRANSFER_FLIP_VERTICAL,
+    DISPLAY_TRANSFER_LINEAR_TO_TILED, DISPLAY_TRANSFER_TEXTURE_COPY,
+    DISPLAY_TRANSFER_TILED_TO_TILED, MAX_DISPLAY_TRANSFER_BYTES, DisplayTransferError,
+    DisplayTransferFormat, DisplayTransferLayout, DisplayTransferReport, DisplayTransferRequest,
+    display_transfer_buffer_sizes, execute_display_transfer,
 };
 pub use shader_exec::{
     PicaShaderExecError, PicaShaderOpcode, PicaVertexShaderOutput, PicaVertexShaderProgram,
