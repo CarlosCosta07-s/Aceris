@@ -2163,20 +2163,28 @@ impl Arm11CodeAddressSpace {
         let resident = if let Some(line) = self.data_cache.get_mut(&line_base) {
             let was_dirty = line.dirty;
             line.bytes[offset] = value;
-            let bytes = line.bytes;
-            line.dirty = false;
-            Some((was_dirty, bytes))
+            line.dirty = true;
+            Some((was_dirty, line.bytes))
         } else {
             None
         };
 
         if let Some((was_dirty, bytes)) = resident {
-            self.touch_data_cache_line(line_base);
+            // Keep the resident copy dirty until the corresponding queue entry
+            // has been accepted, so a failed enqueue cannot lose modified data.
             if was_dirty {
-                return self.enqueue_data_cache_writeback(line_base, bytes);
+                self.enqueue_data_cache_writeback(line_base, bytes)?;
+            } else {
+                self.enqueue_buffered_normal_store(address, value)?;
             }
+            if let Some(line) = self.data_cache.get_mut(&line_base) {
+                line.dirty = false;
+            }
+            self.touch_data_cache_line(line_base);
+            Ok(())
+        } else {
+            self.enqueue_buffered_normal_store(address, value)
         }
-        self.enqueue_buffered_normal_store(address, value)
     }
 
     /// Write-through stores are bufferable Normal-memory transactions. Misses
