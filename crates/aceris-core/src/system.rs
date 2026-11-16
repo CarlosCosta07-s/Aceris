@@ -3638,6 +3638,9 @@ mod tests {
         );
 
         let session = system.ncsd_session_mut().unwrap();
+        // RequestDMA's flush_source writes back and removes the dirty source
+        // line. The unrelated destination line remains resident and clean.
+        assert_eq!(session.address_space().data_cache_line_count(), 1);
         // The DMA write is visible through physical backing, but the clean
         // destination line remains stale regardless of which alias reads it.
         assert_eq!(session.read_memory_u32(destination_old_alias).unwrap(), 0);
@@ -3648,6 +3651,7 @@ mod tests {
                 .unwrap(),
             1
         );
+        assert_eq!(session.address_space().data_cache_line_count(), 0);
         // Invalidating through one alias exposes the DMA write through both.
         assert_eq!(
             session.read_memory_u32(destination_old_alias).unwrap(),
@@ -3657,6 +3661,7 @@ mod tests {
             session.read_memory_u32(destination_new_alias).unwrap(),
             expected
         );
+        assert_eq!(session.address_space().data_cache_line_count(), 1);
     }
 
     #[test]
