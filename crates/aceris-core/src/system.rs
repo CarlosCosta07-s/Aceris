@@ -2642,6 +2642,25 @@ mod tests {
             })
             .collect()
     }
+ 
+    /// Reserves real FCRAM backing and maps the matching CPU and GSP aliases.
+    fn map_test_linear_fcram(system: &mut System, size: u32) -> (u32, u32) {
+        let physical_base = system
+            .physical_memory_mut()
+            .allocate_linear_fcram(size)
+            .unwrap();
+        let virtual_base = 0x1400_0000 + (physical_base - FCRAM_BASE);
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(virtual_base, size)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .map_linear_memory_region(virtual_base, physical_base, size)
+            .unwrap();
+        (virtual_base, physical_base)
+    }
 
     #[test]
     fn acquire_right_blocks_and_resumes_after_rendering_handoff() {
@@ -3362,20 +3381,13 @@ mod tests {
 
         // RequestDMA accepts byte-granular spans. The legacy linear alias maps
         // to the same FCRAM backing used by the ARM11 process and GPU.
-        let source_virtual: u32 = 0x1400_0011;
+        let (linear_virtual_base, _linear_physical_base) =
+            map_test_linear_fcram(&mut system, 0x1000);
+        let source_virtual = linear_virtual_base + 0x11;
         let destination_virtual: u32 = VRAM_BASE + 0x20_003;
         let expected = [
             0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x17, 0x28, 0x39, 0x4A, 0x5B, 0x6C, 0x7D,
         ];
-        system
-            .gpu_address_space_mut()
-            .map_linear_region(0x1400_0000, 0x1000)
-            .unwrap();
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x1000)
-            .unwrap();
         system
             .ncsd_session_mut()
             .unwrap()
@@ -3794,16 +3806,8 @@ mod tests {
             )
             .unwrap();
 
-        let command_list_address = 0x1400_0000;
-        system
-            .gpu_address_space_mut()
-            .map_linear_region(command_list_address, 0x1000)
-            .unwrap();
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .map_linear_memory_region(command_list_address, crate::gpu::FCRAM_BASE, 0x1000)
-            .unwrap();
+        let (command_list_address, _command_list_physical_base) =
+            map_test_linear_fcram(&mut system, 0x1000);
         system
             .ncsd_session_mut()
             .unwrap()
@@ -4661,19 +4665,12 @@ mod tests {
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
-        system
-            .gpu_address_space_mut()
-            .map_linear_region(0x1400_0000, 0x2000)
-            .unwrap();
+        let (linear_virtual_base, linear_physical_base) =
+            map_test_linear_fcram(&mut system, 0x2000);
         system
             .ncsd_session_mut()
             .unwrap()
-            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
-            .unwrap();
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .write_memory_bytes(0x1400_0100, &[0xCA, 0xFE, 0xBA, 0xBE])
+            .write_memory_bytes(linear_virtual_base + 0x100, &[0xCA, 0xFE, 0xBA, 0xBE])
             .unwrap();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
@@ -4682,11 +4679,11 @@ mod tests {
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
         queue_bytes[entry + 2] = 1;
         let arguments = [
-            0x1400_0100u32,
+            linear_virtual_base + 0x100,
             0x20,
-            0x1400_0800,
+            linear_virtual_base + 0x800,
             0x10,
-            0x1400_1800,
+            linear_virtual_base + 0x1800,
             0x40,
             0,
         ];
@@ -4706,7 +4703,7 @@ mod tests {
         let mut flushed = [0u8; 4];
         system
             .physical_memory()
-            .read(crate::gpu::FCRAM_BASE + 0x100, &mut flushed)
+            .read(linear_physical_base + 0x100, &mut flushed)
             .unwrap();
         assert_eq!(flushed, [0xCA, 0xFE, 0xBA, 0xBE]);
     }
@@ -4721,21 +4718,22 @@ mod tests {
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
-        system
-            .gpu_address_space_mut()
-            .map_linear_region(0x1400_0000, 0x2000)
-            .unwrap();
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
-            .unwrap();
+        let (linear_virtual_base, _linear_physical_base) =
+            map_test_linear_fcram(&mut system, 0x2000);
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
         let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
-        let arguments = [0x1400_0100u32, 0x20, 0xDEAD_BEEF, 0, 0x1400_1800, 0x40, 0];
+        let arguments = [
+            linear_virtual_base + 0x100,
+            0x20,
+            0xDEAD_BEEF,
+            0,
+            linear_virtual_base + 0x1800,
+            0x40,
+            0,
+        ];
         for (index, value) in arguments.into_iter().enumerate() {
             let offset = entry + 4 + index * 4;
             queue_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
@@ -4759,26 +4757,19 @@ mod tests {
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
-        system
-            .gpu_address_space_mut()
-            .map_linear_region(0x1400_0000, 0x2000)
-            .unwrap();
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x2000)
-            .unwrap();
+        let (linear_virtual_base, _linear_physical_base) =
+            map_test_linear_fcram(&mut system, 0x2000);
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
         let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
         let arguments = [
-            0x1400_0100u32,
+            linear_virtual_base + 0x100,
             0x20,
-            0x1500_0000,
+            linear_virtual_base + 0x4000,
             0x20,
-            0x1400_1800,
+            linear_virtual_base + 0x1800,
             0x40,
             0,
         ];
@@ -4793,7 +4784,7 @@ mod tests {
         assert_eq!(
             report.error,
             Some(GspGxCommandQueueError::InvalidCacheRegionRange {
-                address: 0x1500_0000,
+                address: linear_virtual_base + 0x4000,
                 size_bytes: 0x20,
             })
         );
