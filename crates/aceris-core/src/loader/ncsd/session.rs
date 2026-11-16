@@ -3941,7 +3941,10 @@ mod tests {
             memory.read_u32(destination_physical_base).unwrap(),
             physical_base + 0x100
         );
-        assert_eq!(memory.read_u32(destination_physical_base + 4).unwrap(), 0x40);
+        assert_eq!(
+            memory.read_u32(destination_physical_base + 4).unwrap(),
+            0x40
+        );
     }
 
     #[test]
