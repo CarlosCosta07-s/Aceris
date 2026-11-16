@@ -137,13 +137,86 @@ mod tests {
         Ok(())
     }
 
-    // mrc p15,0,r0,c0,c0,0 / mcr p15,0,r1,c1,c0,0 / mrc p15,0,r2,c13,c0,3
+    struct BarrierBus {
+        memory: FlatMemory,
+        operations: Vec<&'static str>,
+    }
+
+    impl BarrierBus {
+        fn new() -> Self {
+            Self {
+                memory: FlatMemory::new(0, 0x100),
+                operations: Vec::new(),
+            }
+        }
+    }
+
+    impl Bus for BarrierBus {
+        fn read8(&mut self, addr: u32) -> aceris_common::Result<u8> {
+            self.memory.read8(addr)
+        }
+
+        fn write8(&mut self, addr: u32, value: u8) -> aceris_common::Result<()> {
+            self.memory.write8(addr, value)
+        }
+
+        fn drain_write_buffer(&mut self) -> aceris_common::Result<()> {
+            self.operations.push("drain");
+            Ok(())
+        }
+
+        fn data_memory_barrier(&mut self) -> aceris_common::Result<()> {
+            self.operations.push("dmb");
+            Ok(())
+        }
+
+        fn instruction_sync_barrier(&mut self) -> aceris_common::Result<()> {
+            self.operations.push("isb");
+            Ok(())
+        }
+    }
+
+    fn run_on_barrier_bus(
+        cpu: &mut Arm11Core,
+        bus: &mut BarrierBus,
+        words: &[u32],
+    ) -> aceris_common::Result<()> {
+        for (index, word) in words.iter().enumerate() {
+            bus.memory.write32(index as u32 * 4, *word)?;
+        }
+        cpu.set_pc(0);
+        for _ in words {
+            cpu.step(bus)?;
+        }
+        Ok(())
+    }
+
+    // MCR p15,0,r0,c7,c10,4 / MCR p15,0,r0,c7,c10,5 / MCR p15,0,r0,c7,c5,4
     const MRC_MIDR: u32 = 0xEE10_0F10;
     // mcr p15,0,r0,c7,c8,0 / mrc p15,0,r1,c7,c4,0
     const MCR_VA_TO_PA_PRIV_READ: u32 = 0xEE07_0F18;
     const MRC_PA_REGISTER_R1: u32 = 0xEE17_1F14;
     const MCR_SCTLR_R1: u32 = 0xEE01_1F10;
     const MRC_TLS_R2: u32 = 0xEE1D_2F70;
+
+    #[test]
+    fn armv6_cp15_barriers_reach_the_memory_bus_in_program_order() {
+        const DRAIN_WRITE_BUFFER: u32 = 0xEE07_0F9A;
+        const DATA_MEMORY_BARRIER: u32 = 0xEE07_0FBA;
+        const INSTRUCTION_SYNC_BARRIER: u32 = 0xEE07_0F95;
+
+        let mut cpu = Arm11Core::new();
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        let mut bus = BarrierBus::new();
+        run_on_barrier_bus(
+            &mut cpu,
+            &mut bus,
+            &[DRAIN_WRITE_BUFFER, DATA_MEMORY_BARRIER, INSTRUCTION_SYNC_BARRIER],
+        )
+        .unwrap();
+
+        assert_eq!(bus.operations, ["drain", "dmb", "isb"]);
+    }
 
     #[test]
     fn va_to_pa_cp15_operations_write_and_read_par() {
