@@ -6005,6 +6005,11 @@ mod tests {
             .register_gsp_client(0, shared_memory_base, event_handle)
             .unwrap();
         assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+        let cache_lines_before_dispatch = system
+            .ncsd_session()
+            .unwrap()
+            .address_space()
+            .data_cache_line_count();
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
@@ -6046,7 +6051,7 @@ mod tests {
                 .unwrap()
                 .address_space()
                 .data_cache_line_count(),
-            baseline_cache_lines + 1
+            cache_lines_before_dispatch
         );
 
         assert_eq!(
@@ -6063,7 +6068,7 @@ mod tests {
                 .unwrap()
                 .address_space()
                 .data_cache_line_count(),
-            baseline_cache_lines
+            cache_lines_before_dispatch - 1
         );
         let mut refreshed_destination = [0u8; 16];
         system
@@ -6072,6 +6077,14 @@ mod tests {
             .read_memory_bytes(destination_old_alias, &mut refreshed_destination)
             .unwrap();
         assert_eq!(refreshed_destination, expected);
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            cache_lines_before_dispatch
+        );
 
         let interrupt_queue_address =
             shared_memory_base + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
