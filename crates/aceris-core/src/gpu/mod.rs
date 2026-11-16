@@ -14,6 +14,7 @@ mod physical_memory;
 mod pica200;
 mod rasterizer;
 mod render;
+mod render_target;
 mod shader_exec;
 mod shader_input;
 mod vertex;
@@ -75,6 +76,11 @@ pub use rasterizer::{
     DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
 };
 pub use render::{PicaRenderError, PicaRenderReport};
+pub use render_target::{
+    PicaColorBufferFormat, PicaRenderBlockMode, PicaRenderTargetConfig, PicaRenderTargetError,
+    PicaRenderTargetWriteReport, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
+    REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
+};
 pub use shader_exec::{
     PicaShaderExecError, PicaShaderOpcode, PicaVertexShaderOutput, PicaVertexShaderProgram,
     SHADER_INPUT_REGISTERS, SHADER_OUTPUT_REGISTERS, SHADER_TEMPORARY_REGISTERS,

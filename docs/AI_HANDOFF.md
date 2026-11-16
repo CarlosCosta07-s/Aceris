@@ -1358,3 +1358,26 @@ Sobre o `main` `198429c`: `cargo fmt --all --check`, `cargo clippy --workspace -
 1. Decodificar os registradores de render target (endereço, formato, dimensões) e fazer o draw escrever neles.
 2. Ligar `present_to_framebuffer` (ou o `DisplayTransfer`) ao ciclo de frame, para a saída aparecer no frontend.
 3. Alinhar o layout de scanout com o hardware (tiling e rotação) com fonte independente.
+
+
+## PICA200 — render target e armazenamento tiled 8x8 (15/11/2026)
+
+Nova etapa implementada pelo ChatGPT em arquivo novo, sem alterar os módulos de shader, draw, rasterização ou o trabalho de Thumb:
+
+- crates/aceris-core/src/gpu/render_target.rs — decodifica GPUREG_COLORBUFFER_LOC (0x11D), GPUREG_COLORBUFFER_FORMAT (0x117), GPUREG_FRAMEBUFFER_BLOCK32 (0x11B) e GPUREG_FRAMEBUFFER_DIM (0x11E).
+- PicaRenderTargetConfig reconstrói o endereço físico (valor do registrador deslocado à esquerda em 3), largura (bits 0–10) e altura (bits 12–21 mais um). Registra o bit 24 como flag de flip ainda não aplicada.
+- Formatos implementados: RGBA8 (32-bit format 0), RGB5A1 (16-bit format 2), RGB565 (16-bit format 3) e RGBA4 (16-bit format 4). RGB8 não faz parte do decoder de formato do render target PICA.
+- Codec implementa blocos 8x8 em ordem Morton/Z: tiles em ordem de linha; pixels em ordem de bits X/Y intercalados dentro do tile. Width/height não múltiplos de 8 são completados por pixels de padding zerados.
+- write_rasterizer() valida que as dimensões do rasterizador correspondem ao target, valida o intervalo físico completo antes da escrita e devolve relatório de tiles/bytes. read_rgba8() oferece caminho inverso para inspeção/transferência futura.
+- Modo de bloco 32x32 é decodificado mas recusado pelo codec; não é tratado incorretamente como 8x8. A flag de flip é exposta sem aplicação automática até confirmar a semântica.
+- Seis testes novos cobrem decode de registradores, erros de dimensão/formato, bijeção Morton, round-trip RGBA8 no backing físico, quantização nos formatos 16-bit, e recusa de bloco 32x32/dimensões divergentes antes de modificar memória.
+- Referências de protocolo: https://docs.mikage.app/GPU/Internal_Registers/ e https://docs.mikage.app/GSP_Shared_Memory/. A documentação descreve os registros de framebuffer, a cor tiled e DisplayTransfer para converter o render target em framebuffer linear de LCD.
+
+### Limites não resolvidos
+
+- O codec é uma primitive de bring-up com blocos 8x8 e ordem Morton; ele não implementa o modo 32x32, DisplayTransfer, rotação, escala, PPF assíncrono, cache flush, nem a chamada a partir do ciclo de frame.
+- A flag de flip vertical do FRAMEBUFFER_DIM continua apenas exposta porque a própria descrição de referência a marca como incerta.
+- A numeração de formato e o packing de canais são baseados no registro público; os testes provam round-trip interno, não compatibilidade validada em hardware real.
+- Não há declaração de jogo executável ou compatibilidade PICA200 completa.
+
+A CI deste commit precisa passar em Linux, Windows e macOS, além do build Android ARM64, antes de aprovar esta etapa.
