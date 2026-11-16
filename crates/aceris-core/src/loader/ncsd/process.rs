@@ -56,7 +56,6 @@ enum DataCacheTarget {
 struct Arm11DataCacheLine {
     bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
     dirty: bool,
-    generation: u64,
     target: DataCacheTarget,
 }
 
@@ -207,7 +206,6 @@ pub struct SharedMemoryBacking {
     offset: usize,
     length: usize,
     backing_id: u64,
-    cache_generations: Arc<Mutex<BTreeMap<usize, u64>>>,
     exclusive_versions: Arc<Mutex<BTreeMap<u32, u64>>>,
 }
 
@@ -229,7 +227,6 @@ impl SharedMemoryBacking {
             offset: 0,
             length,
             backing_id: crate::memory::next_memory_backing_id(),
-            cache_generations: Arc::new(Mutex::new(BTreeMap::new())),
             exclusive_versions: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -245,7 +242,6 @@ impl SharedMemoryBacking {
             offset: self.offset.checked_add(offset)?,
             length,
             backing_id: self.backing_id,
-            cache_generations: self.cache_generations.clone(),
             exclusive_versions: self.exclusive_versions.clone(),
         })
     }
@@ -287,18 +283,6 @@ impl SharedMemoryBacking {
 
     fn root_base_offset(&self) -> usize {
         self.offset
-    }
-
-    fn cache_generation(&self, offset: usize) -> u64 {
-        let Some(root_offset) = self.root_offset(offset) else {
-            return 0;
-        };
-        let line = root_offset & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
-        self.cache_generations
-            .lock()
-            .ok()
-            .and_then(|generations| generations.get(&line).copied())
-            .unwrap_or(0)
     }
 
     fn exclusive_version(&self, offset: usize) -> u64 {
@@ -354,14 +338,6 @@ impl SharedMemoryBacking {
 
         if !input.is_empty() {
             let absolute_end = start + input.len();
-            if let Ok(mut generations) = self.cache_generations.lock() {
-                let mut line = start & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
-                while line < absolute_end {
-                    let generation = generations.entry(line).or_insert(0);
-                    *generation = generation.wrapping_add(1);
-                    line += ARM11_DATA_CACHE_LINE_SIZE;
-                }
-            }
             if let Ok(mut versions) = self.exclusive_versions.lock() {
                 let granule_size = crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize;
                 let mut granule = start & !(granule_size - 1);
@@ -793,8 +769,6 @@ pub struct Arm11CodeAddressSpace {
     gpu_memory: Option<GpuPhysicalMemory>,
     /// Stable identities for the process' private static segments.
     static_backing_ids: [u64; 5],
-    /// Generations for direct writes to private static backing.
-    static_cache_generations: BTreeMap<DataCacheKey, u64>,
     /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
     data_cache: BTreeMap<DataCacheKey, Arm11DataCacheLine>,
     /// Per-set least-recently-used order, oldest line first.
@@ -848,7 +822,6 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
-            static_cache_generations: BTreeMap::new(),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
@@ -942,7 +915,6 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
-            static_cache_generations: BTreeMap::new(),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
@@ -2146,18 +2118,6 @@ impl Arm11CodeAddressSpace {
         }
     }
 
-    fn cache_target_generation(&self, target: &DataCacheTarget, key: DataCacheKey) -> u64 {
-        match target {
-            DataCacheTarget::Static { .. } => self
-                .static_cache_generations
-                .get(&key)
-                .copied()
-                .unwrap_or(0),
-            DataCacheTarget::Backing { backing, offset } => backing.cache_generation(*offset),
-            DataCacheTarget::Physical { memory, address } => memory.cache_generation(*address),
-        }
-    }
-
     fn read_cache_target_line(
         &self,
         target: &DataCacheTarget,
@@ -2205,8 +2165,6 @@ impl Arm11CodeAddressSpace {
                     .get_mut(begin..end)
                     .ok_or(Error::InvalidAccess { addr: 0 })?;
                 destination.copy_from_slice(bytes);
-                let generation = self.static_cache_generations.entry(key).or_insert(0);
-                *generation = generation.wrapping_add(1);
             }
             DataCacheTarget::Backing { backing, offset } => {
                 let begin = offset
@@ -2415,6 +2373,8 @@ impl Arm11CodeAddressSpace {
 
     /// Queues a bufferable Normal-memory store. A resident line is updated
     /// immediately for this CPU, while other agents see it only after drain.
+    /// Queues a bufferable Normal-memory store. A resident line is updated
+    /// immediately for this CPU, while other agents see it only after drain.
     fn write_normal_buffered_byte(
         &mut self,
         target: &DataCacheTarget,
@@ -2422,15 +2382,6 @@ impl Arm11CodeAddressSpace {
         offset: usize,
         value: u8,
     ) -> BusResult<()> {
-        let generation = self.cache_target_generation(target, key);
-        let stale_clean = self
-            .data_cache
-            .get(&key)
-            .is_some_and(|line| !line.dirty && line.generation != generation);
-        if stale_clean {
-            self.remove_data_cache_line(key);
-        }
-
         let resident = if let Some(line) = self.data_cache.get_mut(&key) {
             let was_dirty = line.dirty;
             line.bytes[offset] = value;
@@ -2462,15 +2413,6 @@ impl Arm11CodeAddressSpace {
         key: DataCacheKey,
         offset: usize,
     ) -> BusResult<u8> {
-        let generation = self.cache_target_generation(target, key);
-        let stale_clean = self
-            .data_cache
-            .get(&key)
-            .is_some_and(|line| !line.dirty && line.generation != generation);
-        if stale_clean {
-            self.remove_data_cache_line(key);
-        }
-
         if self.data_cache.contains_key(&key) {
             self.touch_data_cache_line(key);
         } else {
@@ -2481,7 +2423,6 @@ impl Arm11CodeAddressSpace {
                 Arm11DataCacheLine {
                     bytes,
                     dirty: false,
-                    generation,
                     target: target.clone(),
                 },
             )?;
@@ -2517,15 +2458,6 @@ impl Arm11CodeAddressSpace {
         offset: usize,
         value: u8,
     ) -> BusResult<()> {
-        let generation = self.cache_target_generation(target, key);
-        let stale_clean = self
-            .data_cache
-            .get(&key)
-            .is_some_and(|line| !line.dirty && line.generation != generation);
-        if stale_clean {
-            self.remove_data_cache_line(key);
-        }
-
         if let Some(line) = self.data_cache.get_mut(&key) {
             line.bytes[offset] = value;
             line.dirty = true;
