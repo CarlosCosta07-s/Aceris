@@ -911,7 +911,8 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
     }
 
     fn read8(&mut self, addr: u32) -> Result<u8> {
-        let (physical, attributes) = self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
+        let (physical, attributes) =
+                self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
         self.inner.read8_with_cache_policy(
             physical,
             attributes.data_cache_policy(self.params.data_cache_enabled),
@@ -919,7 +920,8 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
     }
 
     fn write8(&mut self, addr: u32, value: u8) -> Result<()> {
-        let (physical, attributes) = self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
+        let (physical, attributes) =
+                self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
         self.inner.write8_with_cache_policy(
             physical,
             value,
@@ -976,7 +978,8 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn read16(&mut self, addr: u32) -> Result<u16> {
         if addr & 0xFFF <= 0xFFE {
-            let (physical, attributes) = self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
+            let (physical, attributes) =
+                self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
             return self.inner.read16_with_cache_policy(
                 physical,
                 attributes.data_cache_policy(self.params.data_cache_enabled),
@@ -989,7 +992,8 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn read32(&mut self, addr: u32) -> Result<u32> {
         if addr & 0xFFF <= 0xFFC {
-            let (physical, attributes) = self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
+            let (physical, attributes) =
+                self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
             return self.inner.read32_with_cache_policy(
                 physical,
                 attributes.data_cache_policy(self.params.data_cache_enabled),
@@ -1004,7 +1008,8 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn write16(&mut self, addr: u32, value: u16) -> Result<()> {
         if addr & 0xFFF <= 0xFFE {
-            let (physical, attributes) = self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
+            let (physical, attributes) =
+                self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
             return self.inner.write16_with_cache_policy(
                 physical,
                 value,
@@ -1019,7 +1024,8 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
 
     fn write32(&mut self, addr: u32, value: u32) -> Result<()> {
         if addr & 0xFFF <= 0xFFC {
-            let (physical, attributes) = self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
+            let (physical, attributes) =
+                self.map_with_privilege(addr, Access::Write, self.params.privileged)?;
             return self.inner.write32_with_cache_policy(
                 physical,
                 value,
