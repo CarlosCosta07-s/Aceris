@@ -2199,17 +2199,20 @@ impl Arm11CodeAddressSpace {
         let victim = {
             let set = self
                 .data_cache_lru
-                .get_mut(set_index)
+                .get(set_index)
                 .ok_or(Error::InvalidAccess { addr: 0 })?;
             if set.len() >= ARM11_DATA_CACHE_WAYS {
-                set.pop_front()
+                set.front().copied()
             } else {
                 None
             }
         };
 
         if let Some(victim_key) = victim {
-            if let Some(victim_line) = self.data_cache.remove(&victim_key) {
+            // Preserve the resident line until a dirty writeback has been
+            // accepted by the FIFO. A failed back-pressure drain must not
+            // silently discard modified cache state.
+            if let Some(victim_line) = self.data_cache.get(&victim_key).cloned() {
                 if victim_line.dirty {
                     self.enqueue_data_cache_writeback(
                         victim_key,
@@ -2218,6 +2221,7 @@ impl Arm11CodeAddressSpace {
                     )?;
                 }
             }
+            self.remove_data_cache_line(victim_key);
         }
 
         if let Some(set) = self.data_cache_lru.get_mut(set_index) {
