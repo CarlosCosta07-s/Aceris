@@ -1369,6 +1369,45 @@ mod tests {
     }
 
     #[test]
+    fn resolved_inner_attributes_select_dcache_policy_and_respect_sctlr_c() {
+        let attributes = |memory_type, inner| MemoryAttributes {
+            memory_type,
+            shareable: false,
+            inner,
+            outer: 3,
+        };
+
+        assert_eq!(
+            attributes(MemoryType::Normal, 0).data_cache_policy(true),
+            CachePolicy::NonCacheable
+        );
+        assert_eq!(
+            attributes(MemoryType::Normal, 1).data_cache_policy(true),
+            CachePolicy::WriteBack
+        );
+        assert_eq!(
+            attributes(MemoryType::Normal, 2).data_cache_policy(true),
+            CachePolicy::WriteThrough
+        );
+        assert_eq!(
+            attributes(MemoryType::Normal, 3).data_cache_policy(true),
+            CachePolicy::WriteBack
+        );
+        assert_eq!(
+            attributes(MemoryType::Normal, 3).data_cache_policy(false),
+            CachePolicy::NonCacheable
+        );
+        assert_eq!(
+            attributes(MemoryType::Device, 3).data_cache_policy(true),
+            CachePolicy::NonCacheable
+        );
+        assert_eq!(
+            attributes(MemoryType::StronglyOrdered, 3).data_cache_policy(true),
+            CachePolicy::NonCacheable
+        );
+    }
+
+    #[test]
     fn mmu_bus_reports_normal_device_and_strongly_ordered_attributes() {
         let (cpu, mut mem) = machine();
         let device_va = 0x0010_0000;
