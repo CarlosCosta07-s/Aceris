@@ -819,7 +819,6 @@ mod tests {
         assert_eq!(rasterizer.color_at(0, 0), Some([7; 4]));
     }
 
-
     /// End-to-end output path: PICA200 draw -> tiled color target ->
     /// GSP DisplayTransfer -> linear PDC buffers -> all three LCD surfaces.
     #[test]
