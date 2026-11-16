@@ -1449,3 +1449,35 @@ Testes adicionados: decode dos três pares; três faixas válidas; região de ta
 Arquivos alterados: `crates/aceris-core/src/gpu/gsp_queue.rs`, `crates/aceris-core/src/gpu/mod.rs`, `crates/aceris-core/src/system.rs`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md` e este registro.
 
 A CI de `main` precisa confirmar Rustfmt, build, Clippy com `-D warnings`, `cargo test --workspace` em Linux/Windows/macOS e build Android ARM64 antes de considerar a etapa aprovada. O ambiente desta sessão não possui `cargo` nem `rustc`; os testes foram adicionados, mas não executados localmente.
+
+
+## ARM11 data cache e coerência CPU/GPU/DMA (16/11/2026)
+
+O ChatGPT implementou uma primeira camada observável de cache write-back na memória de processo ARM11 e conectou as operações GSP de flush aos caminhos de consumo de memória.
+
+### Alterações publicadas em `main`
+
+- `814e954` — adiciona linhas ARM11 de 32 bytes, com bytes residentes e estado dirty, para aliases lineares físicos mapeados. CPU loads consultam as linhas e CPU stores as atualizam sem escrever imediatamente no backing físico.
+- `9e1b926` — inicializa a cache também no construtor de address space 3DSX.
+- `c5c6575` e `6ea696d` — expõem operações por processo e acrescentam Store (writeback mantendo a linha clean), Invalidate (descarta sem writeback) e Flush (writeback + invalidate).
+- `ea38758` — despacha SVC 0x52/0x53/0x54 para InvalidateProcessDataCache, StoreProcessDataCache e FlushProcessDataCache, aceitando o pseudo-handle do processo atual `0xFFFF8001`.
+- `d7914f5`, `fa5fbe8` — conectam FlushCacheRegions, RequestDMA.flush_source e ProcessCommandList.flush_buffer à manutenção do cache antes da leitura pelo agente GPU/DMA; VRAM é validada mas não passa pelo data cache ARM11.
+- `bb36bd8` — expõe a criação do alias linear no processo para os testes de integração.
+- `c490eee`, `af15c2b`, `51d8616`, `e37dd90` — atualizam testes GSP para mapear o alias também no address space do processo e verificar writeback real em RequestDMA, ProcessCommandList e FlushCacheRegions.
+- `80e0804` — adiciona teste direto de coerência CPU/GPU: dirty não visível no backing antes do writeback, Store escreve mantendo a linha, GPU write deixa uma linha CPU stale, Invalidate refaz o load e Flush escreve e remove a linha.
+
+### Contrato atual
+
+- Tamanho da linha modelada: 32 bytes. A chave é o endereço físico alinhado, de modo que aliases virtuais para a mesma linha compartilham o estado dentro da sessão.
+- O cache é write-back: CPU store deixa a linha dirty; CPU load da mesma linha observa o valor local.
+- StoreProcessDataCache limpa dirty lines e mantém as linhas residentes. InvalidateProcessDataCache remove as linhas sem writeback. FlushProcessDataCache faz writeback e remove as linhas.
+- Os três serviços SVC aceitam apenas o pseudo-handle current-process `0xFFFF8001`; handles de outros processos ainda não são suportados.
+- GSP RequestDMA executa flush da origem quando solicitado e quando a origem resolve para FCRAM. ProcessCommandList executa flush do buffer quando solicitado e o buffer resolve para FCRAM. FlushCacheRegions executa flush das regiões FCRAM válidas na ordem documentada, interrompendo em tamanho zero ou erro. VRAM não é cacheada por este modelo.
+- A manutenção valida o intervalo completo antes de writeback/evicção. O writeback usa o backing físico compartilhado com DMA/GPU/LCD.
+
+### Limites e validação pendente
+
+- O modelo cobre os aliases lineares físicos tratados como cacheáveis pelo caminho atual. Regiões estáticas, heap host-side e shared memory sem PA observável ainda não têm linhas cacheadas próprias; atributos ARM C/B/S e a seleção de memória Normal/Device precisam ser ligados ao cache.
+- A linha de 32 bytes e os estados clean/dirty são uma abstração funcional; associatividade, substituição, latência, prefetch, write buffer, barreiras e concorrência multicore não estão modelados.
+- Invalidate de uma linha dirty descarta deliberadamente os dados não escritos, conforme a semântica de invalidação sem clean.
+- Os testes foram adicionados/atualizados, mas não executados nesta sessão: o ambiente não possui `cargo`, `rustc` ou `rustfmt`. Confirme CI de `main` para fmt, build, Clippy, testes Linux/Windows/macOS e Android ARM64 antes de considerar a etapa aprovada.
