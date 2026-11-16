@@ -146,7 +146,10 @@ impl fmt::Display for Arm11DynamicMemoryError {
                 formatter.write_str("process has no shared physical-memory backing")
             }
             Self::WritebackFailure(reason) => {
-                write!(formatter, "could not drain the ARM11 write buffer: {reason}")
+                write!(
+                    formatter,
+                    "could not drain the ARM11 write buffer: {reason}"
+                )
             }
             Self::LinearMappingNotFound { address, size } => write!(
                 formatter,
@@ -2055,9 +2058,13 @@ impl Arm11CodeAddressSpace {
             };
             self.gpu_memory
                 .as_mut()
-                .ok_or(Error::InvalidAccess { addr: entry.address })?
+                .ok_or(Error::InvalidAccess {
+                    addr: entry.address,
+                })?
                 .write(entry.address, &entry.bytes)
-                .map_err(|_| Error::InvalidAccess { addr: entry.address })?;
+                .map_err(|_| Error::InvalidAccess {
+                    addr: entry.address,
+                })?;
             self.write_buffer.pop_front();
             drained += 1;
         }
@@ -2145,11 +2152,7 @@ impl Arm11CodeAddressSpace {
             .ok_or(Error::InvalidAccess { addr: address })
     }
 
-    fn write_back_no_allocate_physical_byte(
-        &mut self,
-        address: u32,
-        value: u8,
-    ) -> BusResult<()> {
+    fn write_back_no_allocate_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
         let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
         let offset = (address - line_base) as usize;
         if let Some(line) = self.data_cache.get_mut(&line_base) {
@@ -2387,7 +2390,9 @@ impl Bus for Arm11CodeAddressSpace {
                 ..
             } => match policy {
                 CachePolicy::NonCacheable => self.read_uncached_physical_byte(physical_address),
-                CachePolicy::WriteThrough | CachePolicy::WriteBack => {
+                CachePolicy::WriteThrough
+                | CachePolicy::WriteBack
+                | CachePolicy::WriteBackNoAllocate => {
                     self.read_cached_physical_byte(physical_address)
                 }
             },
@@ -3024,7 +3029,11 @@ mod tests {
         let mut first = [0u8; 1];
         let mut second = [0u8; 1];
         memory.read(physical_base, &mut first).unwrap();
-        memory.read(physical_base + ARM11_DATA_CACHE_LINE_SIZE as u32, &mut second)
+        memory
+            .read(
+                physical_base + ARM11_DATA_CACHE_LINE_SIZE as u32,
+                &mut second,
+            )
             .unwrap();
         assert_eq!(first, [1]);
         assert_eq!(second, [0]);
