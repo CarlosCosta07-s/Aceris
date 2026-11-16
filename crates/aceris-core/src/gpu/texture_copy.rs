@@ -376,7 +376,7 @@ mod tests {
 
         let mut actual = vec![0; expected.len()];
         memory.read(FCRAM_BASE + 0x1000, &mut actual).unwrap();
-        assert_eq!(actual, expected);
+        assert_eq!(actual.as_slice(), expected.as_slice());
         assert_eq!(
             report,
             TextureCopyReport {
