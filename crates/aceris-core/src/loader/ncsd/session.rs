@@ -283,7 +283,8 @@ impl Arm11ProcessSession {
         physical_base: u32,
         size: u32,
     ) -> std::result::Result<(), Arm11DynamicMemoryError> {
-        self.address_space.map_linear_memory_region(virtual_base, physical_base, size)
+        self.address_space
+            .map_linear_memory_region(virtual_base, physical_base, size)
     }
 
     /// Connects this process to the shared physical memory and GPU DMA map.
@@ -379,7 +380,11 @@ impl Arm11ProcessSession {
     }
 
     /// Invalidates process data-cache lines without writing dirty data back.
-    pub fn invalidate_process_data_cache(&mut self, address: u32, size_bytes: u32) -> Result<usize> {
+    pub fn invalidate_process_data_cache(
+        &mut self,
+        address: u32,
+        size_bytes: u32,
+    ) -> Result<usize> {
         self.address_space.invalidate_data_cache_range(address, size_bytes)
     }
 
@@ -2099,7 +2104,11 @@ impl Arm11ProcessSession {
     /// Handles InvalidateProcessDataCache (0x52), StoreProcessDataCache (0x53),
     /// and FlushProcessDataCache (0x54) for the current-process pseudo-handle.
     fn svc_cache_maintenance(&mut self, caller: ThreadId, operation: u8) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         if registers[0] != 0xFFFF_8001 {
             return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
         }
@@ -2851,10 +2860,13 @@ mod tests {
         let physical = memory.allocate_linear_fcram(0x1000).unwrap();
         let virtual_address = physical - 0x0C00_0000;
         session.address_space.attach_gpu_memory(memory.clone());
-        session.address_space
+        session
+            .address_space
             .map_linear_memory_region(virtual_address, physical, 0x1000)
             .unwrap();
-        session.write_memory_bytes(virtual_address, &[0x12, 0x34, 0x56, 0x78]).unwrap();
+        session
+            .write_memory_bytes(virtual_address, &[0x12, 0x34, 0x56, 0x78])
+            .unwrap();
         assert_eq!(memory.read_u32(physical).unwrap(), 0);
 
         session.set_current_register(0, 0xFFFF_8001);
