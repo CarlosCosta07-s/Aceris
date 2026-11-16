@@ -203,9 +203,7 @@ impl fmt::Display for DisplayTransferError {
             Self::UnsupportedScaling(value) => {
                 write!(f, "DisplayTransfer scaling mode {value} is unsupported")
             }
-            Self::UnsupportedCropMode => {
-                f.write_str("DisplayTransfer crop mode is unsupported")
-            }
+            Self::UnsupportedCropMode => f.write_str("DisplayTransfer crop mode is unsupported"),
             Self::UnsupportedBlock32 => f.write_str("DisplayTransfer 32x32 blocks are unsupported"),
             Self::UnsupportedTextureCopyMode => {
                 f.write_str("TextureCopy mode is not a DisplayTransfer")
