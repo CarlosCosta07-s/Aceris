@@ -2642,7 +2642,7 @@ mod tests {
             })
             .collect()
     }
- 
+
     /// Reserves real FCRAM backing and maps the matching CPU and GSP aliases.
     fn map_test_linear_fcram(system: &mut System, size: u32) -> (u32, u32) {
         let physical_base = system
