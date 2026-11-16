@@ -65,14 +65,29 @@ impl std::error::Error for GpuPhysicalMemoryError {}
 /// Clones share the same physical backing so CPU linear mappings, GPU DMA and
 /// LCD scanout observe one coherent byte store. CPU cache behavior is modeled
 /// separately and is not implied by this shared backing.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct GpuPhysicalMemoryInner {
+    backing_id: u64,
     pages: BTreeMap<u32, Box<[u8; PHYSICAL_PAGE_SIZE]>>,
     /// Exact contiguous FCRAM ranges reserved for ControlMemory linear allocations.
     linear_allocations: BTreeMap<u32, u32>,
     /// Write generation per exclusive-reservation granule, bumped by every
     /// physical write so CPU exclusive monitors observe DMA/GPU/LCD stores.
     exclusive_versions: BTreeMap<u32, u64>,
+    /// Generation per 32-byte data-cache line, shared by all physical-memory clones.
+    cache_generations: BTreeMap<u32, u64>,
+}
+
+impl Default for GpuPhysicalMemoryInner {
+    fn default() -> Self {
+        Self {
+            backing_id: crate::memory::next_memory_backing_id(),
+            pages: BTreeMap::new(),
+            linear_allocations: BTreeMap::new(),
+            exclusive_versions: BTreeMap::new(),
+            cache_generations: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -83,6 +98,26 @@ pub struct GpuPhysicalMemory {
 impl GpuPhysicalMemory {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Stable identity shared by every clone of this physical backing.
+    pub(crate) fn backing_id(&self) -> u64 {
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .backing_id
+    }
+
+    /// Generation of the 32-byte line containing `address`.
+    pub(crate) fn cache_generation(&self, address: u32) -> u64 {
+        let line = address & !0x1F;
+        self.inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cache_generations
+            .get(&line)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Number of 4 KiB backing pages currently materialized.
@@ -233,6 +268,16 @@ impl GpuPhysicalMemory {
         inner
             .pages
             .retain(|page, _| *page < first_page || *page >= end_page);
+        let mut line = address & !0x1F;
+        let end = u64::from(address) + u64::from(size);
+        while u64::from(line) < end {
+            let generation = inner.cache_generations.entry(line).or_insert(0);
+            *generation = generation.wrapping_add(1);
+            let granule = line & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
+            let exclusive = inner.exclusive_versions.entry(granule).or_insert(0);
+            *exclusive = exclusive.wrapping_add(1);
+            line = line.saturating_add(32);
+        }
         inner.linear_allocations.remove(&address);
         Ok(())
     }
@@ -307,14 +352,21 @@ impl GpuPhysicalMemory {
             copied += count;
         }
 
-        let granule = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
         if !input.is_empty() {
             let end = u64::from(address) + input.len() as u64;
+            let granule = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
             let mut current = u64::from(address & !(granule - 1));
             while current < end {
                 let version = inner.exclusive_versions.entry(current as u32).or_insert(0);
                 *version = version.wrapping_add(1);
                 current += u64::from(granule);
+            }
+
+            let mut line = address & !0x1F;
+            while u64::from(line) < end {
+                let generation = inner.cache_generations.entry(line).or_insert(0);
+                *generation = generation.wrapping_add(1);
+                line = line.saturating_add(32);
             }
         }
         Ok(())
