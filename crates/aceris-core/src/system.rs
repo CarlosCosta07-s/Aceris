@@ -3483,9 +3483,7 @@ mod tests {
 
         {
             let session = system.ncsd_session_mut().unwrap();
-            session
-                .write_memory_u32(source_address, expected)
-                .unwrap();
+            session.write_memory_u32(source_address, expected).unwrap();
             // Prime a clean CPU cache line for the DMA destination before the
             // device writes it. The line must remain stale until invalidated.
             assert_eq!(session.read_memory_u32(destination_address).unwrap(), 0);
@@ -3528,7 +3526,10 @@ mod tests {
 
         // The source flush makes the CPU's dirty bytes visible to DMA.
         assert_eq!(
-            system.physical_memory().read_u32(source_physical + 0x100).unwrap(),
+            system
+                .physical_memory()
+                .read_u32(source_physical + 0x100)
+                .unwrap(),
             expected
         );
         // DMA commits the destination to shared physical memory.
