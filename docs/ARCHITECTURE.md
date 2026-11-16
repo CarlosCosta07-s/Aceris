@@ -91,9 +91,9 @@ O GSP cria o bloco compartilhado do cliente, associa o event handle, e trata `Re
 
 ## GPU PICA200 e LCD
 
-A GPU possui banco inicial de registradores, parser PICA200, canais de command buffer, memória física esparsa e um modelo da GSP Interrupt Relay Queue. O dispatcher conectado ao IPC convidado processa `ProcessCommandList` (ID 0x01) e `MemoryFill` (ID 0x02); `MemoryFill` suporta padrões de 16/24/32 bits em faixas de VRAM validadas e notifica a conclusão pela relay queue e pelo event handle do cliente. A implementação de `ProcessCommandList` lê e valida os comandos na memória física/DMA e submete as escritas ao parser PICA200. Não há ainda executor de vertex shader ou pipeline PICA200 completa.
+A GPU possui banco inicial de registradores, parser PICA200, canais de command buffer, memória física esparsa e um modelo da GSP Interrupt Relay Queue. O dispatcher conectado ao IPC convidado processa `ProcessCommandList` (ID 0x01), `MemoryFill` (ID 0x02), `DisplayTransfer` (ID 0x03) e `TextureCopy` (ID 0x04). `MemoryFill` suporta padrões de 16/24/32 bits em faixas de VRAM validadas. `TextureCopy` executa cópia raw contígua ou por linhas com gaps, valida todos os spans antes da escrita e emite PPF após concluir. A implementação de `ProcessCommandList` lê e valida os comandos na memória física/DMA e submete as escritas ao parser PICA200. Não há ainda pipeline PICA200 completa.
 
-Os comandos GX `RequestDMA`, `DisplayTransfer` e `TextureCopy`, cache flush/invalidate, arbitragem completa de busy, estados externos de hardware, coerência de cache ARM/GPU e semântica assíncrona completa continuam pendentes. A infraestrutura atual também não transforma a presença dos parsers em compatibilidade de jogos.
+`RequestDMA`, `DisplayTransfer` e `TextureCopy` continuam parciais e síncronos; cache flush/invalidate, arbitragem completa de busy, estados externos de hardware, coerência de cache ARM/GPU e temporização assíncrona continuam pendentes. O caminho TextureCopy atual exige larguras de cópia iguais para origem e destino. A infraestrutura presente não constitui prova de compatibilidade com jogos.
 
 Ainda faltam a execução real dos vertex shaders PICA200, decodificação e execução integrada de DRAWARRAYS/DRAWELEMENTS, fragment pipeline, texturas, blending, sincronização GSP/IPC e coerência de cache.
 
