@@ -122,9 +122,7 @@ impl std::fmt::Display for TextureCopyError {
                     "TextureCopy address range at {address:#010x} is not mapped"
                 )
             }
-            Self::AllocationFailed => {
-                formatter.write_str("TextureCopy staging allocation failed")
-            }
+            Self::AllocationFailed => formatter.write_str("TextureCopy staging allocation failed"),
             Self::PhysicalMemory(reason) => {
                 write!(formatter, "TextureCopy memory failed: {reason}")
             }
@@ -182,10 +180,8 @@ pub fn execute_texture_copy(
 
     let size_bytes = request.size_bytes as usize;
     let (line_bytes, source_gap, destination_gap) = if used_gaps {
-        let source_line =
-            (request.source_line_width_and_gap & 0xFFFF) as usize * 16;
-        let destination_line =
-            (request.destination_line_width_and_gap & 0xFFFF) as usize * 16;
+        let source_line = (request.source_line_width_and_gap & 0xFFFF) as usize * 16;
+        let destination_line = (request.destination_line_width_and_gap & 0xFFFF) as usize * 16;
         if source_line == 0 || destination_line == 0 {
             return Err(TextureCopyError::MissingLineWidth);
         }
@@ -204,25 +200,28 @@ pub fn execute_texture_copy(
         (size_bytes, 0, 0)
     };
 
-    let source_stride = line_bytes
-        .checked_add(source_gap)
-        .ok_or(TextureCopyError::AddressOverflow {
-            base: request.source_address,
-            offset: u64::MAX,
-        })?;
-    let destination_stride = line_bytes
-        .checked_add(destination_gap)
-        .ok_or(TextureCopyError::AddressOverflow {
-            base: request.destination_address,
-            offset: u64::MAX,
-        })?;
-    let row_count = size_bytes
-        .checked_add(line_bytes - 1)
-        .ok_or(TextureCopyError::InvalidSize {
-            size_bytes: request.size_bytes,
-            minimum_bytes,
-        })?
-        / line_bytes;
+    let source_stride =
+        line_bytes
+            .checked_add(source_gap)
+            .ok_or(TextureCopyError::AddressOverflow {
+                base: request.source_address,
+                offset: u64::MAX,
+            })?;
+    let destination_stride =
+        line_bytes
+            .checked_add(destination_gap)
+            .ok_or(TextureCopyError::AddressOverflow {
+                base: request.destination_address,
+                offset: u64::MAX,
+            })?;
+    let row_count =
+        size_bytes
+            .checked_add(line_bytes - 1)
+            .ok_or(TextureCopyError::InvalidSize {
+                size_bytes: request.size_bytes,
+                minimum_bytes,
+            })?
+            / line_bytes;
 
     // Validate every row on both sides before reading or changing any bytes.
     for row in 0..row_count {
@@ -245,8 +244,7 @@ pub fn execute_texture_copy(
     for row in 0..row_count {
         let count = row_size(size_bytes, line_bytes, row);
         let source = row_address(request.source_address, source_stride, row)?;
-        let physical_source =
-            resolve_texture_copy_range(memory, address_space, source, count)?;
+        let physical_source = resolve_texture_copy_range(memory, address_space, source, count)?;
         memory
             .read(physical_source, &mut staged[copied..copied + count])
             .map_err(|error| TextureCopyError::PhysicalMemory(error.to_string()))?;
@@ -277,12 +275,13 @@ fn row_size(total_bytes: usize, line_bytes: usize, row: usize) -> usize {
 }
 
 fn row_address(base: u32, stride: usize, row: usize) -> Result<u32, TextureCopyError> {
-    let offset = (stride as u64)
-        .checked_mul(row as u64)
-        .ok_or(TextureCopyError::AddressOverflow {
-            base,
-            offset: u64::MAX,
-        })?;
+    let offset =
+        (stride as u64)
+            .checked_mul(row as u64)
+            .ok_or(TextureCopyError::AddressOverflow {
+                base,
+                offset: u64::MAX,
+            })?;
     let address = u64::from(base)
         .checked_add(offset)
         .ok_or(TextureCopyError::AddressOverflow { base, offset })?;
@@ -329,7 +328,9 @@ mod tests {
 
     fn mapped_linear_memory() -> GpuDmaAddressSpace {
         let mut address_space = GpuDmaAddressSpace::new();
-        address_space.map_linear_region(0x1400_0000, 0x1_0000).unwrap();
+        address_space
+            .map_linear_region(0x1400_0000, 0x1_0000)
+            .unwrap();
         address_space
     }
 
@@ -443,7 +444,10 @@ mod tests {
                 flags: TEXTURE_COPY_ENGINE_MODE | TEXTURE_COPY_GAP_MODE,
             },
         );
-        assert!(matches!(result, Err(TextureCopyError::InvalidAddress { .. })));
+        assert!(matches!(
+            result,
+            Err(TextureCopyError::InvalidAddress { .. })
+        ));
 
         let mut actual = vec![0; 192];
         memory.read(destination, &mut actual).unwrap();
