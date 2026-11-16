@@ -394,6 +394,16 @@ impl Arm11ProcessSession {
             .invalidate_data_cache_range(address, size_bytes)
     }
 
+    /// Completes the process ARM11 D-cache writeback queue in FIFO order.
+    pub fn drain_write_buffer(&mut self) -> Result<usize> {
+        self.address_space.drain_arm11_write_buffer()
+    }
+
+    /// Number of D-cache writeback entries still waiting for physical memory.
+    pub fn pending_write_buffer_entries(&self) -> usize {
+        self.address_space.pending_write_buffer_entries()
+    }
+
     /// Returns the number of resident data-cache lines for diagnostics/tests.
     pub fn data_cache_line_count(&self) -> usize {
         self.address_space.data_cache_line_count()
