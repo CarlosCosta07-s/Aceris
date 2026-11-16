@@ -1427,7 +1427,7 @@ O ChatGPT implementou o comando GX TextureCopy (ID 0x04) na área de integraçã
 - Todos os spans de linha são resolvidos e validados antes da primeira escrita; os bytes de origem são armazenados temporariamente para preservar cópias sobrepostas.
 - O dispatcher exige rendering rights, incrementa texture_copies_completed e emite PPF somente após concluir a cópia.
 - Limite explícito: a implementação exige a mesma largura de bytes copiados por linha na origem e no destino; larguras diferentes são recusadas para não inventar semântica. Cache flush e temporização assíncrona não são simulados.
-- Testes adicionados cobrem decode, cópia contígua, gaps independentes, alias VRAM, overlap, rejeição de larguras diferentes, alinhamento e validação de todas as linhas antes de modificar o destino. Um teste de integração cobre a fila GSP, a escrita de bytes e o PPF.
+- Testes adicionados cobrem decode, cópia contígua, gaps independentes, alias VRAM, overlap, seleção obrigatória do modo TextureCopy, rejeição de larguras diferentes, alinhamento e validação de todas as linhas antes de modificar o destino. Um teste de integração cobre a fila GSP, a escrita de bytes e o PPF.
 
 Arquivos alterados nesta etapa: crates/aceris-core/src/gpu/texture_copy.rs (novo), crates/aceris-core/src/gpu/gsp_queue.rs, crates/aceris-core/src/gpu/mod.rs, crates/aceris-core/src/system.rs, docs/ROADMAP.md, docs/ARCHITECTURE.md e este registro.
 
