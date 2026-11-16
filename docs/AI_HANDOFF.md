@@ -1581,3 +1581,18 @@ A execução [43947785182](https://github.com/CarlosCosta07-s/Aceris/actions/run
 
 Essa execução cobre a regressão de coerência por aliases FCRAM e o teste que comprova clean+invalidate em `FlushCacheRegions`. Ela não inclui as alterações posteriores de `ProcessCommandList` (commit `73d3bf2`) nem a asserção adicional de invalidação da origem `RequestDMA` (commit `4890e91`); estas permanecem dependentes da CI mais recente.
 
+## GSP TextureCopy — coerência CPU/GPU no destino FCRAM (16/11/2026)
+
+O ChatGPT acrescentou o teste de integração `gsp_gx_texture_copy_to_fcram_requires_cpu_invalidation` em `crates/aceris-core/src/system.rs` (commit `58898f1`).
+
+- Uma alocação FCRAM é mapeada pelo alias linear antigo e pelo novo, tanto na sessão ARM11 quanto no mapa DMA/GPU.
+- O teste prepara uma linha clean na D-cache por leitura CPU do destino, com backing físico inicialmente zerado.
+- A fila GSP executa `TextureCopy` em modo contíguo, copiando 16 bytes de VRAM para o destino FCRAM pelo alias linear novo.
+- O backing físico precisa conter os bytes copiados enquanto as leituras CPU pelos dois aliases continuam stale até `InvalidateProcessDataCache`.
+- A invalidação pelo alias novo remove a linha física compartilhada; a leitura pelo alias antigo passa a observar os bytes copiados.
+- O teste também confirma a interrupção PPF na relay queue e o event handle OneShot sinalizado após a conclusão.
+
+A regressão foi publicada em `main`; validar Rustfmt, build, Clippy, testes de workspace em Linux/Windows/macOS e Android ARM64 pelo CI do commit. O modelo é sequencial e explícito: não simula snooping automático, temporização assíncrona nem concorrência host-side.
+
+**Limites preservados:** a alteração ficou no teste de integração em `system.rs` e nesta nota. Nenhum módulo de CPU/Thumb ou draw/shader atribuído ao Claude foi modificado.
+
