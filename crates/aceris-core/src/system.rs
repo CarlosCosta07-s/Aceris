@@ -118,15 +118,13 @@ pub struct GspGxCommandQueueReport {
     pub memory_fills_completed: u8,
     /// Number of RequestDMA commands completed by the synchronous software backend.
     pub dma_requests_completed: u8,
-    /// Whether a guest RequestDMA requested a source cache flush.
-    /// The current coherent backing has no separate data-cache model to flush.
+    /// Whether a guest RequestDMA requested source writeback before DMA reads.
     pub flush_source_requested: bool,
     /// Number of DisplayTransfer commands completed by the synchronous software backend.
     pub display_transfers_completed: u8,
     /// Number of TextureCopy commands completed by the synchronous backend.
     pub texture_copies_completed: u8,
-    /// Non-empty FlushCacheRegions spans validated against the registered GPU-visible map.
-    /// This does not imply a physical cache clean: the current core has no data-cache model.
+    /// Non-empty FlushCacheRegions spans validated and processed in order.
     pub cache_regions_validated: u8,
     /// Number of entries still pending after this dispatch.
     pub pending_commands: u8,
@@ -2164,8 +2162,8 @@ impl System {
     ///
     /// Both complete ranges are translated and validated before any memory is
     /// changed. Staging the source gives overlapping copies deterministic
-    /// memmove semantics. The shared physical-memory backend is coherent in this
-    /// model, so flush_source is reported but cannot perform a real cache flush.
+    /// memmove semantics. When requested, the ARM11 source range is cleaned and
+    /// invalidated before the DMA backend reads shared physical memory.
     fn dispatch_gsp_dma_request(
         &mut self,
         command: GspDmaRequest,
@@ -2264,10 +2262,8 @@ impl System {
 
     /// Validates the non-empty address ranges supplied to GX FlushCacheRegions.
     ///
-    /// The current emulator has no independent ARM data-cache or dirty-line model.
-    /// Its GPU backing therefore cannot perform a hardware-equivalent clean here;
-    /// this path enforces rendering rights, range validity and documented skip/order
-    /// semantics without claiming that cache maintenance occurred.
+    /// FCRAM spans are cleaned and invalidated through the owning ARM11 process.
+    /// VRAM spans are validated only because this model does not cache device memory.
     fn validate_gsp_cache_regions(
         &mut self,
         command: GspFlushCacheRegions,
