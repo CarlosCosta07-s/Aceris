@@ -94,6 +94,18 @@ impl Arm11Core {
             self.cp15
                 .write(privileged, opc1, crn, crm, opc2, value)
                 .map_err(|f| fault(f, self))?;
+
+            // ARMv6 exposes ordering operations through CP15 c7. Keep these
+            // effects on the bus so deferred device/memory backends can drain
+            // writes or synchronize instruction fetch state at the right point.
+            if opc1 == 0 && crn == 7 {
+                match (crm, opc2) {
+                    (10, 4) => bus.drain_write_buffer()?,
+                    (10, 5) => bus.data_memory_barrier()?,
+                    (5, 4) => bus.instruction_sync_barrier()?,
+                    _ => {}
+                }
+            }
             self.configure_exception_entry(
                 self.cp15.high_vectors(),
                 self.cp15.exception_big_endian(),
