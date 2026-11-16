@@ -2267,7 +2267,7 @@ impl System {
     ) -> std::result::Result<(), GspGxCommandQueueError> {
         for region in command.regions {
             if region.size_bytes == 0 {
-                continue;
+                break;
             }
             self.resolve_gsp_physical_range(region.address, region.size_bytes as usize)
                 .map_err(|_| GspGxCommandQueueError::InvalidCacheRegionRange {
@@ -4638,8 +4638,8 @@ mod tests {
         let arguments = [
             0x1400_0100u32,
             0x20,
-            0xDEAD_BEEF,
-            0,
+            0x1400_0800,
+            0x10,
             0x1400_1800,
             0x40,
             0,
@@ -4653,10 +4653,52 @@ mod tests {
         let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
         assert_eq!(report.commands_consumed, 1);
         assert!(report.cache_flush_requested);
-        assert_eq!(report.cache_regions_validated, 2);
+        assert_eq!(report.cache_regions_validated, 3);
         assert_eq!(report.pending_commands, 0);
         assert!(report.error.is_none());
         assert_eq!(report.last_result, 0);
+    }
+
+
+    #[test]
+    fn gsp_gx_flush_cache_regions_zero_size_stops_later_regions() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(0x1400_0000, 0x2000)
+            .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
+        let arguments = [
+            0x1400_0100u32,
+            0x20,
+            0xDEAD_BEEF,
+            0,
+            0x1400_1800,
+            0x40,
+            0,
+        ];
+        for (index, value) in arguments.into_iter().enumerate() {
+            let offset = entry + 4 + index * 4;
+            queue_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert!(report.cache_flush_requested);
+        assert_eq!(report.cache_regions_validated, 1);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.error.is_none());
     }
 
     #[test]
