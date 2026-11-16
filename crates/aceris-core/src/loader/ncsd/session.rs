@@ -2130,8 +2130,12 @@ impl Arm11ProcessSession {
         }
         let result = match operation {
             0x52 => self.invalidate_process_data_cache(registers[1], registers[2]),
-            0x53 => self.store_process_data_cache(registers[1], registers[2]),
-            0x54 => self.flush_process_data_cache(registers[1], registers[2]),
+            0x53 => self
+                .store_process_data_cache(registers[1], registers[2])
+                .and_then(|lines| self.drain_write_buffer().map(|_| lines)),
+            0x54 => self
+                .flush_process_data_cache(registers[1], registers[2])
+                .and_then(|lines| self.drain_write_buffer().map(|_| lines)),
             _ => unreachable!("cache maintenance operation is selected by its SVC number"),
         };
         self.write_svc_result(caller, result.map(|_| 0).unwrap_or(RESULT_INVALID_ADDRESS))
