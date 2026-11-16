@@ -571,6 +571,6 @@ mod tests {
 
         let mut actual = [0; 64];
         memory.read(FCRAM_BASE + 0x3008, &mut actual).unwrap();
-        assert_eq!(actual, expected);
+        assert_eq!(actual.as_slice(), expected.as_slice());
     }
 }
