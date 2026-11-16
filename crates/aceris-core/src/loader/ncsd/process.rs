@@ -5,7 +5,7 @@
 //! physical memory, configure privileged kernel state, schedule threads, or
 //! start a complete console execution environment.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +22,10 @@ use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
 const ARM11_DATA_CACHE_LINE_SIZE: usize = 32;
+const ARM11_DATA_CACHE_CAPACITY_BYTES: usize = 16 * 1024;
+const ARM11_DATA_CACHE_WAYS: usize = 4;
+const ARM11_DATA_CACHE_SET_COUNT: usize =
+    ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE / ARM11_DATA_CACHE_WAYS;
 
 #[derive(Clone, Debug)]
 struct Arm11DataCacheLine {
@@ -676,6 +680,8 @@ pub struct Arm11CodeAddressSpace {
     gpu_memory: Option<GpuPhysicalMemory>,
     /// Write-back ARM11 data-cache lines, keyed by aligned physical address.
     data_cache: BTreeMap<u32, Arm11DataCacheLine>,
+    /// Per-set least-recently-used order, oldest line first.
+    data_cache_lru: Vec<VecDeque<u32>>,
     /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
     exclusive_versions: BTreeMap<u32, u64>,
     /// Occupancy of each 0x200-byte thread-local-storage slot.
@@ -723,6 +729,9 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             data_cache: BTreeMap::new(),
+            data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
+                .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
+                .collect(),
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
@@ -811,6 +820,9 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             data_cache: BTreeMap::new(),
+            data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
+                .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
+                .collect(),
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
@@ -1894,17 +1906,87 @@ impl Arm11CodeAddressSpace {
         Ok(())
     }
 
+    fn cache_set_index(line_base: u32) -> usize {
+        (line_base as usize / ARM11_DATA_CACHE_LINE_SIZE) % ARM11_DATA_CACHE_SET_COUNT
+    }
+
+    fn touch_data_cache_line(&mut self, line_base: u32) {
+        let set_index = Self::cache_set_index(line_base);
+        if let Some(set) = self.data_cache_lru.get_mut(set_index) {
+            if let Some(position) = set.iter().position(|entry| *entry == line_base) {
+                set.remove(position);
+            }
+            set.push_back(line_base);
+        }
+    }
+
+    /// Inserts a line into the four-way set-associative cache. Dirty victims
+    /// are written back before their slot is reused.
+    fn insert_data_cache_line(
+        &mut self,
+        line_base: u32,
+        line: Arm11DataCacheLine,
+    ) -> BusResult<()> {
+        let set_index = Self::cache_set_index(line_base);
+        let victim = {
+            let set = self
+                .data_cache_lru
+                .get_mut(set_index)
+                .ok_or(Error::InvalidAccess { addr: line_base })?;
+            if set.len() >= ARM11_DATA_CACHE_WAYS {
+                set.pop_front()
+            } else {
+                None
+            }
+        };
+
+        if let Some(victim_base) = victim {
+            if let Some(victim_line) = self.data_cache.remove(&victim_base) {
+                if victim_line.dirty {
+                    self.gpu_memory
+                        .as_mut()
+                        .ok_or(Error::InvalidAccess { addr: victim_base })?
+                        .write(victim_base, &victim_line.bytes)
+                        .map_err(|_| Error::InvalidAccess { addr: victim_base })?;
+                }
+            }
+        }
+
+        if let Some(set) = self.data_cache_lru.get_mut(set_index) {
+            set.push_back(line_base);
+        }
+        self.data_cache.insert(line_base, line);
+        Ok(())
+    }
+
+    fn remove_data_cache_line(&mut self, line_base: u32) -> Option<Arm11DataCacheLine> {
+        let set_index = Self::cache_set_index(line_base);
+        if let Some(set) = self.data_cache_lru.get_mut(set_index) {
+            if let Some(position) = set.iter().position(|entry| *entry == line_base) {
+                set.remove(position);
+            }
+        }
+        self.data_cache.remove(&line_base)
+    }
+
     fn read_cached_physical_byte(&mut self, address: u32) -> BusResult<u8> {
         let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
-        if !self.data_cache.contains_key(&line_base) {
+        if self.data_cache.contains_key(&line_base) {
+            self.touch_data_cache_line(line_base);
+        } else {
             let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
             self.gpu_memory
                 .as_ref()
                 .ok_or(Error::InvalidAccess { addr: address })?
                 .read(line_base, &mut bytes)
                 .map_err(|_| Error::InvalidAccess { addr: address })?;
-            self.data_cache
-                .insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
+            self.insert_data_cache_line(
+                line_base,
+                Arm11DataCacheLine {
+                    bytes,
+                    dirty: false,
+                },
+            )?;
         }
 
         let offset = (address - line_base) as usize;
@@ -1916,15 +1998,22 @@ impl Arm11CodeAddressSpace {
 
     fn write_cached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
         let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
-        if !self.data_cache.contains_key(&line_base) {
+        if self.data_cache.contains_key(&line_base) {
+            self.touch_data_cache_line(line_base);
+        } else {
             let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
             self.gpu_memory
                 .as_ref()
                 .ok_or(Error::InvalidAccess { addr: address })?
                 .read(line_base, &mut bytes)
                 .map_err(|_| Error::InvalidAccess { addr: address })?;
-            self.data_cache
-                .insert(line_base, Arm11DataCacheLine { bytes, dirty: false });
+            self.insert_data_cache_line(
+                line_base,
+                Arm11DataCacheLine {
+                    bytes,
+                    dirty: false,
+                },
+            )?;
         }
 
         let line = self
@@ -2010,7 +2099,7 @@ impl Arm11CodeAddressSpace {
                     written_back += 1;
                 }
             }
-            self.data_cache.remove(&line_base);
+            self.remove_data_cache_line(line_base);
         }
 
         Ok(written_back)
@@ -2053,7 +2142,7 @@ impl Arm11CodeAddressSpace {
         let mut evicted = 0usize;
 
         for line_base in lines {
-            if self.data_cache.remove(&line_base).is_some() {
+            if self.remove_data_cache_line(line_base).is_some() {
                 evicted += 1;
             }
         }
