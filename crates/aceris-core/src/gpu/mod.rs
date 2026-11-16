@@ -18,6 +18,7 @@ mod render_target;
 mod shader_exec;
 mod shader_input;
 mod transfer;
+mod texture_copy;
 mod vertex;
 mod vertex_shader;
 
@@ -49,7 +50,8 @@ pub use gsp_queue::{
     GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_CAPACITY,
     GSP_GX_COMMAND_QUEUE_CLIENT_COUNT, GSP_GX_COMMAND_QUEUE_CLIENT_STRIDE,
     GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_OFFSET, GSP_GX_COMMAND_QUEUE_SIZE,
-    GSP_GX_COMMAND_REQUEST_DMA, GSP_INVALID_ADDRESS_RESULT, GspDisplayTransfer, GspDmaRequest,
+    GSP_GX_COMMAND_REQUEST_DMA, GSP_GX_COMMAND_TEXTURE_COPY, GSP_INVALID_ADDRESS_RESULT,
+    GspDisplayTransfer, GspDmaRequest, GspTextureCopy,
     GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer,
     GspProcessCommandList, MAX_GSP_DMA_BYTES,
 };
@@ -92,6 +94,10 @@ pub use shader_input::{
     PicaVertexShaderInputState, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
     REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_INPUTBUFFER_CONFIG, VertexShaderAttributeBinding,
     VertexShaderInputBindings, VertexShaderInputError,
+};
+pub use texture_copy::{
+    execute_texture_copy, MAX_TEXTURE_COPY_BYTES, TextureCopyError, TextureCopyReport,
+    TextureCopyRequest,
 };
 pub use transfer::{
     DISPLAY_TRANSFER_BLOCKS_32X32, DISPLAY_TRANSFER_CROP, DISPLAY_TRANSFER_FLIP_VERTICAL,
