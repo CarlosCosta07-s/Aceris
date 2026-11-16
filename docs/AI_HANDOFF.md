@@ -1479,11 +1479,15 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 - `5435a7d` — adiciona teste de capacidade total: ocupa os 128 conjuntos com quatro linhas dirty cada, confirma 512 linhas residentes e verifica writeback quando a 513ª linha colide com o conjunto zero.
 - `0d48007` — ajusta a fixture de capacidade para reservar FCRAM em múltiplos de página (0x5000), sem reduzir os 0x4020 bytes efetivamente exercitados.
 - `10d6caa`, `12ab466` — documentam a capacidade de 512 linhas e corrigem o roadmap: `FlushCacheRegions` já executa writeback+invalidação nas faixas FCRAM mapeadas.
+- `eeff3de` — adiciona regressão para os aliases linear antigo e novo apontando para o mesmo intervalo físico: a linha escrita pelo alias antigo é lida e limpa pelo novo, permanece stale após escrita externa e é atualizada após invalidação pelo outro alias.
+- `aa8878e` — ajusta o teste de aliases para usar a API de leitura de backing físico existente.
+- `0c8b8f6`, `45053bc` — incluem a regressão de aliases na arquitetura e no roadmap.
 
 ### Contrato atual
 
 - Geometria do D-cache modelado: 16 KiB, 4 vias, 128 conjuntos, 32 bytes por linha e 512 slots no total. Os campos DSize do CTR ARM11 documentam 16 KiB, 4 vias e 8 words por linha; Aceris usa LRU aproximado como política de substituição do software model.
 - A chave é o endereço físico alinhado, de modo que aliases virtuais para a mesma linha compartilham o estado dentro da sessão. Em colisão de conjunto, a vítima menos recentemente usada é removida; se dirty, seus 32 bytes são escritos de volta antes de reutilizar a via.
+- Os aliases linear antigo e novo podem mapear a mesma FCRAM física no mesmo processo; a regressão verifica que loads, Store e Invalidate por VAs diferentes atuam na mesma linha física.
 - O cache é write-back: CPU store deixa a linha dirty; CPU load da mesma linha observa o valor local.
 - StoreProcessDataCache limpa dirty lines e mantém as linhas residentes. InvalidateProcessDataCache remove as linhas sem writeback. FlushProcessDataCache faz writeback e remove as linhas.
 - Os três serviços SVC aceitam apenas `CURRENT_PROCESS_HANDLE` (`0xFFFF8001`); handles de outros processos ainda não são suportados.
