@@ -3023,7 +3023,10 @@ mod tests {
         address_space
             .write32(virtual_base + 0x100, 0xCAFE_BABE)
             .unwrap();
-        assert_eq!(address_space.read32(virtual_base + 0x100).unwrap(), 0xCAFE_BABE);
+        assert_eq!(
+            address_space.read32(virtual_base + 0x100).unwrap(),
+            0xCAFE_BABE
+        );
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
 
         // Store writes the dirty line to FCRAM but leaves a clean CPU copy resident.
