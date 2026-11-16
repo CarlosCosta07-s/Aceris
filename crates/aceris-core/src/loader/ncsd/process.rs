@@ -2580,6 +2580,41 @@ mod tests {
     }
 
     #[test]
+    fn arm11_data_cache_writeback_and_invalidation_cohere_with_gpu_memory() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space.map_linear_memory_region(virtual_base, physical_base, 0x1000).unwrap();
+
+        // CPU stores remain dirty in its private cache until a clean/flush.
+        address_space.write32(virtual_base, 0x1122_3344).unwrap();
+        assert_eq!(address_space.read32(virtual_base).unwrap(), 0x1122_3344);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0);
+        assert_eq!(address_space.data_cache_line_count(), 1);
+
+        // StoreProcessDataCache writes back but retains a clean resident line.
+        assert_eq!(address_space.store_data_cache_range(virtual_base, 4).unwrap(), 1);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0x1122_3344);
+        assert_eq!(address_space.data_cache_line_count(), 1);
+
+        // A GPU/DMA write changes physical memory, while the CPU keeps its cached view.
+        memory.write_u32(physical_base, 0xAABB_CCDD).unwrap();
+        assert_eq!(address_space.read32(virtual_base).unwrap(), 0x1122_3344);
+
+        // Invalidate discards the stale clean line; the next CPU read refills from GPU memory.
+        assert_eq!(address_space.invalidate_data_cache_range(virtual_base, 4).unwrap(), 1);
+        assert_eq!(address_space.read32(virtual_base).unwrap(), 0xAABB_CCDD);
+
+        // FlushProcessDataCache writes back dirty data and invalidates the line.
+        address_space.write32(virtual_base, 0x5566_7788).unwrap();
+        assert_eq!(address_space.flush_data_cache_range(virtual_base, 4).unwrap(), 1);
+        assert_eq!(memory.read_u32(physical_base).unwrap(), 0x5566_7788);
+        assert_eq!(address_space.data_cache_line_count(), 0);
+    }
+
+    #[test]
     fn device_writes_to_linear_memory_invalidate_cpu_exclusive_reservations() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
