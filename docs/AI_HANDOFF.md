@@ -1410,3 +1410,8 @@ O ChatGPT implementou o comando GX RequestDMA (ID 0x00) na colaboração autoriz
 ### Verificação
 
 O código e os testes foram preparados para publicação na branch `main`. Não declare a etapa aprovada até a CI do commit correspondente terminar em verde nos jobs desktop Linux/Windows/macOS e Android ARM64. A verificação local com Cargo não estava disponível nesta sessão.
+
+
+## Integração GSP framebuffer-info → PDC — 15/11/2026
+
+Após GX DisplayTransfer (ID 0x03), o caminho real de fila com contexto do cliente lê as estruturas compartilhadas top/bottom, valida índice, flags, stride e formato, traduz os endereços de framebuffer por DMA/VRAM, grava o endereço no slot A/B selecionado, configura formato/stride/status do PDC e limpa o bit de dados novos. Painéis sem metadata nova alternam o seletor de próximo buffer. A integração ocorre antes da entrega de PPF; o scanout continua no ciclo de frame existente. Não declarar compatibilidade com jogos sem teste real.

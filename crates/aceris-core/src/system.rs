@@ -29,7 +29,11 @@ use crate::loader::ncsd::session::{
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::threedsx::ThreeDsxImage;
 use crate::loader::{self, ImageFormat};
-use crate::video::{DualScreenDisplay, LcdController};
+use crate::video::{
+    DualScreenDisplay, LcdController, LcdPanel, PDC_FRAMEBUFFER_A_FIRST,
+    PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND,
+    PDC_FRAMEBUFFER_FORMAT, PDC_FRAMEBUFFER_SELECT, PDC_FRAMEBUFFER_STRIDE,
+};
 use aceris_common::{Error, Result};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -39,6 +43,33 @@ use std::path::Path;
 struct PendingGspAcquire {
     client_id: u8,
     thread_id: ThreadId,
+}
+
+const GSP_TOP_FRAMEBUFFER_INFO_OFFSET: u32 = 0x200;
+const GSP_BOTTOM_FRAMEBUFFER_INFO_OFFSET: u32 = 0x240;
+const GSP_FRAMEBUFFER_INFO_CLIENT_STRIDE: u32 = 0x80;
+const GSP_FRAMEBUFFER_INFO_HEADER_SIZE: u32 = 4;
+const GSP_FRAMEBUFFER_INFO_ENTRY_SIZE: u32 = 0x1C;
+const GSP_FRAMEBUFFER_INFO_NEW_DATA: u8 = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingGspFramebufferInfo {
+    panel: LcdPanel,
+    flags_address: u32,
+    cleared_flags: u8,
+    active_buffer: u32,
+    left_address: u32,
+    right_address: u32,
+    stride: u32,
+    format: u32,
+    status: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ResolvedGspFramebufferInfo {
+    info: PendingGspFramebufferInfo,
+    left_physical_address: u32,
+    right_physical_address: u32,
 }
 
 /// The emulated console. Front-ends create one of these, load a game and then
@@ -1552,8 +1583,11 @@ impl System {
         })?;
         queue.reset_halt_for_trigger();
         let client_has_rendering_right = self.gsp_service.owns_rendering_right(client_id);
-        let report =
-            self.dispatch_gsp_gx_command_queue_with_right(&mut queue, client_has_rendering_right);
+        let report = self.dispatch_gsp_gx_command_queue_with_client(
+            &mut queue,
+            client_has_rendering_right,
+            Some((shared_memory_base, client_id)),
+        );
 
         self.ncsd_session
             .as_mut()
@@ -1645,6 +1679,15 @@ impl System {
         &mut self,
         queue: &mut GspGxCommandQueue,
         client_has_rendering_right: bool,
+    ) -> GspGxCommandQueueReport {
+        self.dispatch_gsp_gx_command_queue_with_client(queue, client_has_rendering_right, None)
+    }
+
+    fn dispatch_gsp_gx_command_queue_with_client(
+        &mut self,
+        queue: &mut GspGxCommandQueue,
+        client_has_rendering_right: bool,
+        client_context: Option<(u32, u8)>,
     ) -> GspGxCommandQueueReport {
         let mut report = GspGxCommandQueueReport {
             commands_consumed: 0,
@@ -1743,6 +1786,12 @@ impl System {
                         if client_has_rendering_right {
                             self.dispatch_gsp_display_transfer(arguments)
                                 .and_then(|()| {
+                                    if let Some((shared_memory_base, client_id)) = client_context {
+                                        self.update_lcd_from_gsp_shared_memory(
+                                            shared_memory_base,
+                                            client_id,
+                                        )?;
+                                    }
                                     report.display_transfers_completed =
                                         report.display_transfers_completed.saturating_add(1);
                                     self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
@@ -1788,6 +1837,245 @@ impl System {
         report.status = queue.status();
         report.last_result = queue.last_result();
         report
+    }
+
+    fn framebuffer_info_error(reason: impl Into<String>) -> GspGxCommandQueueError {
+        GspGxCommandQueueError::DisplayTransfer(format!(
+            "GSP framebuffer info: {}",
+            reason.into()
+        ))
+    }
+
+    fn read_gsp_framebuffer_info(
+        &mut self,
+        shared_memory_base: u32,
+        client_id: u8,
+        panel: LcdPanel,
+    ) -> std::result::Result<Option<PendingGspFramebufferInfo>, GspGxCommandQueueError> {
+        if client_id >= crate::gpu::GSP_INTERRUPT_QUEUE_CLIENT_COUNT {
+            return Err(Self::framebuffer_info_error(format!(
+                "invalid client slot {client_id}"
+            )));
+        }
+        let panel_offset = match panel {
+            LcdPanel::Top => GSP_TOP_FRAMEBUFFER_INFO_OFFSET,
+            LcdPanel::Bottom => GSP_BOTTOM_FRAMEBUFFER_INFO_OFFSET,
+        };
+        let client_offset = u32::from(client_id)
+            .checked_mul(GSP_FRAMEBUFFER_INFO_CLIENT_STRIDE)
+            .ok_or_else(|| Self::framebuffer_info_error("client offset overflowed"))?;
+        let info_address = shared_memory_base
+            .checked_add(panel_offset)
+            .and_then(|address| address.checked_add(client_offset))
+            .ok_or_else(|| Self::framebuffer_info_error("header address overflowed"))?;
+
+        let mut header = [0u8; GSP_FRAMEBUFFER_INFO_HEADER_SIZE as usize];
+        self.ncsd_session
+            .as_mut()
+            .ok_or_else(|| Self::framebuffer_info_error("ARM11 process session is unavailable"))?
+            .read_memory_bytes(info_address, &mut header)
+            .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        if header[1] & GSP_FRAMEBUFFER_INFO_NEW_DATA == 0 {
+            return Ok(None);
+        }
+
+        let index = header[0];
+        if index > 1 {
+            return Err(Self::framebuffer_info_error(format!(
+                "entry index {index} is outside the two-entry ring"
+            )));
+        }
+        let entry_offset = GSP_FRAMEBUFFER_INFO_HEADER_SIZE
+            .checked_add(u32::from(index) * GSP_FRAMEBUFFER_INFO_ENTRY_SIZE)
+            .ok_or_else(|| Self::framebuffer_info_error("entry offset overflowed"))?;
+        let entry_address = info_address
+            .checked_add(entry_offset)
+            .ok_or_else(|| Self::framebuffer_info_error("entry address overflowed"))?;
+        let mut entry = [0u8; GSP_FRAMEBUFFER_INFO_ENTRY_SIZE as usize];
+        self.ncsd_session
+            .as_mut()
+            .ok_or_else(|| Self::framebuffer_info_error("ARM11 process session is unavailable"))?
+            .read_memory_bytes(entry_address, &mut entry)
+            .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+
+        let word = |index: usize| {
+            u32::from_le_bytes(
+                entry[index * 4..index * 4 + 4]
+                    .try_into()
+                    .expect("framebuffer-info entry contains seven complete words"),
+            )
+        };
+        let active_buffer = word(0);
+        if active_buffer > 1 {
+            return Err(Self::framebuffer_info_error(format!(
+                "active framebuffer index {active_buffer} is invalid"
+            )));
+        }
+        let format = word(4);
+        let format_id = format & 0x7;
+        if format_id > 4 {
+            return Err(Self::framebuffer_info_error(format!(
+                "pixel format {format_id} is unsupported"
+            )));
+        }
+        let interlace = (format >> 4) & 0x3;
+        if interlace != 0 {
+            return Err(Self::framebuffer_info_error(format!(
+                "interlace mode {interlace} is not implemented"
+            )));
+        }
+
+        Ok(Some(PendingGspFramebufferInfo {
+            panel,
+            flags_address: info_address + 1,
+            cleared_flags: header[1] & !GSP_FRAMEBUFFER_INFO_NEW_DATA,
+            active_buffer,
+            left_address: word(1),
+            right_address: word(2),
+            stride: word(3),
+            format,
+            status: word(5),
+        }))
+    }
+
+    fn resolve_gsp_framebuffer_info(
+        &self,
+        info: PendingGspFramebufferInfo,
+    ) -> std::result::Result<ResolvedGspFramebufferInfo, GspGxCommandQueueError> {
+        let (width, height) = match info.panel {
+            LcdPanel::Top => (crate::video::TOP_SCREEN_WIDTH, crate::video::TOP_SCREEN_HEIGHT),
+            LcdPanel::Bottom => (
+                crate::video::BOTTOM_SCREEN_WIDTH,
+                crate::video::BOTTOM_SCREEN_HEIGHT,
+            ),
+        };
+        let bytes_per_pixel = match info.format & 0x7 {
+            0 => 4usize,
+            1 => 3,
+            2..=4 => 2,
+            _ => unreachable!("pixel format was validated while parsing"),
+        };
+        let row_bytes = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| Self::framebuffer_info_error("framebuffer row size overflowed"))?;
+        if info.stride & 0x8000_0000 != 0
+            || (info.stride != 0
+                && (info.stride & 0x7 != 0 || (info.stride as usize) < row_bytes))
+        {
+            return Err(Self::framebuffer_info_error(format!(
+                "invalid {:?} stride {:#010x} for a {row_bytes}-byte row",
+                info.panel, info.stride
+            )));
+        }
+        let source_length = if info.stride == 0 {
+            row_bytes
+        } else {
+            (height - 1)
+                .checked_mul(info.stride as usize)
+                .and_then(|offset| offset.checked_add(row_bytes))
+                .ok_or_else(|| Self::framebuffer_info_error("framebuffer range overflowed"))?
+        };
+        let left_physical_address =
+            self.resolve_gsp_physical_range(info.left_address, source_length)?;
+        let right_physical_address = if info.panel == LcdPanel::Top {
+            if info.right_address == 0 {
+                left_physical_address
+            } else {
+                self.resolve_gsp_physical_range(info.right_address, source_length)?
+            }
+        } else {
+            0
+        };
+        Ok(ResolvedGspFramebufferInfo {
+            info,
+            left_physical_address,
+            right_physical_address,
+        })
+    }
+
+    fn apply_gsp_framebuffer_info(
+        &mut self,
+        resolved: ResolvedGspFramebufferInfo,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        let panel = resolved.info.panel;
+        let (left_register, right_register) = match resolved.info.active_buffer {
+            0 => (PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST),
+            1 => (PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_SECOND),
+            _ => unreachable!("active framebuffer was validated while parsing"),
+        };
+        self.lcd
+            .write_register(panel, left_register, resolved.left_physical_address)
+            .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        if panel == LcdPanel::Top {
+            self.lcd
+                .write_register(panel, right_register, resolved.right_physical_address)
+                .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        }
+        for (register, value) in [
+            (PDC_FRAMEBUFFER_FORMAT, resolved.info.format),
+            (PDC_FRAMEBUFFER_STRIDE, resolved.info.stride),
+            (PDC_FRAMEBUFFER_SELECT, resolved.info.status),
+        ] {
+            self.lcd
+                .write_register(panel, register, value)
+                .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn toggle_lcd_framebuffer(
+        &mut self,
+        panel: LcdPanel,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        let status = self
+            .lcd
+            .read_register(panel, PDC_FRAMEBUFFER_SELECT)
+            .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        self.lcd
+            .write_register(panel, PDC_FRAMEBUFFER_SELECT, status ^ 1)
+            .map_err(|error| Self::framebuffer_info_error(error.to_string()))
+    }
+
+    /// Applies newly published GSP framebuffer metadata after DisplayTransfer.
+    ///
+    /// The guest publishes two alternating metadata entries per panel. All
+    /// selected framebuffer spans are translated and validated before either
+    /// LCD controller is modified. A panel without new metadata toggles its
+    /// next-buffer selector, matching the GSP's automatic buffer-swap behavior.
+    fn update_lcd_from_gsp_shared_memory(
+        &mut self,
+        shared_memory_base: u32,
+        client_id: u8,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        let top = self.read_gsp_framebuffer_info(shared_memory_base, client_id, LcdPanel::Top)?;
+        let bottom =
+            self.read_gsp_framebuffer_info(shared_memory_base, client_id, LcdPanel::Bottom)?;
+        let resolved_top = top
+            .map(|info| self.resolve_gsp_framebuffer_info(info))
+            .transpose()?;
+        let resolved_bottom = bottom
+            .map(|info| self.resolve_gsp_framebuffer_info(info))
+            .transpose()?;
+
+        if let Some(info) = resolved_top {
+            self.apply_gsp_framebuffer_info(info)?;
+        } else {
+            self.toggle_lcd_framebuffer(LcdPanel::Top)?;
+        }
+        if let Some(info) = resolved_bottom {
+            self.apply_gsp_framebuffer_info(info)?;
+        } else {
+            self.toggle_lcd_framebuffer(LcdPanel::Bottom)?;
+        }
+
+        for info in [top, bottom].into_iter().flatten() {
+            self.ncsd_session
+                .as_mut()
+                .ok_or_else(|| Self::framebuffer_info_error("ARM11 process session is unavailable"))?
+                .write_memory_bytes(info.flags_address, &[info.cleared_flags])
+                .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Resolves one GSP-visible virtual address to the physical memory backing.
@@ -3092,6 +3380,66 @@ mod tests {
             .unwrap();
         assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
 
+        let top_left_framebuffer = VRAM_BASE + 0x100_000;
+        let top_right_framebuffer = VRAM_BASE + 0x180_000;
+        let bottom_framebuffer = VRAM_BASE + 0x200_000;
+        fn encode_framebuffer_info(
+            active_buffer: u32,
+            left: u32,
+            right: u32,
+            stride: u32,
+            format: u32,
+            status: u32,
+        ) -> [u8; GSP_FRAMEBUFFER_INFO_ENTRY_SIZE as usize] {
+            let words = [active_buffer, left, right, stride, format, status, 0];
+            let mut bytes = [0u8; GSP_FRAMEBUFFER_INFO_ENTRY_SIZE as usize];
+            for (index, word) in words.into_iter().enumerate() {
+                bytes[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+            }
+            bytes
+        }
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let top_info = shared_memory_base + GSP_TOP_FRAMEBUFFER_INFO_OFFSET;
+            let top_entry =
+                top_info + GSP_FRAMEBUFFER_INFO_HEADER_SIZE + GSP_FRAMEBUFFER_INFO_ENTRY_SIZE;
+            session
+                .write_memory_bytes(
+                    top_entry,
+                    &encode_framebuffer_info(
+                        1,
+                        top_left_framebuffer,
+                        top_right_framebuffer,
+                        (TOP_SCREEN_WIDTH * 4) as u32,
+                        0,
+                        1,
+                    ),
+                )
+                .unwrap();
+            session
+                .write_memory_bytes(top_info, &[1, 1, 0, 0])
+                .unwrap();
+
+            let bottom_info = shared_memory_base + GSP_BOTTOM_FRAMEBUFFER_INFO_OFFSET;
+            let bottom_entry = bottom_info + GSP_FRAMEBUFFER_INFO_HEADER_SIZE;
+            session
+                .write_memory_bytes(
+                    bottom_entry,
+                    &encode_framebuffer_info(
+                        0,
+                        bottom_framebuffer,
+                        0,
+                        (BOTTOM_SCREEN_WIDTH * 4) as u32,
+                        0,
+                        0,
+                    ),
+                )
+                .unwrap();
+            session
+                .write_memory_bytes(bottom_info, &[0, 1, 0, 0])
+                .unwrap();
+        }
+
         let linear_source = VRAM_BASE + 0x20_000;
         let tiled_source = VRAM_BASE + 0x40_000;
         let linear_output = VRAM_BASE + 0x60_000;
@@ -3136,14 +3484,104 @@ mod tests {
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&dimensions.to_le_bytes());
         queue_bytes[entry + 16..entry + 20].copy_from_slice(&dimensions.to_le_bytes());
 
-        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
-        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        let queue_address =
+            shared_memory_base + GspGxCommandQueue::client_queue_offset(0).unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(queue_address, &queue_bytes)
+            .unwrap();
+        let report = system.process_gsp_gx_command_queue(shared_memory_base, 0).unwrap();
 
         assert_eq!(report.commands_consumed, 1);
         assert_eq!(report.display_transfers_completed, 1);
         assert_eq!(report.pending_commands, 0);
         assert!(report.halted);
         assert!(report.error.is_none());
+
+        // The selected GSP framebuffers are physically resolved and applied
+        // to the two LCD PDCs before the completion interrupt is delivered.
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_A_SECOND)
+                .unwrap(),
+            top_left_framebuffer
+        );
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_B_SECOND)
+                .unwrap(),
+            top_right_framebuffer
+        );
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_STRIDE)
+                .unwrap(),
+            (TOP_SCREEN_WIDTH * 4) as u32
+        );
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_SELECT)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Bottom, PDC_FRAMEBUFFER_A_FIRST)
+                .unwrap(),
+            bottom_framebuffer
+        );
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Bottom, PDC_FRAMEBUFFER_SELECT)
+                .unwrap(),
+            0
+        );
+        let mut top_header = [0u8; 4];
+        let mut bottom_header = [0u8; 4];
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            session
+                .read_memory_bytes(
+                    shared_memory_base + GSP_TOP_FRAMEBUFFER_INFO_OFFSET,
+                    &mut top_header,
+                )
+                .unwrap();
+            session
+                .read_memory_bytes(
+                    shared_memory_base + GSP_BOTTOM_FRAMEBUFFER_INFO_OFFSET,
+                    &mut bottom_header,
+                )
+                .unwrap();
+        }
+        assert_eq!(top_header[1] & GSP_FRAMEBUFFER_INFO_NEW_DATA, 0);
+        assert_eq!(bottom_header[1] & GSP_FRAMEBUFFER_INFO_NEW_DATA, 0);
+
+        // With no new metadata, GSP toggles each panel's next-buffer selector.
+        system
+            .update_lcd_from_gsp_shared_memory(shared_memory_base, 0)
+            .unwrap();
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Top, PDC_FRAMEBUFFER_SELECT)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            system
+                .lcd
+                .read_register(LcdPanel::Bottom, PDC_FRAMEBUFFER_SELECT)
+                .unwrap(),
+            1
+        );
 
         // DisplayTransfer completion must enqueue PPF for the rights owner
         // and signal that client's registered process-local event.
