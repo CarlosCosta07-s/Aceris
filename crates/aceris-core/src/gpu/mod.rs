@@ -17,8 +17,8 @@ mod render;
 mod render_target;
 mod shader_exec;
 mod shader_input;
-mod transfer;
 mod texture_copy;
+mod transfer;
 mod vertex;
 mod vertex_shader;
 
@@ -46,15 +46,14 @@ pub use gsp_interrupt::{
     GspInterruptQueueError, GspInterruptQueuePushResult, GspInterruptRelayQueue,
 };
 pub use gsp_queue::{
-    GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_MEMORY_FILL,
-    GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_CAPACITY,
+    GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+    GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_CAPACITY,
     GSP_GX_COMMAND_QUEUE_CLIENT_COUNT, GSP_GX_COMMAND_QUEUE_CLIENT_STRIDE,
     GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_OFFSET, GSP_GX_COMMAND_QUEUE_SIZE,
-    GSP_GX_COMMAND_REQUEST_DMA, GSP_GX_COMMAND_TEXTURE_COPY,
-    GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_INVALID_ADDRESS_RESULT,
-    GspCacheRegion, GspDisplayTransfer, GspDmaRequest, GspFlushCacheRegions, GspTextureCopy,
-    GspGxCommand, GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, MAX_GSP_DMA_BYTES,
+    GSP_GX_COMMAND_REQUEST_DMA, GSP_GX_COMMAND_TEXTURE_COPY, GSP_INVALID_ADDRESS_RESULT,
+    GspCacheRegion, GspDisplayTransfer, GspDmaRequest, GspFlushCacheRegions, GspGxCommand,
+    GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer,
+    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES,
 };
 pub use index::{
     IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
@@ -97,8 +96,8 @@ pub use shader_input::{
     VertexShaderInputBindings, VertexShaderInputError,
 };
 pub use texture_copy::{
-    execute_texture_copy, MAX_TEXTURE_COPY_BYTES, TextureCopyError, TextureCopyReport,
-    TextureCopyRequest,
+    MAX_TEXTURE_COPY_BYTES, TextureCopyError, TextureCopyReport, TextureCopyRequest,
+    execute_texture_copy,
 };
 pub use transfer::{
     DISPLAY_TRANSFER_BLOCKS_32X32, DISPLAY_TRANSFER_CROP, DISPLAY_TRANSFER_FLIP_VERTICAL,
