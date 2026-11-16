@@ -3604,6 +3604,28 @@ mod tests {
         );
         address_space.data_cache_lru[set_index].push_back(victim_key);
 
+        // Fill the remaining three ways with clean lines that collide with
+        // the dirty LRU victim. The replacement must now evict that victim.
+        for way in 1..ARM11_DATA_CACHE_WAYS {
+            let line_offset = way * ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE;
+            let key = DataCacheKey {
+                backing_id: victim_key.backing_id,
+                line_offset: line_offset as u64,
+            };
+            address_space.data_cache.insert(
+                key,
+                Arm11DataCacheLine {
+                    bytes: [0; ARM11_DATA_CACHE_LINE_SIZE],
+                    dirty: false,
+                    target: DataCacheTarget::Backing {
+                        backing: backing.clone(),
+                        offset: line_offset,
+                    },
+                },
+            );
+            address_space.data_cache_lru[set_index].push_back(key);
+        }
+
         for value in 0..ARM11_WRITE_BUFFER_CAPACITY {
             let mut bytes = [0; ARM11_DATA_CACHE_LINE_SIZE];
             bytes[0] = value as u8;
@@ -3616,15 +3638,17 @@ mod tests {
             });
         }
 
-        // The second key is one full set-span away, so it collides with the
-        // dirty victim while still identifying another line of the same block.
+        // The replacement is one full set-span beyond all four resident
+        // lines, so it collides with the dirty victim's set.
         let replacement_key = DataCacheKey {
             backing_id: victim_key.backing_id,
-            line_offset: ARM11_DATA_CACHE_SET_COUNT as u64 * ARM11_DATA_CACHE_LINE_SIZE as u64,
+            line_offset: ARM11_DATA_CACHE_WAYS as u64
+                * ARM11_DATA_CACHE_SET_COUNT as u64
+                * ARM11_DATA_CACHE_LINE_SIZE as u64,
         };
         let replacement_target = DataCacheTarget::Backing {
             backing,
-            offset: (ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE),
+            offset: ARM11_DATA_CACHE_WAYS * ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE,
         };
 
         assert!(matches!(
