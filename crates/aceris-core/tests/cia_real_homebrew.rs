@@ -58,7 +58,6 @@ fn validates_real_super_mario_64_luigi_cia_and_reports_inner_ncch_encryption() {
 
     eprintln!(
         "CIA validated: title={title_id:#018x}, content_index={}, content_bytes={:#x}; outer CIA content is clear, inner NCCH encryption requires caller-supplied keys",
-        location.content_index,
-        location.size_bytes
+        location.content_index, location.size_bytes
     );
 }
