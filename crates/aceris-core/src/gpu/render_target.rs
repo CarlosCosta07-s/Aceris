@@ -578,7 +578,7 @@ mod tests {
             })
         );
         assert_eq!(
-            PicaRenderTargetConfig::from_registers(0, 0, 0, (7 << 16) | 8),
+            PicaRenderTargetConfig::from_registers(0, 7 << 16, 0, 8),
             Err(PicaRenderTargetError::UnsupportedColorFormat {
                 pixel_size: 0,
                 format: 7,
