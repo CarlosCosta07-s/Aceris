@@ -1724,7 +1724,7 @@ impl Arm11CodeAddressSpace {
         // A translated ARM11 access reaches this bus with its physical
         // address. Resolve registered linear FCRAM backing in both directions
         // so MMU-enabled CPU accesses and device accesses share the same cache.
-        if let Some((index, region)) = self.linear_regions.iter().enumerate().find(|(_, region)| {
+        if let Some((index, _)) = self.linear_regions.iter().enumerate().find(|(_, region)| {
             address >= region.physical_base
                 && u64::from(address) < u64::from(region.physical_base) + u64::from(region.size)
         }) {
