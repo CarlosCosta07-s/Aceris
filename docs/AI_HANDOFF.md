@@ -1534,3 +1534,16 @@ A regressão foi adicionada à suíte do workspace; aguardar o CI associado ao c
 
 **Limites preservados:** nenhum módulo de CPU/Thumb ou draw/shader atribuído ao Claude foi alterado. A seleção do D-cache a partir dos atributos CP15 `TEX/C/B/S` e `PRRR/NMRR` continua pendente e deve ser integrada com revisão explícita da propriedade desses módulos antes de editar a ponte MMU/Bus.
 
+## GSP FlushCacheRegions — regressão de invalidação observável (16/11/2026)
+
+O ChatGPT ampliou `gsp_gx_flush_cache_regions_validates_all_three_nonzero_ranges`, renomeando-o para `gsp_gx_flush_cache_regions_cleans_and_invalidates_fcram_ranges` em `crates/aceris-core/src/system.rs` (commit `9467eb7`).
+
+- O teste registra a quantidade de linhas D-cache antes do acesso e confirma que a escrita CPU aloca uma linha dirty.
+- O comando GSP `FlushCacheRegions` percorre três faixas FCRAM não vazias; o relatório continua exigindo três regiões processadas com sucesso.
+- Além de confirmar os bytes escritos de volta no backing físico, a regressão confirma que a linha D-cache residente foi removida pelo comando.
+- Em seguida, uma escrita externa modifica os mesmos bytes no backing; a próxima leitura CPU, sem SVC invalidate adicional, precisa observar o novo valor. Isso verifica o efeito observável de clean+invalidate do comando.
+
+A alteração foi publicada em `main`; o CI associado ainda precisa confirmar Rustfmt, build, Clippy, testes do workspace em Linux/Windows/macOS e build Android ARM64. A escrita externa do teste é determinística e sequencial; não representa concorrência multicore nem snooping automático.
+
+**Limites preservados:** nenhum arquivo de CPU/Thumb ou draw/shader foi modificado. A política por atributos CP15 e as barreiras/write buffers permanecem fora desta alteração.
+
