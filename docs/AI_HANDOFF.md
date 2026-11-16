@@ -1665,7 +1665,8 @@ Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `carg
 ### Semântica atual
 
 - Store/Flush de linhas D-cache dirty e expulsão de vítimas LRU enfileiram writebacks físicos em ordem FIFO. Store mantém a linha residente e limpa; Flush remove a linha.
-- Leituras da própria CPU sobre uma linha ainda pendente recebem os bytes encaminhados pela FIFO. Leitores de dispositivo que acessam diretamente GpuPhysicalMemory só observam o que já foi drenado.
+- Stores de Normal memory não-cacheável, write-through e write-back/no-write-allocate em miss também entram na FIFO; stores adjacentes são coalescidos em transações de até 32 bytes, sem atravessar o limite da linha.
+- Leituras da própria CPU sobre bytes pendentes recebem encaminhamento da FIFO. Leituras Device/Strongly Ordered drenam antes de acessar o backing, e stores nesses tipos continuam síncronos. Leitores externos que acessam diretamente GpuPhysicalMemory só observam o que já foi drenado.
 - A fila tem capacidade de software de oito linhas. Ao ficar cheia, a inserção conclui a entrada mais antiga antes de aceitar a próxima; esse limite é uma escolha determinística do modelo e não afirma reproduzir a profundidade física do ARM11.
 - CP15 MCR c7,c10,4 drena a FIFO (DSB/Drain Write Buffer); MCR c7,c10,5 executa DMB por meio do ponto de ordenação do barramento; MCR c7,c5,4 executa o ponto ISB. Como o interpretador não mantém pipeline ou I-cache separados, ISB não precisa drenar writebacks.
 - MmuBus encaminha os pontos de barreira para o barramento subjacente. A sessão oferece drenagem explícita para o dispatcher GSP e testes.
@@ -1674,8 +1675,8 @@ Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `carg
 
 ### Limites ainda abertos
 
-- O write buffer modelado recebe writebacks de linhas D-cache; ainda não modela todos os stores bufferable de memória normal como transações independentes.
-- A D-cache continua limitada aos aliases lineares FCRAM. Memória estática, heap dinâmico e shared memory ainda não usam as mesmas tags/linhas nem um modelo completo de coerência interprocesso.
+- O write buffer agora recebe writebacks da D-cache e stores bufferable de Normal memory nos aliases lineares FCRAM; sua fila limitada e coalescência são um modelo determinístico, não uma medição da profundidade ou da temporização física do ARM11.
+- A D-cache e o write buffering continuam limitados aos aliases lineares FCRAM. Memória estática, heap dinâmico e shared memory ainda não usam as mesmas tags/linhas nem um modelo completo de coerência interprocesso.
 - Não há outer cache, timings de barramento, concorrência assíncrona, snooping multicore ou I-cache/pipeline independente. ISB é, portanto, um ponto de sincronização vazio no interpretador atual.
 - A execução dos workflows associados às últimas alterações deve ser conferida no GitHub antes de registrar aprovação. Não considerar estas implementações como conformidade física completa.
 
@@ -1683,6 +1684,6 @@ Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `carg
 
 1. Validar a CI do HEAD mais recente e corrigir qualquer falha antes de adicionar semântica adicional.
 2. Expandir as tags D-cache para memória dinâmica/estática/shared com identidade de backing e invalidação segura entre sessões.
-3. Modelar os stores bufferable não-cacheáveis de Normal memory sem atrasar Strongly Ordered/Device.
+3. Estender a identidade de backing, tags de cache e buffering para memória estática, heap dinâmico e shared, sem atrasar Strongly Ordered/Device.
 4. Acrescentar integração LCD explícita (além da memória física compartilhada) e casos end-to-end CPU → DMB/DSB → DMA/GPU → LCD.
 5. Manter documentado o limite entre os efeitos observáveis modelados e as temporizações físicas ainda aproximadas.
