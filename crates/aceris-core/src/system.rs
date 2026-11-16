@@ -7,7 +7,7 @@ use crate::gpu::{
     GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
     GspDisplayTransfer, GspDmaRequest, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, Pica200, MAX_GSP_DMA_BYTES, VRAM_BASE, VRAM_SIZE,
+    GspProcessCommandList, MAX_GSP_DMA_BYTES, Pica200, VRAM_BASE, VRAM_SIZE,
     display_transfer_buffer_sizes, execute_display_transfer,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
@@ -28,9 +28,9 @@ use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdI
 use crate::loader::threedsx::ThreeDsxImage;
 use crate::loader::{self, ImageFormat};
 use crate::video::{
-    DualScreenDisplay, LcdController, LcdPanel, PDC_FRAMEBUFFER_A_FIRST,
-    PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND,
-    PDC_FRAMEBUFFER_FORMAT, PDC_FRAMEBUFFER_SELECT, PDC_FRAMEBUFFER_STRIDE,
+    DualScreenDisplay, LcdController, LcdPanel, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
+    PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT,
+    PDC_FRAMEBUFFER_SELECT, PDC_FRAMEBUFFER_STRIDE,
 };
 use aceris_common::{Error, Result};
 use std::fs::File;
@@ -1838,10 +1838,7 @@ impl System {
     }
 
     fn framebuffer_info_error(reason: impl Into<String>) -> GspGxCommandQueueError {
-        GspGxCommandQueueError::DisplayTransfer(format!(
-            "GSP framebuffer info: {}",
-            reason.into()
-        ))
+        GspGxCommandQueueError::DisplayTransfer(format!("GSP framebuffer info: {}", reason.into()))
     }
 
     fn read_gsp_framebuffer_info(
@@ -1941,7 +1938,10 @@ impl System {
         info: PendingGspFramebufferInfo,
     ) -> std::result::Result<ResolvedGspFramebufferInfo, GspGxCommandQueueError> {
         let (width, height) = match info.panel {
-            LcdPanel::Top => (crate::video::TOP_SCREEN_WIDTH, crate::video::TOP_SCREEN_HEIGHT),
+            LcdPanel::Top => (
+                crate::video::TOP_SCREEN_WIDTH,
+                crate::video::TOP_SCREEN_HEIGHT,
+            ),
             LcdPanel::Bottom => (
                 crate::video::BOTTOM_SCREEN_WIDTH,
                 crate::video::BOTTOM_SCREEN_HEIGHT,
@@ -1957,8 +1957,7 @@ impl System {
             .checked_mul(bytes_per_pixel)
             .ok_or_else(|| Self::framebuffer_info_error("framebuffer row size overflowed"))?;
         if info.stride & 0x8000_0000 != 0
-            || (info.stride != 0
-                && (info.stride & 0x7 != 0 || (info.stride as usize) < row_bytes))
+            || (info.stride != 0 && (info.stride & 0x7 != 0 || (info.stride as usize) < row_bytes))
         {
             return Err(Self::framebuffer_info_error(format!(
                 "invalid {:?} stride {:#010x} for a {row_bytes}-byte row",
@@ -2069,7 +2068,9 @@ impl System {
         for info in [top, bottom].into_iter().flatten() {
             self.ncsd_session
                 .as_mut()
-                .ok_or_else(|| Self::framebuffer_info_error("ARM11 process session is unavailable"))?
+                .ok_or_else(|| {
+                    Self::framebuffer_info_error("ARM11 process session is unavailable")
+                })?
                 .write_memory_bytes(info.flags_address, &[info.cleared_flags])
                 .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
         }
@@ -3418,9 +3419,7 @@ mod tests {
                     ),
                 )
                 .unwrap();
-            session
-                .write_memory_bytes(top_info, &[1, 1, 0, 0])
-                .unwrap();
+            session.write_memory_bytes(top_info, &[1, 1, 0, 0]).unwrap();
 
             let bottom_info = shared_memory_base + GSP_BOTTOM_FRAMEBUFFER_INFO_OFFSET;
             let bottom_entry = bottom_info + GSP_FRAMEBUFFER_INFO_HEADER_SIZE;
@@ -3486,15 +3485,16 @@ mod tests {
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&dimensions.to_le_bytes());
         queue_bytes[entry + 16..entry + 20].copy_from_slice(&dimensions.to_le_bytes());
 
-        let queue_address =
-            shared_memory_base + GspGxCommandQueue::client_queue_offset(0).unwrap();
+        let queue_address = shared_memory_base + GspGxCommandQueue::client_queue_offset(0).unwrap();
         system
             .ncsd_session
             .as_mut()
             .unwrap()
             .write_memory_bytes(queue_address, &queue_bytes)
             .unwrap();
-        let report = system.process_gsp_gx_command_queue(shared_memory_base, 0).unwrap();
+        let report = system
+            .process_gsp_gx_command_queue(shared_memory_base, 0)
+            .unwrap();
 
         assert_eq!(report.commands_consumed, 1);
         assert_eq!(report.display_transfers_completed, 1);
