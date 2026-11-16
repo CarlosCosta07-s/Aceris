@@ -1961,6 +1961,35 @@ impl Arm11CodeAddressSpace {
         Ok(written_back)
     }
 
+    /// Writes dirty lines back while keeping the lines resident and clean.
+    pub fn store_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
+        if size_bytes == 0 { return Ok(0); }
+        let end = u64::from(address) + u64::from(size_bytes);
+        if end > u64::from(u32::MAX) + 1 { return Err(Error::InvalidAccess { addr: address }); }
+        let mut lines = std::collections::BTreeSet::new();
+        for offset in 0..size_bytes {
+            let current = address.checked_add(offset).ok_or(Error::InvalidAccess { addr: address })?;
+            let location = self.locate(current).ok_or(Error::InvalidAccess { addr: current })?;
+            if !self.location_is_readable(location) { return Err(Error::InvalidAccess { addr: current }); }
+            if let MemoryLocation::Physical { address: physical, .. } = location {
+                lines.insert(physical & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1));
+            }
+        }
+        let mut written_back = 0;
+        for line_base in lines {
+            if let Some(line) = self.data_cache.get_mut(&line_base) {
+                if line.dirty {
+                    self.gpu_memory.as_mut().ok_or(Error::InvalidAccess { addr: address })?
+                        .write(line_base, &line.bytes)
+                        .map_err(|_| Error::InvalidAccess { addr: address })?;
+                    line.dirty = false;
+                    written_back += 1;
+                }
+            }
+        }
+        Ok(written_back)
+    }
+
     /// Invalidates cache lines without writing dirty data back to physical memory.
     pub fn invalidate_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
         if size_bytes == 0 { return Ok(0); }
