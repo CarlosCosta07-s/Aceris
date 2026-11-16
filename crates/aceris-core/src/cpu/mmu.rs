@@ -1398,7 +1398,7 @@ mod tests {
         );
         assert_eq!(
             attributes(MemoryType::Normal, 3).data_cache_policy(true),
-            CachePolicy::WriteBack
+            CachePolicy::WriteBackNoAllocate
         );
         assert_eq!(
             attributes(MemoryType::Normal, 3).data_cache_policy(false),
