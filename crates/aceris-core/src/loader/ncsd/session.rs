@@ -374,12 +374,14 @@ impl Arm11ProcessSession {
     /// physical memory and then invalidated. The full range is validated before
     /// any cache line is modified.
     pub fn flush_process_data_cache(&mut self, address: u32, size_bytes: u32) -> Result<usize> {
-        self.address_space.flush_data_cache_range(address, size_bytes)
+        self.address_space
+            .flush_data_cache_range(address, size_bytes)
     }
 
     /// Cleans dirty process data-cache lines while retaining them as clean.
     pub fn store_process_data_cache(&mut self, address: u32, size_bytes: u32) -> Result<usize> {
-        self.address_space.store_data_cache_range(address, size_bytes)
+        self.address_space
+            .store_data_cache_range(address, size_bytes)
     }
 
     /// Invalidates process data-cache lines without writing dirty data back.
@@ -388,7 +390,8 @@ impl Arm11ProcessSession {
         address: u32,
         size_bytes: u32,
     ) -> Result<usize> {
-        self.address_space.invalidate_data_cache_range(address, size_bytes)
+        self.address_space
+            .invalidate_data_cache_range(address, size_bytes)
     }
 
     /// Returns the number of resident data-cache lines for diagnostics/tests.
@@ -2914,7 +2917,10 @@ mod tests {
 
         // A device write is hidden by the still-resident clean CPU line.
         memory.write_u32(physical, 0xAABB_CCDD).unwrap();
-        assert_eq!(session.read_memory_u32(virtual_address).unwrap(), 0x4030_2010);
+        assert_eq!(
+            session.read_memory_u32(virtual_address).unwrap(),
+            0x4030_2010
+        );
 
         session.set_current_register(0, CURRENT_PROCESS_HANDLE);
         session.set_current_register(1, virtual_address);
@@ -2922,7 +2928,10 @@ mod tests {
         session.dispatch_svc(0x52); // InvalidateProcessDataCache
         assert_eq!(session.current_registers().unwrap()[0], 0);
         assert_eq!(session.data_cache_line_count(), 0);
-        assert_eq!(session.read_memory_u32(virtual_address).unwrap(), 0xAABB_CCDD);
+        assert_eq!(
+            session.read_memory_u32(virtual_address).unwrap(),
+            0xAABB_CCDD
+        );
 
         // Invalidating a dirty line discards it rather than writing it back.
         session
@@ -2935,7 +2944,10 @@ mod tests {
         session.dispatch_svc(0x52);
         assert_eq!(session.current_registers().unwrap()[0], 0);
         assert_eq!(memory.read_u32(physical).unwrap(), 0xAABB_CCDD);
-        assert_eq!(session.read_memory_u32(virtual_address).unwrap(), 0xAABB_CCDD);
+        assert_eq!(
+            session.read_memory_u32(virtual_address).unwrap(),
+            0xAABB_CCDD
+        );
 
         // The current-process pseudo-handle is checked, not silently ignored.
         session.set_current_register(0, CURRENT_THREAD_HANDLE);
