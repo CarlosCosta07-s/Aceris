@@ -2001,7 +2001,7 @@ impl Arm11CodeAddressSpace {
                 .ok_or(Error::InvalidAccess { addr: address })?;
             match policy {
                 CachePolicy::NonCacheable => {
-                    self.write_uncached_byte(&target, key, byte_offset, *byte)?;
+                    self.write_uncached_byte(&target, byte_offset, *byte)?;
                 }
                 CachePolicy::NormalNonCacheable | CachePolicy::WriteThrough => {
                     self.write_normal_buffered_byte(&target, key, byte_offset, *byte)?;
@@ -2148,7 +2148,6 @@ impl Arm11CodeAddressSpace {
     fn write_cache_target_range(
         &mut self,
         target: &DataCacheTarget,
-        key: DataCacheKey,
         start: usize,
         bytes: &[u8],
     ) -> BusResult<()> {
@@ -2316,7 +2315,6 @@ impl Arm11CodeAddressSpace {
             let end = start + usize::from(entry.length);
             self.write_cache_target_range(
                 &entry.target,
-                entry.key,
                 start,
                 &entry.bytes[start..end],
             )?;
@@ -2363,12 +2361,11 @@ impl Arm11CodeAddressSpace {
     fn write_uncached_byte(
         &mut self,
         target: &DataCacheTarget,
-        key: DataCacheKey,
         offset: usize,
         value: u8,
     ) -> BusResult<()> {
         self.drain_arm11_write_buffer()?;
-        self.write_cache_target_range(target, key, offset, &[value])
+        self.write_cache_target_range(target, offset, &[value])
     }
 
     /// Queues a bufferable Normal-memory store. A resident line is updated
