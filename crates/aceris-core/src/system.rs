@@ -2952,8 +2952,7 @@ mod tests {
             system
                 .ncsd_session()
                 .unwrap()
-                .kernel_objects
-                .event_is_signaled(event_handle),
+                .event_handle_is_signaled(event_handle),
             Some(true)
         );
 
