@@ -2157,11 +2157,7 @@ impl Arm11CodeAddressSpace {
     /// Queues a bufferable Normal-memory store. If a cache line is resident,
     /// keep its CPU view coherent; a dirty resident line is queued as a full
     /// writeback so older bytes cannot later overwrite this store.
-    fn write_normal_buffered_physical_byte(
-        &mut self,
-        address: u32,
-        value: u8,
-    ) -> BusResult<()> {
+    fn write_normal_buffered_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
         let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
         let offset = (address - line_base) as usize;
         let resident = if let Some(line) = self.data_cache.get_mut(&line_base) {
@@ -3073,11 +3069,7 @@ mod tests {
         // Four byte stores from the default wide-access helper coalesce into one
         // pending transaction without allocating a D-cache line.
         address_space
-            .write32_with_cache_policy(
-                virtual_base,
-                0x1122_3344,
-                CachePolicy::NormalNonCacheable,
-            )
+            .write32_with_cache_policy(virtual_base, 0x1122_3344, CachePolicy::NormalNonCacheable)
             .unwrap();
         assert_eq!(address_space.pending_write_buffer_entries(), 1);
         assert_eq!(address_space.data_cache_line_count(), 0);
