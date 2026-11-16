@@ -4231,15 +4231,31 @@ mod tests {
         session
             .write_memory_u32(virtual_base + 0x100, 0xCAFE_BABE)
             .unwrap();
+        // CPU stores remain dirty until a cache-maintenance SVC/operation.
+        assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
+        session
+            .store_process_data_cache(virtual_base + 0x100, 4)
+            .unwrap();
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0xCAFE_BABE);
 
+        // An external DMA/GPU write does not snoop the resident CPU line.
         memory
             .write_u32(physical_base + 0x104, 0x1234_5678)
+            .unwrap();
+        assert_eq!(session.read_memory_u32(virtual_base + 0x104).unwrap(), 0);
+        session
+            .invalidate_process_data_cache(virtual_base + 0x104, 4)
             .unwrap();
         assert_eq!(
             session.read_memory_u32(virtual_base + 0x104).unwrap(),
             0x1234_5678
         );
+
+        // A dirty line must not survive the release/reuse of its physical pages.
+        session
+            .write_memory_u32(virtual_base + 0x108, 0xDEAD_BEEF)
+            .unwrap();
+        assert!(session.data_cache_line_count() > 0);
 
         let resolved = dma
             .resolve_physical_range(&memory, virtual_base + 0x100, 8)
@@ -4260,7 +4276,9 @@ mod tests {
         assert!(dma.mappings().is_empty());
         assert!(!memory.has_linear_fcram_allocation(physical_base, 0x2000));
         assert!(!session.address_space.is_writable_range(virtual_base, 4));
+        assert_eq!(session.data_cache_line_count(), 0);
         assert_eq!(memory.read_u32(physical_base + 0x100).unwrap(), 0);
+        assert_eq!(memory.read_u32(physical_base + 0x108).unwrap(), 0);
     }
 
     #[test]
