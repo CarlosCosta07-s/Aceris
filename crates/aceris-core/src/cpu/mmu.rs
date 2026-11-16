@@ -106,7 +106,8 @@ impl MemoryAttributes {
         match self.inner {
             0 => CachePolicy::NonCacheable,
             2 => CachePolicy::WriteThrough,
-            1 | 3 => CachePolicy::WriteBack,
+            1 => CachePolicy::WriteBack,
+            3 => CachePolicy::WriteBackNoAllocate,
             _ => CachePolicy::NonCacheable,
         }
     }
