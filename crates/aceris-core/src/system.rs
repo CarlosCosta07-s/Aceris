@@ -3992,7 +3992,7 @@ mod tests {
     }
 
     #[test]
-    fn gsp_gx_queue_dispatches_process_command_list_to_pica200() {
+    fn gsp_gx_process_command_list_flushes_cache_before_pica_submission() {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
@@ -4002,8 +4002,13 @@ mod tests {
             )
             .unwrap();
 
-        let (command_list_address, _command_list_physical_base) =
+        let (command_list_address, command_list_physical_base) =
             map_test_linear_fcram(&mut system, 0x1000);
+        let baseline_cache_lines = system
+            .ncsd_session()
+            .unwrap()
+            .address_space()
+            .data_cache_line_count();
         system
             .ncsd_session_mut()
             .unwrap()
@@ -4014,6 +4019,14 @@ mod tests {
             .unwrap()
             .write_memory_u32(command_list_address + 4, 0x000F_0100)
             .unwrap();
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines + 1
+        );
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[0] = 0;
@@ -4038,6 +4051,32 @@ mod tests {
         assert!(report.error.is_none());
         assert_eq!(system.gpu().register(0x100), Some(0xDEAD_BEEF));
         assert_eq!(&queue.encode_header()[0..4], &[1, 0, 1, 1]);
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines
+        );
+
+        // The command-list flush invalidated the CPU line after writing it
+        // back. A later device-side update must be visible on the next load.
+        system
+            .physical_memory_mut()
+            .write(
+                command_list_physical_base,
+                &0xCAFE_BABEu32.to_le_bytes(),
+            )
+            .unwrap();
+        assert_eq!(
+            system
+                .ncsd_session_mut()
+                .unwrap()
+                .read_memory_u32(command_list_address)
+                .unwrap(),
+            0xCAFE_BABE
+        );
     }
 
     #[test]
