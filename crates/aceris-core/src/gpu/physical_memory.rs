@@ -268,15 +268,19 @@ impl GpuPhysicalMemory {
         inner
             .pages
             .retain(|page, _| *page < first_page || *page >= end_page);
-        let mut line = address & !0x1F;
         let end = u64::from(address) + u64::from(size);
+        let mut line = address & !0x1F;
         while u64::from(line) < end {
             let generation = inner.cache_generations.entry(line).or_insert(0);
             *generation = generation.wrapping_add(1);
-            let granule = line & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
+            line = line.saturating_add(32);
+        }
+        let granule_size = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
+        let mut granule = address & !(granule_size - 1);
+        while u64::from(granule) < end {
             let exclusive = inner.exclusive_versions.entry(granule).or_insert(0);
             *exclusive = exclusive.wrapping_add(1);
-            line = line.saturating_add(32);
+            granule = granule.saturating_add(granule_size);
         }
         inner.linear_allocations.remove(&address);
         Ok(())
