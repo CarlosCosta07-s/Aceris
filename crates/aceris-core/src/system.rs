@@ -2254,7 +2254,8 @@ impl System {
         )
         .map(|_| ())
         .map_err(|error| match error {
-            TextureCopyError::InvalidAddress { address } => {
+            TextureCopyError::InvalidAddress { address }
+            | TextureCopyError::MisalignedAddress { address } => {
                 GspGxCommandQueueError::InvalidTextureCopyAddress { address }
             }
             TextureCopyError::AddressOverflow { base, .. } => {
