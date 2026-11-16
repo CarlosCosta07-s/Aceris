@@ -1,6 +1,14 @@
 //! Memory bus abstraction.
 
 use aceris_common::{Error, Result};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_MEMORY_BACKING_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Allocates an identity shared by every alias of one memory backing.
+pub(crate) fn next_memory_backing_id() -> u64 {
+    NEXT_MEMORY_BACKING_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// A little-endian byte-addressable bus.
 ///
