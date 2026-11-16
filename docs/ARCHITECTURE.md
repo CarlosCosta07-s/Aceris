@@ -73,7 +73,7 @@ A interface `Bus` define os acessos usados pela CPU. `FlatMemory` atende testes 
 
 O espaço de endereços do processo mapeia regiões de código, dados, BSS, heap, pilha e TLS. Aliases lineares de FCRAM podem compartilhar o mesmo backing físico observado pela CPU e pelo caminho DMA/GPU/LCD.
 
-O backing físico continua compartilhado, mas a sessão ARM11 agora mantém linhas de data cache write-back de 32 bytes para aliases lineares de FCRAM/VRAM mapeados como memória física. Stores da CPU atualizam linhas dirty sem alterar imediatamente o backing; loads consultam a linha residente. `StoreProcessDataCache` escreve linhas dirty e as mantém clean, `InvalidateProcessDataCache` descarta linhas sem writeback, e `FlushProcessDataCache` escreve e invalida. A manutenção valida a faixa inteira antes de alterar as linhas. O modelo ainda não cobre todos os tipos de região privada/normal nem reproduz temporização, associatividade ou política de substituição do cache físico.
+O backing físico continua compartilhado, mas a sessão ARM11 agora mantém linhas de data cache write-back de 32 bytes para aliases lineares de FCRAM mapeados como memória física. Stores da CPU atualizam linhas dirty sem alterar imediatamente o backing; loads consultam a linha residente. `StoreProcessDataCache` escreve linhas dirty e as mantém clean, `InvalidateProcessDataCache` descarta linhas sem writeback, e `FlushProcessDataCache` escreve e invalida. A manutenção valida a faixa inteira antes de alterar as linhas. O modelo ainda não cobre todos os tipos de região privada/normal nem reproduz temporização, associatividade ou política de substituição do cache físico.
 
 ## Loader e formatos
 
