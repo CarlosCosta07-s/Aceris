@@ -1519,3 +1519,18 @@ Commit `2f2baa3` adiciona a regressão; `eee8918` aplica a formatação exigida 
 Arquivos alterados nesta etapa: `crates/aceris-core/src/system.rs`, `crates/aceris-core/src/gpu/gsp_queue.rs` e este registro.
 
 **Limites preservados:** nenhuma alteração foi feita nos módulos de CPU/Thumb ou draw/shader reservados ao Claude. Não há implementação de coerência snoop automática; o teste confirma a visibilidade explícita por flush/invalidação. A aprovação final depende da CI de `main` no commit `eee8918`.
+
+## RequestDMA — coerência entre aliases FCRAM (16/11/2026)
+
+O ChatGPT acrescentou em `crates/aceris-core/src/system.rs` a regressão `gsp_gx_request_dma_cache_coherence_uses_physical_identity_across_aliases` (commit `a61c6e3`).
+
+- Uma única alocação FCRAM é mapeada pelos aliases linear antigo e novo no mesmo processo ARM11.
+- A CPU escreve uma origem dirty pelo alias antigo e preenche uma linha clean do destino pelo alias novo.
+- RequestDMA lê a origem pelo alias antigo, com `flush_source=1`, e grava o destino pelo alias antigo.
+- O teste confirma o conteúdo no backing físico, confirma que as duas VAs ainda observam a linha clean stale e invalida a linha usando o alias novo.
+- Depois da invalidação, leituras por ambos os aliases devem observar os bytes escritos pelo DMA. Isso comprova que a chave de cache física e a manutenção de cache convergem para a mesma linha independentemente da VA usada.
+
+A regressão foi adicionada à suíte do workspace; aguardar o CI associado ao commit para validar Rustfmt, Clippy, testes completos e build Android ARM64. Ela cobre um interleaving determinístico CPU → DMA → CPU; não representa concorrência real entre threads do host nem snooping automático.
+
+**Limites preservados:** nenhum módulo de CPU/Thumb ou draw/shader atribuído ao Claude foi alterado. A seleção do D-cache a partir dos atributos CP15 `TEX/C/B/S` e `PRRR/NMRR` continua pendente e deve ser integrada com revisão explícita da propriedade desses módulos antes de editar a ponte MMU/Bus.
+
