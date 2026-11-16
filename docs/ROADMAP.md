@@ -1,6 +1,6 @@
 # Roadmap do Aceris
 
-> Estado revisado em 16/11/2026. O GX FlushCacheRegions (ID 0x05) está integrado em escopo parcial; testes e CI desta etapa ainda precisam ser confirmados.
+> Estado revisado em 16/11/2026. O GX FlushCacheRegions (ID 0x05) está integrado em escopo parcial; regressões de clean+invalidate e coerência por aliases FCRAM passaram na matriz [43947785182](https://github.com/CarlosCosta07-s/Aceris/actions/runs/43947785182). Integrações posteriores de ProcessCommandList e novas asserções de RequestDMA ainda aguardam a CI do HEAD.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
 
