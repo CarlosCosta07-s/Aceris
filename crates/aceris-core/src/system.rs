@@ -4,11 +4,12 @@ use crate::cpu::Arm11Core;
 use crate::gpu::{
     DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_MEMORY_FILL,
     GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, GSP_GX_COMMAND_REQUEST_DMA,
-    GSP_GX_COMMAND_TEXTURE_COPY,
+    GSP_GX_COMMAND_TEXTURE_COPY, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
     GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
     GspDisplayTransfer, GspDmaRequest, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, TextureCopyError,
+    GspProcessCommandList, GspTextureCopy, GspFlushCacheRegions, MAX_GSP_DMA_BYTES, Pica200,
+    TextureCopyError,
     TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
     execute_display_transfer, execute_texture_copy,
 };
@@ -99,6 +100,8 @@ pub const MAX_PICA_COMMAND_WORDS: usize = 0x1_0000;
 
 /// Result returned by GSP when another client currently owns rendering rights.
 const RESULT_GSP_RENDERING_RIGHT_BUSY: u32 = 0xC840_2BF0;
+/// Result returned by GX commands that require rendering rights.
+const RESULT_GSP_NO_RIGHT: u32 = 0xD820_2A06;
 
 /// Maximum number of 32-bit words in the ARM11 TLS IPC command buffer.
 const ARM11_IPC_BUFFER_WORDS: usize = 0x40;
@@ -123,6 +126,9 @@ pub struct GspGxCommandQueueReport {
     pub display_transfers_completed: u8,
     /// Number of TextureCopy commands completed by the synchronous backend.
     pub texture_copies_completed: u8,
+    /// Non-empty FlushCacheRegions spans validated against the registered GPU-visible map.
+    /// This does not imply a physical cache clean: the current core has no data-cache model.
+    pub cache_regions_validated: u8,
     /// Number of entries still pending after this dispatch.
     pub pending_commands: u8,
     /// Requests observed but not independently emulated by this GSP layer.
@@ -1701,6 +1707,7 @@ impl System {
             flush_source_requested: false,
             display_transfers_completed: 0,
             texture_copies_completed: 0,
+            cache_regions_validated: 0,
             pending_commands: queue.command_count(),
             cache_flush_requested: false,
             gas_blend_update_requested: false,
@@ -1811,6 +1818,17 @@ impl System {
                             Ok(())
                         }
                     }
+                    GSP_GX_COMMAND_FLUSH_CACHE_REGIONS => {
+                        let arguments = command
+                            .flush_cache_regions()
+                            .expect("command ID was checked immediately above");
+                        report.cache_flush_requested = true;
+                        if client_has_rendering_right {
+                            self.validate_gsp_cache_regions(arguments, &mut report)
+                        } else {
+                            Err(GspGxCommandQueueError::RenderingRightRequired)
+                        }
+                    }
                     GSP_GX_COMMAND_TEXTURE_COPY => {
                         let arguments = command
                             .texture_copy()
@@ -1833,16 +1851,21 @@ impl System {
                 };
 
                 if let Err(error) = dispatch_result {
-                    let result = matches!(
-                        &error,
-                        GspGxCommandQueueError::InvalidCommandListAddress { .. }
+                    let result = match &error {
+                        GspGxCommandQueueError::RenderingRightRequired => {
+                            Some(RESULT_GSP_NO_RIGHT)
+                        }
+                        GspGxCommandQueueError::InvalidCacheRegionRange { .. }
+                        | GspGxCommandQueueError::InvalidCommandListAddress { .. }
                             | GspGxCommandQueueError::InvalidCommandListSize { .. }
                             | GspGxCommandQueueError::InvalidMemoryFillRange { .. }
                             | GspGxCommandQueueError::InvalidDisplayTransferAddress { .. }
                             | GspGxCommandQueueError::InvalidDmaRange { .. }
-                            | GspGxCommandQueueError::InvalidTextureCopyAddress { .. }
-                    )
-                    .then_some(GSP_INVALID_ADDRESS_RESULT);
+                            | GspGxCommandQueueError::InvalidTextureCopyAddress { .. } => {
+                            Some(GSP_INVALID_ADDRESS_RESULT)
+                        }
+                        _ => None,
+                    };
                     queue.mark_error(result);
                     queue.halt();
                     report.error = Some(error);
@@ -2228,6 +2251,32 @@ impl System {
         execute_display_transfer(&mut self.physical_memory, request)
             .map(|_| ())
             .map_err(|error| GspGxCommandQueueError::DisplayTransfer(error.to_string()))
+    }
+
+    /// Validates the non-empty address ranges supplied to GX FlushCacheRegions.
+    ///
+    /// The current emulator has no independent ARM data-cache or dirty-line model.
+    /// Its GPU backing therefore cannot perform a hardware-equivalent clean here;
+    /// this path enforces rendering rights, range validity and documented skip/order
+    /// semantics without claiming that cache maintenance occurred.
+    fn validate_gsp_cache_regions(
+        &self,
+        command: GspFlushCacheRegions,
+        report: &mut GspGxCommandQueueReport,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        for region in command.regions {
+            if region.size_bytes == 0 {
+                continue;
+            }
+            self.resolve_gsp_physical_range(region.address, region.size_bytes as usize)
+                .map_err(|_| GspGxCommandQueueError::InvalidCacheRegionRange {
+                    address: region.address,
+                    size_bytes: region.size_bytes,
+                })?;
+            report.cache_regions_validated =
+                report.cache_regions_validated.saturating_add(1);
+        }
+        Ok(())
     }
 
     /// Executes one raw GSP TextureCopy operation.
@@ -4562,6 +4611,121 @@ mod tests {
             interrupt_queue.pending_interrupts().unwrap(),
             [GspInterruptId::Ppf]
         );
+    }
+
+
+    #[test]
+    fn gsp_gx_flush_cache_regions_validates_ranges_and_skips_zero_sizes() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(0x1400_0000, 0x2000)
+            .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
+        queue_bytes[entry + 2] = 1;
+        let arguments = [
+            0x1400_0100u32,
+            0x20,
+            0xDEAD_BEEF,
+            0,
+            0x1400_1800,
+            0x40,
+            0,
+        ];
+        for (index, value) in arguments.into_iter().enumerate() {
+            let offset = entry + 4 + index * 4;
+            queue_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 1);
+        assert!(report.cache_flush_requested);
+        assert_eq!(report.cache_regions_validated, 2);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.error.is_none());
+        assert_eq!(report.last_result, 0);
+    }
+
+    #[test]
+    fn gsp_gx_flush_cache_regions_stops_at_first_invalid_range() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        system
+            .gpu_address_space_mut()
+            .map_linear_region(0x1400_0000, 0x2000)
+            .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
+        let arguments = [
+            0x1400_0100u32,
+            0x20,
+            0x1500_0000,
+            0x20,
+            0x1400_1800,
+            0x40,
+            0,
+        ];
+        for (index, value) in arguments.into_iter().enumerate() {
+            let offset = entry + 4 + index * 4;
+            queue_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.cache_regions_validated, 1);
+        assert_eq!(
+            report.error,
+            Some(GspGxCommandQueueError::InvalidCacheRegionRange {
+                address: 0x1500_0000,
+                size_bytes: 0x20,
+            })
+        );
+        assert_eq!(report.last_result, GSP_INVALID_ADDRESS_RESULT);
+        assert!(report.halted);
+        assert!(report.status & 0x80 != 0);
+    }
+
+    #[test]
+    fn gsp_gx_flush_cache_regions_requires_rendering_rights() {
+        let mut system = System::new();
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&0x1500_0000u32.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&0x20u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, false);
+        assert!(report.cache_flush_requested);
+        assert_eq!(report.cache_regions_validated, 0);
+        assert_eq!(
+            report.error,
+            Some(GspGxCommandQueueError::RenderingRightRequired)
+        );
+        assert_eq!(report.last_result, RESULT_GSP_NO_RIGHT);
+        assert!(report.halted);
     }
 
 }
