@@ -1894,10 +1894,6 @@ impl Arm11CodeAddressSpace {
         Ok(())
     }
 
-    /// Reservation token for `address`: CPU-side stores bump the virtual
-    /// generation, and stores by any agent to shared physical backing (DMA, GPU,
-    /// LCD, other processes' aliases) bump the physical one. The sum changes
-    /// whenever either does.
     fn read_cached_physical_byte(&mut self, address: u32) -> BusResult<u8> {
         let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
         if !self.data_cache.contains_key(&line_base) {
@@ -2070,6 +2066,10 @@ impl Arm11CodeAddressSpace {
         self.data_cache.len()
     }
 
+    /// Reservation token for `address`: CPU-side stores bump the virtual
+    /// generation, and stores by any agent to shared physical backing (DMA, GPU,
+    /// LCD, other processes' aliases) bump the physical one. The sum changes
+    /// whenever either does.
     fn exclusive_version(&self, address: u32) -> u64 {"
         let virtual_version = self
             .exclusive_versions
