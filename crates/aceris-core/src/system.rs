@@ -5054,6 +5054,147 @@ mod tests {
     }
 
     #[test]
+    fn gsp_gx_flush_then_texture_copy_reads_dirty_cpu_fcram_data() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (linear_virtual_base, linear_physical_base) =
+            map_test_linear_fcram(&mut system, 0x1000);
+        let source_address = linear_virtual_base + 0x100;
+        let destination_address = VRAM_BASE + 0x4000;
+        let expected: [u8; 16] = [
+            0x91, 0x82, 0x73, 0x64, 0x55, 0x46, 0x37, 0x28, 0x19, 0x0A, 0xFB, 0xEC, 0xDD, 0xCE,
+            0xBF, 0xA0,
+        ];
+        system
+            .physical_memory_mut()
+            .write(linear_physical_base + 0x100, &[0; 16])
+            .unwrap();
+
+        let baseline_cache_lines = system
+            .ncsd_session()
+            .unwrap()
+            .address_space()
+            .data_cache_line_count();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_bytes(source_address, &expected)
+            .unwrap();
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines + 1
+        );
+        let mut backing_before_flush = [0xFF; 16];
+        system
+            .physical_memory()
+            .read(linear_physical_base + 0x100, &mut backing_before_flush)
+            .unwrap();
+        assert_eq!(backing_before_flush, [0; 16]);
+
+        let (shared_memory_base, event_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            session
+                .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (stack.address, event_handle)
+        };
+        system
+            .register_gsp_client(0, shared_memory_base, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 2;
+        let flush_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[flush_entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
+        for (index, value) in [source_address, expected.len() as u32, 0, 0, 0, 0, 0]
+            .into_iter()
+            .enumerate()
+        {
+            let offset = flush_entry + 4 + index * 4;
+            queue_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        let copy_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + crate::gpu::GSP_GX_COMMAND_ENTRY_SIZE;
+        queue_bytes[copy_entry] = GSP_GX_COMMAND_TEXTURE_COPY;
+        queue_bytes[copy_entry + 2] = 1;
+        queue_bytes[copy_entry + 4..copy_entry + 8].copy_from_slice(&source_address.to_le_bytes());
+        queue_bytes[copy_entry + 8..copy_entry + 12]
+            .copy_from_slice(&destination_address.to_le_bytes());
+        queue_bytes[copy_entry + 12..copy_entry + 16]
+            .copy_from_slice(&(expected.len() as u32).to_le_bytes());
+        queue_bytes[copy_entry + 24..copy_entry + 28].copy_from_slice(&0x08u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 2);
+        assert!(report.cache_flush_requested);
+        assert_eq!(report.cache_regions_validated, 1);
+        assert_eq!(report.texture_copies_completed, 1);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.halted);
+        assert!(report.error.is_none());
+        assert_eq!(report.last_result, 0);
+
+        let mut backing_source = [0u8; 16];
+        system
+            .physical_memory()
+            .read(linear_physical_base + 0x100, &mut backing_source)
+            .unwrap();
+        assert_eq!(backing_source, expected);
+        let mut copied_destination = [0u8; 16];
+        system
+            .physical_memory()
+            .read(destination_address, &mut copied_destination)
+            .unwrap();
+        assert_eq!(copied_destination, expected);
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .data_cache_line_count(),
+            baseline_cache_lines
+        );
+
+        let interrupt_queue_address =
+            shared_memory_base + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf]
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn gsp_gx_flush_cache_regions_cleans_and_invalidates_fcram_ranges() {
         let mut system = System::new();
         system
