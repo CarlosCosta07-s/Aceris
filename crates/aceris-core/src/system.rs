@@ -2870,9 +2870,7 @@ mod tests {
                 .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
                 .unwrap();
             let event_handle = session
-                .create_event_handle(
-                    crate::loader::ncsd::session::kernel::EventResetType::OneShot,
-                )
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
                 .unwrap();
             (stack.address, event_handle)
         };
@@ -2936,8 +2934,8 @@ mod tests {
 
         // DisplayTransfer completion must enqueue PPF for the rights owner
         // and signal that client's registered process-local event.
-        let interrupt_queue_address = shared_memory_base
-            + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
+        let interrupt_queue_address =
+            shared_memory_base + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
         let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
         system
             .ncsd_session
