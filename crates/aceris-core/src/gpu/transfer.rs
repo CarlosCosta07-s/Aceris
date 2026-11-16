@@ -163,6 +163,7 @@ pub enum DisplayTransferError {
     },
     UnsupportedFormat(u8),
     UnsupportedScaling(u8),
+    UnsupportedCropMode,
     UnsupportedBlock32,
     UnsupportedTextureCopyMode,
     UnsupportedTiledToTiledMode,
@@ -201,6 +202,9 @@ impl fmt::Display for DisplayTransferError {
             }
             Self::UnsupportedScaling(value) => {
                 write!(f, "DisplayTransfer scaling mode {value} is unsupported")
+            }
+            Self::UnsupportedCropMode => {
+                f.write_str("DisplayTransfer crop mode is unsupported")
             }
             Self::UnsupportedBlock32 => f.write_str("DisplayTransfer 32x32 blocks are unsupported"),
             Self::UnsupportedTextureCopyMode => {
@@ -368,6 +372,9 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
             width: request.output_width,
             height: request.output_height,
         });
+    }
+    if request.flags & DISPLAY_TRANSFER_CROP != 0 {
+        return Err(DisplayTransferError::UnsupportedCropMode);
     }
     if request.flags & DISPLAY_TRANSFER_TEXTURE_COPY != 0 {
         return Err(DisplayTransferError::UnsupportedTextureCopyMode);
@@ -572,6 +579,7 @@ mod tests {
             DISPLAY_TRANSFER_BLOCKS_32X32,
             DISPLAY_TRANSFER_TILED_TO_TILED,
             DISPLAY_TRANSFER_TEXTURE_COPY,
+            DISPLAY_TRANSFER_CROP,
             1 << 24,
         ] {
             assert!(
