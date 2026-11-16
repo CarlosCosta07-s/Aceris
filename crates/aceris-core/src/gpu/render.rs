@@ -777,9 +777,7 @@ mod tests {
         let mut session = PicaRenderSession::new(session_settings());
 
         let (first_list, first_render) = session
-            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| {
-                Some(VERTEX_BASE)
-            })
+            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| Some(VERTEX_BASE))
             .unwrap();
         assert_eq!(first_list.commands, 1);
         assert_eq!(first_render.triangles_submitted, 1);
@@ -787,9 +785,7 @@ mod tests {
         session.flush(&mut memory).unwrap();
 
         let (second_list, second_render) = session
-            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| {
-                Some(VERTEX_BASE)
-            })
+            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| Some(VERTEX_BASE))
             .unwrap();
         assert_eq!(second_list.commands, 1);
         assert_eq!(second_render.triangles_submitted, 1);
@@ -816,9 +812,7 @@ mod tests {
         let mut memory = memory_with_triangle();
         let mut session = PicaRenderSession::new(session_settings());
         let (_, report) = session
-            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| {
-                Some(VERTEX_BASE)
-            })
+            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| Some(VERTEX_BASE))
             .unwrap();
         assert!(report.pixels_written > 0);
         session.flush(&mut memory).unwrap();
