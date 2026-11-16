@@ -4,8 +4,11 @@ use crate::cpu::Arm11Core;
 use crate::gpu::{
     GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
     GSP_INTERRUPT_QUEUE_SIZE, GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory,
-    GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId, GspInterruptQueuePushResult,
+    GspDisplayTransfer, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
+    GspInterruptQueuePushResult,
     GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer, GspProcessCommandList, Pica200,
+    DisplayTransferRequest, display_transfer_buffer_sizes, execute_display_transfer,
+    GSP_GX_COMMAND_DISPLAY_TRANSFER,
     VRAM_BASE, VRAM_SIZE,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
@@ -79,6 +82,8 @@ pub struct GspGxCommandQueueReport {
     pub command_lists_submitted: u8,
     /// Number of MemoryFill buffer operations completed.
     pub memory_fills_completed: u8,
+    /// Number of DisplayTransfer commands completed by the synchronous software backend.
+    pub display_transfers_completed: u8,
     /// Number of entries still pending after this dispatch.
     pub pending_commands: u8,
     /// Requests observed but not independently emulated by this GSP layer.
@@ -1639,6 +1644,7 @@ impl System {
             commands_consumed: 0,
             command_lists_submitted: 0,
             memory_fills_completed: 0,
+            display_transfers_completed: 0,
             pending_commands: queue.command_count(),
             cache_flush_requested: false,
             gas_blend_update_requested: false,
@@ -1703,6 +1709,24 @@ impl System {
                             Ok(())
                         }
                     }
+                    GSP_GX_COMMAND_DISPLAY_TRANSFER => {
+                        let arguments = command
+                            .display_transfer()
+                            .expect("command ID was checked immediately above");
+                        if client_has_rendering_right {
+                            self.dispatch_gsp_display_transfer(arguments).and_then(|()| {
+                                report.display_transfers_completed =
+                                    report.display_transfers_completed.saturating_add(1);
+                                self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
+                                    .map(|_| ())
+                                    .map_err(|error| {
+                                        GspGxCommandQueueError::DisplayTransfer(error.to_string())
+                                    })
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    }
                     command_id => Err(GspGxCommandQueueError::UnsupportedCommand { command_id }),
                 };
 
@@ -1712,6 +1736,7 @@ impl System {
                         GspGxCommandQueueError::InvalidCommandListAddress { .. }
                             | GspGxCommandQueueError::InvalidCommandListSize { .. }
                             | GspGxCommandQueueError::InvalidMemoryFillRange { .. }
+                            | GspGxCommandQueueError::InvalidDisplayTransferAddress { .. }
                     )
                     .then_some(GSP_INVALID_ADDRESS_RESULT);
                     queue.mark_error(result);
@@ -1732,6 +1757,82 @@ impl System {
         report.status = queue.status();
         report.last_result = queue.last_result();
         report
+    }
+
+    /// Resolves one GSP-visible virtual address to the physical memory backing.
+    ///
+    /// VRAM is available at its physical address and at the legacy application
+    /// alias. All other process addresses go through the DMA map populated by
+    /// ControlMemory.
+    fn resolve_gsp_physical_range(
+        &self,
+        address: u32,
+        length: usize,
+    ) -> std::result::Result<u32, GspGxCommandQueueError> {
+        const GSP_VRAM_ALIAS: u32 = 0x1F00_0000;
+        let end = u64::from(address)
+            .checked_add(length as u64)
+            .ok_or(GspGxCommandQueueError::InvalidDisplayTransferAddress { address })?;
+        let start = u64::from(address);
+        let physical_vram_end = u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
+        let alias_vram_end = u64::from(GSP_VRAM_ALIAS) + u64::from(VRAM_SIZE);
+
+        let physical_address = if start >= u64::from(VRAM_BASE) && end <= physical_vram_end {
+            address
+        } else if start >= u64::from(GSP_VRAM_ALIAS) && end <= alias_vram_end {
+            VRAM_BASE + (address - GSP_VRAM_ALIAS)
+        } else {
+            self.gpu_address_space
+                .resolve_physical_range(&self.physical_memory, address, length)
+                .map_err(|_| GspGxCommandQueueError::InvalidDisplayTransferAddress { address })?
+                .physical_address
+        };
+        self.physical_memory
+            .validate_range(physical_address, length)
+            .map_err(|_| GspGxCommandQueueError::InvalidDisplayTransferAddress { address })?;
+        Ok(physical_address)
+    }
+
+    /// Executes one basic DisplayTransfer operation.
+    ///
+    /// The software backend completes the memory copy synchronously. Its caller
+    /// queues the PPF event only after the destination bytes are committed.
+    fn dispatch_gsp_display_transfer(
+        &mut self,
+        command: GspDisplayTransfer,
+    ) -> std::result::Result<(), GspGxCommandQueueError> {
+        if command.input_address & 7 != 0 {
+            return Err(GspGxCommandQueueError::InvalidDisplayTransferAddress {
+                address: command.input_address,
+            });
+        }
+        if command.output_address & 7 != 0 {
+            return Err(GspGxCommandQueueError::InvalidDisplayTransferAddress {
+                address: command.output_address,
+            });
+        }
+
+        let mut request = DisplayTransferRequest {
+            input_address: command.input_address,
+            output_address: command.output_address,
+            input_width: command.input_width(),
+            input_height: command.input_height(),
+            output_width: command.output_width(),
+            output_height: command.output_height(),
+            flags: command.flags,
+        };
+        let (source_length, destination_length) =
+            display_transfer_buffer_sizes(request).map_err(|error| {
+                GspGxCommandQueueError::DisplayTransfer(error.to_string())
+            })?;
+        request.input_address =
+            self.resolve_gsp_physical_range(command.input_address, source_length)?;
+        request.output_address =
+            self.resolve_gsp_physical_range(command.output_address, destination_length)?;
+
+        execute_display_transfer(&mut self.physical_memory, request)
+            .map(|_| ())
+            .map_err(|error| GspGxCommandQueueError::DisplayTransfer(error.to_string()))
     }
 
     /// Executes the two optional buffers of one GX MemoryFill command.
@@ -2746,6 +2847,106 @@ mod tests {
         let queue = GspInterruptRelayQueue::parse(&bytes).unwrap();
         assert!(queue.ignores_pdc());
         assert!(queue.pending_interrupts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion() {
+        use crate::gpu::{execute_display_transfer, DisplayTransferRequest};
+
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let linear_source = VRAM_BASE + 0x20_000;
+        let tiled_source = VRAM_BASE + 0x40_000;
+        let linear_output = VRAM_BASE + 0x60_000;
+        let mut expected = vec![0u8; 64 * 64 * 4];
+        for y in 0..64usize {
+            for x in 0..64usize {
+                let offset = (y * 64 + x) * 4;
+                expected[offset..offset + 4]
+                    .copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
+            }
+        }
+        system
+            .physical_memory_mut()
+            .write(linear_source, &expected)
+            .unwrap();
+        execute_display_transfer(
+            system.physical_memory_mut(),
+            DisplayTransferRequest {
+                input_address: linear_source,
+                output_address: tiled_source,
+                input_width: 64,
+                input_height: 64,
+                output_width: 64,
+                output_height: 64,
+                flags: crate::gpu::DISPLAY_TRANSFER_LINEAR_TO_TILED,
+            },
+        )
+        .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&tiled_source.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12].copy_from_slice(&linear_output.to_le_bytes());
+        let dimensions = (64u32 << 16) | 64;
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&dimensions.to_le_bytes());
+        queue_bytes[entry + 16..entry + 20].copy_from_slice(&dimensions.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.display_transfers_completed, 1);
+        assert_eq!(report.pending_commands, 0);
+        assert!(report.halted);
+        assert!(report.error.is_none());
+
+        let mut actual = vec![0u8; expected.len()];
+        system
+            .physical_memory()
+            .read(linear_output, &mut actual)
+            .unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn gsp_gx_display_transfer_is_consumed_without_rendering_rights() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        queue_bytes[entry + 4..entry + 8]
+            .copy_from_slice(&(VRAM_BASE + 0x20_000).to_le_bytes());
+        queue_bytes[entry + 8..entry + 12]
+            .copy_from_slice(&(VRAM_BASE + 0x40_000).to_le_bytes());
+        let dimensions = (64u32 << 16) | 64;
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&dimensions.to_le_bytes());
+        queue_bytes[entry + 16..entry + 20].copy_from_slice(&dimensions.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, false);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.display_transfers_completed, 0);
+        assert!(report.error.is_none());
     }
 
     #[test]

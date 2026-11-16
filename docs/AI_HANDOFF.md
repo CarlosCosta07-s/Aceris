@@ -1381,3 +1381,12 @@ Nova etapa implementada pelo ChatGPT em arquivo novo, sem alterar os módulos de
 - Não há declaração de jogo executável ou compatibilidade PICA200 completa.
 
 A CI deste commit precisa passar em Linux, Windows e macOS, além do build Android ARM64, antes de aprovar esta etapa.
+
+
+## GSP DisplayTransfer — execução pelo GX queue (15/11/2026)
+
+- `GSP_GX_COMMAND_DISPLAY_TRANSFER` (ID 0x03) agora é decodificado por `GspGxCommand::display_transfer` e executado pela fila GSP quando o cliente possui rendering rights.
+- Os spans exatos de entrada/saída são calculados antes de resolver endereço físico. VRAM aceita o endereço físico e o alias 0x1F000000; outras regiões usam os mapeamentos DMA registrados por ControlMemory.
+- Após a conversão, o dispatcher emite PPF. O `GspGxCommandQueueReport` conta `display_transfers_completed`. Sem rendering rights, a entrada é consumida mas não executada.
+- Os testes de integração validam tiled 8x8→linear em VRAM, bytes de saída, relatório de conclusão e consumo sem direitos de renderização.
+- Limite temporal: a cópia CPU é síncrona, com PPF imediato após conclusão; não representa latência assíncrona/ciclo-a-ciclo do transfer engine real.
