@@ -2764,6 +2764,50 @@ mod tests {
     }
 
     #[test]
+    fn arm11_data_cache_uses_four_ways_and_writes_back_lru_victims() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x5000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x5000)
+            .unwrap();
+
+        // A 4-way, 128-set cache maps lines separated by 4 KiB to the same set.
+        for way in 0..ARM11_DATA_CACHE_WAYS {
+            let offset = (way * ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE) as u32;
+            address_space
+                .write8(virtual_base + offset, 0xA0 + way as u8)
+                .unwrap();
+        }
+        assert_eq!(address_space.data_cache_line_count(), ARM11_DATA_CACHE_WAYS);
+
+        // Touch way 0 to make way 1 the least-recently-used dirty victim.
+        assert_eq!(address_space.read8(virtual_base).unwrap(), 0xA0);
+        let fifth_offset =
+            (ARM11_DATA_CACHE_WAYS * ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE)
+                as u32;
+        address_space
+            .write8(virtual_base + fifth_offset, 0xA4)
+            .unwrap();
+
+        assert_eq!(address_space.data_cache_line_count(), ARM11_DATA_CACHE_WAYS);
+        // Way 1 was evicted and its dirty byte was written back.
+        let way_one_physical =
+            physical_base + (ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE) as u32;
+        let mut evicted_value = [0u8; 1];
+        memory.read(way_one_physical, &mut evicted_value).unwrap();
+        assert_eq!(evicted_value, [0xA1]);
+
+        // Way 0 remained resident and dirty, so backing memory is still unchanged.
+        let mut resident_value = [0u8; 1];
+        memory.read(physical_base, &mut resident_value).unwrap();
+        assert_eq!(resident_value, [0]);
+        assert_eq!(address_space.read8(virtual_base).unwrap(), 0xA0);
+    }
+
+    #[test]
     fn device_writes_to_linear_memory_invalidate_cpu_exclusive_reservations() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut memory = GpuPhysicalMemory::new();
