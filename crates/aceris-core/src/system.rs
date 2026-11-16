@@ -3557,6 +3557,104 @@ mod tests {
     }
 
     #[test]
+    fn gsp_gx_request_dma_cache_coherence_uses_physical_identity_across_aliases() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (old_virtual_base, physical_base) = map_test_linear_fcram(&mut system, 0x1000);
+        let new_virtual_base = 0x3000_0000 + (physical_base - FCRAM_BASE);
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .map_linear_memory_region(new_virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        let source_address = old_virtual_base + 0x100;
+        let destination_old_alias = old_virtual_base + 0x200;
+        let destination_new_alias = new_virtual_base + 0x200;
+        let expected = 0x5A6B_7C8Du32;
+
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            session.write_memory_u32(source_address, expected).unwrap();
+            // Prime the destination through the new alias. Both aliases must
+            // resolve to one physical cache line in the ARM11 data cache.
+            assert_eq!(session.read_memory_u32(destination_new_alias).unwrap(), 0);
+            assert_eq!(session.address_space().data_cache_line_count(), 2);
+        }
+
+        let (shared_memory_base, event_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let stack = session.address_space().layout().stack;
+            session
+                .write_memory_bytes(stack.address, &vec![0u8; GSP_SHARED_MEMORY_SIZE])
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (stack.address, event_handle)
+        };
+        system
+            .register_gsp_client(0, shared_memory_base, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 1;
+        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
+        queue_bytes[entry + 2] = 1;
+        queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_address.to_le_bytes());
+        queue_bytes[entry + 8..entry + 12]
+            .copy_from_slice(&destination_old_alias.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&4u32.to_le_bytes());
+        queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert_eq!(report.commands_consumed, 1);
+        assert_eq!(report.dma_requests_completed, 1);
+        assert!(report.flush_source_requested);
+        assert!(report.error.is_none());
+
+        assert_eq!(
+            system
+                .physical_memory()
+                .read_u32(physical_base + 0x100)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            system
+                .physical_memory()
+                .read_u32(physical_base + 0x200)
+                .unwrap(),
+            expected
+        );
+
+        let session = system.ncsd_session_mut().unwrap();
+        // The DMA write is visible through physical backing, but the clean
+        // destination line remains stale regardless of which alias reads it.
+        assert_eq!(session.read_memory_u32(destination_old_alias).unwrap(), 0);
+        assert_eq!(session.read_memory_u32(destination_new_alias).unwrap(), 0);
+        assert_eq!(
+            session
+                .invalidate_process_data_cache(destination_new_alias, 4)
+                .unwrap(),
+            1
+        );
+        // Invalidating through one alias exposes the DMA write through both.
+        assert_eq!(session.read_memory_u32(destination_old_alias).unwrap(), expected);
+        assert_eq!(session.read_memory_u32(destination_new_alias).unwrap(), expected);
+    }
+
+    #[test]
     fn gsp_gx_request_dma_is_consumed_without_rendering_rights() {
         let mut system = System::new();
         system
