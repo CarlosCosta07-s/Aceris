@@ -344,7 +344,6 @@ impl GpuPhysicalMemory {
                 *version = version.wrapping_add(1);
                 current += u64::from(granule);
             }
-
         }
         Ok(())
     }
