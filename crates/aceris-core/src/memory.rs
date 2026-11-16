@@ -9,9 +9,76 @@ use aceris_common::{Error, Result};
 /// Granularity used by the local exclusive monitor in the built-in memory buses.
 pub const EXCLUSIVE_RESERVATION_GRANULE: u32 = 8;
 
+/// Effective data-side cache policy selected by the ARM11 MMU.
+///
+/// The emulator currently models the inner data cache. Outer-cache attributes
+/// remain available in the MMU translation result but have no separate device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CachePolicy {
+    NonCacheable,
+    WriteThrough,
+    WriteBack,
+}
+
 pub trait Bus {
     fn read8(&mut self, addr: u32) -> Result<u8>;
     fn write8(&mut self, addr: u32, value: u8) -> Result<()>;
+
+    /// Reads one byte using the cache policy resolved by the active MMU mapping.
+    /// Simple buses may ignore the policy when they have no data cache.
+    fn read8_with_cache_policy(&mut self, addr: u32, policy: CachePolicy) -> Result<u8> {
+        let _ = policy;
+        self.read8(addr)
+    }
+
+    /// Writes one byte using the cache policy resolved by the active MMU mapping.
+    fn write8_with_cache_policy(
+        &mut self,
+        addr: u32,
+        value: u8,
+        policy: CachePolicy,
+    ) -> Result<()> {
+        let _ = policy;
+        self.write8(addr, value)
+    }
+
+    fn read16_with_cache_policy(&mut self, addr: u32, policy: CachePolicy) -> Result<u16> {
+        let lo = self.read8_with_cache_policy(addr, policy)?;
+        let hi = self.read8_with_cache_policy(addr.wrapping_add(1), policy)?;
+        Ok(u16::from_le_bytes([lo, hi]))
+    }
+
+    fn read32_with_cache_policy(&mut self, addr: u32, policy: CachePolicy) -> Result<u32> {
+        let mut bytes = [0u8; 4];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = self.read8_with_cache_policy(addr.wrapping_add(index as u32), policy)?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn write16_with_cache_policy(
+        &mut self,
+        addr: u32,
+        value: u16,
+        policy: CachePolicy,
+    ) -> Result<()> {
+        for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write8_with_cache_policy(addr.wrapping_add(index as u32), byte, policy)?;
+        }
+        Ok(())
+    }
+
+    fn write32_with_cache_policy(
+        &mut self,
+        addr: u32,
+        value: u32,
+        policy: CachePolicy,
+    ) -> Result<()> {
+        for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write8_with_cache_policy(addr.wrapping_add(index as u32), byte, policy)?;
+        }
+        Ok(())
+    }
 
     /// Reads an exclusive value and returns an opaque monitor-generation token.
     fn exclusive_read(&mut self, addr: u32, size: usize) -> Result<(u64, u64)> {
