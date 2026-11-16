@@ -1465,6 +1465,9 @@ O ChatGPT implementou uma primeira camada observável de cache write-back na mem
 - `bb36bd8` — expõe a criação do alias linear no processo para os testes de integração.
 - `c490eee`, `af15c2b`, `51d8616`, `e37dd90` — atualizam testes GSP para mapear o alias também no address space do processo e verificar writeback real em RequestDMA, ProcessCommandList e FlushCacheRegions.
 - `80e0804` — adiciona teste direto de coerência CPU/GPU: dirty não visível no backing antes do writeback, Store escreve mantendo a linha, GPU write deixa uma linha CPU stale, Invalidate refaz o load e Flush escreve e remove a linha.
+- `92007bb` — otimiza a validação de intervalos para percorrer spans mapeados e linhas de 32 bytes, evitando varredura byte a byte em buffers DMA grandes; preserva validação completa antes da manutenção.
+- `c43363a` — adiciona teste guest-side do SVC `FlushProcessDataCache` com o pseudo-handle `0xFFFF8001`, verificando o retorno e o writeback físico.
+- `a247fc2`, `93c97fb`, `ad54df4`, `fa7a285` — atualizam comentários e formatação das integrações.
 
 ### Contrato atual
 
