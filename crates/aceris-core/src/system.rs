@@ -3380,10 +3380,11 @@ mod tests {
         system.ncsd_session_mut().unwrap()
             .map_linear_memory_region(0x1400_0000, crate::gpu::FCRAM_BASE, 0x1000)
             .unwrap();
-        system
-            .physical_memory_mut()
-            .write(source_physical, &expected)
+        system.ncsd_session_mut().unwrap()
+            .write_memory_bytes(source_virtual, &expected)
             .unwrap();
+        // The source bytes are dirty in the ARM11 cache; RequestDMA's flush flag
+        // must write them back before the GPU/DMA engine reads physical memory.
 
         let (shared_memory_base, event_handle) = {
             let session = system.ncsd_session_mut().unwrap();
