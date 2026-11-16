@@ -2845,6 +2845,29 @@ mod tests {
     }
 
     #[test]
+    fn flush_process_data_cache_svc_uses_current_process_pseudo_handle() {
+        let mut session = test_session();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_address = physical - 0x0C00_0000;
+        session.address_space.attach_gpu_memory(memory.clone());
+        session.address_space
+            .map_linear_memory_region(virtual_address, physical, 0x1000)
+            .unwrap();
+        session.write_memory_bytes(virtual_address, &[0x12, 0x34, 0x56, 0x78]).unwrap();
+        assert_eq!(memory.read_u32(physical).unwrap(), 0);
+
+        session.set_current_register(0, 0xFFFF_8001);
+        session.set_current_register(1, virtual_address);
+        session.set_current_register(2, 4);
+        session.dispatch_svc(0x54);
+
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(memory.read_u32(physical).unwrap(), 0x7856_3412);
+        assert_eq!(session.data_cache_line_count(), 0);
+    }
+
+    #[test]
     fn initializes_entry_pc_and_main_thread_sp() {
         let session = test_session();
         assert_eq!(session.core().pc(), 0x0010_0000);
