@@ -1717,8 +1717,8 @@ impl System {
     /// processing. The supported synchronous subset includes RequestDMA,
     /// ProcessCommandList, MemoryFill, DisplayTransfer, TextureCopy and
     /// FlushCacheRegions. FlushCacheRegions currently validates guest ranges only;
-    /// a separate ARM data-cache model is not implemented. Busy arbitration and
-    /// asynchronous device timing remain pending.
+    /// the process D-cache performs writeback/invalidation for mapped FCRAM
+    /// ranges. Busy arbitration and asynchronous device timing remain pending.
     pub fn process_gsp_gx_command_queue(
         &mut self,
         shared_memory_base: u32,
