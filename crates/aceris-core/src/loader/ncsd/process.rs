@@ -840,6 +840,7 @@ impl Arm11CodeAddressSpace {
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
                 .collect(),
+            write_buffer: VecDeque::with_capacity(ARM11_WRITE_BUFFER_CAPACITY),
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
