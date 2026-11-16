@@ -1547,3 +1547,16 @@ A alteração foi publicada em `main`; o CI associado ainda precisa confirmar Ru
 
 **Limites preservados:** nenhum arquivo de CPU/Thumb ou draw/shader foi modificado. A política por atributos CP15 e as barreiras/write buffers permanecem fora desta alteração.
 
+## GSP ProcessCommandList — invalidação da cache do buffer (16/11/2026)
+
+O ChatGPT ampliou o teste de integração do despacho `ProcessCommandList` em `crates/aceris-core/src/system.rs`, publicado no commit `73d3bf2`.
+
+- O teste agora registra a quantidade inicial de linhas D-cache e confirma que as duas palavras da command list deixam uma única linha dirty.
+- A fila GSP envia `ProcessCommandList` com `flush_buffer=1`; a GPU deve receber os words escritos pela CPU e atualizar o registrador PICA200 `0x100`.
+- Após a submissão, o teste confirma que a linha foi removida da D-cache, demonstrando que o flush faz clean+invalidate, e não apenas writeback.
+- Uma escrita externa subsequente altera a primeira palavra do buffer físico; a leitura CPU seguinte precisa observar `0xCAFE_BABE` sem invalidação manual adicional.
+
+A regressão foi adicionada, mas aguarda Rustfmt, Clippy, `cargo test --workspace`, build multiplataforma e build Android ARM64 no CI associado ao HEAD. O agente externo é modelado por uma escrita direta e sequencial ao backing físico; não representa snooping nem concorrência host-side.
+
+**Limites preservados:** a alteração ficou em testes de integração `system.rs` e documentação. Nenhum módulo de CPU/Thumb ou draw/shader reservado ao Claude foi tocado.
+
