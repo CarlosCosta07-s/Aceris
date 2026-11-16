@@ -768,6 +768,82 @@ mod tests {
     }
 
     #[test]
+    fn persistent_render_session_preserves_depth_between_command_lists() {
+        let mut gpu = Pica200::new();
+        configure_vertex_path(&mut gpu);
+        point_target(&mut gpu, TARGET_A);
+        let mut memory = memory_with_triangle();
+        let mut session = PicaRenderSession::new(session_settings());
+
+        let (first_list, first_render) = session
+            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| {
+                Some(VERTEX_BASE)
+            })
+            .unwrap();
+        assert_eq!(first_list.commands, 1);
+        assert_eq!(first_render.triangles_submitted, 1);
+        assert!(first_render.pixels_written > 0);
+        session.flush(&mut memory).unwrap();
+
+        let (second_list, second_render) = session
+            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| {
+                Some(VERTEX_BASE)
+            })
+            .unwrap();
+        assert_eq!(second_list.commands, 1);
+        assert_eq!(second_render.triangles_submitted, 1);
+        assert_eq!(second_render.pixels_written, 0);
+        assert!(second_render.depth_rejected_pixels > 0);
+        assert_eq!(target_pixel(&memory, TARGET_A, 1, 6), [200, 100, 50, 255]);
+    }
+
+    #[test]
+    fn render_session_scales_viewport_to_the_active_target_dimensions() {
+        const WIDE_TARGET: u32 = FCRAM_BASE + 0x60_0000;
+        const WIDTH: usize = 16;
+        const HEIGHT: usize = 8;
+
+        let mut gpu = Pica200::new();
+        configure_vertex_path(&mut gpu);
+        point_target(&mut gpu, WIDE_TARGET);
+        gpu.write_register(
+            crate::gpu::REG_FRAMEBUFFER_DIM,
+            (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
+        )
+        .unwrap();
+
+        let mut memory = memory_with_triangle();
+        let mut session = PicaRenderSession::new(session_settings());
+        let (_, report) = session
+            .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| {
+                Some(VERTEX_BASE)
+            })
+            .unwrap();
+        assert!(report.pixels_written > 0);
+        session.flush(&mut memory).unwrap();
+
+        let target = PicaRenderTargetConfig::from_registers(
+            WIDE_TARGET >> 3,
+            2,
+            0,
+            (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
+        )
+        .unwrap();
+        let pixels = target.read_rgba8(&memory).unwrap();
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * WIDTH + x) * 4;
+            [
+                pixels[offset],
+                pixels[offset + 1],
+                pixels[offset + 2],
+                pixels[offset + 3],
+            ]
+        };
+        assert_eq!(pixel(9, 6), [200, 100, 50, 255]);
+        assert_eq!(pixel(13, 1), [0, 0, 0, 255]);
+    }
+
+    #[test]
     fn existing_target_content_is_preserved_by_a_later_list() {
         let mut gpu = Pica200::new();
         configure_vertex_path(&mut gpu);
