@@ -4285,9 +4285,9 @@ mod tests {
     #[test]
     fn gsp_render_transfer_and_lcd_scanout_form_one_complete_frame() {
         use crate::gpu::{
-            ClipDepthRange, DepthFunction, GeometryPipeline, GSP_GX_COMMAND_DISPLAY_TRANSFER,
+            ClipDepthRange, DepthFunction, GSP_GX_COMMAND_DISPLAY_TRANSFER,
             GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
-            GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, Matrix4,
+            GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, GeometryPipeline, Matrix4,
             PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
             REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
             REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
@@ -4391,8 +4391,7 @@ mod tests {
         queue_bytes[command_entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[command_entry + 4..command_entry + 8]
             .copy_from_slice(&COMMAND_LIST.to_le_bytes());
-        queue_bytes[command_entry + 8..command_entry + 12]
-            .copy_from_slice(&8u32.to_le_bytes());
+        queue_bytes[command_entry + 8..command_entry + 12].copy_from_slice(&8u32.to_le_bytes());
 
         let transfer_entry = command_entry + GSP_GX_COMMAND_ENTRY_SIZE;
         queue_bytes[transfer_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
