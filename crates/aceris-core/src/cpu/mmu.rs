@@ -193,7 +193,7 @@ impl DescriptorMemoryAttributes {
             (0, 2) => (MemoryType::Normal, self.shareable, 2, 2),
             (0, 3) => (MemoryType::Normal, self.shareable, 3, 3),
             (1, 0) => (MemoryType::Normal, self.shareable, 0, 0),
-            (1, 3) => (MemoryType::Normal, self.shareable, 1, 1),
+            (1, 2..=3) => (MemoryType::Normal, self.shareable, 1, 1),
             (2, 0) => (MemoryType::Device, false, 0, 0),
             (4..=7, policy) => (MemoryType::Normal, self.shareable, policy, self.tex & 3),
             _ => (MemoryType::Reserved, false, 0, 0),
@@ -1426,6 +1426,85 @@ mod tests {
             attributes(MemoryType::StronglyOrdered, 3).data_cache_policy(true),
             CachePolicy::NonCacheable
         );
+    }
+
+    #[test]
+    fn xp_disabled_tex_cb_encodings_match_the_armv6_attribute_matrix() {
+        let (cpu, _mem) = machine();
+        let params = params(&cpu);
+
+        // The short-descriptor TEX/C/B table has distinct rules for TEX=000,
+        // TEX=001 and TEX=1BB. In particular, TEX=001 with C=1 maps to
+        // write-back/write-allocate for either value of B.
+        for tex in 0u8..=7 {
+            for cache_bits in 0u8..=3 {
+                let descriptor = DescriptorMemoryAttributes {
+                    tex,
+                    cacheable: cache_bits & 0b10 != 0,
+                    bufferable: cache_bits & 0b01 != 0,
+                    shareable: true,
+                };
+                let actual = descriptor.resolve(&params);
+                let expected = match (tex, cache_bits) {
+                    (0, 0) => MemoryAttributes::strongly_ordered(),
+                    (0, 1) => MemoryAttributes {
+                        memory_type: MemoryType::Device,
+                        shareable: true,
+                        inner: 0,
+                        outer: 0,
+                    },
+                    (0, 2) => MemoryAttributes {
+                        memory_type: MemoryType::Normal,
+                        shareable: true,
+                        inner: 2,
+                        outer: 2,
+                    },
+                    (0, 3) => MemoryAttributes {
+                        memory_type: MemoryType::Normal,
+                        shareable: true,
+                        inner: 3,
+                        outer: 3,
+                    },
+                    (1, 0) => MemoryAttributes {
+                        memory_type: MemoryType::Normal,
+                        shareable: true,
+                        inner: 0,
+                        outer: 0,
+                    },
+                    (1, 2..=3) => MemoryAttributes {
+                        memory_type: MemoryType::Normal,
+                        shareable: true,
+                        inner: 1,
+                        outer: 1,
+                    },
+                    (2, 0) => MemoryAttributes {
+                        memory_type: MemoryType::Device,
+                        shareable: false,
+                        inner: 0,
+                        outer: 0,
+                    },
+                    (4..=7, inner) => MemoryAttributes {
+                        memory_type: MemoryType::Normal,
+                        shareable: true,
+                        inner,
+                        outer: tex & 0b11,
+                    },
+                    _ => MemoryAttributes {
+                        memory_type: MemoryType::Reserved,
+                        shareable: false,
+                        inner: 0,
+                        outer: 0,
+                    },
+                };
+
+                assert_eq!(
+                    actual, expected,
+                    "unexpected attributes for TEX={tex:03b}, C={}, B={}",
+                    u8::from(descriptor.cacheable),
+                    u8::from(descriptor.bufferable),
+                );
+            }
+        }
     }
 
     #[test]
