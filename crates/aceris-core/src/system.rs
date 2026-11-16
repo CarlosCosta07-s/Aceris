@@ -10,8 +10,8 @@ use crate::gpu::{
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
     GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, PicaRenderReport,
     PicaRenderSession, PicaRenderSettings, REG_ATTRIBBUFFERS_LOC, TextureCopyError,
-    TextureCopyRequest, VRAM_BASE,
-    VRAM_SIZE, display_transfer_buffer_sizes, execute_display_transfer, execute_texture_copy,
+    TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
+    execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
