@@ -2,8 +2,8 @@
 //!
 //! This module models the documented queue header and the 15-entry ring.
 //! The system dispatcher consumes RequestDMA, ProcessCommandList, MemoryFill,
-//! DisplayTransfer and TextureCopy entries through the guest TriggerCmdReqQueue
-//! path. Busy arbitration and cache maintenance remain incomplete.
+//! DisplayTransfer, TextureCopy and FlushCacheRegions entries through the guest
+//! TriggerCmdReqQueue path. Busy arbitration and physical cache modelling remain incomplete.
 
 use std::fmt;
 
@@ -33,6 +33,8 @@ pub const GSP_GX_COMMAND_MEMORY_FILL: u8 = 0x02;
 pub const GSP_GX_COMMAND_DISPLAY_TRANSFER: u8 = 0x03;
 /// GX command ID for TextureCopy.
 pub const GSP_GX_COMMAND_TEXTURE_COPY: u8 = 0x04;
+/// GX command ID for FlushCacheRegions.
+pub const GSP_GX_COMMAND_FLUSH_CACHE_REGIONS: u8 = 0x05;
 /// GSP result for an invalid GPU-visible address.
 pub const GSP_INVALID_ADDRESS_RESULT: u32 = 0xE0E0_2BF5;
 
@@ -132,6 +134,29 @@ impl GspGxCommand {
             source_line_width_and_gap: self.arguments[3],
             destination_line_width_and_gap: self.arguments[4],
             flags: self.arguments[5],
+        })
+    }
+
+    /// Decodes up to three process virtual-memory ranges for FlushCacheRegions.
+    pub const fn flush_cache_regions(self) -> Option<GspFlushCacheRegions> {
+        if self.command_id != GSP_GX_COMMAND_FLUSH_CACHE_REGIONS {
+            return None;
+        }
+        Some(GspFlushCacheRegions {
+            regions: [
+                GspCacheRegion {
+                    address: self.arguments[0],
+                    size_bytes: self.arguments[1],
+                },
+                GspCacheRegion {
+                    address: self.arguments[2],
+                    size_bytes: self.arguments[3],
+                },
+                GspCacheRegion {
+                    address: self.arguments[4],
+                    size_bytes: self.arguments[5],
+                },
+            ],
         })
     }
 
@@ -239,6 +264,19 @@ pub struct GspTextureCopy {
     pub flags: u32,
 }
 
+/// One process virtual-memory range passed to GX FlushCacheRegions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspCacheRegion {
+    pub address: u32,
+    pub size_bytes: u32,
+}
+
+/// Three optional ranges passed to GX command ID 0x05.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GspFlushCacheRegions {
+    pub regions: [GspCacheRegion; 3],
+}
+
 /// Decoded arguments for GX command ID 0x02.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GspMemoryFill {
@@ -291,6 +329,11 @@ pub enum GspGxCommandQueueError {
         size_bytes: usize,
     },
     DisplayTransfer(String),
+    InvalidCacheRegionRange {
+        address: u32,
+        size_bytes: u32,
+    },
+    RenderingRightRequired,
     InvalidTextureCopyAddress {
         address: u32,
     },
@@ -533,6 +576,45 @@ mod tests {
                 source_line_width_and_gap: 0x0001_0002,
                 destination_line_width_and_gap: 0x0000_0002,
                 flags: 0x0C,
+            })
+        );
+    }
+
+    #[test]
+    fn decodes_flush_cache_regions_as_three_address_size_pairs() {
+        let mut bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        bytes[1] = 1;
+        write_command(
+            &mut bytes,
+            0,
+            GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+            true,
+            false,
+            [0x1400_1000, 0x200, 0x1400_3000, 0, 0x1F00_1000, 0x80, 0],
+        );
+
+        let command = GspGxCommandQueue::parse(&bytes)
+            .unwrap()
+            .next_command()
+            .unwrap();
+        assert_eq!(command.command_id, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS);
+        assert_eq!(
+            command.flush_cache_regions(),
+            Some(GspFlushCacheRegions {
+                regions: [
+                    GspCacheRegion {
+                        address: 0x1400_1000,
+                        size_bytes: 0x200,
+                    },
+                    GspCacheRegion {
+                        address: 0x1400_3000,
+                        size_bytes: 0,
+                    },
+                    GspCacheRegion {
+                        address: 0x1F00_1000,
+                        size_bytes: 0x80,
+                    },
+                ],
             })
         );
     }
