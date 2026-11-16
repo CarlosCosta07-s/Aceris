@@ -26,11 +26,20 @@ const ARM11_DATA_CACHE_CAPACITY_BYTES: usize = 16 * 1024;
 const ARM11_DATA_CACHE_WAYS: usize = 4;
 const ARM11_DATA_CACHE_SET_COUNT: usize =
     ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE / ARM11_DATA_CACHE_WAYS;
+// Bounded software queue for dirty D-cache line writebacks. This is a
+// deterministic back-pressure model, not a claim about undocumented silicon depth.
+const ARM11_WRITE_BUFFER_CAPACITY: usize = 8;
 
 #[derive(Clone, Debug)]
 struct Arm11DataCacheLine {
     bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
     dirty: bool,
+}
+
+#[derive(Clone, Debug)]
+struct Arm11WriteBufferEntry {
+    address: u32,
+    bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
 }
 const ADDRESS_SPACE_END: u64 = 0x1_0000_0000;
 const MAIN_STACK_TOP: u32 = 0x1000_0000;
@@ -83,6 +92,8 @@ pub enum Arm11DynamicMemoryError {
     OutsideLinearMemoryRange { address: u32, size: u32 },
     /// No shared physical-memory backing was attached to this process.
     PhysicalMemoryUnavailable,
+    /// Pending D-cache writeback could not be committed before unmapping memory.
+    WritebackFailure(String),
     /// The exact linear mapping is not present in the process address space.
     LinearMappingNotFound { address: u32, size: u32 },
     /// A virtual shared-memory mapping would wrap the process address space.
@@ -133,6 +144,9 @@ impl fmt::Display for Arm11DynamicMemoryError {
             ),
             Self::PhysicalMemoryUnavailable => {
                 formatter.write_str("process has no shared physical-memory backing")
+            }
+            Self::WritebackFailure(reason) => {
+                write!(formatter, "could not drain the ARM11 write buffer: {reason}")
             }
             Self::LinearMappingNotFound { address, size } => write!(
                 formatter,
@@ -682,6 +696,8 @@ pub struct Arm11CodeAddressSpace {
     data_cache: BTreeMap<u32, Arm11DataCacheLine>,
     /// Per-set least-recently-used order, oldest line first.
     data_cache_lru: Vec<VecDeque<u32>>,
+    /// FIFO of dirty D-cache lines awaiting visibility in physical memory.
+    write_buffer: VecDeque<Arm11WriteBufferEntry>,
     /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
     exclusive_versions: BTreeMap<u32, u64>,
     /// Occupancy of each 0x200-byte thread-local-storage slot.
@@ -732,6 +748,7 @@ impl Arm11CodeAddressSpace {
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
                 .collect(),
+            write_buffer: VecDeque::with_capacity(ARM11_WRITE_BUFFER_CAPACITY),
             exclusive_versions: BTreeMap::new(),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
@@ -1227,6 +1244,8 @@ impl Arm11CodeAddressSpace {
                 size,
             });
         };
+        self.drain_arm11_write_buffer()
+            .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.invalidate_exclusive_range(virtual_base, size as usize);
         self.linear_regions.remove(index);
         Ok(())
@@ -1973,11 +1992,7 @@ impl Arm11CodeAddressSpace {
         if let Some(victim_base) = victim {
             if let Some(victim_line) = self.data_cache.remove(&victim_base) {
                 if victim_line.dirty {
-                    self.gpu_memory
-                        .as_mut()
-                        .ok_or(Error::InvalidAccess { addr: victim_base })?
-                        .write(victim_base, &victim_line.bytes)
-                        .map_err(|_| Error::InvalidAccess { addr: victim_base })?;
+                    self.enqueue_data_cache_writeback(victim_base, victim_line.bytes)?;
                 }
             }
         }
@@ -1999,6 +2014,65 @@ impl Arm11CodeAddressSpace {
         self.data_cache.remove(&line_base)
     }
 
+    fn overlay_write_buffer(&self, address: u32, output: &mut [u8]) {
+        let output_start = u64::from(address);
+        let output_end = output_start + output.len() as u64;
+        for entry in &self.write_buffer {
+            let entry_start = u64::from(entry.address);
+            let entry_end = entry_start + ARM11_DATA_CACHE_LINE_SIZE as u64;
+            let overlap_start = output_start.max(entry_start);
+            let overlap_end = output_end.min(entry_end);
+            if overlap_start >= overlap_end {
+                continue;
+            }
+            let source_start = (overlap_start - entry_start) as usize;
+            let destination_start = (overlap_start - output_start) as usize;
+            let length = (overlap_end - overlap_start) as usize;
+            output[destination_start..destination_start + length]
+                .copy_from_slice(&entry.bytes[source_start..source_start + length]);
+        }
+    }
+
+    fn enqueue_data_cache_writeback(
+        &mut self,
+        address: u32,
+        bytes: [u8; ARM11_DATA_CACHE_LINE_SIZE],
+    ) -> BusResult<()> {
+        if self.write_buffer.len() >= ARM11_WRITE_BUFFER_CAPACITY {
+            self.drain_write_buffer_entries(1)?;
+        }
+        self.write_buffer
+            .push_back(Arm11WriteBufferEntry { address, bytes });
+        Ok(())
+    }
+
+    fn drain_write_buffer_entries(&mut self, maximum: usize) -> BusResult<usize> {
+        let mut drained = 0;
+        while drained < maximum {
+            let Some(entry) = self.write_buffer.front().cloned() else {
+                break;
+            };
+            self.gpu_memory
+                .as_mut()
+                .ok_or(Error::InvalidAccess { addr: entry.address })?
+                .write(entry.address, &entry.bytes)
+                .map_err(|_| Error::InvalidAccess { addr: entry.address })?;
+            self.write_buffer.pop_front();
+            drained += 1;
+        }
+        Ok(drained)
+    }
+
+    /// Completes queued ARM11 D-cache writebacks in FIFO order.
+    pub fn drain_arm11_write_buffer(&mut self) -> BusResult<usize> {
+        self.drain_write_buffer_entries(usize::MAX)
+    }
+
+    /// Number of dirty cache-line writebacks currently waiting for physical memory.
+    pub fn pending_write_buffer_entries(&self) -> usize {
+        self.write_buffer.len()
+    }
+
     fn read_uncached_physical_byte(&self, address: u32) -> BusResult<u8> {
         let mut byte = [0u8; 1];
         self.gpu_memory
@@ -2006,10 +2080,13 @@ impl Arm11CodeAddressSpace {
             .ok_or(Error::InvalidAccess { addr: address })?
             .read(address, &mut byte)
             .map_err(|_| Error::InvalidAccess { addr: address })?;
+        self.overlay_write_buffer(address, &mut byte);
         Ok(byte[0])
     }
 
     fn write_uncached_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
+        // A synchronous uncached store cannot pass older D-cache writebacks.
+        self.drain_arm11_write_buffer()?;
         self.gpu_memory
             .as_mut()
             .ok_or(Error::InvalidAccess { addr: address })?
@@ -2020,6 +2097,7 @@ impl Arm11CodeAddressSpace {
     /// A write-through store updates backing memory immediately. If a line is
     /// already resident, update that copy and clean it; do not allocate on a miss.
     fn write_through_physical_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
+        self.drain_arm11_write_buffer()?;
         let line_base = address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
         let offset = (address - line_base) as usize;
         if let Some(line) = self.data_cache.get_mut(&line_base) {
@@ -2049,6 +2127,7 @@ impl Arm11CodeAddressSpace {
                 .ok_or(Error::InvalidAccess { addr: address })?
                 .read(line_base, &mut bytes)
                 .map_err(|_| Error::InvalidAccess { addr: address })?;
+            self.overlay_write_buffer(line_base, &mut bytes);
             self.insert_data_cache_line(
                 line_base,
                 Arm11DataCacheLine {
@@ -2178,11 +2257,7 @@ impl Arm11CodeAddressSpace {
         for line_base in lines {
             if let Some(line) = self.data_cache.get(&line_base) {
                 if line.dirty {
-                    self.gpu_memory
-                        .as_mut()
-                        .ok_or(Error::InvalidAccess { addr: address })?
-                        .write(line_base, &line.bytes)
-                        .map_err(|_| Error::InvalidAccess { addr: address })?;
+                    self.enqueue_data_cache_writeback(line_base, line.bytes)?;
                     written_back += 1;
                 }
             }
@@ -2204,11 +2279,7 @@ impl Arm11CodeAddressSpace {
                 .filter(|line| line.dirty)
                 .map(|line| line.bytes);
             if let Some(bytes) = dirty_bytes {
-                self.gpu_memory
-                    .as_mut()
-                    .ok_or(Error::InvalidAccess { addr: address })?
-                    .write(line_base, &bytes)
-                    .map_err(|_| Error::InvalidAccess { addr: address })?;
+                self.enqueue_data_cache_writeback(line_base, bytes)?;
                 if let Some(line) = self.data_cache.get_mut(&line_base) {
                     line.dirty = false;
                 }
@@ -2346,6 +2417,19 @@ impl Bus for Arm11CodeAddressSpace {
 
     fn write32(&mut self, address: u32, value: u32) -> BusResult<()> {
         self.write_bytes(address, &value.to_le_bytes())
+    }
+
+    fn drain_write_buffer(&mut self) -> BusResult<()> {
+        self.drain_arm11_write_buffer().map(|_| ())
+    }
+
+    fn data_memory_barrier(&mut self) -> BusResult<()> {
+        self.drain_arm11_write_buffer().map(|_| ())
+    }
+
+    fn instruction_sync_barrier(&mut self) -> BusResult<()> {
+        // Instruction fetch is not independently cached/pipelined in this interpreter.
+        Ok(())
     }
 
     fn exclusive_read(&mut self, address: u32, size: usize) -> BusResult<(u64, u64)> {
