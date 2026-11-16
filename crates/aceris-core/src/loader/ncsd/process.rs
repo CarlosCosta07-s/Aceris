@@ -3620,8 +3620,7 @@ mod tests {
         // dirty victim while still identifying another line of the same block.
         let replacement_key = DataCacheKey {
             backing_id: victim_key.backing_id,
-            line_offset: ARM11_DATA_CACHE_SET_COUNT as u64
-                * ARM11_DATA_CACHE_LINE_SIZE as u64,
+            line_offset: ARM11_DATA_CACHE_SET_COUNT as u64 * ARM11_DATA_CACHE_LINE_SIZE as u64,
         };
         let replacement_target = DataCacheTarget::Backing {
             backing,
