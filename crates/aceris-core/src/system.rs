@@ -4230,7 +4230,9 @@ mod tests {
 
         let session = system.ncsd_session_mut().unwrap();
         let mut stale = vec![0u8; BUFFER_SIZE];
-        session.read_memory_bytes(output_virtual, &mut stale).unwrap();
+        session
+            .read_memory_bytes(output_virtual, &mut stale)
+            .unwrap();
         assert_eq!(stale, zeros);
 
         assert!(
