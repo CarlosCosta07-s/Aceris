@@ -2848,7 +2848,12 @@ mod tests {
             address_space.data_cache_line_count(),
             ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE
         );
-        assert_eq!(address_space.read8(virtual_base + overflow_offset).unwrap(), 0xEE);
+        assert_eq!(
+            address_space
+                .read8(virtual_base + overflow_offset)
+                .unwrap(),
+            0xEE
+        );
 
         // The evicted first line was dirty and therefore reached physical memory.
         let mut evicted_value = [0u8; 1];
@@ -2874,10 +2879,9 @@ mod tests {
             .unwrap();
         assert_eq!(address_space.data_cache_line_count(), 2);
 
+        let backing_address = physical_base + ARM11_DATA_CACHE_LINE_SIZE as u32 - 2;
         let mut backing_before = [0xFF; 4];
-        memory
-            .read(physical_base + (ARM11_DATA_CACHE_LINE_SIZE as u32) - 2, &mut backing_before)
-            .unwrap();
+        memory.read(backing_address, &mut backing_before).unwrap();
         assert_eq!(backing_before, [0, 0, 0, 0]);
 
         // The invalid tail range touches the first line but extends past the mapping.
@@ -2890,7 +2894,7 @@ mod tests {
         assert_eq!(address_space.data_cache_line_count(), 2);
         let mut backing_after_rejection = [0xFF; 4];
         memory
-            .read(physical_base + (ARM11_DATA_CACHE_LINE_SIZE as u32) - 2, &mut backing_after_rejection)
+            .read(backing_address, &mut backing_after_rejection)
             .unwrap();
         assert_eq!(backing_after_rejection, [0, 0, 0, 0]);
 
@@ -2904,7 +2908,7 @@ mod tests {
         assert_eq!(address_space.data_cache_line_count(), 0);
         let mut backing_after_flush = [0; 4];
         memory
-            .read(physical_base + (ARM11_DATA_CACHE_LINE_SIZE as u32) - 2, &mut backing_after_flush)
+            .read(backing_address, &mut backing_after_flush)
             .unwrap();
         assert_eq!(backing_after_flush, [0x44, 0x33, 0x22, 0x11]);
     }
