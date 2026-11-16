@@ -2788,7 +2788,8 @@ fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
         | Arm11DynamicMemoryError::OverlappingMapping
         | Arm11DynamicMemoryError::MappingNotFound { .. }
         | Arm11DynamicMemoryError::LinearMappingNotFound { .. }
-        | Arm11DynamicMemoryError::AddressRangeOverflow { .. } => RESULT_INVALID_ADDRESS,
+        | Arm11DynamicMemoryError::AddressRangeOverflow { .. }
+        | Arm11DynamicMemoryError::WritebackFailure(_) => RESULT_INVALID_ADDRESS,
         Arm11DynamicMemoryError::InvalidPermissions(_) => RESULT_INVALID_ENUM,
     }
 }
