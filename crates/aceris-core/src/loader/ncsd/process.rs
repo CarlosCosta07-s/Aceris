@@ -279,7 +279,9 @@ impl SharedMemoryBacking {
 
     /// Absolute byte offset within the root allocation.
     fn root_offset(&self, offset: usize) -> Option<usize> {
-        if offset > self.length { return None; }
+        if offset > self.length {
+            return None;
+        }
         self.offset.checked_add(offset)
     }
 
@@ -303,8 +305,7 @@ impl SharedMemoryBacking {
         let Some(root_offset) = self.root_offset(offset) else {
             return 0;
         };
-        let granule =
-            (root_offset as u32) & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
+        let granule = (root_offset as u32) & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
         self.exclusive_versions
             .lock()
             .ok()
@@ -2044,7 +2045,8 @@ impl Arm11CodeAddressSpace {
 
         // Validate the complete range before mutating cache state or backing.
         for index in 0..bytes.len() {
-            let offset = u32::try_from(index).map_err(|_| Error::InvalidAccess { addr: address })?;
+            let offset =
+                u32::try_from(index).map_err(|_| Error::InvalidAccess { addr: address })?;
             let current_address = address
                 .checked_add(offset)
                 .ok_or(Error::InvalidAccess { addr: address })?;
@@ -2128,8 +2130,7 @@ impl Arm11CodeAddressSpace {
                 ..
             } => {
                 let memory = self.gpu_memory.as_ref()?.clone();
-                let line_address =
-                    physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
+                let line_address = physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
                 let key = DataCacheKey {
                     backing_id: memory.backing_id(),
                     line_offset: u64::from(line_address),
@@ -2191,9 +2192,7 @@ impl Arm11CodeAddressSpace {
                 .copied()
                 .unwrap_or(0),
             DataCacheTarget::Backing { backing, offset } => backing.cache_generation(*offset),
-            DataCacheTarget::Physical { memory, address } => {
-                memory.cache_generation(*address)
-            }
+            DataCacheTarget::Physical { memory, address } => memory.cache_generation(*address),
         }
     }
 
