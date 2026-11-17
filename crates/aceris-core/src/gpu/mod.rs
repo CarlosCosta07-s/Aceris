@@ -1,9 +1,9 @@
 //! PICA200 graphics hardware model and its software bring-up primitives.
 
 mod address_space;
+mod depth_buffer;
 mod draw;
 mod draw_exec;
-mod depth_buffer;
 mod fixed_attribute;
 mod fragment;
 mod fragment_output;
