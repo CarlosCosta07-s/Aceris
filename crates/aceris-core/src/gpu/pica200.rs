@@ -1200,6 +1200,7 @@ mod tests {
         assert_eq!(
             gpu.depth_state(),
             PicaDepthState {
+                transform_enabled: false,
                 scale: 0.5,
                 offset: 0.5,
                 buffering: PicaDepthBuffering::WBuffer,
@@ -1210,11 +1211,29 @@ mod tests {
         assert_eq!(
             gpu.depth_state(),
             PicaDepthState {
+                transform_enabled: false,
                 scale: 0.5,
                 offset: 0.5,
                 buffering: PicaDepthBuffering::ZBuffer,
             }
         );
+    }
+
+    #[test]
+    fn decodes_guest_depthmap_transform_enable_independently_of_buffer_mode() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_DEPTHMAP_ENABLE, 1).unwrap();
+
+        assert!(!gpu.depth_state().transform_enabled);
+        assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::ZBuffer);
+
+        gpu.write_register(REG_DEPTHMAP_TRANSFORM_ENABLE, 1).unwrap();
+        assert!(gpu.depth_state().transform_enabled);
+        assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::ZBuffer);
+
+        gpu.write_register(REG_DEPTHMAP_ENABLE, 0).unwrap();
+        assert!(gpu.depth_state().transform_enabled);
+        assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::WBuffer);
     }
 
     #[test]
