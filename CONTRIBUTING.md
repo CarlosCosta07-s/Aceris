@@ -4,14 +4,15 @@
 
 Antes de qualquer contribuição, leia [REGRAS_PARA_IA.md](docs/REGRAS_PARA_IA.md). As regras de isolamento entre IAs, uso exclusivo de `main`, Rust em todo o produto e autoria integral de código e assets são obrigatórias.
 
-### Política de sala limpa
+### Política de implementação original e referências técnicas
 
-- Não abra, leia, pesquise ou consulte o código-fonte interno de outros emuladores, incluindo Azahar, Citra, Lime3DS e derivados.
-- Outros emuladores só podem ser analisados pela superfície observável: interface em execução, menus, configurações, fluxos de usuário e comportamento visível.
-- Não copie, adapte, traduza ou derive código, interface, texto ou assets de terceiros.
-- Documentação pública independente de hardware e formatos pode ser consultada; isso não autoriza consultar código-fonte de emuladores.
-- Todo o produto, inclusive interface e frontends, deve ser implementado em Rust.
-- Não adicione dependências que forneçam implementação ou recursos do produto sem autorização explícita do mantenedor.
+- É permitido consultar código-fonte publicamente disponível de outros emuladores como referência técnica para compreender arquitetura, abordagens e casos-limite.
+- Essa consulta não autoriza copiar, colar, traduzir, portar, adaptar ou reproduzir trechos, funções, estruturas, testes, fixtures, shaders, patches, assets ou organização interna.
+- Não faça tradução linha a linha nem reproduza a estrutura expressiva do código consultado. Toda implementação do Aceris deve ser concebida independentemente e escrita em Rust, com arquitetura, interfaces, nomes e testes próprios.
+- Registre projeto, URL, arquivo/área consultada, commit/revisão, licença, data e pergunta técnica investigada. Converta o aprendizado em especificação independente e valide-o com documentação e testes próprios.
+- Se houver dúvida sobre compatibilidade de licença ou risco de obra derivada, interrompa o uso daquela referência na implementação e peça orientação a Carlos Costa.
+- Assets e recursos visuais/sonoros de terceiros continuam proibidos. Não adicione dependências que forneçam implementação ou recursos do produto sem autorização explícita do mantenedor.
+- Todo o produto, inclusive núcleo, interface e frontends, deve ser implementado em Rust.
 - Não inclua jogos, firmware, BIOS, chaves ou material protegido no repositório.
 
 ### Isolamento de agentes
