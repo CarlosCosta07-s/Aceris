@@ -6,6 +6,7 @@ mod draw_exec;
 mod fixed_attribute;
 mod fragment;
 mod fragment_pipeline;
+mod fragment_output;
 mod geometry;
 mod gsp_interrupt;
 mod gsp_queue;
@@ -44,6 +45,11 @@ pub use fragment::{
     PicaTevError, PicaTevRgbOperand, PicaTevSource, PicaTevStage, PicaTextureEnvironment,
     REG_TEXENV0_COLOR, REG_TEXENV0_COMBINER, REG_TEXENV0_OPERAND, REG_TEXENV0_SCALE,
     REG_TEXENV0_SOURCE, TEXENV_STAGE_REGISTER_STRIDE, TEXENV_STAGE_SOURCE_REGISTERS,
+};
+pub use fragment_output::{
+    PicaBlendChannel, PicaBlendEquation, PicaBlendFactor, PicaColorOperationMode,
+    PicaFragmentOperation, PicaFragmentOutputError, PicaFragmentOutputState,
+    PicaLogicOperation, REG_BLEND_COLOR, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_LOGIC_OP,
 };
 pub use fragment_pipeline::{
     PicaFragmentPipeline, PicaFragmentPipelineError, PicaFragmentVaryings,
