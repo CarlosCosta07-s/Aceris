@@ -1903,4 +1903,6 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Testes: decodificação dos registradores, culling nas duas orientações, scissor include/exclude particionando os pixels e origem inferior-esquerda das linhas.
 - Não há teste ponta a ponta via GSP para estes registradores; o `PicaRenderSession` legado os ignora.
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.
-- Fora deste commit, e sem integração: `crates/aceris-core/src/input.rs` (modelo de entrada: botões, circle pad, toque), ainda não ligado a `System`, ABI Android nem desktop.
+- Commit seguinte, sem integração: `crates/aceris-core/src/input.rs` (modelo de entrada: botões, circle pad, toque), ainda não ligado a `System`, ABI Android nem desktop.
+
+- `input.rs`: modelo comum de entrada (botões em ordem de hardware, circle pad ±156, toque 320x240, bordas press/release). Ainda não ligado a `System`, à ABI Android nem ao desktop; layout dos bits e faixas vêm de documentação pública, não verificados em hardware.

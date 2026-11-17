@@ -5,6 +5,7 @@
 
 pub mod cpu;
 pub mod gpu;
+pub mod input;
 pub mod loader;
 pub mod memory;
 pub mod selftest;
