@@ -4880,13 +4880,12 @@ mod tests {
             GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
             GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
             GSP_GX_COMMAND_QUEUE_SIZE, GeometryPipeline, Matrix4, PicaRenderSettings,
-            REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
-            REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
-            REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
-            REG_SH_OUTMAP_O0, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
-            REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_CODETRANSFER_DATA0,
-            REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
-            REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
+            REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
+            REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
+            REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
+            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
+            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
         };
         use crate::video::{
             LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
@@ -5062,10 +5061,7 @@ mod tests {
             .physical_memory()
             .read(command_list_physical, &mut published_command_list)
             .unwrap();
-        assert_eq!(
-            published_command_list,
-            [1, 0, 0, 0, 0x2E, 0x02, 0x0F, 0]
-        );
+        assert_eq!(published_command_list, [1, 0, 0, 0, 0x2E, 0x02, 0x0F, 0]);
 
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
@@ -5098,7 +5094,10 @@ mod tests {
         let mut linear_pixel = [0u8; 4];
         system
             .physical_memory()
-            .read(linear_framebuffer_physical + sample as u32, &mut linear_pixel)
+            .read(
+                linear_framebuffer_physical + sample as u32,
+                &mut linear_pixel,
+            )
             .unwrap();
         assert_eq!(linear_pixel, [200, 100, 50, 255]);
     }
