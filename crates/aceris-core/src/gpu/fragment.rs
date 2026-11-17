@@ -666,10 +666,11 @@ mod tests {
             alpha_combine: PicaTevCombine::Modulate,
             ..replace
         };
-        assert_eq!(
-            modulate.evaluate(0, [0.0; 4], &inputs).unwrap(),
-            [0.1, 0.1, 0.06, 0.4]
-        );
+        let modulated = modulate.evaluate(0, [0.0; 4], &inputs).unwrap();
+        assert!((modulated[0] - 0.1).abs() < 1.0e-6);
+        assert!((modulated[1] - 0.1).abs() < 1.0e-6);
+        assert!((modulated[2] - 0.06).abs() < 1.0e-6);
+        assert!((modulated[3] - 0.4).abs() < 1.0e-6);
 
         let add = PicaTevStage {
             rgb_combine: PicaTevCombine::Add,
