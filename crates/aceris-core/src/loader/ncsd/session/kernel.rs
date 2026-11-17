@@ -1150,8 +1150,11 @@ mod tests {
 
     #[test]
     fn retired_mutex_survives_owner_handoff_until_new_owner_exits() {
-        let owner = thread_id(2);
-        let waiter = thread_id(3);
+        let mut scheduler =
+            super::super::thread::Arm11ThreadScheduler::new(crate::cpu::Arm11Core::new(), 0x30)
+                .unwrap();
+        let owner = scheduler.create_thread(0x1000, 0, 0x2000, 0x30, 0).unwrap();
+        let waiter = scheduler.create_thread(0x2000, 0, 0x3000, 0x30, 0).unwrap();
         let mut table = Arm11KernelObjectTable::default();
         let mutex = table.insert_mutex(true, owner).unwrap();
         table.enqueue_waiter(mutex, waiter).unwrap();
