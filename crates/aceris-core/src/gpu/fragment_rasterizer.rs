@@ -170,9 +170,7 @@ impl PicaFragmentRasterizer {
         clear_depth: f32,
     ) -> Result<Self, PicaFragmentRasterError> {
         if !clear_depth.is_finite() || !(0.0..=1.0).contains(&clear_depth) {
-            return Err(PicaFragmentRasterError::InvalidClearDepth {
-                depth: clear_depth,
-            });
+            return Err(PicaFragmentRasterError::InvalidClearDepth { depth: clear_depth });
         }
         let width = usize::try_from(target.width)
             .map_err(|_| PicaFragmentRasterError::InvalidDimensions)?;
@@ -313,7 +311,8 @@ impl PicaFragmentRasterizer {
             let first = polygon[0];
             for index in 1..polygon.len() - 1 {
                 let triangle = [first, polygon[index], polygon[index + 1]];
-                let screen = triangle.map(|vertex| to_screen(vertex, state.viewport, state.depth_map))
+                let screen = triangle
+                    .map(|vertex| to_screen(vertex, state.viewport, state.depth_map))
                     .into_iter()
                     .collect::<Result<Vec<_>, _>>()?;
                 report.clipped_triangles = report.clipped_triangles.saturating_add(1);
@@ -452,10 +451,10 @@ impl PicaFragmentRasterizer {
                             PicaDepthMode::WBuffer => {
                                 let reciprocal_w = (0..3)
                                     .map(|index| {
-                                        weights[index]
-                                            * f64::from(vertices[index].reciprocal_w)
+                                        weights[index] * f64::from(vertices[index].reciprocal_w)
                                     })
-                                    .sum::<f64>() as f32;
+                                    .sum::<f64>()
+                                    as f32;
                                 scaled / reciprocal_w
                             }
                         }
@@ -465,9 +464,12 @@ impl PicaFragmentRasterizer {
                 };
 
                 let pixel_index = y * self.width + x;
-                if !depth_passes(state.depth_function, fragment_depth, self.depth[pixel_index]) {
-                    report.depth_rejected_pixels =
-                        report.depth_rejected_pixels.saturating_add(1);
+                if !depth_passes(
+                    state.depth_function,
+                    fragment_depth,
+                    self.depth[pixel_index],
+                ) {
+                    report.depth_rejected_pixels = report.depth_rejected_pixels.saturating_add(1);
                     continue;
                 }
 
@@ -477,7 +479,12 @@ impl PicaFragmentRasterizer {
                     vertices[2].varying,
                 ];
                 let source = pipeline
-                    .shade_triangle_sample(memory, varyings, weights.map(|weight| weight as f32), state.minifying)
+                    .shade_triangle_sample(
+                        memory,
+                        varyings,
+                        weights.map(|weight| weight as f32),
+                        state.minifying,
+                    )
                     .map_err(PicaFragmentRasterError::Fragment)?;
                 let color_offset = pixel_index * 4;
                 let destination = [
@@ -676,11 +683,15 @@ fn depth_passes(function: DepthFunction, source: f32, destination: f32) -> bool 
 pub enum PicaFragmentRasterError {
     InvalidDimensions,
     AllocationFailed,
-    InvalidClearDepth { depth: f32 },
+    InvalidClearDepth {
+        depth: f32,
+    },
     InvalidTransform,
     InvalidViewport,
     InvalidDepthMap,
-    NonFiniteVertex { index: usize },
+    NonFiniteVertex {
+        index: usize,
+    },
     InvalidTriangleVertex {
         triangle: usize,
         vertex: usize,
@@ -699,25 +710,52 @@ pub enum PicaFragmentRasterError {
 impl std::fmt::Display for PicaFragmentRasterError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidDimensions => formatter.write_str("PICA fragment target dimensions are invalid"),
-            Self::AllocationFailed => formatter.write_str("could not allocate PICA fragment buffers"),
-            Self::InvalidClearDepth { depth } => write!(formatter, "PICA fragment clear depth {depth} is invalid"),
+            Self::InvalidDimensions => {
+                formatter.write_str("PICA fragment target dimensions are invalid")
+            }
+            Self::AllocationFailed => {
+                formatter.write_str("could not allocate PICA fragment buffers")
+            }
+            Self::InvalidClearDepth { depth } => {
+                write!(formatter, "PICA fragment clear depth {depth} is invalid")
+            }
             Self::InvalidTransform => formatter.write_str("PICA fragment transform is not finite"),
             Self::InvalidViewport => formatter.write_str("PICA fragment viewport is invalid"),
             Self::InvalidDepthMap => formatter.write_str("PICA fragment depth map is invalid"),
-            Self::NonFiniteVertex { index } => write!(formatter, "PICA fragment vertex {index} contains a non-finite value"),
-            Self::InvalidTriangleVertex { triangle, vertex, vertex_count } => write!(
+            Self::NonFiniteVertex { index } => write!(
+                formatter,
+                "PICA fragment vertex {index} contains a non-finite value"
+            ),
+            Self::InvalidTriangleVertex {
+                triangle,
+                vertex,
+                vertex_count,
+            } => write!(
                 formatter,
                 "PICA fragment triangle {triangle} references vertex {vertex}, but draw has {vertex_count} vertices"
             ),
-            Self::InvalidClipIntersection => formatter.write_str("PICA fragment clipping intersection is invalid"),
-            Self::ClippedPolygonOverflow => formatter.write_str("PICA fragment clipped polygon exceeded its vertex bound"),
-            Self::InvalidPerspectiveDivide => formatter.write_str("PICA fragment perspective divide is invalid"),
-            Self::InvalidScreenTriangle => formatter.write_str("PICA fragment screen-space triangle is invalid"),
+            Self::InvalidClipIntersection => {
+                formatter.write_str("PICA fragment clipping intersection is invalid")
+            }
+            Self::ClippedPolygonOverflow => {
+                formatter.write_str("PICA fragment clipped polygon exceeded its vertex bound")
+            }
+            Self::InvalidPerspectiveDivide => {
+                formatter.write_str("PICA fragment perspective divide is invalid")
+            }
+            Self::InvalidScreenTriangle => {
+                formatter.write_str("PICA fragment screen-space triangle is invalid")
+            }
             Self::Fragment(error) => write!(formatter, "PICA fragment shading failed: {error}"),
-            Self::FragmentOutput(error) => write!(formatter, "PICA fragment output failed: {error}"),
-            Self::Rasterizer(error) => write!(formatter, "PICA fragment output rasterizer failed: {error}"),
-            Self::RenderTarget(error) => write!(formatter, "PICA fragment render target failed: {error}"),
+            Self::FragmentOutput(error) => {
+                write!(formatter, "PICA fragment output failed: {error}")
+            }
+            Self::Rasterizer(error) => {
+                write!(formatter, "PICA fragment output rasterizer failed: {error}")
+            }
+            Self::RenderTarget(error) => {
+                write!(formatter, "PICA fragment render target failed: {error}")
+            }
         }
     }
 }
@@ -727,11 +765,11 @@ impl std::error::Error for PicaFragmentRasterError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
         PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
         PicaVertexOutputMap, REG_LOGIC_OP, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
     };
-    use crate::gpu::physical_memory::VRAM_BASE;
 
     fn fragment_vertex(position: [f32; 4], color: [f32; 4]) -> PicaFragmentVertex {
         PicaFragmentVertex {
@@ -773,13 +811,7 @@ mod tests {
             triangles: vec![[0, 1, 2]],
             executed_instructions: 0,
         };
-        PicaFragmentDraw::from_shaded_draw(
-            &shaded,
-            &output_map,
-            [1.0; 4],
-            [[0.0; 2]; 3],
-        )
-        .unwrap()
+        PicaFragmentDraw::from_shaded_draw(&shaded, &output_map, [1.0; 4], [[0.0; 2]; 3]).unwrap()
     }
 
     fn configure_tev(pica: &mut super::super::Pica200) {
@@ -844,9 +876,7 @@ mod tests {
         assert_eq!(report.shaded_pixels, 28);
         assert_eq!(rasterizer.color_at(1, 6), Some([159, 48, 48, 255]));
 
-        rasterizer
-            .write_render_target(target, &mut memory)
-            .unwrap();
+        rasterizer.write_render_target(target, &mut memory).unwrap();
         let decoded = target.read_rgba8(&memory).unwrap();
         let offset = (6 * 8 + 1) * 4;
         assert_eq!(&decoded[offset..offset + 4], &[159, 48, 48, 255]);
@@ -878,4 +908,3 @@ mod tests {
         assert_eq!(clipped.varying.texture_coordinates[0], [0.5, 0.0]);
     }
 }
-
