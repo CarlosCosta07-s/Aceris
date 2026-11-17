@@ -52,7 +52,8 @@ pub use fragment_output::{
     REG_BLEND_COLOR, REG_BLEND_FUNC, REG_LOGIC_OP,
 };
 pub use fragment_pipeline::{
-    PicaFragmentPipeline, PicaFragmentPipelineError, PicaFragmentVaryings,
+    PicaFragmentInterpolationError, PicaFragmentPipeline, PicaFragmentPipelineError,
+    PicaFragmentSampleError, PicaFragmentVertex, PicaFragmentVaryings,
 };
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
