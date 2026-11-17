@@ -206,7 +206,34 @@ impl PicaTextureUnit {
             .get(unit)
             .ok_or(PicaTextureError::InvalidUnit { unit })?;
         let config = pica.register(REG_TEXUNIT_CONFIG).unwrap_or(0);
+        let enabled = config & (1 << unit) != 0;
         let border = pica.register(registers[0]).unwrap_or(0);
+        let border_color = [
+            border as u8,
+            (border >> 8) as u8,
+            (border >> 16) as u8,
+            (border >> 24) as u8,
+        ];
+        if !enabled {
+            // Disabled units may legitimately have zero dimensions and an
+            // uninitialized format register. Preserve their disabled state
+            // without interpreting irrelevant register contents.
+            return Ok(Self {
+                unit,
+                enabled: false,
+                address: 0,
+                width: 0,
+                height: 0,
+                format: PicaTextureFormat::Rgba8,
+                wrap_s: PicaTextureWrap::ClampToEdge,
+                wrap_t: PicaTextureWrap::ClampToEdge,
+                magnification_filter: PicaTextureFilter::Nearest,
+                minification_filter: PicaTextureFilter::Nearest,
+                mipmap_filter_linear: false,
+                border_color,
+            });
+        }
+
         let dimensions = pica.register(registers[1]).unwrap_or(0);
         let parameters = pica.register(registers[2]).unwrap_or(0);
         let address_register = pica.register(registers[3]).unwrap_or(0);
@@ -232,7 +259,7 @@ impl PicaTextureUnit {
 
         Ok(Self {
             unit,
-            enabled: config & (1 << unit) != 0,
+            enabled,
             address: (address_register & 0x0FFF_FFFF) << 3,
             width,
             height,
@@ -242,12 +269,7 @@ impl PicaTextureUnit {
             magnification_filter: PicaTextureFilter::decode(unit, false, (parameters >> 1) & 1)?,
             minification_filter: PicaTextureFilter::decode(unit, true, (parameters >> 2) & 1)?,
             mipmap_filter_linear: parameters & (1 << 24) != 0,
-            border_color: [
-                border as u8,
-                (border >> 8) as u8,
-                (border >> 16) as u8,
-                (border >> 24) as u8,
-            ],
+            border_color,
         })
     }
 
@@ -549,6 +571,17 @@ mod tests {
             mipmap_filter_linear: false,
             border_color: [7, 11, 13, 17],
         }
+    }
+
+    #[test]
+    fn disabled_texture_units_ignore_uninitialized_dimensions_and_format() {
+        let pica = Pica200::new();
+        let unit = PicaTextureUnit::from_pica(&pica, 1).unwrap();
+        assert!(!unit.enabled);
+        assert_eq!(
+            unit.sample(&GpuPhysicalMemory::new(), 0.5, 0.5, false),
+            Err(PicaTextureError::Disabled { unit: 1 })
+        );
     }
 
     #[test]
