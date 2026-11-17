@@ -3204,11 +3204,18 @@ mod tests {
                     0xEF00_002D, // SVC ConnectToPort
                     0xEF00_0032, // srv:RegisterClient
                     0xEF00_0032, // srv:GetServiceHandle
+                    // Guest-authored RegisterInterruptRelayQueue message.
+                    0xE584_5000, // STR r5, [r4] (IPC header)
+                    0xE584_6004, // STR r6, [r4, #4] (flags)
+                    0xE584_7008, // STR r7, [r4, #8] (COPY_HANDLE descriptor)
+                    0xE584_800C, // STR r8, [r4, #12] (event handle)
+                    0xE1A0_000C, // MOV r0, r12 (GSP service handle)
                     0xEF00_0032, // GSP RegisterInterruptRelayQueue
                     // Guest-authored TryAcquireRight IPC header and two parameters.
                     0xE584_5000, // STR r5, [r4] (IPC header)
                     0xE584_6004, // STR r6, [r4, #4] (normal parameter 0)
                     0xE584_7008, // STR r7, [r4, #8] (normal parameter 1)
+                    0xE1A0_000C, // MOV r0, r12 (GSP service handle)
                     0xEF00_0032, // GSP TryAcquireRight
                     // The guest writes the two-entry GX ring header and entries.
                     0xE584_5000, // STR r5, [r4] (queue command count = 2)
@@ -3331,9 +3338,27 @@ mod tests {
             })
         ));
 
-        // gsp::Gpu:RegisterInterruptRelayQueue(flags=0, event_handle)
-        let register_buffer =
-            write_tls_ipc_request(&mut system, gsp_handle, &[0x0013_0042, 0, 0, event_handle]);
+        // gsp::Gpu:RegisterInterruptRelayQueue is assembled entirely by
+        // guest STR instructions; the guest also places the GSP handle in r0.
+        let register_buffer = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let buffer = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET;
+            assert!(session.set_current_register(4, buffer));
+            assert!(session.set_current_register(5, 0x0013_0042));
+            assert!(session.set_current_register(6, 0));
+            assert!(session.set_current_register(7, 0));
+            assert!(session.set_current_register(8, event_handle));
+            assert!(session.set_current_register(12, gsp_handle));
+            for _ in 0..5 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            assert_eq!(session.read_memory_u32(buffer).unwrap(), 0x0013_0042);
+            assert_eq!(session.read_memory_u32(buffer + 4).unwrap(), 0);
+            assert_eq!(session.read_memory_u32(buffer + 8).unwrap(), 0);
+            assert_eq!(session.read_memory_u32(buffer + 12).unwrap(), event_handle);
+            assert_eq!(session.current_registers().unwrap()[0], gsp_handle);
+            buffer
+        };
         run_one_ipc_svc(&mut system);
         let register_response = read_tls_ipc_response(&mut system, register_buffer, 5);
         assert_eq!(register_response[0], 0x0013_0082);
@@ -3353,22 +3378,23 @@ mod tests {
             .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
             .unwrap();
 
-        // The guest writes the complete TryAcquireRight IPC message to its TLS:
-        // command header followed by both normal parameters.
+        // The guest writes the complete TryAcquireRight IPC message and
+        // moves the session handle into r0 before executing SendSyncRequest.
         let acquire_buffer = {
             let session = system.ncsd_session.as_mut().unwrap();
             let buffer = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET;
-            assert!(session.set_current_register(0, gsp_handle));
             assert!(session.set_current_register(4, buffer));
             assert!(session.set_current_register(5, 0x0015_0002));
             assert!(session.set_current_register(6, 0));
             assert!(session.set_current_register(7, 0));
-            for _ in 0..3 {
+            assert!(session.set_current_register(12, gsp_handle));
+            for _ in 0..4 {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             }
             assert_eq!(session.read_memory_u32(buffer).unwrap(), 0x0015_0002);
             assert_eq!(session.read_memory_u32(buffer + 4).unwrap(), 0);
             assert_eq!(session.read_memory_u32(buffer + 8).unwrap(), 0);
+            assert_eq!(session.current_registers().unwrap()[0], gsp_handle);
             buffer
         };
         run_one_ipc_svc(&mut system);
