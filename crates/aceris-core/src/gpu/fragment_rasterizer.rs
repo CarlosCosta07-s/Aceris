@@ -14,6 +14,7 @@
 
 use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthBufferConfig, PicaDepthBufferError,
+    PicaDepthBufferFormat,
     PicaDepthMap, PicaDepthMode, PicaFragmentDraw,
     PicaFragmentDrawError, PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex,
     PicaRenderTargetConfig, PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw,
@@ -144,6 +145,8 @@ pub struct PicaFragmentRasterState {
     pub color_write_mask: [bool; 4],
     /// Depth writes require the guest's depth/color mask and depth-write access.
     pub depth_write_enabled: bool,
+    /// Precision used by the physical depth target, if one is configured.
+    pub depth_format: Option<PicaDepthBufferFormat>,
     /// Guest PICA depth-map scale/offset and Z/W-buffer selection.
     pub depth_map: Option<PicaDepthMap>,
     /// LOD classification supplied by the caller until screen derivatives are
@@ -159,6 +162,7 @@ impl PicaFragmentRasterState {
             depth_function: DepthFunction::Less,
             color_write_mask: [true; 4],
             depth_write_enabled: true,
+            depth_format: None,
             depth_map: None,
             minifying: [false; 3],
         }
@@ -548,6 +552,10 @@ impl PicaFragmentRasterizer {
                     }
                     None => interpolated_depth.clamp(0.0, 1.0),
                 };
+                let fragment_depth = state
+                    .depth_format
+                    .map(|format| format.quantize_depth(fragment_depth))
+                    .unwrap_or(fragment_depth);
 
                 let pixel_index = y * self.width + x;
                 let varyings = [
