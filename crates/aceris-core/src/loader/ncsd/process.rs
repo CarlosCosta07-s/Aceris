@@ -3210,10 +3210,7 @@ mod tests {
 
         publisher.write8(0x0800_101F, 0xA5).unwrap();
         publisher.write8(0x0800_1020, 0x5A).unwrap();
-        assert_eq!(
-            publisher.store_data_cache_range(0x0800_101F, 2).unwrap(),
-            2
-        );
+        assert_eq!(publisher.store_data_cache_range(0x0800_101F, 2).unwrap(), 2);
         assert_eq!(publisher.data_cache_line_count(), 2);
         assert_eq!(publisher.pending_write_buffer_entries(), 2);
 
