@@ -5218,7 +5218,7 @@ mod tests {
         assert_eq!(session.kernel_objects.retained_object_count(), 0);
 
         // Guest code cannot use the closed handle for a new SignalEvent call.
-        session.core_mut().regs[0] = event;
+        session.scheduler.current_core_mut().unwrap().regs[0] = event;
         assert!(matches!(
             session.dispatch_svc(SVC_SIGNAL_EVENT),
             SvcRunDisposition::Resume
