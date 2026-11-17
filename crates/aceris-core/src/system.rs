@@ -5613,6 +5613,324 @@ mod tests {
         assert_eq!(linear_pixel, [255, 50, 100, 200]);
     }
 
+    /// ARM encoding helpers for the guest image used by the loader test.
+    const fn guest_branch(condition: u32, from: i32, to: i32) -> u32 {
+        (condition << 28) | 0x0A00_0000 | (((to - from - 2) as u32) & 0x00FF_FFFF)
+    }
+
+    #[test]
+    fn arm11_guest_programs_pica_registers_and_publishes_framebuffers_without_host_register_writes()
+    {
+        use crate::gpu::{
+            ClipDepthRange, DepthFunction, GSP_GX_COMMAND_DISPLAY_TRANSFER,
+            GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
+            GeometryPipeline, Matrix4, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
+            REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32,
+            REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
+            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
+            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
+        };
+        use crate::video::{
+            LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST,
+            PDC_FRAMEBUFFER_SELECT, PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_WIDTH,
+        };
+
+        const WIDTH: usize = 400;
+        const HEIGHT: usize = 240;
+        const FRAME_ALLOCATION: u32 = ((WIDTH * HEIGHT * 4) as u32 + 0xFFF) & !0xFFF;
+        const CODE_WORDS: i32 = 20;
+
+        // The guest is a small table loader: it walks (destination, word
+        // count, words...) records that follow its code and copies them with
+        // LDR/STR, then publishes with DMB/DSB, sends the GSP IPC request and
+        // waits on the completion event. The records are the relocated data
+        // image of the program (command list, vertices, GX ring, framebuffer
+        // metadata, TLS request); the host writes none of those bytes.
+        let guest_code: [u32; CODE_WORDS as usize] = [
+            0xE28F_1048,              // 0  ADD r1, pc, #0x48 (address of the record table)
+            0xE491_2004,              // 1  LDR r2, [r1], #4 (record destination)
+            0xE491_3004,              // 2  LDR r3, [r1], #4 (record word count)
+            0xE353_0000,              // 3  CMP r3, #0
+            guest_branch(0x0, 4, 10), // 4  BEQ done
+            0xE491_4004,              // 5  LDR r4, [r1], #4
+            0xE482_4004,              // 6  STR r4, [r2], #4
+            0xE253_3001,              // 7  SUBS r3, r3, #1
+            guest_branch(0x1, 8, 5),  // 8  BNE copy
+            guest_branch(0xE, 9, 1),  // 9  B next record
+            0xEE07_0FBA,              // 10 DMB
+            0xEE07_0F9A,              // 11 DSB
+            0xE1A0_000C,              // 12 MOV r0, r12 (GSP service handle)
+            0xEF00_0032,              // 13 SVC SendSyncRequest
+            0xE1A0_000B,              // 14 MOV r0, r11 (GSP completion event)
+            0xE3E0_2000,              // 15 MVN r2, #0 (infinite timeout, low)
+            0xE3E0_3000,              // 16 MVN r3, #0 (infinite timeout, high)
+            0xEF00_0024,              // 17 SVC WaitSynchronization1
+            0xE3A0_605A,              // 18 MOV r6, #0x5A (reached after the wait)
+            0xEAFF_FFFE,              // 19 B .
+        ];
+
+        // The data records need the addresses of mapped buffers, which exist
+        // only after a process is loaded. Allocation is deterministic, so a
+        // probe system with the same fixture yields them; the real system
+        // asserts it reproduced exactly the same addresses.
+        let layout = |system: &mut System| {
+            let command_list = map_test_linear_fcram(system, 0x1000);
+            let vertices = map_test_linear_fcram(system, 0x1000);
+            let tiled_target = map_test_linear_fcram(system, FRAME_ALLOCATION);
+            let linear_framebuffer = map_test_linear_fcram(system, FRAME_ALLOCATION);
+            (command_list, vertices, tiled_target, linear_framebuffer)
+        };
+        let mut probe = System::new();
+        probe
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&guest_code)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let probe_layout = layout(&mut probe);
+        let tls_request = probe.ncsd_session().unwrap().current_tls_address().unwrap()
+            + ARM11_TLS_IPC_BUFFER_OFFSET;
+        let (
+            (command_list_address, _),
+            (vertex_address, vertex_physical),
+            (tiled_target_address, tiled_target_physical),
+            (linear_framebuffer_address, linear_framebuffer_physical),
+        ) = probe_layout;
+        drop(probe);
+
+        let mut table: Vec<u32> = Vec::new();
+        let mut record = |destination: u32, words: &[u32]| {
+            table.push(destination);
+            table.push(words.len() as u32);
+            table.extend_from_slice(words);
+        };
+        let write = |register: u16, value: u32| [value, 0x000F_0000 | u32::from(register)];
+        let mut command_list: Vec<u32> = Vec::new();
+        for (register, value) in [
+            (REG_ATTRIBBUFFERS_LOC, vertex_physical >> 3),
+            (REG_ATTRIBBUFFERS_FORMAT_LOW, 0x1),
+            (REG_ATTRIBBUFFERS_FORMAT_HIGH, 0),
+            (REG_ATTRIBBUFFER0_OFFSET, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 1, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 2, (2 << 16) | (2 << 28)),
+            (REG_VSH_INPUTBUFFER_CONFIG, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
+            (REG_VSH_OPDESCS_INDEX, 0),
+            (
+                REG_VSH_OPDESCS_DATA0,
+                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
+            ),
+            (REG_VSH_CODETRANSFER_INDEX, 0),
+            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
+            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+            (REG_VSH_ENTRYPOINT, 0),
+            (REG_NUMVERTICES, 3),
+            (REG_COLORBUFFER_LOC, tiled_target_physical >> 3),
+            (REG_COLORBUFFER_FORMAT, 2),
+            (REG_FRAMEBUFFER_BLOCK32, 0),
+            (
+                REG_FRAMEBUFFER_DIM,
+                (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
+            ),
+        ] {
+            command_list.extend(write(register, value));
+        }
+        for index in 1..7u16 {
+            command_list.extend(write(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F));
+        }
+        command_list.extend(write(REG_SH_OUTMAP_O0, 0x0302_0100));
+        command_list.extend(write(REG_DRAWARRAYS, 1));
+        let command_list_bytes = (command_list.len() * 4) as u32;
+        record(command_list_address, &command_list);
+        record(vertex_address, &[0x0008_0000, 0x0000_0800]);
+
+        let queue_address =
+            GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
+        let dimensions = ((HEIGHT as u32) << 16) | WIDTH as u32;
+        let mut ring = [0u32; 24];
+        ring[0] = 0x0000_0300;
+        ring[2] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32;
+        ring[3] = vertex_address;
+        ring[4] = 8;
+        ring[10] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32;
+        ring[11] = command_list_address;
+        ring[12] = command_list_bytes;
+        ring[17] = 1;
+        ring[18] = GSP_GX_COMMAND_DISPLAY_TRANSFER as u32;
+        ring[19] = tiled_target_address;
+        ring[20] = linear_framebuffer_address;
+        ring[21] = dimensions;
+        ring[22] = dimensions;
+        record(queue_address, &ring);
+
+        // Top-screen framebuffer metadata: new-data header, then the first
+        // entry {active, left, right, stride, format, status, 0}.
+        let top_info = GSP_SHARED_MEMORY_BASE + GSP_TOP_FRAMEBUFFER_INFO_OFFSET;
+        record(
+            top_info,
+            &[
+                0x0000_0100,
+                0,
+                linear_framebuffer_address,
+                linear_framebuffer_address,
+                (TOP_SCREEN_WIDTH * 4) as u32,
+                0,
+                0,
+                0,
+            ],
+        );
+        record(tls_request, &[0x000C_0000]);
+        table.extend_from_slice(&[0, 0]);
+
+        let mut image_words = guest_code.to_vec();
+        image_words.extend_from_slice(&table);
+
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&image_words)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        assert_eq!(
+            layout(&mut system),
+            probe_layout,
+            "allocation must be deterministic"
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .current_tls_address()
+                .unwrap()
+                + ARM11_TLS_IPC_BUFFER_OFFSET,
+            tls_request
+        );
+
+        let (event_handle, shared_memory_handle, gsp_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let shared_memory_handle = session.create_memory_block(0x1000, 3, 3).unwrap();
+            session
+                .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
+                .unwrap();
+            session
+                .write_memory_bytes(
+                    GSP_SHARED_MEMORY_BASE,
+                    &GspInterruptRelayQueue::new().encode(),
+                )
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            let gsp_handle = session.create_gsp_gpu_session().unwrap();
+            (event_handle, shared_memory_handle, gsp_handle)
+        };
+        system
+            .register_gsp_client(0, GSP_SHARED_MEMORY_BASE, event_handle)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .set_gsp_session_registration(
+                gsp_handle,
+                Some(0),
+                Some(shared_memory_handle),
+                Some(event_handle),
+                0,
+            )
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        // Not PICA registers: only the software pipeline's matrix/viewport
+        // (no viewport registers are modelled) and the render switch.
+        system.set_pica_rendering(Some(PicaRenderSettings {
+            pipeline: GeometryPipeline::new(
+                Matrix4::from_column_major([
+                    0.25, 0.0, 0.0, 0.0, //
+                    0.0, 0.25, 0.0, 0.0, //
+                    0.0, 0.0, 1.0, 0.0, //
+                    -1.0, -1.0, 0.0, 1.0,
+                ])
+                .unwrap(),
+                Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
+                ClipDepthRange::NegativeOneToOne,
+            ),
+            default_color: [200, 100, 50, 255],
+            depth_function: DepthFunction::Less,
+        }));
+        // No PICA register is touched by the host: all start at reset values.
+        assert_eq!(system.gpu_mut().register(REG_NUMVERTICES), Some(0));
+        assert_eq!(system.gpu_mut().register(REG_COLORBUFFER_LOC), Some(0));
+
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            assert!(session.set_current_register(11, event_handle));
+            assert!(session.set_current_register(12, gsp_handle));
+        }
+        let run = system.run_instructions(4000).unwrap();
+        assert!(run.instructions_executed > 200, "{run:?}");
+
+        let registers = system.ncsd_session().unwrap().current_registers().unwrap();
+        assert_eq!(registers[6], 0x5A, "guest did not pass the event wait");
+        assert_eq!(
+            read_tls_ipc_response(&mut system, tls_request, 2),
+            vec![0x000C_0040, 0]
+        );
+
+        // The guest-authored command list programmed the PICA200.
+        assert_eq!(system.gpu_mut().register(REG_NUMVERTICES), Some(3));
+        assert_eq!(
+            system.gpu_mut().register(REG_COLORBUFFER_LOC),
+            Some(tiled_target_physical >> 3)
+        );
+        let render = system.last_pica_render_report().unwrap();
+        assert_eq!(render.triangles_submitted, 1);
+        assert!(render.pixels_written > 0);
+
+        // The guest-published metadata reached the LCD controller.
+        let lcd = system.lcd_controller_mut();
+        assert_eq!(
+            lcd.read_register(LcdPanel::Top, PDC_FRAMEBUFFER_A_FIRST)
+                .unwrap(),
+            linear_framebuffer_physical
+        );
+        assert_eq!(
+            lcd.read_register(LcdPanel::Top, PDC_FRAMEBUFFER_B_FIRST)
+                .unwrap(),
+            linear_framebuffer_physical
+        );
+        assert_eq!(
+            lcd.read_register(LcdPanel::Top, PDC_FRAMEBUFFER_STRIDE)
+                .unwrap(),
+            (TOP_SCREEN_WIDTH * 4) as u32
+        );
+        assert_eq!(
+            lcd.read_register(LcdPanel::Top, PDC_FRAMEBUFFER_SELECT)
+                .unwrap(),
+            0
+        );
+        // Enabling the display controllers is the GSP system module's boot
+        // work, not the application's, so it stays host-side and is the only
+        // LCD register this test writes.
+        system
+            .lcd_controller_mut()
+            .write_register(LcdPanel::Top, PDC_CONTROL, 0x1_0001)
+            .unwrap();
+
+        let frame = system.run_frame_with_budget(0).unwrap();
+        assert_eq!(frame.lcd_screens_scanned_out, 2);
+        let sample = (180 * WIDTH + 40) * 4;
+        assert_eq!(
+            &system.display().top_left().pixels()[sample..sample + 4],
+            &[200, 100, 50, 255]
+        );
+    }
+
     #[test]
     fn gsp_process_command_list_renders_a_draw_into_the_tiled_target_when_enabled() {
         let mut system = System::new();

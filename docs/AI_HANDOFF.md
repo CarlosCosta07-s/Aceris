@@ -1708,3 +1708,15 @@ Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `carg
 3. Conectar IMB/I-cache e validar os efeitos de manutenção de instruções sem inventar pipeline ou temporização ainda inexistentes.
 4. Projetar testes de interleavings concorrentes reais entre processos e dispositivos; não confundir gerações sob demanda com snooping automático.
 5. Evoluir os modelos de outer cache, temporização e arbitração apenas quando houver comportamento arquitetural documentado e fixtures reproduzíveis.
+
+## Guest programa o PICA200 e publica framebuffers (Claude, 17/11/2026)
+
+Pedido do mantenedor: o guest ARM11 deve escrever IPC no TLS, executar a chamada GSP, produzir command lists, configurar o PICA200, publicar framebuffers e sincronizar com o evento de conclusão. Os itens de IPC/TLS, fila GX, command lists em FCRAM/VRAM e despertar por evento já estavam cobertos por outras sessões (ver ROADMAP). Faltavam registradores PICA e metadados de framebuffer, ainda escritos pelo host. Fechado por um teste só em `system.rs` (sem comportamento novo):
+
+- `arm11_guest_programs_pica_registers_and_publishes_framebuffers_without_host_register_writes`: carregador de tabela ARM11 copia (LDR/STR) a imagem de dados para FCRAM/Shared Memory/TLS; depois DMB/DSB, `SendSyncRequest` e `WaitSynchronization1`. O host não escreve nenhum registrador PICA nem registrador de framebuffer do PDC; o teste afirma que os registradores partem de zero e passam a ter os valores da command list do guest.
+- Auto-verificação: trocar o valor de DRAWARRAYS por 0 faz o teste falhar (rodado e revertido).
+
+**Limites honestos:** (1) os endereços na tabela são calculados pelo teste (relocação), com asserção de determinismo da alocação; (2) `PDC_CONTROL` do topo é habilitado pelo host por ser trabalho de boot do módulo GSP; (3) matriz e viewport do `GeometryPipeline` vêm de `set_pica_rendering`, pois não há registradores de viewport modelados; (4) o evento já está sinalizado quando o guest espera, então o bloqueio real continua coberto só por `gsp_completion_interrupt_wakes_waiting_arm11_thread`; (5) shader mínimo de dois opcodes, não de jogo comercial; (6) não alterei o teste de DisplayTransfer FCRAM descartado antes (WIP em branco: o conjunto de trabalho de 16 KiB expulsa linhas por LRU; precisa de redesenho).
+
+Verificado localmente sobre `main` em d0416ec: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
+
