@@ -150,8 +150,7 @@ fn all_thumb_conditional_branches_match_every_nzcv_combination() {
                 "Thumb condition={condition:#x} NZCV={n}{z}{c}{v}"
             );
             assert_eq!(
-                cpu.cpsr,
-                status_before,
+                cpu.cpsr, status_before,
                 "Thumb condition={condition:#x} NZCV={n}{z}{c}{v}"
             );
             assert!(
