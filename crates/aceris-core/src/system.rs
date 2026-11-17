@@ -5028,9 +5028,7 @@ mod tests {
         const UNIFORM_INDEX: u16 = crate::gpu::REG_VSH_FLOATUNIFORM_INDEX;
         const END: u32 = 0x22 << 26;
 
-        let descriptor = |mask: u32| {
-            mask | (0x1B << 5) | (0x1B << 14) | (0x1B << 23)
-        };
+        let descriptor = |mask: u32| mask | (0x1B << 5) | (0x1B << 14) | (0x1B << 23);
         let dphi = |uniform: u32, descriptor_index: u32| {
             (0x18 << 26) | ((0x20 + uniform) << 7) | descriptor_index
         };
@@ -5075,8 +5073,7 @@ mod tests {
             REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
             REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
-            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
+            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, Viewport,
         };
 
         system
@@ -5101,8 +5098,6 @@ mod tests {
             (REG_VSH_INPUTBUFFER_CONFIG, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
-            (REG_VSH_OPDESCS_INDEX, 0),
-
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, target_physical >> 3),
@@ -5198,9 +5193,8 @@ mod tests {
             REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
             REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
-            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, VRAM_BASE,
-            Viewport,
+            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX,
+            VRAM_BASE, Viewport,
         };
         use crate::video::{
             LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
@@ -5235,8 +5229,6 @@ mod tests {
             (REG_VSH_INPUTBUFFER_CONFIG, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
-            (REG_VSH_OPDESCS_INDEX, 0),
-
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, TILED_TARGET >> 3),
@@ -5355,8 +5347,7 @@ mod tests {
             REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
             REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
-            REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
+            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, Viewport,
         };
         use crate::video::{
             LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
@@ -5505,8 +5496,6 @@ mod tests {
             (REG_VSH_INPUTBUFFER_CONFIG, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
-            (REG_VSH_OPDESCS_INDEX, 0),
-
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, tiled_target_physical >> 3),
@@ -5895,8 +5884,6 @@ mod tests {
             (REG_VSH_INPUTBUFFER_CONFIG, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
-            (REG_VSH_OPDESCS_INDEX, 0),
-
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, tiled_target_physical >> 3),
