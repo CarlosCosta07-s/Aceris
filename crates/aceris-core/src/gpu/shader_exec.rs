@@ -111,9 +111,14 @@ impl PicaShaderOpcode {
             | Self::Slt
             | Self::Max
             | Self::Min => Some(PicaVertexShaderInstructionFormat::Format1),
-            Self::Ex2 | Self::Lg2 | Self::Litp | Self::Flr | Self::Rcp | Self::Rsq | Self::Mova | Self::Mov => {
-                Some(PicaVertexShaderInstructionFormat::Format1Unary)
-            }
+            Self::Ex2
+            | Self::Lg2
+            | Self::Litp
+            | Self::Flr
+            | Self::Rcp
+            | Self::Rsq
+            | Self::Mova
+            | Self::Mov => Some(PicaVertexShaderInstructionFormat::Format1Unary),
             Self::Dphi | Self::Dsti | Self::Sgei | Self::Slti => {
                 Some(PicaVertexShaderInstructionFormat::Format1Inverted)
             }
@@ -1091,11 +1096,26 @@ mod tests {
             PicaShaderOpcode::from_word(0x30 << 26),
             Some(PicaShaderOpcode::Madi)
         );
-        assert_eq!(PicaShaderOpcode::from_word(0x04 << 26), Some(PicaShaderOpcode::Dst));
-        assert_eq!(PicaShaderOpcode::from_word(0x07 << 26), Some(PicaShaderOpcode::Litp));
-        assert_eq!(PicaShaderOpcode::from_word(0x12 << 26), Some(PicaShaderOpcode::Mova));
-        assert_eq!(PicaShaderOpcode::from_word(0x19 << 26), Some(PicaShaderOpcode::Dsti));
-        assert_eq!(PicaShaderOpcode::from_word(0x17 << 27), Some(PicaShaderOpcode::Cmp));
+        assert_eq!(
+            PicaShaderOpcode::from_word(0x04 << 26),
+            Some(PicaShaderOpcode::Dst)
+        );
+        assert_eq!(
+            PicaShaderOpcode::from_word(0x07 << 26),
+            Some(PicaShaderOpcode::Litp)
+        );
+        assert_eq!(
+            PicaShaderOpcode::from_word(0x12 << 26),
+            Some(PicaShaderOpcode::Mova)
+        );
+        assert_eq!(
+            PicaShaderOpcode::from_word(0x19 << 26),
+            Some(PicaShaderOpcode::Dsti)
+        );
+        assert_eq!(
+            PicaShaderOpcode::from_word(0x17 << 27),
+            Some(PicaShaderOpcode::Cmp)
+        );
         assert_eq!(PicaShaderOpcode::from_word(0x10 << 26), None);
     }
 
@@ -1122,7 +1142,9 @@ mod tests {
             &[plain_descriptor(0b1111)],
             &[],
         );
-        let result = program.run(0, &inputs([-1.0, 200.0, 3.0, 0.5], [0.0; 4])).unwrap();
+        let result = program
+            .run(0, &inputs([-1.0, 200.0, 3.0, 0.5], [0.0; 4]))
+            .unwrap();
         assert_eq!(result.outputs[0], [0.0, 127.996_093_75, 0.0, 0.5]);
         assert_eq!(result.comparison_flags, [false, true]);
     }
@@ -1134,14 +1156,16 @@ mod tests {
         uniforms[1] = [20.0, 21.0, 22.0, 23.0];
         let program = PicaVertexShaderProgram::from_words(
             &[
-                format1_unary(0x12, 0, V0), // MOVA a0.x, v0.x
+                format1_unary(0x12, 0, V0),              // MOVA a0.x, v0.x
                 format1_unary(0x13, O0, C0) | (1 << 19), // MOV o0, c0[a0.x]
                 END,
             ],
             &[plain_descriptor(0b1111)],
             &uniforms,
         );
-        let result = program.run(0, &inputs([1.9, 0.0, 0.0, 0.0], [0.0; 4])).unwrap();
+        let result = program
+            .run(0, &inputs([1.9, 0.0, 0.0, 0.0], [0.0; 4]))
+            .unwrap();
         assert_eq!(result.outputs[0], uniforms[1]);
         assert_eq!(result.address_registers, [1, 0]);
     }
