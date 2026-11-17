@@ -187,12 +187,17 @@ enum KernelObject {
 
 /// Process-local table mapping guest-visible handles to typed kernel objects.
 ///
-/// Handles are monotonically allocated and are not reused after close. This
-/// avoids stale-handle aliasing in the current bootstrap; kernel generations
-/// and reference counting are not yet emulated.
+/// Handles are monotonically allocated and are not reused after close. Objects
+/// whose handles are closed remain in the retired table while a synchronization
+/// wait still holds an internal reference to them.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Arm11KernelObjectTable {
+    /// Objects with at least one open guest-visible handle.
     objects: BTreeMap<u32, KernelObject>,
+    /// Closed handles whose objects are still pinned by a pending wait.
+    retired_objects: BTreeMap<u32, KernelObject>,
+    /// Handle set pinned by each pending wait-all request.
+    wait_all_refs: BTreeMap<ThreadId, Vec<u32>>,
     next_handle: u32,
     /// Handle that most recently handed an object to a blocked thread, so a
     /// WaitSynchronizationN waiter can report which handle released it.
@@ -203,6 +208,8 @@ impl Default for Arm11KernelObjectTable {
     fn default() -> Self {
         Self {
             objects: BTreeMap::new(),
+            retired_objects: BTreeMap::new(),
+            wait_all_refs: BTreeMap::new(),
             next_handle: FIRST_HANDLE,
             handoffs: BTreeMap::new(),
         }
@@ -381,7 +388,11 @@ impl Arm11KernelObjectTable {
         let mut awakened = Vec::new();
         let mut handoffs = Vec::new();
 
-        for (handle, object) in self.objects.iter_mut() {
+        for (handle, object) in self
+            .objects
+            .iter_mut()
+            .chain(self.retired_objects.iter_mut())
+        {
             let KernelObject::Thread(thread) = object else {
                 continue;
             };
@@ -428,6 +439,90 @@ impl Arm11KernelObjectTable {
             .count()
     }
 
+    /// Returns whether a handle is still open to guest SVC calls.
+    pub fn is_open_handle(&self, handle: u32) -> bool {
+        self.objects.contains_key(&handle)
+    }
+
+    /// Returns the number of live objects, including objects pinned by waits.
+    pub fn retained_object_count(&self) -> usize {
+        self.objects.len() + self.retired_objects.len()
+    }
+
+    /// Pins each unique handle in a wait-all request until the request
+    /// completes or is cancelled. This keeps a closed handle's object alive.
+    pub fn retain_wait_all_handles(
+        &mut self,
+        handles: &[u32],
+        thread: ThreadId,
+    ) -> Result<(), KernelHandleError> {
+        let mut retained = Vec::new();
+        for handle in handles.iter().copied() {
+            if retained.contains(&handle) {
+                continue;
+            }
+            if !self.objects.contains_key(&handle) {
+                return Err(KernelHandleError::InvalidHandle);
+            }
+            retained.push(handle);
+        }
+        self.wait_all_refs.insert(thread, retained);
+        Ok(())
+    }
+
+    /// Releases a wait-all request's internal references and reaps retired
+    /// objects that no longer have registered waiters or wait-all pins.
+    pub fn release_wait_all_handles(&mut self, thread: ThreadId) -> bool {
+        let released = self.wait_all_refs.remove(&thread).is_some();
+        self.collect_retired_objects();
+        released
+    }
+
+    fn has_wait_all_reference(&self, handle: u32) -> bool {
+        self.wait_all_refs
+            .values()
+            .any(|handles| handles.contains(&handle))
+    }
+
+    fn wait_all_object(&self, handle: u32, thread: ThreadId) -> Option<&KernelObject> {
+        self.objects.get(&handle).or_else(|| {
+            self.wait_all_refs
+                .get(&thread)
+                .is_some_and(|handles| handles.contains(&handle))
+                .then(|| self.retired_objects.get(&handle))
+                .flatten()
+        })
+    }
+
+    fn wait_all_object_mut(
+        &mut self,
+        handle: u32,
+        thread: ThreadId,
+    ) -> Option<&mut KernelObject> {
+        if self.objects.contains_key(&handle) {
+            return self.objects.get_mut(&handle);
+        }
+        if self
+            .wait_all_refs
+            .get(&thread)
+            .is_some_and(|handles| handles.contains(&handle))
+        {
+            return self.retired_objects.get_mut(&handle);
+        }
+        None
+    }
+
+    fn collect_retired_objects(&mut self) {
+        let pinned_handles = self
+            .wait_all_refs
+            .values()
+            .flat_map(|handles| handles.iter().copied())
+            .collect::<std::collections::BTreeSet<_>>();
+        self.retired_objects.retain(|handle, object| {
+            pinned_handles.contains(handle) || object_has_waiters(object)
+        });
+    }
+
     /// Releases every mutex owned by a terminating thread.
     ///
     /// Ownership is transferred to the oldest waiter on each mutex, just as
@@ -438,6 +533,7 @@ impl Arm11KernelObjectTable {
         let owned_handles = self
             .objects
             .iter()
+            .chain(self.retired_objects.iter())
             .filter_map(|(handle, object)| {
                 matches!(object, KernelObject::Mutex(mutex) if mutex.owner == Some(owner))
                     .then_some(*handle)
@@ -446,13 +542,18 @@ impl Arm11KernelObjectTable {
         let mut awakened = Vec::new();
 
         for handle in owned_handles {
-            let waiter = match self.objects.get_mut(&handle) {
-                Some(KernelObject::Mutex(mutex)) => {
-                    let waiter = mutex.waiters.pop_front();
-                    mutex.owner = waiter;
-                    waiter
-                }
-                _ => None,
+            let waiter = if let Some(KernelObject::Mutex(mutex)) = self.objects.get_mut(&handle) {
+                let waiter = mutex.waiters.pop_front();
+                mutex.owner = waiter;
+                waiter
+            } else if let Some(KernelObject::Mutex(mutex)) =
+                self.retired_objects.get_mut(&handle)
+            {
+                let waiter = mutex.waiters.pop_front();
+                mutex.owner = waiter;
+                waiter
+            } else {
+                None
             };
 
             let Some(waiter) = waiter else {
