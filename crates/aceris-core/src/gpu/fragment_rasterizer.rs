@@ -1170,11 +1170,8 @@ mod tests {
         let mut pica = super::super::Pica200::new();
         configure_tev(&mut pica);
         pica.write_register(REG_LOGIC_OP, 3).unwrap();
-        pica.write_register(
-            REG_STENCIL_TEST,
-            1 | (0xFF << 8) | (9 << 16) | (0xFF << 24),
-        )
-        .unwrap();
+        pica.write_register(REG_STENCIL_TEST, 1 | (0xFF << 8) | (9 << 16) | (0xFF << 24))
+            .unwrap();
         pica.write_register(REG_STENCIL_OP, 2).unwrap(); // stencil fail: replace
         let mut pipeline = pica.fragment_pipeline().unwrap();
 
