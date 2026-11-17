@@ -5381,8 +5381,8 @@ mod tests {
         assert!(render.pixels_written > 0);
         let depth_config = PicaDepthBufferConfig::from_pica(
             system.gpu_mut(),
-            WIDTH as u16,
-            HEIGHT as u16,
+            WIDTH as u32,
+            HEIGHT as u32,
         )
         .unwrap()
         .unwrap();
@@ -6153,8 +6153,8 @@ mod tests {
         assert_eq!(system.gpu_mut().register(REG_DEPTHBUFFER_READ), Some(2));
         let depth_config = PicaDepthBufferConfig::from_pica(
             system.gpu_mut(),
-            WIDTH as u16,
-            HEIGHT as u16,
+            WIDTH as u32,
+            HEIGHT as u32,
         )
         .unwrap()
         .unwrap();
