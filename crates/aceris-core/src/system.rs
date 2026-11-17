@@ -2986,6 +2986,16 @@ mod tests {
                     0xEF00_0032, // srv:GetServiceHandle
                     0xEF00_0032, // GSP RegisterInterruptRelayQueue
                     0xEF00_0032, // GSP TryAcquireRight
+                    // The guest writes the two-entry GX ring header and entries.
+                    0xE584_5000, // STR r5, [r4] (queue command count = 2)
+                    0xE584_6008, // STR r6, [r4, #8] (entry 0: ProcessCommandList + halt)
+                    0xE584_700C, // STR r7, [r4, #12] (entry 0: command-list address)
+                    0xE584_8010, // STR r8, [r4, #16] (entry 0: command-list size)
+                    0xE584_9028, // STR r9, [r4, #40] (entry 1: ProcessCommandList)
+                    0xE584_A02C, // STR r10, [r4, #44] (entry 1: command-list address)
+                    0xE584_B030, // STR r11, [r4, #48] (entry 1: command-list size)
+                    0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
+                    0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill, both buffers)
@@ -3133,24 +3143,46 @@ mod tests {
 
         let queue_address =
             GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
-        let mut gx_queue = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
-        gx_queue[1] = 2;
-        for (slot, command_address, stop_after) in [
-            (0usize, first_command_address, true),
-            (1usize, second_command_address, false),
-        ] {
-            let entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + slot * 0x20;
-            gx_queue[entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
-            gx_queue[entry + 2] = u8::from(stop_after);
-            gx_queue[entry + 4..entry + 8].copy_from_slice(&command_address.to_le_bytes());
-            gx_queue[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
+        // The ARM11, not the test host, authors the queue header and both
+        // ProcessCommandList entries through its normal write-back cache.
+        // The first entry sets stop-after; the second must survive one trigger.
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            assert!(session.set_current_register(4, queue_address));
+            assert!(session.set_current_register(5, 0x0000_0200));
+            assert!(session.set_current_register(6, 0x0001_0001));
+            assert!(session.set_current_register(7, first_command_address));
+            assert!(session.set_current_register(8, 8));
+            assert!(session.set_current_register(9, 0x0000_0001));
+            assert!(session.set_current_register(10, second_command_address));
+            assert!(session.set_current_register(11, 8));
+
+            for _ in 0..9 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+
+            let mut guest_queue = [0u8; 56];
+            session
+                .read_memory_bytes(queue_address, &mut guest_queue)
+                .unwrap();
+            assert_eq!(&guest_queue[0..8], &[0, 2, 0, 0, 0, 0, 0, 0]);
+            assert_eq!(&guest_queue[8..20], &[
+                1, 0, 1, 0,
+                first_command_address.to_le_bytes()[0],
+                first_command_address.to_le_bytes()[1],
+                first_command_address.to_le_bytes()[2],
+                first_command_address.to_le_bytes()[3],
+                8, 0, 0, 0,
+            ]);
+            assert_eq!(&guest_queue[40..52], &[
+                1, 0, 0, 0,
+                second_command_address.to_le_bytes()[0],
+                second_command_address.to_le_bytes()[1],
+                second_command_address.to_le_bytes()[2],
+                second_command_address.to_le_bytes()[3],
+                8, 0, 0, 0,
+            ]);
         }
-        system
-            .ncsd_session
-            .as_mut()
-            .unwrap()
-            .write_memory_bytes(queue_address, &gx_queue)
-            .unwrap();
 
         // First trigger submits register 0x100 and leaves one command halted.
         let trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
