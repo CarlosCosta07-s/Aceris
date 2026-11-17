@@ -49,7 +49,7 @@ pub use fragment::{
 pub use fragment_output::{
     PicaBlendChannel, PicaBlendEquation, PicaBlendFactor, PicaColorOperationMode,
     PicaFragmentOperation, PicaFragmentOutputError, PicaFragmentOutputState,
-    PicaLogicOperation, REG_BLEND_COLOR, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_LOGIC_OP,
+    PicaLogicOperation, REG_BLEND_COLOR, REG_BLEND_FUNC, REG_LOGIC_OP,
 };
 pub use fragment_pipeline::{
     PicaFragmentPipeline, PicaFragmentPipelineError, PicaFragmentVaryings,
