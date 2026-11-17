@@ -17,6 +17,10 @@ pub const REG_LOGIC_OP: u16 = 0x102;
 pub const REG_BLEND_COLOR: u16 = 0x103;
 /// GPUREG_FRAGOP_ALPHA_TEST.
 pub const REG_FRAGOP_ALPHA_TEST: u16 = 0x104;
+/// GPUREG_STENCIL_TEST.
+pub const REG_STENCIL_TEST: u16 = 0x105;
+/// GPUREG_STENCIL_OP.
+pub const REG_STENCIL_OP: u16 = 0x106;
 
 /// Alpha-test comparison configured by GPUREG_FRAGOP_ALPHA_TEST.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +60,118 @@ impl PicaAlphaTestFunction {
             Self::Greater => alpha > reference,
             Self::GreaterEqual => alpha >= reference,
         }
+    }
+}
+
+/// Comparison function configured by GPUREG_STENCIL_TEST.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaStencilFunction {
+    Never,
+    Always,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+impl PicaStencilFunction {
+    fn decode(value: u32) -> Self {
+        match value & 0x7 {
+            0 => Self::Never,
+            1 => Self::Always,
+            2 => Self::Equal,
+            3 => Self::NotEqual,
+            4 => Self::Less,
+            5 => Self::LessEqual,
+            6 => Self::Greater,
+            _ => Self::GreaterEqual,
+        }
+    }
+
+    fn compare(self, reference: u8, value: u8) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Always => true,
+            Self::Equal => reference == value,
+            Self::NotEqual => reference != value,
+            Self::Less => reference < value,
+            Self::LessEqual => reference <= value,
+            Self::Greater => reference > value,
+            Self::GreaterEqual => reference >= value,
+        }
+    }
+}
+
+/// Stencil actions configured by GPUREG_STENCIL_OP.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaStencilOperation {
+    Keep,
+    Zero,
+    Replace,
+    IncrementClamp,
+    DecrementClamp,
+    Invert,
+    IncrementWrap,
+    DecrementWrap,
+}
+
+impl PicaStencilOperation {
+    fn decode(value: u32) -> Self {
+        match value & 0x7 {
+            0 => Self::Keep,
+            1 => Self::Zero,
+            2 => Self::Replace,
+            3 => Self::IncrementClamp,
+            4 => Self::DecrementClamp,
+            5 => Self::Invert,
+            6 => Self::IncrementWrap,
+            _ => Self::DecrementWrap,
+        }
+    }
+
+    fn apply(self, current: u8, reference: u8) -> u8 {
+        match self {
+            Self::Keep => current,
+            Self::Zero => 0,
+            Self::Replace => reference,
+            Self::IncrementClamp => current.saturating_add(1),
+            Self::DecrementClamp => current.saturating_sub(1),
+            Self::Invert => !current,
+            Self::IncrementWrap => current.wrapping_add(1),
+            Self::DecrementWrap => current.wrapping_sub(1),
+        }
+    }
+}
+
+/// Guest stencil-test state captured at the PICA draw trigger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaStencilState {
+    pub enabled: bool,
+    pub function: PicaStencilFunction,
+    pub write_mask: u8,
+    pub reference: u8,
+    pub compare_mask: u8,
+    pub stencil_fail: PicaStencilOperation,
+    pub depth_fail: PicaStencilOperation,
+    pub depth_pass: PicaStencilOperation,
+}
+
+impl PicaStencilState {
+    /// Compares the masked reference value with the masked stored stencil value.
+    pub fn test_passes(self, stored: u8) -> bool {
+        if !self.enabled {
+            return true;
+        }
+        self.function
+            .compare(self.reference & self.compare_mask, stored & self.compare_mask)
+    }
+
+    /// Applies an action and merges it through the guest's stencil write mask.
+    pub fn apply(self, action: PicaStencilOperation, stored: u8) -> u8 {
+        let updated = action.apply(stored, self.reference);
+        (stored & !self.write_mask) | (updated & self.write_mask)
     }
 }
 
@@ -277,6 +393,7 @@ pub struct PicaFragmentOutputState {
     pub alpha_test_enabled: bool,
     pub alpha_test_function: PicaAlphaTestFunction,
     pub alpha_test_reference: u8,
+    pub stencil: PicaStencilState,
 }
 
 impl PicaFragmentOutputState {
@@ -300,6 +417,8 @@ impl PicaFragmentOutputState {
         let blend_color = pica.register(REG_BLEND_COLOR).unwrap_or(0);
         let alpha_test = pica.register(REG_FRAGOP_ALPHA_TEST).unwrap_or(0);
         let alpha_test_enabled = alpha_test & 1 != 0;
+        let stencil_test = pica.register(REG_STENCIL_TEST).unwrap_or(0);
+        let stencil_operation = pica.register(REG_STENCIL_OP).unwrap_or(0);
         let (
             rgb_equation,
             alpha_equation,
@@ -355,6 +474,16 @@ impl PicaFragmentOutputState {
                 PicaAlphaTestFunction::Always
             },
             alpha_test_reference: (alpha_test >> 8) as u8,
+            stencil: PicaStencilState {
+                enabled: stencil_test & 1 != 0,
+                function: PicaStencilFunction::decode(stencil_test >> 4),
+                write_mask: (stencil_test >> 8) as u8,
+                reference: (stencil_test >> 16) as u8,
+                compare_mask: (stencil_test >> 24) as u8,
+                stencil_fail: PicaStencilOperation::decode(stencil_operation),
+                depth_fail: PicaStencilOperation::decode(stencil_operation >> 4),
+                depth_pass: PicaStencilOperation::decode(stencil_operation >> 8),
+            },
         })
     }
 
@@ -568,6 +697,16 @@ mod tests {
             alpha_test_enabled: false,
             alpha_test_function: PicaAlphaTestFunction::Always,
             alpha_test_reference: 0,
+            stencil: PicaStencilState {
+                enabled: false,
+                function: PicaStencilFunction::Always,
+                write_mask: 0,
+                reference: 0,
+                compare_mask: 0xFF,
+                stencil_fail: PicaStencilOperation::Keep,
+                depth_fail: PicaStencilOperation::Keep,
+                depth_pass: PicaStencilOperation::Keep,
+            },
         };
         assert_eq!(
             state
@@ -684,6 +823,60 @@ mod tests {
         assert!(!state.alpha_test_passes(1.0).unwrap());
         state.alpha_test_function = PicaAlphaTestFunction::Always;
         assert!(state.alpha_test_passes(0.0).unwrap());
+    }
+
+    #[test]
+    fn decodes_stencil_masks_comparison_and_three_result_operations() {
+        let mut pica = Pica200::new();
+        pica.write_register(
+            REG_STENCIL_TEST,
+            1 | (2 << 4) | (0x0F << 8) | (0xA5 << 16) | (0xF0 << 24),
+        )
+        .unwrap();
+        pica.write_register(
+            REG_STENCIL_OP,
+            2 | (3 << 4) | (7 << 8),
+        )
+        .unwrap();
+
+        let state = PicaFragmentOutputState::from_pica(&pica).unwrap().stencil;
+        assert!(state.enabled);
+        assert_eq!(state.function, PicaStencilFunction::Equal);
+        assert_eq!(state.write_mask, 0x0F);
+        assert_eq!(state.reference, 0xA5);
+        assert_eq!(state.compare_mask, 0xF0);
+        assert_eq!(state.stencil_fail, PicaStencilOperation::Replace);
+        assert_eq!(state.depth_fail, PicaStencilOperation::IncrementClamp);
+        assert_eq!(state.depth_pass, PicaStencilOperation::DecrementWrap);
+        assert!(state.test_passes(0xA1));
+        assert!(!state.test_passes(0xB1));
+        assert_eq!(state.apply(PicaStencilOperation::Replace, 0x5A), 0x55);
+    }
+
+    #[test]
+    fn stencil_operations_cover_clamp_wrap_invert_and_mask_merge() {
+        let state = PicaStencilState {
+            enabled: true,
+            function: PicaStencilFunction::Always,
+            write_mask: 0xFF,
+            reference: 0x34,
+            compare_mask: 0xFF,
+            stencil_fail: PicaStencilOperation::Keep,
+            depth_fail: PicaStencilOperation::Keep,
+            depth_pass: PicaStencilOperation::Keep,
+        };
+        assert_eq!(state.apply(PicaStencilOperation::IncrementClamp, 0xFF), 0xFF);
+        assert_eq!(state.apply(PicaStencilOperation::DecrementClamp, 0), 0);
+        assert_eq!(state.apply(PicaStencilOperation::IncrementWrap, 0xFF), 0);
+        assert_eq!(state.apply(PicaStencilOperation::DecrementWrap, 0), 0xFF);
+        assert_eq!(state.apply(PicaStencilOperation::Invert, 0x0F), 0xF0);
+        assert_eq!(state.apply(PicaStencilOperation::Zero, 0xAA), 0);
+
+        let masked = PicaStencilState {
+            write_mask: 0x0F,
+            ..state
+        };
+        assert_eq!(masked.apply(PicaStencilOperation::Replace, 0xA0), 0xA4);
     }
 
     #[test]
