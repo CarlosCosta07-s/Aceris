@@ -3161,27 +3161,20 @@ mod tests {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             }
 
-            let mut guest_queue = [0u8; 56];
-            session
-                .read_memory_bytes(queue_address, &mut guest_queue)
-                .unwrap();
-            assert_eq!(&guest_queue[0..8], &[0, 2, 0, 0, 0, 0, 0, 0]);
-            assert_eq!(&guest_queue[8..20], &[
-                1, 0, 1, 0,
-                first_command_address.to_le_bytes()[0],
-                first_command_address.to_le_bytes()[1],
-                first_command_address.to_le_bytes()[2],
-                first_command_address.to_le_bytes()[3],
-                8, 0, 0, 0,
-            ]);
-            assert_eq!(&guest_queue[40..52], &[
-                1, 0, 0, 0,
-                second_command_address.to_le_bytes()[0],
-                second_command_address.to_le_bytes()[1],
-                second_command_address.to_le_bytes()[2],
-                second_command_address.to_le_bytes()[3],
-                8, 0, 0, 0,
-            ]);
+            for (offset, expected) in [
+                (0, 0x0000_0200),
+                (8, 0x0001_0001),
+                (12, first_command_address),
+                (16, 8),
+                (40, 1),
+                (44, second_command_address),
+                (48, 8),
+            ] {
+                assert_eq!(
+                    session.read_memory_u32(queue_address + offset).unwrap(),
+                    expected
+                );
+            }
         }
 
         // First trigger submits register 0x100 and leaves one command halted.
