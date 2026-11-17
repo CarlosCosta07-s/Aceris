@@ -762,7 +762,7 @@ impl Arm11KernelObjectTable {
                 continue;
             }
 
-            let ready = match self.objects.get(&handle) {
+            let ready = match self.wait_all_object(handle, thread) {
                 Some(KernelObject::Event(event)) => event.signaled,
                 Some(KernelObject::Mutex(mutex)) => mutex.owner.is_none(),
                 Some(KernelObject::Semaphore(semaphore)) => semaphore.count > 0,
@@ -789,8 +789,7 @@ impl Arm11KernelObjectTable {
             }
 
             match self
-                .objects
-                .get_mut(&handle)
+                .wait_all_object_mut(handle, thread)
                 .expect("wait-all preflight validated every unique handle")
             {
                 KernelObject::Event(event) => {
@@ -850,7 +849,11 @@ impl Arm11KernelObjectTable {
     /// wake a thread that has already returned RESULT_TIMEOUT.
     pub fn remove_waiter(&mut self, thread: ThreadId) -> bool {
         let mut removed = false;
-        for object in self.objects.values_mut() {
+        for object in self
+            .objects
+            .values_mut()
+            .chain(self.retired_objects.values_mut())
+        {
             let waiters = match object {
                 KernelObject::Event(event) => &mut event.waiters,
                 KernelObject::Mutex(mutex) => &mut mutex.waiters,
@@ -863,6 +866,9 @@ impl Arm11KernelObjectTable {
             waiters.retain(|waiter| *waiter != thread);
             removed |= waiters.len() != previous_len;
         }
+        let released_wait_all = self.wait_all_refs.remove(&thread).is_some();
+        removed |= released_wait_all;
+        self.collect_retired_objects();
         removed
     }
 
@@ -876,7 +882,11 @@ impl Arm11KernelObjectTable {
         let mut awakened = Vec::new();
         let mut handed_off: Vec<(ThreadId, u32)> = Vec::new();
 
-        for (handle, object) in self.objects.iter_mut() {
+        for (handle, object) in self
+            .objects
+            .iter_mut()
+            .chain(self.retired_objects.iter_mut())
+        {
             let KernelObject::Timer(timer) = object else {
                 continue;
             };
@@ -924,8 +934,16 @@ impl Arm11KernelObjectTable {
     }
 
     /// Sets an event signaled and returns the threads released by the signal.
+    ///
+    /// The session layer validates guest SVC handles before calling this
+    /// method. HLE devices may also signal a retired event whose only
+    /// remaining references belong to already-blocked guest threads.
     pub fn signal_event(&mut self, handle: u32) -> Result<Vec<ThreadId>, KernelHandleError> {
-        let event = self.event_mut(handle)?;
+        let event = if self.objects.contains_key(&handle) {
+            self.event_mut(handle)?
+        } else {
+            self.retired_event_mut(handle)?
+        };
         let released: Vec<ThreadId> = match event.reset_type {
             EventResetType::Sticky => {
                 event.signaled = true;
@@ -1021,21 +1039,20 @@ impl Arm11KernelObjectTable {
 
     /// Closes a regular process-local handle.
     ///
-    /// Pseudo-handles are not stored in the table and therefore cannot be closed.
+    /// If a pending synchronization wait already references this object, the
+    /// guest-visible handle is removed immediately while the object is kept in
+    /// the retired table. The final wait/reference release reclaims the object.
+    /// Pseudo-handles are not stored in the table and cannot be closed.
     pub fn close_handle(&mut self, handle: u32) -> Result<(), KernelHandleError> {
-        let has_waiters = match self.objects.get(&handle) {
-            Some(KernelObject::Event(event)) => !event.waiters.is_empty(),
-            Some(KernelObject::Mutex(mutex)) => !mutex.waiters.is_empty(),
-            Some(KernelObject::Semaphore(semaphore)) => !semaphore.waiters.is_empty(),
-            Some(KernelObject::Timer(timer)) => !timer.waiters.is_empty(),
-            Some(KernelObject::Thread(thread)) => !thread.waiters.is_empty(),
-            Some(KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_)) => false,
-            None => return Err(KernelHandleError::InvalidHandle),
-        };
-        if has_waiters {
-            return Err(KernelHandleError::WaitersPending);
+        let object = self
+            .objects
+            .remove(&handle)
+            .ok_or(KernelHandleError::InvalidHandle)?;
+        let keep_alive = object_has_waiters(&object) || self.has_wait_all_reference(handle);
+        if keep_alive {
+            self.retired_objects.insert(handle, object);
         }
-        self.objects.remove(&handle);
+        self.collect_retired_objects();
         Ok(())
     }
 
@@ -1076,6 +1093,14 @@ impl Arm11KernelObjectTable {
         }
     }
 
+    fn retired_event_mut(&mut self, handle: u32) -> Result<&mut KernelEvent, KernelHandleError> {
+        match self.retired_objects.get_mut(&handle) {
+            Some(KernelObject::Event(event)) => Ok(event),
+            Some(_) => Err(KernelHandleError::WrongType),
+            None => Err(KernelHandleError::InvalidHandle),
+        }
+    }
+
     fn insert(&mut self, object: KernelObject) -> Result<u32, KernelHandleError> {
         let mut handle = self.next_handle;
         while self.objects.contains_key(&handle) || handle == CURRENT_THREAD_HANDLE {
@@ -1085,6 +1110,17 @@ impl Arm11KernelObjectTable {
         self.next_handle = handle.checked_add(1).ok_or(KernelHandleError::Exhausted)?;
         self.objects.insert(handle, object);
         Ok(handle)
+    }
+}
+
+fn object_has_waiters(object: &KernelObject) -> bool {
+    match object {
+        KernelObject::Thread(thread) => !thread.waiters.is_empty(),
+        KernelObject::Event(event) => !event.waiters.is_empty(),
+        KernelObject::Mutex(mutex) => !mutex.waiters.is_empty(),
+        KernelObject::Semaphore(semaphore) => !semaphore.waiters.is_empty(),
+        KernelObject::Timer(timer) => !timer.waiters.is_empty(),
+        KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_) => false,
     }
 }
 
