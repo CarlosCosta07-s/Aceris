@@ -394,6 +394,21 @@ impl PicaFragmentPipeline {
         self.shade_triangle_sample(memory, vertices, barycentric, minifying)
     }
 
+    /// Returns whether this draw has alpha testing enabled.
+    pub const fn alpha_test_enabled(&self) -> bool {
+        self.output_state.alpha_test_enabled
+    }
+
+    /// Evaluates the guest-configured alpha test for a shaded fragment.
+    pub fn alpha_test_passes(
+        &self,
+        source: [f32; 4],
+    ) -> Result<bool, PicaFragmentPipelineError> {
+        self.output_state
+            .alpha_test_passes(source[3])
+            .map_err(PicaFragmentPipelineError::Output)
+    }
+
     /// Applies the captured blend or logic operation to a shaded fragment and
     /// the destination pixel already stored in the RGBA8 color target.
     pub fn apply_fragment_output(
