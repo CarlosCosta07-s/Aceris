@@ -41,10 +41,10 @@ use svc::{
     SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
-    SVC_MAP_MEMORY_BLOCK,
-    SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST,
-    SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
-    SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
+    SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
+    SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
+    SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
+    SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -5405,13 +5405,19 @@ mod tests {
         assert_eq!(session.kernel_objects.handle_count(), 2);
         assert_eq!(session.kernel_objects.retained_object_count(), 1);
 
-        assert_eq!(session.kernel_objects.signal_event(duplicate), Ok(Vec::new()));
+        assert_eq!(
+            session.kernel_objects.signal_event(duplicate),
+            Ok(Vec::new())
+        );
         assert_eq!(session.kernel_objects.event_is_signaled(event), Some(true));
 
         session.close_handle(event).unwrap();
         assert!(!session.kernel_objects.is_open_handle(event));
         assert!(session.kernel_objects.is_open_handle(duplicate));
-        assert_eq!(session.kernel_objects.event_is_signaled(duplicate), Some(true));
+        assert_eq!(
+            session.kernel_objects.event_is_signaled(duplicate),
+            Some(true)
+        );
 
         session.close_handle(duplicate).unwrap();
         assert_eq!(session.kernel_objects.handle_count(), 0);
