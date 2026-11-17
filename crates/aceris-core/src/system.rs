@@ -3671,7 +3671,12 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
+                    0xE580_1000, // STR r1, [r0]
+                    0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
+                    0xE580_3004, // STR r3, [r0, #4]
+                    0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
+                ])),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
@@ -3683,38 +3688,82 @@ mod tests {
         let (framebuffer_virtual, framebuffer_physical) =
             map_test_linear_fcram(&mut system, framebuffer_allocation_size);
 
-        // A CPU write starts dirty and is not yet visible in the physical
-        // backing that the DMA engine and LCD consume.
-        let source_pixel = [0x44, 0x33, 0x22, 0x11];
-        system
-            .ncsd_session_mut()
-            .unwrap()
-            .write_memory_bytes(source_virtual, &source_pixel)
-            .unwrap();
-        let mut physical_before = [0u8; 4];
-        system
-            .physical_memory()
-            .read(source_physical, &mut physical_before)
-            .unwrap();
-        assert_eq!(physical_before, [0; 4]);
-
-        // Clean the CPU line, then execute the process bus DMB/DSB completion
-        // point before the external DMA transaction is allowed to read it.
+        // Execute real guest ARM instructions. STR leaves the source dirty in
+        // the CPU D-cache; FlushProcessDataCache queues its writeback, and the
+        // guest DMB instruction must drain that write before DMA can observe it.
+        let source_pixels = [
+            0x44, 0x33, 0x22, 0x11, // first RGBA8 source pixel
+            0x88, 0x77, 0x66, 0x55, // second RGBA8 source pixel
+        ];
         {
             let session = system.ncsd_session_mut().unwrap();
+            assert!(session.set_current_register(0, source_virtual));
+            assert!(session.set_current_register(1, u32::from_le_bytes([
+                source_pixels[0],
+                source_pixels[1],
+                source_pixels[2],
+                source_pixels[3],
+            ])));
+            assert!(session.set_current_register(3, u32::from_le_bytes([
+                source_pixels[4],
+                source_pixels[5],
+                source_pixels[6],
+                source_pixels[7],
+            ])));
+
+            // STR r1, [r0]
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             assert_eq!(
                 session.flush_process_data_cache(source_virtual, 4).unwrap(),
                 1
             );
-            session.data_memory_barrier().unwrap();
+            assert_eq!(session.pending_write_buffer_entries(), 1);
+        }
+
+        let mut physical_before_dmb = [0u8; 8];
+        system
+            .physical_memory()
+            .read(source_physical, &mut physical_before_dmb)
+            .unwrap();
+        assert_eq!(physical_before_dmb, [0; 8]);
+
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            // MCR p15, 0, r0, c7, c10, 5 (DMB)
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             assert_eq!(session.pending_write_buffer_entries(), 0);
         }
-        let mut physical_after_dsb = [0u8; 4];
+
+        let mut physical_after_dmb = [0u8; 4];
+        system
+            .physical_memory()
+            .read(source_physical, &mut physical_after_dmb)
+            .unwrap();
+        assert_eq!(&physical_after_dmb, &source_pixels[..4]);
+
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            // STR r3, [r0, #4], followed by an explicit cache clean.
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            assert_eq!(
+                session
+                    .flush_process_data_cache(source_virtual + 4, 4)
+                    .unwrap(),
+                1
+            );
+            assert_eq!(session.pending_write_buffer_entries(), 1);
+
+            // MCR p15, 0, r0, c7, c10, 4 (DSB)
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            assert_eq!(session.pending_write_buffer_entries(), 0);
+        }
+
+        let mut physical_after_dsb = [0u8; 8];
         system
             .physical_memory()
             .read(source_physical, &mut physical_after_dsb)
             .unwrap();
-        assert_eq!(physical_after_dsb, source_pixel);
+        assert_eq!(physical_after_dsb, source_pixels);
 
         // Queue a synchronous GSP RequestDMA from the committed source into
         // the physical framebuffer that will be scanned out by the LCD.
@@ -3725,7 +3774,7 @@ mod tests {
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&framebuffer_virtual.to_le_bytes());
-        queue_bytes[entry + 12..entry + 16].copy_from_slice(&4u32.to_le_bytes());
+        queue_bytes[entry + 12..entry + 16].copy_from_slice(&8u32.to_le_bytes());
         queue_bytes[entry + 28..entry + 32].copy_from_slice(&1u32.to_le_bytes());
 
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
@@ -3734,7 +3783,7 @@ mod tests {
         assert!(dma_report.flush_source_requested);
         assert!(dma_report.error.is_none());
 
-        let mut dma_destination = [0u8; 4];
+        let mut dma_destination = [0u8; 8];
         system
             .physical_memory()
             .read(framebuffer_physical, &mut dma_destination)
@@ -3765,8 +3814,12 @@ mod tests {
             &[0x11, 0x22, 0x33, 0x44]
         );
         assert_eq!(
-            &system.display().top_right().pixels()[..4],
-            &[0x11, 0x22, 0x33, 0x44]
+            &system.display().top_left().pixels()[..8],
+            &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]
+        );
+        assert_eq!(
+            &system.display().top_right().pixels()[..8],
+            &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]
         );
     }
 
