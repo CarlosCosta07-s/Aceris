@@ -183,7 +183,9 @@ impl std::error::Error for PicaFragmentPipelineError {}
 mod tests {
     use super::*;
     use crate::gpu::physical_memory::VRAM_BASE;
-    use crate::gpu::{PicaTevSource, TEXENV_STAGE_SOURCE_REGISTERS};
+    use crate::gpu::{
+        PicaTevSource, REG_BLEND_FUNC, REG_COLOR_OPERATION, TEXENV_STAGE_SOURCE_REGISTERS,
+    };
 
     fn configure_texture(pica: &mut Pica200, unit: usize, address: u32, width: u16, height: u16) {
         let registers = match unit {
