@@ -1150,6 +1150,106 @@ mod tests {
     }
 
     #[test]
+    fn stencil_fail_replace_then_equal_increment_updates_d24s8_surface() {
+        let mut pica = super::super::Pica200::new();
+        configure_tev(&mut pica);
+        pica.write_register(REG_LOGIC_OP, 3).unwrap();
+        pica.write_register(
+            REG_STENCIL_TEST,
+            1 | (0 << 4) | (0xFF << 8) | (9 << 16) | (0xFF << 24),
+        )
+        .unwrap();
+        pica.write_register(REG_STENCIL_OP, 2).unwrap(); // stencil fail: replace
+        let mut pipeline = pica.fragment_pipeline().unwrap();
+
+        let target = PicaRenderTargetConfig::from_registers(
+            VRAM_BASE >> 3,
+            2,
+            0,
+            8 | (7 << 12) | (1 << 24),
+        )
+        .unwrap();
+        let depth_config = PicaDepthBufferConfig {
+            address: VRAM_BASE + 0x1000,
+            width: 8,
+            height: 8,
+            format: PicaDepthBufferFormat::D24S8,
+            depth_read_enabled: true,
+            stencil_read_enabled: true,
+            depth_write_enabled: true,
+            stencil_write_enabled: true,
+        };
+
+        let mut memory = GpuPhysicalMemory::new();
+        let initial_pixels = vec![0u8; 8 * 8 * 4];
+        let mut initial = SoftwareRasterizer::new(8, 8).unwrap();
+        initial.load_color_rgba8(&initial_pixels).unwrap();
+        target.write_rasterizer(&initial, &mut memory).unwrap();
+        depth_config
+            .write_depth_values(&vec![1.0; 64], &mut memory)
+            .unwrap();
+        depth_config
+            .write_stencil_values(&vec![0; 64], &mut memory)
+            .unwrap();
+
+        let mut rasterizer =
+            PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
+        rasterizer
+            .load_depth_buffer(depth_config, &memory, 1.0)
+            .unwrap();
+        let draw = draw([
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], [0.0, 1.0, 0.0, 1.0]),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], [0.0, 0.0, 1.0, 1.0]),
+        ]);
+        let mut state = PicaFragmentRasterState::new(
+            Matrix4::identity(),
+            Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+        );
+        state.depth_function = DepthFunction::Always;
+        state.depth_write_enabled = false;
+        state.depth_format = Some(PicaDepthBufferFormat::D24S8);
+        state.stencil_write_enabled = true;
+
+        // First draw fails stencil, but REPLACE writes the reference value 9.
+        let rejected = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
+        assert_eq!(rejected.stencil_rejected_pixels, 28);
+        assert_eq!(rejected.shaded_pixels, 0);
+        let pixel_index = 6 * 8 + 1;
+        assert_eq!(rasterizer.stencil_buffer()[pixel_index], 9);
+        assert_eq!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
+
+        rasterizer.write_depth_buffer(depth_config, &mut memory).unwrap();
+        let stored = depth_config
+            .read_stencil_values(&memory)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored[pixel_index], 9);
+
+        // Now require stencil == 9 and increment on successful depth/stencil.
+        pica.write_register(
+            REG_STENCIL_TEST,
+            1 | (2 << 4) | (0xFF << 8) | (9 << 16) | (0xFF << 24),
+        )
+        .unwrap();
+        pica.write_register(REG_STENCIL_OP, 3 << 8).unwrap();
+        pipeline = pica.fragment_pipeline().unwrap();
+
+        let accepted = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
+        assert_eq!(accepted.stencil_rejected_pixels, 0);
+        assert_eq!(accepted.shaded_pixels, 28);
+        assert_eq!(rasterizer.stencil_buffer()[pixel_index], 10);
+        assert_ne!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
+
+        rasterizer.write_depth_buffer(depth_config, &mut memory).unwrap();
+        let stored = depth_config
+            .read_stencil_values(&memory)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored[pixel_index], 10);
+    }
+
+    #[test]
     fn clipping_interpolates_texture_coordinates_with_vertex_outputs() {
         let first = ClipVertex {
             varying: PicaFragmentVertex {
