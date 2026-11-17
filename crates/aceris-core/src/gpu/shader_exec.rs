@@ -765,7 +765,11 @@ mod tests {
             [0.0, 0.0, 0.0, 0.0],
             [0.0; 4],
         );
-        assert!(log_zero.iter().all(|value| value.is_infinite() && value.is_sign_negative()));
+        assert!(
+            log_zero
+                .iter()
+                .all(|value| value.is_infinite() && value.is_sign_negative())
+        );
 
         let log_negative = run_one(
             format1_unary(0x06, O0, V0),
