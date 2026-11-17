@@ -1221,26 +1221,56 @@ mod tests {
         let stored = depth_config.read_stencil_values(&memory).unwrap().unwrap();
         assert_eq!(stored[pixel_index], 9);
 
-        // Now require stencil == 9 and increment on successful depth/stencil.
+        // Stencil now matches, but depth fails. The depth-fail action increments.
+        depth_config
+            .write_depth_values(&vec![0.25; 64], &mut memory)
+            .unwrap();
+        rasterizer
+            .load_depth_buffer(depth_config, &memory, 1.0)
+            .unwrap();
         pica.write_register(
             REG_STENCIL_TEST,
             1 | (2 << 4) | (0xFF << 8) | (9 << 16) | (0xFF << 24),
         )
         .unwrap();
-        pica.write_register(REG_STENCIL_OP, 3 << 8).unwrap();
+        pica.write_register(REG_STENCIL_OP, 3 << 4).unwrap();
         pipeline = pica.fragment_pipeline().unwrap();
+        state.depth_function = DepthFunction::Less;
 
-        let accepted = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
-        assert_eq!(accepted.stencil_rejected_pixels, 0);
-        assert_eq!(accepted.shaded_pixels, 28);
+        let depth_rejected = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
+        assert_eq!(depth_rejected.stencil_rejected_pixels, 0);
+        assert!(depth_rejected.depth_rejected_pixels > 0);
+        assert_eq!(depth_rejected.shaded_pixels, 0);
         assert_eq!(rasterizer.stencil_buffer()[pixel_index], 10);
-        assert_ne!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
+        assert_eq!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
 
         rasterizer
             .write_depth_buffer(depth_config, &mut memory)
             .unwrap();
         let stored = depth_config.read_stencil_values(&memory).unwrap().unwrap();
         assert_eq!(stored[pixel_index], 10);
+
+        // An always-passing depth test now runs the depth-pass wrap operation.
+        pica.write_register(
+            REG_STENCIL_TEST,
+            1 | (2 << 4) | (0xFF << 8) | (10 << 16) | (0xFF << 24),
+        )
+        .unwrap();
+        pica.write_register(REG_STENCIL_OP, 6 << 8).unwrap();
+        pipeline = pica.fragment_pipeline().unwrap();
+        state.depth_function = DepthFunction::Always;
+
+        let accepted = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
+        assert_eq!(accepted.stencil_rejected_pixels, 0);
+        assert_eq!(accepted.shaded_pixels, 28);
+        assert_eq!(rasterizer.stencil_buffer()[pixel_index], 11);
+        assert_ne!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
+
+        rasterizer
+            .write_depth_buffer(depth_config, &mut memory)
+            .unwrap();
+        let stored = depth_config.read_stencil_values(&memory).unwrap().unwrap();
+        assert_eq!(stored[pixel_index], 11);
     }
 
     #[test]
