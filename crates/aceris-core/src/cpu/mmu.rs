@@ -107,12 +107,7 @@ impl MemoryAttributes {
     /// treated as write-allocate. This gate does not implement tag RAM or
     /// cache-to-cache snooping; it only selects the architecturally permitted
     /// L1 cache policy for the current platform state.
-    fn data_cache_policy(
-        self,
-        enabled: bool,
-        smp_enabled: bool,
-        scu_enabled: bool,
-    ) -> CachePolicy {
+    fn data_cache_policy(self, enabled: bool, smp_enabled: bool, scu_enabled: bool) -> CachePolicy {
         if self.memory_type != MemoryType::Normal {
             return CachePolicy::NonCacheable;
         }
@@ -936,10 +931,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         self.inner.read8_with_cache_policy(
             physical,
             attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
         )
     }
 
@@ -950,10 +945,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             physical,
             value,
             attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
         )
     }
 
@@ -962,10 +957,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         self.inner.read8_with_cache_policy(
             physical,
             attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
         )
     }
 
@@ -975,10 +970,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             physical,
             value,
             attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
         )
     }
 
@@ -988,10 +983,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             return self.inner.read32_with_cache_policy(
                 physical,
                 attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
             );
         }
         let mut bytes = [0u8; 4];
@@ -1008,10 +1003,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
                 physical,
                 value,
                 attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
             );
         }
         for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
@@ -1027,10 +1022,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             return self.inner.read16_with_cache_policy(
                 physical,
                 attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
             );
         }
         let lo = self.read8(addr)?;
@@ -1045,10 +1040,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             return self.inner.read32_with_cache_policy(
                 physical,
                 attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
             );
         }
         let mut bytes = [0u8; 4];
@@ -1066,10 +1061,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
                 physical,
                 value,
                 attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
             );
         }
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
@@ -1086,10 +1081,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
                 physical,
                 value,
                 attributes.data_cache_policy(
-                self.params.data_cache_enabled,
-                self.params.smp_enabled,
-                self.params.scu_enabled,
-            ),
+                    self.params.data_cache_enabled,
+                    self.params.smp_enabled,
+                    self.params.scu_enabled,
+                ),
             );
         }
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
@@ -1392,7 +1387,6 @@ mod tests {
             self.memory.write8(address, value)
         }
     }
-
 
     #[test]
     fn xp_section_retains_tex_cb_and_shareable_attributes() {
@@ -1740,7 +1734,8 @@ mod tests {
                 };
 
                 assert_eq!(
-                    actual, expected,
+                    actual,
+                    expected,
                     "unexpected attributes for TEX={tex:03b}, C={}, B={}",
                     u8::from(descriptor.cacheable),
                     u8::from(descriptor.bufferable),
