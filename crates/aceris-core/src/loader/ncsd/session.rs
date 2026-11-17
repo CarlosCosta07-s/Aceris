@@ -34,8 +34,7 @@ use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
 use kernel::{
     Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE, EventResetType,
-    KernelHandleError,
-    ServiceSessionKind,
+    KernelHandleError, ServiceSessionKind,
 };
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
