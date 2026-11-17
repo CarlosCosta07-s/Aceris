@@ -365,9 +365,7 @@ impl PicaTextureUnit {
                 + (f32::from(c10[channel]) - f32::from(c00[channel])) * amount_x;
             let bottom = f32::from(c01[channel])
                 + (f32::from(c11[channel]) - f32::from(c01[channel])) * amount_x;
-            result[channel] = (top + (bottom - top) * amount_y)
-                .round()
-                .clamp(0.0, 255.0) as u8;
+            result[channel] = (top + (bottom - top) * amount_y).round().clamp(0.0, 255.0) as u8;
         }
         Ok(result)
     }
@@ -530,7 +528,11 @@ impl std::fmt::Display for PicaTextureError {
             } => write!(
                 formatter,
                 "PICA texture unit {unit} uses unsupported {} filter {value}",
-                if *minifying { "minification" } else { "magnification" }
+                if *minifying {
+                    "minification"
+                } else {
+                    "magnification"
+                }
             ),
             Self::InvalidDimensions {
                 unit,
@@ -541,9 +543,14 @@ impl std::fmt::Display for PicaTextureError {
                 "PICA texture unit {unit} has invalid dimensions {width}x{height}"
             ),
             Self::InvalidCoordinates { s, t } => {
-                write!(formatter, "PICA texture coordinates ({s}, {t}) are not finite")
+                write!(
+                    formatter,
+                    "PICA texture coordinates ({s}, {t}) are not finite"
+                )
             }
-            Self::AddressOverflow => formatter.write_str("PICA texture address calculation overflowed"),
+            Self::AddressOverflow => {
+                formatter.write_str("PICA texture address calculation overflowed")
+            }
             Self::Memory(error) => write!(formatter, "PICA texture memory read failed: {error}"),
         }
     }
@@ -590,8 +597,11 @@ mod tests {
         pica.write_register(REG_TEXUNIT_CONFIG, 1).unwrap();
         pica.write_register(0x081, 0x8040_2010).unwrap();
         pica.write_register(0x082, (64 << 16) | 32).unwrap();
-        pica.write_register(0x083, (1 << 1) | (1 << 2) | (2 << 8) | (3 << 12) | (1 << 24))
-            .unwrap();
+        pica.write_register(
+            0x083,
+            (1 << 1) | (1 << 2) | (2 << 8) | (3 << 12) | (1 << 24),
+        )
+        .unwrap();
         pica.write_register(0x085, 0x0123_4567).unwrap();
         pica.write_register(0x08E, 0).unwrap();
 
@@ -617,12 +627,7 @@ mod tests {
         let unit = sample_unit(PicaTextureFormat::Rgba8);
         assert_eq!(
             unit.sample(&memory, 3.5 / 8.0, 5.5 / 8.0, false).unwrap(),
-            [
-                10.0 / 255.0,
-                20.0 / 255.0,
-                30.0 / 255.0,
-                40.0 / 255.0
-            ]
+            [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 40.0 / 255.0]
         );
     }
 
@@ -702,8 +707,7 @@ mod tests {
     fn linear_filter_interpolates_four_texels_and_edge_clamp_is_stable() {
         let mut memory = GpuPhysicalMemory::new();
         let mut tiled = vec![0; TILE_PIXELS * 4];
-        for (x, color) in [[0u8, [0, 0, 0, 255]], [1, [255, 0, 0, 255]]]
-        {
+        for (x, color) in [[0u8, [0, 0, 0, 255]], [1, [255, 0, 0, 255]]] {
             let offset = morton_index(x as usize, 0) * 4;
             tiled[offset..offset + 4].copy_from_slice(&color);
         }
@@ -730,7 +734,10 @@ mod tests {
         pica.write_register(0x08E, 0xC).unwrap();
         assert!(matches!(
             PicaTextureUnit::from_pica(&pica, 0),
-            Err(PicaTextureError::UnsupportedFormat { unit: 0, format: 0xC })
+            Err(PicaTextureError::UnsupportedFormat {
+                unit: 0,
+                format: 0xC
+            })
         ));
     }
 }
