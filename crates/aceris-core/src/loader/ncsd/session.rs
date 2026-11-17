@@ -41,7 +41,8 @@ use svc::{
     SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
-    SVC_GET_PROCESS_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY,
+    SVC_GET_PROCESS_INFO, SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK,
+    SVC_QUERY_MEMORY,
     SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY,
     SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK,
     SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
@@ -1959,6 +1960,7 @@ impl Arm11ProcessSession {
             SVC_DUPLICATE_HANDLE => self.svc_duplicate_handle(caller),
             SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
             SVC_GET_PROCESS_INFO => self.svc_get_process_info(caller),
+            SVC_GET_THREAD_INFO => self.svc_get_thread_info(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
@@ -3097,6 +3099,25 @@ impl Arm11ProcessSession {
                 core.regs[2] = (value >> 32) as u32;
             }
         }
+        self.write_svc_result(caller, result)
+    }
+
+    /// Handles GetThreadInfo using r1 = thread handle and r2 = information type.
+    ///
+    /// Current 3DS kernels always reject this SVC after checking the handle type:
+    /// thread handles return InvalidEnum, while non-thread/invalid handles return
+    /// InvalidHandle. The information type and output registers are not consumed.
+    fn svc_get_thread_info(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let handle = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs[1];
+        let result = if self.kernel_objects.thread_id(handle, caller).is_some() {
+            RESULT_INVALID_ENUM
+        } else {
+            RESULT_INVALID_HANDLE
+        };
         self.write_svc_result(caller, result)
     }
 
@@ -5565,6 +5586,59 @@ mod tests {
             session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
             RESULT_INVALID_ENUM
         );
+    }
+
+    #[test]
+    fn get_thread_info_svc_matches_kernel_handle_type_checks() {
+        let mut session = test_session();
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x30, 0)
+            .unwrap();
+        let thread_handle = session.kernel_objects.insert_thread(target).unwrap();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+
+        // A real thread handle always yields InvalidEnum, regardless of type.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[0] = 0xDEAD_BEEF;
+            main.regs[1] = thread_handle;
+            main.regs[2] = 0xFFFF;
+        }
+        assert!(matches!(
+            session.dispatch_svc(SVC_GET_THREAD_INFO),
+            SvcRunDisposition::Resume
+        ));
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+            RESULT_INVALID_ENUM
+        );
+
+        // The current-thread pseudo-handle is also a thread handle.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = CURRENT_THREAD_HANDLE;
+            main.regs[2] = 0;
+        }
+        session.dispatch_svc(SVC_GET_THREAD_INFO);
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+            RESULT_INVALID_ENUM
+        );
+
+        // Non-thread objects, the process pseudo-handle and invalid handles
+        // all take the kernel's InvalidHandle path.
+        for handle in [event, CURRENT_PROCESS_HANDLE, 0xDEAD_BEEF] {
+            session.scheduler.core_mut(MAIN_THREAD_ID).unwrap().regs[1] = handle;
+            session.dispatch_svc(SVC_GET_THREAD_INFO);
+            assert_eq!(
+                session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+                RESULT_INVALID_HANDLE
+            );
+        }
     }
 
     #[test]
