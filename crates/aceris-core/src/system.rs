@@ -5719,10 +5719,10 @@ mod tests {
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
             REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
-            REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
-            REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
-            REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
-            REG_LOGIC_OP, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
+            REG_LOGIC_OP, REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_TEXUNIT_CONFIG,
+            REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
+            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
         };
         use crate::video::{
             PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_SELECT,
@@ -6179,7 +6179,10 @@ mod tests {
         let mut native_pixel = [0u8; 4];
         system
             .physical_memory()
-            .read(linear_framebuffer_physical + sample as u32, &mut native_pixel)
+            .read(
+                linear_framebuffer_physical + sample as u32,
+                &mut native_pixel,
+            )
             .unwrap();
         assert_eq!(native_pixel, [255, 56, 34, 12]);
     }
