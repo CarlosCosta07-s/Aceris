@@ -232,8 +232,10 @@ pub struct Arm11ProcessSession {
     kernel_objects: Arm11KernelObjectTable,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
     wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
-    /// Handle lists of threads blocked in WaitSynchronizationN.
+    /// Handle lists of threads blocked in WaitSynchronizationN wait-any mode.
     multi_waits: BTreeMap<ThreadId, Vec<u32>>,
+    /// Handle sets of threads blocked in WaitSynchronizationN wait-all mode.
+    wait_all_waits: BTreeMap<ThreadId, Vec<u32>>,
     gpu_memory: Option<GpuPhysicalMemory>,
     gpu_address_space: Option<GpuDmaAddressSpace>,
     instruction_count: u64,
@@ -259,6 +261,7 @@ impl Arm11ProcessSession {
             kernel_objects: Arm11KernelObjectTable::default(),
             wait_deadlines: BTreeMap::new(),
             multi_waits: BTreeMap::new(),
+            wait_all_waits: BTreeMap::new(),
             gpu_memory: None,
             gpu_address_space: None,
             instruction_count: 0,
@@ -539,7 +542,9 @@ impl Arm11ProcessSession {
 
     /// Closes a process-local handle through the kernel object table.
     pub fn close_handle(&mut self, handle: u32) -> std::result::Result<(), KernelHandleError> {
-        self.kernel_objects.close_handle(handle)
+        self.kernel_objects.close_handle(handle)?;
+        self.service_wait_all_waiters();
+        Ok(())
     }
 
     /// Creates a zero-filled, page-aligned shared-memory block in the process kernel table.
@@ -1595,6 +1600,7 @@ impl Arm11ProcessSession {
     ) -> std::result::Result<(), KernelHandleError> {
         let awakened = self.kernel_objects.signal_event(handle)?;
         self.wake_synchronization_waiters(awakened);
+        self.service_wait_all_waiters();
         Ok(())
     }
 
@@ -1738,6 +1744,9 @@ impl Arm11ProcessSession {
         let now = self.scheduler.virtual_time_ns();
         let timer_awakened = self.kernel_objects.advance_time(now);
         self.wake_synchronization_waiters(timer_awakened);
+        // A timer without a wait-any FIFO waiter may still complete a wait-all
+        // request. Check object sets before applying deadlines at this instant.
+        self.service_wait_all_waiters();
         let expired = self
             .wait_deadlines
             .iter()
@@ -1747,6 +1756,7 @@ impl Arm11ProcessSession {
         for thread in expired {
             if self.wait_deadlines.remove(&thread).is_some() {
                 self.multi_waits.remove(&thread);
+                self.wait_all_waits.remove(&thread);
                 self.kernel_objects.take_handoff(thread);
                 self.kernel_objects.remove_waiter(thread);
                 if let Some(core) = self.scheduler.core_mut(thread) {
@@ -2489,9 +2499,13 @@ impl Arm11ProcessSession {
         match self.kernel_objects.release_mutex(handle, caller) {
             Ok(Some(waiter)) => {
                 self.wake_synchronization_waiters([waiter]);
+                self.service_wait_all_waiters();
                 self.write_svc_result(caller, 0)
             }
-            Ok(None) => self.write_svc_result(caller, 0),
+            Ok(None) => {
+                self.service_wait_all_waiters();
+                self.write_svc_result(caller, 0)
+            },
             Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
         }
     }
@@ -2543,6 +2557,7 @@ impl Arm11ProcessSession {
         };
         let awakened_count = awakened.len() as u32;
         self.wake_synchronization_waiters(awakened);
+        self.service_wait_all_waiters();
         if self
             .address_space
             .write32(output_address, awakened_count)
@@ -2615,8 +2630,9 @@ impl Arm11ProcessSession {
     /// the selected index in `r1`. Since the wrapper stores `r1` even when
     /// the SVC fails, the handler initializes it to zero before validation.
     ///
-    /// Wait-all with more than one handle is not modelled yet and stops the run
-    /// loudly instead of returning a misleading success.
+    /// Wait-all preflights and acquires the complete set atomically. Blocked
+    /// requests are rechecked when an object changes state and do not consume
+    /// one-shot signals until every handle is ready.
     fn svc_wait_synchronization_n(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
             .scheduler
@@ -2641,12 +2657,6 @@ impl Arm11ProcessSession {
         if !(0..=0x40).contains(&count) {
             return self.write_svc_result(caller, RESULT_OUT_OF_RANGE);
         }
-        if wait_all && count > 1 {
-            return SvcRunDisposition::KernelServiceError {
-                number: SVC_WAIT_SYNCHRONIZATION_N,
-                result: RESULT_INVALID_ENUM,
-            };
-        }
         if timeout < -1 {
             return self.write_svc_result(caller, RESULT_INVALID_TIMEOUT);
         }
@@ -2659,6 +2669,46 @@ impl Arm11ProcessSession {
                 Ok(handle) => handles.push(handle),
                 Err(_) => return self.write_svc_result(caller, RESULT_INVALID_ADDRESS),
             }
+        }
+
+        if wait_all {
+            match self
+                .kernel_objects
+                .try_wait_synchronization_all(&handles, caller)
+            {
+                Ok(true) => return self.write_svc_result(caller, 0),
+                Ok(false) => {}
+                Err(error) => {
+                    return self.write_svc_result(caller, kernel_handle_result_code(error));
+                }
+            }
+
+            if timeout == 0 {
+                return self.write_svc_result(caller, RESULT_TIMEOUT);
+            }
+
+            self.wait_all_waits.insert(caller, handles.clone());
+            if timeout > 0 {
+                let deadline = self
+                    .scheduler
+                    .virtual_time_ns()
+                    .saturating_add(timeout as u64);
+                let first = handles.first().copied().unwrap_or(0);
+                self.wait_deadlines.insert(caller, (first, deadline));
+            }
+
+            return match self.scheduler.wait_current() {
+                Ok(Some(_)) => SvcRunDisposition::Resume,
+                Ok(None) => SvcRunDisposition::NoRunnableThread,
+                Err(_) => {
+                    self.wait_deadlines.remove(&caller);
+                    self.wait_all_waits.remove(&caller);
+                    SvcRunDisposition::KernelServiceError {
+                        number: SVC_WAIT_SYNCHRONIZATION_N,
+                        result: RESULT_INVALID_ENUM,
+                    }
+                }
+            };
         }
 
         for (index, handle) in handles.iter().enumerate() {
@@ -2735,6 +2785,42 @@ impl Arm11ProcessSession {
         }
     }
 
+    /// Rechecks blocked wait-all requests after synchronization state changes.
+    ///
+    /// Each successful request acquires its complete handle set atomically.
+    /// Failed readiness checks leave every object untouched; invalidated
+    /// handles complete the request with the corresponding kernel error.
+    fn service_wait_all_waiters(&mut self) {
+        let waiting_threads = self.wait_all_waits.keys().copied().collect::<Vec<_>>();
+        let mut completed = Vec::new();
+
+        for thread in waiting_threads {
+            let Some(handles) = self.wait_all_waits.get(&thread).cloned() else {
+                continue;
+            };
+
+            match self
+                .kernel_objects
+                .try_wait_synchronization_all(&handles, thread)
+            {
+                Ok(true) => completed.push((thread, 0)),
+                Ok(false) => {}
+                Err(error) => completed.push((thread, kernel_handle_result_code(error))),
+            }
+        }
+
+        for (thread, result) in completed {
+            self.wait_all_waits.remove(&thread);
+            self.wait_deadlines.remove(&thread);
+            if let Some(core) = self.scheduler.core_mut(thread) {
+                core.regs[0] = result;
+                // Wait-all has no single selected handle index.
+                core.regs[1] = 0;
+            }
+            let _ = self.scheduler.wake_thread(thread);
+        }
+    }
+
     /// Handles CreateTimer: r0 points to the output handle and r1 is ResetType.
     fn svc_create_timer(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
@@ -2780,6 +2866,7 @@ impl Arm11ProcessSession {
             Ok(()) => {
                 let awakened = self.kernel_objects.advance_time(now_ns);
                 self.wake_synchronization_waiters(awakened);
+                self.service_wait_all_waiters();
                 self.write_svc_result(caller, 0)
             }
             Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
@@ -2882,7 +2969,6 @@ impl Arm11ProcessSession {
             .expect("current thread context exists")
             .regs[0];
         let result = self
-            .kernel_objects
             .close_handle(handle)
             .map(|()| 0)
             .unwrap_or_else(kernel_handle_result_code);
@@ -5426,21 +5512,161 @@ mod tests {
     }
 
     #[test]
-    fn wait_synchronization_n_wait_all_with_several_handles_is_not_silently_modelled() {
+    fn wait_synchronization_n_wait_all_does_not_consume_a_partial_signal_set() {
         let mut session = test_session_with_program(&[0xEF00_0025]);
         let (first, second) = two_events(&mut session);
-        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first, second], -1);
-        session.scheduler.current_core_mut().unwrap().regs[3] = 1;
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        wait_n_setup(&mut session, child, &[first, second], -1);
+        session.scheduler.core_mut(child).unwrap().regs[3] = 1;
 
-        let disposition = session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
 
-        assert!(matches!(
-            disposition,
-            SvcRunDisposition::KernelServiceError {
-                number: SVC_WAIT_SYNCHRONIZATION_N,
-                ..
-            }
-        ));
+        session.signal_event_handle(first).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
+        assert_eq!(session.event_handle_is_signaled(first), Some(true));
+        assert_eq!(session.event_handle_is_signaled(second), Some(false));
+
+        session.signal_event_handle(second).unwrap();
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Running);
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
+        assert_eq!(session.scheduler.core(child).unwrap().regs[1], 0);
+        assert_eq!(session.event_handle_is_signaled(first), Some(false));
+        assert_eq!(session.event_handle_is_signaled(second), Some(false));
+    }
+
+    #[test]
+    fn wait_synchronization_n_wait_all_timeout_preserves_unacquired_signals() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let (first, second) = two_events(&mut session);
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        wait_n_setup(&mut session, child, &[first, second], 100);
+        session.scheduler.core_mut(child).unwrap().regs[3] = 1;
+
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        session.signal_event_handle(first).unwrap();
+        assert_eq!(session.event_handle_is_signaled(first), Some(true));
+        session.advance_time(99);
+        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
+
+        session.advance_time(1);
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], RESULT_TIMEOUT);
+        assert_eq!(session.scheduler.core(child).unwrap().regs[1], 0);
+        assert_eq!(session.event_handle_is_signaled(first), Some(true));
+        assert_eq!(session.event_handle_is_signaled(second), Some(false));
+        assert!(!session.wait_all_waits.contains_key(&child));
+    }
+
+    #[test]
+    fn wait_synchronization_n_wait_all_acquires_mixed_objects_atomically() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let (event, _) = two_events(&mut session);
+        let semaphore = session.kernel_objects.insert_semaphore(0, 1).unwrap();
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        wait_n_setup(&mut session, child, &[event, semaphore], -1);
+        session.scheduler.core_mut(child).unwrap().regs[3] = 1;
+
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        session.signal_event_handle(event).unwrap();
+        assert_eq!(session.event_handle_is_signaled(event), Some(true));
+        assert_eq!(session.kernel_objects.semaphore_counts(semaphore), Some((0, 1)));
+        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
+
+        {
+            let core = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            core.regs[0] = 0x0020_0000;
+            core.regs[1] = semaphore;
+            core.regs[2] = 1;
+        }
+        session.dispatch_svc(SVC_RELEASE_SEMAPHORE);
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
+        assert_eq!(session.scheduler.core(child).unwrap().regs[1], 0);
+        assert_eq!(session.event_handle_is_signaled(event), Some(false));
+        assert_eq!(session.kernel_objects.semaphore_counts(semaphore), Some((0, 1)));
+    }
+
+    #[test]
+    fn wait_synchronization_n_wait_all_runs_through_the_guest_abi_veneer() {
+        let mut session = libctru_wait_n_wrapper_session();
+        let (first, second) = two_events(&mut session);
+        let out_address = 0x0020_0180;
+        let handles_address = 0x0020_0100;
+        let stack_pointer = 0x0020_1F00;
+        let timeout = -1_i64;
+
+        session
+            .address_space
+            .write32(out_address, 0xCAFE_BABE)
+            .unwrap();
+        session
+            .address_space
+            .write32(handles_address, first)
+            .unwrap();
+        session
+            .address_space
+            .write32(handles_address + 4, second)
+            .unwrap();
+        session
+            .address_space
+            .write32(stack_pointer, timeout as u32)
+            .unwrap();
+        session
+            .address_space
+            .write32(stack_pointer + 4, (timeout >> 32) as u32)
+            .unwrap();
+
+        {
+            let core = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            core.regs[0] = out_address;
+            core.regs[1] = handles_address;
+            core.regs[2] = 2;
+            core.regs[3] = 1;
+            core.regs[4] = 0x4444_4444;
+            core.regs[5] = 0x5555_5555;
+            core.regs[13] = stack_pointer;
+            core.regs[14] = 0x0010_0028;
+        }
+
+        let report = session.run_instructions(6).unwrap();
+        assert_eq!(report.stop_reason, Arm11RunStopReason::NoRunnableThread);
+        assert_eq!(
+            session.address_space.read32(out_address).unwrap(),
+            0xCAFE_BABE
+        );
+
+        session.signal_event_handle(first).unwrap();
+        assert_eq!(session.current_thread_id(), None);
+        assert_eq!(session.address_space.read32(out_address).unwrap(), 0xCAFE_BABE);
+        session.signal_event_handle(second).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        let regs = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!((regs[0], regs[1]), (0, 0));
+
+        let epilogue = session.run_instructions(5).unwrap();
+        assert_eq!(epilogue.stop_reason, Arm11RunStopReason::Breakpoint(0));
+        assert_eq!(session.read_memory_u32(out_address).unwrap(), 0);
+        assert_eq!(session.core().regs[4], 0x4444_4444);
+        assert_eq!(session.core().regs[5], 0x5555_5555);
+        assert_eq!(session.core().regs[13], stack_pointer);
     }
 
     #[test]
