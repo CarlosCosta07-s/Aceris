@@ -336,7 +336,7 @@ fn print_summary(options: &Options, summary: BenchmarkSummary<'_>) {
     );
 }
 
-fn dump_lcd(system: &System, directory: &PathBuf) -> Result<(), String> {
+fn dump_lcd(system: &System, directory: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("could not create LCD output directory: {error}"))?;
     for (name, surface) in [
