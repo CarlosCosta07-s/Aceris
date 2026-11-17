@@ -178,7 +178,11 @@ pub enum PicaShaderExecError {
     /// A control-flow target or block boundary lies outside uploaded code.
     InvalidControlFlowTarget { index: usize, target: usize },
     /// A conditional flow instruction names a special constant outside its bank.
-    InvalidFlowConstant { index: usize, constant: usize, integer: bool },
+    InvalidFlowConstant {
+        index: usize,
+        constant: usize,
+        integer: bool,
+    },
     /// A CALL would exceed the hardware's four-level nesting limit.
     CallStackOverflow { index: usize },
     /// An IF would exceed the hardware's eight-level nesting limit.
@@ -213,22 +217,35 @@ impl std::fmt::Display for PicaShaderExecError {
                 formatter,
                 "shader instruction {index} targets invalid code offset {target}"
             ),
-            Self::InvalidFlowConstant { index, constant, integer } => write!(
+            Self::InvalidFlowConstant {
+                index,
+                constant,
+                integer,
+            } => write!(
                 formatter,
                 "shader instruction {index} uses invalid {} constant {constant}",
                 if *integer { "integer" } else { "boolean" }
             ),
             Self::CallStackOverflow { index } => {
-                write!(formatter, "shader CALL stack overflow at instruction {index}")
+                write!(
+                    formatter,
+                    "shader CALL stack overflow at instruction {index}"
+                )
             }
             Self::IfStackOverflow { index } => {
                 write!(formatter, "shader IF stack overflow at instruction {index}")
             }
             Self::LoopStackOverflow { index } => {
-                write!(formatter, "shader LOOP stack overflow at instruction {index}")
+                write!(
+                    formatter,
+                    "shader LOOP stack overflow at instruction {index}"
+                )
             }
             Self::BreakOutsideLoop { index } => {
-                write!(formatter, "shader BREAK at instruction {index} has no active LOOP")
+                write!(
+                    formatter,
+                    "shader BREAK at instruction {index} has no active LOOP"
+                )
             }
             Self::BreakInsideCall { index } => write!(
                 formatter,
@@ -239,7 +256,10 @@ impl std::fmt::Display for PicaShaderExecError {
                 "geometry-shader instruction {opcode:#04x} at {index} cannot run in the vertex stage"
             ),
             Self::InstructionBudgetExceeded { budget } => {
-                write!(formatter, "shader exceeded the {budget}-instruction execution budget")
+                write!(
+                    formatter,
+                    "shader exceeded the {budget}-instruction execution budget"
+                )
             }
         }
     }
@@ -350,12 +370,13 @@ impl PicaVertexShaderProgram {
             let opcode = PicaShaderOpcode::from_word(word)
                 .ok_or(PicaShaderExecError::UnsupportedOpcode { index, word })?;
             executed_instructions += 1;
-            let mut next_index = index.checked_add(1).ok_or(
-                PicaShaderExecError::InvalidControlFlowTarget {
-                    index,
-                    target: usize::MAX,
-                },
-            )?;
+            let mut next_index =
+                index
+                    .checked_add(1)
+                    .ok_or(PicaShaderExecError::InvalidControlFlowTarget {
+                        index,
+                        target: usize::MAX,
+                    })?;
             match opcode {
                 PicaShaderOpcode::Nop => {}
                 PicaShaderOpcode::End => {
@@ -434,8 +455,14 @@ enum ControlStackKind {
 
 #[derive(Clone, Copy)]
 enum ControlFrame {
-    Call { return_pc: usize, end_pc: usize },
-    If { else_pc: usize, resume_pc: usize },
+    Call {
+        return_pc: usize,
+        end_pc: usize,
+    },
+    If {
+        else_pc: usize,
+        resume_pc: usize,
+    },
     Loop {
         start_pc: usize,
         end_pc: usize,
@@ -683,12 +710,16 @@ impl Machine<'_> {
         index: usize,
         required: ControlStackKind,
     ) -> Result<(), PicaShaderExecError> {
-        let count = self.control_stack.iter().filter(|frame| match (required, frame) {
-            (ControlStackKind::Call, ControlFrame::Call { .. }) => true,
-            (ControlStackKind::If, ControlFrame::If { .. }) => true,
-            (ControlStackKind::Loop, ControlFrame::Loop { .. }) => true,
-            _ => false,
-        }).count();
+        let count = self
+            .control_stack
+            .iter()
+            .filter(|frame| match (required, frame) {
+                (ControlStackKind::Call, ControlFrame::Call { .. }) => true,
+                (ControlStackKind::If, ControlFrame::If { .. }) => true,
+                (ControlStackKind::Loop, ControlFrame::Loop { .. }) => true,
+                _ => false,
+            })
+            .count();
         let limit = match required {
             ControlStackKind::Call => CALL_STACK_LIMIT,
             ControlStackKind::If => IF_STACK_LIMIT,
@@ -850,12 +881,12 @@ impl Machine<'_> {
     ) -> Result<(), PicaShaderExecError> {
         self.ensure_control_capacity(index, ControlStackKind::Call)?;
         let target = self.absolute_target(index, destination)?;
-        let end_pc = target
-            .checked_add(usize::from(instruction_count))
-            .ok_or(PicaShaderExecError::InvalidControlFlowTarget {
+        let end_pc = target.checked_add(usize::from(instruction_count)).ok_or(
+            PicaShaderExecError::InvalidControlFlowTarget {
                 index,
                 target: usize::MAX,
-            })?;
+            },
+        )?;
         if end_pc > self.program.code.len() {
             return Err(PicaShaderExecError::InvalidControlFlowTarget {
                 index,
@@ -879,12 +910,12 @@ impl Machine<'_> {
         next_pc: &mut usize,
     ) -> Result<(), PicaShaderExecError> {
         let else_pc = self.absolute_target(index, destination)?;
-        let resume_pc = else_pc
-            .checked_add(usize::from(instruction_count))
-            .ok_or(PicaShaderExecError::InvalidControlFlowTarget {
+        let resume_pc = else_pc.checked_add(usize::from(instruction_count)).ok_or(
+            PicaShaderExecError::InvalidControlFlowTarget {
                 index,
                 target: usize::MAX,
-            })?;
+            },
+        )?;
         if resume_pc > self.program.code.len() {
             return Err(PicaShaderExecError::InvalidControlFlowTarget {
                 index,
@@ -894,7 +925,8 @@ impl Machine<'_> {
         if condition {
             if instruction_count != 0 {
                 self.ensure_control_capacity(index, ControlStackKind::If)?;
-                self.control_stack.push(ControlFrame::If { else_pc, resume_pc });
+                self.control_stack
+                    .push(ControlFrame::If { else_pc, resume_pc });
             }
         } else {
             *next_pc = else_pc;
@@ -911,12 +943,12 @@ impl Machine<'_> {
     ) -> Result<(), PicaShaderExecError> {
         self.ensure_control_capacity(index, ControlStackKind::Loop)?;
         let end_instruction = self.absolute_target(index, destination)?;
-        let end_pc = end_instruction
-            .checked_add(1)
-            .ok_or(PicaShaderExecError::InvalidControlFlowTarget {
+        let end_pc = end_instruction.checked_add(1).ok_or(
+            PicaShaderExecError::InvalidControlFlowTarget {
                 index,
                 target: usize::MAX,
-            })?;
+            },
+        )?;
         if end_instruction < *next_pc || end_instruction >= self.program.code.len() {
             return Err(PicaShaderExecError::InvalidControlFlowTarget {
                 index,
@@ -933,11 +965,7 @@ impl Machine<'_> {
         Ok(())
     }
 
-    fn break_loop(
-        &mut self,
-        index: usize,
-        next_pc: &mut usize,
-    ) -> Result<(), PicaShaderExecError> {
+    fn break_loop(&mut self, index: usize, next_pc: &mut usize) -> Result<(), PicaShaderExecError> {
         let loop_index = self
             .control_stack
             .iter()
@@ -1214,7 +1242,12 @@ mod tests {
             | instruction_count
     }
 
-    fn format3(opcode: u32, instruction_count: u32, destination_offset: u32, constant_id: u32) -> u32 {
+    fn format3(
+        opcode: u32,
+        instruction_count: u32,
+        destination_offset: u32,
+        constant_id: u32,
+    ) -> u32 {
         (opcode << 26) | (constant_id << 22) | (destination_offset << 10) | instruction_count
     }
 
@@ -1716,15 +1749,11 @@ mod tests {
             &[plain_descriptor(0b1111)],
             &[],
         );
-        let true_result = program
-            .run(0, &inputs([1.0; 4], [2.0; 4]))
-            .unwrap();
+        let true_result = program.run(0, &inputs([1.0; 4], [2.0; 4])).unwrap();
         assert_eq!(true_result.outputs[0], [1.0; 4]);
         assert_eq!(true_result.outputs[1], [0.0; 4]);
 
-        let false_result = program
-            .run(0, &inputs([3.0; 4], [2.0; 4]))
-            .unwrap();
+        let false_result = program.run(0, &inputs([3.0; 4], [2.0; 4])).unwrap();
         assert_eq!(false_result.outputs[0], [0.0; 4]);
         assert_eq!(false_result.outputs[1], [2.0; 4]);
     }
@@ -1819,7 +1848,10 @@ mod tests {
         );
         assert_eq!(
             invalid_call.run(0, &input),
-            Err(PicaShaderExecError::InvalidControlFlowTarget { index: 0, target: 7 })
+            Err(PicaShaderExecError::InvalidControlFlowTarget {
+                index: 0,
+                target: 7
+            })
         );
 
         let endless = PicaVertexShaderProgram::from_words(

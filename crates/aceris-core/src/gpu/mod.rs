@@ -127,9 +127,9 @@ pub use render_target::{
     REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
 };
 pub use shader_exec::{
-    PicaShaderExecError, PicaShaderOpcode, PicaVertexShaderOutput, PicaVertexShaderProgram,
-    MAX_SHADER_EXECUTION_INSTRUCTIONS, SHADER_INPUT_REGISTERS, SHADER_OUTPUT_REGISTERS,
-    SHADER_TEMPORARY_REGISTERS,
+    MAX_SHADER_EXECUTION_INSTRUCTIONS, PicaShaderExecError, PicaShaderOpcode,
+    PicaVertexShaderOutput, PicaVertexShaderProgram, SHADER_INPUT_REGISTERS,
+    SHADER_OUTPUT_REGISTERS, SHADER_TEMPORARY_REGISTERS,
 };
 pub use shader_input::{
     MAX_VERTEX_SHADER_INPUTS, MAX_VERTEX_SHADER_REGISTERS, PicaVertexShaderInputLayout,
