@@ -410,6 +410,64 @@ impl Arm11KernelObjectTable {
         }
     }
 
+    /// Returns the target thread associated with a regular thread handle.
+    pub fn thread_handle_target(&self, handle: u32) -> Option<ThreadId> {
+        match self.objects.get(&handle) {
+            Some(KernelObject::Thread(thread)) => Some(thread.id),
+            _ => None,
+        }
+    }
+
+    /// Counts the process-local handles that keep a thread object alive.
+    pub fn thread_handle_count(&self, thread_id: ThreadId) -> usize {
+        self.objects
+            .values()
+            .filter(|object| {
+                matches!(object, KernelObject::Thread(thread) if thread.id == thread_id)
+            })
+            .count()
+    }
+
+    /// Releases every mutex owned by a terminating thread.
+    ///
+    /// Ownership is transferred to the oldest waiter on each mutex, just as
+    /// ReleaseMutex does. A wait-any thread is handed at most one mutex: once
+    /// selected, it is removed from every other synchronization queue before
+    /// the next owned mutex is processed.
+    pub fn release_owned_mutexes(&mut self, owner: ThreadId) -> Vec<ThreadId> {
+        let owned_handles = self
+            .objects
+            .iter()
+            .filter_map(|(handle, object)| {
+                matches!(object, KernelObject::Mutex(mutex) if mutex.owner == Some(owner))
+                    .then_some(*handle)
+            })
+            .collect::<Vec<_>>();
+        let mut awakened = Vec::new();
+
+        for handle in owned_handles {
+            let waiter = match self.objects.get_mut(&handle) {
+                Some(KernelObject::Mutex(mutex)) => {
+                    let waiter = mutex.waiters.pop_front();
+                    mutex.owner = waiter;
+                    waiter
+                }
+                _ => None,
+            };
+
+            let Some(waiter) = waiter else {
+                continue;
+            };
+            self.handoffs.insert(waiter, handle);
+            self.remove_waiter(waiter);
+            if !awakened.contains(&waiter) {
+                awakened.push(waiter);
+            }
+        }
+
+        awakened
+    }
+
     /// Creates an unsignaled event and returns its guest-visible handle.
     pub fn insert_event(&mut self, reset_type: EventResetType) -> Result<u32, KernelHandleError> {
         self.insert(KernelObject::Event(KernelEvent {
@@ -943,6 +1001,39 @@ mod tests {
         } else {
             scheduler.create_thread(0x1000, 0, 0x2000, 0x30, 0).unwrap()
         }
+    }
+
+    #[test]
+    fn thread_handles_are_counted_until_closed() {
+        let mut table = Arm11KernelObjectTable::default();
+        let target = thread_id(2);
+        let handle = table.insert_thread(target).unwrap();
+
+        assert_eq!(table.thread_handle_target(handle), Some(target));
+        assert_eq!(table.thread_handle_count(target), 1);
+        table.close_handle(handle).unwrap();
+        assert_eq!(table.thread_handle_count(target), 0);
+    }
+
+    #[test]
+    fn thread_exit_releases_owned_mutexes_and_deduplicates_wait_any_waiters() {
+        let mut table = Arm11KernelObjectTable::default();
+        let owner = thread_id(2);
+        let first_waiter = thread_id(3);
+        let second_waiter = thread_id(4);
+        let first_mutex = table.insert_mutex(true, owner).unwrap();
+        let second_mutex = table.insert_mutex(true, owner).unwrap();
+
+        table.enqueue_waiter(first_mutex, first_waiter).unwrap();
+        table.enqueue_waiter(second_mutex, first_waiter).unwrap();
+        table.enqueue_waiter(second_mutex, second_waiter).unwrap();
+
+        let awakened = table.release_owned_mutexes(owner);
+        assert_eq!(awakened, vec![first_waiter, second_waiter]);
+        assert_eq!(table.mutex_owner(first_mutex), Some(first_waiter));
+        assert_eq!(table.mutex_owner(second_mutex), Some(second_waiter));
+        assert_eq!(table.take_handoff(first_waiter), Some(first_mutex));
+        assert_eq!(table.take_handoff(second_waiter), Some(second_mutex));
     }
 
     #[test]
