@@ -19,8 +19,7 @@ mod vfp;
 pub use condition::Condition;
 pub use cp15::Cp15;
 pub use mpcore_scu::{
-    MpcoreScu, MPCORE_PRIVATE_MEMORY_BASE, MPCORE_PRIVATE_MEMORY_SIZE,
-    SCU_REGISTER_WINDOW_SIZE,
+    MPCORE_PRIVATE_MEMORY_BASE, MPCORE_PRIVATE_MEMORY_SIZE, MpcoreScu, SCU_REGISTER_WINDOW_SIZE,
 };
 pub use psr::Psr;
 pub use vfp::Vfp;
