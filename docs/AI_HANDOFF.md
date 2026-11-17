@@ -1860,3 +1860,22 @@ Carlos autorizou a intervenção nas áreas anteriormente atribuídas a outro ag
 - A CI anterior falhou em Rustfmt, antes de build, Clippy e testes completos. Conferir o workflow associado ao HEAD depois dos ajustes e correções conceituais antes de declarar validação multiplataforma.
 
 **Resultado:** viewport e mapeamento básico de profundidade guest-side estão ligados ao draw, com a interpretação Z/W marcada como hipótese. Isto é um avanço parcial da pipeline PICA200, não uma declaração de compatibilidade gráfica comercial.
+
+
+## PICA200 — EX2 e LG2 no executor do vertex shader (17/11/2026)
+
+Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribuição altera somente `crates/aceris-core/src/gpu/shader_exec.rs` no código de produção; o executor permanece em Rust e sem dependências externas.
+
+### Implementação
+
+- Commit `c6f6fe52498fcfb4589347ce6ce5ea3d1d5840af` adiciona os opcodes `EX2` (`0x05`) e `LG2` (`0x06`) à enumeração, à tabela de decodificação e ao formato unário.
+- A entrada é o primeiro lane do SRC1 depois do swizzle e da negação do operand descriptor. O escalar `exp2` ou `log2` é replicado para os quatro lanes; a máscara do destino continua aplicada no writeback existente.
+- Testes novos: `ex2_and_lg2_broadcast_the_first_swizzled_source_lane` e `ex2_and_lg2_respect_destination_masks_and_ieee_domain_results`. A regressão da tabela de opcodes confirma EX2/LG2 reconhecidos e mantém MOVA, CMP, CALL, DST e LITP rejeitados.
+- A implementação usa funções IEEE `f32`; não afirma reproduzir precisão float24 ou aproximações numéricas do PICA200.
+
+### Pesquisa e limites
+
+- A pesquisa técnica independente está registrada na seção 11 de `docs/INDEPENDENT_RESEARCH.md`: 3dbrew documenta os resultados escalares/broadcast; a revisão Azahar `11eceda5e0e682a1f44e396bf954a1b9137097ca`, arquivo `src/video_core/shader/shader_jit_x64_compiler.cpp`, confirma os slots 0x05/0x06 e o formato unário. Nenhum código, teste, fixture, shader ou estrutura de terceiros foi incorporado.
+- DST permanece desligada: a documentação 3dbrew associa 0x04 a DST, mas a tabela JIT consultada em Azahar o deixa desconhecido. A divergência está registrada e não foi resolvida por suposição. LITP permanece desligada porque seu comportamento de condition codes dependeria da frente CMP ainda não implementada.
+- Roadmap atualizado para indicar executor e decodificador parciais. Ainda faltam CMP/condition codes, MOVA, a0/a1/aL, fluxo de controle, LITP/DST e validação independente em hardware.
+- CI do commit funcional `c6f6fe52498fcfb4589347ce6ce5ea3d1d5840af` deve ser conferida antes de declarar esta etapa validada.
