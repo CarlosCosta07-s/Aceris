@@ -12,7 +12,8 @@ use super::{
     PicaDrawRequest, PicaFragmentPipelineError, PicaFragmentRasterError, PicaFragmentRasterReport,
     PicaFragmentRasterState, PicaFragmentRasterizer, PicaFragmentVertexDefaults,
     PicaOutputMapError, PicaRenderReport, PicaRenderSettings, PicaRenderTargetConfig,
-    PicaRenderTargetError, Viewport,
+    PicaRenderTargetError, REG_COLORBUFFER_WRITE, REG_DEPTHBUFFER_WRITE,
+    REG_DEPTH_COLOR_MASK, Viewport,
 };
 
 /// Failure while drawing through the PICA fragment-stage backend.
@@ -139,10 +140,24 @@ impl PicaFragmentRenderSession {
                 .map(|channel| f32::from(channel) / 255.0),
             texture_coordinates: [[0.0; 2]; 3],
         };
+        let depth_color_mask = pica.register(REG_DEPTH_COLOR_MASK).unwrap_or(0);
+        let color_buffer_write = pica.register(REG_COLORBUFFER_WRITE).unwrap_or(0) & 0xF;
+        let depth_buffer_write = pica.register(REG_DEPTHBUFFER_WRITE).unwrap_or(0);
+        let color_write_mask = [
+            depth_color_mask & (1 << 8) != 0 && color_buffer_write & (1 << 0) != 0,
+            depth_color_mask & (1 << 9) != 0 && color_buffer_write & (1 << 1) != 0,
+            depth_color_mask & (1 << 10) != 0 && color_buffer_write & (1 << 2) != 0,
+            depth_color_mask & (1 << 11) != 0 && color_buffer_write & (1 << 3) != 0,
+        ];
+        let depth_write_enabled =
+            depth_color_mask & (1 << 12) != 0 && depth_buffer_write & (1 << 1) != 0;
+
         let raster_state = PicaFragmentRasterState {
             transform: Matrix4::identity(),
             viewport,
             depth_function,
+            color_write_mask,
+            depth_write_enabled,
             depth_map: Some(depth_map),
             minifying: [false; 3],
         };
