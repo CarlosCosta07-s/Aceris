@@ -5218,7 +5218,10 @@ mod tests {
             session.wait_deadlines.get(&MAIN_THREAD_ID),
             Some(&(first, timeout as u64))
         );
-        assert_eq!(session.address_space.read32(out_address).unwrap(), 0xCAFE_BABE);
+        assert_eq!(
+            session.address_space.read32(out_address).unwrap(),
+            0xCAFE_BABE
+        );
 
         // Signalling handle 1 resumes the same guest wrapper. It observes the
         // selected index in r1 and stores it through the original C out pointer.
