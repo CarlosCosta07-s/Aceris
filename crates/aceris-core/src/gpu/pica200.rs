@@ -31,6 +31,8 @@ pub const REG_VIEWPORT_INV_WIDTH: u16 = 0x042;
 pub const REG_VIEWPORT_HEIGHT: u16 = 0x043;
 /// Reciprocal viewport height (retained for diagnostics and future derivative rules).
 pub const REG_VIEWPORT_INV_HEIGHT: u16 = 0x044;
+/// PICA depth-map transform enable (bit 0).
+pub const REG_DEPTHMAP_TRANSFORM_ENABLE: u16 = 0x04C;
 /// PICA normalized-depth scale, encoded as float24.
 pub const REG_DEPTHMAP_SCALE: u16 = 0x04D;
 /// PICA normalized-depth offset, encoded as float24.
@@ -64,11 +66,16 @@ pub enum PicaDepthBuffering {
     ZBuffer,
 }
 
-/// Decoded scale, offset and interpolation mode for the PICA depth buffer.
+/// Decoded guest controls for PICA depth mapping and interpolation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaDepthState {
+    /// Whether the guest enabled the scale/offset transform at register 0x04C.
+    pub transform_enabled: bool,
+    /// Float24 scale applied when the depth transform is enabled.
     pub scale: f32,
+    /// Float24 offset applied when the depth transform is enabled.
     pub offset: f32,
+    /// Z/W selection from register 0x06D.
     pub buffering: PicaDepthBuffering,
 }
 
@@ -289,6 +296,11 @@ impl Pica200 {
     pub fn depth_state(&self) -> PicaDepthState {
         let mode = self.register(REG_DEPTHMAP_ENABLE).unwrap_or(0);
         PicaDepthState {
+            transform_enabled: self
+                .register(REG_DEPTHMAP_TRANSFORM_ENABLE)
+                .unwrap_or(0)
+                & 1
+                != 0,
             scale: Float24::from_bits(self.register(REG_DEPTHMAP_SCALE).unwrap_or(0)).to_f32(),
             offset: Float24::from_bits(self.register(REG_DEPTHMAP_OFFSET).unwrap_or(0)).to_f32(),
             buffering: if mode & 1 == 0 {
