@@ -781,6 +781,40 @@ mod tests {
     }
 
     #[test]
+    fn stages_four_and_five_use_their_non_contiguous_hardware_register_groups() {
+        let mut pica = Pica200::new();
+        let stage_four = TEXENV_STAGE_SOURCE_REGISTERS[4];
+        let stage_five = TEXENV_STAGE_SOURCE_REGISTERS[5];
+
+        pica.write_register(stage_four, 5 | (5 << 16)).unwrap();
+        pica.write_register(stage_five, 14 | (14 << 16)).unwrap();
+        pica.write_register(stage_five + 3, 0x4433_2211).unwrap();
+
+        // The unused 0xE0/0xE8 area must not be mistaken for TEV stages 4/5.
+        pica.write_register(0x0E0, 0).unwrap();
+        pica.write_register(0x0E8, 0).unwrap();
+
+        let environment = PicaTextureEnvironment::from_pica(&pica).unwrap();
+        assert_eq!(
+            environment.stages[4].rgb_sources[0],
+            PicaTevSource::Texture2
+        );
+        assert_eq!(
+            environment.stages[5].rgb_sources[0],
+            PicaTevSource::Constant
+        );
+        assert_eq!(
+            environment.stages[5].constant_color,
+            [
+                0x11 as f32 / 255.0,
+                0x22 as f32 / 255.0,
+                0x33 as f32 / 255.0,
+                0x44 as f32 / 255.0,
+            ]
+        );
+    }
+
+    #[test]
     fn rejects_reserved_register_selectors_instead_of_guessing() {
         let mut pica = Pica200::new();
         pica.write_register(REG_TEXENV0_SOURCE, 7).unwrap();
