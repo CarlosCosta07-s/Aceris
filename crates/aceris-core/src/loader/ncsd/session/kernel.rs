@@ -1,8 +1,9 @@
 //! Process-local ARM11 kernel handles and synchronization objects.
 //!
-//! The process-local table models typed handles, FIFO synchronization waiters,
-//! mutex ownership, semaphore counts, events and virtual-clock timers. Object
-//! reference counting and kernel handle generations remain future work.
+//! The process-local table models typed handles, shared object identity for
+//! duplicated handles, FIFO synchronization waiters, mutex ownership,
+//! semaphore counts, events and virtual-clock timers. Explicit kernel refcount
+//! metadata and generation-tagged handle recycling remain future work.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -187,17 +188,23 @@ enum KernelObject {
 
 /// Process-local table mapping guest-visible handles to typed kernel objects.
 ///
-/// Handles are monotonically allocated and are not reused after close. Objects
-/// whose handles are closed remain in the retired table while a synchronization
-/// wait still holds an internal reference to them.
+/// The first handle allocated for an object is its stable table key. Duplicate
+/// handles map to that key, so closing one handle never changes object identity.
+/// Closed object anchors remain in the retired table while aliases or internal
+/// synchronization references still exist. Guest-visible handles are monotonic
+/// and are not reused after close.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Arm11KernelObjectTable {
-    /// Objects with at least one open guest-visible handle.
+    /// Objects whose original handle is still open.
     objects: BTreeMap<u32, KernelObject>,
-    /// Closed handles whose objects are still pinned by a pending wait.
+    /// Closed object anchors retained by aliases or internal references.
     retired_objects: BTreeMap<u32, KernelObject>,
-    /// Handle set pinned by each pending wait-all request.
-    wait_all_refs: BTreeMap<ThreadId, Vec<u32>>,
+    /// Duplicate guest handles mapped to their stable object anchor.
+    handle_aliases: BTreeMap<u32, u32>,
+    /// Handle used by each thread when it queued on a particular object.
+    waiter_handles: BTreeMap<(ThreadId, u32), u32>,
+    /// Original handle and object anchor pinned by each pending wait-all.
+    wait_all_refs: BTreeMap<ThreadId, Vec<(u32, u32)>>,
     next_handle: u32,
     /// Handle that most recently handed an object to a blocked thread, so a
     /// WaitSynchronizationN waiter can report which handle released it.
@@ -209,6 +216,8 @@ impl Default for Arm11KernelObjectTable {
         Self {
             objects: BTreeMap::new(),
             retired_objects: BTreeMap::new(),
+            handle_aliases: BTreeMap::new(),
+            waiter_handles: BTreeMap::new(),
             wait_all_refs: BTreeMap::new(),
             next_handle: FIRST_HANDLE,
             handoffs: BTreeMap::new(),
@@ -272,7 +281,7 @@ impl Arm11KernelObjectTable {
         &self,
         handle: u32,
     ) -> Result<SharedMemoryBacking, KernelHandleError> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::MemoryBlock(block)) => Ok(block.backing.clone()),
             Some(_) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
@@ -281,7 +290,7 @@ impl Arm11KernelObjectTable {
 
     /// Returns the creator and peer-process permissions for a memory block.
     pub fn memory_block_permissions(&self, handle: u32) -> Option<(u32, u32)> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::MemoryBlock(block)) => {
                 Some((block.owner_permissions, block.other_permissions))
             }
@@ -303,7 +312,7 @@ impl Arm11KernelObjectTable {
         &mut self,
         handle: u32,
     ) -> Result<(), KernelHandleError> {
-        match self.objects.get_mut(&handle) {
+        match self.object_mut(handle) {
             Some(KernelObject::ServiceSession(ServiceSessionKind::ServiceManager {
                 client_registered,
             })) => {
@@ -317,7 +326,7 @@ impl Arm11KernelObjectTable {
 
     /// Reports whether a service-manager session completed RegisterClient.
     pub fn service_manager_client_registered(&self, handle: u32) -> Option<bool> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::ServiceSession(ServiceSessionKind::ServiceManager {
                 client_registered,
             })) => Some(*client_registered),
@@ -337,7 +346,7 @@ impl Arm11KernelObjectTable {
 
     /// Returns the service endpoint state associated with a guest handle.
     pub fn service_session(&self, handle: u32) -> Option<ServiceSessionKind> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::ServiceSession(kind)) => Some(*kind),
             _ => None,
         }
@@ -352,7 +361,7 @@ impl Arm11KernelObjectTable {
         event_handle: Option<u32>,
         flags: u32,
     ) -> Result<(), KernelHandleError> {
-        match self.objects.get_mut(&handle) {
+        match self.object_mut(handle) {
             Some(KernelObject::ServiceSession(ServiceSessionKind::GspGpu {
                 client_id: current_client_id,
                 shared_memory_handle: current_memory_handle,
@@ -409,13 +418,19 @@ impl Arm11KernelObjectTable {
             }
         }
 
-        self.handoffs.extend(handoffs);
+        for (waiter, object_key) in handoffs {
+            let handle = self
+                .waiter_handles
+                .remove(&(waiter, object_key))
+                .unwrap_or(object_key);
+            self.handoffs.insert(waiter, handle);
+        }
         awakened
     }
 
     /// Returns whether a thread handle has observed permanent thread exit.
     pub fn thread_is_terminated(&self, handle: u32) -> Option<bool> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Thread(thread)) => Some(thread.terminated),
             _ => None,
         }
@@ -423,7 +438,7 @@ impl Arm11KernelObjectTable {
 
     /// Returns the target thread associated with a regular thread handle.
     pub fn thread_handle_target(&self, handle: u32) -> Option<ThreadId> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Thread(thread)) => Some(thread.id),
             _ => None,
         }
@@ -431,22 +446,38 @@ impl Arm11KernelObjectTable {
 
     /// Counts the process-local handles that keep a thread object alive.
     pub fn thread_handle_count(&self, thread_id: ThreadId) -> usize {
-        self.objects
+        let primary_handles = self
+            .objects
             .values()
-            .filter(
-                |object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id),
-            )
-            .count()
+            .filter(|object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id))
+            .count();
+        let duplicate_handles = self
+            .handle_aliases
+            .values()
+            .filter_map(|key| self.object_by_key(*key))
+            .filter(|object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id))
+            .count();
+        primary_handles + duplicate_handles
     }
 
     /// Returns whether a handle is still open to guest SVC calls.
     pub fn is_open_handle(&self, handle: u32) -> bool {
-        self.objects.contains_key(&handle)
+        self.objects.contains_key(&handle) || self.handle_aliases.contains_key(&handle)
     }
 
     /// Returns the number of live objects, including objects pinned by waits.
     pub fn retained_object_count(&self) -> usize {
         self.objects.len() + self.retired_objects.len()
+    }
+
+    /// Creates a new process-local handle that refers to the same kernel object.
+    pub fn duplicate_handle(&mut self, original: u32) -> Result<u32, KernelHandleError> {
+        let object_key = self
+            .object_key(original)
+            .ok_or(KernelHandleError::InvalidHandle)?;
+        let duplicate = self.allocate_handle()?;
+        self.handle_aliases.insert(duplicate, object_key);
+        Ok(duplicate)
     }
 
     /// Pins each unique handle in a wait-all request until the request
@@ -458,13 +489,12 @@ impl Arm11KernelObjectTable {
     ) -> Result<(), KernelHandleError> {
         let mut retained = Vec::new();
         for handle in handles.iter().copied() {
-            if retained.contains(&handle) {
-                continue;
+            let object_key = self
+                .object_key(handle)
+                .ok_or(KernelHandleError::InvalidHandle)?;
+            if !retained.iter().any(|(_, key)| *key == object_key) {
+                retained.push((handle, object_key));
             }
-            if !self.objects.contains_key(&handle) {
-                return Err(KernelHandleError::InvalidHandle);
-            }
-            retained.push(handle);
         }
         self.wait_all_refs.insert(thread, retained);
         Ok(())
@@ -478,44 +508,48 @@ impl Arm11KernelObjectTable {
         released
     }
 
-    fn has_wait_all_reference(&self, handle: u32) -> bool {
-        self.wait_all_refs
-            .values()
-            .any(|handles| handles.contains(&handle))
-    }
-
-    fn wait_all_object(&self, handle: u32, thread: ThreadId) -> Option<&KernelObject> {
-        self.objects.get(&handle).or_else(|| {
-            self.wait_all_refs
-                .get(&thread)
-                .is_some_and(|handles| handles.contains(&handle))
-                .then(|| self.retired_objects.get(&handle))
-                .flatten()
+    fn has_wait_all_reference(&self, object_key: u32) -> bool {
+        self.wait_all_refs.values().any(|handles| {
+            handles.iter().any(|(_, key)| *key == object_key)
         })
     }
 
+    fn wait_all_object_key(&self, handle: u32, thread: ThreadId) -> Option<u32> {
+        self.object_key(handle).or_else(|| {
+            self.wait_all_refs.get(&thread).and_then(|handles| {
+                handles
+                    .iter()
+                    .find(|(wait_handle, _)| *wait_handle == handle)
+                    .map(|(_, object_key)| *object_key)
+            })
+        })
+    }
+
+    fn wait_all_object(&self, handle: u32, thread: ThreadId) -> Option<&KernelObject> {
+        let object_key = self.wait_all_object_key(handle, thread)?;
+        self.object_by_key(object_key)
+    }
+
     fn wait_all_object_mut(&mut self, handle: u32, thread: ThreadId) -> Option<&mut KernelObject> {
-        if self.objects.contains_key(&handle) {
-            return self.objects.get_mut(&handle);
-        }
-        if self
-            .wait_all_refs
-            .get(&thread)
-            .is_some_and(|handles| handles.contains(&handle))
-        {
-            return self.retired_objects.get_mut(&handle);
-        }
-        None
+        let object_key = self.wait_all_object_key(handle, thread)?;
+        self.object_mut_by_key(object_key)
     }
 
     fn collect_retired_objects(&mut self) {
-        let pinned_handles = self
+        let pinned_objects = self
             .wait_all_refs
             .values()
-            .flat_map(|handles| handles.iter().copied())
+            .flat_map(|handles| handles.iter().map(|(_, key)| *key))
             .collect::<std::collections::BTreeSet<_>>();
-        self.retired_objects.retain(|handle, object| {
-            pinned_handles.contains(handle) || object_has_internal_references(object)
+        let aliased_objects = self
+            .handle_aliases
+            .values()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        self.retired_objects.retain(|object_key, object| {
+            pinned_objects.contains(object_key)
+                || aliased_objects.contains(object_key)
+                || object_has_internal_references(object)
         });
     }
 
@@ -530,30 +564,31 @@ impl Arm11KernelObjectTable {
             .objects
             .iter()
             .chain(self.retired_objects.iter())
-            .filter_map(|(handle, object)| {
+            .filter_map(|(object_key, object)| {
                 matches!(object, KernelObject::Mutex(mutex) if mutex.owner == Some(owner))
-                    .then_some(*handle)
+                    .then_some(*object_key)
             })
             .collect::<Vec<_>>();
         let mut awakened = Vec::new();
 
         for handle in owned_handles {
-            let waiter = if let Some(KernelObject::Mutex(mutex)) = self.objects.get_mut(&handle) {
-                let waiter = mutex.waiters.pop_front();
-                mutex.owner = waiter;
-                waiter
-            } else if let Some(KernelObject::Mutex(mutex)) = self.retired_objects.get_mut(&handle) {
-                let waiter = mutex.waiters.pop_front();
-                mutex.owner = waiter;
-                waiter
-            } else {
-                None
+            let waiter = match self.object_mut_by_key(handle) {
+                Some(KernelObject::Mutex(mutex)) => {
+                    let waiter = mutex.waiters.pop_front();
+                    mutex.owner = waiter;
+                    waiter
+                }
+                _ => None,
             };
 
             let Some(waiter) = waiter else {
                 continue;
             };
-            self.handoffs.insert(waiter, handle);
+            let waiter_handle = self
+                .waiter_handles
+                .remove(&(waiter, handle))
+                .unwrap_or(handle);
+            self.handoffs.insert(waiter, waiter_handle);
             self.remove_waiter(waiter);
             if !awakened.contains(&waiter) {
                 awakened.push(waiter);
@@ -618,7 +653,7 @@ impl Arm11KernelObjectTable {
             return Some(current_thread);
         }
 
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Thread(thread)) => Some(thread.id),
             _ => None,
         }
@@ -626,7 +661,7 @@ impl Arm11KernelObjectTable {
 
     /// Returns the reset mode of an event handle, if it is a valid event.
     pub fn event_reset_type(&self, handle: u32) -> Option<EventResetType> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Event(event)) => Some(event.reset_type),
             _ => None,
         }
@@ -634,7 +669,7 @@ impl Arm11KernelObjectTable {
 
     /// Returns the signal state of an event handle, if it is a valid event.
     pub fn event_is_signaled(&self, handle: u32) -> Option<bool> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Event(event)) => Some(event.signaled),
             _ => None,
         }
@@ -642,7 +677,7 @@ impl Arm11KernelObjectTable {
 
     /// Returns the signal state of a timer handle, if it is a valid timer.
     pub fn timer_is_signaled(&self, handle: u32) -> Option<bool> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Timer(timer)) => Some(timer.signaled),
             _ => None,
         }
@@ -695,7 +730,7 @@ impl Arm11KernelObjectTable {
         handle: u32,
         thread: ThreadId,
     ) -> Result<bool, KernelHandleError> {
-        match self.objects.get_mut(&handle) {
+        match self.object_mut(handle) {
             Some(KernelObject::Event(event)) => {
                 if !event.signaled {
                     return Ok(false);
@@ -752,8 +787,12 @@ impl Arm11KernelObjectTable {
         }
 
         let mut all_ready = true;
-        for (index, handle) in handles.iter().copied().enumerate() {
-            if handles[..index].contains(&handle) {
+        let mut checked_objects = std::collections::BTreeSet::new();
+        for handle in handles.iter().copied() {
+            let object_key = self
+                .wait_all_object_key(handle, thread)
+                .ok_or(KernelHandleError::InvalidHandle)?;
+            if !checked_objects.insert(object_key) {
                 continue;
             }
 
@@ -778,8 +817,12 @@ impl Arm11KernelObjectTable {
         // The preflight above guarantees that every operation below can
         // complete. No guest code or scheduler callback can interleave this
         // acquisition because the process kernel is driven cooperatively.
-        for (index, handle) in handles.iter().copied().enumerate() {
-            if handles[..index].contains(&handle) {
+        let mut acquired_objects = std::collections::BTreeSet::new();
+        for handle in handles.iter().copied() {
+            let object_key = self
+                .wait_all_object_key(handle, thread)
+                .expect("wait-all preflight validated every object");
+            if !acquired_objects.insert(object_key) {
                 continue;
             }
 
@@ -816,7 +859,10 @@ impl Arm11KernelObjectTable {
         handle: u32,
         thread: ThreadId,
     ) -> Result<(), KernelHandleError> {
-        let waiters = match self.objects.get_mut(&handle) {
+        let object_key = self
+            .object_key(handle)
+            .ok_or(KernelHandleError::InvalidHandle)?;
+        let waiters = match self.object_mut_by_key(object_key) {
             Some(KernelObject::Event(event)) => &mut event.waiters,
             Some(KernelObject::Mutex(mutex)) => &mut mutex.waiters,
             Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
@@ -829,6 +875,7 @@ impl Arm11KernelObjectTable {
         };
         if !waiters.contains(&thread) {
             waiters.push_back(thread);
+            self.waiter_handles.insert((thread, object_key), handle);
         }
         Ok(())
     }
@@ -838,7 +885,8 @@ impl Arm11KernelObjectTable {
         self.handoffs.remove(&thread)
     }
 
-    /// Removes one thread from every synchronization-object wait queue.
+    /// Removes one thread from every synchronization-object wait queue and
+    /// releases its wait-all pins and alias-specific waiter metadata.
     ///
     /// This is used when a finite wait times out, so a later signal cannot
     /// wake a thread that has already returned RESULT_TIMEOUT.
@@ -861,6 +909,10 @@ impl Arm11KernelObjectTable {
             waiters.retain(|waiter| *waiter != thread);
             removed |= waiters.len() != previous_len;
         }
+        let previous_handle_count = self.waiter_handles.len();
+        self.waiter_handles
+            .retain(|(waiter, _), _| *waiter != thread);
+        removed |= self.waiter_handles.len() != previous_handle_count;
         let released_wait_all = self.wait_all_refs.remove(&thread).is_some();
         removed |= released_wait_all;
         self.collect_retired_objects();
@@ -924,7 +976,13 @@ impl Arm11KernelObjectTable {
             }
         }
 
-        self.handoffs.extend(handed_off);
+        for (waiter, object_key) in handed_off {
+            let handle = self
+                .waiter_handles
+                .remove(&(waiter, object_key))
+                .unwrap_or(object_key);
+            self.handoffs.insert(waiter, handle);
+        }
         awakened
     }
 
@@ -934,10 +992,14 @@ impl Arm11KernelObjectTable {
     /// method. HLE devices may also signal a retired event whose only
     /// remaining references belong to already-blocked guest threads.
     pub fn signal_event(&mut self, handle: u32) -> Result<Vec<ThreadId>, KernelHandleError> {
-        let event = if self.objects.contains_key(&handle) {
-            self.event_mut(handle)?
-        } else {
-            self.retired_event_mut(handle)?
+        let object_key = self
+            .object_key(handle)
+            .or_else(|| self.retired_objects.contains_key(&handle).then_some(handle))
+            .ok_or(KernelHandleError::InvalidHandle)?;
+        let event = match self.object_mut_by_key(object_key) {
+            Some(KernelObject::Event(event)) => event,
+            Some(_) => return Err(KernelHandleError::WrongType),
+            None => return Err(KernelHandleError::InvalidHandle),
         };
         let released: Vec<ThreadId> = match event.reset_type {
             EventResetType::Sticky => {
@@ -955,7 +1017,11 @@ impl Arm11KernelObjectTable {
             }
         };
         for waiter in &released {
-            self.handoffs.insert(*waiter, handle);
+            let waiter_handle = self
+                .waiter_handles
+                .remove(&(*waiter, object_key))
+                .unwrap_or(handle);
+            self.handoffs.insert(*waiter, waiter_handle);
         }
         Ok(released)
     }
@@ -973,14 +1039,24 @@ impl Arm11KernelObjectTable {
         handle: u32,
         owner: ThreadId,
     ) -> Result<Option<ThreadId>, KernelHandleError> {
-        let mutex = self.mutex_mut(handle)?;
-        if mutex.owner != Some(owner) {
-            return Err(KernelHandleError::NotOwner);
-        }
-        let next_owner = mutex.waiters.pop_front();
-        mutex.owner = next_owner;
+        let object_key = self
+            .object_key(handle)
+            .ok_or(KernelHandleError::InvalidHandle)?;
+        let next_owner = {
+            let mutex = self.mutex_mut(handle)?;
+            if mutex.owner != Some(owner) {
+                return Err(KernelHandleError::NotOwner);
+            }
+            let next_owner = mutex.waiters.pop_front();
+            mutex.owner = next_owner;
+            next_owner
+        };
         if let Some(next) = next_owner {
-            self.handoffs.insert(next, handle);
+            let waiter_handle = self
+                .waiter_handles
+                .remove(&(next, object_key))
+                .unwrap_or(handle);
+            self.handoffs.insert(next, waiter_handle);
         }
         Ok(next_owner)
     }
@@ -996,29 +1072,39 @@ impl Arm11KernelObjectTable {
         if release_count == 0 {
             return Err(KernelHandleError::InvalidCount);
         }
-        let semaphore = self.semaphore_mut(handle)?;
-        let waiter_count = release_count.min(semaphore.waiters.len() as u32);
-        let units_to_store = release_count - waiter_count;
-        if semaphore.count.saturating_add(units_to_store) > semaphore.maximum {
-            return Err(KernelHandleError::CountLimitExceeded);
-        }
-
-        let mut awakened = Vec::with_capacity(waiter_count as usize);
-        for _ in 0..waiter_count {
-            if let Some(waiter) = semaphore.waiters.pop_front() {
-                awakened.push(waiter);
+        let object_key = self
+            .object_key(handle)
+            .ok_or(KernelHandleError::InvalidHandle)?;
+        let awakened = {
+            let semaphore = self.semaphore_mut(handle)?;
+            let waiter_count = release_count.min(semaphore.waiters.len() as u32);
+            let units_to_store = release_count - waiter_count;
+            if semaphore.count.saturating_add(units_to_store) > semaphore.maximum {
+                return Err(KernelHandleError::CountLimitExceeded);
             }
-        }
-        semaphore.count += units_to_store;
+
+            let mut awakened = Vec::with_capacity(waiter_count as usize);
+            for _ in 0..waiter_count {
+                if let Some(waiter) = semaphore.waiters.pop_front() {
+                    awakened.push(waiter);
+                }
+            }
+            semaphore.count += units_to_store;
+            awakened
+        };
         for waiter in &awakened {
-            self.handoffs.insert(*waiter, handle);
+            let waiter_handle = self
+                .waiter_handles
+                .remove(&(*waiter, object_key))
+                .unwrap_or(handle);
+            self.handoffs.insert(*waiter, waiter_handle);
         }
         Ok(awakened)
     }
 
     /// Returns a mutex's current owner, if the handle refers to a mutex.
     pub fn mutex_owner(&self, handle: u32) -> Option<ThreadId> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Mutex(mutex)) => mutex.owner,
             _ => None,
         }
@@ -1026,7 +1112,7 @@ impl Arm11KernelObjectTable {
 
     /// Returns the current and maximum count of a semaphore handle.
     pub fn semaphore_counts(&self, handle: u32) -> Option<(u32, u32)> {
-        match self.objects.get(&handle) {
+        match self.object(handle) {
             Some(KernelObject::Semaphore(semaphore)) => Some((semaphore.count, semaphore.maximum)),
             _ => None,
         }
@@ -1034,17 +1120,24 @@ impl Arm11KernelObjectTable {
 
     /// Closes a regular process-local handle.
     ///
-    /// If a pending synchronization wait already references this object, the
-    /// guest-visible handle is removed immediately while the object is kept in
-    /// the retired table. The final wait/reference release reclaims the object.
+    /// The guest-visible handle is removed immediately. The object remains
+    /// alive while another duplicate handle, owner, waiter or wait-all pin
+    /// references it; the final reference release reclaims the object.
     /// Pseudo-handles are not stored in the table and cannot be closed.
     pub fn close_handle(&mut self, handle: u32) -> Result<(), KernelHandleError> {
+        if self.handle_aliases.remove(&handle).is_some() {
+            self.collect_retired_objects();
+            return Ok(());
+        }
+
         let object = self
             .objects
             .remove(&handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
-        let keep_alive =
-            object_has_internal_references(&object) || self.has_wait_all_reference(handle);
+        let has_aliases = self.handle_aliases.values().any(|key| *key == handle);
+        let keep_alive = has_aliases
+            || object_has_internal_references(&object)
+            || self.has_wait_all_reference(handle);
         if keep_alive {
             self.retired_objects.insert(handle, object);
         }
@@ -1054,11 +1147,11 @@ impl Arm11KernelObjectTable {
 
     /// Returns the number of currently open regular handles.
     pub fn handle_count(&self) -> usize {
-        self.objects.len()
+        self.objects.len() + self.handle_aliases.len()
     }
 
     fn mutex_mut(&mut self, handle: u32) -> Result<&mut KernelMutex, KernelHandleError> {
-        match self.objects.get_mut(&handle) {
+        match self.object_mut(handle) {
             Some(KernelObject::Mutex(mutex)) => Ok(mutex),
             Some(_) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
@@ -1066,7 +1159,7 @@ impl Arm11KernelObjectTable {
     }
 
     fn semaphore_mut(&mut self, handle: u32) -> Result<&mut KernelSemaphore, KernelHandleError> {
-        match self.objects.get_mut(&handle) {
+        match self.object_mut(handle) {
             Some(KernelObject::Semaphore(semaphore)) => Ok(semaphore),
             Some(_) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
@@ -1074,7 +1167,7 @@ impl Arm11KernelObjectTable {
     }
 
     fn timer_mut(&mut self, handle: u32) -> Result<&mut KernelTimer, KernelHandleError> {
-        match self.objects.get_mut(&handle) {
+        match self.object_mut(handle) {
             Some(KernelObject::Timer(timer)) => Ok(timer),
             Some(_) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
@@ -1082,28 +1175,62 @@ impl Arm11KernelObjectTable {
     }
 
     fn event_mut(&mut self, handle: u32) -> Result<&mut KernelEvent, KernelHandleError> {
-        match self.objects.get_mut(&handle) {
+        match self.object_mut(handle) {
             Some(KernelObject::Event(event)) => Ok(event),
             Some(_) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
         }
     }
 
-    fn retired_event_mut(&mut self, handle: u32) -> Result<&mut KernelEvent, KernelHandleError> {
-        match self.retired_objects.get_mut(&handle) {
-            Some(KernelObject::Event(event)) => Ok(event),
-            Some(_) => Err(KernelHandleError::WrongType),
-            None => Err(KernelHandleError::InvalidHandle),
+    fn object_key(&self, handle: u32) -> Option<u32> {
+        if self.objects.contains_key(&handle) {
+            Some(handle)
+        } else {
+            self.handle_aliases.get(&handle).copied()
         }
     }
 
-    fn insert(&mut self, object: KernelObject) -> Result<u32, KernelHandleError> {
+    fn object_by_key(&self, object_key: u32) -> Option<&KernelObject> {
+        self.objects
+            .get(&object_key)
+            .or_else(|| self.retired_objects.get(&object_key))
+    }
+
+    fn object_mut_by_key(&mut self, object_key: u32) -> Option<&mut KernelObject> {
+        if self.objects.contains_key(&object_key) {
+            self.objects.get_mut(&object_key)
+        } else {
+            self.retired_objects.get_mut(&object_key)
+        }
+    }
+
+    fn object(&self, handle: u32) -> Option<&KernelObject> {
+        let object_key = self.object_key(handle)?;
+        self.object_by_key(object_key)
+    }
+
+    fn object_mut(&mut self, handle: u32) -> Option<&mut KernelObject> {
+        let object_key = self.object_key(handle)?;
+        self.object_mut_by_key(object_key)
+    }
+
+    fn allocate_handle(&mut self) -> Result<u32, KernelHandleError> {
         let mut handle = self.next_handle;
-        while self.objects.contains_key(&handle) || handle == CURRENT_THREAD_HANDLE {
+        while self.objects.contains_key(&handle)
+            || self.retired_objects.contains_key(&handle)
+            || self.handle_aliases.contains_key(&handle)
+            || handle == CURRENT_THREAD_HANDLE
+            || handle == CURRENT_PROCESS_HANDLE
+        {
             handle = handle.checked_add(1).ok_or(KernelHandleError::Exhausted)?;
         }
 
         self.next_handle = handle.checked_add(1).ok_or(KernelHandleError::Exhausted)?;
+        Ok(handle)
+    }
+
+    fn insert(&mut self, object: KernelObject) -> Result<u32, KernelHandleError> {
+        let handle = self.allocate_handle()?;
         self.objects.insert(handle, object);
         Ok(handle)
     }
