@@ -7,8 +7,8 @@
 
 use super::{
     GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
-    PicaFragmentOutputState, PicaTevError, PicaTextureEnvironment, PicaTextureError,
-    PicaTextureUnit, REG_TEXUNIT_CONFIG,
+    PicaFragmentOutputState, PicaResolvedVertex, PicaTevError, PicaTextureEnvironment,
+    PicaTextureError, PicaTextureUnit, REG_TEXUNIT_CONFIG,
 };
 
 /// Perspective-correct attributes at one fragment sample.
