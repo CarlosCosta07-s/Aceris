@@ -648,8 +648,7 @@ impl PicaFragmentRasterizer {
                     self.depth[pixel_index],
                 ) {
                     if stencil_state.enabled && state.stencil_write_enabled {
-                        let updated =
-                            stencil_state.apply(stencil_state.depth_fail, stored_stencil);
+                        let updated = stencil_state.apply(stencil_state.depth_fail, stored_stencil);
                         if updated != stored_stencil {
                             self.stencil[pixel_index] = updated;
                             self.stencil_dirty = true;
@@ -964,8 +963,8 @@ mod tests {
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
         PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
-        PicaVertexOutputMap, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP, REG_STENCIL_OP,
-        REG_STENCIL_TEST, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
+        PicaVertexOutputMap, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP, REG_STENCIL_OP, REG_STENCIL_TEST,
+        REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn fragment_vertex(position: [f32; 4], color: [f32; 4]) -> PicaFragmentVertex {
