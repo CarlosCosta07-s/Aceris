@@ -31,9 +31,10 @@ use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdI
 use crate::loader::threedsx::ThreeDsxImage;
 use crate::loader::{self, ImageFormat};
 use crate::video::{
-    DualScreenDisplay, LcdController, LcdPanel, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
-    PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT,
-    PDC_FRAMEBUFFER_SELECT, PDC_FRAMEBUFFER_STRIDE,
+    DualScreenDisplay, LcdController, LcdPanel, PDC_CONTROL, PDC_CONTROL_ENABLED,
+    PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
+    PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT, PDC_FRAMEBUFFER_SELECT,
+    PDC_FRAMEBUFFER_STRIDE,
 };
 use aceris_common::{Error, Result};
 use std::fs::File;
@@ -2256,6 +2257,16 @@ impl System {
                 .write_register(panel, register, value)
                 .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
         }
+        // The GSP system module owns the display controllers: a panel is
+        // turned on once an application has published a framebuffer for it.
+        // Panels without a published framebuffer stay off.
+        let control = self
+            .lcd
+            .read_register(panel, PDC_CONTROL)
+            .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        self.lcd
+            .write_register(panel, PDC_CONTROL, control | PDC_CONTROL_ENABLED)
+            .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
         Ok(())
     }
 
@@ -5636,93 +5647,143 @@ mod tests {
             REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
         };
         use crate::video::{
-            LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST,
-            PDC_FRAMEBUFFER_SELECT, PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_WIDTH,
+            PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_SELECT,
+            PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_WIDTH,
         };
 
         const WIDTH: usize = 400;
         const HEIGHT: usize = 240;
         const FRAME_ALLOCATION: u32 = ((WIDTH * HEIGHT * 4) as u32 + 0xFFF) & !0xFFF;
-        const LOADER: i32 = 42;
-        const TABLE: i32 = 51;
-
-        // One continuous ARM11 program: it creates its event, connects to
-        // `srv:`, obtains `gsp::Gpu`, registers the relay queue, maps the
-        // returned Shared Memory, acquires the rendering right, loads its data
-        // image (command list, vertices, GX ring, framebuffer metadata, IPC
-        // header) with an LDR/STR table loader, publishes with DMB/DSB,
-        // triggers the GX queue and waits on the completion event. The host
-        // only loads the image, maps linear FCRAM and calls run_instructions.
-        // Registers: r5 TLS, r8 event, r9 srv:, r10 gsp::Gpu, r11 shared memory.
-        let mut guest_code: Vec<u32> = vec![
-            0xEE1D_5F70,            // 0  MRC p15,0,r5,c13,c0,3 (TLS base)
-            0xE28F_C0C0,            // 1  ADD r12, pc, #0xC0 (record table)
-            guest_call(2, LOADER),  // 2  BL loader (section 0: "srv:" and MapMemoryBlock args)
-            0xE285_0040,            // 3  ADD r0, r5, #0x40 (CreateEvent output)
-            0xE3A0_1000,            // 4  MOV r1, #0 (one-shot)
-            0xEF00_0017,            // 5  SVC CreateEvent
-            0xE595_8040,            // 6  LDR r8, [r5, #0x40]
-            0xE285_0044,            // 7  ADD r0, r5, #0x44 (ConnectToPort output)
-            0xE285_1020,            // 8  ADD r1, r5, #0x20 ("srv:")
-            0xEF00_002D,            // 9  SVC ConnectToPort
-            0xE595_9044,            // 10 LDR r9, [r5, #0x44]
-            guest_call(11, LOADER), // 11 BL loader (srv:RegisterClient)
-            0xE1A0_0009,            // 12 MOV r0, r9
-            0xEF00_0032,            // 13 SVC SendSyncRequest
-            guest_call(14, LOADER), // 14 BL loader (srv:GetServiceHandle)
-            0xE1A0_0009,            // 15 MOV r0, r9
-            0xEF00_0032,            // 16 SVC SendSyncRequest
-            0xE595_A08C,            // 17 LDR r10, [r5, #0x8C] (GSP handle from reply)
-            guest_call(18, LOADER), // 18 BL loader (RegisterInterruptRelayQueue)
-            0xE585_808C,            // 19 STR r8, [r5, #0x8C] (event handle parameter)
-            0xE1A0_000A,            // 20 MOV r0, r10
-            0xEF00_0032,            // 21 SVC SendSyncRequest
-            0xE595_B090,            // 22 LDR r11, [r5, #0x90] (Shared Memory handle)
-            0xE1A0_000B,            // 23 MOV r0, r11
-            0xE595_1048,            // 24 LDR r1, [r5, #0x48] (base)
-            0xE595_204C,            // 25 LDR r2, [r5, #0x4C] (permissions)
-            0xE595_3050,            // 26 LDR r3, [r5, #0x50] (peer permissions)
-            0xEF00_001F,            // 27 SVC MapMemoryBlock
-            guest_call(28, LOADER), // 28 BL loader (TryAcquireRight)
-            0xE1A0_000A,            // 29 MOV r0, r10
-            0xEF00_0032,            // 30 SVC SendSyncRequest
-            guest_call(31, LOADER), // 31 BL loader (data image + TriggerCmdReqQueue)
-            0xEE07_0FBA,            // 32 DMB
-            0xEE07_0F9A,            // 33 DSB
-            0xE1A0_000A,            // 34 MOV r0, r10
-            0xEF00_0032,            // 35 SVC SendSyncRequest (TriggerCmdReqQueue)
-            0xE1A0_0008,            // 36 MOV r0, r8
-            0xE3E0_2000,            // 37 MVN r2, #0
-            0xE3E0_3000,            // 38 MVN r3, #0
-            0xEF00_0024,            // 39 SVC WaitSynchronization1
-            0xE3A0_605A,            // 40 MOV r6, #0x5A
-            0xEAFF_FFFE,            // 41 B .
+        const MEMOP_ALLOC_LINEAR: u32 = 0x0001_0003;
+        const PERMISSION_READ_WRITE: u32 = 3;
+        // Linear buffers are allocated by the guest with ControlMemory at
+        // fixed hints in the new linear window; the physical address is the
+        // window offset from FCRAM_BASE, so no host mapping or probe is needed.
+        let command_list_address = crate::gpu::NEW_LINEAR_BASE;
+        let vertex_address = command_list_address + 0x1000;
+        let tiled_target_address = vertex_address + 0x1000;
+        let linear_framebuffer_address = tiled_target_address + FRAME_ALLOCATION;
+        let to_physical = |address: u32| FCRAM_BASE + (address - crate::gpu::NEW_LINEAR_BASE);
+        let vertex_physical = to_physical(vertex_address);
+        let tiled_target_physical = to_physical(tiled_target_address);
+        let linear_framebuffer_physical = to_physical(linear_framebuffer_address);
+        let allocations = [
+            (command_list_address, 0x1000u32),
+            (vertex_address, 0x1000),
+            (tiled_target_address, FRAME_ALLOCATION),
+            (linear_framebuffer_address, FRAME_ALLOCATION),
         ];
-        // loader: copy (destination, count, words...) records until count 0.
-        guest_code.extend([
-            0xE49C_2004,               // 42 LDR r2, [r12], #4
-            0xE49C_3004,               // 43 LDR r3, [r12], #4
-            0xE353_0000,               // 44 CMP r3, #0
-            0x012F_FF1E,               // 45 BXEQ lr
-            0xE49C_7004,               // 46 LDR r7, [r12], #4
-            0xE482_7004,               // 47 STR r7, [r2], #4
-            0xE253_3001,               // 48 SUBS r3, r3, #1
-            guest_branch(0x1, 49, 46), // 49 BNE copy
-            guest_branch(0xE, 50, 42), // 50 B next record
-        ]);
-        assert_eq!(guest_code.len() as i32, TABLE);
 
-        // The data records need the addresses of mapped buffers and the TLS
-        // slot, known only after a process is loaded. Allocation is
-        // deterministic, so a probe system yields them; the real system
-        // asserts it reproduced the same addresses.
-        let layout = |system: &mut System| {
-            let command_list = map_test_linear_fcram(system, 0x1000);
-            let vertices = map_test_linear_fcram(system, 0x1000);
-            let tiled_target = map_test_linear_fcram(system, FRAME_ALLOCATION);
-            let linear_framebuffer = map_test_linear_fcram(system, FRAME_ALLOCATION);
-            (command_list, vertices, tiled_target, linear_framebuffer)
+        // One continuous ARM11 program: it allocates linear FCRAM with
+        // ControlMemory, creates its event, connects to `srv:`, obtains
+        // `gsp::Gpu`, registers the relay queue, maps the returned Shared
+        // Memory, acquires the rendering right, loads its data image (command
+        // list, vertices, GX ring, framebuffer metadata, IPC header) with an
+        // LDR/STR table loader, publishes with DMB/DSB, triggers the GX queue
+        // and waits on the completion event. The host only loads the image and
+        // calls run_instructions.
+        // Registers: r5 TLS, r8 event, r9 srv:, r10 gsp::Gpu, r11 shared memory.
+        let mut code: Vec<u32> = Vec::new();
+        let mut loader_calls: Vec<usize> = Vec::new();
+        let mut call_loader = |code: &mut Vec<u32>| {
+            loader_calls.push(code.len());
+            code.push(0); // patched with BL once the loader address is known
         };
+        code.push(0xEE1D_5F70); // MRC p15,0,r5,c13,c0,3 (TLS base)
+        let table_pointer_slot = code.len();
+        code.push(0); // ADD r12, pc, #offset (patched)
+        call_loader(&mut code); // section 0: constants for the code below
+        code.extend([
+            0xE285_6060, // ADD r6, r5, #0x60 (allocation table)
+            0xE3A0_7004, // MOV r7, #4
+        ]);
+        let allocation_loop = code.len() as i32;
+        code.extend([
+            0xE595_0054, // LDR r0, [r5, #0x54] (ALLOC | LINEAR)
+            0xE496_1004, // LDR r1, [r6], #4 (address hint)
+            0xE3A0_2000, // MOV r2, #0
+            0xE496_3004, // LDR r3, [r6], #4 (size)
+            0xE595_4058, // LDR r4, [r5, #0x58] (read/write)
+            0xEF00_0001, // SVC ControlMemory
+            0xE257_7001, // SUBS r7, r7, #1
+        ]);
+        let branch_at = code.len() as i32;
+        code.push(guest_branch(0x1, branch_at, allocation_loop)); // BNE
+        code.extend([
+            0xE285_0040, // ADD r0, r5, #0x40 (CreateEvent output)
+            0xE3A0_1000, // MOV r1, #0 (one-shot)
+            0xEF00_0017, // SVC CreateEvent
+            0xE595_8040, // LDR r8, [r5, #0x40]
+            0xE285_0044, // ADD r0, r5, #0x44 (ConnectToPort output)
+            0xE285_1020, // ADD r1, r5, #0x20 ("srv:")
+            0xEF00_002D, // SVC ConnectToPort
+            0xE595_9044, // LDR r9, [r5, #0x44]
+        ]);
+        call_loader(&mut code); // srv:RegisterClient
+        code.extend([0xE1A0_0009, 0xEF00_0032]); // MOV r0,r9; SendSyncRequest
+        call_loader(&mut code); // srv:GetServiceHandle
+        code.extend([
+            0xE1A0_0009, // MOV r0, r9
+            0xEF00_0032, // SVC SendSyncRequest
+            0xE595_A08C, // LDR r10, [r5, #0x8C] (GSP handle from reply)
+        ]);
+        call_loader(&mut code); // RegisterInterruptRelayQueue
+        code.extend([
+            0xE585_808C, // STR r8, [r5, #0x8C] (event handle parameter)
+            0xE1A0_000A, // MOV r0, r10
+            0xEF00_0032, // SVC SendSyncRequest
+            0xE595_B090, // LDR r11, [r5, #0x90] (Shared Memory handle)
+            0xE1A0_000B, // MOV r0, r11
+            0xE595_1048, // LDR r1, [r5, #0x48] (base)
+            0xE595_204C, // LDR r2, [r5, #0x4C] (permissions)
+            0xE595_3050, // LDR r3, [r5, #0x50] (peer permissions)
+            0xEF00_001F, // SVC MapMemoryBlock
+        ]);
+        call_loader(&mut code); // TryAcquireRight
+        code.extend([0xE1A0_000A, 0xEF00_0032]); // MOV r0,r10; SendSyncRequest
+        call_loader(&mut code); // data image + TriggerCmdReqQueue header
+        code.extend([
+            0xEE07_0FBA, // DMB
+            0xEE07_0F9A, // DSB
+            0xE1A0_000A, // MOV r0, r10
+            0xEF00_0032, // SVC SendSyncRequest (TriggerCmdReqQueue)
+            0xE1A0_0008, // MOV r0, r8
+            0xE3E0_2000, // MVN r2, #0
+            0xE3E0_3000, // MVN r3, #0
+            0xEF00_0024, // SVC WaitSynchronization1
+            0xE3A0_605A, // MOV r6, #0x5A
+            0xEAFF_FFFE, // B .
+        ]);
+        // loader: copy (destination, count, words...) records until count 0.
+        let loader = code.len() as i32;
+        code.extend([
+            0xE49C_2004, // LDR r2, [r12], #4
+            0xE49C_3004, // LDR r3, [r12], #4
+            0xE353_0000, // CMP r3, #0
+            0x012F_FF1E, // BXEQ lr
+            0xE49C_7004, // LDR r7, [r12], #4
+            0xE482_7004, // STR r7, [r2], #4
+            0xE253_3001, // SUBS r3, r3, #1
+        ]);
+        let copy_branch = code.len() as i32;
+        code.push(guest_branch(0x1, copy_branch, loader + 4)); // BNE copy
+        let next_branch = code.len() as i32;
+        code.push(guest_branch(0xE, next_branch, loader)); // B next record
+        let table_index = code.len() as i32;
+        for position in loader_calls {
+            code[position] = guest_call(position as i32, loader);
+        }
+        let table_offset = ((table_index - table_pointer_slot as i32) * 4 - 8) as u32;
+        let encoded_offset = (0..16u32)
+            .find_map(|rotation| {
+                let imm8 = table_offset.rotate_left(rotation * 2);
+                (imm8 <= 0xFF).then_some((rotation << 8) | imm8)
+            })
+            .expect("table offset must be an ARM immediate");
+        code[table_pointer_slot] = 0xE28F_C000 | encoded_offset;
+        let guest_code = code;
+
+        // The TLS slot is only known after a process is loaded.
         let mut probe = System::new();
         probe
             .load_ncsd_with_keys(
@@ -5731,15 +5792,8 @@ mod tests {
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
-        let probe_layout = layout(&mut probe);
         let tls_base = probe.ncsd_session().unwrap().current_tls_address().unwrap();
         let tls_request = tls_base + ARM11_TLS_IPC_BUFFER_OFFSET;
-        let (
-            (command_list_address, _),
-            (vertex_address, vertex_physical),
-            (tiled_target_address, tiled_target_physical),
-            (linear_framebuffer_address, linear_framebuffer_physical),
-        ) = probe_layout;
         drop(probe);
 
         let mut table: Vec<u32> = Vec::new();
@@ -5757,6 +5811,16 @@ mod tests {
             tls_base + 0x48,
             &[GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000],
         );
+        record(
+            &mut table,
+            tls_base + 0x54,
+            &[MEMOP_ALLOC_LINEAR, PERMISSION_READ_WRITE],
+        );
+        let allocation_words: Vec<u32> = allocations
+            .iter()
+            .flat_map(|(address, size)| [*address, *size])
+            .collect();
+        record(&mut table, tls_base + 0x60, &allocation_words);
         end_section(&mut table);
         // Sections 1-4: the IPC requests for srv: and gsp::Gpu.
         record(&mut table, tls_request, &[0x0001_0002, 0x20, 0]);
@@ -5864,11 +5928,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            layout(&mut system),
-            probe_layout,
-            "allocation must be deterministic"
-        );
-        assert_eq!(
             system
                 .ncsd_session()
                 .unwrap()
@@ -5903,6 +5962,14 @@ mod tests {
         let run = system.run_instructions(6000).unwrap();
         assert!(run.instructions_executed > 400, "{run:?}");
 
+        for (address, size) in allocations {
+            assert!(
+                system
+                    .physical_memory()
+                    .has_linear_fcram_allocation(to_physical(address), size),
+                "guest ControlMemory did not allocate {address:#x}"
+            );
+        }
         let registers = system.ncsd_session().unwrap().current_registers().unwrap();
         assert_eq!(registers[6], 0x5A, "guest did not pass the event wait");
         assert_eq!(system.gsp_service_registry().registered_client_count(), 1);
@@ -5944,14 +6011,23 @@ mod tests {
                 .unwrap(),
             0
         );
-        // Enabling the display controllers is the GSP system module's boot
-        // work, not the application's, so it stays host-side and is the only
-        // LCD register this test writes (the bottom screen has no framebuffer
-        // and stays disabled).
-        system
-            .lcd_controller_mut()
-            .write_register(LcdPanel::Top, PDC_CONTROL, 0x1_0001)
-            .unwrap();
+        // The HLE GSP turned the top panel on when the guest published its
+        // framebuffer; the bottom panel has none and stays off. The host
+        // writes no LCD register at all.
+        assert_eq!(
+            system
+                .lcd_controller_mut()
+                .read_register(LcdPanel::Top, PDC_CONTROL)
+                .unwrap(),
+            PDC_CONTROL_ENABLED
+        );
+        assert_eq!(
+            system
+                .lcd_controller_mut()
+                .read_register(LcdPanel::Bottom, PDC_CONTROL)
+                .unwrap(),
+            0
+        );
 
         let frame = system.run_frame_with_budget(0).unwrap();
         assert_eq!(frame.lcd_screens_scanned_out, 2);

@@ -1725,3 +1725,11 @@ O host não cria evento, client GSP, shared memory nem direito de renderização
 
 Verificado localmente sobre `main` em b49df8c: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
 
+### Itens 3 e 2 dos próximos passos (Claude, 17/11/2026)
+
+- **PDC pelo HLE do GSP:** `apply_gsp_framebuffer_info` agora liga `PDC_CONTROL` (`PDC_CONTROL_ENABLED`, exportado de `video`) do painel que recebeu metadados de framebuffer; painéis sem framebuffer publicado ficam desligados. O teste da cadeia não escreve mais nenhum registrador do LCD e afirma topo ligado, fundo desligado.
+- **`ControlMemory` linear no guest:** o teste da cadeia aloca os quatro buffers lineares com `SVC ControlMemory` (ALLOC|LINEAR, hints em `NEW_LINEAR_BASE`); o host não chama mais `map_test_linear_fcram` nesse teste. O programa guest agora é montado por código (rótulos/BL/ADD calculados), não por índices manuais. Mutação: reduzir a 3 alocações falha com "guest ControlMemory did not allocate 0x30060000".
+- Restam: viewport/escala de profundidade por registradores com a transformação no shader do guest (hoje matriz/viewport vêm de `set_pica_rendering`).
+
+Verificado localmente sobre `main` em 2388b23: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
+

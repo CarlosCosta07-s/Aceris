@@ -58,6 +58,8 @@ pub const PDC_FRAMEBUFFER_B_SECOND: u32 = 0x98;
 
 const PDC_ENABLE: u32 = 1;
 const PDC_OUTPUT_ENABLE: u32 = 1 << 16;
+/// PDC_CONTROL value with display timing and pixel output both enabled.
+pub const PDC_CONTROL_ENABLED: u32 = PDC_ENABLE | PDC_OUTPUT_ENABLE;
 const PDC_NEXT_BUFFER: u32 = 1;
 const PDC_CURRENT_BUFFER: u32 = 1 << 4;
 
