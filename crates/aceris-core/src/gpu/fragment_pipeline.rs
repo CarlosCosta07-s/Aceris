@@ -248,6 +248,30 @@ impl PicaFragmentPipeline {
             .map_err(PicaFragmentSampleError::Pipeline)
     }
 
+    /// Resolves output-map vertices directly into a perspective-correct fragment.
+    ///
+    /// This adapter keeps the existing vertex output-map and rasterizer modules
+    /// untouched. The caller supplies screen-space barycentrics from its
+    /// coverage stage and explicit defaults for unmapped color/UV semantics.
+    pub fn shade_resolved_triangle_sample(
+        &self,
+        memory: &GpuPhysicalMemory,
+        vertices: [PicaResolvedVertex; 3],
+        barycentric: [f32; 3],
+        default_primary_color: [f32; 4],
+        default_texture_coordinates: [[f32; 2]; 3],
+        minifying: [bool; 3],
+    ) -> Result<[f32; 4], PicaFragmentSampleError> {
+        let vertices = vertices.map(|vertex| {
+            PicaFragmentVertex::from_resolved(
+                &vertex,
+                default_primary_color,
+                default_texture_coordinates,
+            )
+        });
+        self.shade_triangle_sample(memory, vertices, barycentric, minifying)
+    }
+
     /// Applies the captured blend or logic operation to a shaded fragment and
     /// the destination pixel already stored in the RGBA8 color target.
     pub fn apply_fragment_output(
@@ -501,6 +525,43 @@ mod tests {
                 &GpuPhysicalMemory::new(),
                 vertices,
                 [0.25, 0.5, 0.25],
+                [false; 3],
+            )
+            .unwrap();
+        assert!((output[0] - 4.0 / 9.0).abs() < 1.0e-6);
+        assert!((output[1] - 4.0 / 9.0).abs() < 1.0e-6);
+        assert!((output[2] - 1.0 / 9.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn resolves_vertex_output_map_values_before_fragment_interpolation() {
+        let mut pica = Pica200::new();
+        configure_tev(&mut pica, PicaTevSource::PrimaryColor);
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let vertices = [
+            PicaResolvedVertex {
+                position: [-1.0, -1.0, 0.0, 1.0],
+                color: Some([1.0, 0.0, 0.0, 1.0]),
+                texcoords: [Some([0.0, 0.0]), None, None],
+            },
+            PicaResolvedVertex {
+                position: [2.0, -2.0, 0.0, 2.0],
+                color: Some([0.0, 1.0, 0.0, 1.0]),
+                texcoords: [Some([1.0, 0.0]), None, None],
+            },
+            PicaResolvedVertex {
+                position: [0.0, 4.0, 0.0, 4.0],
+                color: Some([0.0, 0.0, 1.0, 1.0]),
+                texcoords: [Some([0.0, 1.0]), None, None],
+            },
+        ];
+        let output = pipeline
+            .shade_resolved_triangle_sample(
+                &GpuPhysicalMemory::new(),
+                vertices,
+                [0.25, 0.5, 0.25],
+                [1.0; 4],
+                [[0.0; 2]; 3],
                 [false; 3],
             )
             .unwrap();
