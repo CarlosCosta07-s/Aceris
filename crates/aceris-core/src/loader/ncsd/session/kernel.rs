@@ -484,7 +484,11 @@ impl Arm11KernelObjectTable {
             .object_key(handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
 
-        let primary_handle = u64::from(self.objects.contains_key(&object_key));
+        let primary_handle = if self.objects.contains_key(&object_key) {
+            1
+        } else {
+            0
+        };
         let duplicate_handles = self
             .handle_aliases
             .values()
@@ -501,10 +505,14 @@ impl Arm11KernelObjectTable {
             .flat_map(|handles| handles.iter())
             .filter(|(_, key)| *key == object_key)
             .count() as u64;
-        let owner_reference = u64::from(matches!(
+        let owner_reference = if matches!(
             self.object_by_key(object_key),
             Some(KernelObject::Mutex(KernelMutex { owner: Some(_), .. }))
-        ));
+        ) {
+            1
+        } else {
+            0
+        };
 
         Ok(primary_handle
             .saturating_add(duplicate_handles)
