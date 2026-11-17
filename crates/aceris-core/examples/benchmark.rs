@@ -240,6 +240,8 @@ fn print_summary(
     zero_instruction_frames: usize,
     stop_reasons: &BTreeMap<String, u64>,
     first_report: Option<SystemFrameReport>,
+    final_pc: u32,
+    final_cpsr: u32,
 ) {
     let mut sorted = samples_ns.to_vec();
     sorted.sort_unstable();
@@ -277,7 +279,7 @@ fn print_summary(
 
     if let Some(report) = first_report {
         println!("First measured stop:      {:?}", report.cpu_stop_reason);
-        println!("First measured PC/CPSR:   available from System CPU diagnostics");
+        println!("Final guest PC/CPSR:      {final_pc:#010X} / {final_cpsr:#010X}");
     }
     println!("Stop reasons:");
     for (reason, count) in stop_reasons {
@@ -365,6 +367,8 @@ fn run(options: Options) -> Result<(), String> {
         zero_instruction_frames,
         &stop_reasons,
         first_report,
+        system.cpu().pc(),
+        system.cpu().cpsr.0,
     );
     Ok(())
 }
