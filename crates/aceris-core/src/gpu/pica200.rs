@@ -147,6 +147,10 @@ fn sign_extend_10(value: u32) -> i32 {
 pub const REG_COLOR_OPERATION: u16 = 0x100;
 /// First documented geometry-state register.
 pub const REG_ATTRIBUTE_BUFFERS: u16 = 0x200;
+/// Vertex shader boolean constants b0-b15.
+pub const REG_VSH_BOOLUNIFORM: u16 = 0x2B0;
+/// Vertex shader integer constant i0; i1-i3 occupy the next three registers.
+pub const REG_VSH_INTUNIFORM_I0: u16 = 0x2B1;
 /// Vertex shader float-uniform index/transfer-mode register.
 pub const REG_VSH_FLOATUNIFORM_INDEX: u16 = 0x2C0;
 /// First of eight vertex shader float-uniform data FIFO registers.
