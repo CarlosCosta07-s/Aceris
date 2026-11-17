@@ -21,6 +21,7 @@ struct Options {
     frames: usize,
     warmup_frames: usize,
     instruction_budget: usize,
+    dump_lcd: Option<PathBuf>,
 }
 
 struct BenchmarkSummary<'a> {
@@ -45,6 +46,7 @@ fn usage() {
          --frames <N>              Measured frames (default: 120)\n\
          --warmup <N>              Warm-up frames excluded from results (default: 15)\n\
          --instruction-budget <N>  ARM11 instruction budget per frame (default: {DEFAULT_FRAME_INSTRUCTION_BUDGET})\n\
+         --dump-lcd <DIR>          Save final LCD surfaces as PNG after timing\n\
          -h, --help                Show this help\n\
          \n\
          Supports 3DSX, NCSD (.3ds/.cci) and CIA files supported by the current loader."
@@ -75,6 +77,7 @@ fn parse_args() -> Result<Option<Options>, String> {
         frames: 120,
         warmup_frames: 15,
         instruction_budget: DEFAULT_FRAME_INSTRUCTION_BUDGET,
+        dump_lcd: None,
     };
 
     while let Some(argument) = args.next() {
@@ -91,6 +94,7 @@ fn parse_args() -> Result<Option<Options>, String> {
             "--instruction-budget" => {
                 options.instruction_budget = parse_positive(&value, "--instruction-budget")?;
             }
+            "--dump-lcd" => options.dump_lcd = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown option: {argument}")),
         }
     }
@@ -332,6 +336,20 @@ fn print_summary(options: &Options, summary: BenchmarkSummary<'_>) {
     );
 }
 
+fn dump_lcd(system: &System, directory: &PathBuf) -> Result<(), String> {
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("could not create LCD output directory: {error}"))?;
+    for (name, surface) in [
+        ("top_left.png", system.display().top_left()),
+        ("top_right.png", system.display().top_right()),
+        ("bottom.png", system.display().bottom()),
+    ] {
+        std::fs::write(directory.join(name), surface.to_png())
+            .map_err(|error| format!("could not write {name}: {error}"))?;
+    }
+    Ok(())
+}
+
 fn run(options: Options) -> Result<(), String> {
     let mut system = System::new();
     let format = load_image(&mut system, &options.image)?;
@@ -397,6 +415,10 @@ fn run(options: Options) -> Result<(), String> {
             final_cpsr: system.cpu().cpsr.0,
         },
     );
+    if let Some(directory) = options.dump_lcd.as_ref() {
+        dump_lcd(&system, directory)?;
+        println!("LCD captures written to {}", directory.display());
+    }
     Ok(())
 }
 
