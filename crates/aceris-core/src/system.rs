@@ -5229,6 +5229,9 @@ mod tests {
             0xE587_D058, // STR r13, [r7, #0x58] (output dimensions)
             0xEE07_0FBA, // DMB
             0xEE07_0F9A, // DSB
+            0xE584_5000, // STR r5, [r4] (guest TLS TriggerCmdReqQueue header)
+            0xE1A0_000C, // MOV r0, r12 (guest GSP service handle)
+            0xEF00_0032, // SVC SendSyncRequest
         ];
         let mut system = System::new();
         system
@@ -5246,7 +5249,7 @@ mod tests {
             map_test_linear_fcram(&mut system, FRAME_ALLOCATION);
         let (linear_framebuffer_address, linear_framebuffer_physical) =
             map_test_linear_fcram(&mut system, FRAME_ALLOCATION);
-        let (event_handle, _shared_memory_handle) = {
+        let (event_handle, shared_memory_handle, gsp_handle) = {
             let session = system.ncsd_session_mut().unwrap();
             let shared_memory_handle = session.create_memory_block(0x1000, 3, 3).unwrap();
             session
@@ -5261,10 +5264,22 @@ mod tests {
             let event_handle = session
                 .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
                 .unwrap();
-            (event_handle, shared_memory_handle)
+            let gsp_handle = session.create_gsp_gpu_session().unwrap();
+            (event_handle, shared_memory_handle, gsp_handle)
         };
         system
             .register_gsp_client(0, GSP_SHARED_MEMORY_BASE, event_handle)
+            .unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .set_gsp_session_registration(
+                gsp_handle,
+                Some(0),
+                Some(shared_memory_handle),
+                Some(event_handle),
+                0,
+            )
             .unwrap();
         assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
         let queue_address =
@@ -5289,7 +5304,9 @@ mod tests {
             assert!(session.set_current_register(13, dimensions));
             assert!(session.set_current_register(14, 8));
 
-            for _ in guest_program {
+            // Leave the trailing guest TLS write, MOV r0,r12 and
+            // SendSyncRequest for after the PICA setup below.
+            for _ in 0..guest_program.len() - 3 {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             }
             assert_eq!(session.pending_write_buffer_entries(), 0);
@@ -5387,13 +5404,34 @@ mod tests {
                 expected
             );
         }
-        let report = system.trigger_gsp_cmd_req_queue(0).unwrap();
-        assert!(report.error.is_none(), "{:?}", report.error);
-        assert_eq!(report.commands_consumed, 3);
-        assert_eq!(report.cache_regions_validated, 1);
-        assert_eq!(report.command_lists_submitted, 1);
-        assert_eq!(report.display_transfers_completed, 1);
-        assert!(report.cache_flush_requested);
+        // Supply only the guest's TLS pointer, command word and GSP handle;
+        // the ARM11 instructions write the IPC request and execute the SVC.
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            let tls = session.current_tls_address().unwrap();
+            assert!(session.set_current_register(4, tls + ARM11_TLS_IPC_BUFFER_OFFSET));
+            assert!(session.set_current_register(5, 0x000C_0000));
+            assert!(session.set_current_register(12, gsp_handle));
+        }
+        let trigger = system.run_instructions(3).unwrap();
+        assert_eq!(trigger.instructions_executed, 3);
+        assert_eq!(
+            read_tls_ipc_response(
+                &mut system,
+                system.ncsd_session().unwrap().current_tls_address().unwrap()
+                    + ARM11_TLS_IPC_BUFFER_OFFSET,
+                2,
+            ),
+            vec![0x000C_0040, 0]
+        );
+        let mut completed_queue_header = [0u8; GSP_GX_COMMAND_QUEUE_HEADER_SIZE];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(queue_address, &mut completed_queue_header)
+            .unwrap();
+        assert_eq!(completed_queue_header[0], 3);
+        assert_eq!(completed_queue_header[1], 0);
         assert_eq!(
             system
                 .ncsd_session()
