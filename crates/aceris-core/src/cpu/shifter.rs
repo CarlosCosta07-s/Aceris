@@ -234,13 +234,10 @@ mod tests {
                     for carry_in in [false, true] {
                         let expected = match (kind, imm5) {
                             (Lsl, 0) => (value, carry_in),
-                            (Lsr | Asr, 0) => {
-                                reference_register_shift(kind, value, 32, carry_in)
+                            (Lsr | Asr, 0) => reference_register_shift(kind, value, 32, carry_in),
+                            (Ror, 0) => {
+                                ((u32::from(carry_in) << 31) | (value >> 1), value & 1 != 0)
                             }
-                            (Ror, 0) => (
-                                (u32::from(carry_in) << 31) | (value >> 1),
-                                value & 1 != 0,
-                            ),
                             _ => reference_register_shift(kind, value, imm5, carry_in),
                         };
                         assert_eq!(
@@ -253,5 +250,4 @@ mod tests {
             }
         }
     }
-
 }
