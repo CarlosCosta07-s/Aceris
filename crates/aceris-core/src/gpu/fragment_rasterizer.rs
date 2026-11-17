@@ -139,6 +139,10 @@ pub struct PicaFragmentRasterState {
     pub transform: Matrix4,
     pub viewport: Viewport,
     pub depth_function: DepthFunction,
+    /// Independent R, G, B and alpha write enables after fragment output.
+    pub color_write_mask: [bool; 4],
+    /// Depth writes require the guest's depth/color mask and depth-write access.
+    pub depth_write_enabled: bool,
     /// Guest PICA depth-map scale/offset and Z/W-buffer selection.
     pub depth_map: Option<PicaDepthMap>,
     /// LOD classification supplied by the caller until screen derivatives are
@@ -152,6 +156,8 @@ impl PicaFragmentRasterState {
             transform,
             viewport,
             depth_function: DepthFunction::Less,
+            color_write_mask: [true; 4],
+            depth_write_enabled: true,
             depth_map: None,
             minifying: [false; 3],
         }
@@ -563,8 +569,14 @@ impl PicaFragmentRasterizer {
                 let output = pipeline
                     .apply_fragment_output(source, destination)
                     .map_err(PicaFragmentRasterError::FragmentOutput)?;
-                self.color[color_offset..color_offset + 4].copy_from_slice(&output);
-                self.depth[pixel_index] = fragment_depth;
+                for (channel, enabled) in state.color_write_mask.iter().copied().enumerate() {
+                    if enabled {
+                        self.color[color_offset + channel] = output[channel];
+                    }
+                }
+                if state.depth_write_enabled {
+                    self.depth[pixel_index] = fragment_depth;
+                }
                 report.shaded_pixels = report.shaded_pixels.saturating_add(1);
             }
         }
@@ -986,6 +998,57 @@ mod tests {
         assert_eq!(report.shaded_pixels, 0);
         assert_eq!(rasterizer.color_at(1, 6), Some([0, 0, 0, 255]));
         assert_eq!(rasterizer.depth_buffer()[6 * 8 + 1], 1.0);
+    }
+
+    #[test]
+    fn framebuffer_color_and_depth_write_masks_are_independent() {
+        let mut pica = super::super::Pica200::new();
+        configure_tev(&mut pica);
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let target = PicaRenderTargetConfig::from_registers(
+            VRAM_BASE >> 3,
+            2,
+            0,
+            8 | (7 << 12) | (1 << 24),
+        )
+        .unwrap();
+
+        let mut memory = GpuPhysicalMemory::new();
+        let initial_color = [20, 30, 40, 50];
+        let mut initial_pixels = vec![0u8; 8 * 8 * 4];
+        for pixel in initial_pixels.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&initial_color);
+        }
+        let mut initial = SoftwareRasterizer::new(8, 8).unwrap();
+        initial.load_color_rgba8(&initial_pixels).unwrap();
+        target.write_rasterizer(&initial, &mut memory).unwrap();
+
+        let mut rasterizer =
+            PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
+        let source = [200.0 / 255.0, 100.0 / 255.0, 50.0 / 255.0, 1.0];
+        let guest_draw = draw([
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], source),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], source),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], source),
+        ]);
+        let mut state = PicaFragmentRasterState::new(
+            Matrix4::identity(),
+            Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+        );
+        state.depth_function = DepthFunction::Always;
+        state.color_write_mask = [false, true, false, false];
+        state.depth_write_enabled = false;
+
+        let report = rasterizer.draw(&guest_draw, &pipeline, &memory, state).unwrap();
+        assert!(report.shaded_pixels > 0);
+        assert_eq!(rasterizer.color_at(1, 6), Some([20, 100, 40, 50]));
+        assert_eq!(rasterizer.depth_buffer()[6 * 8 + 1], 1.0);
+
+        state.color_write_mask = [true; 4];
+        state.depth_write_enabled = true;
+        rasterizer.draw(&guest_draw, &pipeline, &memory, state).unwrap();
+        assert_eq!(rasterizer.color_at(1, 6), Some([200, 100, 50, 255]));
+        assert!((rasterizer.depth_buffer()[6 * 8 + 1] - 0.5).abs() < 1.0e-6);
     }
 
     #[test]
