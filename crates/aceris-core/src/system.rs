@@ -3698,18 +3698,24 @@ mod tests {
         {
             let session = system.ncsd_session_mut().unwrap();
             assert!(session.set_current_register(0, source_virtual));
-            assert!(session.set_current_register(1, u32::from_le_bytes([
-                source_pixels[0],
-                source_pixels[1],
-                source_pixels[2],
-                source_pixels[3],
-            ])));
-            assert!(session.set_current_register(3, u32::from_le_bytes([
-                source_pixels[4],
-                source_pixels[5],
-                source_pixels[6],
-                source_pixels[7],
-            ])));
+            assert!(session.set_current_register(
+                1,
+                u32::from_le_bytes([
+                    source_pixels[0],
+                    source_pixels[1],
+                    source_pixels[2],
+                    source_pixels[3],
+                ])
+            ));
+            assert!(session.set_current_register(
+                3,
+                u32::from_le_bytes([
+                    source_pixels[4],
+                    source_pixels[5],
+                    source_pixels[6],
+                    source_pixels[7],
+                ])
+            ));
 
             // STR r1, [r0]
             assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
