@@ -166,6 +166,9 @@ pub enum PicaTevCombine {
 
 impl PicaTevCombine {
     fn decode(stage: usize, channel: PicaTevChannel, value: u32) -> Result<Self, PicaTevError> {
+        if channel == PicaTevChannel::Alpha && (value == 6 || value == 7) {
+            return Err(PicaTevError::UnsupportedCombine { stage, channel, value: value as u8 });
+        }
         match value {
             0 => Ok(Self::Replace),
             1 => Ok(Self::Modulate),
@@ -301,7 +304,7 @@ impl PicaTevStage {
         stage_index: usize,
         previous: [f32; 4],
         inputs: &PicaFragmentInputs,
-    ) -> [f32; 4] {
+    ) -> Result<[f32; 4], PicaTevError> {
         let rgb_sources = self.rgb_sources.map(|source| {
             resolve_source(source, self.rgb_sources, stage_index, previous, inputs, self.constant_color)
         });
@@ -320,22 +323,27 @@ impl PicaTevStage {
             self.alpha_operands[2].apply(alpha_sources[2]),
         ];
 
-        let mut rgb = self.rgb_combine.apply_rgb(rgb_operands);
+        let unscaled_rgb = self.rgb_combine.apply_rgb(rgb_operands);
+        let mut rgb = unscaled_rgb;
         for lane in &mut rgb {
             *lane = (*lane * self.rgb_scale).clamp(0.0, 1.0);
         }
 
         let alpha = if self.rgb_combine == PicaTevCombine::Dot3Rgba {
-            rgb[0]
+            (unscaled_rgb[0] * self.alpha_scale).clamp(0.0, 1.0)
         } else {
             self.alpha_combine
                 .apply_alpha(alpha_operands)
-                .unwrap_or(alpha_operands[0])
+                .ok_or(PicaTevError::UnsupportedCombine {
+                    stage: stage_index,
+                    channel: PicaTevChannel::Alpha,
+                    value: 6,
+                })?
                 .mul_add(self.alpha_scale, 0.0)
                 .clamp(0.0, 1.0)
         };
 
-        [rgb[0], rgb[1], rgb[2], alpha]
+        Ok([rgb[0], rgb[1], rgb[2], alpha])
     }
 }
 
@@ -419,12 +427,12 @@ impl PicaTextureEnvironment {
     }
 
     /// Evaluates all six stages in order, returning normalized RGBA.
-    pub fn evaluate(&self, inputs: &PicaFragmentInputs) -> [f32; 4] {
+    pub fn evaluate(&self, inputs: &PicaFragmentInputs) -> Result<[f32; 4], PicaTevError> {
         let mut previous = [0.0; 4];
         for (index, stage) in self.stages.iter().copied().enumerate() {
-            previous = stage.evaluate(index, previous, inputs);
+            previous = stage.evaluate(index, previous, inputs)?;
         }
-        previous
+        Ok(previous)
     }
 }
 
@@ -515,16 +523,16 @@ mod tests {
             PicaTevCombine::Replace,
             1.0,
         );
-        assert_eq!(replace.evaluate(0, [0.0; 4], &inputs), a);
+        assert_eq!(replace.evaluate(0, [0.0; 4], &inputs).unwrap(), a);
 
         let modulate = PicaTevStage { rgb_combine: PicaTevCombine::Modulate, alpha_combine: PicaTevCombine::Modulate, ..replace };
-        assert_eq!(modulate.evaluate(0, [0.0; 4], &inputs), [0.1, 0.1, 0.06, 0.4]);
+        assert_eq!(modulate.evaluate(0, [0.0; 4], &inputs).unwrap(), [0.1, 0.1, 0.06, 0.4]);
 
         let add = PicaTevStage { rgb_combine: PicaTevCombine::Add, alpha_combine: PicaTevCombine::Add, ..replace };
-        assert_eq!(add.evaluate(0, [0.0; 4], &inputs), [0.7, 0.65, 0.7, 1.0]);
+        assert_eq!(add.evaluate(0, [0.0; 4], &inputs).unwrap(), [0.7, 0.65, 0.7, 1.0]);
 
         let subtract = PicaTevStage { rgb_combine: PicaTevCombine::Subtract, alpha_combine: PicaTevCombine::Subtract, ..replace };
-        assert_eq!(subtract.evaluate(0, [0.0; 4], &inputs), [0.0, 0.15, 0.5, 0.3]);
+        assert_eq!(subtract.evaluate(0, [0.0; 4], &inputs).unwrap(), [0.0, 0.15, 0.5, 0.3]);
     }
 
     #[test]
@@ -539,10 +547,10 @@ mod tests {
             PicaTevCombine::Interpolate,
             1.0,
         );
-        assert_eq!(interpolate.evaluate(0, [0.0; 4], &inputs), [0.625, 0.375, 0.5, 0.75]);
+        assert_eq!(interpolate.evaluate(0, [0.0; 4], &inputs).unwrap(), [0.625, 0.625, 0.5, 0.75]);
 
         let add_signed = PicaTevStage { rgb_combine: PicaTevCombine::AddSigned, ..interpolate };
-        assert_eq!(add_signed.evaluate(0, [0.0; 4], &inputs), [0.5, 0.0, 0.5, 0.75]);
+        assert_eq!(add_signed.evaluate(0, [0.0; 4], &inputs).unwrap(), [0.5, 0.5, 0.5, 0.75]);
 
         let dot = PicaTevStage {
             rgb_sources: [PicaTevSource::PrimaryColor, PicaTevSource::Texture0, PicaTevSource::PrimaryColor],
@@ -552,10 +560,10 @@ mod tests {
             ..interpolate
         };
         let dot = dot.evaluate(0, [0.0; 4], &inputs);
-        assert_eq!(dot, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(dot.unwrap(), [0.0, 0.0, 0.0, 0.0]);
 
         let scaled = PicaTevStage { rgb_scale: 4.0, rgb_combine: PicaTevCombine::Add, ..interpolate };
-        assert_eq!(scaled.evaluate(0, [0.0; 4], &inputs), [1.0, 1.0, 1.0, 0.75]);
+        assert_eq!(scaled.evaluate(0, [0.0; 4], &inputs).unwrap(), [1.0, 1.0, 1.0, 0.75]);
     }
 
     #[test]
@@ -576,12 +584,12 @@ mod tests {
         let env = PicaTextureEnvironment { stages };
         let mut inputs = PicaFragmentInputs::default();
         inputs.textures[0] = [0.1, 0.2, 0.3, 0.4];
-        assert_eq!(env.evaluate(&inputs), [0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(env.evaluate(&inputs).unwrap(), [0.1, 0.2, 0.3, 0.4]);
 
         first.rgb_sources = [PicaTevSource::Previous; 3];
         first.alpha_sources = [PicaTevSource::Previous; 3];
         let first_only_previous = PicaTevStage { ..first };
-        assert_eq!(first_only_previous.evaluate(0, [0.0; 4], &inputs), [0.0; 4]);
+        assert_eq!(first_only_previous.evaluate(0, [0.0; 4], &inputs).unwrap(), [0.0; 4]);
     }
 
     #[test]
