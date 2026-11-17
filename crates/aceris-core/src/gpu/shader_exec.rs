@@ -1,16 +1,12 @@
-//! Reference execution of a documented subset of the PICA200 vertex shader ISA.
+//! Reference execution of the implemented PICA200 vertex shader ISA subset.
 //!
-//! Supported: the arithmetic instructions without address-register indexing
-//! (ADD, MUL, DP3, DP4, DPH, DPHI, SLT, SLTI, SGE, SGEI, MAX, MIN, FLR, RCP,
-//! RSQ, EX2, LG2, MOV, MAD, MADI) plus NOP and END. Programs are straight-line:
-//! flow control (CALL/IF/LOOP/JMP/BREAK), comparisons that set condition codes
-//! (CMP), MOVA, address-register indexing, LITP/DST and geometry-shader emits
-//! are rejected with an explicit error instead of being guessed.
+//! The executor covers the documented arithmetic and vector operations,
+//! MOVA/CMP, relative constant addressing, operand masks and swizzles.
+//! Geometry-shader emits and structured control flow are the remaining
+//! execution gaps in this stage.
 //!
-//! Arithmetic is performed in IEEE `f32`. The hardware's internal float24
-//! precision and its approximated reciprocal/inverse-square-root results are
-//! not modeled. Multiplication follows the documented rule that a zero
-//! operand yields zero, even when the other operand is infinite or NaN.
+//! Arithmetic uses IEEE f32. PICA200 float24 intermediate precision and
+//! hardware-specific transcendental approximations are not modeled.
 
 use super::pica200::{
     Pica200, REG_VSH_BOOLUNIFORM, REG_VSH_INTUNIFORM_I0, VSH_CODE_TRANSFER_WORDS,
@@ -210,6 +206,16 @@ impl PicaVertexShaderProgram {
         self.boolean_uniforms = boolean_uniforms;
         self.integer_uniforms = integer_uniforms;
         self
+    }
+
+    /// Returns one uploaded boolean constant b0-b15.
+    pub fn boolean_uniform(&self, index: usize) -> Option<bool> {
+        (index < 16).then(|| self.boolean_uniforms & (1 << index) != 0)
+    }
+
+    /// Returns one uploaded integer constant i0-i3 as its four guest bytes.
+    pub fn integer_uniform(&self, index: usize) -> Option<[u8; 4]> {
+        self.integer_uniforms.get(index).copied()
     }
 
     /// Creates a program from fully uploaded code and descriptor words.
@@ -439,7 +445,11 @@ impl Machine<'_> {
         if constant_index >= VSH_FLOAT_UNIFORM_COUNT as i32 {
             [1.0; 4]
         } else {
-            self.program.uniforms[constant_index as usize]
+            self.program
+                .uniforms
+                .get(constant_index as usize)
+                .copied()
+                .unwrap_or([0.0; 4])
         }
     }
 
