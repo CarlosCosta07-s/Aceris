@@ -182,3 +182,23 @@ Quais registradores configuram o retângulo de viewport, a faixa de profundidade
 A viewport é sustentada por documentação técnica pública não oficial e pelo layout de registradores estudado. A escala/offset está descrita em documentação; a interpretação Z/W de `0x06D` tem divergência de terminologia e permanece pendente de hardware. Os testes Aceris verificam o contrato implementado, não equivalência física. Ainda faltam comparação em hardware legítimo, precisão/quantização exata, scissor, culling, polygon offset aplicado como estado real, depth/stencil e persistência do depth buffer em memória.
 
 A implementação Aceris foi escrita separadamente em Rust. Não foi copiado, traduzido, portado ou adaptado código-fonte, testes, assets ou shaders dos projetos consultados.
+
+
+## 11. PICA200 — instruções aritméticas EX2 e LG2 (17/11/2026)
+
+### Pergunta técnica
+
+Quais são os números de opcode e o formato de operandos de EX2/LG2, qual componente é usado como entrada escalar e como o resultado é distribuído pelos lanes de destino?
+
+### Referências consultadas
+
+- 3dbrew, *GPU/Shader Instruction Set*: https://www.3dbrew.org/wiki/GPU/Shader_Instruction_Set — documentação comunitária de engenharia reversa, consultada em 17/11/2026. Descreve EX2 como exponencial base 2 do primeiro componente do SRC1, com resultado replicado nos quatro lanes; LG2 como logaritmo base 2 do primeiro componente, também replicado. A licença da página não foi identificada nesta consulta.
+- Azahar, repositório https://github.com/azahar-emu/azahar, revisão `11eceda5e0e682a1f44e396bf954a1b9137097ca`: `src/video_core/shader/shader_jit_x64_compiler.cpp`. A tabela de instruções associa o opcode `0x05` a EX2 e `0x06` a LG2, ambos pelo caminho de instrução unária. O cabeçalho do arquivo declara GPLv2 ou posterior; o `LICENSE.txt` na raiz da mesma revisão contém GPLv3. A diferença entre cabeçalho e licença de raiz é registrada como observada, sem conclusão jurídica. A fonte foi consultada somente para confirmar a tabela de opcodes/formato; nenhum código, teste, fixture, shader ou estrutura foi copiado, traduzido, portado ou adaptado. Data: 17/11/2026.
+
+### Conclusão e implementação independente
+
+- O Aceris reconhece EX2 no opcode `0x05` e LG2 no opcode `0x06`, ambos como formato unário.
+- A execução usa o primeiro lane do SRC1 depois do swizzle/negação do operand descriptor e replica o resultado nos quatro componentes de destino; a máscara de destino existente continua controlando quais componentes são escritos.
+- A implementação própria em Rust usa `f32::exp2` e `f32::log2`. Isso não declara precisão float24 nem equivalência com as aproximações internas do hardware PICA200.
+- Foram adicionados testes de valores positivos e negativos para EX2, logaritmo de potência de dois, swizzle de componente, máscara parcial e os resultados IEEE de `log2(0)` e `log2(negativo)`.
+- DST permanece explicitamente não implementada: 3dbrew a lista como opcode `0x04`, mas a tabela JIT consultada em Azahar o deixa como desconhecido. A divergência exige investigação independente antes de habilitar a instrução. LITP também permanece fora do subconjunto porque seus efeitos sobre condition codes não estão implementados.
