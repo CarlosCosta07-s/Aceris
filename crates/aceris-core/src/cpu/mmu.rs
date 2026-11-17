@@ -1489,7 +1489,7 @@ mod tests {
     }
 
     #[test]
-    fn xp_disabled_tex_cb_encodings_match_the_armv6_attribute_matrix() {
+    fn tre_disabled_tex_cb_encodings_match_the_arm11_attribute_matrix() {
         let (cpu, _mem) = machine();
         let params = params(&cpu);
 
