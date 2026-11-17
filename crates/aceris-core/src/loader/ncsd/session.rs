@@ -3047,7 +3047,11 @@ impl Arm11ProcessSession {
             .unwrap_or_else(kernel_handle_result_code);
         // Closing the final handle to the calling thread terminates it. In
         // that case there is no guest context to receive a return value.
-        if self.scheduler.core(caller).is_none() {
+        let caller_exited = self
+            .scheduler
+            .thread_info(caller)
+            .is_none_or(|info| info.state == ThreadState::Exited);
+        if caller_exited {
             return if self.scheduler.current_thread_id().is_some() {
                 SvcRunDisposition::Resume
             } else {
