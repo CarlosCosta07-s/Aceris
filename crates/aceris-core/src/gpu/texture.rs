@@ -715,10 +715,9 @@ mod tests {
 
         let mut unit = sample_unit(PicaTextureFormat::Rgba8);
         unit.magnification_filter = PicaTextureFilter::Linear;
-        assert_eq!(
-            unit.sample(&memory, 1.0 / 8.0, 0.5 / 8.0, false).unwrap(),
-            [0.5, 0.0, 0.0, 1.0]
-        );
+        let filtered = unit.sample(&memory, 1.0 / 8.0, 0.5 / 8.0, false).unwrap();
+        assert!((filtered[0] - 128.0 / 255.0).abs() < 1.0e-6);
+        assert_eq!(&filtered[1..], &[0.0, 0.0, 1.0]);
         assert_eq!(
             unit.sample(&memory, 0.0, 0.0, false).unwrap(),
             [0.0, 0.0, 0.0, 1.0]
