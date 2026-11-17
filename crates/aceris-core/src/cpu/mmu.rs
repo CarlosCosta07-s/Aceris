@@ -1361,6 +1361,39 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct CachePolicyTrackingBus {
+        memory: FlatMemory,
+        last_read_policy: Option<CachePolicy>,
+        last_write_policy: Option<CachePolicy>,
+    }
+
+    impl Bus for CachePolicyTrackingBus {
+        fn read8(&mut self, address: u32) -> Result<u8> {
+            self.memory.read8(address)
+        }
+
+        fn write8(&mut self, address: u32, value: u8) -> Result<()> {
+            self.memory.write8(address, value)
+        }
+
+        fn read8_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> Result<u8> {
+            self.last_read_policy = Some(policy);
+            self.memory.read8(address)
+        }
+
+        fn write8_with_cache_policy(
+            &mut self,
+            address: u32,
+            value: u8,
+            policy: CachePolicy,
+        ) -> Result<()> {
+            self.last_write_policy = Some(policy);
+            self.memory.write8(address, value)
+        }
+    }
+
+
     #[test]
     fn xp_section_retains_tex_cb_and_shareable_attributes() {
         let (cpu, mut mem) = machine();
@@ -1547,6 +1580,53 @@ mod tests {
             attributes(MemoryType::StronglyOrdered, 3).data_cache_policy(true, false, false),
             CachePolicy::NonCacheable
         );
+    }
+
+    #[test]
+    fn mmu_bus_applies_shared_cacheability_gate_to_real_loads_and_stores() {
+        let (cpu, mut memory) = machine();
+        let virtual_address = 0x0010_0000;
+        // Section mapping: Normal WBWA (TEX=001,C=1,B=1), Shareable.
+        set_l1(
+            &mut memory,
+            1,
+            SECTION | SECTION_AP_RW_ALL | (1 << 16) | (1 << 12) | (1 << 3) | (1 << 2),
+        );
+        let mut bus = CachePolicyTrackingBus {
+            memory,
+            last_read_policy: None,
+            last_write_policy: None,
+        };
+
+        for (smp_enabled, scu_enabled, expected) in [
+            (false, false, CachePolicy::NormalNonCacheable),
+            (true, false, CachePolicy::NormalNonCacheable),
+            (false, true, CachePolicy::NormalNonCacheable),
+            (true, true, CachePolicy::WriteBack),
+        ] {
+            let mut parameters = params(&cpu);
+            parameters.data_cache_enabled = true;
+            parameters.smp_enabled = smp_enabled;
+            parameters.scu_enabled = scu_enabled;
+
+            let mut tlb = TranslationLookasideBuffer::default();
+            {
+                let mut mmu = MmuBus::new(&mut bus, parameters, &mut tlb);
+                let _ = mmu.read8(virtual_address).unwrap();
+                mmu.write8(virtual_address, 0x5A).unwrap();
+            }
+
+            assert_eq!(
+                bus.last_read_policy,
+                Some(expected),
+                "read policy mismatch for ACTLR.SMP={smp_enabled}, SCU={scu_enabled}",
+            );
+            assert_eq!(
+                bus.last_write_policy,
+                Some(expected),
+                "write policy mismatch for ACTLR.SMP={smp_enabled}, SCU={scu_enabled}",
+            );
+        }
     }
 
     #[test]
