@@ -33,7 +33,8 @@ use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
 use kernel::{
-    Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, EventResetType, KernelHandleError,
+    Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE, EventResetType,
+    KernelHandleError,
     ServiceSessionKind,
 };
 use svc::{
@@ -3054,10 +3055,11 @@ impl Arm11ProcessSession {
     /// Handles GetHandleInfo using r1 = handle and r2 = information type.
     ///
     /// The raw SVC returns its 64-bit output in r1-r2 and the Result in r0.
-    /// Type 1 reports the object references currently modelled by this kernel
-    /// table. Type 0 is supported for the current-process pseudo-handle, whose
-    /// creation time is the process virtual-clock origin (tick zero). Type
-    /// 0x32107 follows the documented constant-zero behavior.
+    /// Type 0 returns the creation tick for the current-process pseudo-handle;
+    /// for another valid object, the kernel leaves the r5-r6 output seed intact.
+    /// Type 1 reports the modeled object refcount, sign-extended to 64 bits.
+    /// Type 2 is unimplemented by the 3DS kernel and likewise preserves r5-r6.
+    /// Type 0x32107 follows the documented constant-zero behavior.
     fn svc_get_handle_info(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
             .scheduler
@@ -3066,21 +3068,35 @@ impl Arm11ProcessSession {
             .regs;
         let handle = registers[1];
         let info_type = registers[2];
+        let output_seed = u64::from(registers[5]) | (u64::from(registers[6]) << 32);
+        let valid_handle = handle == CURRENT_PROCESS_HANDLE
+            || handle == CURRENT_THREAD_HANDLE
+            || self.kernel_objects.is_open_handle(handle);
 
-        let (result, value) = match info_type {
-            0 if handle == CURRENT_PROCESS_HANDLE => (0, 0),
-            0 => (RESULT_INVALID_HANDLE, 0),
-            1 => match self.kernel_objects.handle_reference_count(handle) {
-                Ok(count) => (0, count),
-                Err(error) => (kernel_handle_result_code(error), 0),
-            },
-            0x0003_2107 => (0, 0),
-            _ => (RESULT_INVALID_ENUM, 0),
+        let (result, value) = if !valid_handle {
+            (RESULT_INVALID_HANDLE, None)
+        } else {
+            match info_type {
+                0 if handle == CURRENT_PROCESS_HANDLE => (0, Some(0)),
+                // Non-process handles do not have process creation timestamps.
+                0 | 2 => (0, Some(output_seed)),
+                1 => match self.kernel_objects.handle_reference_count(handle) {
+                    Ok(count) => {
+                        let signed_count = i64::from(count as i32);
+                        (0, Some(signed_count as u64))
+                    }
+                    Err(error) => (kernel_handle_result_code(error), None),
+                },
+                0x0003_2107 => (0, Some(0)),
+                _ => (RESULT_INVALID_ENUM, None),
+            }
         };
 
-        if let Some(core) = self.scheduler.core_mut(caller) {
-            core.regs[1] = value as u32;
-            core.regs[2] = (value >> 32) as u32;
+        if let Some(value) = value {
+            if let Some(core) = self.scheduler.core_mut(caller) {
+                core.regs[1] = value as u32;
+                core.regs[2] = (value >> 32) as u32;
+            }
         }
         self.write_svc_result(caller, result)
     }
@@ -5484,7 +5500,62 @@ mod tests {
         assert_eq!(registers[1], 0);
         assert_eq!(registers[2], 0);
 
-        // Undefined information types are rejected deterministically.
+        // A non-process object leaves the r5-r6 output seed unchanged for type 0.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = event;
+            main.regs[2] = 0;
+            main.regs[5] = 0x1122_3344;
+            main.regs[6] = 0x5566_7788;
+        }
+        session.dispatch_svc(SVC_GET_HANDLE_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(
+            u64::from(registers[1]) | (u64::from(registers[2]) << 32),
+            0x5566_7788_1122_3344
+        );
+
+        // Type 2 is an unimplemented kernel query and preserves r5-r6 too.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = duplicate;
+            main.regs[2] = 2;
+            main.regs[5] = 0x89AB_CDEF;
+            main.regs[6] = 0x0123_4567;
+        }
+        session.dispatch_svc(SVC_GET_HANDLE_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(
+            u64::from(registers[1]) | (u64::from(registers[2]) << 32),
+            0x0123_4567_89AB_CDEF
+        );
+
+        // The documented special type always returns zero.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = event;
+            main.regs[2] = 0x0003_2107;
+        }
+        session.dispatch_svc(SVC_GET_HANDLE_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(registers[1], 0);
+        assert_eq!(registers[2], 0);
+
+        // Invalid handles and undefined information types retain distinct errors.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = 0xDEAD_BEEF;
+            main.regs[2] = 2;
+        }
+        session.dispatch_svc(SVC_GET_HANDLE_INFO);
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+            RESULT_INVALID_HANDLE
+        );
+
         {
             let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
             main.regs[1] = duplicate;
