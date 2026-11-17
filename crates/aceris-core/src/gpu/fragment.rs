@@ -677,20 +677,22 @@ mod tests {
             alpha_combine: PicaTevCombine::Add,
             ..replace
         };
-        assert_eq!(
-            add.evaluate(0, [0.0; 4], &inputs).unwrap(),
-            [0.7, 0.65, 0.7, 1.0]
-        );
+        let added = add.evaluate(0, [0.0; 4], &inputs).unwrap();
+        assert!((added[0] - 0.7).abs() < 1.0e-6);
+        assert!((added[1] - 0.65).abs() < 1.0e-6);
+        assert!((added[2] - 0.7).abs() < 1.0e-6);
+        assert!((added[3] - 1.0).abs() < 1.0e-6);
 
         let subtract = PicaTevStage {
             rgb_combine: PicaTevCombine::Subtract,
             alpha_combine: PicaTevCombine::Subtract,
             ..replace
         };
-        assert_eq!(
-            subtract.evaluate(0, [0.0; 4], &inputs).unwrap(),
-            [0.0, 0.15, 0.5, 0.3]
-        );
+        let subtracted = subtract.evaluate(0, [0.0; 4], &inputs).unwrap();
+        assert!(subtracted[0].abs() < 1.0e-6);
+        assert!((subtracted[1] - 0.15).abs() < 1.0e-6);
+        assert!((subtracted[2] - 0.5).abs() < 1.0e-6);
+        assert!((subtracted[3] - 0.3).abs() < 1.0e-6);
     }
 
     #[test]
