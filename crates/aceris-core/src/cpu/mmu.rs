@@ -1220,6 +1220,8 @@ impl Arm11Core {
             sctlr_r: self.cp15.legacy_sctlr_r(),
             tre: self.cp15.memory_region_remap_enabled(),
             data_cache_enabled: self.cp15.sctlr() & (1 << 2) != 0,
+            smp_enabled: self.cp15.smp_mode_enabled(),
+            scu_enabled,
             primary_remap: self.cp15.primary_memory_remap(),
             normal_remap: self.cp15.normal_memory_remap(),
             tlb_preserve: self.cp15.tlb_preserve(),
