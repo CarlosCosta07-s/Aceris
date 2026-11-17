@@ -5099,8 +5099,11 @@ mod tests {
         };
 
         let mut writes = Vec::with_capacity(2 + 4 + 2 + 5 + 1 + 16 + 1);
-        // The guest also enables the depth test (function: less).
-        writes.push((crate::gpu::REG_DEPTH_COLOR_MASK, 0x41));
+        // The guest enables depth testing (less), all RGBA write masks and
+        // depth writes. Separate buffer permissions also allow RGBA/depth.
+        writes.push((crate::gpu::REG_DEPTH_COLOR_MASK, 0x1F41));
+        writes.push((crate::gpu::REG_COLORBUFFER_WRITE, 0xF));
+        writes.push((crate::gpu::REG_DEPTHBUFFER_WRITE, 0x2));
         writes.push((OPDESC_INDEX, 0));
         for lane in 0..4 {
             writes.push((OPDESC_DATA, descriptor(1 << (3 - lane))));
