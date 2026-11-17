@@ -3226,6 +3226,13 @@ mod tests {
                     0xE584_800C, // STR r8, [r4, #12] (event handle)
                     0xE1A0_000C, // MOV r0, r12 (GSP service handle)
                     0xEF00_0032, // GSP RegisterInterruptRelayQueue
+                    // Guest maps the returned Shared Memory handle via SVC 0x1F.
+                    0xE594_5010, // LDR r5, [r4, #16] (shared memory handle from reply)
+                    0xE1A0_0005, // MOV r0, r5 (memory-block handle)
+                    0xE1A0_1006, // MOV r1, r6 (shared-memory base)
+                    0xE1A0_2007, // MOV r2, r7 (read/write permissions)
+                    0xE1A0_3008, // MOV r3, r8 (peer permissions: DONTCARE)
+                    0xEF00_001F, // SVC MapMemoryBlock
                     // Guest-authored TryAcquireRight IPC header and two parameters.
                     0xE584_5000, // STR r5, [r4] (IPC header)
                     0xE584_6004, // STR r6, [r4, #4] (normal parameter 0)
@@ -3413,14 +3420,37 @@ mod tests {
         assert_ne!(shared_memory_handle, 0);
         assert_eq!(system.gsp_service_registry().registered_client_count(), 1);
 
-        // The guest's MapMemoryBlock call after the IPC response is idempotent
-        // for this exact block/address, but does not accept another mapping.
-        system
-            .ncsd_session
-            .as_mut()
-            .unwrap()
-            .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
-            .unwrap();
+        // The guest loads the returned handle from its TLS IPC response,
+        // prepares SVC MapMemoryBlock arguments and invokes the real ARM11 SVC.
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            assert!(session.set_current_register(6, GSP_SHARED_MEMORY_BASE));
+            assert!(session.set_current_register(7, 3));
+            assert!(session.set_current_register(8, 0x1000_0000));
+            for _ in 0..5 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            let registers = session.current_registers().unwrap();
+            assert_eq!(registers[0], shared_memory_handle);
+            assert_eq!(registers[1], GSP_SHARED_MEMORY_BASE);
+            assert_eq!(registers[2], 3);
+            assert_eq!(registers[3], 0x1000_0000);
+        }
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            system.ncsd_session().unwrap().core().regs[0],
+            0,
+            "guest MapMemoryBlock must succeed"
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .address_space()
+                .query_memory(GSP_SHARED_MEMORY_BASE)
+                .state,
+            crate::loader::ncsd::process::Arm11MemoryState::Shared
+        );
 
         // The guest writes the complete TryAcquireRight IPC message and
         // moves the session handle into r0 before executing SendSyncRequest.
