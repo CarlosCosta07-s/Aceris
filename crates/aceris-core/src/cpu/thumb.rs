@@ -2469,4 +2469,38 @@ mod tests {
         assert_eq!(cpu.pc(), 0x12);
         assert!(cpu.cpsr.thumb());
     }
+
+    #[test]
+    fn thumb_decoder_sweeps_all_65536_encodings_without_emulator_gaps() {
+        // Exhaust the complete 16-bit encoding space of the ARMv6 Thumb ISA.
+        // Reserved/UNDEFINED/UNPREDICTABLE encodings may return an architectural
+        // error, but no encoding may escape as an unimplemented emulator path.
+        let mut memory = FlatMemory::new(0, 0x1000);
+
+        for encoding in 0u16..=u16::MAX {
+            memory.write16(0, encoding).unwrap();
+
+            let mut cpu = Arm11Core::new();
+            cpu.cpsr.set_thumb(true);
+
+            // Keep every legal single- and multiple-transfer addressing form
+            // inside the fixture while leaving PC-relative branches executable.
+            for register in 0..8 {
+                cpu.regs[register] = 0x400 + register as u32 * 4;
+            }
+            for register in 8..13 {
+                cpu.regs[register] = 0x600 + (register as u32 - 8) * 4;
+            }
+            cpu.regs[SP] = 0xC00;
+            cpu.regs[LR] = 0x700;
+            cpu.set_pc(0);
+
+            let result = cpu.step(&mut memory);
+            assert!(
+                !matches!(result, Err(Error::Unimplemented(_))),
+                "Thumb encoding {encoding:#06x} reached an unimplemented path: {result:?}"
+            );
+        }
+    }
+
 }
