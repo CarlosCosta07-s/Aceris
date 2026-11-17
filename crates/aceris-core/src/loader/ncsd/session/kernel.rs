@@ -1572,10 +1572,7 @@ mod tests {
         assert_eq!(table.mutex_owner(mutex_alias), Some(owner));
         assert_eq!(table.release_mutex(mutex_alias, owner), Ok(None));
         assert_eq!(table.mutex_owner(mutex), None);
-        assert_eq!(
-            table.try_wait_synchronization(mutex, owner),
-            Ok(true)
-        );
+        assert_eq!(table.try_wait_synchronization(mutex, owner), Ok(true));
         assert_eq!(table.mutex_owner(mutex_alias), Some(owner));
         table.release_mutex(mutex_alias, owner).unwrap();
         table.close_handle(mutex).unwrap();
@@ -1615,10 +1612,15 @@ mod tests {
 
         let service = table.insert_service_manager_session().unwrap();
         let service_alias = table.duplicate_handle(service).unwrap();
-        table.register_service_manager_client(service_alias).unwrap();
+        table
+            .register_service_manager_client(service_alias)
+            .unwrap();
         assert_eq!(table.service_manager_client_registered(service), Some(true));
         table.close_handle(service).unwrap();
-        assert_eq!(table.service_manager_client_registered(service_alias), Some(true));
+        assert_eq!(
+            table.service_manager_client_registered(service_alias),
+            Some(true)
+        );
         table.close_handle(service_alias).unwrap();
 
         let gsp = table.insert_gsp_gpu_session().unwrap();
