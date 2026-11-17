@@ -164,6 +164,7 @@ pub struct PicaFragmentRasterReport {
     pub input_triangles: u64,
     pub clipped_triangles: u64,
     pub covered_pixels: u64,
+    pub alpha_rejected_pixels: u64,
     pub depth_rejected_pixels: u64,
     pub shaded_pixels: u64,
 }
@@ -504,6 +505,38 @@ impl PicaFragmentRasterizer {
                 };
 
                 let pixel_index = y * self.width + x;
+                let varyings = [
+                    vertices[0].varying,
+                    vertices[1].varying,
+                    vertices[2].varying,
+                ];
+                let shade_fragment = || {
+                    pipeline
+                        .shade_triangle_sample(
+                            memory,
+                            varyings,
+                            weights.map(|weight| weight as f32),
+                            state.minifying,
+                        )
+                        .map_err(PicaFragmentRasterError::Fragment)
+                };
+
+                // PICA alpha testing is evaluated after TEV and before depth.
+                let source_before_depth = if pipeline.alpha_test_enabled() {
+                    let source = shade_fragment()?;
+                    if !pipeline
+                        .alpha_test_passes(source)
+                        .map_err(PicaFragmentRasterError::FragmentOutput)?
+                    {
+                        report.alpha_rejected_pixels =
+                            report.alpha_rejected_pixels.saturating_add(1);
+                        continue;
+                    }
+                    Some(source)
+                } else {
+                    None
+                };
+
                 if !depth_passes(
                     state.depth_function,
                     fragment_depth,
@@ -513,19 +546,10 @@ impl PicaFragmentRasterizer {
                     continue;
                 }
 
-                let varyings = [
-                    vertices[0].varying,
-                    vertices[1].varying,
-                    vertices[2].varying,
-                ];
-                let source = pipeline
-                    .shade_triangle_sample(
-                        memory,
-                        varyings,
-                        weights.map(|weight| weight as f32),
-                        state.minifying,
-                    )
-                    .map_err(PicaFragmentRasterError::Fragment)?;
+                let source = match source_before_depth {
+                    Some(source) => source,
+                    None => shade_fragment()?,
+                };
                 let color_offset = pixel_index * 4;
                 let destination = [
                     f32::from(self.color[color_offset]) / 255.0,
