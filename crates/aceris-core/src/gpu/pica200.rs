@@ -13,7 +13,7 @@ use super::draw::{
 
 type DrawObserver<'a, E> = dyn FnMut(&Pica200, &PicaDrawRequest) -> Result<(), E> + 'a;
 use super::fixed_attribute::{
-    Float24, FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0,
+    FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, Float24, REG_FIXEDATTRIB_DATA0,
     REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
 };
 use super::vertex_shader::{
@@ -272,14 +272,9 @@ impl Pica200 {
     pub fn viewport_state(&self) -> PicaViewportState {
         let origin = self.register(REG_VIEWPORT_XY).unwrap_or(0);
         PicaViewportState {
-            half_width: Float24::from_bits(
-                self.register(REG_VIEWPORT_WIDTH).unwrap_or(0),
-            )
-            .to_f32(),
-            half_height: Float24::from_bits(
-                self.register(REG_VIEWPORT_HEIGHT).unwrap_or(0),
-            )
-            .to_f32(),
+            half_width: Float24::from_bits(self.register(REG_VIEWPORT_WIDTH).unwrap_or(0)).to_f32(),
+            half_height: Float24::from_bits(self.register(REG_VIEWPORT_HEIGHT).unwrap_or(0))
+                .to_f32(),
             origin_x: sign_extend_10(origin),
             origin_y: sign_extend_10(origin >> 16),
             inverse_width_raw: self.register(REG_VIEWPORT_INV_WIDTH).unwrap_or(0),
@@ -1171,9 +1166,12 @@ mod tests {
     fn decodes_guest_viewport_half_sizes_and_signed_origin() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_VIEWPORT_WIDTH, 0x0041_0000).unwrap(); // 4.0
-        gpu.write_register(REG_VIEWPORT_HEIGHT, 0x0040_0000).unwrap(); // 2.0
-        gpu.write_register(REG_VIEWPORT_INV_WIDTH, 0x1234_5678).unwrap();
-        gpu.write_register(REG_VIEWPORT_INV_HEIGHT, 0x8765_4321).unwrap();
+        gpu.write_register(REG_VIEWPORT_HEIGHT, 0x0040_0000)
+            .unwrap(); // 2.0
+        gpu.write_register(REG_VIEWPORT_INV_WIDTH, 0x1234_5678)
+            .unwrap();
+        gpu.write_register(REG_VIEWPORT_INV_HEIGHT, 0x8765_4321)
+            .unwrap();
         let origin_x = (-7i32 as u32) & 0x03FF;
         let origin_y = 11u32 & 0x03FF;
         gpu.write_register(REG_VIEWPORT_XY, origin_x | (origin_y << 16))
@@ -1196,7 +1194,8 @@ mod tests {
     fn decodes_guest_z_and_w_depth_modes_and_float24_mapping() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_DEPTHMAP_SCALE, 0x003E_0000).unwrap(); // 0.5
-        gpu.write_register(REG_DEPTHMAP_OFFSET, 0x003E_0000).unwrap(); // 0.5
+        gpu.write_register(REG_DEPTHMAP_OFFSET, 0x003E_0000)
+            .unwrap(); // 0.5
 
         assert_eq!(
             gpu.depth_state(),
