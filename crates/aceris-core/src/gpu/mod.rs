@@ -58,11 +58,11 @@ pub use fragment_pipeline::{
     PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentInterpolationError, PicaFragmentPipeline,
     PicaFragmentPipelineError, PicaFragmentSampleError, PicaFragmentVaryings, PicaFragmentVertex,
 };
-pub use fragment_render::{PicaFragmentRenderSession, PicaFragmentRenderSessionError};
 pub use fragment_rasterizer::{
     PicaFragmentRasterError, PicaFragmentRasterReport, PicaFragmentRasterState,
     PicaFragmentRasterizer, PicaFragmentVertexDefaults,
 };
+pub use fragment_render::{PicaFragmentRenderSession, PicaFragmentRenderSessionError};
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
     Viewport,
