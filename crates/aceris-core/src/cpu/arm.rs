@@ -3255,13 +3255,7 @@ mod tests {
     fn register_controlled_shift_decode_exhausts_armv6_amounts_and_types() {
         use super::super::shifter::{shift_reg, ShiftKind};
 
-        let source_values = [
-            0,
-            1,
-            0x8000_0001,
-            0x7FFF_FFFF,
-            0xA5C3_7E19,
-        ];
+        let source_values = [0, 1, 0x8000_0001, 0x7FFF_FFFF, 0xA5C3_7E19];
         let mut memory = FlatMemory::new(0, 0x100);
 
         for shift_code in 0..4u32 {
