@@ -728,9 +728,8 @@ impl std::error::Error for PicaFragmentRasterError {}
 mod tests {
     use super::*;
     use crate::gpu::{
-        PicaFragmentDraw, PicaFragmentVertex, PicaTextureFormat, PicaTextureFilter,
-        PicaTextureUnit, PicaTextureWrap, PicaTevSource, REG_TEXENV0_SOURCE,
-        TEXENV_STAGE_SOURCE_REGISTERS, REG_TEXUNIT_CONFIG,
+        PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
+        PicaVertexOutputMap, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
     };
     use crate::gpu::physical_memory::VRAM_BASE;
 
@@ -745,7 +744,42 @@ mod tests {
     }
 
     fn draw(vertices: [PicaFragmentVertex; 3]) -> PicaFragmentDraw {
-        PicaFragmentDraw::from_test_vertices(vertices, vec![[0, 1, 2]])
+        let output_map = PicaVertexOutputMap::from_registers([
+            0x0302_0100,
+            0x1F1F_1F1F,
+            0x0B0A_0908,
+            0x1F1F_0D0C,
+            0x1F1F_1F1F,
+            0x1F1F_1F1F,
+            0x1F1F_1F1F,
+        ])
+        .unwrap();
+        let shaded = PicaShadedDraw {
+            vertices: vertices
+                .into_iter()
+                .enumerate()
+                .map(|(index, vertex)| {
+                    let mut outputs = [[0.0; 4]; super::super::SHADER_OUTPUT_REGISTERS];
+                    outputs[0] = vertex.clip_position;
+                    outputs[2] = vertex.primary_color;
+                    outputs[3][0] = vertex.texture_coordinates[0][0];
+                    outputs[3][1] = vertex.texture_coordinates[0][1];
+                    PicaShadedVertex {
+                        source_index: index as u32,
+                        outputs,
+                    }
+                })
+                .collect(),
+            triangles: vec![[0, 1, 2]],
+            executed_instructions: 0,
+        };
+        PicaFragmentDraw::from_shaded_draw(
+            &shaded,
+            &output_map,
+            [1.0; 4],
+            [[0.0; 2]; 3],
+        )
+        .unwrap()
     }
 
     fn configure_tev(pica: &mut super::super::Pica200) {
@@ -810,16 +844,16 @@ mod tests {
         let report = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
         assert_eq!(report.input_triangles, 1);
         assert_eq!(report.shaded_pixels, 28);
-        assert_eq!(rasterizer.color_at(2, 2), Some([159, 32, 64, 255]));
+        assert_eq!(rasterizer.color_at(1, 6), Some([159, 48, 48, 255]));
 
         rasterizer
             .write_render_target(target, &mut memory)
             .unwrap();
         let decoded = target.read_rgba8(&memory).unwrap();
-        let offset = (2 * 8 + 2) * 4;
+        let offset = (6 * 8 + 1) * 4;
         assert_eq!(
             &decoded[offset..offset + 4],
-            &[159, 32, 64, 255]
+            &[159, 48, 48, 255]
         );
     }
 
