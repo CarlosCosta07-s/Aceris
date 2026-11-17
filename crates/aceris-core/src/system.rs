@@ -5201,14 +5201,14 @@ mod tests {
             assert!(session.set_current_register(0, command_list_address));
             assert!(session.set_current_register(1, 1));
             assert!(session.set_current_register(2, 0x000F_022E));
-            assert!(session.set_current_register(3, GSP_GX_COMMAND_DISPLAY_TRANSFER));
+            assert!(session.set_current_register(3, GSP_GX_COMMAND_DISPLAY_TRANSFER as u32));
             assert!(session.set_current_register(4, vertex_address));
             assert!(session.set_current_register(5, 0x0008_0000));
             assert!(session.set_current_register(6, 0x0000_0800));
             assert!(session.set_current_register(7, queue_address));
             assert!(session.set_current_register(8, 0x0000_0300));
-            assert!(session.set_current_register(9, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS));
-            assert!(session.set_current_register(10, GSP_GX_COMMAND_PROCESS_COMMAND_LIST));
+            assert!(session.set_current_register(9, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32));
+            assert!(session.set_current_register(10, GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32));
             assert!(session.set_current_register(11, tiled_target_address));
             assert!(session.set_current_register(12, linear_framebuffer_address));
             assert!(session.set_current_register(13, dimensions));
