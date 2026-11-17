@@ -3136,12 +3136,7 @@ mod tests {
                                     );
                                 } else {
                                     assert_eq!(
-                                        (
-                                            cpu.cpsr.n(),
-                                            cpu.cpsr.z(),
-                                            cpu.cpsr.c(),
-                                            cpu.cpsr.v(),
-                                        ),
+                                        (cpu.cpsr.n(), cpu.cpsr.z(), cpu.cpsr.c(), cpu.cpsr.v(),),
                                         (true, false, carry_in, initial_v),
                                         "S=0 must preserve NZCV"
                                     );
