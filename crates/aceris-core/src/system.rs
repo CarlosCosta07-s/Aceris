@@ -5022,7 +5022,9 @@ mod tests {
         use crate::gpu::{
             ClipDepthRange, DepthFunction, GeometryPipeline, Matrix4, PicaRenderSettings,
             REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET,
+            REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
+            REG_VIEWPORT_XY,
             REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
             REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
@@ -5065,6 +5067,12 @@ mod tests {
             (REG_COLORBUFFER_FORMAT, RENDER_TARGET_REGISTERS.0),
             (REG_FRAMEBUFFER_BLOCK32, 0),
             (REG_FRAMEBUFFER_DIM, RENDER_TARGET_REGISTERS.1),
+            (REG_VIEWPORT_WIDTH, 0x0041_0000),  // Float24 half-width: 4
+            (REG_VIEWPORT_HEIGHT, 0x0041_0000), // Float24 half-height: 4
+            (REG_VIEWPORT_XY, 0),
+            (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
+            (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
+            (REG_DEPTHMAP_MODE, 1),             // Z buffering
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -5147,7 +5155,9 @@ mod tests {
             GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, GeometryPipeline, Matrix4,
             PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
             REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
-            REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
+            REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE,
+            REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_VIEWPORT_HEIGHT,
+            REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_SH_OUTMAP_O0, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
             REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_CODETRANSFER_DATA0,
             REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
@@ -5203,6 +5213,12 @@ mod tests {
                 REG_FRAMEBUFFER_DIM,
                 (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
             ),
+            (REG_VIEWPORT_WIDTH, 0x0046_9000),  // Float24 half-width: 200
+            (REG_VIEWPORT_HEIGHT, 0x0045_E000), // Float24 half-height: 120
+            (REG_VIEWPORT_XY, 0),
+            (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
+            (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
+            (REG_DEPTHMAP_MODE, 1),             // Z buffering
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -5305,7 +5321,9 @@ mod tests {
             GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
             GeometryPipeline, Matrix4, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET,
+            REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
+            REG_VIEWPORT_XY,
             REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
             REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
@@ -5475,6 +5493,12 @@ mod tests {
                 REG_FRAMEBUFFER_DIM,
                 (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
             ),
+            (REG_VIEWPORT_WIDTH, 0x0046_9000),  // Float24 half-width: 200
+            (REG_VIEWPORT_HEIGHT, 0x0045_E000), // Float24 half-height: 120
+            (REG_VIEWPORT_XY, 0),
+            (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
+            (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
+            (REG_DEPTHMAP_MODE, 1),             // Z buffering
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -5640,7 +5664,10 @@ mod tests {
             GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
             GeometryPipeline, Matrix4, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET,
+            REG_DEPTHMAP_SCALE, REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
+            REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
+            REG_VIEWPORT_XY,
             REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
             REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
@@ -5866,6 +5893,12 @@ mod tests {
                 REG_FRAMEBUFFER_DIM,
                 (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
             ),
+            (REG_VIEWPORT_WIDTH, 0x0046_9000),  // Float24 half-width: 200
+            (REG_VIEWPORT_HEIGHT, 0x0045_E000), // Float24 half-height: 120
+            (REG_VIEWPORT_XY, 0),
+            (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
+            (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
+            (REG_DEPTHMAP_MODE, 1),             // Z buffering
         ] {
             command_list.extend(write(register, value));
         }
@@ -5936,8 +5969,9 @@ mod tests {
             tls_base
         );
 
-        // Not PICA registers: only the software pipeline's matrix/viewport
-        // (no viewport registers are modelled) and the render switch.
+        // The guest command list now supplies the viewport and depth-map
+        // registers. The generic reference transform and render switch remain
+        // host-side until the guest shader matrix path is connected.
         system.set_pica_rendering(Some(PicaRenderSettings {
             pipeline: GeometryPipeline::new(
                 Matrix4::from_column_major([
@@ -5985,6 +6019,12 @@ mod tests {
             system.gpu_mut().register(REG_COLORBUFFER_LOC),
             Some(tiled_target_physical >> 3)
         );
+        assert_eq!(system.gpu_mut().register(REG_VIEWPORT_WIDTH), Some(0x0046_9000));
+        assert_eq!(system.gpu_mut().register(REG_VIEWPORT_HEIGHT), Some(0x0045_E000));
+        assert_eq!(system.gpu_mut().register(REG_VIEWPORT_XY), Some(0));
+        assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_SCALE), Some(0x003E_0000));
+        assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_OFFSET), Some(0x003E_0000));
+        assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_MODE), Some(1));
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
         assert!(render.pixels_written > 0);
