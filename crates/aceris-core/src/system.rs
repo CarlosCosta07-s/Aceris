@@ -2826,6 +2826,34 @@ mod tests {
         buffer
     }
 
+    /// Lets the synthetic ARM11 guest author a one-word GSP IPC request
+    /// and place the service handle in r0 before executing SendSyncRequest.
+    fn run_guest_gsp_ipc_request(
+        system: &mut System,
+        service_handle: u32,
+        command_header: u32,
+    ) -> u32 {
+        let buffer = {
+            let session = system
+                .ncsd_session
+                .as_mut()
+                .expect("test process is loaded");
+            let tls = session.current_tls_address().expect("main thread has TLS");
+            let buffer = tls + ARM11_TLS_IPC_BUFFER_OFFSET;
+            assert!(session.set_current_register(4, buffer));
+            assert!(session.set_current_register(5, command_header));
+            assert!(session.set_current_register(12, service_handle));
+            // Guest instructions: STR r5,[r4]; MOV r0,r12.
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            assert_eq!(session.read_memory_u32(buffer).unwrap(), command_header);
+            assert_eq!(session.current_registers().unwrap()[0], service_handle);
+            buffer
+        };
+        run_one_ipc_svc(system);
+        buffer
+    }
+
     fn read_tls_ipc_response(system: &mut System, buffer: u32, word_count: usize) -> Vec<u32> {
         let session = system
             .ncsd_session
@@ -3197,12 +3225,23 @@ mod tests {
                     0xE584_8014, // STR r8, [r4, #20] (second command header)
                     0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
                     0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
-                    0xE584_5000, // STR r5, [r4] (guest-authored TriggerCmdReqQueue IPC header)
+                    0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                    0xE1A0_000C, // MOV r0, r12 (guest service handle)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
+                    0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                    0xE1A0_000C, // MOV r0, r12
                     0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
+                    0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                    0xE1A0_000C, // MOV r0, r12
                     0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill, both buffers)
+                    0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                    0xE1A0_000C, // MOV r0, r12
                     0xEF00_0032, // GSP TriggerCmdReqQueue (buffer 1 only / PSC1)
+                    0xE584_5000, // STR r5, [r4] (guest ReleaseRight header)
+                    0xE1A0_000C, // MOV r0, r12
                     0xEF00_0032, // GSP ReleaseRight
+                    0xE584_5000, // STR r5, [r4] (guest Unregister header)
+                    0xE1A0_000C, // MOV r0, r12
                     0xEF00_0032, // GSP UnregisterInterruptRelayQueue
                 ])),
                 [0; AES_BLOCK_SIZE],
@@ -3398,19 +3437,10 @@ mod tests {
             }
         }
 
-        // The guest writes the TriggerCmdReqQueue IPC header into TLS and
-        // executes the SVC with the GSP handle in r0.
-        let trigger_buffer = {
-            let session = system.ncsd_session.as_mut().unwrap();
-            let buffer = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET;
-            assert!(session.set_current_register(0, gsp_handle));
-            assert!(session.set_current_register(4, buffer));
-            assert!(session.set_current_register(5, 0x000C_0000));
-            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
-            assert_eq!(session.read_memory_u32(buffer).unwrap(), 0x000C_0000);
-            buffer
-        };
-        run_one_ipc_svc(&mut system);
+        // Both the TLS command word and service handle are prepared by guest
+        // STR/MOV instructions before the actual GSP SendSyncRequest SVC.
+        let trigger_buffer =
+            run_guest_gsp_ipc_request(&mut system, gsp_handle, 0x000C_0000);
         assert_eq!(
             read_tls_ipc_response(&mut system, trigger_buffer, 2),
             vec![0x000C_0040, 0]
@@ -3429,8 +3459,8 @@ mod tests {
         assert_ne!(queue_header[3] & 0x01, 0);
 
         // Second trigger clears the halt latch and submits the remaining command.
-        let trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
-        run_one_ipc_svc(&mut system);
+        let trigger_buffer =
+            run_guest_gsp_ipc_request(&mut system, gsp_handle, 0x000C_0000);
         assert_eq!(
             read_tls_ipc_response(&mut system, trigger_buffer, 2),
             vec![0x000C_0040, 0]
@@ -3479,8 +3509,8 @@ mod tests {
             .write_memory_bytes(queue_address, &fill_queue)
             .unwrap();
 
-        let fill_trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
-        run_one_ipc_svc(&mut system);
+        let fill_trigger_buffer =
+            run_guest_gsp_ipc_request(&mut system, gsp_handle, 0x000C_0000);
         assert_eq!(
             read_tls_ipc_response(&mut system, fill_trigger_buffer, 2),
             vec![0x000C_0040, 0]
@@ -3574,8 +3604,8 @@ mod tests {
             .write_memory_bytes(queue_address, &fill_queue_1_only)
             .unwrap();
 
-        let fill_1_only_trigger = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
-        run_one_ipc_svc(&mut system);
+        let fill_1_only_trigger =
+            run_guest_gsp_ipc_request(&mut system, gsp_handle, 0x000C_0000);
         assert_eq!(
             read_tls_ipc_response(&mut system, fill_1_only_trigger, 2),
             vec![0x000C_0040, 0]
@@ -3612,8 +3642,8 @@ mod tests {
         );
 
         // ReleaseRight must travel through the same guest IPC path.
-        let release_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0017_0000]);
-        run_one_ipc_svc(&mut system);
+        let release_buffer =
+            run_guest_gsp_ipc_request(&mut system, gsp_handle, 0x0017_0000);
         assert_eq!(
             read_tls_ipc_response(&mut system, release_buffer, 2),
             vec![0x0017_0040, 0]
@@ -3621,8 +3651,8 @@ mod tests {
         assert_eq!(system.gsp_service_registry().rendering_right_owner(), None);
 
         // Unregister releases the queue mapping and memory handle.
-        let unregister_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0014_0000]);
-        run_one_ipc_svc(&mut system);
+        let unregister_buffer =
+            run_guest_gsp_ipc_request(&mut system, gsp_handle, 0x0014_0000);
         let unregister_response = read_tls_ipc_response(&mut system, unregister_buffer, 2);
         assert_eq!(unregister_response, vec![0x0014_0040, 0]);
         assert_eq!(system.gsp_service_registry().registered_client_count(), 0);
