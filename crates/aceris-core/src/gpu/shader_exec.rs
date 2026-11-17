@@ -1,8 +1,8 @@
 //! Reference execution of the implemented PICA200 vertex shader ISA subset.
 //!
 //! The executor covers documented arithmetic and vector operations, MOVA/CMP,
-//! relative constant addressing and bounded structured flow control.
-//! Geometry-shader emits remain outside this vertex-only execution stage.
+//! relative constant addressing and the PICA200's independent CALL/IF/LOOP
+//! stacks. Geometry-shader emits remain outside this vertex-only execution stage.
 //!
 //! Arithmetic uses IEEE f32. PICA200 float24 intermediate precision and
 //! hardware-specific transcendental approximations are not modeled.
@@ -183,16 +183,12 @@ pub enum PicaShaderExecError {
         constant: usize,
         integer: bool,
     },
-    /// A CALL would exceed the hardware's four-level nesting limit.
-    CallStackOverflow { index: usize },
-    /// An IF would exceed the hardware's eight-level nesting limit.
-    IfStackOverflow { index: usize },
-    /// A LOOP would exceed the hardware's four-level nesting limit.
-    LoopStackOverflow { index: usize },
     /// BREAK was executed without an active LOOP.
     BreakOutsideLoop { index: usize },
-    /// BREAK crossed an active subroutine call; this sequence is undocumented.
+    /// BREAK was executed from inside a subroutine in the LOOP body.
     BreakInsideCall { index: usize },
+    /// BREAK was executed from inside an IF block in the LOOP body.
+    BreakInsideIf { index: usize },
     /// EMIT/SETEMIT belong to the geometry-shader stage, not the vertex stage.
     UnsupportedGeometryInstruction { index: usize, opcode: u8 },
     /// A malformed shader exceeded its defensive execution limit.
@@ -226,21 +222,6 @@ impl std::fmt::Display for PicaShaderExecError {
                 "shader instruction {index} uses invalid {} constant {constant}",
                 if *integer { "integer" } else { "boolean" }
             ),
-            Self::CallStackOverflow { index } => {
-                write!(
-                    formatter,
-                    "shader CALL stack overflow at instruction {index}"
-                )
-            }
-            Self::IfStackOverflow { index } => {
-                write!(formatter, "shader IF stack overflow at instruction {index}")
-            }
-            Self::LoopStackOverflow { index } => {
-                write!(
-                    formatter,
-                    "shader LOOP stack overflow at instruction {index}"
-                )
-            }
             Self::BreakOutsideLoop { index } => {
                 write!(
                     formatter,
@@ -250,6 +231,10 @@ impl std::fmt::Display for PicaShaderExecError {
             Self::BreakInsideCall { index } => write!(
                 formatter,
                 "shader BREAK at instruction {index} crosses an active CALL frame"
+            ),
+            Self::BreakInsideIf { index } => write!(
+                formatter,
+                "shader BREAK at instruction {index} is inside an active IF block"
             ),
             Self::UnsupportedGeometryInstruction { index, opcode } => write!(
                 formatter,
@@ -314,9 +299,9 @@ impl PicaVertexShaderProgram {
         self
     }
 
-    /// Returns one uploaded boolean constant b0-b15.
+    /// Returns one uploaded boolean constant b0-b7.
     pub fn boolean_uniform(&self, index: usize) -> Option<bool> {
-        (index < 16).then(|| self.boolean_uniforms & (1 << index) != 0)
+        (index < 8).then(|| self.boolean_uniforms & (1 << index) != 0)
     }
 
     /// Returns one uploaded integer constant i0-i3 as its four guest bytes.
@@ -350,12 +335,13 @@ impl PicaVertexShaderProgram {
             comparison_flags: [false; 2],
             address_registers: [0; 2],
             loop_counter: 0,
-            control_stack: Vec::with_capacity(CALL_STACK_LIMIT + IF_STACK_LIMIT + LOOP_STACK_LIMIT),
+            call_stack: Vec::with_capacity(CALL_STACK_LIMIT),
+            if_stack: Vec::with_capacity(IF_STACK_LIMIT),
+            loop_stack: Vec::with_capacity(LOOP_STACK_LIMIT),
         };
         let mut index = entry;
         let mut executed_instructions = 0usize;
         loop {
-            machine.advance_control_flow(&mut index);
             if executed_instructions >= MAX_SHADER_EXECUTION_INSTRUCTIONS {
                 return Err(PicaShaderExecError::InstructionBudgetExceeded {
                     budget: MAX_SHADER_EXECUTION_INSTRUCTIONS,
@@ -377,6 +363,7 @@ impl PicaVertexShaderProgram {
                         index,
                         target: usize::MAX,
                     })?;
+            let mut jump_target = None;
             match opcode {
                 PicaShaderOpcode::Nop => {}
                 PicaShaderOpcode::End => {
@@ -398,7 +385,13 @@ impl PicaVertexShaderProgram {
                 | PicaShaderOpcode::Loop
                 | PicaShaderOpcode::JmpC
                 | PicaShaderOpcode::JmpU => {
-                    machine.execute_flow(index, word, opcode, &mut next_index)?;
+                    machine.execute_flow(
+                        index,
+                        word,
+                        opcode,
+                        &mut next_index,
+                        &mut jump_target,
+                    )?;
                 }
                 PicaShaderOpcode::Emit | PicaShaderOpcode::SetEmit => {
                     return Err(PicaShaderExecError::UnsupportedGeometryInstruction {
@@ -408,6 +401,7 @@ impl PicaVertexShaderProgram {
                 }
                 _ => machine.execute(index, word, opcode)?,
             }
+            machine.resolve_control_flow(&mut next_index, jump_target);
             index = next_index;
         }
     }
@@ -447,28 +441,32 @@ struct Source {
 }
 
 #[derive(Clone, Copy)]
-enum ControlStackKind {
-    Call,
-    If,
-    Loop,
+struct CallFrame {
+    return_pc: usize,
+    end_pc: usize,
 }
 
 #[derive(Clone, Copy)]
-enum ControlFrame {
-    Call {
-        return_pc: usize,
-        end_pc: usize,
-    },
-    If {
-        else_pc: usize,
-        resume_pc: usize,
-    },
-    Loop {
-        start_pc: usize,
-        end_pc: usize,
-        remaining_iterations: u16,
-        step: i32,
-    },
+struct IfFrame {
+    else_pc: usize,
+    resume_pc: usize,
+}
+
+#[derive(Clone, Copy)]
+struct LoopFrame {
+    start_pc: usize,
+    end_pc: usize,
+    remaining_iterations: u16,
+    step: i32,
+    call_depth: usize,
+    if_depth: usize,
+}
+
+fn push_bounded<T>(stack: &mut Vec<T>, frame: T, capacity: usize) {
+    if stack.len() == capacity {
+        stack.remove(0);
+    }
+    stack.push(frame);
 }
 
 struct Machine<'a> {
@@ -479,7 +477,9 @@ struct Machine<'a> {
     comparison_flags: [bool; 2],
     address_registers: [i32; 2],
     loop_counter: i32,
-    control_stack: Vec<ControlFrame>,
+    call_stack: Vec<CallFrame>,
+    if_stack: Vec<IfFrame>,
+    loop_stack: Vec<LoopFrame>,
 }
 
 impl Machine<'_> {
@@ -705,44 +705,13 @@ impl Machine<'_> {
         }
     }
 
-    fn ensure_control_capacity(
-        &self,
-        index: usize,
-        required: ControlStackKind,
-    ) -> Result<(), PicaShaderExecError> {
-        let count = self
-            .control_stack
-            .iter()
-            .filter(|frame| {
-                matches!(
-                    (required, frame),
-                    (ControlStackKind::Call, ControlFrame::Call { .. })
-                        | (ControlStackKind::If, ControlFrame::If { .. })
-                        | (ControlStackKind::Loop, ControlFrame::Loop { .. })
-                )
-            })
-            .count();
-        let limit = match required {
-            ControlStackKind::Call => CALL_STACK_LIMIT,
-            ControlStackKind::If => IF_STACK_LIMIT,
-            ControlStackKind::Loop => LOOP_STACK_LIMIT,
-        };
-        if count >= limit {
-            return Err(match required {
-                ControlStackKind::Call => PicaShaderExecError::CallStackOverflow { index },
-                ControlStackKind::If => PicaShaderExecError::IfStackOverflow { index },
-                ControlStackKind::Loop => PicaShaderExecError::LoopStackOverflow { index },
-            });
-        }
-        Ok(())
-    }
-
     fn execute_flow(
         &mut self,
         index: usize,
         word: u32,
         opcode: PicaShaderOpcode,
         next_pc: &mut usize,
+        jump_target: &mut Option<usize>,
     ) -> Result<(), PicaShaderExecError> {
         match opcode {
             PicaShaderOpcode::BreakC
@@ -789,7 +758,8 @@ impl Machine<'_> {
                     }
                     PicaShaderOpcode::JmpC => {
                         if condition {
-                            *next_pc = self.absolute_target(index, flow.destination_offset)?;
+                            *jump_target =
+                                Some(self.absolute_target(index, flow.destination_offset)?);
                         }
                     }
                     _ => unreachable!(),
@@ -809,13 +779,7 @@ impl Machine<'_> {
                 let constant_id = usize::from(flow.constant_id);
                 match opcode {
                     PicaShaderOpcode::CallU => {
-                        let condition = self.program.boolean_uniform(constant_id).ok_or(
-                            PicaShaderExecError::InvalidFlowConstant {
-                                index,
-                                constant: constant_id,
-                                integer: false,
-                            },
-                        )?;
+                        let condition = self.boolean_condition(index, constant_id)?;
                         if condition {
                             self.call(
                                 index,
@@ -826,13 +790,7 @@ impl Machine<'_> {
                         }
                     }
                     PicaShaderOpcode::IfU => {
-                        let condition = self.program.boolean_uniform(constant_id).ok_or(
-                            PicaShaderExecError::InvalidFlowConstant {
-                                index,
-                                constant: constant_id,
-                                integer: false,
-                            },
-                        )?;
+                        let condition = self.boolean_condition(index, constant_id)?;
                         self.if_branch(
                             index,
                             condition,
@@ -842,28 +800,24 @@ impl Machine<'_> {
                         )?;
                     }
                     PicaShaderOpcode::Loop => {
-                        let integer = self.program.integer_uniform(constant_id).ok_or(
-                            PicaShaderExecError::InvalidFlowConstant {
+                        let integer = self
+                            .program
+                            .integer_uniform(constant_id)
+                            .ok_or(PicaShaderExecError::InvalidFlowConstant {
                                 index,
                                 constant: constant_id,
                                 integer: true,
-                            },
-                        )?;
+                            })?;
                         self.start_loop(index, flow.destination_offset, integer, next_pc)?;
                     }
                     PicaShaderOpcode::JmpU => {
-                        let mut condition = self.program.boolean_uniform(constant_id).ok_or(
-                            PicaShaderExecError::InvalidFlowConstant {
-                                index,
-                                constant: constant_id,
-                                integer: false,
-                            },
-                        )?;
+                        let mut condition = self.boolean_condition(index, constant_id)?;
                         if flow.instruction_count & 1 != 0 {
                             condition = !condition;
                         }
                         if condition {
-                            *next_pc = self.absolute_target(index, flow.destination_offset)?;
+                            *jump_target =
+                                Some(self.absolute_target(index, flow.destination_offset)?);
                         }
                     }
                     _ => unreachable!(),
@@ -874,6 +828,40 @@ impl Machine<'_> {
         Ok(())
     }
 
+    fn boolean_condition(
+        &self,
+        index: usize,
+        constant_id: usize,
+    ) -> Result<bool, PicaShaderExecError> {
+        self.program
+            .boolean_uniform(constant_id)
+            .ok_or(PicaShaderExecError::InvalidFlowConstant {
+                index,
+                constant: constant_id,
+                integer: false,
+            })
+    }
+
+    fn absolute_target(&self, index: usize, target: u16) -> Result<usize, PicaShaderExecError> {
+        let target = usize::from(target);
+        if target > self.program.code.len() {
+            return Err(PicaShaderExecError::InvalidControlFlowTarget { index, target });
+        }
+        Ok(target)
+    }
+
+    fn flow_condition(&self, operator: u8, reference_x: bool, reference_y: bool) -> bool {
+        let x_matches = self.comparison_flags[0] == reference_x;
+        let y_matches = self.comparison_flags[1] == reference_y;
+        match operator {
+            0 => x_matches || y_matches,
+            1 => x_matches && y_matches,
+            2 => x_matches,
+            3 => y_matches,
+            _ => false,
+        }
+    }
+
     fn call(
         &mut self,
         index: usize,
@@ -881,7 +869,6 @@ impl Machine<'_> {
         instruction_count: u8,
         next_pc: &mut usize,
     ) -> Result<(), PicaShaderExecError> {
-        self.ensure_control_capacity(index, ControlStackKind::Call)?;
         let target = self.absolute_target(index, destination)?;
         let end_pc = target.checked_add(usize::from(instruction_count)).ok_or(
             PicaShaderExecError::InvalidControlFlowTarget {
@@ -895,10 +882,15 @@ impl Machine<'_> {
                 target: end_pc,
             });
         }
-        self.control_stack.push(ControlFrame::Call {
-            return_pc: *next_pc,
-            end_pc,
-        });
+
+        push_bounded(
+            &mut self.call_stack,
+            CallFrame {
+                return_pc: *next_pc,
+                end_pc,
+            },
+            CALL_STACK_LIMIT,
+        );
         *next_pc = target;
         Ok(())
     }
@@ -924,11 +916,17 @@ impl Machine<'_> {
                 target: resume_pc,
             });
         }
+
         if condition {
             if instruction_count != 0 {
-                self.ensure_control_capacity(index, ControlStackKind::If)?;
-                self.control_stack
-                    .push(ControlFrame::If { else_pc, resume_pc });
+                push_bounded(
+                    &mut self.if_stack,
+                    IfFrame {
+                        else_pc,
+                        resume_pc,
+                    },
+                    IF_STACK_LIMIT,
+                );
             }
         } else {
             *next_pc = else_pc;
@@ -943,7 +941,6 @@ impl Machine<'_> {
         integer: [u8; 4],
         next_pc: &mut usize,
     ) -> Result<(), PicaShaderExecError> {
-        self.ensure_control_capacity(index, ControlStackKind::Loop)?;
         let end_instruction = self.absolute_target(index, destination)?;
         let end_pc = end_instruction.checked_add(1).ok_or(
             PicaShaderExecError::InvalidControlFlowTarget {
@@ -957,72 +954,102 @@ impl Machine<'_> {
                 target: end_instruction,
             });
         }
+
         self.loop_counter = i32::from(integer[1]);
-        self.control_stack.push(ControlFrame::Loop {
-            start_pc: *next_pc,
-            end_pc,
-            remaining_iterations: u16::from(integer[0]) + 1,
-            step: i32::from(integer[2]),
-        });
+        push_bounded(
+            &mut self.loop_stack,
+            LoopFrame {
+                start_pc: *next_pc,
+                end_pc,
+                remaining_iterations: u16::from(integer[0]) + 1,
+                step: i32::from(integer[2]),
+                call_depth: self.call_stack.len(),
+                if_depth: self.if_stack.len(),
+            },
+            LOOP_STACK_LIMIT,
+        );
         Ok(())
     }
 
-    fn break_loop(&mut self, index: usize, next_pc: &mut usize) -> Result<(), PicaShaderExecError> {
-        let loop_index = self
-            .control_stack
-            .iter()
-            .rposition(|frame| matches!(frame, ControlFrame::Loop { .. }))
+    fn break_loop(
+        &mut self,
+        index: usize,
+        next_pc: &mut usize,
+    ) -> Result<(), PicaShaderExecError> {
+        let frame = *self
+            .loop_stack
+            .last()
             .ok_or(PicaShaderExecError::BreakOutsideLoop { index })?;
-        if self.control_stack[loop_index + 1..]
-            .iter()
-            .any(|frame| matches!(frame, ControlFrame::Call { .. }))
-        {
+
+        if self.call_stack.len() != frame.call_depth {
             return Err(PicaShaderExecError::BreakInsideCall { index });
         }
-        let ControlFrame::Loop { end_pc, .. } = self.control_stack[loop_index] else {
-            unreachable!("rposition selected a loop frame");
-        };
-        self.control_stack.truncate(loop_index);
-        *next_pc = end_pc;
+        if self.if_stack.len() != frame.if_depth {
+            return Err(PicaShaderExecError::BreakInsideIf { index });
+        }
+
+        self.loop_stack.pop();
+        *next_pc = frame.end_pc;
         Ok(())
     }
 
-    fn advance_control_flow(&mut self, pc: &mut usize) {
-        loop {
-            let Some(frame) = self.control_stack.last().copied() else {
-                return;
-            };
-            match frame {
-                ControlFrame::Call { return_pc, end_pc } if *pc == end_pc => {
-                    self.control_stack.pop();
-                    *pc = return_pc;
+    /// The PICA200 has independent CALL, IF and LOOP stacks. Each sees the
+    /// instruction's next PC; the resulting PC priority is LOOP, IF, CALL,
+    /// then JMP. CALL may pop repeatedly, while IF and LOOP pop at most once.
+    fn resolve_control_flow(
+        &mut self,
+        next_pc: &mut usize,
+        jump_target: Option<usize>,
+    ) {
+        let mut loop_pc = *next_pc;
+        let mut loop_updated = false;
+        if let Some(frame) = self.loop_stack.last_mut() {
+            if loop_pc == frame.end_pc {
+                self.loop_counter = self.loop_counter.wrapping_add(frame.step);
+                if frame.remaining_iterations > 1 {
+                    frame.remaining_iterations -= 1;
+                    loop_pc = frame.start_pc;
+                } else {
+                    self.loop_stack.pop();
                 }
-                ControlFrame::If { else_pc, resume_pc } if *pc == else_pc => {
-                    self.control_stack.pop();
-                    *pc = resume_pc;
-                }
-                ControlFrame::Loop {
-                    start_pc,
-                    end_pc,
-                    remaining_iterations,
-                    step,
-                } if *pc == end_pc => {
-                    self.loop_counter = self.loop_counter.wrapping_add(step);
-                    if remaining_iterations > 1 {
-                        if let Some(ControlFrame::Loop {
-                            remaining_iterations,
-                            ..
-                        }) = self.control_stack.last_mut()
-                        {
-                            *remaining_iterations -= 1;
-                        }
-                        *pc = start_pc;
-                    } else {
-                        self.control_stack.pop();
-                    }
-                }
-                _ => return,
+                loop_updated = true;
             }
+        }
+
+        let mut if_pc = *next_pc;
+        let mut if_updated = false;
+        if self
+            .if_stack
+            .last()
+            .is_some_and(|frame| if_pc == frame.else_pc)
+        {
+            if let Some(frame) = self.if_stack.pop() {
+                if_pc = frame.resume_pc;
+                if_updated = true;
+            }
+        }
+
+        let mut call_pc = *next_pc;
+        let mut call_updated = false;
+        while self
+            .call_stack
+            .last()
+            .is_some_and(|frame| call_pc == frame.end_pc)
+        {
+            if let Some(frame) = self.call_stack.pop() {
+                call_pc = frame.return_pc;
+                call_updated = true;
+            }
+        }
+
+        if loop_updated {
+            *next_pc = loop_pc;
+        } else if if_updated {
+            *next_pc = if_pc;
+        } else if call_updated {
+            *next_pc = call_pc;
+        } else if let Some(target) = jump_target {
+            *next_pc = target;
         }
     }
 
@@ -1143,9 +1170,17 @@ fn lanewise(a: [f32; 4], b: [f32; 4], operation: impl Fn(f32, f32) -> f32) -> [f
     ]
 }
 
-/// PICA multiplication: a zero operand gives zero even against infinity or NaN.
+/// PICA multiplication: infinity times zero is zero, while NaN times zero
+/// remains NaN. Negative zero is canonicalized to positive zero.
 fn pica_mul(a: f32, b: f32) -> f32 {
-    if a == 0.0 || b == 0.0 { 0.0 } else { a * b }
+    let product = a * b;
+    if product == 0.0 {
+        0.0
+    } else if product.is_nan() && !a.is_nan() && !b.is_nan() {
+        0.0
+    } else {
+        product
+    }
 }
 
 fn dot(a: [f32; 4], b: [f32; 4], lanes: usize) -> f32 {
@@ -1868,6 +1903,44 @@ mod tests {
                 budget: MAX_SHADER_EXECUTION_INSTRUCTIONS
             })
         );
+    }
+
+    #[test]
+    fn control_flow_stacks_are_independent_for_nested_if_and_loop() {
+        let program = PicaVertexShaderProgram::from_words(
+            &[
+                format3(0x29, 0, 6, 0),
+                format3(0x27, 1, 4, 3),
+                format1_unary(0x13, O0, V0),
+                NOP,
+                format1_unary(0x13, O1, V1),
+                NOP,
+                NOP,
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &[],
+        )
+        .with_special_registers(1 << 3, [[1, 0, 1, 0], [0; 4], [0; 4], [0; 4]]);
+        let result = program.run(0, &inputs([5.0; 4], [9.0; 4])).unwrap();
+        assert_eq!(result.outputs[0], [5.0; 4]);
+        assert_eq!(result.outputs[1], [0.0; 4]);
+        assert_eq!(result.loop_counter, 2);
+    }
+
+    #[test]
+    fn boolean_uniform_bank_rejects_indexes_above_b7() {
+        let program = PicaVertexShaderProgram::from_words(&[END], &[], &[])
+            .with_special_registers(0xFFFF, [[0; 4]; 4]);
+        assert_eq!(program.boolean_uniform(7), Some(true));
+        assert_eq!(program.boolean_uniform(8), None);
+    }
+
+    #[test]
+    fn pica_multiply_preserves_nan_zero_products_but_clears_infinity_zero() {
+        assert_eq!(pica_mul(f32::INFINITY, 0.0), 0.0);
+        assert!(pica_mul(f32::NAN, 0.0).is_nan());
+        assert_eq!(pica_mul(-0.0, 2.0).to_bits(), 0.0f32.to_bits());
     }
 
     #[test]
