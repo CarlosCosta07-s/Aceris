@@ -41,6 +41,7 @@ pub use fixed_attribute::{
 pub use fragment::{
     PICA_TEV_STAGE_COUNT, PicaFragmentInputs, PicaTevAlphaOperand, PicaTevChannel, PicaTevCombine,
     PicaTevError, PicaTevRgbOperand, PicaTevSource, PicaTevStage, PicaTextureEnvironment,
+    REG_TEXENV0_COLOR, REG_TEXENV0_COMBINER, REG_TEXENV0_OPERAND, REG_TEXENV0_SCALE,
     REG_TEXENV0_SOURCE, TEXENV_STAGE_REGISTER_STRIDE,
 };
 pub use geometry::{
