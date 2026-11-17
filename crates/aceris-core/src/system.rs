@@ -3201,6 +3201,9 @@ mod tests {
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
+                    0xE1A0_0007, // MOV r0, r7 (CreateEvent output pointer)
+                    0xE3A0_1000, // MOV r1, #0 (one-shot reset type)
+                    0xEF00_0017, // SVC CreateEvent
                     0xE584_5000, // STR r5, [r4] (guest writes "srv:")
                     0xE1A0_0006, // MOV r0, r6 (ConnectToPort output pointer)
                     0xE1A0_1004, // MOV r1, r4 (ConnectToPort service-name pointer)
@@ -3219,6 +3222,7 @@ mod tests {
                     0xE584_9010, // STR r9, [r4, #16] (flags)
                     0xE1A0_000C, // MOV r0, r12 (srv: session handle)
                     0xEF00_0032, // srv:GetServiceHandle
+                    0xE514_8010, // LDR r8, [r4, #-4] (guest-created event handle)
                     // Guest-authored RegisterInterruptRelayQueue message.
                     0xE584_5000, // STR r5, [r4] (IPC header)
                     0xE584_6004, // STR r6, [r4, #4] (flags)
@@ -3279,12 +3283,35 @@ mod tests {
             )
             .unwrap();
 
+        // The guest creates its own one-shot event handle through SVC CreateEvent.
+        let event_output_address = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let address =
+                session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET - 4;
+            assert!(session.set_current_register(4, 0x0010_2000));
+            assert!(session.set_current_register(5, 0x3A76_7273));
+            assert!(session.set_current_register(6, 0x0010_2010));
+            assert!(session.set_current_register(7, address));
+            for _ in 0..2 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            address
+        };
+        run_one_ipc_svc(&mut system);
         let event_handle = system
             .ncsd_session
             .as_mut()
             .unwrap()
-            .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+            .read_memory_u32(event_output_address)
             .unwrap();
+        assert_ne!(event_handle, 0);
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(false)
+        );
 
         // The guest writes "srv:", supplies both ConnectToPort pointers
         // through ordinary ARM11 instructions and executes the SVC itself.
@@ -3349,6 +3376,14 @@ mod tests {
             Some(true)
         );
 
+        // The instruction after GetServiceHandle loads the event handle
+        // created by the guest from TLS-1 word, without host-side injection.
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            assert_eq!(session.current_registers().unwrap()[8], event_handle);
+        }
+
         // srv:GetServiceHandle is also authored by guest STR/MOV instructions.
         let srv_buffer = {
             let session = system.ncsd_session.as_mut().unwrap();
@@ -3398,7 +3433,6 @@ mod tests {
             assert!(session.set_current_register(5, 0x0013_0042));
             assert!(session.set_current_register(6, 0));
             assert!(session.set_current_register(7, 0));
-            assert!(session.set_current_register(8, event_handle));
             assert!(session.set_current_register(12, gsp_handle));
             for _ in 0..5 {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
