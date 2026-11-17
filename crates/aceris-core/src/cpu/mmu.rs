@@ -199,7 +199,7 @@ impl DescriptorMemoryAttributes {
             (0, 2) => (MemoryType::Normal, self.shareable, 2, 2),
             (0, 3) => (MemoryType::Normal, self.shareable, 3, 3),
             (1, 0) => (MemoryType::Normal, self.shareable, 0, 0),
-            (1, 2..=3) => (MemoryType::Normal, self.shareable, 1, 1),
+            (1, 3) => (MemoryType::Normal, self.shareable, 1, 1),
             (2, 0) => (MemoryType::Device, false, 0, 0),
             (4..=7, policy) => (MemoryType::Normal, self.shareable, policy, self.tex & 3),
             _ => (MemoryType::Reserved, false, 0, 0),
@@ -1493,9 +1493,8 @@ mod tests {
         let (cpu, _mem) = machine();
         let params = params(&cpu);
 
-        // The short-descriptor TEX/C/B table has distinct rules for TEX=000,
-        // TEX=001 and TEX=1BB. In particular, TEX=001 with C=1 maps to
-        // write-back/write-allocate for either value of B.
+        // The ARM11 table marks TEX=001,C=1,B=0 as reserved; only
+        // TEX=001,C=1,B=1 maps to write-back/write-allocate.
         for tex in 0u8..=7 {
             for cache_bits in 0u8..=3 {
                 let descriptor = DescriptorMemoryAttributes {
@@ -1531,7 +1530,7 @@ mod tests {
                         inner: 0,
                         outer: 0,
                     },
-                    (1, 2..=3) => MemoryAttributes {
+                    (1, 3) => MemoryAttributes {
                         memory_type: MemoryType::Normal,
                         shareable: true,
                         inner: 1,
