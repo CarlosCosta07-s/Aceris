@@ -790,6 +790,64 @@ mod tests {
     }
 
     #[test]
+    fn register_shift_alu_exhausts_armv6_thumb_amounts_and_flags() {
+        use super::super::shifter::{shift_reg, ShiftKind};
+
+        let operations = [
+            (0b0010u32, ShiftKind::Lsl),
+            (0b0011, ShiftKind::Lsr),
+            (0b0100, ShiftKind::Asr),
+            (0b0111, ShiftKind::Ror),
+        ];
+        let source_values = [0, 1, 0x8000_0001, 0x7FFF_FFFF, 0xA5C3_7E19];
+
+        for (operation, kind) in operations {
+            for amount in 0..=u8::MAX as u32 {
+                for source in source_values {
+                    for carry_in in [false, true] {
+                        let mut cpu = Arm11Core::new();
+                        cpu.cpsr = Psr::from_flags(false, false, carry_in, true);
+                        cpu.cpsr.set_thumb(true);
+                        cpu.regs[0] = source;
+                        // High bits are intentionally nonzero; T16 register
+                        // shifts consume only the low byte of Rs.
+                        cpu.regs[1] = 0xFACE_BE00 | amount;
+                        cpu.set_pc(0);
+
+                        // LSL/LSR/ASR/ROR Rd,Rm with Rd=r0 and Rm=r1.
+                        let instruction = 0x4000 | (operation << 6) | (1 << 3);
+                        cpu.execute_thumb(&mut FlatMemory::new(0, 0x100), instruction)
+                            .unwrap();
+
+                        let (expected, expected_carry) =
+                            shift_reg(kind, source, amount, carry_in);
+                        assert_eq!(
+                            cpu.regs[0], expected,
+                            "shift={kind:?} amount={amount} source={source:#010x}"
+                        );
+                        assert_eq!(
+                            (
+                                cpu.cpsr.n(),
+                                cpu.cpsr.z(),
+                                cpu.cpsr.c(),
+                                cpu.cpsr.v(),
+                            ),
+                            (
+                                expected >> 31 != 0,
+                                expected == 0,
+                                expected_carry,
+                                true,
+                            ),
+                            "flags: shift={kind:?} amount={amount} source={source:#010x} carry_in={carry_in}"
+                        );
+                        assert!(cpu.cpsr.thumb(), "ALU shifts must remain in Thumb state");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn register_controlled_shifts() {
         assert_eq!(alu(0x4088, 1, 4, Psr::default()).cpu.regs[0], 0x10); // LSL
         assert_eq!(alu(0x40C8, 0x100, 4, Psr::default()).cpu.regs[0], 0x10); // LSR
