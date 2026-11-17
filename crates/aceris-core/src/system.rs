@@ -8,10 +8,9 @@ use crate::gpu::{
     GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspDisplayTransfer,
     GspDmaRequest, GspFlushCacheRegions, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200,
-    PicaFragmentRenderSession, PicaRenderReport, PicaRenderSession, PicaRenderSettings,
-    REG_ATTRIBBUFFERS_LOC, TextureCopyError,
-    TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
+    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, PicaFragmentRenderSession,
+    PicaRenderReport, PicaRenderSession, PicaRenderSettings, REG_ATTRIBBUFFERS_LOC,
+    TextureCopyError, TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
     execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore, tmd::CONTENT_TYPE_ENCRYPTED};
@@ -5252,9 +5251,9 @@ mod tests {
             REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_LOGIC_OP,
             REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
-            REG_VIEWPORT_XY,
-            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, VRAM_BASE,
+            REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
+            REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
+            VRAM_BASE,
         };
         use crate::video::{
             LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
