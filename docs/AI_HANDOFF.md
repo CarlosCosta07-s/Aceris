@@ -1748,3 +1748,37 @@ Escopo: novo exemplo isolado `crates/aceris-core/examples/benchmark.rs` e docume
 O primeiro build do exemplo foi bloqueado por rustfmt e depois Clippy `too_many_arguments`; ambas as causas foram corrigidas agrupando métricas em `BenchmarkSummary`. O workflow final do commit `8a042d37a42b6faf006ae98170ab3b51c1700684` está em execução na matriz Linux/Windows/macOS e Android ARM64; confirmar o resultado completo antes de marcar a validação multiplataforma como concluída.
 
 **Limite atual:** a ferramenta prepara e mede a execução limitada no PC; não foi executada contra um arquivo de jogo real nesta sessão. O teste CIA manual documentado em `REAL_HOMEBREW_TESTING.md` continua dependendo do arquivo local do mantenedor. O crate Android ainda não é um aplicativo instalável, então não há benchmark de aparelho Android nesta etapa.
+
+
+## Benchmark de desempenho Android ARM64 — extensão autorizada (ChatGPT, 17/11/2026)
+
+Carlos solicitou ampliar o benchmark de títulos locais para permitir medições também no processador físico Android, além do PC. O trabalho ficou restrito à infraestrutura isolada do benchmark; não foram alterados `frontends/android/src/lib.rs`, `system.rs`, módulos de CPU/GPU, loader, nem arquivos reservados a outro agente.
+
+### Alterações publicadas em `main`
+
+- `7c59353` — expõe `run_cli()` no exemplo do benchmark, preservando o entrypoint do exemplo desktop.
+- `3c5257c` — adiciona `frontends/android/src/bin/benchmark.rs`, que reutiliza por caminho o mesmo código-fonte do exemplo, sem duplicar a implementação.
+- `9571252` — declara o binário `aceris-benchmark` no pacote Android.
+- `f7cb374` — adiciona build do binário Android ARM64 e upload do artefato `aceris-android-benchmark-arm64-v8a`.
+- `6d88b02` — documenta a execução física via ADB em `docs/PERFORMANCE_TESTING.md`.
+- `6c7be98` — amplia a CI para compilar binários release do benchmark para cada desktop da matriz e publicar artefatos.
+- `ac95475` — documenta o uso dos binários desktop baixáveis.
+
+### Verificação observada
+
+O workflow [44032702899](https://github.com/CarlosCosta07-s/Aceris/actions/runs/44032702899), no commit `6d88b028ac008cb3fc7a4235cd6417a97748e75f`, concluiu com sucesso o job Android, incluindo:
+- build da biblioteca nativa Android;
+- build `cargo ndk -t arm64-v8a build -p aceris-android --bin aceris-benchmark --release`;
+- upload do artefato `aceris-android-benchmark-arm64-v8a` (artifact ID `14305328610`).
+
+A revisão mais recente da CI que inclui também os artefatos de desktop precisa ser conferida separadamente antes de considerar a matriz completa aprovada.
+
+### Limites explícitos
+
+- O executável Android é um runner de linha de comando para ADB; não é APK, Activity, nem frontend gráfico.
+- Ele mede o throughput do mesmo `aceris-core` no processador ARM64 do dispositivo, com as chamadas `run_frame_with_budget` limitadas por orçamento. Não mede FPS cycle-accurate nem prova gameplay.
+- Não houve execução em aparelho Android físico nesta intervenção; só foi confirmada a compilação e publicação do artefato.
+- Alguns firmwares podem bloquear execução direta em `/data/local/tmp`; o guia documenta essa limitação.
+- Imagens de jogos e qualquer material de chave continuam locais; nada disso foi adicionado ao repositório ou CI.
+
+Os próximos passos dependem de executar o mesmo título localmente em PC e Android, comparar relatórios e usar PC/CPSR, motivos de parada, instruções, GSP e LCD para priorizar os bloqueios reais de compatibilidade.
