@@ -296,11 +296,7 @@ impl Pica200 {
     pub fn depth_state(&self) -> PicaDepthState {
         let mode = self.register(REG_DEPTHMAP_ENABLE).unwrap_or(0);
         PicaDepthState {
-            transform_enabled: self
-                .register(REG_DEPTHMAP_TRANSFORM_ENABLE)
-                .unwrap_or(0)
-                & 1
-                != 0,
+            transform_enabled: self.register(REG_DEPTHMAP_TRANSFORM_ENABLE).unwrap_or(0) & 1 != 0,
             scale: Float24::from_bits(self.register(REG_DEPTHMAP_SCALE).unwrap_or(0)).to_f32(),
             offset: Float24::from_bits(self.register(REG_DEPTHMAP_OFFSET).unwrap_or(0)).to_f32(),
             buffering: if mode & 1 == 0 {
@@ -1239,7 +1235,8 @@ mod tests {
         assert!(!gpu.depth_state().transform_enabled);
         assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::ZBuffer);
 
-        gpu.write_register(REG_DEPTHMAP_TRANSFORM_ENABLE, 1).unwrap();
+        gpu.write_register(REG_DEPTHMAP_TRANSFORM_ENABLE, 1)
+            .unwrap();
         assert!(gpu.depth_state().transform_enabled);
         assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::ZBuffer);
 
