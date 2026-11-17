@@ -1,11 +1,11 @@
 //! Reference execution of a documented subset of the PICA200 vertex shader ISA.
 //!
 //! Supported: the arithmetic instructions without address-register indexing
-//! (ADD, MUL, DP3, DP4, DPH, DPHI, SLT, SLTI, SGE, SGEI, MAX, MIN, FLR, RCP, RSQ,
-//! MOV, MAD, MADI) plus NOP and END. Programs are straight-line: flow control
-//! (CALL/IF/LOOP/JMP/BREAK), comparisons that set condition codes (CMP), MOVA,
-//! address-register indexing, EX2/LG2/LITP/DST and geometry-shader emits are
-//! rejected with an explicit error instead of being guessed.
+//! (ADD, MUL, DP3, DP4, DPH, DPHI, SLT, SLTI, SGE, SGEI, MAX, MIN, FLR, RCP,
+//! RSQ, EX2, LG2, MOV, MAD, MADI) plus NOP and END. Programs are straight-line:
+//! flow control (CALL/IF/LOOP/JMP/BREAK), comparisons that set condition codes
+//! (CMP), MOVA, address-register indexing, LITP/DST and geometry-shader emits
+//! are rejected with an explicit error instead of being guessed.
 //!
 //! Arithmetic is performed in IEEE `f32`. The hardware's internal float24
 //! precision and its approximated reciprocal/inverse-square-root results are
@@ -32,6 +32,8 @@ pub enum PicaShaderOpcode {
     Dp3,
     Dp4,
     Dph,
+    Ex2,
+    Lg2,
     Mul,
     Sge,
     Slt,
@@ -66,6 +68,8 @@ impl PicaShaderOpcode {
             0x01 => Some(Self::Dp3),
             0x02 => Some(Self::Dp4),
             0x03 => Some(Self::Dph),
+            0x05 => Some(Self::Ex2),
+            0x06 => Some(Self::Lg2),
             0x08 => Some(Self::Mul),
             0x09 => Some(Self::Sge),
             0x0A => Some(Self::Slt),
@@ -95,7 +99,7 @@ impl PicaShaderOpcode {
             | Self::Slt
             | Self::Max
             | Self::Min => Some(PicaVertexShaderInstructionFormat::Format1),
-            Self::Flr | Self::Rcp | Self::Rsq | Self::Mov => {
+            Self::Ex2 | Self::Lg2 | Self::Flr | Self::Rcp | Self::Rsq | Self::Mov => {
                 Some(PicaVertexShaderInstructionFormat::Format1Unary)
             }
             Self::Dphi | Self::Sgei | Self::Slti => {
@@ -313,6 +317,8 @@ impl Machine<'_> {
                 [dot([a[0], a[1], a[2], 1.0], b, 4); 4]
             }
             PicaShaderOpcode::Flr => [a[0].floor(), a[1].floor(), a[2].floor(), a[3].floor()],
+            PicaShaderOpcode::Ex2 => [a[0].exp2(); 4],
+            PicaShaderOpcode::Lg2 => [a[0].log2(); 4],
             PicaShaderOpcode::Rcp => [1.0 / a[0]; 4],
             PicaShaderOpcode::Rsq => [1.0 / a[0].sqrt(); 4],
             PicaShaderOpcode::Mov => a,
@@ -697,6 +703,80 @@ mod tests {
     }
 
     #[test]
+    fn ex2_and_lg2_broadcast_the_first_swizzled_source_lane() {
+        let mask = plain_descriptor(0b1111);
+        assert_eq!(
+            run_one(
+                format1_unary(0x05, O0, V0),
+                mask,
+                [3.0, 0.0, 0.0, 0.0],
+                [0.0; 4]
+            ),
+            [8.0; 4]
+        );
+        assert_eq!(
+            run_one(
+                format1_unary(0x05, O0, V0),
+                mask,
+                [-2.0, 0.0, 0.0, 0.0],
+                [0.0; 4]
+            ),
+            [0.25; 4]
+        );
+        assert_eq!(
+            run_one(
+                format1_unary(0x06, O0, V0),
+                mask,
+                [8.0, 0.0, 0.0, 0.0],
+                [0.0; 4]
+            ),
+            [3.0; 4]
+        );
+
+        let pick_y = descriptor(
+            0b1111,
+            [(false, 0x55), (false, IDENTITY), (false, IDENTITY)],
+        );
+        assert_eq!(
+            run_one(
+                format1_unary(0x06, O0, V0),
+                pick_y,
+                [9.0, 2.0, 9.0, 9.0],
+                [0.0; 4]
+            ),
+            [1.0; 4]
+        );
+    }
+
+    #[test]
+    fn ex2_and_lg2_respect_destination_masks_and_ieee_domain_results() {
+        let only_y_and_w = plain_descriptor(0b0101);
+        let ex2 = run_one(
+            format1_unary(0x05, O0, V0),
+            only_y_and_w,
+            [2.0, 0.0, 0.0, 0.0],
+            [0.0; 4],
+        );
+        assert_eq!(ex2, [0.0, 4.0, 0.0, 4.0]);
+
+        let log_zero = run_one(
+            format1_unary(0x06, O0, V0),
+            plain_descriptor(0b1111),
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0; 4],
+        );
+        assert!(log_zero.iter().all(|value| value.is_infinite() && value.is_sign_negative()));
+
+        let log_negative = run_one(
+            format1_unary(0x06, O0, V0),
+            plain_descriptor(0b1111),
+            [-1.0, 0.0, 0.0, 0.0],
+            [0.0; 4],
+        );
+        assert!(log_negative.iter().all(|value| value.is_nan()));
+    }
+
+    #[test]
     fn multiply_add_forms_read_constants_through_their_wide_source_field() {
         let mut uniforms = [[0.0; 4]; 96];
         uniforms[0] = [2.0, 2.0, 2.0, 2.0];
@@ -816,6 +896,14 @@ mod tests {
             Some(PicaShaderOpcode::Mad)
         );
         assert_eq!(
+            PicaShaderOpcode::from_word(0x05 << 26),
+            Some(PicaShaderOpcode::Ex2)
+        );
+        assert_eq!(
+            PicaShaderOpcode::from_word(0x06 << 26),
+            Some(PicaShaderOpcode::Lg2)
+        );
+        assert_eq!(
             PicaShaderOpcode::from_word(0x37 << 26),
             Some(PicaShaderOpcode::Madi)
         );
@@ -823,8 +911,8 @@ mod tests {
             PicaShaderOpcode::from_word(0x30 << 26),
             Some(PicaShaderOpcode::Madi)
         );
-        // MOVA, CMP, CALL, DST, EX2 and LG2 are intentionally unsupported.
-        for opcode in [0x12u32, 0x2E, 0x2F, 0x24, 0x04, 0x05, 0x06, 0x19] {
+        // MOVA, CMP, CALL, DST, LITP and other unimplemented opcodes stay rejected.
+        for opcode in [0x12u32, 0x2E, 0x2F, 0x24, 0x04, 0x07, 0x19] {
             assert_eq!(
                 PicaShaderOpcode::from_word(opcode << 26),
                 None,
