@@ -5231,6 +5231,28 @@ mod tests {
     }
 
     #[test]
+    fn close_handle_from_the_target_thread_terminates_without_returning_to_it() {
+        let mut session = test_session_with_program(&[0xEF00_0023]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x30, 0)
+            .unwrap();
+        let handle = session.kernel_objects.insert_thread(target).unwrap();
+
+        session.scheduler.yield_current().unwrap();
+        assert_eq!(session.current_thread_id(), Some(target));
+        session.scheduler.core_mut(target).unwrap().regs[0] = handle;
+
+        assert!(matches!(
+            session.dispatch_svc(SVC_CLOSE_HANDLE),
+            SvcRunDisposition::Resume
+        ));
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.thread_info(target), None);
+        assert_eq!(session.scheduler.thread_count(), 1);
+    }
+
+    #[test]
     fn closing_one_of_multiple_thread_handles_does_not_terminate_target() {
         let mut session = test_session_with_program(&[0xEF00_0009]);
         let target = session
