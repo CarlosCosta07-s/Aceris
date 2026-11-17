@@ -384,16 +384,18 @@ fn run(options: Options) -> Result<(), String> {
 
     print_summary(
         &options,
-        format,
-        &samples_ns,
-        instructions,
-        gpu_lists,
-        lcd_scans,
-        zero_instruction_frames,
-        &stop_reasons,
-        first_report,
-        system.cpu().pc(),
-        system.cpu().cpsr.0,
+        BenchmarkSummary {
+            format,
+            samples_ns: &samples_ns,
+            instructions,
+            gpu_lists,
+            lcd_scans,
+            zero_instruction_frames,
+            stop_reasons: &stop_reasons,
+            first_report,
+            final_pc: system.cpu().pc(),
+            final_cpsr: system.cpu().cpsr.0,
+        },
     );
     Ok(())
 }
