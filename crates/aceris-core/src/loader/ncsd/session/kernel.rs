@@ -1352,7 +1352,7 @@ mod tests {
         assert_eq!(table.retained_object_count(), 1);
 
         assert_eq!(table.signal_event(event).unwrap(), vec![waiter]);
-        assert!(table.remove_waiter(waiter));
+        assert!(!table.remove_waiter(waiter));
         assert_eq!(table.retained_object_count(), 0);
     }
 
@@ -1408,7 +1408,7 @@ mod tests {
         assert!(!table.is_open_handle(one_shot));
         assert_eq!(table.retained_object_count(), 1);
         assert_eq!(table.signal_event(one_shot).unwrap(), vec![second]);
-        assert!(table.remove_waiter(second));
+        assert!(!table.remove_waiter(second));
         assert_eq!(table.retained_object_count(), 0);
 
         let sticky = table.insert_event(EventResetType::Sticky).unwrap();
