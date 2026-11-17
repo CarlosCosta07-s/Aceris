@@ -39,9 +39,7 @@ impl PicaDepthBufferFormat {
             0 => Ok(Self::D16),
             2 => Ok(Self::D24),
             3 => Ok(Self::D24S8),
-            value => Err(PicaDepthBufferError::UnsupportedFormat {
-                value: value as u8,
-            }),
+            value => Err(PicaDepthBufferError::UnsupportedFormat { value: value as u8 }),
         }
     }
 
@@ -112,9 +110,8 @@ impl PicaDepthBufferConfig {
         if width == 0 || height == 0 {
             return Err(PicaDepthBufferError::InvalidDimensions { width, height });
         }
-        let format = PicaDepthBufferFormat::decode(
-            pica.register(REG_DEPTHBUFFER_FORMAT).unwrap_or(0),
-        )?;
+        let format =
+            PicaDepthBufferFormat::decode(pica.register(REG_DEPTHBUFFER_FORMAT).unwrap_or(0))?;
         let read = pica.register(REG_DEPTHBUFFER_READ).unwrap_or(0);
         let write = pica.register(REG_DEPTHBUFFER_WRITE).unwrap_or(0);
         Ok(Some(Self {
@@ -174,8 +171,9 @@ impl PicaDepthBufferConfig {
             for x in 0..self.width as usize {
                 let offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
                 let destination = y * self.width as usize + x;
-                values[destination] =
-                    self.format.decode_depth(&raw[offset..offset + bytes_per_pixel]);
+                values[destination] = self
+                    .format
+                    .decode_depth(&raw[offset..offset + bytes_per_pixel]);
             }
         }
         Ok(values)
@@ -203,9 +201,7 @@ impl PicaDepthBufferConfig {
             });
         }
         if values.iter().any(|value| !value.is_finite()) {
-            return Err(PicaDepthBufferError::InvalidDepth {
-                depth: f32::NAN,
-            });
+            return Err(PicaDepthBufferError::InvalidDepth { depth: f32::NAN });
         }
 
         let storage_size = self.tiled_storage_size()?;
@@ -353,9 +349,14 @@ impl std::fmt::Display for PicaDepthBufferError {
                 write!(formatter, "PICA depth buffer format {value} is unsupported")
             }
             Self::InvalidDimensions { width, height } => {
-                write!(formatter, "PICA depth buffer dimensions {width}x{height} are invalid")
+                write!(
+                    formatter,
+                    "PICA depth buffer dimensions {width}x{height} are invalid"
+                )
             }
-            Self::InvalidDepth { depth } => write!(formatter, "PICA depth value {depth} is invalid"),
+            Self::InvalidDepth { depth } => {
+                write!(formatter, "PICA depth value {depth} is invalid")
+            }
             Self::SizeOverflow => formatter.write_str("PICA depth buffer size overflowed"),
             Self::AllocationFailed => formatter.write_str("could not allocate PICA depth buffer"),
             Self::BufferLengthMismatch { expected, actual } => write!(
@@ -399,7 +400,8 @@ mod tests {
     #[test]
     fn decodes_guest_depth_buffer_registers_and_access_permissions() {
         let mut pica = Pica200::new();
-        pica.write_register(REG_DEPTHBUFFER_LOC, 0x0123_4567).unwrap();
+        pica.write_register(REG_DEPTHBUFFER_LOC, 0x0123_4567)
+            .unwrap();
         pica.write_register(REG_DEPTHBUFFER_FORMAT, 3).unwrap();
         pica.write_register(REG_DEPTHBUFFER_READ, 3).unwrap();
         pica.write_register(REG_DEPTHBUFFER_WRITE, 2).unwrap();
@@ -452,8 +454,13 @@ mod tests {
         let d24s8 = config(PicaDepthBufferFormat::D24S8, 8, 8);
         let stencil = (0..64).map(|value| value as u8).collect::<Vec<_>>();
         d24s8.write_stencil_values(&stencil, &mut memory).unwrap();
-        d24s8.write_depth_values(&vec![0.25; 64], &mut memory).unwrap();
-        assert_eq!(d24s8.read_stencil_values(&memory).unwrap().unwrap(), stencil);
+        d24s8
+            .write_depth_values(&vec![0.25; 64], &mut memory)
+            .unwrap();
+        assert_eq!(
+            d24s8.read_stencil_values(&memory).unwrap().unwrap(),
+            stencil
+        );
         let depths = d24s8.read_depth_values(&memory, 1.0).unwrap();
         assert!((depths[0] - 0.25).abs() < 1.0 / 0x00FF_FFFF as f32);
     }
@@ -469,7 +476,9 @@ mod tests {
             vec![0.75; 64]
         );
         assert_eq!(
-            config.write_depth_values(&vec![0.25; 64], &mut memory).unwrap(),
+            config
+                .write_depth_values(&vec![0.25; 64], &mut memory)
+                .unwrap(),
             0
         );
         assert!(memory.read_u32(VRAM_BASE).is_ok());
@@ -508,4 +517,3 @@ mod tests {
         assert!(config.tiled_storage_size().is_ok());
     }
 }
-
