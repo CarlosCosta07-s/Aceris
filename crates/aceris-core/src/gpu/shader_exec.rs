@@ -385,13 +385,7 @@ impl PicaVertexShaderProgram {
                 | PicaShaderOpcode::Loop
                 | PicaShaderOpcode::JmpC
                 | PicaShaderOpcode::JmpU => {
-                    machine.execute_flow(
-                        index,
-                        word,
-                        opcode,
-                        &mut next_index,
-                        &mut jump_target,
-                    )?;
+                    machine.execute_flow(index, word, opcode, &mut next_index, &mut jump_target)?;
                 }
                 PicaShaderOpcode::Emit | PicaShaderOpcode::SetEmit => {
                     return Err(PicaShaderExecError::UnsupportedGeometryInstruction {
@@ -800,14 +794,13 @@ impl Machine<'_> {
                         )?;
                     }
                     PicaShaderOpcode::Loop => {
-                        let integer = self
-                            .program
-                            .integer_uniform(constant_id)
-                            .ok_or(PicaShaderExecError::InvalidFlowConstant {
+                        let integer = self.program.integer_uniform(constant_id).ok_or(
+                            PicaShaderExecError::InvalidFlowConstant {
                                 index,
                                 constant: constant_id,
                                 integer: true,
-                            })?;
+                            },
+                        )?;
                         self.start_loop(index, flow.destination_offset, integer, next_pc)?;
                     }
                     PicaShaderOpcode::JmpU => {
@@ -921,10 +914,7 @@ impl Machine<'_> {
             if instruction_count != 0 {
                 push_bounded(
                     &mut self.if_stack,
-                    IfFrame {
-                        else_pc,
-                        resume_pc,
-                    },
+                    IfFrame { else_pc, resume_pc },
                     IF_STACK_LIMIT,
                 );
             }
@@ -971,11 +961,7 @@ impl Machine<'_> {
         Ok(())
     }
 
-    fn break_loop(
-        &mut self,
-        index: usize,
-        next_pc: &mut usize,
-    ) -> Result<(), PicaShaderExecError> {
+    fn break_loop(&mut self, index: usize, next_pc: &mut usize) -> Result<(), PicaShaderExecError> {
         let frame = *self
             .loop_stack
             .last()
@@ -996,11 +982,7 @@ impl Machine<'_> {
     /// The PICA200 has independent CALL, IF and LOOP stacks. Each sees the
     /// instruction's next PC; the resulting PC priority is LOOP, IF, CALL,
     /// then JMP. CALL may pop repeatedly, while IF and LOOP pop at most once.
-    fn resolve_control_flow(
-        &mut self,
-        next_pc: &mut usize,
-        jump_target: Option<usize>,
-    ) {
+    fn resolve_control_flow(&mut self, next_pc: &mut usize, jump_target: Option<usize>) {
         let mut loop_pc = *next_pc;
         let mut loop_updated = false;
         if let Some(frame) = self.loop_stack.last_mut() {
