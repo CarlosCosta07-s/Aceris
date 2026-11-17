@@ -70,7 +70,6 @@ pub enum PicaDepthMode {
 /// Guest-controlled PICA depth mapping attached to transformed vertices.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaDepthMap {
-    pub transform_enabled: bool,
     pub scale: f32,
     pub offset: f32,
     pub mode: PicaDepthMode,
@@ -269,7 +268,7 @@ impl SoftwareRasterizer {
     ) -> Result<RasterizationReport, RasterizerError> {
         let pica_depth_map = vertices[0].pica_depth_map;
         if let Some(map) = pica_depth_map {
-            if map.transform_enabled && (!map.scale.is_finite() || !map.offset.is_finite()) {
+            if !map.scale.is_finite() || !map.offset.is_finite() {
                 return Err(RasterizerError::InvalidPicaDepthMap);
             }
         }
@@ -278,17 +277,7 @@ impl SoftwareRasterizer {
             if !vertex.x.is_finite() || !vertex.y.is_finite() || !vertex.depth.is_finite() {
                 return Err(RasterizerError::InvalidVertex { index });
             }
-            let depth_map_matches = match (pica_depth_map, vertex.pica_depth_map) {
-                (None, None) => true,
-                (Some(expected), Some(actual)) => {
-                    expected.transform_enabled == actual.transform_enabled
-                        && expected.mode == actual.mode
-                        && (!expected.transform_enabled
-                            || (expected.scale == actual.scale && expected.offset == actual.offset))
-                }
-                _ => false,
-            };
-            if !depth_map_matches {
+            if vertex.pica_depth_map != pica_depth_map {
                 return Err(RasterizerError::InconsistentPicaDepthMap);
             }
             if pica_depth_map.is_none() && !(0.0..=1.0).contains(&vertex.depth) {
@@ -380,11 +369,7 @@ impl SoftwareRasterizer {
                     + weight_2 * f64::from(vertices[2].depth))
                     as f32;
                 let fragment_depth = if let Some(map) = pica_depth_map {
-                    let scaled = if map.transform_enabled {
-                        interpolated_depth.mul_add(map.scale, map.offset)
-                    } else {
-                        -interpolated_depth
-                    };
+                    let scaled = interpolated_depth.mul_add(map.scale, map.offset);
                     let mapped = match map.mode {
                         PicaDepthMode::ZBuffer => scaled,
                         PicaDepthMode::WBuffer => {
@@ -585,7 +570,6 @@ mod tests {
     #[test]
     fn pica_z_buffer_applies_guest_depth_scale_and_offset() {
         let mapping = PicaDepthMap {
-            transform_enabled: true,
             scale: 0.5,
             offset: 0.25,
             mode: PicaDepthMode::ZBuffer,
@@ -630,26 +614,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(rasterizer.depth_at(0, 0), Some(1.0));
-    }
-
-    #[test]
-    fn disabled_pica_depth_transform_uses_negative_z_over_w_and_ignores_scale_offset() {
-        let mapping = PicaDepthMap {
-            transform_enabled: false,
-            scale: f32::NAN,
-            offset: f32::INFINITY,
-            mode: PicaDepthMode::ZBuffer,
-        };
-        let mut rasterizer = SoftwareRasterizer::new(4, 4).unwrap();
-        let triangle = [
-            vertex(0.0, 0.0, -0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
-            vertex(4.0, 0.0, -0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
-            vertex(0.0, 4.0, -0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
-        ];
-
-        rasterizer.draw_triangle(triangle, DepthFunction::Always).unwrap();
-
-        assert_eq!(rasterizer.depth_at(0, 0), Some(0.5));
     }
 
     #[test]
