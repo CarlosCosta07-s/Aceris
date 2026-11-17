@@ -2910,6 +2910,38 @@ mod tests {
         system
             .register_gsp_client(0, GSP_SHARED_MEMORY_BASE, event_handle)
             .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+
+        // Queue a real GX MemoryFill operation. Its PSC0 completion signal
+        // will be delivered through this client's relay queue and event.
+        let fill_start = VRAM_BASE + 0x2000;
+        let fill_end = fill_start + 0x10;
+        let mut gx_queue = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        gx_queue[1] = 1;
+        let gx_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        gx_queue[gx_entry] = GSP_GX_COMMAND_MEMORY_FILL;
+        for (index, value) in [
+            fill_start,
+            0xAABB_CCDD,
+            fill_end,
+            0,
+            0,
+            0,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let offset = gx_entry + 4 + index * 4;
+            gx_queue[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let gx_queue_address =
+            GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .write_memory_bytes(gx_queue_address, &gx_queue)
+            .unwrap();
 
         // The main thread creates a higher-priority child and passes the
         // process-local GSP completion event as its argument (child r0).
@@ -2937,10 +2969,13 @@ mod tests {
             Some(crate::loader::ncsd::session::MAIN_THREAD_ID)
         );
 
-        // A PPF completion is inserted in the registered GSP relay queue.
-        // The one-shot event handoff wakes the exact ARM11 thread waiting on it.
-        let delivery = system.dispatch_gsp_interrupt(GspInterruptId::Ppf).unwrap();
-        assert_eq!(delivery.deliveries.len(), 1);
+        // Trigger the GX queue. Completing MemoryFill inserts PSC0 in the
+        // registered relay queue and hands the one-shot event to the waiter.
+        let completion = system.trigger_gsp_cmd_req_queue(0).unwrap();
+        assert_eq!(completion.commands_consumed, 1);
+        assert_eq!(completion.memory_fills_completed, 1);
+        assert_eq!(completion.pending_commands, 0);
+        assert!(completion.error.is_none());
         assert_eq!(
             system.ncsd_session().unwrap().thread_info(child_id).unwrap().state,
             crate::loader::ncsd::session::ThreadState::Running
@@ -2970,7 +3005,19 @@ mod tests {
         let relay_queue = GspInterruptRelayQueue::parse(&relay_bytes).unwrap();
         assert_eq!(
             relay_queue.pending_interrupts().unwrap(),
-            [GspInterruptId::Ppf]
+            [GspInterruptId::Psc0]
+        );
+        let mut filled = [0u8; 16];
+        system
+            .physical_memory()
+            .read(fill_start, &mut filled)
+            .unwrap();
+        assert_eq!(
+            filled,
+            [
+                0xDD, 0xCC, 0xBB, 0xAA, 0xDD, 0xCC, 0xBB, 0xAA, 0xDD, 0xCC, 0xBB, 0xAA, 0xDD,
+                0xCC, 0xBB, 0xAA,
+            ]
         );
 
         // The first post-wakeup guest instruction executes, proving the
