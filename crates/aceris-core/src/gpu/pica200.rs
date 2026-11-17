@@ -40,9 +40,12 @@ pub const REG_DEPTHMAP_OFFSET: u16 = 0x04E;
 pub const REG_VIEWPORT_XY: u16 = 0x068;
 /// PICA depth-buffer control: the current model treats bit 0 as Z (1) / W (0).
 pub const REG_DEPTHMAP_ENABLE: u16 = 0x06D;
-/// GPUREG_DEPTH_COLOR_MASK: bit 0 depth test enable, bits 4..6 function.
-/// Layout taken from public 3DS documentation; not verified on hardware.
+/// GPUREG_DEPTH_COLOR_MASK: depth test/function, channel masks and depth write.
 pub const REG_DEPTH_COLOR_MASK: u16 = 0x107;
+/// GPUREG_COLORBUFFER_WRITE: per-channel color-buffer write access.
+pub const REG_COLORBUFFER_WRITE: u16 = 0x113;
+/// GPUREG_DEPTHBUFFER_WRITE: stencil/depth write access.
+pub const REG_DEPTHBUFFER_WRITE: u16 = 0x115;
 
 /// Decoded viewport data written by the guest through PICA registers.
 #[derive(Clone, Copy, Debug, PartialEq)]
