@@ -5531,7 +5531,10 @@ mod tests {
 
         session.signal_event_handle(first).unwrap();
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
-        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
         assert_eq!(session.event_handle_is_signaled(first), Some(true));
         assert_eq!(session.event_handle_is_signaled(second), Some(false));
 
@@ -5564,7 +5567,10 @@ mod tests {
         session.signal_event_handle(first).unwrap();
         assert_eq!(session.event_handle_is_signaled(first), Some(true));
         session.advance_time(99);
-        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
 
         session.advance_time(1);
         assert_eq!(session.current_thread_id(), Some(child));
@@ -5599,7 +5605,10 @@ mod tests {
             session.kernel_objects.semaphore_counts(semaphore),
             Some((0, 1))
         );
-        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
 
         {
             let core = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
@@ -5612,7 +5621,10 @@ mod tests {
         assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
         assert_eq!(session.scheduler.core(child).unwrap().regs[1], 0);
         assert_eq!(session.event_handle_is_signaled(event), Some(false));
-        assert_eq!(session.kernel_objects.semaphore_counts(semaphore), Some((0, 1)));
+        assert_eq!(
+            session.kernel_objects.semaphore_counts(semaphore),
+            Some((0, 1))
+        );
     }
 
     #[test]
@@ -5666,7 +5678,10 @@ mod tests {
 
         session.signal_event_handle(first).unwrap();
         assert_eq!(session.current_thread_id(), None);
-        assert_eq!(session.address_space.read32(out_address).unwrap(), 0xCAFE_BABE);
+        assert_eq!(
+            session.address_space.read32(out_address).unwrap(),
+            0xCAFE_BABE
+        );
         session.signal_event_handle(second).unwrap();
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
 
