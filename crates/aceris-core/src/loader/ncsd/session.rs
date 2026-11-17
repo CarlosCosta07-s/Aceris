@@ -5227,6 +5227,31 @@ mod tests {
     }
 
     #[test]
+    fn closing_one_of_multiple_thread_handles_does_not_terminate_target() {
+        let mut session = test_session_with_program(&[0xEF00_0009]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x30, 0)
+            .unwrap();
+        let first_handle = session.kernel_objects.insert_thread(target).unwrap();
+        let second_handle = session.kernel_objects.insert_thread(target).unwrap();
+
+        assert_eq!(session.kernel_objects.thread_handle_count(target), 2);
+        session.close_handle(first_handle).unwrap();
+        assert_eq!(session.kernel_objects.thread_handle_count(target), 1);
+        assert_eq!(
+            session.thread_info(target).unwrap().state,
+            ThreadState::Ready
+        );
+        assert_eq!(session.scheduler.thread_count(), 2);
+
+        session.close_handle(second_handle).unwrap();
+        assert_eq!(session.thread_info(target), None);
+        assert_eq!(session.scheduler.thread_count(), 1);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+    }
+
+    #[test]
     fn create_thread_rejects_non_executable_entrypoints_and_unmapped_stacks() {
         let mut session = test_session_with_program(&[0xEF00_0008]);
         {
