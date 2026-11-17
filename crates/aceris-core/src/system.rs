@@ -3147,8 +3147,11 @@ mod tests {
 
         // Two commands are queued. The first halts after execution; the second
         // must remain pending until a second TriggerCmdReqQueue IPC arrives.
-        let first_command_address = VRAM_BASE + 0x1000;
-        let second_command_address = VRAM_BASE + 0x1010;
+        // The guest command lists live in mapped linear FCRAM: this is CPU-
+        // writable and shares the same physical backing with the GSP DMA view.
+        let (command_lists_virtual_base, _) = map_test_linear_fcram(&mut system, 0x1000);
+        let first_command_address = command_lists_virtual_base + 0x100;
+        let second_command_address = command_lists_virtual_base + 0x110;
         let queue_address =
             GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
         // The ARM11, not the test host, authors the queue header and both
@@ -3169,7 +3172,7 @@ mod tests {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             }
 
-            // The guest writes both command lists into VRAM using ARM11 STRs.
+            // The guest writes both command lists into FCRAM using ARM11 STRs.
             assert!(session.set_current_register(4, first_command_address));
             assert!(session.set_current_register(5, 0xDEAD_BEEF));
             assert!(session.set_current_register(6, 0x000F_0100));
