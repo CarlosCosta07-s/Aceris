@@ -303,7 +303,7 @@ mod tests {
         pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
         pica.write_register(
             REG_BLEND_FUNC,
-            0 | (0 << 8) | (6 << 16) | (7 << 20) | (1 << 24),
+            (6 << 16) | (7 << 20) | (1 << 24),
         )
         .unwrap();
         let pipeline = pica.fragment_pipeline().unwrap();
