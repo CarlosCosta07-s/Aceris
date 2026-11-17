@@ -2189,19 +2189,19 @@ mod tests {
     fn short_vector_sqrt_exception_records_no_iterations_after_last_lane() {
         let (mut cpu, mut mem) = machine();
         cpu.vfp_mut().fpscr = (1 << 16) | FPSCR_IOE; // two lanes
-        set_f32(&mut cpu, 8, -1.0);
-        set_f32(&mut cpu, 9, 4.0);
+        set_f32(&mut cpu, 8, 4.0);
+        set_f32(&mut cpu, 9, -1.0);
         set_f32(&mut cpu, 16, 123.0);
         set_f32(&mut cpu, 17, 456.0);
 
         let instruction = dp(VSQRT, 16, 0, 8, false);
         run(&mut cpu, &mut mem, &[instruction]).unwrap();
 
-        assert_eq!(f32_of(&cpu, 16), 123.0, "failing lane must not commit");
-        assert_eq!(f32_of(&cpu, 17), 456.0, "later lane must not execute");
+        assert_eq!(f32_of(&cpu, 16), 2.0, "earlier lane must retire");
+        assert_eq!(f32_of(&cpu, 17), 456.0, "failing lane must not commit");
         assert_eq!(
             cpu.vfp().fpinst(),
-            instruction,
+            dp(VSQRT, 17, 0, 9, false),
             "FPINST must identify the exceptional source and destination"
         );
         assert_ne!(cpu.vfp().fpexc() & FPEXC_EX, 0);
