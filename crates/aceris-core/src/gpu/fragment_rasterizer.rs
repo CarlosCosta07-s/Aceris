@@ -729,7 +729,7 @@ mod tests {
     use super::*;
     use crate::gpu::{
         PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
-        PicaVertexOutputMap, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
+        PicaVertexOutputMap, REG_LOGIC_OP, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
     };
     use crate::gpu::physical_memory::VRAM_BASE;
 
@@ -793,6 +793,7 @@ mod tests {
             pica.write_register(base + 4, 0).unwrap();
         }
         pica.write_register(REG_TEXUNIT_CONFIG, 0).unwrap();
+        pica.write_register(REG_LOGIC_OP, 3).unwrap();
     }
 
     #[test]
