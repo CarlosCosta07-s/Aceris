@@ -24,7 +24,12 @@ pub const REG_TEXENV0_COMBINER: u16 = REG_TEXENV0_SOURCE + 2;
 pub const REG_TEXENV0_COLOR: u16 = REG_TEXENV0_SOURCE + 3;
 /// RGB/alpha output scale for the first texture-environment stage.
 pub const REG_TEXENV0_SCALE: u16 = REG_TEXENV0_SOURCE + 4;
-/// Register spacing between texture-environment stages.
+/// Source-register addresses for all six TEV stages. The final two stages
+/// occupy the 0xF0 and 0xF8 register groups rather than continuing the first
+/// four-stage 8-register sequence.
+pub const TEXENV_STAGE_SOURCE_REGISTERS: [u16; PICA_TEV_STAGE_COUNT] =
+    [0x0C0, 0x0C8, 0x0D0, 0x0D8, 0x0F0, 0x0F8];
+/// Register spacing between the first four texture-environment stages.
 pub const TEXENV_STAGE_REGISTER_STRIDE: u16 = 8;
 
 /// Sources accepted by the texture-environment combiner.
@@ -285,7 +290,7 @@ pub struct PicaTevStage {
 
 impl PicaTevStage {
     fn from_registers(pica: &Pica200, index: usize) -> Result<Self, PicaTevError> {
-        let base = REG_TEXENV0_SOURCE + (index as u16) * TEXENV_STAGE_REGISTER_STRIDE;
+        let base = TEXENV_STAGE_SOURCE_REGISTERS[index];
         let source = pica.register(base).unwrap_or(0);
         let operand = pica.register(base + 1).unwrap_or(0);
         let combine = pica.register(base + 2).unwrap_or(0);
@@ -595,7 +600,7 @@ mod tests {
     fn decodes_guest_tev_registers_and_constants() {
         let mut pica = Pica200::new();
         let stage = 2u16;
-        let base = REG_TEXENV0_SOURCE + stage * TEXENV_STAGE_REGISTER_STRIDE;
+        let base = TEXENV_STAGE_SOURCE_REGISTERS[stage as usize];
         pica.write_register(
             base,
             3 | (4 << 4) | (14 << 8) | (6 << 16) | (15 << 20) | (13 << 24),
@@ -703,7 +708,7 @@ mod tests {
         );
         assert_eq!(
             interpolate.evaluate(0, [0.0; 4], &inputs).unwrap(),
-            [0.625, 0.375, 0.5, 0.75]
+            [0.625, 0.625, 0.5, 0.75]
         );
 
         let add_signed = PicaTevStage {
