@@ -205,6 +205,8 @@ pub struct Arm11KernelObjectTable {
     waiter_handles: BTreeMap<(ThreadId, u32), u32>,
     /// Original handle and object anchor pinned by each pending wait-all.
     wait_all_refs: BTreeMap<ThreadId, Vec<(u32, u32)>>,
+    /// Highest simultaneous count of open guest-visible handles in this process.
+    high_water_handle_count: usize,
     next_handle: u32,
     /// Handle that most recently handed an object to a blocked thread, so a
     /// WaitSynchronizationN waiter can report which handle released it.
@@ -219,6 +221,7 @@ impl Default for Arm11KernelObjectTable {
             handle_aliases: BTreeMap::new(),
             waiter_handles: BTreeMap::new(),
             wait_all_refs: BTreeMap::new(),
+            high_water_handle_count: 0,
             next_handle: FIRST_HANDLE,
             handoffs: BTreeMap::new(),
         }
@@ -528,6 +531,7 @@ impl Arm11KernelObjectTable {
             .ok_or(KernelHandleError::InvalidHandle)?;
         let duplicate = self.allocate_handle()?;
         self.handle_aliases.insert(duplicate, object_key);
+        self.update_handle_high_water_mark();
         Ok(duplicate)
     }
 
@@ -1212,6 +1216,15 @@ impl Arm11KernelObjectTable {
         self.objects.len() + self.handle_aliases.len()
     }
 
+    /// Returns the highest simultaneous open-handle count observed by this table.
+    pub fn handle_high_water_mark(&self) -> usize {
+        self.high_water_handle_count
+    }
+
+    fn update_handle_high_water_mark(&mut self) {
+        self.high_water_handle_count = self.high_water_handle_count.max(self.handle_count());
+    }
+
     fn mutex_mut(&mut self, handle: u32) -> Result<&mut KernelMutex, KernelHandleError> {
         match self.object_mut(handle) {
             Some(KernelObject::Mutex(mutex)) => Ok(mutex),
@@ -1294,6 +1307,7 @@ impl Arm11KernelObjectTable {
     fn insert(&mut self, object: KernelObject) -> Result<u32, KernelHandleError> {
         let handle = self.allocate_handle()?;
         self.objects.insert(handle, object);
+        self.update_handle_high_water_mark();
         Ok(handle)
     }
 }
@@ -1528,6 +1542,40 @@ mod tests {
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
         assert!(!table.try_wait_synchronization(semaphore, third).unwrap());
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
+    }
+
+    #[test]
+    fn handle_high_water_mark_tracks_peak_across_create_duplicate_and_close() {
+        let mut table = Arm11KernelObjectTable::default();
+        assert_eq!(table.handle_count(), 0);
+        assert_eq!(table.handle_high_water_mark(), 0);
+
+        let event = table.insert_event(EventResetType::Sticky).unwrap();
+        assert_eq!(table.handle_count(), 1);
+        assert_eq!(table.handle_high_water_mark(), 1);
+
+        let duplicate = table.duplicate_handle(event).unwrap();
+        assert_eq!(table.handle_count(), 2);
+        assert_eq!(table.handle_high_water_mark(), 2);
+
+        table.close_handle(duplicate).unwrap();
+        assert_eq!(table.handle_count(), 1);
+        assert_eq!(table.handle_high_water_mark(), 2);
+
+        let semaphore = table.insert_semaphore(0, 2).unwrap();
+        assert_ne!(semaphore, duplicate);
+        assert_eq!(table.handle_count(), 2);
+        assert_eq!(table.handle_high_water_mark(), 2);
+
+        let timer = table.insert_timer(EventResetType::OneShot).unwrap();
+        assert_eq!(table.handle_count(), 3);
+        assert_eq!(table.handle_high_water_mark(), 3);
+
+        table.close_handle(event).unwrap();
+        table.close_handle(semaphore).unwrap();
+        table.close_handle(timer).unwrap();
+        assert_eq!(table.handle_count(), 0);
+        assert_eq!(table.handle_high_water_mark(), 3);
     }
 
     #[test]
