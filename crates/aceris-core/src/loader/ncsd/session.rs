@@ -42,9 +42,9 @@ use svc::{
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
     SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
-    SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
-    SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
-    SVC_WAIT_SYNCHRONIZATION1,
+    SVC_GET_HANDLE_INFO, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER,
+    SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK,
+    SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -1957,6 +1957,7 @@ impl Arm11ProcessSession {
             SVC_CLEAR_EVENT => self.svc_clear_event(caller),
             SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
             SVC_DUPLICATE_HANDLE => self.svc_duplicate_handle(caller),
+            SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
@@ -3046,6 +3047,40 @@ impl Arm11ProcessSession {
             .clear_event(handle)
             .map(|()| 0)
             .unwrap_or_else(kernel_handle_result_code);
+        self.write_svc_result(caller, result)
+    }
+
+    /// Handles GetHandleInfo using r1 = handle and r2 = information type.
+    ///
+    /// The raw SVC returns its 64-bit output in r1-r2 and the Result in r0.
+    /// Type 1 reports the object references currently modelled by this kernel
+    /// table. Type 0 is supported for the current-process pseudo-handle, whose
+    /// creation time is the process virtual-clock origin (tick zero). Type
+    /// 0x32107 follows the documented constant-zero behavior.
+    fn svc_get_handle_info(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        let handle = registers[1];
+        let info_type = registers[2];
+
+        let (result, value) = match info_type {
+            0 if handle == CURRENT_PROCESS_HANDLE => (0, 0),
+            0 => (RESULT_INVALID_HANDLE, 0),
+            1 => match self.kernel_objects.handle_reference_count(handle) {
+                Ok(count) => (0, count),
+                Err(error) => (kernel_handle_result_code(error), 0),
+            },
+            0x0003_2107 => (0, 0),
+            _ => (RESULT_INVALID_ENUM, 0),
+        };
+
+        if let Some(core) = self.scheduler.core_mut(caller) {
+            core.regs[1] = value as u32;
+            core.regs[2] = (value >> 32) as u32;
+        }
         self.write_svc_result(caller, result)
     }
 
@@ -5377,6 +5412,56 @@ mod tests {
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
         assert_eq!(session.thread_info(target), None);
         assert_eq!(session.scheduler.thread_count(), 1);
+    }
+
+    #[test]
+    fn get_handle_info_svc_returns_64_bit_reference_count_in_r1_r2() {
+        let mut session = test_session();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let duplicate = session.kernel_objects.duplicate_handle(event).unwrap();
+
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            // libctru preserves the out pointer outside the SVC boundary;
+            // r1 and r2 are the actual handle/type inputs at the kernel.
+            main.regs[0] = 0xDEAD_BEEF;
+            main.regs[1] = duplicate;
+            main.regs[2] = 1;
+        }
+        assert!(matches!(
+            session.dispatch_svc(SVC_GET_HANDLE_INFO),
+            SvcRunDisposition::Resume
+        ));
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 2);
+
+        // The current process was created at virtual tick zero.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = CURRENT_PROCESS_HANDLE;
+            main.regs[2] = 0;
+        }
+        session.dispatch_svc(SVC_GET_HANDLE_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(registers[1], 0);
+        assert_eq!(registers[2], 0);
+
+        // Undefined information types are rejected deterministically.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = duplicate;
+            main.regs[2] = 0xFFFF;
+        }
+        session.dispatch_svc(SVC_GET_HANDLE_INFO);
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+            RESULT_INVALID_ENUM
+        );
     }
 
     #[test]
