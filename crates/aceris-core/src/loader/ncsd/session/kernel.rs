@@ -647,9 +647,8 @@ impl Arm11KernelObjectTable {
                     }
                 }
                 // Thread objects are sticky: termination is never consumed.
-                KernelObject::Thread(_)
-                | KernelObject::MemoryBlock(_)
-                | KernelObject::ServiceSession(_) => {
+                KernelObject::Thread(_) => {}
+                KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_) => {
                     unreachable!("wait-all preflight rejected non-waitable objects")
                 }
             }
