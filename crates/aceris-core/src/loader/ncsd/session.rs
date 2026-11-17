@@ -40,7 +40,8 @@ use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
     SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
-    SVC_CREATE_TIMER, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK,
+    SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY,
+    SVC_MAP_MEMORY_BLOCK,
     SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST,
     SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
     SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
@@ -1955,6 +1956,7 @@ impl Arm11ProcessSession {
             SVC_SIGNAL_EVENT => self.svc_signal_event(caller),
             SVC_CLEAR_EVENT => self.svc_clear_event(caller),
             SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
+            SVC_DUPLICATE_HANDLE => self.svc_duplicate_handle(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
@@ -3045,6 +3047,34 @@ impl Arm11ProcessSession {
             .map(|()| 0)
             .unwrap_or_else(kernel_handle_result_code);
         self.write_svc_result(caller, result)
+    }
+
+    /// Handles DuplicateHandle using the input handle in r1.
+    ///
+    /// The raw SVC ABI returns the result in r0 and the duplicate handle in r1.
+    /// The guest-facing libctru wrapper writes r1 through its output pointer
+    /// after the SVC; the pointer is not itself passed in r0 at this boundary.
+    fn svc_duplicate_handle(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let original = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs[1];
+
+        // Initialize r1 on failure because the ABI exposes it as an output.
+        if let Some(core) = self.scheduler.core_mut(caller) {
+            core.regs[1] = 0;
+        }
+
+        match self.kernel_objects.duplicate_handle(original) {
+            Ok(duplicate) => {
+                if let Some(core) = self.scheduler.core_mut(caller) {
+                    core.regs[1] = duplicate;
+                }
+                self.write_svc_result(caller, 0)
+            }
+            Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
+        }
     }
 
     /// Handles CloseHandle using the process-local object handle in r0.
