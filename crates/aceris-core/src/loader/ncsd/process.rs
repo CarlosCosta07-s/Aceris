@@ -3252,9 +3252,7 @@ mod tests {
         // from the publisher's full-backing mapping.
         let (_, reservation) = consumer.exclusive_read(0x0900_0000, 4).unwrap();
         publisher.write32(0x0800_1000, 0xCAFE_BABE).unwrap();
-        publisher
-            .flush_data_cache_range(0x0800_1000, 4)
-            .unwrap();
+        publisher.flush_data_cache_range(0x0800_1000, 4).unwrap();
         assert_eq!(publisher.pending_write_buffer_entries(), 1);
 
         // Publishing the CPU cache line updates the shared exclusive-monitor
