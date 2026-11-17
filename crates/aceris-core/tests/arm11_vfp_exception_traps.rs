@@ -289,8 +289,16 @@ fn input_subnormal_with_ide_bounces_and_preserves_registers_when_fz_is_clear() {
 
     assert_eq!(cpu.vfp().s(0), 0xDEAD_BEEF);
     assert_ne!(cpu.vfp().fpexc() & (1 << 31), 0, "FPEXC.EX is set");
-    assert_ne!(cpu.vfp().fpscr() & (1 << 7), 0, "FPSCR.IDC is visible to the handler");
-    assert_ne!(cpu.vfp().fpexc() & (1 << 7), 0, "FPEXC.INV records the input exception");
+    assert_ne!(
+        cpu.vfp().fpscr() & (1 << 7),
+        0,
+        "FPSCR.IDC is visible to the handler"
+    );
+    assert_ne!(
+        cpu.vfp().fpexc() & (1 << 7),
+        0,
+        "FPEXC.INV records the input exception"
+    );
     assert_eq!(
         cpu.vfp().fpexc() & ((1 << 3) | (1 << 2) | 1),
         0,
