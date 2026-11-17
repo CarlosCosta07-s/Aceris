@@ -16,9 +16,11 @@ pub struct RasterVertex {
     pub depth: f32,
     /// Interpolated RGBA8 vertex color.
     pub color: [u8; 4],
-    /// Reciprocal clip-space W used for perspective-correct varyings.
+    /// Reciprocal clip-space W used for perspective-correct varyings and W-buffering.
     /// The direct rasterizer constructor defaults this to 1.0.
     pub reciprocal_w: f32,
+    /// Optional PICA depth mapping. Without it, depth is already normalized.
+    pub pica_depth_map: Option<PicaDepthMap>,
 }
 
 impl RasterVertex {
@@ -29,7 +31,14 @@ impl RasterVertex {
             depth,
             color,
             reciprocal_w: 1.0,
+            pica_depth_map: None,
         }
+    }
+
+    /// Sets the guest-controlled PICA depth mapping for this vertex.
+    pub const fn with_pica_depth_map(mut self, pica_depth_map: PicaDepthMap) -> Self {
+        self.pica_depth_map = Some(pica_depth_map);
+        self
     }
 
     /// Sets reciprocal clip-space W for perspective-correct color interpolation.
@@ -47,6 +56,23 @@ pub enum DepthFunction {
     Less,
     LessEqual,
     Always,
+}
+
+/// PICA depth-buffer interpretation for the interpolated guest depth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaDepthMode {
+    /// Apply the scale and offset to Z/W and retain the perspective W factor.
+    WBuffer,
+    /// Store the scaled and offset Z/W value directly.
+    ZBuffer,
+}
+
+/// Guest-controlled PICA depth mapping attached to transformed vertices.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PicaDepthMap {
+    pub scale: f32,
+    pub offset: f32,
+    pub mode: PicaDepthMode,
 }
 
 /// Counts the fragments considered while drawing one triangle.
@@ -69,6 +95,8 @@ pub enum RasterizerError {
     InvalidVertex { index: usize },
     InvalidVertexDepth { index: usize, depth: f32 },
     InvalidReciprocalW { index: usize, value: f32 },
+    InvalidPicaDepthMap,
+    InconsistentPicaDepthMap,
 }
 
 impl std::fmt::Display for RasterizerError {
@@ -101,6 +129,12 @@ impl std::fmt::Display for RasterizerError {
                     formatter,
                     "raster vertex {index} has invalid reciprocal W {value}"
                 )
+            }
+            Self::InvalidPicaDepthMap => {
+                formatter.write_str("PICA depth scale and offset must be finite")
+            }
+            Self::InconsistentPicaDepthMap => {
+                formatter.write_str("triangle vertices must use the same PICA depth mapping")
             }
         }
     }
@@ -232,11 +266,21 @@ impl SoftwareRasterizer {
         mut vertices: [RasterVertex; 3],
         depth_function: DepthFunction,
     ) -> Result<RasterizationReport, RasterizerError> {
+        let pica_depth_map = vertices[0].pica_depth_map;
+        if let Some(map) = pica_depth_map {
+            if !map.scale.is_finite() || !map.offset.is_finite() {
+                return Err(RasterizerError::InvalidPicaDepthMap);
+            }
+        }
+
         for (index, vertex) in vertices.iter().enumerate() {
             if !vertex.x.is_finite() || !vertex.y.is_finite() || !vertex.depth.is_finite() {
                 return Err(RasterizerError::InvalidVertex { index });
             }
-            if !(0.0..=1.0).contains(&vertex.depth) {
+            if vertex.pica_depth_map != pica_depth_map {
+                return Err(RasterizerError::InconsistentPicaDepthMap);
+            }
+            if pica_depth_map.is_none() && !(0.0..=1.0).contains(&vertex.depth) {
                 return Err(RasterizerError::InvalidVertexDepth {
                     index,
                     depth: vertex.depth,
@@ -320,10 +364,26 @@ impl SoftwareRasterizer {
                 let weight_0 = edge_0 / area;
                 let weight_1 = edge_1 / area;
                 let weight_2 = edge_2 / area;
-                let fragment_depth = (weight_0 * f64::from(vertices[0].depth)
+                let interpolated_depth = (weight_0 * f64::from(vertices[0].depth)
                     + weight_1 * f64::from(vertices[1].depth)
                     + weight_2 * f64::from(vertices[2].depth))
                     as f32;
+                let fragment_depth = if let Some(map) = pica_depth_map {
+                    let scaled = interpolated_depth.mul_add(map.scale, map.offset);
+                    let mapped = match map.mode {
+                        PicaDepthMode::ZBuffer => scaled,
+                        PicaDepthMode::WBuffer => {
+                            let reciprocal_w = weight_0
+                                * f64::from(vertices[0].reciprocal_w)
+                                + weight_1 * f64::from(vertices[1].reciprocal_w)
+                                + weight_2 * f64::from(vertices[2].reciprocal_w);
+                            scaled / reciprocal_w as f32
+                        }
+                    };
+                    mapped.clamp(0.0, 1.0)
+                } else {
+                    interpolated_depth
+                };
                 let index = y * self.width + x;
 
                 if !depth_passes(depth_function, fragment_depth, self.depth[index]) {
@@ -506,6 +566,72 @@ mod tests {
         // Pixel center (0.5, 0.5) has screen barycentrics (0.75, 0.125, 0.125).
         // Perspective correction gives round((0.125 * 255 * 0.5) / 0.875) = 18.
         assert_eq!(rasterizer.color_at(0, 0), Some([18, 0, 0, 255]));
+    }
+
+    #[test]
+    fn pica_z_buffer_applies_guest_depth_scale_and_offset() {
+        let mapping = PicaDepthMap {
+            scale: 0.5,
+            offset: 0.25,
+            mode: PicaDepthMode::ZBuffer,
+        };
+        let mut rasterizer = SoftwareRasterizer::new(4, 4).unwrap();
+        let triangle = [
+            vertex(0.0, 0.0, 0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
+            vertex(4.0, 0.0, 0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
+            vertex(0.0, 4.0, 0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
+        ];
+
+        rasterizer.draw_triangle(triangle, DepthFunction::Always).unwrap();
+
+        assert_eq!(rasterizer.depth_at(0, 0), Some(0.5));
+    }
+
+    #[test]
+    fn pica_w_buffer_restores_interpolated_perspective_w() {
+        let mapping = PicaDepthMap {
+            scale: 0.5,
+            offset: 0.25,
+            mode: PicaDepthMode::WBuffer,
+        };
+        let mut rasterizer = SoftwareRasterizer::new(4, 4).unwrap();
+        let triangle = [
+            vertex(0.0, 0.0, 0.5, [80, 90, 100, 255])
+                .with_reciprocal_w(0.5)
+                .with_pica_depth_map(mapping),
+            vertex(4.0, 0.0, 0.5, [80, 90, 100, 255])
+                .with_reciprocal_w(0.5)
+                .with_pica_depth_map(mapping),
+            vertex(0.0, 4.0, 0.5, [80, 90, 100, 255])
+                .with_reciprocal_w(0.5)
+                .with_pica_depth_map(mapping),
+        ];
+
+        rasterizer.draw_triangle(triangle, DepthFunction::Always).unwrap();
+
+        assert_eq!(rasterizer.depth_at(0, 0), Some(1.0));
+    }
+
+    #[test]
+    fn mixed_pica_depth_mappings_are_rejected_before_target_changes() {
+        let mapping = PicaDepthMap {
+            scale: 1.0,
+            offset: 0.0,
+            mode: PicaDepthMode::ZBuffer,
+        };
+        let mut rasterizer = SoftwareRasterizer::new(2, 2).unwrap();
+        let before = rasterizer.depth_buffer().to_vec();
+        let triangle = [
+            vertex(0.0, 0.0, 0.5, [255; 4]).with_pica_depth_map(mapping),
+            vertex(2.0, 0.0, 0.5, [255; 4]),
+            vertex(0.0, 2.0, 0.5, [255; 4]).with_pica_depth_map(mapping),
+        ];
+
+        assert_eq!(
+            rasterizer.draw_triangle(triangle, DepthFunction::Always),
+            Err(RasterizerError::InconsistentPicaDepthMap)
+        );
+        assert_eq!(rasterizer.depth_buffer(), before);
     }
 
     #[test]
