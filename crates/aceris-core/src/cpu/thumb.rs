@@ -2495,11 +2495,27 @@ mod tests {
             cpu.regs[LR] = 0x700;
             cpu.set_pc(0);
 
+            let registers_before = cpu.regs;
+            let cpsr_before = cpu.cpsr;
             let result = cpu.step(&mut memory);
             assert!(
                 !matches!(result, Err(Error::Unimplemented(_))),
                 "Thumb encoding {encoding:#06x} reached an unimplemented path: {result:?}"
             );
+
+            // Reserved/UNDEFINED encodings must be rejected atomically.
+            // An error must not partially change architectural registers,
+            // flags, mode, or the instruction address.
+            if result.is_err() {
+                assert_eq!(
+                    cpu.regs, registers_before,
+                    "Thumb encoding {encoding:#06x} changed registers before failing"
+                );
+                assert_eq!(
+                    cpu.cpsr, cpsr_before,
+                    "Thumb encoding {encoding:#06x} changed CPSR before failing"
+                );
+            }
         }
     }
 }
