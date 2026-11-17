@@ -16,6 +16,14 @@ use super::pica200::Pica200;
 pub const PICA_TEV_STAGE_COUNT: usize = 6;
 /// First texture-environment stage register.
 pub const REG_TEXENV0_SOURCE: u16 = 0x0C0;
+/// Operand selectors for the first texture-environment stage.
+pub const REG_TEXENV0_OPERAND: u16 = REG_TEXENV0_SOURCE + 1;
+/// RGB/alpha combine operations for the first texture-environment stage.
+pub const REG_TEXENV0_COMBINER: u16 = REG_TEXENV0_SOURCE + 2;
+/// Constant RGBA color for the first texture-environment stage.
+pub const REG_TEXENV0_COLOR: u16 = REG_TEXENV0_SOURCE + 3;
+/// RGB/alpha output scale for the first texture-environment stage.
+pub const REG_TEXENV0_SCALE: u16 = REG_TEXENV0_SOURCE + 4;
 /// Register spacing between texture-environment stages.
 pub const TEXENV_STAGE_REGISTER_STRIDE: u16 = 8;
 
