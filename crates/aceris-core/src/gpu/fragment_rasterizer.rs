@@ -14,11 +14,10 @@
 
 use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthBufferConfig, PicaDepthBufferError,
-    PicaDepthBufferFormat,
-    PicaDepthMap, PicaDepthMode, PicaFragmentDraw,
-    PicaFragmentDrawError, PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex,
-    PicaRenderTargetConfig, PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw,
-    PicaVertexOutputMap, SoftwareRasterizer, Viewport,
+    PicaDepthBufferFormat, PicaDepthMap, PicaDepthMode, PicaFragmentDraw, PicaFragmentDrawError,
+    PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex, PicaRenderTargetConfig,
+    PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw, PicaVertexOutputMap,
+    SoftwareRasterizer, Viewport,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
@@ -243,7 +242,8 @@ impl PicaFragmentRasterizer {
         clear_depth: f32,
     ) -> Result<(), PicaFragmentRasterError> {
         if usize::try_from(config.width).ok() != Some(self.width)
-            || usize::try_from(config.height).ok() != Some(self.height) {
+            || usize::try_from(config.height).ok() != Some(self.height)
+        {
             return Err(PicaFragmentRasterError::InvalidDimensions);
         }
         self.depth = config
