@@ -42,7 +42,7 @@ pub enum PicaBlendEquation {
 impl PicaBlendEquation {
     fn decode(channel: PicaBlendChannel, value: u32) -> Result<Self, PicaFragmentOutputError> {
         match value {
-            0 => Ok(Self::Add),
+            0 | 5 | 6 | 7 => Ok(Self::Add),
             1 => Ok(Self::Subtract),
             2 => Ok(Self::ReverseSubtract),
             3 => Ok(Self::Minimum),
@@ -465,6 +465,17 @@ mod tests {
         assert_eq!(state.alpha_destination_factor, PicaBlendFactor::Zero);
         assert_eq!(state.logic_operation, PicaLogicOperation::Copy);
         assert_eq!(state.constant_color, [0x10, 0x20, 0x40, 0x80]);
+    }
+
+    #[test]
+    fn observed_blend_equation_aliases_decode_as_add() {
+        for equation in 5..=7 {
+            let mut pica = Pica200::new();
+            pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
+            pica.write_register(REG_BLEND_FUNC, equation).unwrap();
+            let state = PicaFragmentOutputState::from_pica(&pica).unwrap();
+            assert_eq!(state.rgb_equation, PicaBlendEquation::Add);
+        }
     }
 
     #[test]
