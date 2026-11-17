@@ -54,7 +54,13 @@ impl PicaBlendEquation {
         }
     }
 
-    fn apply(self, source: f32, destination: f32, source_factor: f32, destination_factor: f32) -> f32 {
+    fn apply(
+        self,
+        source: f32,
+        destination: f32,
+        source_factor: f32,
+        destination_factor: f32,
+    ) -> f32 {
         match self {
             Self::Add => source * source_factor + destination * destination_factor,
             Self::Subtract => source * source_factor - destination * destination_factor,
@@ -186,9 +192,7 @@ impl PicaLogicOperation {
             13 => Ok(Self::InvertedAnd),
             14 => Ok(Self::ReverseOr),
             15 => Ok(Self::InvertedOr),
-            other => Err(PicaFragmentOutputError::UnsupportedLogicOperation {
-                value: other as u8,
-            }),
+            other => Err(PicaFragmentOutputError::UnsupportedLogicOperation { value: other as u8 }),
         }
     }
 
@@ -248,8 +252,15 @@ impl PicaFragmentOutputState {
         };
 
         let blend_color = pica.register(REG_BLEND_COLOR).unwrap_or(0);
-        let (rgb_equation, alpha_equation, rgb_source_factor, rgb_destination_factor,
-            alpha_source_factor, alpha_destination_factor, logic_operation) = match mode {
+        let (
+            rgb_equation,
+            alpha_equation,
+            rgb_source_factor,
+            rgb_destination_factor,
+            alpha_source_factor,
+            alpha_destination_factor,
+            logic_operation,
+        ) = match mode {
             PicaColorOperationMode::Logic => (
                 PicaBlendEquation::Add,
                 PicaBlendEquation::Add,
@@ -263,10 +274,7 @@ impl PicaFragmentOutputState {
                 let blend = pica.register(REG_BLEND_FUNC).unwrap_or(0);
                 (
                     PicaBlendEquation::decode(PicaBlendChannel::Rgb, blend & 0x7)?,
-                    PicaBlendEquation::decode(
-                        PicaBlendChannel::Alpha,
-                        (blend >> 8) & 0x7,
-                    )?,
+                    PicaBlendEquation::decode(PicaBlendChannel::Alpha, (blend >> 8) & 0x7)?,
                     PicaBlendFactor::decode(PicaBlendChannel::Rgb, (blend >> 16) & 0xF)?,
                     PicaBlendFactor::decode(PicaBlendChannel::Rgb, (blend >> 20) & 0xF)?,
                     PicaBlendFactor::decode(PicaBlendChannel::Alpha, (blend >> 24) & 0xF)?,
@@ -313,7 +321,8 @@ impl PicaFragmentOutputState {
                 let source = source.map(to_u8);
                 let destination = destination.map(to_u8);
                 Ok(std::array::from_fn(|channel| {
-                    self.logic_operation.apply(source[channel], destination[channel])
+                    self.logic_operation
+                        .apply(source[channel], destination[channel])
                 }))
             }
             PicaColorOperationMode::Blend => {
@@ -357,7 +366,9 @@ impl PicaFragmentOutputState {
 
 impl Pica200 {
     /// Decodes the current PICA200 framebuffer color-operation state.
-    pub fn fragment_output_state(&self) -> Result<PicaFragmentOutputState, PicaFragmentOutputError> {
+    pub fn fragment_output_state(
+        &self,
+    ) -> Result<PicaFragmentOutputState, PicaFragmentOutputError> {
         PicaFragmentOutputState::from_pica(self)
     }
 }
@@ -369,10 +380,7 @@ fn to_u8(value: f32) -> u8 {
 fn validate_color(name: &'static str, color: [f32; 4]) -> Result<(), PicaFragmentOutputError> {
     for (channel, value) in color.into_iter().enumerate() {
         if !value.is_finite() {
-            return Err(PicaFragmentOutputError::NonFiniteColor {
-                name,
-                channel,
-            });
+            return Err(PicaFragmentOutputError::NonFiniteColor { name, channel });
         }
     }
     Ok(())
@@ -381,11 +389,24 @@ fn validate_color(name: &'static str, color: [f32; 4]) -> Result<(), PicaFragmen
 /// Decode or evaluation error for the PICA framebuffer color operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaFragmentOutputError {
-    UnsupportedFragmentOperation { value: u8 },
-    UnsupportedBlendEquation { channel: PicaBlendChannel, value: u8 },
-    UnsupportedBlendFactor { channel: PicaBlendChannel, value: u8 },
-    UnsupportedLogicOperation { value: u8 },
-    NonFiniteColor { name: &'static str, channel: usize },
+    UnsupportedFragmentOperation {
+        value: u8,
+    },
+    UnsupportedBlendEquation {
+        channel: PicaBlendChannel,
+        value: u8,
+    },
+    UnsupportedBlendFactor {
+        channel: PicaBlendChannel,
+        value: u8,
+    },
+    UnsupportedLogicOperation {
+        value: u8,
+    },
+    NonFiniteColor {
+        name: &'static str,
+        channel: usize,
+    },
 }
 
 impl std::fmt::Display for PicaFragmentOutputError {
@@ -407,7 +428,10 @@ impl std::fmt::Display for PicaFragmentOutputError {
                 write!(formatter, "PICA logic operation {value} is not implemented")
             }
             Self::NonFiniteColor { name, channel } => {
-                write!(formatter, "PICA fragment {name} channel {channel} is not finite")
+                write!(
+                    formatter,
+                    "PICA fragment {name} channel {channel} is not finite"
+                )
             }
         }
     }
@@ -436,7 +460,10 @@ mod tests {
         assert_eq!(state.rgb_equation, PicaBlendEquation::Add);
         assert_eq!(state.alpha_equation, PicaBlendEquation::Add);
         assert_eq!(state.rgb_source_factor, PicaBlendFactor::SourceAlpha);
-        assert_eq!(state.rgb_destination_factor, PicaBlendFactor::OneMinusSourceAlpha);
+        assert_eq!(
+            state.rgb_destination_factor,
+            PicaBlendFactor::OneMinusSourceAlpha
+        );
         assert_eq!(state.alpha_source_factor, PicaBlendFactor::One);
         assert_eq!(state.alpha_destination_factor, PicaBlendFactor::Zero);
         assert_eq!(state.logic_operation, PicaLogicOperation::Copy);
@@ -458,7 +485,9 @@ mod tests {
             constant_color: [0; 4],
         };
         assert_eq!(
-            state.apply([1.0, 0.0, 0.0, 0.5], [0.0, 0.0, 1.0, 1.0]).unwrap(),
+            state
+                .apply([1.0, 0.0, 0.0, 0.5], [0.0, 0.0, 1.0, 1.0])
+                .unwrap(),
             [128, 0, 128, 128]
         );
     }
@@ -478,7 +507,9 @@ mod tests {
             constant_color: [0; 4],
         };
         assert_eq!(
-            state.apply([0.25, 0.75, 0.5, 0.25], [0.5, 0.5, 0.25, 0.75]).unwrap(),
+            state
+                .apply([0.25, 0.75, 0.5, 0.25], [0.5, 0.5, 0.25, 0.75])
+                .unwrap(),
             [64, 128, 64, 191]
         );
 
@@ -500,11 +531,22 @@ mod tests {
         assert_eq!(state.mode, PicaColorOperationMode::Logic);
         state.logic_operation = PicaLogicOperation::Xor;
         assert_eq!(
-            state.apply(
-                [0xF0 as f32 / 255.0, 0x55 as f32 / 255.0, 0xAA as f32 / 255.0, 1.0],
-                [0x0F as f32 / 255.0, 0x33 as f32 / 255.0, 0xAA as f32 / 255.0, 0.0],
-            )
-            .unwrap(),
+            state
+                .apply(
+                    [
+                        0xF0 as f32 / 255.0,
+                        0x55 as f32 / 255.0,
+                        0xAA as f32 / 255.0,
+                        1.0,
+                    ],
+                    [
+                        0x0F as f32 / 255.0,
+                        0x33 as f32 / 255.0,
+                        0xAA as f32 / 255.0,
+                        0.0,
+                    ],
+                )
+                .unwrap(),
             [0xFF, 0x66, 0x00, 0xFF]
         );
         state.logic_operation = PicaLogicOperation::Noop;
