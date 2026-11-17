@@ -301,11 +301,8 @@ mod tests {
     fn applies_guest_configured_framebuffer_blending_after_tev() {
         let mut pica = Pica200::new();
         pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
-        pica.write_register(
-            REG_BLEND_FUNC,
-            (6 << 16) | (7 << 20) | (1 << 24),
-        )
-        .unwrap();
+        pica.write_register(REG_BLEND_FUNC, (6 << 16) | (7 << 20) | (1 << 24))
+            .unwrap();
         let pipeline = pica.fragment_pipeline().unwrap();
 
         assert_eq!(
