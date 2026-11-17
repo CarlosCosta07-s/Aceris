@@ -5131,15 +5131,31 @@ mod tests {
         const FRAME_BYTES: u32 = (WIDTH * HEIGHT * 4) as u32;
         const FRAME_ALLOCATION: u32 = (FRAME_BYTES + 0xFFF) & !0xFFF;
 
-        // The ARM11 writes both the vertex data and the PICA command list.
-        // DMB/DSB drain the write buffer, but do not clean dirty D-cache lines.
+        // The ARM11 writes vertex data, the PICA command list and all three
+        // GX queue entries. Two DMB/DSB pairs order the stores; device-facing
+        // cache maintenance remains an explicit GSP command.
         let guest_program = [
-            0xE584_5000, // STR r5, [r4]
-            0xE584_6004, // STR r6, [r4, #4]
-            0xE580_1000, // STR r1, [r0]
-            0xE580_2004, // STR r2, [r0, #4]
-            0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
-            0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
+            0xE584_5000, // STR r5, [r4] (vertex word 0)
+            0xE584_6004, // STR r6, [r4, #4] (vertex word 1)
+            0xE580_1000, // STR r1, [r0] (PICA command data)
+            0xE580_2004, // STR r2, [r0, #4] (PICA command header)
+            0xEE07_0FBA, // DMB
+            0xEE07_0F9A, // DSB
+            0xE587_8000, // STR r8, [r7] (GX queue header: three commands)
+            0xE587_9020, // STR r9, [r7, #0x20] (FlushCacheRegions)
+            0xE587_4024, // STR r4, [r7, #0x24] (vertex address)
+            0xE587_E028, // STR r14, [r7, #0x28] (vertex size)
+            0xE587_A040, // STR r10, [r7, #0x40] (ProcessCommandList)
+            0xE587_0044, // STR r0, [r7, #0x44] (command-list address)
+            0xE587_E048, // STR r14, [r7, #0x48] (command-list size)
+            0xE587_105C, // STR r1, [r7, #0x5C] (flush command-list cache)
+            0xE587_3060, // STR r3, [r7, #0x60] (DisplayTransfer)
+            0xE587_B064, // STR r11, [r7, #0x64] (PICA target address)
+            0xE587_C068, // STR r12, [r7, #0x68] (linear framebuffer address)
+            0xE587_D06C, // STR r13, [r7, #0x6C] (input dimensions)
+            0xE587_D070, // STR r13, [r7, #0x70] (output dimensions)
+            0xEE07_0FBA, // DMB
+            0xEE07_0F9A, // DSB
         ];
         let mut system = System::new();
         system
@@ -5157,15 +5173,48 @@ mod tests {
             map_test_linear_fcram(&mut system, FRAME_ALLOCATION);
         let (linear_framebuffer_address, linear_framebuffer_physical) =
             map_test_linear_fcram(&mut system, FRAME_ALLOCATION);
+        let (event_handle, _shared_memory_handle) = {
+            let session = system.ncsd_session_mut().unwrap();
+            let shared_memory_handle = session.create_memory_block(0x1000, 3, 3).unwrap();
+            session
+                .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
+                .unwrap();
+            session
+                .write_memory_bytes(
+                    GSP_SHARED_MEMORY_BASE,
+                    &GspInterruptRelayQueue::new().encode(),
+                )
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (event_handle, shared_memory_handle)
+        };
+        system
+            .register_gsp_client(0, GSP_SHARED_MEMORY_BASE, event_handle)
+            .unwrap();
+        assert!(system.try_acquire_gsp_rendering_right(0).unwrap());
+        let queue_address =
+            GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
+        let dimensions = ((HEIGHT as u32) << 16) | WIDTH as u32;
 
         {
             let session = system.ncsd_session_mut().unwrap();
             assert!(session.set_current_register(0, command_list_address));
             assert!(session.set_current_register(1, 1));
             assert!(session.set_current_register(2, 0x000F_022E));
+            assert!(session.set_current_register(3, GSP_GX_COMMAND_DISPLAY_TRANSFER));
             assert!(session.set_current_register(4, vertex_address));
             assert!(session.set_current_register(5, 0x0008_0000));
             assert!(session.set_current_register(6, 0x0000_0800));
+            assert!(session.set_current_register(7, queue_address));
+            assert!(session.set_current_register(8, 0x0000_0300));
+            assert!(session.set_current_register(9, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS));
+            assert!(session.set_current_register(10, GSP_GX_COMMAND_PROCESS_COMMAND_LIST));
+            assert!(session.set_current_register(11, tiled_target_address));
+            assert!(session.set_current_register(12, linear_framebuffer_address));
+            assert!(session.set_current_register(13, dimensions));
+            assert!(session.set_current_register(14, 8));
 
             for _ in guest_program {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
@@ -5243,45 +5292,53 @@ mod tests {
             depth_function: DepthFunction::Less,
         }));
 
-        // Flush the vertex range, submit the CPU-authored command list with
-        // ProcessCommandList's own flush flag, then transfer the PICA target
-        // into the linear FCRAM framebuffer for LCD scanout.
-        let mut queue_bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
-        queue_bytes[1] = 3;
-
-        let flush_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
-        queue_bytes[flush_entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
-        queue_bytes[flush_entry + 4..flush_entry + 8]
-            .copy_from_slice(&vertex_address.to_le_bytes());
-        queue_bytes[flush_entry + 8..flush_entry + 12].copy_from_slice(&8u32.to_le_bytes());
-
-        let command_entry = flush_entry + GSP_GX_COMMAND_ENTRY_SIZE;
-        queue_bytes[command_entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
-        queue_bytes[command_entry + 4..command_entry + 8]
-            .copy_from_slice(&command_list_address.to_le_bytes());
-        queue_bytes[command_entry + 8..command_entry + 12].copy_from_slice(&8u32.to_le_bytes());
-        queue_bytes[command_entry + 28..command_entry + 32].copy_from_slice(&1u32.to_le_bytes());
-
-        let transfer_entry = command_entry + GSP_GX_COMMAND_ENTRY_SIZE;
-        queue_bytes[transfer_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
-        queue_bytes[transfer_entry + 4..transfer_entry + 8]
-            .copy_from_slice(&tiled_target_address.to_le_bytes());
-        queue_bytes[transfer_entry + 8..transfer_entry + 12]
-            .copy_from_slice(&linear_framebuffer_address.to_le_bytes());
-        let dimensions = ((HEIGHT as u32) << 16) | WIDTH as u32;
-        queue_bytes[transfer_entry + 12..transfer_entry + 16]
-            .copy_from_slice(&dimensions.to_le_bytes());
-        queue_bytes[transfer_entry + 16..transfer_entry + 20]
-            .copy_from_slice(&dimensions.to_le_bytes());
-
-        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
-        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        // The command ring is not constructed by the test host: its header
+        // and all command words were written by guest ARM11 STR instructions.
+        // Triggering the registered GSP client now performs cache maintenance,
+        // PICA submission, DisplayTransfer and the PPF completion notification.
+        for (offset, expected) in [
+            (0, 0x0000_0300),
+            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32),
+            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 4, vertex_address),
+            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 8, 8),
+            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32),
+            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + GSP_GX_COMMAND_ENTRY_SIZE + 4, command_list_address),
+            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 2 * GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_DISPLAY_TRANSFER as u32),
+        ] {
+            assert_eq!(
+                system
+                    .ncsd_session_mut()
+                    .unwrap()
+                    .read_memory_u32(queue_address + offset as u32)
+                    .unwrap(),
+                expected
+            );
+        }
+        let report = system.trigger_gsp_cmd_req_queue(0).unwrap();
         assert!(report.error.is_none(), "{:?}", report.error);
         assert_eq!(report.commands_consumed, 3);
         assert_eq!(report.cache_regions_validated, 1);
         assert_eq!(report.command_lists_submitted, 1);
         assert_eq!(report.display_transfers_completed, 1);
         assert!(report.cache_flush_requested);
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(true)
+        );
+        let mut relay_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(GSP_SHARED_MEMORY_BASE, &mut relay_bytes)
+            .unwrap();
+        let relay_queue = GspInterruptRelayQueue::parse(&relay_bytes).unwrap();
+        assert_eq!(
+            relay_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf]
+        );
 
         let mut published_vertices = [0u8; 8];
         system
