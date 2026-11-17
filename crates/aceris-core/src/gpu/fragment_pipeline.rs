@@ -8,7 +8,7 @@
 use super::{
     GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
     PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw,
-    PicaShadedVertex, PicaTevError, PicaTextureEnvironment, PicaTextureError, PicaTextureUnit,
+    PicaTevError, PicaTextureEnvironment, PicaTextureError, PicaTextureUnit,
     PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
 };
 
@@ -488,6 +488,7 @@ impl std::error::Error for PicaFragmentPipelineError {}
 mod tests {
     use super::*;
     use crate::gpu::physical_memory::VRAM_BASE;
+    use crate::gpu::PicaShadedVertex;
     use crate::gpu::{
         PicaTevSource, REG_BLEND_FUNC, REG_COLOR_OPERATION, TEXENV_STAGE_SOURCE_REGISTERS,
     };
@@ -708,7 +709,10 @@ mod tests {
             0x1F1F_1F1F,
         ])
         .unwrap();
-        let make_vertex = |source_index, position, color, uv| {
+        let make_vertex = |source_index: u32,
+                           position: [f32; 4],
+                           color: [f32; 4],
+                           uv: [f32; 2]| {
             let mut outputs = [[0.0; 4]; super::super::SHADER_OUTPUT_REGISTERS];
             outputs[0] = position;
             outputs[2] = color;
