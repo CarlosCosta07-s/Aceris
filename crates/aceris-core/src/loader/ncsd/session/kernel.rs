@@ -1017,10 +1017,19 @@ mod tests {
 
     #[test]
     fn thread_exit_releases_owned_mutexes_and_deduplicates_wait_any_waiters() {
+        let mut scheduler =
+            super::super::thread::Arm11ThreadScheduler::new(crate::cpu::Arm11Core::new(), 0x30)
+                .unwrap();
+        let owner = scheduler
+            .create_thread(0x1000, 0, 0x2000, 0x30, 0)
+            .unwrap();
+        let first_waiter = scheduler
+            .create_thread(0x2000, 0, 0x3000, 0x30, 0)
+            .unwrap();
+        let second_waiter = scheduler
+            .create_thread(0x3000, 0, 0x4000, 0x30, 0)
+            .unwrap();
         let mut table = Arm11KernelObjectTable::default();
-        let owner = thread_id(2);
-        let first_waiter = thread_id(3);
-        let second_waiter = thread_id(4);
         let first_mutex = table.insert_mutex(true, owner).unwrap();
         let second_mutex = table.insert_mutex(true, owner).unwrap();
 
