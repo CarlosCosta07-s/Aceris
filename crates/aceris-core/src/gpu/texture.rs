@@ -73,7 +73,8 @@ impl PicaTextureFormat {
 
     fn decode_texel(self, data: &[u8]) -> [u8; 4] {
         match self {
-            Self::Rgba8 => [data[0], data[1], data[2], data[3]],
+            // PICA RGBA8 is stored in little-endian ABGR byte order.
+            Self::Rgba8 => [data[3], data[2], data[1], data[0]],
             Self::Rgb8 => [data[0], data[1], data[2], 255],
             Self::Rgba5551 => {
                 let packed = u16::from_le_bytes([data[0], data[1]]);
@@ -622,7 +623,7 @@ mod tests {
         let mut memory = GpuPhysicalMemory::new();
         let morton = morton_index(3, 5);
         memory
-            .write(VRAM_BASE + (morton * 4) as u32, &[10, 20, 30, 40])
+            .write(VRAM_BASE + (morton * 4) as u32, &[40, 30, 20, 10])
             .unwrap();
         let unit = sample_unit(PicaTextureFormat::Rgba8);
         assert_eq!(
@@ -678,7 +679,8 @@ mod tests {
         for y in 0..8 {
             for x in 0..8 {
                 let offset = morton_index(x, y) * 4;
-                tiled[offset..offset + 4].copy_from_slice(&[x as u8 * 20, y as u8 * 20, 0, 255]);
+                tiled[offset..offset + 4]
+                    .copy_from_slice(&[255, 0, y as u8 * 20, x as u8 * 20]);
             }
         }
         memory.write(VRAM_BASE, &tiled).unwrap();
@@ -707,7 +709,7 @@ mod tests {
     fn linear_filter_interpolates_four_texels_and_edge_clamp_is_stable() {
         let mut memory = GpuPhysicalMemory::new();
         let mut tiled = vec![0; TILE_PIXELS * 4];
-        for (x, color) in [(0u8, [0, 0, 0, 255]), (1u8, [255, 0, 0, 255])] {
+        for (x, color) in [(0u8, [255, 0, 0, 0]), (1u8, [255, 0, 0, 255])] {
             let offset = morton_index(x as usize, 0) * 4;
             tiled[offset..offset + 4].copy_from_slice(&color);
         }
