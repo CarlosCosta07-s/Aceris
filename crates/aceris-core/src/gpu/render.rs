@@ -9,8 +9,8 @@
 
 use super::{
     DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex,
-    GpuPhysicalMemory, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDrawExecError,
-    PicaDepthBuffering, PicaDepthMap, PicaDepthMode, PicaDrawRequest, PicaOutputMapError,
+    GpuPhysicalMemory, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDepthBuffering,
+    PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest, PicaOutputMapError,
     PicaRenderTargetConfig, PicaRenderTargetError, PicaShadedDraw, PicaVertexOutputMap,
     PicaVertexShaderProgram, RasterizerError, SoftwareRasterizer, Viewport,
 };
