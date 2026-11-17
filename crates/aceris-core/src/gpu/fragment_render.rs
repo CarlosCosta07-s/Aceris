@@ -8,11 +8,11 @@
 
 use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, Pica200, PicaCommandListReport,
-    PicaCommandListRunError, PicaDepthBuffering, PicaDepthMap, PicaDepthMode,
-    PicaDrawExecError, PicaDrawRequest, PicaFragmentPipelineError, PicaFragmentRasterError,
-    PicaFragmentRasterReport, PicaFragmentRasterState, PicaFragmentRasterizer,
-    PicaFragmentVertexDefaults, PicaOutputMapError, PicaRenderReport, PicaRenderSettings,
-    PicaRenderTargetConfig, PicaRenderTargetError, Viewport,
+    PicaCommandListRunError, PicaDepthBuffering, PicaDepthMap, PicaDepthMode, PicaDrawExecError,
+    PicaDrawRequest, PicaFragmentPipelineError, PicaFragmentRasterError, PicaFragmentRasterReport,
+    PicaFragmentRasterState, PicaFragmentRasterizer, PicaFragmentVertexDefaults,
+    PicaOutputMapError, PicaRenderReport, PicaRenderSettings, PicaRenderTargetConfig,
+    PicaRenderTargetError, Viewport,
 };
 
 /// Failure while drawing through the PICA fragment-stage backend.
@@ -100,9 +100,7 @@ impl PicaFragmentRenderSession {
             viewport_height,
         )
         .map_err(|_| {
-            PicaFragmentRenderSessionError::Rasterizer(
-                PicaFragmentRasterError::InvalidViewport,
-            )
+            PicaFragmentRenderSessionError::Rasterizer(PicaFragmentRasterError::InvalidViewport)
         })?;
 
         let guest_depth = pica.depth_state();
@@ -131,12 +129,7 @@ impl PicaFragmentRenderSession {
             .map_err(PicaFragmentRenderSessionError::OutputMap)?;
         let vertex_program = pica.vertex_shader_program();
         let shaded = pica
-            .shade_draw_at_registered_entrypoint(
-                request,
-                memory,
-                vertex_base,
-                &vertex_program,
-            )
+            .shade_draw_at_registered_entrypoint(request, memory, vertex_base, &vertex_program)
             .map_err(PicaFragmentRenderSessionError::Draw)?;
 
         let defaults = PicaFragmentVertexDefaults {
@@ -182,8 +175,10 @@ impl PicaFragmentRenderSession {
             .totals
             .output_triangles
             .saturating_add(report.output_triangles);
-        self.totals.pixels_written =
-            self.totals.pixels_written.saturating_add(report.pixels_written);
+        self.totals.pixels_written = self
+            .totals
+            .pixels_written
+            .saturating_add(report.pixels_written);
         self.totals.depth_rejected_pixels = self
             .totals
             .depth_rejected_pixels
@@ -257,7 +252,7 @@ impl PicaFragmentRenderSession {
     fn select_target(
         &mut self,
         config: PicaRenderTargetConfig,
-        memory: &GpuPhysicalMemory,
+        memory: &mut GpuPhysicalMemory,
     ) -> Result<(), PicaFragmentRenderSessionError> {
         if matches!(&self.active, Some((current, _)) if *current == config) {
             return Ok(());
