@@ -6,7 +6,8 @@
 //! to be established from independent hardware documentation and tests.
 
 use super::{
-    DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
+    DepthFunction, PicaDepthMap, RasterVertex, RasterizationReport, RasterizerError,
+    SoftwareRasterizer,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
@@ -223,6 +224,7 @@ pub struct GeometryPipeline {
     transform: Matrix4,
     viewport: Viewport,
     depth_range: ClipDepthRange,
+    pica_depth_map: Option<PicaDepthMap>,
 }
 
 /// Results from processing one input triangle.
@@ -242,7 +244,21 @@ impl GeometryPipeline {
             transform,
             viewport,
             depth_range,
+            pica_depth_map: None,
         }
+    }
+
+    /// Uses a PICA guest-controlled scale/offset for per-fragment depth mapping.
+    ///
+    /// Without this map, the generic geometry path continues mapping the
+    /// configured clip-depth range to normalized depth as before.
+    pub const fn with_pica_depth_map(mut self, map: PicaDepthMap) -> Self {
+        self.pica_depth_map = Some(map);
+        self
+    }
+
+    pub const fn pica_depth_map(&self) -> Option<PicaDepthMap> {
+        self.pica_depth_map
     }
 
     pub const fn transform(&self) -> Matrix4 {
@@ -345,11 +361,15 @@ impl GeometryPipeline {
             return Err(GeometryError::InvalidPerspectiveDivide);
         }
 
-        let depth = match self.depth_range {
-            ClipDepthRange::NegativeOneToOne => ndc_z.mul_add(0.5, 0.5),
-            ClipDepthRange::ZeroToOne => ndc_z,
-        }
-        .clamp(0.0, 1.0);
+        let depth = if self.pica_depth_map.is_some() {
+            ndc_z
+        } else {
+            match self.depth_range {
+                ClipDepthRange::NegativeOneToOne => ndc_z.mul_add(0.5, 0.5),
+                ClipDepthRange::ZeroToOne => ndc_z,
+            }
+            .clamp(0.0, 1.0)
+        };
         let x = self.viewport.x + (ndc_x + 1.0) * (self.viewport.width * 0.5);
         let y = self.viewport.y + (1.0 - ndc_y) * (self.viewport.height * 0.5);
         if !x.is_finite() || !y.is_finite() {
@@ -359,7 +379,12 @@ impl GeometryPipeline {
         let color = vertex
             .color
             .map(|channel| channel.round().clamp(0.0, 255.0) as u8);
-        Ok(RasterVertex::new(x, y, depth, color).with_reciprocal_w(inverse_w))
+        let mut raster_vertex =
+            RasterVertex::new(x, y, depth, color).with_reciprocal_w(inverse_w);
+        if let Some(map) = self.pica_depth_map {
+            raster_vertex = raster_vertex.with_pica_depth_map(map);
+        }
+        Ok(raster_vertex)
     }
 }
 
@@ -496,6 +521,28 @@ mod tests {
             .unwrap();
         assert_eq!(output.len(), 2);
         assert!(output.iter().flatten().all(|vertex| vertex.depth >= 0.0));
+    }
+
+    #[test]
+    fn pica_depth_mapping_preserves_clip_z_over_w_for_the_rasterizer() {
+        let pipeline = identity_pipeline(16.0, 16.0).with_pica_depth_map(PicaDepthMap {
+            scale: 0.5,
+            offset: 0.5,
+            mode: super::super::PicaDepthMode::ZBuffer,
+        });
+        let output = pipeline
+            .process_triangle([
+                vertex(-0.5, -0.5, 0.25, [255; 4]),
+                vertex(0.5, -0.5, 0.25, [255; 4]),
+                vertex(0.0, 0.5, 0.25, [255; 4]),
+            ])
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert!(output[0].iter().all(|vertex| vertex.depth == 0.25));
+        assert!(output[0]
+            .iter()
+            .all(|vertex| vertex.pica_depth_map == pipeline.pica_depth_map()));
     }
 
     #[test]
