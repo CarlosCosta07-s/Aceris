@@ -520,7 +520,9 @@ mod tests {
         state.alpha_source_factor = PicaBlendFactor::One;
         state.alpha_destination_factor = PicaBlendFactor::Zero;
         assert_eq!(
-            state.apply([0.25, 0.75, 0.5, 0.25], [0.5, 0.5, 0.25, 0.75]).unwrap(),
+            state
+                .apply([0.25, 0.75, 0.5, 0.25], [0.5, 0.5, 0.25, 0.75])
+                .unwrap(),
             [64, 0, 0, 64]
         );
     }
