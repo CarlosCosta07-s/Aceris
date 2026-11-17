@@ -4905,7 +4905,10 @@ mod tests {
             blocked.stop_reason,
             Arm11RunStopReason::InstructionBudgetExhausted
         );
-        assert_eq!(session.thread_info(MAIN_THREAD_ID).unwrap().state, ThreadState::Waiting);
+        assert_eq!(
+            session.thread_info(MAIN_THREAD_ID).unwrap().state,
+            ThreadState::Waiting
+        );
         assert_eq!(session.current_thread_id(), Some(target));
 
         let exited = session.run_instructions(1).unwrap();
@@ -4913,8 +4916,14 @@ mod tests {
             exited.stop_reason,
             Arm11RunStopReason::InstructionBudgetExhausted
         );
-        assert_eq!(session.thread_info(target).unwrap().state, ThreadState::Exited);
-        assert_eq!(session.kernel_objects.thread_is_terminated(target_handle), Some(true));
+        assert_eq!(
+            session.thread_info(target).unwrap().state,
+            ThreadState::Exited
+        );
+        assert_eq!(
+            session.kernel_objects.thread_is_terminated(target_handle),
+            Some(true)
+        );
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
         assert_eq!(session.core().regs[0], 0);
 
@@ -4944,7 +4953,10 @@ mod tests {
             .create_thread(0x0010_0020, 0, 0x0020_2000, 0x3F, 0)
             .unwrap();
         let target_handle = session.kernel_objects.insert_thread(target).unwrap();
-        session.address_space.write32(0x0020_0100, target_handle).unwrap();
+        session
+            .address_space
+            .write32(0x0020_0100, target_handle)
+            .unwrap();
 
         {
             let main = session.scheduler.current_core_mut().unwrap();
@@ -4969,7 +4981,10 @@ mod tests {
         );
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
         assert_eq!((session.core().regs[0], session.core().regs[1]), (0, 0));
-        assert_eq!(session.kernel_objects.thread_is_terminated(target_handle), Some(true));
+        assert_eq!(
+            session.kernel_objects.thread_is_terminated(target_handle),
+            Some(true)
+        );
     }
 
     #[test]
@@ -5014,9 +5029,15 @@ mod tests {
         assert_eq!(session.current_thread_id(), Some(target));
 
         let target_exit = session.run_instructions(1).unwrap();
-        assert_eq!(target_exit.stop_reason, Arm11RunStopReason::NoRunnableThread);
+        assert_eq!(
+            target_exit.stop_reason,
+            Arm11RunStopReason::NoRunnableThread
+        );
         assert_eq!(session.current_thread_id(), None);
-        assert_eq!(session.kernel_objects.thread_is_terminated(target_handle), Some(true));
+        assert_eq!(
+            session.kernel_objects.thread_is_terminated(target_handle),
+            Some(true)
+        );
         assert_eq!(session.event_handle_is_signaled(event_handle), Some(false));
 
         // Thread exit alone does not partially complete the wait-all set.
