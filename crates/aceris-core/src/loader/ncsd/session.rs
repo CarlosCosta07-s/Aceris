@@ -2505,7 +2505,7 @@ impl Arm11ProcessSession {
             Ok(None) => {
                 self.service_wait_all_waiters();
                 self.write_svc_result(caller, 0)
-            },
+            }
             Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
         }
     }
@@ -5524,7 +5524,10 @@ mod tests {
 
         session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
-        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Waiting
+        );
 
         session.signal_event_handle(first).unwrap();
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
@@ -5534,7 +5537,10 @@ mod tests {
 
         session.signal_event_handle(second).unwrap();
         assert_eq!(session.current_thread_id(), Some(child));
-        assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Running);
+        assert_eq!(
+            session.thread_info(child).unwrap().state,
+            ThreadState::Running
+        );
         assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
         assert_eq!(session.scheduler.core(child).unwrap().regs[1], 0);
         assert_eq!(session.event_handle_is_signaled(first), Some(false));
@@ -5562,7 +5568,10 @@ mod tests {
 
         session.advance_time(1);
         assert_eq!(session.current_thread_id(), Some(child));
-        assert_eq!(session.scheduler.core(child).unwrap().regs[0], RESULT_TIMEOUT);
+        assert_eq!(
+            session.scheduler.core(child).unwrap().regs[0],
+            RESULT_TIMEOUT
+        );
         assert_eq!(session.scheduler.core(child).unwrap().regs[1], 0);
         assert_eq!(session.event_handle_is_signaled(first), Some(true));
         assert_eq!(session.event_handle_is_signaled(second), Some(false));
@@ -5586,7 +5595,10 @@ mod tests {
 
         session.signal_event_handle(event).unwrap();
         assert_eq!(session.event_handle_is_signaled(event), Some(true));
-        assert_eq!(session.kernel_objects.semaphore_counts(semaphore), Some((0, 1)));
+        assert_eq!(
+            session.kernel_objects.semaphore_counts(semaphore),
+            Some((0, 1))
+        );
         assert_eq!(session.thread_info(child).unwrap().state, ThreadState::Waiting);
 
         {
