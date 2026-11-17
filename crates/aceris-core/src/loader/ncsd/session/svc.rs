@@ -90,6 +90,9 @@ pub const SVC_GET_HANDLE_INFO: u32 = 0x29;
 /// Query resource information about a process.
 pub const SVC_GET_PROCESS_INFO: u32 = 0x2B;
 
+/// Query information about a thread.
+pub const SVC_GET_THREAD_INFO: u32 = 0x2C;
+
 /// Wait for one synchronization object.
 pub const SVC_WAIT_SYNCHRONIZATION1: u32 = 0x24;
 
@@ -202,6 +205,7 @@ mod tests {
             SVC_DUPLICATE_HANDLE,
             SVC_GET_HANDLE_INFO,
             SVC_GET_PROCESS_INFO,
+            SVC_GET_THREAD_INFO,
         ] {
             assert_eq!(
                 dispatcher.dispatch(number, &mut registers),
