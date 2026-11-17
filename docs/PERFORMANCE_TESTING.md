@@ -145,6 +145,20 @@ adb shell '/data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmu
 adb pull /data/local/tmp/aceris-report.txt .
 ```
 
+Para imagens criptografadas, entre no shell do aparelho e configure localmente as variáveis exigidas pelo caminho de carga. Não coloque valores reais no repositório, em relatórios ou em mensagens compartilhadas.
+
+NCSD criptografado:
+```sh
+adb shell
+export ACERIS_MENU_INFO_KEY="<32 caracteres hexadecimais>"
+export ACERIS_CONTENT_KEY="<32 caracteres hexadecimais>"
+/data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.3ds --warmup 30 --frames 300
+unset ACERIS_MENU_INFO_KEY ACERIS_CONTENT_KEY
+exit
+```
+
+CIA criptografado também exige `ACERIS_COMMON_KEY_INDEX` e uma das opções documentadas acima: `ACERIS_NORMAL_COMMON_KEY` ou o par `ACERIS_COMMON_KEY_X` + `ACERIS_COMMON_KEY_Y`. O benchmark não descobre, imprime nem persiste esse material.
+
 O programa executa no processador ARM64 do telefone, sem emulação de CPU do host e sem depender de uma Activity Android. O arquivo do jogo permanece no aparelho. Para repetir com o mesmo título no PC, use exatamente o mesmo arquivo e as mesmas opções.
 
 Alguns firmwares podem impedir a execução direta de binários em `/data/local/tmp`. Nesse caso, a medição por ADB não está disponível nesse aparelho sem um host Android instalável; não interprete uma falha de permissão do Android como falha do núcleo Aceris.
