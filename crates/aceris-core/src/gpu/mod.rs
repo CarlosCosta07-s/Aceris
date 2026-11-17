@@ -4,6 +4,7 @@ mod address_space;
 mod draw;
 mod draw_exec;
 mod fixed_attribute;
+mod fragment;
 mod geometry;
 mod gsp_interrupt;
 mod gsp_queue;
@@ -32,6 +33,11 @@ pub use draw::{
     REG_PRIMITIVE_CONFIG,
 };
 pub use draw_exec::{PicaDrawExecError, PicaShadedDraw, PicaShadedVertex};
+pub use fragment::{
+    PICA_TEV_STAGE_COUNT, PicaFragmentInputs, PicaTevAlphaOperand, PicaTevChannel,
+    PicaTevCombine, PicaTevError, PicaTevRgbOperand, PicaTevSource, PicaTevStage,
+    PicaTextureEnvironment, REG_TEXENV0_SOURCE, TEXENV_STAGE_REGISTER_STRIDE,
+};
 pub use fixed_attribute::{
     FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, Float24, IMMEDIATE_ATTRIBUTE_INDEX,
     REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
