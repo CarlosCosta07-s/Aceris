@@ -1323,6 +1323,47 @@ mod tests {
     }
 
     #[test]
+    fn close_handle_retires_event_until_waiter_reference_is_released() {
+        let waiter = thread_id(1);
+        let mut table = Arm11KernelObjectTable::default();
+        let event = table.insert_event(EventResetType::OneShot).unwrap();
+        table.enqueue_waiter(event, waiter).unwrap();
+
+        assert_eq!(table.close_handle(event), Ok(()));
+        assert!(!table.is_open_handle(event));
+        assert_eq!(table.handle_count(), 0);
+        assert_eq!(table.retained_object_count(), 1);
+
+        assert_eq!(table.signal_event(event).unwrap(), vec![waiter]);
+        assert!(table.remove_waiter(waiter));
+        assert_eq!(table.retained_object_count(), 0);
+    }
+
+    #[test]
+    fn wait_all_reference_keeps_closed_handle_alive_until_atomic_acquire() {
+        let waiter = thread_id(1);
+        let mut table = Arm11KernelObjectTable::default();
+        let event = table.insert_event(EventResetType::Sticky).unwrap();
+
+        assert_eq!(
+            table.try_wait_synchronization_all(&[event], waiter),
+            Ok(false)
+        );
+        table.retain_wait_all_handles(&[event], waiter).unwrap();
+        assert_eq!(table.close_handle(event), Ok(()));
+        assert!(!table.is_open_handle(event));
+        assert_eq!(table.retained_object_count(), 1);
+
+        assert!(table.signal_event(event).unwrap().is_empty());
+        assert_eq!(
+            table.try_wait_synchronization_all(&[event], waiter),
+            Ok(true)
+        );
+        assert!(table.release_wait_all_handles(waiter));
+        assert_eq!(table.retained_object_count(), 0);
+    }
+
+    #[test]
     fn removing_a_timed_out_waiter_prevents_a_stale_signal_wakeup() {
         let waiter = thread_id(1);
         let mut table = Arm11KernelObjectTable::default();
@@ -1346,10 +1387,12 @@ mod tests {
         table.enqueue_waiter(one_shot, second).unwrap();
         assert_eq!(table.signal_event(one_shot).unwrap(), vec![first]);
         assert_eq!(table.event_is_signaled(one_shot), Some(false));
-        assert_eq!(
-            table.close_handle(one_shot),
-            Err(KernelHandleError::WaitersPending)
-        );
+        assert_eq!(table.close_handle(one_shot), Ok(()));
+        assert!(!table.is_open_handle(one_shot));
+        assert_eq!(table.retained_object_count(), 1);
+        assert_eq!(table.signal_event(one_shot).unwrap(), vec![second]);
+        assert!(table.remove_waiter(second));
+        assert_eq!(table.retained_object_count(), 0);
 
         let sticky = table.insert_event(EventResetType::Sticky).unwrap();
         table.enqueue_waiter(sticky, first).unwrap();
@@ -1375,10 +1418,11 @@ mod tests {
         assert_eq!(table.advance_time(110), vec![first]);
         assert_eq!(table.timer_is_signaled(timer), Some(false));
         assert!(table.advance_time(500).is_empty());
-        assert_eq!(
-            table.close_handle(timer),
-            Err(KernelHandleError::WaitersPending)
-        );
+        assert_eq!(table.close_handle(timer), Ok(()));
+        assert!(!table.is_open_handle(timer));
+        assert_eq!(table.retained_object_count(), 1);
+        assert!(table.remove_waiter(second));
+        assert_eq!(table.retained_object_count(), 0);
     }
 
     #[test]
