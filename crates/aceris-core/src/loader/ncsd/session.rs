@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use crate::Result;
-use crate::cpu::{Arm11Core, StepEvent};
+use crate::cpu::{Arm11Core, MpcoreScu, StepEvent};
 use crate::gpu::{
     FCRAM_BASE, GpuDmaAddressSpace, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END,
     OLD_LINEAR_BASE, OLD_LINEAR_END,
@@ -302,6 +302,11 @@ impl Arm11ProcessSession {
         self.address_space.attach_gpu_memory(memory.clone());
         self.gpu_memory = Some(memory);
         self.gpu_address_space = Some(address_space);
+    }
+
+    /// Connects the process bus to the system-wide ARM11 MPCore SCU.
+    pub fn attach_mpcore_scu(&mut self, scu: MpcoreScu) {
+        self.address_space.attach_mpcore_scu(scu);
     }
 
     /// Returns the currently running core, or the saved main-thread context
