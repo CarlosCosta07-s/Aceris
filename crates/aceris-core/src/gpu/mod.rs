@@ -78,7 +78,8 @@ pub use pica200::{
     VSH_CODE_TRANSFER_WORDS, VSH_FLOAT_UNIFORM_COUNT, VSH_OPDESC_TRANSFER_WORDS,
 };
 pub use rasterizer::{
-    DepthFunction, RasterVertex, RasterizationReport, RasterizerError, SoftwareRasterizer,
+    DepthFunction, PicaDepthMap, PicaDepthMode, RasterVertex, RasterizationReport,
+    RasterizerError, SoftwareRasterizer,
 };
 pub use render::{
     PicaRenderError, PicaRenderReport, PicaRenderSession, PicaRenderSessionError,
