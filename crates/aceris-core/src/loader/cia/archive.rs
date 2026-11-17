@@ -578,10 +578,7 @@ fn verify_content_stream_bytes<R: Read>(
     }
 
     let mut trailing_byte = [0u8; 1];
-    if read_retry_interrupted(reader, &mut trailing_byte)
-        .map_err(CiaArchiveError::Reader)?
-        != 0
-    {
+    if read_retry_interrupted(reader, &mut trailing_byte).map_err(CiaArchiveError::Reader)? != 0 {
         return Err(CiaArchiveError::ContentStreamHasTrailingBytes(
             content_index,
         ));
@@ -1566,7 +1563,10 @@ mod tests {
             }
             if self.interrupt_next {
                 self.interrupt_next = false;
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "synthetic interrupt"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "synthetic interrupt",
+                ));
             }
             self.interrupt_next = true;
             let amount = buffer.len().min(self.maximum_read);
