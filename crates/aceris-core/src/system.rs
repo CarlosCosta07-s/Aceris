@@ -6049,6 +6049,22 @@ mod tests {
             Some(0x003E_0000)
         );
         assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_ENABLE), Some(1));
+        assert_eq!(
+            system.gpu_mut().vertex_shader_uniform(0),
+            Some([0.25, 0.0, 0.0, -1.0])
+        );
+        assert_eq!(
+            system.gpu_mut().vertex_shader_uniform(1),
+            Some([0.0, 0.25, 0.0, -1.0])
+        );
+        assert_eq!(
+            system.gpu_mut().vertex_shader_uniform(2),
+            Some([0.0, 0.0, 1.0, 0.0])
+        );
+        assert_eq!(
+            system.gpu_mut().vertex_shader_uniform(3),
+            Some([0.0, 0.0, 0.0, 1.0])
+        );
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
         assert!(render.pixels_written > 0);
