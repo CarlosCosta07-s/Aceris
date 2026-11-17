@@ -6,8 +6,9 @@
 //! its varying/interpolation contract is extended in a separate step.
 
 use super::{
-    GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaTevError, PicaTextureEnvironment,
-    PicaTextureError, PicaTextureUnit, REG_TEXUNIT_CONFIG,
+    GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
+    PicaFragmentOutputState, PicaTevError, PicaTextureEnvironment, PicaTextureError,
+    PicaTextureUnit, REG_TEXUNIT_CONFIG,
 };
 
 /// Perspective-correct attributes at one fragment sample.
@@ -39,6 +40,7 @@ impl Default for PicaFragmentVaryings {
 pub struct PicaFragmentPipeline {
     texture_environment: PicaTextureEnvironment,
     texture_units: [PicaTextureUnit; 3],
+    output_state: PicaFragmentOutputState,
     /// Unit 2 can read either oTexCoord2 or oTexCoord1.
     texture2_coordinate_index: usize,
 }
@@ -60,6 +62,9 @@ impl PicaFragmentPipeline {
                 PicaTextureUnit::from_pica(pica, 1).map_err(PicaFragmentPipelineError::Texture)?,
                 PicaTextureUnit::from_pica(pica, 2).map_err(PicaFragmentPipelineError::Texture)?,
             ],
+            output_state: pica
+                .fragment_output_state()
+                .map_err(PicaFragmentPipelineError::Output)?,
             texture2_coordinate_index: if config & (1 << 13) != 0 { 1 } else { 2 },
         })
     }
@@ -107,6 +112,18 @@ impl PicaFragmentPipeline {
             .evaluate(&inputs)
             .map_err(PicaFragmentPipelineError::Tev)
     }
+
+    /// Applies the captured blend or logic operation to a shaded fragment and
+    /// the destination pixel already stored in the RGBA8 color target.
+    pub fn apply_fragment_output(
+        &self,
+        source: [f32; 4],
+        destination: [f32; 4],
+    ) -> Result<[u8; 4], PicaFragmentPipelineError> {
+        self.output_state
+            .apply(source, destination)
+            .map_err(PicaFragmentPipelineError::Output)
+    }
 }
 
 impl Pica200 {
@@ -133,6 +150,7 @@ fn validate_color(name: &'static str, color: [f32; 4]) -> Result<(), PicaFragmen
 pub enum PicaFragmentPipelineError {
     Texture(PicaTextureError),
     Tev(PicaTevError),
+    Output(PicaFragmentOutputError),
     ProceduralTextureUnitUnsupported,
     NonFiniteColor {
         attribute: &'static str,
@@ -147,6 +165,7 @@ impl std::fmt::Display for PicaFragmentPipelineError {
                 write!(formatter, "PICA fragment texture stage failed: {error}")
             }
             Self::Tev(error) => write!(formatter, "PICA TEV combiner failed: {error}"),
+            Self::Output(error) => write!(formatter, "PICA fragment output stage failed: {error}"),
             Self::ProceduralTextureUnitUnsupported => {
                 formatter.write_str("PICA procedural texture unit 3 is not implemented")
             }
@@ -274,6 +293,26 @@ mod tests {
         let output = pipeline.shade_fragment(&memory, &varyings).unwrap();
         assert_eq!(output[0], 20.0 / 255.0);
         assert_eq!(output[1], 40.0 / 255.0);
+    }
+
+    #[test]
+    fn applies_guest_configured_framebuffer_blending_after_tev() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
+        pica.write_register(
+            REG_BLEND_FUNC,
+            0 | (0 << 8) | (6 << 16) | (7 << 20) | (1 << 24),
+        )
+        .unwrap();
+        let pipeline = pica.fragment_pipeline().unwrap();
+
+        assert_eq!(
+            pipeline.apply_fragment_output(
+                [1.0, 0.0, 0.0, 0.5],
+                [0.0, 0.0, 1.0, 1.0],
+            ),
+            Ok([128, 0, 128, 128])
+        );
     }
 
     #[test]
