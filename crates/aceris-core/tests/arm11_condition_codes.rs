@@ -125,6 +125,56 @@ fn failed_a32_conditions_suppress_undefined_instruction_exceptions() {
 }
 
 #[test]
+fn all_a32_conditional_branches_and_links_match_every_nzcv_combination() {
+    const INITIAL_LR: u32 = 0xA55A_3CC3;
+
+    for condition in 0..=0xE {
+        for link in [false, true] {
+            for flags_index in 0..16 {
+                let (n, z, c, v) = flags_from_index(flags_index);
+                let expected_to_branch = condition_passes(condition, n, z, c, v);
+                let opcode = if link { 0x0B00_0000 } else { 0x0A00_0000 };
+                let instruction = (condition << 28) | opcode;
+
+                let mut memory = FlatMemory::new(0, 4);
+                memory.write32(0, instruction).unwrap();
+
+                let mut cpu = Arm11Core::new();
+                cpu.set_pc(0);
+                cpu.regs[14] = INITIAL_LR;
+                cpu.cpsr.set_flags(n, z, c, v);
+                let status_before = cpu.cpsr;
+
+                cpu.step(&mut memory).unwrap();
+
+                assert_eq!(
+                    cpu.pc(),
+                    if expected_to_branch { 8 } else { 4 },
+                    "A32 condition={condition:#x} link={link} NZCV={n}{z}{c}{v}"
+                );
+                assert_eq!(
+                    cpu.regs[14],
+                    if expected_to_branch && link {
+                        4
+                    } else {
+                        INITIAL_LR
+                    },
+                    "A32 LR condition={condition:#x} link={link} NZCV={n}{z}{c}{v}"
+                );
+                assert_eq!(
+                    cpu.cpsr, status_before,
+                    "A32 flags condition={condition:#x} link={link} NZCV={n}{z}{c}{v}"
+                );
+                assert!(
+                    !cpu.cpsr.thumb(),
+                    "A32 conditional branch must remain in ARM state"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn all_thumb_conditional_branches_match_every_nzcv_combination() {
     // BEQ/BNE/etc. with imm8=0 targets the instruction at PC+4.
     for condition in 0..=0xD {
