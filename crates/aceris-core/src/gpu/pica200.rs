@@ -1213,7 +1213,6 @@ mod tests {
         assert_eq!(
             gpu.depth_state(),
             PicaDepthState {
-                transform_enabled: false,
                 scale: 0.5,
                 offset: 0.5,
                 buffering: PicaDepthBuffering::ZBuffer,
