@@ -238,6 +238,7 @@ impl PicaRenderSession {
         .map_err(|error| PicaRenderSessionError::Render(PicaRenderError::Geometry(error)))?;
         let guest_depth = pica.depth_state();
         let depth_map = PicaDepthMap {
+            transform_enabled: guest_depth.transform_enabled,
             scale: guest_depth.scale,
             offset: guest_depth.offset,
             mode: match guest_depth.buffering {
