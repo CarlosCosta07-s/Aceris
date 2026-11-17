@@ -5248,7 +5248,8 @@ mod tests {
     fn gsp_render_transfer_and_lcd_scanout_form_one_complete_frame() {
         use crate::gpu::{
             ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_ENTRY_SIZE,
-            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
+            GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
+            GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
             GSP_GX_COMMAND_QUEUE_SIZE, PicaDepthBufferConfig, PicaRenderSettings,
             REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
             REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
@@ -5272,6 +5273,8 @@ mod tests {
         const TILED_TARGET: u32 = VRAM_BASE + 0x40_000;
         const LINEAR_FRAMEBUFFER: u32 = VRAM_BASE + 0xA0_000;
         const DEPTH_TARGET: u32 = VRAM_BASE + 0x10_0000;
+        const DEPTH_BYTES: u32 = (WIDTH * HEIGHT * 3) as u32;
+        const GUEST_VRAM_BASE: u32 = 0x1F00_0000;
 
         let mut system = System::new();
         system
@@ -5348,7 +5351,7 @@ mod tests {
             .unwrap();
 
         let mut queue_bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
-        queue_bytes[1] = 3;
+        queue_bytes[1] = 4;
 
         let command_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         queue_bytes[command_entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
@@ -5356,14 +5359,30 @@ mod tests {
             .copy_from_slice(&COMMAND_LIST.to_le_bytes());
         queue_bytes[command_entry + 8..command_entry + 12].copy_from_slice(&8u32.to_le_bytes());
 
-        let repeated_draw_entry = command_entry + GSP_GX_COMMAND_ENTRY_SIZE;
+        // The guest-visible MemoryFill overwrites the physical D24 plane
+        // between two command lists. The next list must reload that backing.
+        let fill_entry = command_entry + GSP_GX_COMMAND_ENTRY_SIZE;
+        queue_bytes[fill_entry] = GSP_GX_COMMAND_MEMORY_FILL;
+        let depth_guest_address = GUEST_VRAM_BASE + (DEPTH_TARGET - VRAM_BASE);
+        let depth_guest_end = depth_guest_address + DEPTH_BYTES;
+        queue_bytes[fill_entry + 4..fill_entry + 8]
+            .copy_from_slice(&depth_guest_address.to_le_bytes());
+        // D24 little-endian 0xBFFFFF (~0.75): FF FF BF repeated per pixel.
+        queue_bytes[fill_entry + 8..fill_entry + 12]
+            .copy_from_slice(&0x00BF_FFFFu32.to_le_bytes());
+        queue_bytes[fill_entry + 12..fill_entry + 16]
+            .copy_from_slice(&depth_guest_end.to_le_bytes());
+        queue_bytes[fill_entry + 28..fill_entry + 32]
+            .copy_from_slice(&(1u32 | (1 << 8)).to_le_bytes());
+
+        let repeated_draw_entry = command_entry + 2 * GSP_GX_COMMAND_ENTRY_SIZE;
         queue_bytes[repeated_draw_entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[repeated_draw_entry + 4..repeated_draw_entry + 8]
             .copy_from_slice(&COMMAND_LIST.to_le_bytes());
         queue_bytes[repeated_draw_entry + 8..repeated_draw_entry + 12]
             .copy_from_slice(&8u32.to_le_bytes());
 
-        let transfer_entry = command_entry + 2 * GSP_GX_COMMAND_ENTRY_SIZE;
+        let transfer_entry = command_entry + 3 * GSP_GX_COMMAND_ENTRY_SIZE;
         queue_bytes[transfer_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
         queue_bytes[transfer_entry + 4..transfer_entry + 8]
             .copy_from_slice(&TILED_TARGET.to_le_bytes());
@@ -5378,13 +5397,13 @@ mod tests {
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
         let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
         assert!(report.error.is_none(), "{:?}", report.error);
-        assert_eq!(report.commands_consumed, 3);
+        assert_eq!(report.commands_consumed, 4);
         assert_eq!(report.command_lists_submitted, 2);
         assert_eq!(report.display_transfers_completed, 1);
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
-        assert_eq!(render.pixels_written, 0);
-        assert!(render.depth_rejected_pixels > 0);
+        assert!(render.pixels_written > 0);
+        assert_eq!(render.depth_rejected_pixels, 0);
         let depth_config =
             PicaDepthBufferConfig::from_pica(system.gpu_mut(), WIDTH as u32, HEIGHT as u32)
                 .unwrap()
