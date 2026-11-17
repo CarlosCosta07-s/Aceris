@@ -815,8 +815,7 @@ mod tests {
     }
 
     fn configure_tev(pica: &mut super::super::Pica200) {
-        for stage in 0..6 {
-            let base = TEXENV_STAGE_SOURCE_REGISTERS[stage];
+        for (stage, &base) in TEXENV_STAGE_SOURCE_REGISTERS.iter().enumerate() {
             let source = if stage == 0 { 0 } else { 15 };
             pica.write_register(base, source | (source << 16)).unwrap();
             pica.write_register(base + 1, 0).unwrap();
@@ -845,7 +844,7 @@ mod tests {
         let pipeline = pica.fragment_pipeline().unwrap();
         let target = PicaRenderTargetConfig::from_registers(
             VRAM_BASE >> 3,
-            2 | (0 << 16),
+            2,
             0,
             8 | (7 << 12) | (1 << 24),
         )
