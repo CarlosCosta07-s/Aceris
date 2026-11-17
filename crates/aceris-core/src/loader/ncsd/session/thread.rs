@@ -298,18 +298,56 @@ impl Arm11ThreadScheduler {
         Ok(self.current)
     }
 
+    /// Terminates a thread from any scheduler state and selects another Ready
+    /// thread when the terminated thread was current.
+    pub fn terminate_thread(
+        &mut self,
+        id: ThreadId,
+    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+        let thread = self
+            .threads
+            .get_mut(&id)
+            .ok_or(ThreadSchedulerError::UnknownThread(id))?;
+        if thread.info.state == ThreadState::Exited {
+            return Err(ThreadSchedulerError::InvalidState {
+                thread_id: id,
+                state: ThreadState::Exited,
+                operation: "terminate",
+            });
+        }
+
+        thread.info.state = ThreadState::Exited;
+        thread.ready_order = None;
+        if self.current == Some(id) {
+            self.current = None;
+            self.schedule_next();
+        }
+        Ok(self.current)
+    }
+
     /// Exits the current thread and selects another Ready thread, if one exists.
     pub fn exit_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
-        let current = self
+        self.terminate_thread(id)
+    }
+
+    /// Reclaims a terminated non-main thread after its last kernel handle closes.
+    ///
+    /// Thread identifiers are monotonically allocated and never reused, so
+    /// removing this saved context cannot make a stale identifier alias a new
+    /// thread. The main thread context remains available for process diagnostics.
+    pub fn reap_exited_thread(&mut self, id: ThreadId) -> bool {
+        if id == MAIN_THREAD_ID || self.current == Some(id) {
+            return false;
+        }
+        if self
             .threads
-            .get_mut(&id)
-            .expect("current thread must exist");
-        current.info.state = ThreadState::Exited;
-        current.ready_order = None;
-        self.current = None;
-        self.schedule_next();
-        Ok(self.current)
+            .get(&id)
+            .is_none_or(|thread| thread.info.state != ThreadState::Exited)
+        {
+            return false;
+        }
+        self.threads.remove(&id).is_some()
     }
 
     /// Blocks the current thread until it is explicitly woken.
@@ -714,6 +752,36 @@ mod tests {
                 operation: "change priority for",
             })
         );
+    }
+
+    #[test]
+    fn terminate_thread_removes_ready_waiting_and_sleeping_threads_from_schedule() {
+        let mut scheduler = scheduler();
+        let ready = create(&mut scheduler, 0x0020_0000, 0x30);
+        assert!(scheduler.terminate_thread(ready).is_ok());
+        assert_eq!(scheduler.thread_info(ready).unwrap().state, ThreadState::Exited);
+        assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        let waiting = create(&mut scheduler, 0x0030_0000, 0x30);
+        scheduler.yield_current().unwrap();
+        assert_eq!(scheduler.current_thread_id(), Some(ready));
+        // The first thread is Exited and cannot be selected; the second is
+        // the only ready guest thread at this point.
+        let _ = waiting;
+    }
+
+    #[test]
+    fn reaps_only_exited_non_main_threads() {
+        let mut scheduler = scheduler();
+        let id = create(&mut scheduler, 0x0020_0000, 0x30);
+
+        assert!(!scheduler.reap_exited_thread(id));
+        assert!(!scheduler.reap_exited_thread(MAIN_THREAD_ID));
+        scheduler.terminate_thread(id).unwrap();
+        assert!(scheduler.reap_exited_thread(id));
+        assert!(scheduler.thread_info(id).is_none());
+        assert_eq!(scheduler.thread_count(), 1);
+        assert!(!scheduler.reap_exited_thread(id));
     }
 
     #[test]
