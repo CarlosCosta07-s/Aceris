@@ -54,6 +54,8 @@ pub(super) struct Params {
     pub sctlr_r: bool,
     pub tre: bool,
     pub data_cache_enabled: bool,
+    pub smp_enabled: bool,
+    pub scu_enabled: bool,
     pub primary_remap: u32,
     pub normal_remap: u32,
     pub tlb_preserve: bool,
@@ -97,14 +99,20 @@ pub(super) struct MemoryAttributes {
 
 impl MemoryAttributes {
     /// Resolves the inner ARM11 MPCore L1 D-cache behavior from the effective
-    /// memory attributes. The MP11 cache is write-back/write-allocate only:
-    /// inner write-through is treated as non-cacheable and inner write-back
-    /// without allocate is treated as write-allocate. Normal non-cacheable
-    /// memory still permits buffered stores; Device/Strongly Ordered does not.
+    /// memory attributes and the current cluster mode. Shared Normal WBWA is
+    /// cacheable only when ACTLR.SMP and the SCU enable bit are both set.
     ///
-    /// The separate Shared + SMP + SCU cache-eligibility rule is not modeled
-    /// yet; this is not a claim of hardware snooping support.
-    fn data_cache_policy(self, enabled: bool) -> CachePolicy {
+    /// The MP11 cache is write-back/write-allocate only: inner write-through
+    /// is treated as non-cacheable and inner write-back without allocate is
+    /// treated as write-allocate. This gate does not implement tag RAM or
+    /// cache-to-cache snooping; it only selects the architecturally permitted
+    /// L1 cache policy for the current platform state.
+    fn data_cache_policy(
+        self,
+        enabled: bool,
+        smp_enabled: bool,
+        scu_enabled: bool,
+    ) -> CachePolicy {
         if self.memory_type != MemoryType::Normal {
             return CachePolicy::NonCacheable;
         }
@@ -112,6 +120,9 @@ impl MemoryAttributes {
         // Inner write-through (10) is treated as non-cacheable; write-back
         // no-write-allocate (11) is treated as write-allocate by this core.
         if !enabled || matches!(self.inner, 0 | 2) {
+            return CachePolicy::NormalNonCacheable;
+        }
+        if self.shareable && (!smp_enabled || !scu_enabled) {
             return CachePolicy::NormalNonCacheable;
         }
         match self.inner {
@@ -924,7 +935,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
         self.inner.read8_with_cache_policy(
             physical,
-            attributes.data_cache_policy(self.params.data_cache_enabled),
+            attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
@@ -934,7 +949,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         self.inner.write8_with_cache_policy(
             physical,
             value,
-            attributes.data_cache_policy(self.params.data_cache_enabled),
+            attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
@@ -942,7 +961,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         let (physical, attributes) = self.map_with_privilege(addr, Access::Read, false)?;
         self.inner.read8_with_cache_policy(
             physical,
-            attributes.data_cache_policy(self.params.data_cache_enabled),
+            attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
@@ -951,7 +974,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         self.inner.write8_with_cache_policy(
             physical,
             value,
-            attributes.data_cache_policy(self.params.data_cache_enabled),
+            attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
@@ -960,7 +987,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             let (physical, attributes) = self.map_with_privilege(addr, Access::Read, false)?;
             return self.inner.read32_with_cache_policy(
                 physical,
-                attributes.data_cache_policy(self.params.data_cache_enabled),
+                attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
             );
         }
         let mut bytes = [0u8; 4];
@@ -976,7 +1007,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             return self.inner.write32_with_cache_policy(
                 physical,
                 value,
-                attributes.data_cache_policy(self.params.data_cache_enabled),
+                attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
             );
         }
         for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
@@ -991,7 +1026,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
                 self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
             return self.inner.read16_with_cache_policy(
                 physical,
-                attributes.data_cache_policy(self.params.data_cache_enabled),
+                attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
             );
         }
         let lo = self.read8(addr)?;
@@ -1005,7 +1044,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
                 self.map_with_privilege(addr, Access::Read, self.params.privileged)?;
             return self.inner.read32_with_cache_policy(
                 physical,
-                attributes.data_cache_policy(self.params.data_cache_enabled),
+                attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
             );
         }
         let mut bytes = [0u8; 4];
@@ -1022,7 +1065,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             return self.inner.write16_with_cache_policy(
                 physical,
                 value,
-                attributes.data_cache_policy(self.params.data_cache_enabled),
+                attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
             );
         }
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
@@ -1038,7 +1085,11 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             return self.inner.write32_with_cache_policy(
                 physical,
                 value,
-                attributes.data_cache_policy(self.params.data_cache_enabled),
+                attributes.data_cache_policy(
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
             );
         }
         for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
@@ -1087,6 +1138,8 @@ impl Arm11Core {
         privileged_access: bool,
     ) -> Result<()> {
         let mut tlb = std::mem::take(&mut self.tlb);
+        bus.set_arm11_smp_mode(self.cp15.core_id(), self.cp15.smp_mode_enabled());
+        let scu_enabled = bus.arm11_scu_enabled();
         let params = Params {
             ttbr0: self.cp15.ttbr0(),
             ttbr1: self.cp15.ttbr1(),
@@ -1099,6 +1152,8 @@ impl Arm11Core {
             sctlr_r: self.cp15.legacy_sctlr_r(),
             tre: self.cp15.memory_region_remap_enabled(),
             data_cache_enabled: self.cp15.sctlr() & (1 << 2) != 0,
+            smp_enabled: self.cp15.smp_mode_enabled(),
+            scu_enabled,
             primary_remap: self.cp15.primary_memory_remap(),
             normal_remap: self.cp15.normal_memory_remap(),
             tlb_preserve: self.cp15.tlb_preserve(),
@@ -1150,6 +1205,8 @@ impl Arm11Core {
         pc: u32,
     ) -> Result<StepEvent> {
         let mut tlb = std::mem::take(&mut self.tlb);
+        bus.set_arm11_smp_mode(self.cp15.core_id(), self.cp15.smp_mode_enabled());
+        let scu_enabled = bus.arm11_scu_enabled();
 
         let params = Params {
             ttbr0: self.cp15.ttbr0(),
@@ -1274,6 +1331,8 @@ mod tests {
             sctlr_r: cpu.cp15.legacy_sctlr_r(),
             tre: cpu.cp15.memory_region_remap_enabled(),
             data_cache_enabled: cpu.cp15.sctlr() & (1 << 2) != 0,
+            smp_enabled: cpu.cp15.smp_mode_enabled(),
+            scu_enabled: false,
             primary_remap: cpu.cp15.primary_memory_remap(),
             normal_remap: cpu.cp15.normal_memory_remap(),
             tlb_preserve: cpu.cp15.tlb_preserve(),
@@ -1459,32 +1518,74 @@ mod tests {
         };
 
         assert_eq!(
-            attributes(MemoryType::Normal, 0).data_cache_policy(true),
+            attributes(MemoryType::Normal, 0).data_cache_policy(true, false, false),
             CachePolicy::NormalNonCacheable
         );
         assert_eq!(
-            attributes(MemoryType::Normal, 1).data_cache_policy(true),
+            attributes(MemoryType::Normal, 1).data_cache_policy(true, false, false),
             CachePolicy::WriteBack
         );
         assert_eq!(
-            attributes(MemoryType::Normal, 2).data_cache_policy(true),
+            attributes(MemoryType::Normal, 2).data_cache_policy(true, false, false),
             CachePolicy::NormalNonCacheable
         );
         assert_eq!(
-            attributes(MemoryType::Normal, 3).data_cache_policy(true),
+            attributes(MemoryType::Normal, 3).data_cache_policy(true, false, false),
             CachePolicy::WriteBack
         );
         assert_eq!(
-            attributes(MemoryType::Normal, 3).data_cache_policy(false),
+            attributes(MemoryType::Normal, 3).data_cache_policy(false, false, false),
             CachePolicy::NormalNonCacheable
         );
         assert_eq!(
-            attributes(MemoryType::Device, 3).data_cache_policy(true),
+            attributes(MemoryType::Device, 3).data_cache_policy(true, false, false),
             CachePolicy::NonCacheable
         );
         assert_eq!(
-            attributes(MemoryType::StronglyOrdered, 3).data_cache_policy(true),
+            attributes(MemoryType::StronglyOrdered, 3).data_cache_policy(true, false, false),
             CachePolicy::NonCacheable
+        );
+    }
+
+    #[test]
+    fn shared_normal_wbwa_requires_both_actlr_smp_and_scu_enable() {
+        let shared_wbwa = MemoryAttributes {
+            memory_type: MemoryType::Normal,
+            shareable: true,
+            inner: 1,
+            outer: 1,
+        };
+        let private_wbwa = MemoryAttributes {
+            shareable: false,
+            ..shared_wbwa
+        };
+
+        // Private Normal WBWA can use this CPU's local cache in AMP mode.
+        assert_eq!(
+            private_wbwa.data_cache_policy(true, false, false),
+            CachePolicy::WriteBack
+        );
+        // A Shared page is bypassed unless both cluster conditions hold.
+        assert_eq!(
+            shared_wbwa.data_cache_policy(true, false, false),
+            CachePolicy::NormalNonCacheable
+        );
+        assert_eq!(
+            shared_wbwa.data_cache_policy(true, true, false),
+            CachePolicy::NormalNonCacheable
+        );
+        assert_eq!(
+            shared_wbwa.data_cache_policy(true, false, true),
+            CachePolicy::NormalNonCacheable
+        );
+        assert_eq!(
+            shared_wbwa.data_cache_policy(true, true, true),
+            CachePolicy::WriteBack
+        );
+        // Disabling SCTLR.C still bypasses the L1 D-cache in SMP mode.
+        assert_eq!(
+            shared_wbwa.data_cache_policy(false, true, true),
+            CachePolicy::NormalNonCacheable
         );
     }
 
