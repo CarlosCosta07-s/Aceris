@@ -5179,7 +5179,81 @@ mod tests {
     }
 
     #[test]
-    fn closing_last_thread_handle_terminates_target_and_completes_wait_all_error() {
+    fn close_handle_keeps_wait_one_object_alive_until_waiter_wakes() {
+        let mut session = test_session_with_program_and_data(&[
+            (0x00, 0xEF00_0024), // SVC WaitSynchronization1 (main)
+            (0x04, 0xE120_0070), // BKPT #0
+            (0x20, 0xE120_0070), // BKPT #0 (other thread)
+        ]);
+        let other = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x3F, 0)
+            .unwrap();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[0] = event;
+            main.regs[2] = u32::MAX;
+            main.regs[3] = u32::MAX;
+        }
+
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1);
+        assert_eq!(session.current_thread_id(), Some(other));
+        assert_eq!(
+            session.thread_info(MAIN_THREAD_ID).unwrap().state,
+            ThreadState::Waiting
+        );
+
+        session.close_handle(event).unwrap();
+        assert!(!session.kernel_objects.is_open_handle(event));
+        assert_eq!(session.kernel_objects.retained_object_count(), 1);
+
+        // An HLE producer can still signal the retired object held by the wait.
+        session.signal_event_handle(event).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.kernel_objects.retained_object_count(), 0);
+
+        // Guest code cannot use the closed handle for a new SignalEvent call.
+        session.core_mut().regs[0] = event;
+        assert!(matches!(
+            session.dispatch_svc(SVC_SIGNAL_EVENT),
+            SvcRunDisposition::Resume
+        ));
+        assert_eq!(session.core().regs[0], RESULT_INVALID_HANDLE);
+    }
+
+    #[test]
+    fn closing_wait_one_handle_then_timing_out_releases_retired_object() {
+        let mut session = test_session_with_program(&[0xEF00_0024]);
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = event;
+            main.regs[2] = 10;
+            main.regs[3] = 0;
+        }
+
+        assert_eq!(
+            session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1),
+            SvcRunDisposition::NoRunnableThread
+        );
+        session.close_handle(event).unwrap();
+        assert_eq!(session.kernel_objects.retained_object_count(), 1);
+
+        assert_eq!(session.advance_time(10), Some(MAIN_THREAD_ID));
+        assert_eq!(session.core().regs[0], RESULT_TIMEOUT);
+        assert_eq!(session.kernel_objects.retained_object_count(), 0);
+    }
+
+    #[test]
+    fn closing_last_thread_handle_keeps_wait_all_reference_until_other_objects_signal() {
         let mut session = test_session_with_program(&[0xEF00_0025]);
         let target = session
             .scheduler
@@ -5213,12 +5287,18 @@ mod tests {
 
         session.close_handle(target_handle).unwrap();
 
-        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.current_thread_id(), None);
         assert_eq!(session.thread_info(target), None);
         assert_eq!(session.scheduler.thread_count(), 1);
-        assert_eq!(session.core().regs[0], RESULT_INVALID_HANDLE);
+        assert!(session.wait_all_waits.contains_key(&MAIN_THREAD_ID));
         assert_eq!(session.event_handle_is_signaled(event), Some(false));
+        assert_eq!(session.kernel_objects.retained_object_count(), 2);
+
+        session.signal_event_handle(event).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.core().regs[0], 0);
         assert!(!session.wait_all_waits.contains_key(&MAIN_THREAD_ID));
+        assert_eq!(session.kernel_objects.retained_object_count(), 1);
     }
 
     #[test]
