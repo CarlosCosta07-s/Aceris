@@ -447,11 +447,8 @@ mod tests {
     fn decodes_guest_configured_alpha_blend_state() {
         let mut pica = Pica200::new();
         pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
-        pica.write_register(
-            REG_BLEND_FUNC,
-            (6 << 16) | (7 << 20) | (1 << 24),
-        )
-        .unwrap();
+        pica.write_register(REG_BLEND_FUNC, (6 << 16) | (7 << 20) | (1 << 24))
+            .unwrap();
         pica.write_register(REG_LOGIC_OP, 3).unwrap();
         pica.write_register(REG_BLEND_COLOR, 0x8040_2010).unwrap();
 
