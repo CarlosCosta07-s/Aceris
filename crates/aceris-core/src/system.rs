@@ -5066,7 +5066,7 @@ mod tests {
             (REG_COLORBUFFER_FORMAT, RENDER_TARGET_REGISTERS.0),
             (REG_FRAMEBUFFER_BLOCK32, 0),
             (REG_FRAMEBUFFER_DIM, RENDER_TARGET_REGISTERS.1),
-            (REG_VIEWPORT_WIDTH, 0x0041_0000),  // Float24 half-width: 4
+            (REG_VIEWPORT_WIDTH, 0x0041_0000), // Float24 half-width: 4
             (REG_VIEWPORT_HEIGHT, 0x0041_0000), // Float24 half-height: 4
             (REG_VIEWPORT_XY, 0),
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
@@ -5212,7 +5212,7 @@ mod tests {
                 REG_FRAMEBUFFER_DIM,
                 (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
             ),
-            (REG_VIEWPORT_WIDTH, 0x0046_9000),  // Float24 half-width: 200
+            (REG_VIEWPORT_WIDTH, 0x0046_9000), // Float24 half-width: 200
             (REG_VIEWPORT_HEIGHT, 0x0045_E000), // Float24 half-height: 120
             (REG_VIEWPORT_XY, 0),
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
@@ -6016,11 +6016,23 @@ mod tests {
             system.gpu_mut().register(REG_COLORBUFFER_LOC),
             Some(tiled_target_physical >> 3)
         );
-        assert_eq!(system.gpu_mut().register(REG_VIEWPORT_WIDTH), Some(0x0046_9000));
-        assert_eq!(system.gpu_mut().register(REG_VIEWPORT_HEIGHT), Some(0x0045_E000));
+        assert_eq!(
+            system.gpu_mut().register(REG_VIEWPORT_WIDTH),
+            Some(0x0046_9000)
+        );
+        assert_eq!(
+            system.gpu_mut().register(REG_VIEWPORT_HEIGHT),
+            Some(0x0045_E000)
+        );
         assert_eq!(system.gpu_mut().register(REG_VIEWPORT_XY), Some(0));
-        assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_SCALE), Some(0x003E_0000));
-        assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_OFFSET), Some(0x003E_0000));
+        assert_eq!(
+            system.gpu_mut().register(REG_DEPTHMAP_SCALE),
+            Some(0x003E_0000)
+        );
+        assert_eq!(
+            system.gpu_mut().register(REG_DEPTHMAP_OFFSET),
+            Some(0x003E_0000)
+        );
         assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_ENABLE), Some(1));
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
