@@ -5504,7 +5504,7 @@ mod tests {
             .kernel_objects
             .insert_event(EventResetType::Sticky)
             .unwrap();
-        let duplicate = session.kernel_objects.duplicate_handle(event).unwrap();
+        session.kernel_objects.duplicate_handle(event).unwrap();
 
         // Type 4 returns the live count; type 5 returns the historical peak.
         {
