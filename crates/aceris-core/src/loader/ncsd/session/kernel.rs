@@ -480,8 +480,9 @@ impl Arm11KernelObjectTable {
         Ok(duplicate)
     }
 
-    /// Pins each unique handle in a wait-all request until the request
-    /// completes or is cancelled. This keeps a closed handle's object alive.
+    /// Pins every distinct guest handle in a wait-all request until the request
+    /// completes or is cancelled. Aliases share one pinned object, but retaining
+    /// each supplied handle preserves lookup after one or more aliases are closed.
     pub fn retain_wait_all_handles(
         &mut self,
         handles: &[u32],
@@ -492,7 +493,7 @@ impl Arm11KernelObjectTable {
             let object_key = self
                 .object_key(handle)
                 .ok_or(KernelHandleError::InvalidHandle)?;
-            if !retained.iter().any(|(_, key)| *key == object_key) {
+            if !retained.iter().any(|(saved_handle, _)| *saved_handle == handle) {
                 retained.push((handle, object_key));
             }
         }
@@ -862,19 +863,26 @@ impl Arm11KernelObjectTable {
         let object_key = self
             .object_key(handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
-        let waiters = match self.object_mut_by_key(object_key) {
-            Some(KernelObject::Event(event)) => &mut event.waiters,
-            Some(KernelObject::Mutex(mutex)) => &mut mutex.waiters,
-            Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
-            Some(KernelObject::Timer(timer)) => &mut timer.waiters,
-            Some(KernelObject::Thread(thread)) => &mut thread.waiters,
-            Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
-                return Err(KernelHandleError::WrongType);
+        let inserted = {
+            let waiters = match self.object_mut_by_key(object_key) {
+                Some(KernelObject::Event(event)) => &mut event.waiters,
+                Some(KernelObject::Mutex(mutex)) => &mut mutex.waiters,
+                Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
+                Some(KernelObject::Timer(timer)) => &mut timer.waiters,
+                Some(KernelObject::Thread(thread)) => &mut thread.waiters,
+                Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
+                    return Err(KernelHandleError::WrongType);
+                }
+                None => return Err(KernelHandleError::InvalidHandle),
+            };
+            if waiters.contains(&thread) {
+                false
+            } else {
+                waiters.push_back(thread);
+                true
             }
-            None => return Err(KernelHandleError::InvalidHandle),
         };
-        if !waiters.contains(&thread) {
-            waiters.push_back(thread);
+        if inserted {
             self.waiter_handles.insert((thread, object_key), handle);
         }
         Ok(())
@@ -1466,6 +1474,95 @@ mod tests {
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
         assert!(!table.try_wait_synchronization(semaphore, third).unwrap());
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
+    }
+
+    #[test]
+    fn duplicate_handles_share_event_identity_and_last_close_reclaims_object() {
+        let mut table = Arm11KernelObjectTable::default();
+        let original = table.insert_event(EventResetType::Sticky).unwrap();
+        let duplicate = table.duplicate_handle(original).unwrap();
+
+        assert_ne!(original, duplicate);
+        assert_eq!(table.handle_count(), 2);
+        assert_eq!(table.retained_object_count(), 1);
+        assert!(table.is_open_handle(duplicate));
+        assert_eq!(table.signal_event(duplicate), Ok(Vec::new()));
+        assert_eq!(table.event_is_signaled(original), Some(true));
+
+        assert_eq!(table.close_handle(original), Ok(()));
+        assert!(!table.is_open_handle(original));
+        assert!(table.is_open_handle(duplicate));
+        assert_eq!(table.event_is_signaled(duplicate), Some(true));
+        assert_eq!(table.retained_object_count(), 1);
+
+        assert_eq!(table.clear_event(duplicate), Ok(()));
+        assert_eq!(table.event_is_signaled(duplicate), Some(false));
+        assert_eq!(table.close_handle(duplicate), Ok(()));
+        assert_eq!(table.handle_count(), 0);
+        assert_eq!(table.retained_object_count(), 0);
+        assert_eq!(
+            table.duplicate_handle(duplicate),
+            Err(KernelHandleError::InvalidHandle)
+        );
+    }
+
+    #[test]
+    fn waiter_using_duplicate_handle_receives_that_handle_on_handoff() {
+        let waiter = thread_id(1);
+        let mut table = Arm11KernelObjectTable::default();
+        let original = table.insert_event(EventResetType::OneShot).unwrap();
+        let duplicate = table.duplicate_handle(original).unwrap();
+        table.enqueue_waiter(duplicate, waiter).unwrap();
+
+        assert_eq!(table.close_handle(original), Ok(()));
+        assert_eq!(table.retained_object_count(), 1);
+        assert_eq!(table.signal_event(duplicate), Ok(vec![waiter]));
+        assert_eq!(table.take_handoff(waiter), Some(duplicate));
+        assert!(!table.remove_waiter(waiter));
+        assert_eq!(table.close_handle(duplicate), Ok(()));
+        assert_eq!(table.retained_object_count(), 0);
+    }
+
+    #[test]
+    fn wait_all_pins_every_alias_even_when_all_handles_are_closed() {
+        let waiter = thread_id(1);
+        let mut table = Arm11KernelObjectTable::default();
+        let original = table.insert_event(EventResetType::Sticky).unwrap();
+        let duplicate = table.duplicate_handle(original).unwrap();
+        let handles = [original, duplicate];
+
+        assert_eq!(
+            table.try_wait_synchronization_all(&handles, waiter),
+            Ok(false)
+        );
+        table.retain_wait_all_handles(&handles, waiter).unwrap();
+        assert_eq!(table.close_handle(original), Ok(()));
+        assert_eq!(table.close_handle(duplicate), Ok(()));
+        assert_eq!(table.handle_count(), 0);
+        assert_eq!(table.retained_object_count(), 1);
+
+        assert_eq!(table.signal_event(original), Ok(Vec::new()));
+        assert_eq!(
+            table.try_wait_synchronization_all(&handles, waiter),
+            Ok(true)
+        );
+        assert!(table.release_wait_all_handles(waiter));
+        assert_eq!(table.retained_object_count(), 0);
+    }
+
+    #[test]
+    fn duplicate_thread_handles_are_counted_until_every_alias_closes() {
+        let mut table = Arm11KernelObjectTable::default();
+        let target = thread_id(2);
+        let original = table.insert_thread(target).unwrap();
+        let duplicate = table.duplicate_handle(original).unwrap();
+
+        assert_eq!(table.thread_handle_count(target), 2);
+        table.close_handle(original).unwrap();
+        assert_eq!(table.thread_handle_count(target), 1);
+        assert_eq!(table.thread_handle_target(duplicate), Some(target));
+        table.close_handle(duplicate).unwrap();
+        assert_eq!(table.thread_handle_count(target), 0);
     }
 
     #[test]
