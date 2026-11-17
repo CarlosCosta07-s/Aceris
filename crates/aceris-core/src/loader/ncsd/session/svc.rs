@@ -87,7 +87,7 @@ pub const SVC_DUPLICATE_HANDLE: u32 = 0x27;
 /// Wait for one synchronization object.
 pub const SVC_WAIT_SYNCHRONIZATION1: u32 = 0x24;
 
-/// Wait for any of several synchronization objects (wait-all is not modelled).
+/// Wait for any of several synchronization objects, or atomically wait for all.
 pub const SVC_WAIT_SYNCHRONIZATION_N: u32 = 0x25;
 
 /// Result of dispatching a process-scoped SVC.
