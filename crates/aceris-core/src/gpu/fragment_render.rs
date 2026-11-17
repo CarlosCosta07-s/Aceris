@@ -8,8 +8,9 @@
 
 use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, Pica200, PicaCommandListReport,
-    PicaCommandListRunError, PicaDepthBuffering, PicaDepthMap, PicaDepthMode, PicaDrawExecError,
-    PicaDrawRequest, PicaFragmentPipelineError, PicaFragmentRasterError, PicaFragmentRasterReport,
+    PicaCommandListRunError, PicaDepthBufferConfig, PicaDepthBufferError, PicaDepthBuffering,
+    PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest, PicaFragmentPipelineError,
+    PicaFragmentRasterError, PicaFragmentRasterReport,
     PicaFragmentRasterState, PicaFragmentRasterizer, PicaFragmentVertexDefaults,
     PicaOutputMapError, PicaRenderReport, PicaRenderSettings, PicaRenderTargetConfig,
     PicaRenderTargetError, REG_COLORBUFFER_WRITE, REG_DEPTH_COLOR_MASK, REG_DEPTHBUFFER_WRITE,
@@ -24,6 +25,7 @@ pub enum PicaFragmentRenderSessionError {
     Draw(PicaDrawExecError),
     OutputMap(PicaOutputMapError),
     Pipeline(PicaFragmentPipelineError),
+    DepthBuffer(PicaDepthBufferError),
     UnresolvedVertexBase,
 }
 
@@ -35,6 +37,7 @@ impl std::fmt::Display for PicaFragmentRenderSessionError {
             Self::Draw(error) => write!(formatter, "vertex draw failed: {error}"),
             Self::OutputMap(error) => write!(formatter, "vertex output map failed: {error}"),
             Self::Pipeline(error) => write!(formatter, "fragment pipeline failed: {error}"),
+            Self::DepthBuffer(error) => write!(formatter, "physical depth buffer failed: {error}"),
             Self::UnresolvedVertexBase => {
                 formatter.write_str("vertex base address was not resolved")
             }
@@ -48,7 +51,11 @@ impl std::error::Error for PicaFragmentRenderSessionError {}
 #[derive(Debug)]
 pub struct PicaFragmentRenderSession {
     settings: PicaRenderSettings,
-    active: Option<(PicaRenderTargetConfig, PicaFragmentRasterizer)>,
+    active: Option<(
+        PicaRenderTargetConfig,
+        Option<PicaDepthBufferConfig>,
+        PicaFragmentRasterizer,
+    )>,
     dirty: bool,
     totals: PicaRenderReport,
     draws_rendered: u64,
@@ -86,7 +93,9 @@ impl PicaFragmentRenderSession {
         let config = pica
             .render_target_config()
             .map_err(PicaFragmentRenderSessionError::Target)?;
-        self.select_target(config, memory)?;
+        let depth_config = PicaDepthBufferConfig::from_pica(pica, config.width, config.height)
+            .map_err(PicaFragmentRenderSessionError::DepthBuffer)?;
+        self.select_target(config, depth_config, memory)?;
 
         let guest_viewport = pica.viewport_state();
         let viewport_width = guest_viewport.half_width * 2.0;
@@ -149,8 +158,9 @@ impl PicaFragmentRenderSession {
             depth_color_mask & (1 << 10) != 0 && color_buffer_write & (1 << 2) != 0,
             depth_color_mask & (1 << 11) != 0 && color_buffer_write & (1 << 3) != 0,
         ];
-        let depth_write_enabled =
-            depth_color_mask & (1 << 12) != 0 && depth_buffer_write & (1 << 1) != 0;
+        let depth_write_enabled = depth_color_mask & (1 << 12) != 0
+            && depth_buffer_write & (1 << 1) != 0
+            && depth_config.is_some_and(|depth| depth.depth_write_enabled);
 
         let raster_state = PicaFragmentRasterState {
             transform: Matrix4::identity(),
@@ -166,7 +176,7 @@ impl PicaFragmentRenderSession {
             .active
             .as_mut()
             .expect("render target was selected above")
-            .1;
+            .2;
         // A partial draw that later fails is still committed on flush.
         self.dirty = true;
         let fragment_report = rasterizer
@@ -246,10 +256,15 @@ impl PicaFragmentRenderSession {
         memory: &mut GpuPhysicalMemory,
     ) -> Result<(), PicaFragmentRenderSessionError> {
         if self.dirty {
-            if let Some((config, rasterizer)) = &self.active {
+            if let Some((config, depth_config, rasterizer)) = &self.active {
                 rasterizer
                     .write_render_target(*config, memory)
                     .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
+                if let Some(depth_config) = depth_config {
+                    rasterizer
+                        .write_depth_buffer(*depth_config, memory)
+                        .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
+                }
             }
             self.dirty = false;
         }
@@ -267,16 +282,26 @@ impl PicaFragmentRenderSession {
     fn select_target(
         &mut self,
         config: PicaRenderTargetConfig,
+        depth_config: Option<PicaDepthBufferConfig>,
         memory: &mut GpuPhysicalMemory,
     ) -> Result<(), PicaFragmentRenderSessionError> {
-        if matches!(&self.active, Some((current, _)) if *current == config) {
+        if matches!(
+            &self.active,
+            Some((current, current_depth, _))
+                if *current == config && *current_depth == depth_config
+        ) {
             return Ok(());
         }
         // Publish the previous target before switching to a new one.
         self.flush(memory)?;
-        let rasterizer = PicaFragmentRasterizer::from_render_target(config, memory, 1.0)
+        let mut rasterizer = PicaFragmentRasterizer::from_render_target(config, memory, 1.0)
             .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
-        self.active = Some((config, rasterizer));
+        if let Some(depth_config) = depth_config {
+            rasterizer
+                .load_depth_buffer(depth_config, memory, 1.0)
+                .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
+        }
+        self.active = Some((config, depth_config, rasterizer));
         Ok(())
     }
 }
