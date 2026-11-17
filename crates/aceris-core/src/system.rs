@@ -6011,6 +6011,9 @@ mod tests {
         for (register, value) in guest_clip_transform_register_writes() {
             command_list.extend(write(register, value));
         }
+        // The shared clip-transform helper enables depth-only writes; the
+        // guest restores stencil writes explicitly for its D24S8 surface.
+        command_list.extend(write(REG_DEPTHBUFFER_WRITE, 3));
 
         // The guest binds texture0 and configures the six TEV stages. The
         // source image is placed in VRAM in native PICA ABGR byte order.
