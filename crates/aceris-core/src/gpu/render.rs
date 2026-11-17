@@ -419,7 +419,8 @@ mod tests {
         REG_DRAWARRAYS, REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
         REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX,
         REG_VSH_FLOATUNIFORM_DATA0, REG_VSH_FLOATUNIFORM_INDEX, REG_VSH_INPUTBUFFER_CONFIG,
-        REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
+        REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, REG_VIEWPORT_HEIGHT,
+        REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY, Viewport,
     };
 
     const SIZE: usize = 8;
@@ -638,9 +639,13 @@ mod tests {
         memory.write(BASE, &[0, 0, 8, 0, 0, 8]).unwrap();
 
         // Scale x, y by 1/4 and shift by -1 so the 0..8 space fills clip space.
-        // A singular host matrix must not affect the PICA session: the guest
-        // vertex shader is responsible for producing the clip-space position.
-        let transform = Matrix4::from_column_major([0.0; 16]).unwrap();
+        let transform = Matrix4::from_column_major([
+            0.25, 0.0, 0.0, 0.0, //
+            0.0, 0.25, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            -1.0, -1.0, 0.0, 1.0,
+        ])
+        .unwrap();
         let pipeline =
             GeometryPipeline::new(transform, viewport(), ClipDepthRange::NegativeOneToOne);
 
@@ -723,6 +728,28 @@ mod tests {
         }
     }
 
+    fn float24_bits(value: f32) -> u32 {
+        let bits = value.to_bits();
+        let sign = (bits >> 31) & 1;
+        let exponent = (bits >> 23) & 0xFF;
+        let pica_exponent = if exponent == 0 {
+            0
+        } else if exponent == 0xFF {
+            0x7F
+        } else {
+            exponent - 64
+        };
+        (sign << 23) | (pica_exponent << 16) | ((bits >> 7) & 0xFFFF)
+    }
+
+    fn configure_guest_viewport(gpu: &mut Pica200, width: usize, height: usize) {
+        gpu.write_register(REG_VIEWPORT_WIDTH, float24_bits(width as f32 * 0.5))
+            .unwrap();
+        gpu.write_register(REG_VIEWPORT_HEIGHT, float24_bits(height as f32 * 0.5))
+            .unwrap();
+        gpu.write_register(REG_VIEWPORT_XY, 0).unwrap();
+    }
+
     fn configure_vertex_path(gpu: &mut Pica200) {
         for (register, value) in [
             (REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000),
@@ -744,6 +771,7 @@ mod tests {
         }
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
         gpu.write_register(REG_NUMVERTICES, 3).unwrap();
+        configure_guest_viewport(gpu, SIZE, SIZE);
     }
 
     fn point_target(gpu: &mut Pica200, address: u32) {
@@ -855,6 +883,7 @@ mod tests {
             (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
         )
         .unwrap();
+        configure_guest_viewport(&mut gpu, WIDTH, HEIGHT);
 
         let mut memory = memory_with_triangle();
         let mut session = PicaRenderSession::new(session_settings());
@@ -1005,10 +1034,7 @@ mod tests {
         const BOTTOM_LINEAR: u32 = FCRAM_BASE + 0x50_0000;
 
         fn settings_for(width: usize, height: usize) -> PicaRenderSettings {
-            let transform = Matrix4::from_column_major([
-                0.25, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0,
-            ])
-            .unwrap();
+            let transform = Matrix4::from_column_major([0.0; 16]).unwrap();
             PicaRenderSettings {
                 pipeline: GeometryPipeline::new(
                     transform,
@@ -1059,6 +1085,7 @@ mod tests {
         let mut memory = memory_with_triangle();
 
         configure_target(&mut gpu, TOP_TILED, TOP_SCREEN_WIDTH, TOP_SCREEN_HEIGHT);
+        configure_guest_viewport(&mut gpu, TOP_SCREEN_WIDTH, TOP_SCREEN_HEIGHT);
         gpu.execute_command_list_rendering(
             &DRAW_LIST,
             &mut memory,
@@ -1073,6 +1100,7 @@ mod tests {
             BOTTOM_SCREEN_WIDTH,
             BOTTOM_SCREEN_HEIGHT,
         );
+        configure_guest_viewport(&mut gpu, BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT);
         gpu.execute_command_list_rendering(
             &DRAW_LIST,
             &mut memory,
