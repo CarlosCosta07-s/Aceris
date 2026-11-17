@@ -8,8 +8,9 @@ use crate::gpu::{
     GSP_INVALID_ADDRESS_RESULT, GpuDmaAddressSpace, GpuPhysicalMemory, GspDisplayTransfer,
     GspDmaRequest, GspFlushCacheRegions, GspGxCommandQueue, GspGxCommandQueueError, GspInterruptId,
     GspInterruptQueuePushResult, GspInterruptRelayQueue, GspMemoryFill, GspMemoryFillBuffer,
-    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, PicaRenderReport,
-    PicaRenderSession, PicaRenderSettings, REG_ATTRIBBUFFERS_LOC, TextureCopyError,
+    GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200,
+    PicaFragmentRenderSession, PicaRenderReport, PicaRenderSession, PicaRenderSettings,
+    REG_ATTRIBBUFFERS_LOC, TextureCopyError,
     TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
     execute_display_transfer, execute_texture_copy,
 };
@@ -88,8 +89,11 @@ pub struct System {
     gpu: Pica200,
     /// When set, submitted command lists are rendered, not only parsed.
     pica_render_settings: Option<PicaRenderSettings>,
-    /// Persistent state for the enabled software PICA200 rendering path.
+    /// Persistent state for the legacy geometry-only reference renderer.
     pica_render_session: Option<PicaRenderSession>,
+    /// Persistent state for the PICA fixed-function fragment renderer.
+    pica_fragment_render_settings: Option<PicaRenderSettings>,
+    pica_fragment_render_session: Option<PicaFragmentRenderSession>,
     last_pica_render_report: Option<PicaRenderReport>,
     physical_memory: GpuPhysicalMemory,
     gpu_address_space: GpuDmaAddressSpace,
@@ -1394,6 +1398,9 @@ impl System {
         // A process replacement must not inherit the previous title's active
         // color/depth target or the last draw's diagnostics.
         self.pica_render_session = self.pica_render_settings.map(PicaRenderSession::new);
+        self.pica_fragment_render_session = self
+            .pica_fragment_render_settings
+            .map(PicaFragmentRenderSession::new);
         self.last_pica_render_report = None;
 
         let mappings = self.gpu_address_space.mappings();
@@ -1602,6 +1609,44 @@ impl System {
             );
         }
 
+        if let Some(settings) = self.pica_fragment_render_settings {
+            // Use the same command parser and draw-trigger callback as the
+            // reference renderer, but publish pixels from the PICA fragment
+            // pipeline before returning to GSP. This makes an immediately
+            // following DisplayTransfer observe the completed color target.
+            let (result, flushed) = {
+                let session = self
+                    .pica_fragment_render_session
+                    .get_or_insert_with(|| PicaFragmentRenderSession::new(settings));
+                let result = session.execute_command_list(
+                    &mut self.gpu,
+                    &words,
+                    &mut self.physical_memory,
+                    |pica, _| {
+                        pica.register(REG_ATTRIBBUFFERS_LOC)
+                            .map(|raw| (raw & 0x0FFF_FFFF) << 3)
+                    },
+                );
+                let flushed = session.flush(&mut self.physical_memory);
+                (result, flushed)
+            };
+
+            let (report, render) = result.map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("PICA200 fragment command-list rendering failed: {error}"),
+                ))
+            })?;
+            flushed.map_err(|error| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("PICA200 fragment render-target flush failed: {error}"),
+                ))
+            })?;
+            self.last_pica_render_report = Some(render);
+            return Ok(report);
+        }
+
         if let Some(settings) = self.pica_render_settings {
             // GPUREG_ATTRIBBUFFERS_LOC holds the physical base address >> 3
             // (28 bits); this is the documented hardware encoding, applied here
@@ -1658,7 +1703,28 @@ impl System {
     pub fn set_pica_rendering(&mut self, settings: Option<PicaRenderSettings>) {
         self.pica_render_settings = settings;
         self.pica_render_session = settings.map(PicaRenderSession::new);
+        self.pica_fragment_render_settings = None;
+        self.pica_fragment_render_session = None;
         self.last_pica_render_report = None;
+    }
+
+    /// Enables the PICA fixed-function fragment pipeline for guest GSP draws.
+    ///
+    /// This backend runs vertex shading, output mapping, PICA clip/raster,
+    /// texture/TEV, alpha test, depth and color operations before the command
+    /// list returns to GSP. Calling this setter disables the legacy
+    /// color-only renderer; passing None disables both software renderers.
+    pub fn set_pica_fragment_rendering(&mut self, settings: Option<PicaRenderSettings>) {
+        self.pica_fragment_render_settings = settings;
+        self.pica_fragment_render_session = settings.map(PicaFragmentRenderSession::new);
+        self.pica_render_settings = None;
+        self.pica_render_session = None;
+        self.last_pica_render_report = None;
+    }
+
+    /// Whether the PICA fixed-function fragment backend is enabled.
+    pub const fn pica_fragment_rendering_enabled(&self) -> bool {
+        self.pica_fragment_render_settings.is_some()
     }
 
     /// Totals of the most recent rendered command list, if rendering is enabled.
