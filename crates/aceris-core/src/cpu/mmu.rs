@@ -931,10 +931,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         self.inner.read8_with_cache_policy(
             physical,
             attributes.data_cache_policy(
-                    self.params.data_cache_enabled,
-                    self.params.smp_enabled,
-                    self.params.scu_enabled,
-                ),
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
@@ -945,10 +945,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             physical,
             value,
             attributes.data_cache_policy(
-                    self.params.data_cache_enabled,
-                    self.params.smp_enabled,
-                    self.params.scu_enabled,
-                ),
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
@@ -957,10 +957,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         self.inner.read8_with_cache_policy(
             physical,
             attributes.data_cache_policy(
-                    self.params.data_cache_enabled,
-                    self.params.smp_enabled,
-                    self.params.scu_enabled,
-                ),
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
@@ -970,10 +970,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
             physical,
             value,
             attributes.data_cache_policy(
-                    self.params.data_cache_enabled,
-                    self.params.smp_enabled,
-                    self.params.scu_enabled,
-                ),
+                self.params.data_cache_enabled,
+                self.params.smp_enabled,
+                self.params.scu_enabled,
+            ),
         )
     }
 
