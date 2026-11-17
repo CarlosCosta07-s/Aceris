@@ -14,8 +14,9 @@
 
 use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthMap, PicaDepthMode, PicaFragmentDraw,
-    PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex, PicaRenderTargetConfig,
-    PicaRenderTargetError, PicaRenderTargetWriteReport, SoftwareRasterizer, Viewport,
+    PicaFragmentDrawError, PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex,
+    PicaRenderTargetConfig, PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw,
+    PicaVertexOutputMap, SoftwareRasterizer, Viewport,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
@@ -327,6 +328,30 @@ impl PicaFragmentRasterizer {
         }
 
         Ok(report)
+    }
+
+    /// Resolves a completed guest vertex-shader draw and rasterizes it.
+    ///
+    /// This convenience path consumes the existing DRAWARRAYS/DRAWELEMENTS
+    /// output without changing its vertex-fetch or shader-execution modules.
+    pub fn draw_shaded(
+        &mut self,
+        shaded: &PicaShadedDraw,
+        output_map: &PicaVertexOutputMap,
+        default_primary_color: [f32; 4],
+        default_texture_coordinates: [[f32; 2]; 3],
+        pipeline: &PicaFragmentPipeline,
+        memory: &GpuPhysicalMemory,
+        state: PicaFragmentRasterState,
+    ) -> Result<PicaFragmentRasterReport, PicaFragmentRasterError> {
+        let draw = PicaFragmentDraw::from_shaded_draw(
+            shaded,
+            output_map,
+            default_primary_color,
+            default_texture_coordinates,
+        )
+        .map_err(PicaFragmentRasterError::Draw)?;
+        self.draw(&draw, pipeline, memory, state)
     }
 
     /// Encodes and writes the final color buffer through the existing PICA
@@ -701,6 +726,7 @@ pub enum PicaFragmentRasterError {
     ClippedPolygonOverflow,
     InvalidPerspectiveDivide,
     InvalidScreenTriangle,
+    Draw(PicaFragmentDrawError),
     Fragment(PicaFragmentSampleError),
     FragmentOutput(super::PicaFragmentPipelineError),
     Rasterizer(super::RasterizerError),
@@ -746,6 +772,7 @@ impl std::fmt::Display for PicaFragmentRasterError {
             Self::InvalidScreenTriangle => {
                 formatter.write_str("PICA fragment screen-space triangle is invalid")
             }
+            Self::Draw(error) => write!(formatter, "PICA shaded draw adaptation failed: {error}"),
             Self::Fragment(error) => write!(formatter, "PICA fragment shading failed: {error}"),
             Self::FragmentOutput(error) => {
                 write!(formatter, "PICA fragment output failed: {error}")
