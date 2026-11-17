@@ -186,7 +186,7 @@ impl PicaDepthBufferConfig {
         if !self.depth_write_enabled {
             return Ok(0);
         }
-        let expected = self.width as usize
+        let expected = (self.width as usize)
             .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
         if values.len() != expected {
@@ -229,7 +229,7 @@ impl PicaDepthBufferConfig {
             return Ok(None);
         }
         let raw = self.read_raw(memory)?;
-        let pixel_count = self.width as usize
+        let pixel_count = (self.width as usize)
             .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
         let mut values = vec![0; pixel_count];
@@ -256,7 +256,7 @@ impl PicaDepthBufferConfig {
         if !self.stencil_write_enabled {
             return Ok(0);
         }
-        let expected = self.width as usize
+        let expected = (self.width as usize)
             .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
         if values.len() != expected {
