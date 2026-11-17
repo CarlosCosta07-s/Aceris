@@ -696,12 +696,7 @@ mod tests {
     fn evaluates_interpolate_signed_add_dot3_and_scales() {
         let inputs = PicaFragmentInputs {
             primary_color: [0.75, 0.25, 0.5, 0.75],
-            textures: [
-                [0.25, 0.75, 0.5, 0.25],
-                [0.0; 4],
-                [0.0; 4],
-                [0.0; 4],
-            ],
+            textures: [[0.25, 0.75, 0.5, 0.25], [0.0; 4], [0.0; 4], [0.0; 4]],
             ..PicaFragmentInputs::default()
         };
 
@@ -731,12 +726,7 @@ mod tests {
 
         let dot_inputs = PicaFragmentInputs {
             primary_color: [0.75, 0.75, 0.75, 1.0],
-            textures: [
-                [0.75, 0.75, 0.75, 1.0],
-                [0.0; 4],
-                [0.0; 4],
-                [0.0; 4],
-            ],
+            textures: [[0.75, 0.75, 0.75, 1.0], [0.0; 4], [0.0; 4], [0.0; 4]],
             ..PicaFragmentInputs::default()
         };
         let dot = PicaTevStage {
