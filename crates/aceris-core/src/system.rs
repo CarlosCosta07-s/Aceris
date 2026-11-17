@@ -2985,6 +2985,10 @@ mod tests {
                     0xEF00_0032, // srv:RegisterClient
                     0xEF00_0032, // srv:GetServiceHandle
                     0xEF00_0032, // GSP RegisterInterruptRelayQueue
+                    // Guest-authored TryAcquireRight IPC header and two parameters.
+                    0xE584_5000, // STR r5, [r4] (IPC header)
+                    0xE584_6004, // STR r6, [r4, #4] (normal parameter 0)
+                    0xE584_7008, // STR r7, [r4, #8] (normal parameter 1)
                     0xEF00_0032, // GSP TryAcquireRight
                     // The guest writes the two-entry GX ring header and entries.
                     0xE584_5000, // STR r5, [r4] (queue command count = 2)
@@ -2994,8 +2998,13 @@ mod tests {
                     0xE584_9028, // STR r9, [r4, #40] (entry 1: ProcessCommandList)
                     0xE584_A02C, // STR r10, [r4, #44] (entry 1: command-list address)
                     0xE584_B030, // STR r11, [r4, #48] (entry 1: command-list size)
+                    0xE584_5000, // STR r5, [r4] (first VRAM command word)
+                    0xE584_6004, // STR r6, [r4, #4] (first command header)
+                    0xE584_7000, // STR r7, [r4] (second VRAM command word)
+                    0xE584_8004, // STR r8, [r4, #4] (second command header)
                     0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
                     0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
+                    0xE584_5000, // STR r5, [r4] (guest-authored TriggerCmdReqQueue IPC header)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
                     0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill, both buffers)
@@ -3111,8 +3120,24 @@ mod tests {
             .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
             .unwrap();
 
-        // Acquire rendering rights through the guest GSP IPC request.
-        let acquire_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x0015_0002, 0, 0]);
+        // The guest writes the complete TryAcquireRight IPC message to its TLS:
+        // command header followed by both normal parameters.
+        let acquire_buffer = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let buffer = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET;
+            assert!(session.set_current_register(0, gsp_handle));
+            assert!(session.set_current_register(4, buffer));
+            assert!(session.set_current_register(5, 0x0015_0002));
+            assert!(session.set_current_register(6, 0));
+            assert!(session.set_current_register(7, 0));
+            for _ in 0..3 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            assert_eq!(session.read_memory_u32(buffer).unwrap(), 0x0015_0002);
+            assert_eq!(session.read_memory_u32(buffer + 4).unwrap(), 0);
+            assert_eq!(session.read_memory_u32(buffer + 8).unwrap(), 0);
+            buffer
+        };
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, acquire_buffer, 2),
@@ -3124,23 +3149,6 @@ mod tests {
         // must remain pending until a second TriggerCmdReqQueue IPC arrives.
         let first_command_address = VRAM_BASE + 0x1000;
         let second_command_address = VRAM_BASE + 0x1010;
-        system
-            .physical_memory_mut()
-            .write_u32(first_command_address, 0xDEAD_BEEF)
-            .unwrap();
-        system
-            .physical_memory_mut()
-            .write_u32(first_command_address + 4, 0x000F_0100)
-            .unwrap();
-        system
-            .physical_memory_mut()
-            .write_u32(second_command_address, 0xCAFE_BABE)
-            .unwrap();
-        system
-            .physical_memory_mut()
-            .write_u32(second_command_address + 4, 0x000F_0101)
-            .unwrap();
-
         let queue_address =
             GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
         // The ARM11, not the test host, authors the queue header and both
@@ -3157,7 +3165,17 @@ mod tests {
             assert!(session.set_current_register(10, second_command_address));
             assert!(session.set_current_register(11, 8));
 
-            for _ in 0..9 {
+            for _ in 0..7 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+
+            // The guest writes both command lists into VRAM using ARM11 STRs.
+            assert!(session.set_current_register(4, first_command_address));
+            assert!(session.set_current_register(5, 0xDEAD_BEEF));
+            assert!(session.set_current_register(6, 0x000F_0100));
+            assert!(session.set_current_register(7, 0xCAFE_BABE));
+            assert!(session.set_current_register(8, 0x000F_0101));
+            for _ in 0..4 {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             }
 
@@ -3177,8 +3195,18 @@ mod tests {
             }
         }
 
-        // First trigger submits register 0x100 and leaves one command halted.
-        let trigger_buffer = write_tls_ipc_request(&mut system, gsp_handle, &[0x000C_0000]);
+        // The guest writes the TriggerCmdReqQueue IPC header into TLS and
+        // executes the SVC with the GSP handle in r0.
+        let trigger_buffer = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let buffer = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET;
+            assert!(session.set_current_register(0, gsp_handle));
+            assert!(session.set_current_register(4, buffer));
+            assert!(session.set_current_register(5, 0x000C_0000));
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            assert_eq!(session.read_memory_u32(buffer).unwrap(), 0x000C_0000);
+            buffer
+        };
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, trigger_buffer, 2),
@@ -5997,8 +6025,7 @@ mod tests {
         let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
         keys.set_normal_key(0, normal_key).unwrap();
 
-        let mut system = System::new();
-        let result =
+        let mut system = System::new();        let result =
             system.load_cia_with_keys(std::io::Cursor::new(cia), &keys, menu_info_key, content_key);
 
         assert_eq!(result.unwrap(), ImageFormat::Cia);
