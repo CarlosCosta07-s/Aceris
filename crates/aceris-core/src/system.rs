@@ -4874,6 +4874,236 @@ mod tests {
     }
 
     #[test]
+    fn arm11_cpu_gsp_render_transfer_and_lcd_scanout_share_published_fcram() {
+        use crate::gpu::{
+            ClipDepthRange, DepthFunction, GSP_GX_COMMAND_DISPLAY_TRANSFER,
+            GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
+            GSP_GX_COMMAND_QUEUE_SIZE, GeometryPipeline, Matrix4, PicaRenderSettings,
+            REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
+            REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
+            REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
+            REG_SH_OUTMAP_O0, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
+            REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_CODETRANSFER_DATA0,
+            REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
+            REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
+        };
+        use crate::video::{
+            LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
+            PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_B_SECOND, PDC_FRAMEBUFFER_FORMAT,
+            PDC_FRAMEBUFFER_STRIDE, TOP_SCREEN_WIDTH,
+        };
+
+        const WIDTH: usize = 400;
+        const HEIGHT: usize = 240;
+        const FRAME_BYTES: u32 = (WIDTH * HEIGHT * 4) as u32;
+        const FRAME_ALLOCATION: u32 = (FRAME_BYTES + 0xFFF) & !0xFFF;
+
+        // The ARM11 writes both the vertex data and the PICA command list.
+        // DMB/DSB drain the write buffer, but do not clean dirty D-cache lines.
+        let guest_program = [
+            0xE584_5000, // STR r5, [r4]
+            0xE584_6004, // STR r6, [r4, #4]
+            0xE580_1000, // STR r1, [r0]
+            0xE580_2004, // STR r2, [r0, #4]
+            0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
+            0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
+        ];
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&guest_program)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (command_list_address, command_list_physical) =
+            map_test_linear_fcram(&mut system, 0x1000);
+        let (vertex_address, vertex_physical) = map_test_linear_fcram(&mut system, 0x1000);
+        let (tiled_target_address, tiled_target_physical) =
+            map_test_linear_fcram(&mut system, FRAME_ALLOCATION);
+        let (linear_framebuffer_address, linear_framebuffer_physical) =
+            map_test_linear_fcram(&mut system, FRAME_ALLOCATION);
+
+        {
+            let session = system.ncsd_session_mut().unwrap();
+            assert!(session.set_current_register(0, command_list_address));
+            assert!(session.set_current_register(1, 1));
+            assert!(session.set_current_register(2, 0x000F_022E));
+            assert!(session.set_current_register(4, vertex_address));
+            assert!(session.set_current_register(5, 0x0008_0000));
+            assert!(session.set_current_register(6, 0x0000_0800));
+
+            for _ in guest_program {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            assert_eq!(session.pending_write_buffer_entries(), 0);
+            assert!(session.address_space().data_cache_line_count() >= 2);
+        }
+
+        // Barriers alone must not publish dirty write-back lines to FCRAM.
+        let mut unpublished_vertices = [0xFF; 8];
+        system
+            .physical_memory()
+            .read(vertex_physical, &mut unpublished_vertices)
+            .unwrap();
+        assert_eq!(unpublished_vertices, [0; 8]);
+        let mut unpublished_command_list = [0xFF; 8];
+        system
+            .physical_memory()
+            .read(command_list_physical, &mut unpublished_command_list)
+            .unwrap();
+        assert_eq!(unpublished_command_list, [0; 8]);
+
+        // Configure the already-modelled PICA state. Vertex and command-list
+        // contents themselves must arrive exclusively through the guest CPU.
+        let gpu = system.gpu_mut();
+        for (register, value) in [
+            (REG_ATTRIBBUFFERS_LOC, vertex_physical >> 3),
+            (REG_ATTRIBBUFFERS_FORMAT_LOW, 0x1),
+            (REG_ATTRIBBUFFERS_FORMAT_HIGH, 0),
+            (REG_ATTRIBBUFFER0_OFFSET, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 1, 0),
+            (REG_ATTRIBBUFFER0_OFFSET + 2, (2 << 16) | (2 << 28)),
+            (REG_VSH_INPUTBUFFER_CONFIG, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
+            (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
+            (REG_VSH_OPDESCS_INDEX, 0),
+            (
+                REG_VSH_OPDESCS_DATA0,
+                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
+            ),
+            (REG_VSH_CODETRANSFER_INDEX, 0),
+            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
+            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+            (REG_VSH_ENTRYPOINT, 0),
+            (REG_NUMVERTICES, 3),
+            (REG_COLORBUFFER_LOC, tiled_target_physical >> 3),
+            (REG_COLORBUFFER_FORMAT, 2),
+            (REG_FRAMEBUFFER_BLOCK32, 0),
+            (
+                REG_FRAMEBUFFER_DIM,
+                (((HEIGHT as u32) - 1) << 12) | WIDTH as u32,
+            ),
+        ] {
+            gpu.write_register(register, value).unwrap();
+        }
+        for index in 0..7u16 {
+            gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
+                .unwrap();
+        }
+        gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+
+        system.set_pica_rendering(Some(PicaRenderSettings {
+            pipeline: GeometryPipeline::new(
+                Matrix4::from_column_major([
+                    0.25, 0.0, 0.0, 0.0, //
+                    0.0, 0.25, 0.0, 0.0, //
+                    0.0, 0.0, 1.0, 0.0, //
+                    -1.0, -1.0, 0.0, 1.0,
+                ])
+                .unwrap(),
+                Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
+                ClipDepthRange::NegativeOneToOne,
+            ),
+            default_color: [200, 100, 50, 255],
+            depth_function: DepthFunction::Less,
+        }));
+
+        // Flush the vertex range, submit the CPU-authored command list with
+        // ProcessCommandList's own flush flag, then transfer the PICA target
+        // into the linear FCRAM framebuffer for LCD scanout.
+        let mut queue_bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        queue_bytes[1] = 3;
+
+        let flush_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        queue_bytes[flush_entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
+        queue_bytes[flush_entry + 4..flush_entry + 8]
+            .copy_from_slice(&vertex_address.to_le_bytes());
+        queue_bytes[flush_entry + 8..flush_entry + 12].copy_from_slice(&8u32.to_le_bytes());
+
+        let command_entry = flush_entry + GSP_GX_COMMAND_ENTRY_SIZE;
+        queue_bytes[command_entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
+        queue_bytes[command_entry + 4..command_entry + 8]
+            .copy_from_slice(&command_list_address.to_le_bytes());
+        queue_bytes[command_entry + 8..command_entry + 12].copy_from_slice(&8u32.to_le_bytes());
+        queue_bytes[command_entry + 28..command_entry + 32].copy_from_slice(&1u32.to_le_bytes());
+
+        let transfer_entry = command_entry + GSP_GX_COMMAND_ENTRY_SIZE;
+        queue_bytes[transfer_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        queue_bytes[transfer_entry + 4..transfer_entry + 8]
+            .copy_from_slice(&tiled_target_address.to_le_bytes());
+        queue_bytes[transfer_entry + 8..transfer_entry + 12]
+            .copy_from_slice(&linear_framebuffer_address.to_le_bytes());
+        let dimensions = ((HEIGHT as u32) << 16) | WIDTH as u32;
+        queue_bytes[transfer_entry + 12..transfer_entry + 16]
+            .copy_from_slice(&dimensions.to_le_bytes());
+        queue_bytes[transfer_entry + 16..transfer_entry + 20]
+            .copy_from_slice(&dimensions.to_le_bytes());
+
+        let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
+        let report = system.dispatch_gsp_gx_command_queue_with_right(&mut queue, true);
+        assert!(report.error.is_none(), "{:?}", report.error);
+        assert_eq!(report.commands_consumed, 3);
+        assert_eq!(report.cache_regions_validated, 1);
+        assert_eq!(report.command_lists_submitted, 1);
+        assert_eq!(report.display_transfers_completed, 1);
+        assert!(report.cache_flush_requested);
+
+        let mut published_vertices = [0u8; 8];
+        system
+            .physical_memory()
+            .read(vertex_physical, &mut published_vertices)
+            .unwrap();
+        assert_eq!(published_vertices, [0, 0, 8, 0, 0, 8, 0, 0]);
+        let mut published_command_list = [0u8; 8];
+        system
+            .physical_memory()
+            .read(command_list_physical, &mut published_command_list)
+            .unwrap();
+        assert_eq!(
+            published_command_list,
+            [1, 0, 0, 0, 0x2E, 0x02, 0x0F, 0]
+        );
+
+        let render = system.last_pica_render_report().unwrap();
+        assert_eq!(render.triangles_submitted, 1);
+        assert!(render.pixels_written > 0);
+
+        let lcd = system.lcd_controller_mut();
+        for (register, value) in [
+            (PDC_FRAMEBUFFER_A_FIRST, linear_framebuffer_physical),
+            (PDC_FRAMEBUFFER_A_SECOND, linear_framebuffer_physical),
+            (PDC_FRAMEBUFFER_B_FIRST, linear_framebuffer_physical),
+            (PDC_FRAMEBUFFER_B_SECOND, linear_framebuffer_physical),
+            (PDC_FRAMEBUFFER_FORMAT, 0),
+            (PDC_FRAMEBUFFER_STRIDE, (TOP_SCREEN_WIDTH * 4) as u32),
+            (PDC_CONTROL, 0x1_0001),
+        ] {
+            lcd.write_register(LcdPanel::Top, register, value).unwrap();
+        }
+
+        let frame = system.run_frame_with_budget(0).unwrap();
+        assert_eq!(frame.lcd_screens_scanned_out, 2);
+        let sample = (180 * WIDTH + 40) * 4;
+        assert_eq!(
+            &system.display().top_left().pixels()[sample..sample + 4],
+            &[200, 100, 50, 255]
+        );
+        assert_eq!(
+            &system.display().top_right().pixels()[sample..sample + 4],
+            &[200, 100, 50, 255]
+        );
+        let mut linear_pixel = [0u8; 4];
+        system
+            .physical_memory()
+            .read(linear_framebuffer_physical + sample as u32, &mut linear_pixel)
+            .unwrap();
+        assert_eq!(linear_pixel, [200, 100, 50, 255]);
+    }
+
+    #[test]
     fn gsp_process_command_list_renders_a_draw_into_the_tiled_target_when_enabled() {
         let mut system = System::new();
         let fixture = render_fixture(&mut system);
