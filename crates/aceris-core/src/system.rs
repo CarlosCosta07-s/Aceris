@@ -3794,7 +3794,7 @@ mod tests {
             .physical_memory()
             .read(framebuffer_physical, &mut dma_destination)
             .unwrap();
-        assert_eq!(dma_destination, source_pixel);
+        assert_eq!(dma_destination, source_pixels);
 
         // Configure both top LCD eyes to scan the same linear framebuffer.
         for (register, value) in [
