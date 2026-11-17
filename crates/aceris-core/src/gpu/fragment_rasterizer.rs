@@ -167,6 +167,7 @@ pub struct PicaFragmentRasterReport {
     pub alpha_rejected_pixels: u64,
     pub depth_rejected_pixels: u64,
     pub shaded_pixels: u64,
+    pub executed_instructions: u64,
 }
 
 /// Independent RGBA8/depth software buffers for PICA fragment shading.
@@ -367,7 +368,9 @@ impl PicaFragmentRasterizer {
             defaults.texture_coordinates,
         )
         .map_err(PicaFragmentRasterError::Draw)?;
-        self.draw(&draw, pipeline, memory, state)
+        let mut report = self.draw(&draw, pipeline, memory, state)?;
+        report.executed_instructions = shaded.executed_instructions;
+        Ok(report)
     }
 
     /// Encodes and writes the final color buffer through the existing PICA
