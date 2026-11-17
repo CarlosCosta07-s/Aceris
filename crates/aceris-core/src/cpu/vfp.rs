@@ -862,12 +862,7 @@ impl Arm11Core {
         } else if top == 0b1110 && bit(word, 4) {
             self.vfp_register_transfer(word, prec)
         } else if top == 0b1110 {
-            self.vfp_data_processing(
-                word,
-                prec,
-                before.fpscr,
-                &mut vector_exceptions_processed,
-            )
+            self.vfp_data_processing(word, prec, before.fpscr, &mut vector_exceptions_processed)
         } else {
             self.vfp_load_store(bus, word, prec)
         };
@@ -1185,13 +1180,7 @@ impl Arm11Core {
         let m = self.vfp_reg(word, prec, bits(word, 3, 0), bit(word, 5));
 
         if p && q && r {
-            return self.vfp_extension(
-                word,
-                prec,
-                s,
-                previous_fpscr,
-                vector_exceptions_processed,
-            );
+            return self.vfp_extension(word, prec, s, previous_fpscr, vector_exceptions_processed);
         }
         let (d, n, m) = (d?, n?, m?);
         let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(n, false), (m, true)])?;
@@ -1253,20 +1242,14 @@ impl Arm11Core {
                 let raised = self.vfp.exception_status();
                 let trapped = self.vfp.trapped_exception_status(raised);
                 if trapped != 0 {
-                    self.vfp.merge_exception_status(
-                        previous_fpscr,
-                        accumulated_exceptions | raised,
-                    );
+                    self.vfp
+                        .merge_exception_status(previous_fpscr, accumulated_exceptions | raised);
                     for (completed_destination, completed_result) in results {
-                        self.vfp.write(prec, completed_destination, completed_result);
+                        self.vfp
+                            .write(prec, completed_destination, completed_result);
                     }
-                    let fpinst = encode_vector_fpinst(
-                        word,
-                        prec,
-                        destination,
-                        Some(source_n),
-                        source_m,
-                    );
+                    let fpinst =
+                        encode_vector_fpinst(word, prec, destination, Some(source_n), source_m);
                     self.vfp.record_vector_exception_bounce(
                         fpinst,
                         trapped,
@@ -1348,7 +1331,8 @@ impl Arm11Core {
                                 accumulated_exceptions | raised,
                             );
                             for (completed_destination, completed_result) in results {
-                                self.vfp.write(prec, completed_destination, completed_result);
+                                self.vfp
+                                    .write(prec, completed_destination, completed_result);
                             }
                             let fpinst =
                                 encode_vector_fpinst(word, prec, destination, None, source);
