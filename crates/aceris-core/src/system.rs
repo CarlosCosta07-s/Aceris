@@ -2965,7 +2965,8 @@ mod tests {
             assert!(session.set_current_register(0, 0x10));
             assert!(session.set_current_register(1, 0x0010_0020));
             assert!(session.set_current_register(2, event_handle));
-            assert!(session.set_current_register(3, 0x0020_2000));
+            let stack_top = session.address_space().layout().initial_stack_pointer;
+            assert!(session.set_current_register(3, stack_top));
             assert!(session.set_current_register(4, 0));
         }
         let create_report = system.run_instructions(1).unwrap();
