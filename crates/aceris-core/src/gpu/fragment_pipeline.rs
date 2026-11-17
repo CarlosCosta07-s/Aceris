@@ -8,8 +8,8 @@
 use super::{
     GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
     PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw,
-    PicaTevError, PicaTextureEnvironment, PicaTextureError, PicaTextureUnit,
-    PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
+    PicaShadedVertex, PicaTevError, PicaTextureEnvironment, PicaTextureError,
+    PicaTextureUnit, PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
 };
 
 /// Perspective-correct attributes at one fragment sample.
