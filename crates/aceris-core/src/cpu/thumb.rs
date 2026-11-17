@@ -2532,11 +2532,11 @@ mod tests {
 
             // Keep every legal single- and multiple-transfer addressing form
             // inside the fixture while leaving PC-relative branches executable.
-            for register in 0..8 {
-                cpu.regs[register] = 0x400 + register as u32 * 4;
+            for (register, value) in cpu.regs.iter_mut().enumerate().take(8) {
+                *value = 0x400 + register as u32 * 4;
             }
-            for register in 8..13 {
-                cpu.regs[register] = 0x600 + (register as u32 - 8) * 4;
+            for (register, value) in cpu.regs.iter_mut().enumerate().take(13).skip(8) {
+                *value = 0x600 + (register as u32 - 8) * 4;
             }
             cpu.regs[SP] = 0xC00;
             cpu.regs[LR] = 0x700;
