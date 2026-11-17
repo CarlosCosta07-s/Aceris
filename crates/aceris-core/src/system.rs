@@ -3222,7 +3222,7 @@ mod tests {
                     0xE584_9010, // STR r9, [r4, #16] (flags)
                     0xE1A0_000C, // MOV r0, r12 (srv: session handle)
                     0xEF00_0032, // srv:GetServiceHandle
-                    0xE514_8010, // LDR r8, [r4, #-4] (guest-created event handle)
+                    0xE514_8004, // LDR r8, [r4, #-4] (guest-created event handle)
                     // Guest-authored RegisterInterruptRelayQueue message.
                     0xE584_5000, // STR r5, [r4] (IPC header)
                     0xE584_6004, // STR r6, [r4, #4] (flags)
