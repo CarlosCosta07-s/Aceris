@@ -84,6 +84,9 @@ pub const SVC_CLOSE_HANDLE: u32 = 0x23;
 /// Duplicate a process-local kernel object handle.
 pub const SVC_DUPLICATE_HANDLE: u32 = 0x27;
 
+/// Return the 64-bit virtualized ARM11 system tick count.
+pub const SVC_GET_SYSTEM_TICK: u32 = 0x28;
+
 /// Query information about a process-local kernel object handle.
 pub const SVC_GET_HANDLE_INFO: u32 = 0x29;
 
@@ -203,6 +206,7 @@ mod tests {
             SVC_CLEAR_EVENT,
             SVC_CLOSE_HANDLE,
             SVC_DUPLICATE_HANDLE,
+            SVC_GET_SYSTEM_TICK,
             SVC_GET_HANDLE_INFO,
             SVC_GET_PROCESS_INFO,
             SVC_GET_THREAD_INFO,
