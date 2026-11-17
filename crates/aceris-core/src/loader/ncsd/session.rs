@@ -5380,6 +5380,45 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_handle_svc_uses_raw_register_abi_and_shares_object() {
+        let mut session = test_session();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            // r0 is not an output pointer at the raw SVC boundary.
+            main.regs[0] = 0xDEAD_BEEF;
+            main.regs[1] = event;
+        }
+
+        assert!(matches!(
+            session.dispatch_svc(SVC_DUPLICATE_HANDLE),
+            SvcRunDisposition::Resume
+        ));
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        let duplicate = registers[1];
+        assert_ne!(duplicate, event);
+        assert_eq!(session.kernel_objects.handle_count(), 2);
+        assert_eq!(session.kernel_objects.retained_object_count(), 1);
+
+        assert_eq!(session.kernel_objects.signal_event(duplicate), Ok(Vec::new()));
+        assert_eq!(session.kernel_objects.event_is_signaled(event), Some(true));
+
+        session.close_handle(event).unwrap();
+        assert!(!session.kernel_objects.is_open_handle(event));
+        assert!(session.kernel_objects.is_open_handle(duplicate));
+        assert_eq!(session.kernel_objects.event_is_signaled(duplicate), Some(true));
+
+        session.close_handle(duplicate).unwrap();
+        assert_eq!(session.kernel_objects.handle_count(), 0);
+        assert_eq!(session.kernel_objects.retained_object_count(), 0);
+    }
+
+    #[test]
     fn closing_one_of_multiple_thread_handles_does_not_terminate_target() {
         let mut session = test_session_with_program(&[0xEF00_0009]);
         let target = session
