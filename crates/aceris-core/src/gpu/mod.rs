@@ -48,7 +48,8 @@ pub use fragment::{
     REG_TEXENV0_SOURCE, TEXENV_STAGE_REGISTER_STRIDE, TEXENV_STAGE_SOURCE_REGISTERS,
 };
 pub use fragment_output::{
-    PicaBlendChannel, PicaBlendEquation, PicaBlendFactor, PicaColorOperationMode,
+    PicaAlphaTestFunction, PicaBlendChannel, PicaBlendEquation, PicaBlendFactor,
+    PicaColorOperationMode,
     PicaFragmentOperation, PicaFragmentOutputError, PicaFragmentOutputState, PicaLogicOperation,
     REG_BLEND_COLOR, REG_BLEND_FUNC, REG_LOGIC_OP,
 };
