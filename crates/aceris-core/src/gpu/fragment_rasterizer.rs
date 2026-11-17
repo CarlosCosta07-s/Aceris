@@ -1162,13 +1162,9 @@ mod tests {
         pica.write_register(REG_STENCIL_OP, 2).unwrap(); // stencil fail: replace
         let mut pipeline = pica.fragment_pipeline().unwrap();
 
-        let target = PicaRenderTargetConfig::from_registers(
-            VRAM_BASE >> 3,
-            2,
-            0,
-            8 | (7 << 12) | (1 << 24),
-        )
-        .unwrap();
+        let target =
+            PicaRenderTargetConfig::from_registers(VRAM_BASE >> 3, 2, 0, 8 | (7 << 12) | (1 << 24))
+                .unwrap();
         let depth_config = PicaDepthBufferConfig {
             address: VRAM_BASE + 0x1000,
             width: 8,
@@ -1219,11 +1215,10 @@ mod tests {
         assert_eq!(rasterizer.stencil_buffer()[pixel_index], 9);
         assert_eq!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
 
-        rasterizer.write_depth_buffer(depth_config, &mut memory).unwrap();
-        let stored = depth_config
-            .read_stencil_values(&memory)
-            .unwrap()
+        rasterizer
+            .write_depth_buffer(depth_config, &mut memory)
             .unwrap();
+        let stored = depth_config.read_stencil_values(&memory).unwrap().unwrap();
         assert_eq!(stored[pixel_index], 9);
 
         // Now require stencil == 9 and increment on successful depth/stencil.
