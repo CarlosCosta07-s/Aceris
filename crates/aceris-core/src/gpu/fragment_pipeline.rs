@@ -162,7 +162,7 @@ impl std::error::Error for PicaFragmentPipelineError {}
 mod tests {
     use super::*;
     use crate::gpu::physical_memory::VRAM_BASE;
-    use crate::gpu::{PicaTevSource, REG_TEXENV0_SOURCE, TEXENV_STAGE_REGISTER_STRIDE};
+    use crate::gpu::{PicaTevSource, TEXENV_STAGE_SOURCE_REGISTERS};
 
     fn configure_texture(
         pica: &mut Pica200,
@@ -190,7 +190,7 @@ mod tests {
 
     fn configure_tev(pica: &mut Pica200, first_source: PicaTevSource) {
         for stage in 0..6u16 {
-            let base = REG_TEXENV0_SOURCE + stage * TEXENV_STAGE_REGISTER_STRIDE;
+            let base = TEXENV_STAGE_SOURCE_REGISTERS[stage as usize];
             let source = if stage == 0 {
                 let value = match first_source {
                     PicaTevSource::PrimaryColor => 0,
