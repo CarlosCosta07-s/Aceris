@@ -168,6 +168,7 @@ impl PicaFragmentRenderSession {
             depth_function,
             color_write_mask,
             depth_write_enabled,
+            depth_format: depth_config.map(|depth| depth.format),
             depth_map: Some(depth_map),
             minifying: [false; 3],
         };
