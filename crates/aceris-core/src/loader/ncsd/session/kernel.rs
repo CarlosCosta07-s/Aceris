@@ -1563,6 +1563,87 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_handles_preserve_identity_for_all_current_object_types() {
+        let owner = thread_id(1);
+        let mut table = Arm11KernelObjectTable::default();
+
+        let mutex = table.insert_mutex(true, owner).unwrap();
+        let mutex_alias = table.duplicate_handle(mutex).unwrap();
+        assert_eq!(table.mutex_owner(mutex_alias), Some(owner));
+        assert_eq!(table.release_mutex(mutex_alias, owner), Ok(None));
+        assert_eq!(table.mutex_owner(mutex), None);
+        assert_eq!(
+            table.try_wait_synchronization(mutex, owner),
+            Ok(true)
+        );
+        assert_eq!(table.mutex_owner(mutex_alias), Some(owner));
+        table.release_mutex(mutex_alias, owner).unwrap();
+        table.close_handle(mutex).unwrap();
+        table.close_handle(mutex_alias).unwrap();
+
+        let semaphore = table.insert_semaphore(1, 2).unwrap();
+        let semaphore_alias = table.duplicate_handle(semaphore).unwrap();
+        assert_eq!(
+            table.try_wait_synchronization(semaphore_alias, owner),
+            Ok(true)
+        );
+        assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
+        assert_eq!(table.release_semaphore(semaphore, 1), Ok(Vec::new()));
+        assert_eq!(table.semaphore_counts(semaphore_alias), Some((1, 2)));
+        table.close_handle(semaphore).unwrap();
+        table.close_handle(semaphore_alias).unwrap();
+
+        let timer = table.insert_timer(EventResetType::OneShot).unwrap();
+        let timer_alias = table.duplicate_handle(timer).unwrap();
+        table.set_timer(timer_alias, 0, 10, 0).unwrap();
+        assert!(table.advance_time(10).is_empty());
+        assert_eq!(table.timer_is_signaled(timer), Some(true));
+        assert_eq!(table.try_wait_synchronization(timer, owner), Ok(true));
+        assert_eq!(table.timer_is_signaled(timer_alias), Some(false));
+        table.close_handle(timer).unwrap();
+        table.close_handle(timer_alias).unwrap();
+
+        let memory = table.create_memory_block(0x1000, 3, 1).unwrap();
+        let memory_alias = table.duplicate_handle(memory).unwrap();
+        let primary_backing = table.memory_block_backing(memory).unwrap();
+        let alias_backing = table.memory_block_backing(memory_alias).unwrap();
+        assert!(primary_backing.shares_backing_with(&alias_backing));
+        assert_eq!(table.memory_block_permissions(memory_alias), Some((3, 1)));
+        table.close_handle(memory).unwrap();
+        assert!(table.memory_block_backing(memory_alias).is_ok());
+        table.close_handle(memory_alias).unwrap();
+
+        let service = table.insert_service_manager_session().unwrap();
+        let service_alias = table.duplicate_handle(service).unwrap();
+        table.register_service_manager_client(service_alias).unwrap();
+        assert_eq!(table.service_manager_client_registered(service), Some(true));
+        table.close_handle(service).unwrap();
+        assert_eq!(table.service_manager_client_registered(service_alias), Some(true));
+        table.close_handle(service_alias).unwrap();
+
+        let gsp = table.insert_gsp_gpu_session().unwrap();
+        let gsp_alias = table.duplicate_handle(gsp).unwrap();
+        table
+            .set_gsp_session_registration(gsp_alias, Some(7), Some(0x200), Some(0x300), 5)
+            .unwrap();
+        assert_eq!(
+            table.service_session(gsp),
+            Some(ServiceSessionKind::GspGpu {
+                client_id: Some(7),
+                shared_memory_handle: Some(0x200),
+                event_handle: Some(0x300),
+                flags: 5,
+            })
+        );
+        table.close_handle(gsp).unwrap();
+        assert!(table.service_session(gsp_alias).is_some());
+        table.close_handle(gsp_alias).unwrap();
+
+        assert_eq!(table.handle_count(), 0);
+        assert_eq!(table.retained_object_count(), 0);
+    }
+
+    #[test]
     fn duplicate_handles_share_event_identity_and_last_close_reclaims_object() {
         let mut table = Arm11KernelObjectTable::default();
         let original = table.insert_event(EventResetType::Sticky).unwrap();
