@@ -43,7 +43,7 @@ use svc::{
     SVC_CREATE_TIMER, SVC_EXIT_THREAD, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK,
     SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST,
     SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
-    SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION1,
+    SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -79,6 +79,9 @@ pub const RESULT_OUT_OF_THREAD_RESOURCES: u32 = 0xC860_1801;
 
 /// Nintendo 3DS result: a synchronization wait timed out.
 pub const RESULT_TIMEOUT: u32 = 0x0940_1BFE;
+
+/// Kernel OutOfRange result, returned for an invalid handle count.
+pub const RESULT_OUT_OF_RANGE: u32 = 0xE0E0_1BFD;
 
 /// Reason an instruction-budgeted run stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +226,8 @@ pub struct Arm11ProcessSession {
     kernel_objects: Arm11KernelObjectTable,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
     wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
+    /// Handle lists of threads blocked in WaitSynchronizationN.
+    multi_waits: BTreeMap<ThreadId, Vec<u32>>,
     gpu_memory: Option<GpuPhysicalMemory>,
     gpu_address_space: Option<GpuDmaAddressSpace>,
     instruction_count: u64,
@@ -247,6 +252,7 @@ impl Arm11ProcessSession {
             svc_dispatcher: Arm11SvcDispatcher::default(),
             kernel_objects: Arm11KernelObjectTable::default(),
             wait_deadlines: BTreeMap::new(),
+            multi_waits: BTreeMap::new(),
             gpu_memory: None,
             gpu_address_space: None,
             instruction_count: 0,
@@ -1734,6 +1740,8 @@ impl Arm11ProcessSession {
 
         for thread in expired {
             if self.wait_deadlines.remove(&thread).is_some() {
+                self.multi_waits.remove(&thread);
+                self.kernel_objects.take_handoff(thread);
                 self.kernel_objects.remove_waiter(thread);
                 if let Some(core) = self.scheduler.core_mut(thread) {
                     core.regs[0] = RESULT_TIMEOUT;
@@ -1895,6 +1903,7 @@ impl Arm11ProcessSession {
             SVC_CREATE_SEMAPHORE => self.svc_create_semaphore(caller),
             SVC_RELEASE_SEMAPHORE => self.svc_release_semaphore(caller),
             SVC_WAIT_SYNCHRONIZATION1 => self.svc_wait_synchronization1(caller),
+            SVC_WAIT_SYNCHRONIZATION_N => self.svc_wait_synchronization_n(caller),
             SVC_CREATE_TIMER => self.svc_create_timer(caller),
             SVC_SET_TIMER => self.svc_set_timer(caller),
             SVC_CANCEL_TIMER => self.svc_cancel_timer(caller),
@@ -2590,12 +2599,116 @@ impl Arm11ProcessSession {
         }
     }
 
+    /// Handles WaitSynchronizationN in wait-any mode.
+    ///
+    /// r0/r4 hold the signed 64-bit timeout (low/high), r1 the guest handle
+    /// array, r2 the handle count and r3 the wait-all flag. On success r0 is the
+    /// result and r1 the index of the handle that satisfied the wait. Wait-all
+    /// with more than one handle is not modelled and stops the run loudly
+    /// instead of returning a wrong answer.
+    fn svc_wait_synchronization_n(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        let handles_address = registers[1];
+        let count = registers[2] as i32;
+        let wait_all = registers[3] & 1 != 0;
+        let timeout = (u64::from(registers[0]) | (u64::from(registers[4]) << 32)) as i64;
+
+        if !(0..=0x40).contains(&count) {
+            return self.write_svc_result(caller, RESULT_OUT_OF_RANGE);
+        }
+        if wait_all && count > 1 {
+            return SvcRunDisposition::KernelServiceError {
+                number: SVC_WAIT_SYNCHRONIZATION_N,
+                result: RESULT_INVALID_ENUM,
+            };
+        }
+        if timeout < -1 {
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+        }
+        let mut handles = Vec::with_capacity(count as usize);
+        for index in 0..count as u32 {
+            match self
+                .address_space
+                .read32(handles_address.wrapping_add(index * 4))
+            {
+                Ok(handle) => handles.push(handle),
+                Err(_) => return self.write_svc_result(caller, RESULT_INVALID_ADDRESS),
+            }
+        }
+
+        for (index, handle) in handles.iter().enumerate() {
+            match self
+                .kernel_objects
+                .try_wait_synchronization(*handle, caller)
+            {
+                Ok(true) => {
+                    if let Some(core) = self.scheduler.core_mut(caller) {
+                        core.regs[1] = index as u32;
+                    }
+                    return self.write_svc_result(caller, 0);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    return self.write_svc_result(caller, kernel_handle_result_code(error));
+                }
+            }
+        }
+
+        if timeout == 0 {
+            return self.write_svc_result(caller, RESULT_TIMEOUT);
+        }
+        for handle in &handles {
+            if let Err(error) = self.kernel_objects.enqueue_waiter(*handle, caller) {
+                self.kernel_objects.remove_waiter(caller);
+                return self.write_svc_result(caller, kernel_handle_result_code(error));
+            }
+        }
+        self.multi_waits.insert(caller, handles.clone());
+        if timeout > 0 {
+            let deadline = self
+                .scheduler
+                .virtual_time_ns()
+                .saturating_add(timeout as u64);
+            let first = handles.first().copied().unwrap_or(0);
+            self.wait_deadlines.insert(caller, (first, deadline));
+        }
+
+        match self.scheduler.wait_current() {
+            Ok(Some(_)) => SvcRunDisposition::Resume,
+            Ok(None) => SvcRunDisposition::NoRunnableThread,
+            Err(_) => {
+                self.wait_deadlines.remove(&caller);
+                self.multi_waits.remove(&caller);
+                self.kernel_objects.remove_waiter(caller);
+                SvcRunDisposition::KernelServiceError {
+                    number: SVC_WAIT_SYNCHRONIZATION_N,
+                    result: RESULT_INVALID_ENUM,
+                }
+            }
+        }
+    }
+
     /// Completes an object handoff and makes its blocked thread(s) schedulable.
     fn wake_synchronization_waiters(&mut self, waiters: impl IntoIterator<Item = ThreadId>) {
         for waiter in waiters {
             self.wait_deadlines.remove(&waiter);
+            let released_by = self.kernel_objects.take_handoff(waiter);
+            let index = self.multi_waits.remove(&waiter).map(|handles| {
+                // The other handles' queues must not wake this thread again.
+                self.kernel_objects.remove_waiter(waiter);
+                released_by
+                    .and_then(|handle| handles.iter().position(|candidate| *candidate == handle))
+                    .unwrap_or(0) as u32
+            });
             if let Some(core) = self.scheduler.core_mut(waiter) {
                 core.regs[0] = 0;
+                if let Some(index) = index {
+                    core.regs[1] = index;
+                }
             }
             let _ = self.scheduler.wake_thread(waiter);
         }
@@ -4978,6 +5091,186 @@ mod tests {
             session.thread_info(child).unwrap().state,
             ThreadState::Running
         );
+    }
+
+    fn wait_n_setup(
+        session: &mut Arm11ProcessSession,
+        thread: ThreadId,
+        handles: &[u32],
+        timeout: i64,
+    ) {
+        for (index, handle) in handles.iter().enumerate() {
+            session
+                .address_space
+                .write32(0x0020_0100 + index as u32 * 4, *handle)
+                .unwrap();
+        }
+        let core = session.scheduler.core_mut(thread).unwrap();
+        core.regs[0] = timeout as u32;
+        core.regs[1] = 0x0020_0100;
+        core.regs[2] = handles.len() as u32;
+        core.regs[3] = 0;
+        core.regs[4] = (timeout >> 32) as u32;
+    }
+
+    fn two_events(session: &mut Arm11ProcessSession) -> (u32, u32) {
+        (
+            session
+                .kernel_objects
+                .insert_event(EventResetType::OneShot)
+                .unwrap(),
+            session
+                .kernel_objects
+                .insert_event(EventResetType::OneShot)
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn wait_synchronization_n_returns_the_first_signaled_handle_index_immediately() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let (first, second) = two_events(&mut session);
+        session.signal_event_handle(second).unwrap();
+        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first, second], -1);
+
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.core().regs[1], 1);
+        // The one-shot signal was consumed by the wait.
+        assert_eq!(
+            session
+                .kernel_objects
+                .try_wait_synchronization(second, MAIN_THREAD_ID),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn wait_synchronization_n_zero_timeout_and_argument_errors() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let (first, second) = two_events(&mut session);
+        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first, second], 0);
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.core().regs[0], RESULT_TIMEOUT);
+
+        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first, 0xDEAD], -1);
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(
+            session.core().regs[0],
+            kernel_handle_result_code(KernelHandleError::InvalidHandle)
+        );
+
+        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first], -1);
+        session.scheduler.current_core_mut().unwrap().regs[2] = 0x41;
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.core().regs[0], RESULT_OUT_OF_RANGE);
+
+        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first], -2);
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ENUM);
+    }
+
+    #[test]
+    fn wait_synchronization_n_blocks_and_reports_the_releasing_handle() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let (first, second) = two_events(&mut session);
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        wait_n_setup(&mut session, child, &[first, second], -1);
+
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        session.signal_event_handle(second).unwrap();
+        assert_eq!(session.current_thread_id(), Some(child));
+        let regs = session.scheduler.core(child).unwrap().regs;
+        assert_eq!((regs[0], regs[1]), (0, 1));
+
+        // The thread left the first event's queue: signalling it only latches.
+        session.signal_event_handle(first).unwrap();
+        assert_eq!(
+            session
+                .kernel_objects
+                .try_wait_synchronization(first, MAIN_THREAD_ID),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn wait_synchronization_n_finite_timeout_expires_and_cleans_every_queue() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let (first, second) = two_events(&mut session);
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        wait_n_setup(&mut session, child, &[first, second], 100);
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        session.advance_time(100);
+        assert_eq!(
+            session.scheduler.core(child).unwrap().regs[0],
+            RESULT_TIMEOUT
+        );
+
+        // Neither event may wake the thread afterwards.
+        session.signal_event_handle(first).unwrap();
+        session.signal_event_handle(second).unwrap();
+        assert_eq!(
+            session.scheduler.core(child).unwrap().regs[0],
+            RESULT_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn wait_synchronization_n_reports_timer_expiry_index() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
+        let timer = session
+            .kernel_objects
+            .insert_timer(EventResetType::OneShot)
+            .unwrap();
+        session
+            .kernel_objects
+            .set_timer(timer, session.scheduler.virtual_time_ns(), 50, 0)
+            .unwrap();
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        wait_n_setup(&mut session, child, &[event, timer], -1);
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        session.advance_time(50);
+
+        let regs = session.scheduler.core(child).unwrap().regs;
+        assert_eq!((regs[0], regs[1]), (0, 1));
+    }
+
+    #[test]
+    fn wait_synchronization_n_wait_all_with_several_handles_is_not_silently_modelled() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let (first, second) = two_events(&mut session);
+        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first, second], -1);
+        session.scheduler.current_core_mut().unwrap().regs[3] = 1;
+
+        let disposition = session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+
+        assert!(matches!(
+            disposition,
+            SvcRunDisposition::KernelServiceError {
+                number: SVC_WAIT_SYNCHRONIZATION_N,
+                ..
+            }
+        ));
     }
 
     #[test]

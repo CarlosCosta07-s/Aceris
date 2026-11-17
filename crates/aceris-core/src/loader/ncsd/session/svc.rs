@@ -84,6 +84,9 @@ pub const SVC_CLOSE_HANDLE: u32 = 0x23;
 /// Wait for one synchronization object.
 pub const SVC_WAIT_SYNCHRONIZATION1: u32 = 0x24;
 
+/// Wait for any of several synchronization objects (wait-all is not modelled).
+pub const SVC_WAIT_SYNCHRONIZATION_N: u32 = 0x25;
+
 /// Result of dispatching a process-scoped SVC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arm11SvcDisposition {

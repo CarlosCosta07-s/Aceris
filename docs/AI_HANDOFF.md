@@ -1880,3 +1880,10 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - DST permanece desligada: a documentação 3dbrew associa 0x04 a DST, mas a tabela JIT consultada em Azahar o deixa desconhecido. A divergência está registrada e não foi resolvida por suposição. LITP permanece desligada porque seu comportamento de condition codes dependeria da frente CMP ainda não implementada.
 - Roadmap atualizado para indicar executor e decodificador parciais. Ainda faltam CMP/condition codes, MOVA, a0/a1/aL, fluxo de controle, LITP/DST e validação independente em hardware.
 - A workflow `44077933723` para o código após Rustfmt (`c250811c76ec24e93e7c438bc858d50967f3f47c`) foi observada parcialmente: Linux concluiu fmt, build, Clippy, testes, build do benchmark e upload com sucesso; Android concluiu os builds ARM64 e upload; macOS concluiu fmt, build, Clippy e testes, com o build do benchmark ainda em execução; Windows concluiu fmt, build e Clippy, com `cargo test --workspace` ainda em execução na última consulta. A workflow `44077950879`, disparada pela documentação no HEAD `d833ea84a288134a64d431f25449bbf94682b9da`, também seguia em execução. Não declarar matriz multiplataforma integralmente aprovada antes da conclusão dos jobs Windows/macOS e da workflow do HEAD atual.
+
+## WaitSynchronizationN (SVC 0x25)
+
+- Implementado em wait-any em `loader/ncsd/session.rs` e `session/kernel.rs`. O kernel registra em `handoffs` qual handle liberou cada thread, para devolver o índice em r1 sem mudar as assinaturas dos acordadores.
+- Wait-all com mais de um handle retorna `KernelServiceError` (não modelado, de propósito).
+- Premissas NÃO verificadas contra hardware: ABI (r0 timeout baixo, r4 timeout alto, r1 handles, r2 contagem, r3 wait_all) e `RESULT_OUT_OF_RANGE = 0xE0E0_1BFD`.
+- Verificado localmente: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.

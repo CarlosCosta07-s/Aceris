@@ -187,6 +187,9 @@ enum KernelObject {
 pub struct Arm11KernelObjectTable {
     objects: BTreeMap<u32, KernelObject>,
     next_handle: u32,
+    /// Handle that most recently handed an object to a blocked thread, so a
+    /// WaitSynchronizationN waiter can report which handle released it.
+    handoffs: BTreeMap<ThreadId, u32>,
 }
 
 impl Default for Arm11KernelObjectTable {
@@ -194,6 +197,7 @@ impl Default for Arm11KernelObjectTable {
         Self {
             objects: BTreeMap::new(),
             next_handle: FIRST_HANDLE,
+            handoffs: BTreeMap::new(),
         }
     }
 }
@@ -552,6 +556,11 @@ impl Arm11KernelObjectTable {
         Ok(())
     }
 
+    /// Returns and clears the handle that most recently released `thread`.
+    pub fn take_handoff(&mut self, thread: ThreadId) -> Option<u32> {
+        self.handoffs.remove(&thread)
+    }
+
     /// Removes one thread from every synchronization-object wait queue.
     ///
     /// This is used when a finite wait times out, so a later signal cannot
@@ -583,8 +592,9 @@ impl Arm11KernelObjectTable {
     /// coalesced into one signal and the next deadline is advanced beyond now.
     pub fn advance_time(&mut self, now_ns: u64) -> Vec<ThreadId> {
         let mut awakened = Vec::new();
+        let mut handed_off: Vec<(ThreadId, u32)> = Vec::new();
 
-        for object in self.objects.values_mut() {
+        for (handle, object) in self.objects.iter_mut() {
             let KernelObject::Timer(timer) = object else {
                 continue;
             };
@@ -612,38 +622,47 @@ impl Arm11KernelObjectTable {
                     if let Some(waiter) = timer.waiters.pop_front() {
                         timer.signaled = false;
                         awakened.push(waiter);
+                        handed_off.push((waiter, *handle));
                     } else {
                         timer.signaled = true;
                     }
                 }
                 EventResetType::Sticky => {
                     timer.signaled = true;
-                    awakened.extend(timer.waiters.drain(..));
+                    for waiter in timer.waiters.drain(..) {
+                        awakened.push(waiter);
+                        handed_off.push((waiter, *handle));
+                    }
                 }
             }
         }
 
+        self.handoffs.extend(handed_off);
         awakened
     }
 
     /// Sets an event signaled and returns the threads released by the signal.
     pub fn signal_event(&mut self, handle: u32) -> Result<Vec<ThreadId>, KernelHandleError> {
         let event = self.event_mut(handle)?;
-        match event.reset_type {
+        let released: Vec<ThreadId> = match event.reset_type {
             EventResetType::Sticky => {
                 event.signaled = true;
-                Ok(event.waiters.drain(..).collect())
+                event.waiters.drain(..).collect()
             }
             EventResetType::OneShot => {
                 if let Some(waiter) = event.waiters.pop_front() {
                     event.signaled = false;
-                    Ok(vec![waiter])
+                    vec![waiter]
                 } else {
                     event.signaled = true;
-                    Ok(Vec::new())
+                    Vec::new()
                 }
             }
+        };
+        for waiter in &released {
+            self.handoffs.insert(*waiter, handle);
         }
+        Ok(released)
     }
 
     /// Clears an event's signal state.
@@ -665,6 +684,9 @@ impl Arm11KernelObjectTable {
         }
         let next_owner = mutex.waiters.pop_front();
         mutex.owner = next_owner;
+        if let Some(next) = next_owner {
+            self.handoffs.insert(next, handle);
+        }
         Ok(next_owner)
     }
 
@@ -693,6 +715,9 @@ impl Arm11KernelObjectTable {
             }
         }
         semaphore.count += units_to_store;
+        for waiter in &awakened {
+            self.handoffs.insert(*waiter, handle);
+        }
         Ok(awakened)
     }
 

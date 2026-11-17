@@ -128,7 +128,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] Objetos de mutex, semáforo, evento e timer com operações iniciais
 - [~] SVCs com handlers iniciais: ControlMemory, QueryMemory, CreateMemoryBlock (bloco anônimo somente para SYSTEM/BASE; addr não nulo pode compartilhar uma subfaixa de uma alocação existente do heap regular; W-only é rejeitado), MapMemoryBlock, UnmapMemoryBlock, ExitProcess, CreateThread, ExitThread, SleepThread, Get/SetThreadPriority, GetProcessorId, mutexes, semáforos, eventos, timers, WaitSynchronization1 e CloseHandle
 - [ ] Completar ABI e semântica de todos os SVCs; em CreateMemoryBlock ainda faltam tipos de memória regionais completos, regiões de origem além do heap regular modelado, alias que atravesse várias alocações e integração com processos/handles distintos
-- [ ] Completar espera múltipla, timeout, cancelamento, herança de prioridade e ciclo de vida dos objetos
+- [ ] Completar espera múltipla, timeout, cancelamento, herança de prioridade e ciclo de vida dos objetos (WaitSynchronizationN 0x25 em modo wait-any, com índice do handle liberador, timeout e limpeza das filas, implementado; wait-all com mais de um handle, herança de prioridade e ciclo de vida seguem pendentes)
 - [ ] Completar ciclo de vida de processos, handles, compartilhamento e limpeza de recursos
 
 ### IPC e serviços do sistema
