@@ -1236,11 +1236,10 @@ mod tests {
         assert_eq!(rasterizer.stencil_buffer()[pixel_index], 10);
         assert_ne!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
 
-        rasterizer.write_depth_buffer(depth_config, &mut memory).unwrap();
-        let stored = depth_config
-            .read_stencil_values(&memory)
-            .unwrap()
+        rasterizer
+            .write_depth_buffer(depth_config, &mut memory)
             .unwrap();
+        let stored = depth_config.read_stencil_values(&memory).unwrap().unwrap();
         assert_eq!(stored[pixel_index], 10);
     }
 
