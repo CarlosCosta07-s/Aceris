@@ -1733,3 +1733,18 @@ Verificado localmente sobre `main` em b49df8c: fmt, clippy `-D warnings` e `carg
 
 Verificado localmente sobre `main` em 2388b23: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
 
+
+## Benchmark local de títulos — ferramenta independente (ChatGPT, 17/11/2026)
+
+Escopo: novo exemplo isolado `crates/aceris-core/examples/benchmark.rs` e documentação `docs/PERFORMANCE_TESTING.md`. Não foram alterados `system.rs`, módulos de CPU/GPU, frontend desktop/Android nem arquivos do trabalho reservado a outro agente.
+
+- O exemplo aceita 3DSX, NCSD (`.3ds`/`.cci`) e CIA nos caminhos já aceitos pelo carregador.
+- Para imagens criptografadas, o usuário pode fornecer material explicitamente por variáveis de ambiente. O programa não embute, descobre, imprime nem grava chaves; os arquivos e chaves não entram no repositório nem no CI.
+- Mede aquecimento e uma amostra configurável de chamadas `System::run_frame_with_budget`; registra throughput do host, média e percentis de tempo, instruções guest, command lists GSP, scanouts LCD, motivos de parada, PC/CPSR finais e quadros sem instruções.
+- O relatório distingue throughput do host de FPS real: o orçamento é determinístico, o tempo virtual é nominal e a cadeia PICA200 ainda possui etapas incompletas. Não usar os números como prova de gameplay ou de velocidade ciclo-precisa.
+- Comando documentado: `cargo run --release -p aceris-core --example benchmark -- <GAME> --warmup 30 --frames 300`.
+- `README.md` aponta para a metodologia de pesquisa independente e para o guia de benchmark.
+
+O primeiro build do exemplo foi bloqueado por rustfmt e depois Clippy `too_many_arguments`; ambas as causas foram corrigidas agrupando métricas em `BenchmarkSummary`. O workflow final do commit `8a042d37a42b6faf006ae98170ab3b51c1700684` está em execução na matriz Linux/Windows/macOS e Android ARM64; confirmar o resultado completo antes de marcar a validação multiplataforma como concluída.
+
+**Limite atual:** a ferramenta prepara e mede a execução limitada no PC; não foi executada contra um arquivo de jogo real nesta sessão. O teste CIA manual documentado em `REAL_HOMEBREW_TESTING.md` continua dependendo do arquivo local do mantenedor. O crate Android ainda não é um aplicativo instalável, então não há benchmark de aparelho Android nesta etapa.
