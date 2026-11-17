@@ -2889,12 +2889,7 @@ mod tests {
             let session = system.ncsd_session.as_mut().unwrap();
             let shared_memory_handle = session.create_memory_block(0x1000, 3, 3).unwrap();
             session
-                .map_memory_block(
-                    shared_memory_handle,
-                    GSP_SHARED_MEMORY_BASE,
-                    3,
-                    0x1000_0000,
-                )
+                .map_memory_block(shared_memory_handle, GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000)
                 .unwrap();
             session
                 .write_memory_bytes(
@@ -2920,17 +2915,9 @@ mod tests {
         gx_queue[1] = 1;
         let gx_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         gx_queue[gx_entry] = GSP_GX_COMMAND_MEMORY_FILL;
-        for (index, value) in [
-            fill_start,
-            0xAABB_CCDD,
-            fill_end,
-            0,
-            0,
-            0,
-            0,
-        ]
-        .into_iter()
-        .enumerate()
+        for (index, value) in [fill_start, 0xAABB_CCDD, fill_end, 0, 0, 0, 0]
+            .into_iter()
+            .enumerate()
         {
             let offset = gx_entry + 4 + index * 4;
             gx_queue[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
@@ -2960,8 +2947,14 @@ mod tests {
         // The child blocks in the real ARM11 WaitSynchronization1 SVC.
         let wait_report = system.run_instructions(3).unwrap();
         assert_eq!(wait_report.instructions_executed, 3);
+        let child_state = system
+            .ncsd_session()
+            .unwrap()
+            .thread_info(child_id)
+            .unwrap()
+            .state;
         assert_eq!(
-            system.ncsd_session().unwrap().thread_info(child_id).unwrap().state,
+            child_state,
             crate::loader::ncsd::session::ThreadState::Waiting
         );
         assert_eq!(
@@ -2976,8 +2969,14 @@ mod tests {
         assert_eq!(completion.memory_fills_completed, 1);
         assert_eq!(completion.pending_commands, 0);
         assert!(completion.error.is_none());
+        let child_state = system
+            .ncsd_session()
+            .unwrap()
+            .thread_info(child_id)
+            .unwrap()
+            .state;
         assert_eq!(
-            system.ncsd_session().unwrap().thread_info(child_id).unwrap().state,
+            child_state,
             crate::loader::ncsd::session::ThreadState::Running
         );
         assert_eq!(
@@ -3015,8 +3014,8 @@ mod tests {
         assert_eq!(
             filled,
             [
-                0xDD, 0xCC, 0xBB, 0xAA, 0xDD, 0xCC, 0xBB, 0xAA, 0xDD, 0xCC, 0xBB, 0xAA, 0xDD,
-                0xCC, 0xBB, 0xAA,
+                0xDD, 0xCC, 0xBB, 0xAA, 0xDD, 0xCC, 0xBB, 0xAA, 0xDD, 0xCC, 0xBB, 0xAA, 0xDD, 0xCC,
+                0xBB, 0xAA,
             ]
         );
 
