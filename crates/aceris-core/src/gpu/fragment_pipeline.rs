@@ -56,12 +56,9 @@ impl PicaFragmentPipeline {
                 .texture_environment()
                 .map_err(PicaFragmentPipelineError::Tev)?,
             texture_units: [
-                PicaTextureUnit::from_pica(pica, 0)
-                    .map_err(PicaFragmentPipelineError::Texture)?,
-                PicaTextureUnit::from_pica(pica, 1)
-                    .map_err(PicaFragmentPipelineError::Texture)?,
-                PicaTextureUnit::from_pica(pica, 2)
-                    .map_err(PicaFragmentPipelineError::Texture)?,
+                PicaTextureUnit::from_pica(pica, 0).map_err(PicaFragmentPipelineError::Texture)?,
+                PicaTextureUnit::from_pica(pica, 1).map_err(PicaFragmentPipelineError::Texture)?,
+                PicaTextureUnit::from_pica(pica, 2).map_err(PicaFragmentPipelineError::Texture)?,
             ],
             texture2_coordinate_index: if config & (1 << 13) != 0 { 1 } else { 2 },
         })
@@ -79,7 +76,10 @@ impl PicaFragmentPipeline {
     ) -> Result<[f32; 4], PicaFragmentPipelineError> {
         validate_color("primary color", varyings.primary_color)?;
         validate_color("fragment primary color", varyings.fragment_primary_color)?;
-        validate_color("fragment secondary color", varyings.fragment_secondary_color)?;
+        validate_color(
+            "fragment secondary color",
+            varyings.fragment_secondary_color,
+        )?;
 
         let mut inputs = PicaFragmentInputs {
             primary_color: varyings.primary_color,
@@ -143,7 +143,9 @@ pub enum PicaFragmentPipelineError {
 impl std::fmt::Display for PicaFragmentPipelineError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Texture(error) => write!(formatter, "PICA fragment texture stage failed: {error}"),
+            Self::Texture(error) => {
+                write!(formatter, "PICA fragment texture stage failed: {error}")
+            }
             Self::Tev(error) => write!(formatter, "PICA TEV combiner failed: {error}"),
             Self::ProceduralTextureUnitUnsupported => {
                 formatter.write_str("PICA procedural texture unit 3 is not implemented")
@@ -164,13 +166,7 @@ mod tests {
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{PicaTevSource, TEXENV_STAGE_SOURCE_REGISTERS};
 
-    fn configure_texture(
-        pica: &mut Pica200,
-        unit: usize,
-        address: u32,
-        width: u16,
-        height: u16,
-    ) {
+    fn configure_texture(pica: &mut Pica200, unit: usize, address: u32, width: u16, height: u16) {
         let registers = match unit {
             0 => [0x081, 0x082, 0x083, 0x085, 0x08E],
             1 => [0x091, 0x092, 0x093, 0x095, 0x096],
@@ -178,11 +174,8 @@ mod tests {
             _ => panic!("test texture unit out of range"),
         };
         pica.write_register(registers[0], 0).unwrap();
-        pica.write_register(
-            registers[1],
-            (u32::from(width) << 16) | u32::from(height),
-        )
-        .unwrap();
+        pica.write_register(registers[1], (u32::from(width) << 16) | u32::from(height))
+            .unwrap();
         pica.write_register(registers[2], 0).unwrap();
         pica.write_register(registers[3], address >> 3).unwrap();
         pica.write_register(registers[4], 0).unwrap();
@@ -259,8 +252,12 @@ mod tests {
                     | ((y & 2) << 2)
                     | ((x & 4) << 2)
                     | ((y & 4) << 3);
-                texture[morton * 4..morton * 4 + 4]
-                    .copy_from_slice(&[x as u8 * 20, y as u8 * 20, 0, 255]);
+                texture[morton * 4..morton * 4 + 4].copy_from_slice(&[
+                    x as u8 * 20,
+                    y as u8 * 20,
+                    0,
+                    255,
+                ]);
             }
         }
         memory.write(VRAM_BASE, &texture).unwrap();
