@@ -703,7 +703,7 @@ mod tests {
         );
         assert_eq!(
             interpolate.evaluate(0, [0.0; 4], &inputs).unwrap(),
-            [0.625, 0.625, 0.5, 0.75]
+            [0.625, 0.375, 0.5, 0.75]
         );
 
         let add_signed = PicaTevStage {
@@ -715,6 +715,8 @@ mod tests {
             [0.5, 0.5, 0.5, 0.75]
         );
 
+        inputs.primary_color = [0.75, 0.75, 0.75, 1.0];
+        inputs.textures[0] = [0.75, 0.75, 0.75, 1.0];
         let dot = PicaTevStage {
             rgb_sources: [
                 PicaTevSource::PrimaryColor,
@@ -727,7 +729,7 @@ mod tests {
             ..interpolate
         };
         let dot = dot.evaluate(0, [0.0; 4], &inputs);
-        assert_eq!(dot.unwrap(), [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(dot.unwrap(), [0.75, 0.75, 0.75, 0.75]);
 
         let scaled = PicaTevStage {
             rgb_scale: 4.0,
