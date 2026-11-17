@@ -400,7 +400,7 @@ fn run(options: Options) -> Result<(), String> {
     Ok(())
 }
 
-fn main() -> ExitCode {
+pub fn run_cli() -> ExitCode {
     match parse_args() {
         Ok(None) => {
             usage();
@@ -419,4 +419,9 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+#[allow(dead_code)]
+fn main() -> ExitCode {
+    run_cli()
 }
