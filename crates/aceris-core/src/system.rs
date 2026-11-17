@@ -5249,8 +5249,8 @@ mod tests {
         use crate::gpu::{
             ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_ENTRY_SIZE,
             GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
-            GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
-            GSP_GX_COMMAND_QUEUE_SIZE, PicaDepthBufferConfig, PicaRenderSettings,
+            GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, PicaDepthBufferConfig,
+            PicaRenderSettings,
             REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
             REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
             REG_DEPTHBUFFER_FORMAT, REG_DEPTHBUFFER_LOC, REG_DEPTHBUFFER_READ,
@@ -5368,8 +5368,7 @@ mod tests {
         queue_bytes[fill_entry + 4..fill_entry + 8]
             .copy_from_slice(&depth_guest_address.to_le_bytes());
         // D24 little-endian 0xBFFFFF (~0.75): FF FF BF repeated per pixel.
-        queue_bytes[fill_entry + 8..fill_entry + 12]
-            .copy_from_slice(&0x00BF_FFFFu32.to_le_bytes());
+        queue_bytes[fill_entry + 8..fill_entry + 12].copy_from_slice(&0x00BF_FFFFu32.to_le_bytes());
         queue_bytes[fill_entry + 12..fill_entry + 16]
             .copy_from_slice(&depth_guest_end.to_le_bytes());
         queue_bytes[fill_entry + 28..fill_entry + 32]
