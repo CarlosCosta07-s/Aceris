@@ -558,7 +558,7 @@ mod tests {
         let mut memory = GpuPhysicalMemory::new();
         let mut texture = Vec::with_capacity(8 * 8 * 4);
         for _ in 0..64 {
-            texture.extend_from_slice(&[10, 20, 30, 40]);
+            texture.extend_from_slice(&[40, 30, 20, 10]);
         }
         memory.write(VRAM_BASE, &texture).unwrap();
 
@@ -592,10 +592,10 @@ mod tests {
                     | ((x & 4) << 2)
                     | ((y & 4) << 3);
                 texture[morton * 4..morton * 4 + 4].copy_from_slice(&[
-                    x as u8 * 20,
-                    y as u8 * 20,
-                    0,
                     255,
+                    0,
+                    y as u8 * 20,
+                    x as u8 * 20,
                 ]);
             }
         }
