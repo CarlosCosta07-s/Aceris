@@ -8,8 +8,8 @@
 
 use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, Pica200, PicaCommandListReport,
-    PicaCommandListRunError, PicaDepthBufferConfig, PicaDepthBufferError, PicaDepthBuffering,
-    PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest, PicaFragmentPipelineError,
+    PicaCommandListRunError, PicaDepthBufferConfig, PicaDepthBufferError, PicaDepthBufferFormat,
+    PicaDepthBuffering, PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest, PicaFragmentPipelineError,
     PicaFragmentRasterError, PicaFragmentRasterReport, PicaFragmentRasterState,
     PicaFragmentRasterizer, PicaFragmentVertexDefaults, PicaOutputMapError, PicaRenderReport,
     PicaRenderSettings, PicaRenderTargetConfig, PicaRenderTargetError, REG_COLORBUFFER_WRITE,
@@ -25,6 +25,7 @@ pub enum PicaFragmentRenderSessionError {
     OutputMap(PicaOutputMapError),
     Pipeline(PicaFragmentPipelineError),
     DepthBuffer(PicaDepthBufferError),
+    StencilBufferRequired,
     UnresolvedVertexBase,
 }
 
@@ -37,6 +38,9 @@ impl std::fmt::Display for PicaFragmentRenderSessionError {
             Self::OutputMap(error) => write!(formatter, "vertex output map failed: {error}"),
             Self::Pipeline(error) => write!(formatter, "fragment pipeline failed: {error}"),
             Self::DepthBuffer(error) => write!(formatter, "physical depth buffer failed: {error}"),
+            Self::StencilBufferRequired => {
+                formatter.write_str("PICA stencil testing requires a physical D24S8 depth buffer")
+            }
             Self::UnresolvedVertexBase => {
                 formatter.write_str("vertex base address was not resolved")
             }
@@ -136,6 +140,12 @@ impl PicaFragmentRenderSession {
         let output_map = pica
             .vertex_output_map()
             .map_err(PicaFragmentRenderSessionError::OutputMap)?;
+        let stencil_state = fragment_pipeline.stencil_state();
+        if stencil_state.enabled
+            && !depth_config.is_some_and(|depth| depth.format == PicaDepthBufferFormat::D24S8)
+        {
+            return Err(PicaFragmentRenderSessionError::StencilBufferRequired);
+        }
         let vertex_program = pica.vertex_shader_program();
         let shaded = pica
             .shade_draw_at_registered_entrypoint(request, memory, vertex_base, &vertex_program)
@@ -167,6 +177,7 @@ impl PicaFragmentRenderSession {
             depth_function,
             color_write_mask,
             depth_write_enabled,
+            stencil_write_enabled: depth_config.is_some_and(|depth| depth.stencil_write_enabled),
             depth_format: depth_config.map(|depth| depth.format),
             depth_map: Some(depth_map),
             minifying: [false; 3],
