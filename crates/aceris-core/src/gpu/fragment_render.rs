@@ -10,11 +10,10 @@ use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, Pica200, PicaCommandListReport,
     PicaCommandListRunError, PicaDepthBufferConfig, PicaDepthBufferError, PicaDepthBuffering,
     PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest, PicaFragmentPipelineError,
-    PicaFragmentRasterError, PicaFragmentRasterReport,
-    PicaFragmentRasterState, PicaFragmentRasterizer, PicaFragmentVertexDefaults,
-    PicaOutputMapError, PicaRenderReport, PicaRenderSettings, PicaRenderTargetConfig,
-    PicaRenderTargetError, REG_COLORBUFFER_WRITE, REG_DEPTH_COLOR_MASK, REG_DEPTHBUFFER_WRITE,
-    Viewport,
+    PicaFragmentRasterError, PicaFragmentRasterReport, PicaFragmentRasterState,
+    PicaFragmentRasterizer, PicaFragmentVertexDefaults, PicaOutputMapError, PicaRenderReport,
+    PicaRenderSettings, PicaRenderTargetConfig, PicaRenderTargetError, REG_COLORBUFFER_WRITE,
+    REG_DEPTH_COLOR_MASK, REG_DEPTHBUFFER_WRITE, Viewport,
 };
 
 /// Failure while drawing through the PICA fragment-stage backend.
