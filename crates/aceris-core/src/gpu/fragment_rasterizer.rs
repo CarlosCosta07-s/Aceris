@@ -947,8 +947,8 @@ mod tests {
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
         PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
-        PicaVertexOutputMap, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP, REG_TEXUNIT_CONFIG,
-        TEXENV_STAGE_SOURCE_REGISTERS,
+        PicaVertexOutputMap, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP, REG_STENCIL_OP,
+        REG_STENCIL_TEST, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn fragment_vertex(position: [f32; 4], color: [f32; 4]) -> PicaFragmentVertex {
