@@ -11,6 +11,10 @@ authors.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "aceris-benchmark"
+path = "src/bin/benchmark.rs"
+
 [dependencies]
 aceris-common.workspace = true
 aceris-core.workspace = true
