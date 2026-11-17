@@ -18,9 +18,9 @@ mod render;
 mod render_target;
 mod shader_exec;
 mod shader_input;
+mod texture;
 mod texture_copy;
 mod transfer;
-mod texture;
 mod vertex;
 mod vertex_shader;
 
@@ -112,13 +112,13 @@ pub use shader_input::{
     REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_INPUTBUFFER_CONFIG, VertexShaderAttributeBinding,
     VertexShaderInputBindings, VertexShaderInputError,
 };
+pub use texture::{
+    PICA_TEXTURE_UNIT_COUNT, PicaTextureAxis, PicaTextureError, PicaTextureFilter,
+    PicaTextureFormat, PicaTextureUnit, PicaTextureWrap, REG_TEXUNIT_CONFIG,
+};
 pub use texture_copy::{
     MAX_TEXTURE_COPY_BYTES, TextureCopyError, TextureCopyReport, TextureCopyRequest,
     execute_texture_copy,
-};
-pub use texture::{
-    PICA_TEXTURE_UNIT_COUNT, PicaTextureAxis, PicaTextureError, PicaTextureFilter, PicaTextureFormat,
-    PicaTextureUnit, PicaTextureWrap, REG_TEXUNIT_CONFIG,
 };
 pub use transfer::{
     DISPLAY_TRANSFER_BLOCKS_32X32, DISPLAY_TRANSFER_CROP, DISPLAY_TRANSFER_FLIP_VERTICAL,
