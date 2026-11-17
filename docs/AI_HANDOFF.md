@@ -2,6 +2,26 @@
 
 > **Leitura obrigatória ao retomar o trabalho.** Esta nota registra alterações autorizadas pelo mantenedor e evita que uma IA restaure ou sobrescreva trabalho de outra.
 
+
+## Regra vigente do mantenedor — atualização de 17/11/2026
+
+Esta seção prevalece sobre registros históricos posteriores ou anteriores nesta nota que descrevam uma política diferente para consulta a referências.
+
+Carlos Costa flexibilizou somente a política de referências técnicas: agora é permitido consultar código-fonte publicamente disponível de outros emuladores, inclusive Azahar, Citra e Lime3DS, para estudo técnico. A consulta não autoriza copiar, colar, traduzir, portar, adaptar ou reproduzir código, testes, fixtures, shaders, patches, assets ou estrutura interna. Toda implementação deve continuar original e escrita em Rust, com arquitetura, interfaces, nomes e testes próprios. Registre projeto, URL, arquivo/área, commit/revisão, licença, data e pergunta técnica; em caso de dúvida sobre licença ou obra derivada, pare e peça orientação a Carlos Costa.
+
+**Nenhuma outra regra foi flexibilizada.** Permanecem obrigatórios:
+- Produto inteiro em Rust, inclusive núcleo, aplicação, interfaces e frontends.
+- Desenvolvimento exclusivamente na branch `main`; não criar branches nem usar pull requests como fluxo de trabalho.
+- Não alterar o trabalho de outra IA sem autorização explícita do mantenedor.
+- Código e implementação próprios; não incorporar código, patches, testes, fixtures ou dependências de outros emuladores.
+- Não incorporar assets ou recursos de terceiros.
+- Não adicionar dependências que forneçam implementação do emulador sem autorização explícita.
+- Manter jogos, firmware, chaves, dumps e conteúdos protegidos fora do repositório, CI, issues e releases.
+- Confirmar HEAD, preservar autoria e executar as verificações proporcionais antes de declarar uma mudança concluída.
+
+As anotações abaixo que dizem “não foi consultado código-fonte” registram o que ocorreu sob a política vigente na data de cada trabalho; não constituem uma proibição atual. Para as regras atuais, consulte também `docs/REGRAS_PARA_IA.md`, `CONTRIBUTING.md` e `docs/INDEPENDENT_RESEARCH.md`.
+
+
 ## Aviso direto para Claude
 
 Claude: ao retomar o desenvolvimento do Aceris, leia esta nota antes de editar qualquer arquivo. Carlos Costa autorizou explicitamente uma intervenção limitada nas dependências que você introduziu no scaffolding inicial (`thiserror`, `tracing` e `tracing-subscriber`). Essa intervenção foi concluída no commit que contém esta nota.
