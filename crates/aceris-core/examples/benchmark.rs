@@ -7,17 +7,11 @@
 //! environment variables documented in docs/PERFORMANCE_TESTING.md. No key is
 //! embedded, discovered, persisted, or printed by this example.
 
-use std::{
-    collections::BTreeMap,
-    env,
-    path::PathBuf,
-    process::ExitCode,
-    time::Instant,
-};
+use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode, time::Instant};
 
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
-    loader::{ImageFormat, identify_file, cia::TicketCommonKeyStore},
+    loader::{ImageFormat, cia::TicketCommonKeyStore, identify_file},
     system::SystemFrameReport,
 };
 
@@ -77,13 +71,12 @@ fn parse_args() -> Result<Option<Options>, String> {
         match argument.as_str() {
             "--frames" => options.frames = parse_positive(&value, "--frames")?,
             "--warmup" => {
-                options.warmup_frames = value
-                    .parse::<usize>()
-                    .map_err(|_| format!("--warmup expects a non-negative integer, got {value:?}"))?;
+                options.warmup_frames = value.parse::<usize>().map_err(|_| {
+                    format!("--warmup expects a non-negative integer, got {value:?}")
+                })?;
             }
             "--instruction-budget" => {
-                options.instruction_budget =
-                    parse_positive(&value, "--instruction-budget")?;
+                options.instruction_budget = parse_positive(&value, "--instruction-budget")?;
             }
             _ => return Err(format!("unknown option: {argument}")),
         }
@@ -118,9 +111,8 @@ fn parse_key(name: &str) -> Result<Option<[u8; 16]>, String> {
 }
 
 fn load_image(system: &mut System, path: &std::path::Path) -> Result<ImageFormat, String> {
-    let format = identify_file(path).map_err(|error| {
-        format!("could not identify {}: {error}", path.display())
-    })?;
+    let format = identify_file(path)
+        .map_err(|error| format!("could not identify {}: {error}", path.display()))?;
 
     let menu_info_key = parse_key("ACERIS_MENU_INFO_KEY")?;
     let content_key = parse_key("ACERIS_CONTENT_KEY")?;
@@ -255,19 +247,31 @@ fn print_summary(
     println!();
     println!("Aceris benchmark results");
     println!("Image format:             {}", format.name());
-    println!("Host:                     {} / {}", env::consts::OS, env::consts::ARCH);
+    println!(
+        "Host:                     {} / {}",
+        env::consts::OS,
+        env::consts::ARCH
+    );
     println!("Warm-up frames:           {}", options.warmup_frames);
     println!("Measured frames:          {}", samples_ns.len());
     println!("Instruction budget/frame: {}", options.instruction_budget);
     println!("Host elapsed:             {:.3} s", elapsed_seconds);
-    println!("Host throughput:          {:.2} frames/s", frames_per_second);
-    println!("Mean frame processing:    {:.3} ms", average_ns as f64 / 1_000_000.0);
-    println!("Frame time p50/p95/p99:   {:.3} / {:.3} / {:.3} ms",
+    println!(
+        "Host throughput:          {:.2} frames/s",
+        frames_per_second
+    );
+    println!(
+        "Mean frame processing:    {:.3} ms",
+        average_ns as f64 / 1_000_000.0
+    );
+    println!(
+        "Frame time p50/p95/p99:   {:.3} / {:.3} / {:.3} ms",
         percentile(&sorted, 50) as f64 / 1_000_000.0,
         percentile(&sorted, 95) as f64 / 1_000_000.0,
         percentile(&sorted, 99) as f64 / 1_000_000.0
     );
-    println!("Frame time min/max:       {:.3} / {:.3} ms",
+    println!(
+        "Frame time min/max:       {:.3} / {:.3} ms",
         sorted.first().copied().unwrap_or_default() as f64 / 1_000_000.0,
         sorted.last().copied().unwrap_or_default() as f64 / 1_000_000.0
     );
@@ -287,28 +291,38 @@ fn print_summary(
     }
 
     if zero_instruction_frames == samples_ns.len() {
-        println!("WARNING: no guest instructions ran in the measured interval; this is not a meaningful game-performance result.");
+        println!(
+            "WARNING: no guest instructions ran in the measured interval; this is not a meaningful game-performance result."
+        );
     } else if zero_instruction_frames > 0 {
-        println!("WARNING: some frames executed no guest instructions; inspect stop reasons before comparing results.");
+        println!(
+            "WARNING: some frames executed no guest instructions; inspect stop reasons before comparing results."
+        );
     }
 
     println!();
     println!("Interpretation:");
-    println!("- Host throughput is the time this build spent processing bounded frames, not a cycle-accurate 3DS FPS measurement.");
-    println!("- The instruction budget is a deterministic cap, not a hardware clock or proof that the game advanced one full frame.");
-    println!("- GPU-list and LCD counters measure submitted work; they do not prove complete PICA200 rendering, textures, audio, or gameplay.");
-    println!("- Compare runs only with the same image, build mode, frame budget, warm-up, host power mode, and settings.");
-    println!("- Key material is read only from this process environment and is never printed by this example.");
+    println!(
+        "- Host throughput is the time this build spent processing bounded frames, not a cycle-accurate 3DS FPS measurement."
+    );
+    println!(
+        "- The instruction budget is a deterministic cap, not a hardware clock or proof that the game advanced one full frame."
+    );
+    println!(
+        "- GPU-list and LCD counters measure submitted work; they do not prove complete PICA200 rendering, textures, audio, or gameplay."
+    );
+    println!(
+        "- Compare runs only with the same image, build mode, frame budget, warm-up, host power mode, and settings."
+    );
+    println!(
+        "- Key material is read only from this process environment and is never printed by this example."
+    );
 }
 
 fn run(options: Options) -> Result<(), String> {
     let mut system = System::new();
     let format = load_image(&mut system, &options.image)?;
-    println!(
-        "Loaded {:?}: {}",
-        format,
-        options.image.display()
-    );
+    println!("Loaded {:?}: {}", format, options.image.display());
     println!(
         "Prepared ARM11 entry: PC={:#010X}, CPSR={:#010X}",
         system.cpu().pc(),
@@ -318,9 +332,7 @@ fn run(options: Options) -> Result<(), String> {
     for frame in 0..options.warmup_frames {
         let report = system
             .run_frame_with_budget(options.instruction_budget)
-            .map_err(|error| {
-                format!("warm-up frame {} failed: {error}", frame + 1)
-            })?;
+            .map_err(|error| format!("warm-up frame {} failed: {error}", frame + 1))?;
         if report.instructions_executed == 0 {
             eprintln!(
                 "warning: warm-up frame {} executed no guest instructions (stop: {:?})",
