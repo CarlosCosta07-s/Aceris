@@ -422,9 +422,9 @@ impl Arm11KernelObjectTable {
     pub fn thread_handle_count(&self, thread_id: ThreadId) -> usize {
         self.objects
             .values()
-            .filter(|object| {
-                matches!(object, KernelObject::Thread(thread) if thread.id == thread_id)
-            })
+            .filter(
+                |object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id),
+            )
             .count()
     }
 
@@ -1020,15 +1020,9 @@ mod tests {
         let mut scheduler =
             super::super::thread::Arm11ThreadScheduler::new(crate::cpu::Arm11Core::new(), 0x30)
                 .unwrap();
-        let owner = scheduler
-            .create_thread(0x1000, 0, 0x2000, 0x30, 0)
-            .unwrap();
-        let first_waiter = scheduler
-            .create_thread(0x2000, 0, 0x3000, 0x30, 0)
-            .unwrap();
-        let second_waiter = scheduler
-            .create_thread(0x3000, 0, 0x4000, 0x30, 0)
-            .unwrap();
+        let owner = scheduler.create_thread(0x1000, 0, 0x2000, 0x30, 0).unwrap();
+        let first_waiter = scheduler.create_thread(0x2000, 0, 0x3000, 0x30, 0).unwrap();
+        let second_waiter = scheduler.create_thread(0x3000, 0, 0x4000, 0x30, 0).unwrap();
         let mut table = Arm11KernelObjectTable::default();
         let first_mutex = table.insert_mutex(true, owner).unwrap();
         let second_mutex = table.insert_mutex(true, owner).unwrap();
