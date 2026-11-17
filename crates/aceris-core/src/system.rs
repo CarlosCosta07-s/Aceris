@@ -5722,7 +5722,7 @@ mod tests {
             REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
             REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
             REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
-            REG_LOGIC_OP,
+            REG_LOGIC_OP, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
         };
         use crate::video::{
             PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_SELECT,
@@ -5731,6 +5731,7 @@ mod tests {
 
         const WIDTH: usize = 400;
         const HEIGHT: usize = 240;
+        const TEXTURE_ADDRESS: u32 = VRAM_BASE + 0x10_0000;
         const FRAME_ALLOCATION: u32 = ((WIDTH * HEIGHT * 4) as u32 + 0xFFF) & !0xFFF;
         const MEMOP_ALLOC_LINEAR: u32 = 0x0001_0003;
         const PERMISSION_READ_WRITE: u32 = 3;
@@ -5949,6 +5950,30 @@ mod tests {
         for (register, value) in guest_clip_transform_register_writes() {
             command_list.extend(write(register, value));
         }
+
+        // The guest binds texture0 and configures the six TEV stages. The
+        // source image is placed in VRAM in native PICA ABGR byte order.
+        for (register, value) in [
+            (REG_TEXUNIT_CONFIG, 1),
+            (0x081, 0),
+            (0x082, (8 << 16) | 8),
+            (0x083, 0),
+            (0x085, TEXTURE_ADDRESS >> 3),
+            (0x08E, 0),
+        ] {
+            command_list.extend(write(register, value));
+        }
+        for (stage, base) in TEXENV_STAGE_SOURCE_REGISTERS.iter().copied().enumerate() {
+            let source = if stage == 0 {
+                3 | (3 << 16) // Texture0 for RGB and alpha
+            } else {
+                15 | (15 << 16) // Previous combiner result
+            };
+            for (offset, value) in [(0, source), (1, 0), (2, 0), (3, 0), (4, 0)] {
+                command_list.extend(write(base + offset, value));
+            }
+        }
+
         for index in 1..7u16 {
             command_list.extend(write(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F));
         }
@@ -6022,6 +6047,13 @@ mod tests {
             clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
         }));
+        let mut texture_data = vec![0u8; 8 * 8 * 4];
+        texture_data[..4].copy_from_slice(&[255, 56, 34, 12]);
+        system
+            .physical_memory_mut()
+            .write(TEXTURE_ADDRESS, &texture_data)
+            .unwrap();
+
         // Nothing the guest will create exists yet: no client, no right, and
         // every PICA register is at its reset value.
         assert_eq!(system.gsp_service_registry().registered_client_count(), 0);
@@ -6072,6 +6104,11 @@ mod tests {
             Some(0x003E_0000)
         );
         assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_ENABLE), Some(1));
+        assert_eq!(system.gpu_mut().register(REG_TEXUNIT_CONFIG), Some(1));
+        assert_eq!(
+            system.gpu_mut().register(TEXENV_STAGE_SOURCE_REGISTERS[0]),
+            Some(3 | (3 << 16))
+        );
         assert_eq!(
             system.gpu_mut().vertex_shader_uniform(0),
             Some([0.25, 0.0, 0.0, -1.0])
@@ -6137,8 +6174,14 @@ mod tests {
         let sample = (180 * WIDTH + 40) * 4;
         assert_eq!(
             &system.display().top_left().pixels()[sample..sample + 4],
-            &[200, 100, 50, 255]
+            &[12, 34, 56, 255]
         );
+        let mut native_pixel = [0u8; 4];
+        system
+            .physical_memory()
+            .read(linear_framebuffer_physical + sample as u32, &mut native_pixel)
+            .unwrap();
+        assert_eq!(native_pixel, [255, 56, 34, 12]);
     }
 
     #[test]
