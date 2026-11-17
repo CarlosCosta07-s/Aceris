@@ -8,8 +8,8 @@
 use super::{
     GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
     PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw,
-    PicaShadedVertex, PicaTevError, PicaTextureEnvironment, PicaTextureError,
-    PicaTextureUnit, PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
+    PicaShadedVertex, PicaTevError, PicaTextureEnvironment, PicaTextureError, PicaTextureUnit,
+    PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
 };
 
 /// Perspective-correct attributes at one fragment sample.
@@ -356,10 +356,12 @@ impl PicaFragmentPipeline {
         barycentric: [f32; 3],
         minifying: [bool; 3],
     ) -> Result<[f32; 4], PicaFragmentSampleError> {
-        let triangle = draw
-            .triangles
-            .get(triangle_index)
-            .ok_or(PicaFragmentSampleError::InvalidTriangle { triangle: triangle_index })?;
+        let triangle =
+            draw.triangles
+                .get(triangle_index)
+                .ok_or(PicaFragmentSampleError::InvalidTriangle {
+                    triangle: triangle_index,
+                })?;
         let vertices = [
             draw.vertices[triangle[0]],
             draw.vertices[triangle[1]],
@@ -726,13 +728,9 @@ mod tests {
             triangles: vec![[0, 1, 2]],
             executed_instructions: 42,
         };
-        let draw = PicaFragmentDraw::from_shaded_draw(
-            &shaded,
-            &output_map,
-            [1.0; 4],
-            [[0.0; 2]; 3],
-        )
-        .unwrap();
+        let draw =
+            PicaFragmentDraw::from_shaded_draw(&shaded, &output_map, [1.0; 4], [[0.0; 2]; 3])
+                .unwrap();
         assert_eq!(draw.source_indices(), &[4, 7, 9]);
         assert_eq!(draw.executed_instructions(), 42);
 
