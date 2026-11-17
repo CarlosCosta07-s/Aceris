@@ -229,11 +229,26 @@ impl Vfp {
             self.fpexc |= FPEXC_UFC;
         }
         if status & FPSCR_IDC != 0 {
+            self.fpexc |= FPEXC_INV;
             self.fpscr |= FPSCR_IDC;
         }
         if status & FPSCR_IXC != 0 {
             self.fpscr |= FPSCR_IXC;
         }
+    }
+
+    /// Records a short-vector exception and the number of iterations that
+    /// remain after the exceptional iteration. VECITR encodes one remaining
+    /// iteration as zero and eight remaining iterations as seven.
+    fn record_vector_exception_bounce(
+        &mut self,
+        instruction: u32,
+        status: u32,
+        iterations_after: usize,
+    ) {
+        self.record_exception_bounce(instruction, status);
+        let vecitr = iterations_after.wrapping_sub(1) as u32 & 0x7;
+        self.fpexc = (self.fpexc & !FPEXC_VECITR) | (vecitr << 8);
     }
 
     fn rounding_mode(&self) -> u32 {
@@ -753,6 +768,38 @@ fn negate(prec: Prec, bits: u64) -> u64 {
     bits ^ prec.sign_bit()
 }
 
+/// Re-encodes one VFP register field for an exceptional short-vector iteration.
+fn encode_vfp_register_field(
+    word: u32,
+    precision: Prec,
+    high_shift: u32,
+    low_shift: u32,
+    register: usize,
+) -> u32 {
+    let (high, low) = match precision {
+        Prec::Single => ((register >> 1) as u32, (register & 1) as u32),
+        Prec::Double => (register as u32, 0),
+    };
+    let mask = (0xF << high_shift) | (1 << low_shift);
+    (word & !mask) | (high << high_shift) | (low << low_shift)
+}
+
+/// Builds FPINST with the register operands of the exceptional vector lane.
+fn encode_vector_fpinst(
+    word: u32,
+    precision: Prec,
+    destination: usize,
+    source_n: Option<usize>,
+    source_m: usize,
+) -> u32 {
+    let mut encoded = encode_vfp_register_field(word, precision, 12, 22, destination);
+    if let Some(source_n) = source_n {
+        encoded = encode_vfp_register_field(encoded, precision, 16, 7, source_n);
+    }
+    encoded = encode_vfp_register_field(encoded, precision, 0, 5, source_m);
+    (encoded & 0x0FFF_FFFF) | 0xE000_0000
+}
+
 impl Arm11Core {
     /// Grants the guest access to cp10/cp11 and sets FPEXC.EN, as an OS kernel
     /// does before running user code that uses the VFP.
@@ -809,12 +856,18 @@ impl Arm11Core {
         } else {
             Prec::Single
         };
+        let mut vector_exceptions_processed = false;
         let result = if bits(word, 27, 21) == 0b110_0010 {
             self.vfp_two_register_transfer(word, prec)
         } else if top == 0b1110 && bit(word, 4) {
             self.vfp_register_transfer(word, prec)
         } else if top == 0b1110 {
-            self.vfp_data_processing(word, prec)
+            self.vfp_data_processing(
+                word,
+                prec,
+                before.fpscr,
+                &mut vector_exceptions_processed,
+            )
         } else {
             self.vfp_load_store(bus, word, prec)
         };
@@ -823,7 +876,7 @@ impl Arm11Core {
             return Err(error);
         }
 
-        if track_exceptions {
+        if track_exceptions && !vector_exceptions_processed {
             let raised = self.vfp.exception_status();
             let trapped = self.vfp.trapped_exception_status(raised);
             if trapped != 0 {
@@ -1118,7 +1171,13 @@ impl Arm11Core {
         Ok(lanes)
     }
 
-    fn vfp_data_processing(&mut self, word: u32, prec: Prec) -> Result<()> {
+    fn vfp_data_processing(
+        &mut self,
+        word: u32,
+        prec: Prec,
+        previous_fpscr: u32,
+        vector_exceptions_processed: &mut bool,
+    ) -> Result<()> {
         self.require_enabled(word)?;
         let (p, q, r, s) = (bit(word, 23), bit(word, 21), bit(word, 20), bit(word, 6));
         let d = self.vfp_reg(word, prec, bits(word, 15, 12), bit(word, 22));
@@ -1126,12 +1185,19 @@ impl Arm11Core {
         let m = self.vfp_reg(word, prec, bits(word, 3, 0), bit(word, 5));
 
         if p && q && r {
-            return self.vfp_extension(word, prec, s);
+            return self.vfp_extension(
+                word,
+                prec,
+                s,
+                previous_fpscr,
+                vector_exceptions_processed,
+            );
         }
         let (d, n, m) = (d?, n?, m?);
         let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(n, false), (m, true)])?;
-        if lanes.len() > 1 && self.vfp.has_enabled_traps() {
-            return Err(Error::Unimplemented("VFP short-vector exception bounce"));
+        let vector_exception_mode = lanes.len() > 1 && self.vfp.has_enabled_traps();
+        if vector_exception_mode {
+            *vector_exceptions_processed = true;
         }
 
         // Snapshot every source and accumulator before committing any lane.
@@ -1141,6 +1207,8 @@ impl Arm11Core {
             .map(|(destination, sources)| {
                 (
                     destination,
+                    sources[0],
+                    sources[1],
                     self.vfp.read(prec, destination),
                     self.vfp.read(prec, sources[0]),
                     self.vfp.read(prec, sources[1]),
@@ -1148,8 +1216,15 @@ impl Arm11Core {
             })
             .collect();
 
-        let mut results = Vec::with_capacity(inputs.len());
-        for (destination, fd, fn_, fm) in inputs {
+        let lane_count = inputs.len();
+        let mut results = Vec::with_capacity(lane_count);
+        let mut accumulated_exceptions = 0;
+        for (iteration, (destination, source_n, source_m, fd, fn_, fm)) in
+            inputs.into_iter().enumerate()
+        {
+            if vector_exception_mode {
+                self.vfp.clear_exception_status();
+            }
             let result = match (p, q, r) {
                 (false, false, false) => {
                     let product = self.vfp.binary(prec, BinOp::Mul, fn_, fm)?;
@@ -1173,9 +1248,41 @@ impl Arm11Core {
                 (true, false, false) if !s => self.vfp.binary(prec, BinOp::Div, fn_, fm)?,
                 _ => return Err(self.vfp_undefined(word)),
             };
+
+            if vector_exception_mode {
+                let raised = self.vfp.exception_status();
+                let trapped = self.vfp.trapped_exception_status(raised);
+                if trapped != 0 {
+                    self.vfp.merge_exception_status(
+                        previous_fpscr,
+                        accumulated_exceptions | raised,
+                    );
+                    for (completed_destination, completed_result) in results {
+                        self.vfp.write(prec, completed_destination, completed_result);
+                    }
+                    let fpinst = encode_vector_fpinst(
+                        word,
+                        prec,
+                        destination,
+                        Some(source_n),
+                        source_m,
+                    );
+                    self.vfp.record_vector_exception_bounce(
+                        fpinst,
+                        trapped,
+                        lane_count - iteration - 1,
+                    );
+                    return Ok(());
+                }
+                accumulated_exceptions |= raised;
+            }
             results.push((destination, result));
         }
 
+        if vector_exception_mode {
+            self.vfp
+                .merge_exception_status(previous_fpscr, accumulated_exceptions);
+        }
         for (destination, result) in results {
             self.vfp.write(prec, destination, result);
         }
@@ -1183,7 +1290,14 @@ impl Arm11Core {
     }
 
     /// The "extension" opcode space: moves, sign changes, sqrt, compare and convert.
-    fn vfp_extension(&mut self, word: u32, prec: Prec, s: bool) -> Result<()> {
+    fn vfp_extension(
+        &mut self,
+        word: u32,
+        prec: Prec,
+        s: bool,
+        previous_fpscr: u32,
+        vector_exceptions_processed: &mut bool,
+    ) -> Result<()> {
         if !s {
             // VFPv3 immediate moves are not part of VFPv2.
             return Err(self.vfp_undefined(word));
@@ -1200,23 +1314,58 @@ impl Arm11Core {
                 let d = self.vfp_reg(word, prec, vd, d_low)?;
                 let m = self.vfp_reg(word, prec, vm, m_low)?;
                 let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(m, true)])?;
-                if lanes.len() > 1 && self.vfp.has_enabled_traps() {
-                    return Err(Error::Unimplemented("VFP short-vector exception bounce"));
+                let vector_exception_mode = lanes.len() > 1 && self.vfp.has_enabled_traps();
+                if vector_exception_mode {
+                    *vector_exceptions_processed = true;
                 }
                 let inputs: Vec<_> = lanes
                     .into_iter()
-                    .map(|(destination, sources)| (destination, self.vfp.read(prec, sources[0])))
+                    .map(|(destination, sources)| {
+                        (destination, sources[0], self.vfp.read(prec, sources[0]))
+                    })
                     .collect();
 
-                let mut results = Vec::with_capacity(inputs.len());
-                for (destination, value) in inputs {
+                let lane_count = inputs.len();
+                let mut results = Vec::with_capacity(lane_count);
+                let mut accumulated_exceptions = 0;
+                for (iteration, (destination, source, value)) in inputs.into_iter().enumerate() {
+                    if vector_exception_mode {
+                        self.vfp.clear_exception_status();
+                    }
                     let result = match (op, flag) {
                         (0, false) => value,
                         (0, true) => value & !prec.sign_bit(),
                         (1, false) => negate(prec, value),
                         _ => self.vfp.sqrt(prec, value)?,
                     };
+
+                    if vector_exception_mode {
+                        let raised = self.vfp.exception_status();
+                        let trapped = self.vfp.trapped_exception_status(raised);
+                        if trapped != 0 {
+                            self.vfp.merge_exception_status(
+                                previous_fpscr,
+                                accumulated_exceptions | raised,
+                            );
+                            for (completed_destination, completed_result) in results {
+                                self.vfp.write(prec, completed_destination, completed_result);
+                            }
+                            let fpinst =
+                                encode_vector_fpinst(word, prec, destination, None, source);
+                            self.vfp.record_vector_exception_bounce(
+                                fpinst,
+                                trapped,
+                                lane_count - iteration - 1,
+                            );
+                            return Ok(());
+                        }
+                        accumulated_exceptions |= raised;
+                    }
                     results.push((destination, result));
+                }
+                if vector_exception_mode {
+                    self.vfp
+                        .merge_exception_status(previous_fpscr, accumulated_exceptions);
                 }
                 for (destination, result) in results {
                     self.vfp.write(prec, destination, result);
@@ -2000,6 +2149,68 @@ mod tests {
             run(&mut cpu, &mut mem, &[0xEC92_4A00]),
             Err(Error::UndefinedInstruction { .. })
         ));
+    }
+
+    #[test]
+    fn short_vector_exception_bounces_at_failing_lane_and_retires_prior_lanes() {
+        let (mut cpu, mut mem) = machine();
+        cpu.vfp_mut().fpscr = (3 << 16) | FPSCR_IOE; // four lanes, stride one
+        set_f32(&mut cpu, 10, 1.0);
+        cpu.vfp_mut().set_s(11, 0x7F80_0001); // signaling NaN in lane 2
+        set_f32(&mut cpu, 12, 1.0);
+        set_f32(&mut cpu, 13, 1.0);
+        set_f32(&mut cpu, 14, 3.0);
+        set_f32(&mut cpu, 15, 5.0);
+        set_f32(&mut cpu, 8, 0.0);
+        set_f32(&mut cpu, 9, 99.0);
+
+        let instruction = dp(VADD, 8, 10, 12, false);
+        run(&mut cpu, &mut mem, &[instruction]).unwrap();
+
+        assert_eq!(f32_of(&cpu, 8), 2.0);
+        assert_eq!(f32_of(&cpu, 9), 99.0);
+        assert_eq!(f32_of(&cpu, 10), 1.0);
+        assert_eq!(
+            cpu.vfp().fpinst(),
+            dp(VADD, 9, 11, 13, false),
+            "FPINST must name the failing vector lane and force AL"
+        );
+        assert_ne!(cpu.vfp().fpexc() & FPEXC_EX, 0);
+        assert_eq!(cpu.vfp().fpexc() & FPEXC_FP2V, 0);
+        assert_eq!(
+            cpu.vfp().fpexc() & FPEXC_VECITR,
+            1 << 8,
+            "two iterations remain after the exceptional second lane"
+        );
+        assert_ne!(cpu.vfp().fpexc() & FPEXC_IOC, 0);
+    }
+
+    #[test]
+    fn short_vector_sqrt_exception_records_no_iterations_after_last_lane() {
+        let (mut cpu, mut mem) = machine();
+        cpu.vfp_mut().fpscr = (1 << 16) | FPSCR_IOE; // two lanes
+        set_f32(&mut cpu, 8, -1.0);
+        set_f32(&mut cpu, 9, 4.0);
+        set_f32(&mut cpu, 16, 123.0);
+        set_f32(&mut cpu, 17, 456.0);
+
+        let instruction = dp(VSQRT, 16, 0, 8, false);
+        run(&mut cpu, &mut mem, &[instruction]).unwrap();
+
+        assert_eq!(f32_of(&cpu, 16), 123.0, "failing lane must not commit");
+        assert_eq!(f32_of(&cpu, 17), 456.0, "later lane must not execute");
+        assert_eq!(
+            cpu.vfp().fpinst(),
+            instruction,
+            "FPINST must identify the exceptional source and destination"
+        );
+        assert_ne!(cpu.vfp().fpexc() & FPEXC_EX, 0);
+        assert_eq!(
+            cpu.vfp().fpexc() & FPEXC_VECITR,
+            7 << 8,
+            "zero later iterations is encoded as VECITR=111"
+        );
+        assert_ne!(cpu.vfp().fpexc() & FPEXC_IOC, 0);
     }
 
     #[test]
