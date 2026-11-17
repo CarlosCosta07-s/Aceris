@@ -2943,7 +2943,7 @@ mod tests {
         gx_queue[1] = 1;
         let gx_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
         gx_queue[gx_entry] = GSP_GX_COMMAND_MEMORY_FILL;
-        for (index, value) in [fill_start, 0xAABB_CCDD, fill_end, 0, 0, 0, 0]
+        for (index, value) in [fill_start, 0xAABB_CCDD, fill_end, 0, 0, 0, 0x0000_0201]
             .into_iter()
             .enumerate()
         {
