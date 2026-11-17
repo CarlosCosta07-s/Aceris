@@ -198,6 +198,8 @@ impl PicaFragmentRenderSession {
             depth_format: depth_config.map(|depth| depth.format),
             depth_map: Some(depth_map),
             minifying: [false; 3],
+            cull_mode: pica.cull_mode(),
+            scissor: pica.scissor_state(),
         };
 
         let rasterizer = &mut self

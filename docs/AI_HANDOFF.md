@@ -1895,3 +1895,12 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Os guests dos testes de sistema agora escrevem 0x107 = 0x41 (teste habilitado, função less); sem isso o teste fica desabilitado.
 - Pendente: ligar o render por padrão sem `set_pica_rendering`, culling (reg 0x40), scissor, máscaras de escrita, convenção real de clip em Z (NegativeOneToOne é suposição).
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.
+
+## PICA200: scissor e culling no fragment rasterizer
+
+- `PicaFragmentRasterState` ganhou `cull_mode` e `scissor`; `PicaFragmentRenderSession` os lê dos registradores do guest no trigger do draw. Alteração mínima em `fragment_rasterizer.rs` e `fragment_render.rs` (arquivos de outra sessão); nada além dessas bordas foi tocado.
+- Convenção: `area` interna usa Y para baixo, então o enrolamento visto pelo guest (Y para cima) tem sinal oposto. KeepClockwise/KeepCounterClockwise e a codificação 1/2 são premissas não verificadas em hardware.
+- Testes: decodificação dos registradores, culling nas duas orientações, scissor include/exclude particionando os pixels e origem inferior-esquerda das linhas.
+- Não há teste ponta a ponta via GSP para estes registradores; o `PicaRenderSession` legado os ignora.
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.
+- Fora deste commit, e sem integração: `crates/aceris-core/src/input.rs` (modelo de entrada: botões, circle pad, toque), ainda não ligado a `System`, ABI Android nem desktop.

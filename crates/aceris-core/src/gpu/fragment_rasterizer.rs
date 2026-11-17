@@ -13,11 +13,11 @@
 //! multisample coverage remain separate work.
 
 use super::{
-    DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthBufferConfig, PicaDepthBufferError,
-    PicaDepthBufferFormat, PicaDepthMap, PicaDepthMode, PicaFragmentDraw, PicaFragmentDrawError,
-    PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex, PicaRenderTargetConfig,
-    PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw, PicaVertexOutputMap,
-    SoftwareRasterizer, Viewport,
+    DepthFunction, GpuPhysicalMemory, Matrix4, PicaCullMode, PicaDepthBufferConfig,
+    PicaDepthBufferError, PicaDepthBufferFormat, PicaDepthMap, PicaDepthMode, PicaFragmentDraw,
+    PicaFragmentDrawError, PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex,
+    PicaRenderTargetConfig, PicaRenderTargetError, PicaRenderTargetWriteReport, PicaScissorMode,
+    PicaScissorState, PicaShadedDraw, PicaVertexOutputMap, SoftwareRasterizer, Viewport,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
@@ -153,6 +153,10 @@ pub struct PicaFragmentRasterState {
     /// LOD classification supplied by the caller until screen derivatives are
     /// calculated by the rasterizer itself.
     pub minifying: [bool; 3],
+    /// Face culling by triangle winding in PICA window space (Y up).
+    pub cull_mode: PicaCullMode,
+    /// Scissor rectangle in PICA window coordinates (origin bottom-left).
+    pub scissor: PicaScissorState,
 }
 
 impl PicaFragmentRasterState {
@@ -167,6 +171,8 @@ impl PicaFragmentRasterState {
             depth_format: None,
             depth_map: None,
             minifying: [false; 3],
+            cull_mode: PicaCullMode::KeepAll,
+            scissor: PicaScissorState::default(),
         }
     }
 }
@@ -492,6 +498,16 @@ impl PicaFragmentRasterizer {
         if area == 0.0 {
             return Ok(());
         }
+        // `area` uses top-left screen coordinates (Y down); PICA window space
+        // has Y up, so the winding seen by the guest is the opposite sign.
+        let culled = match state.cull_mode {
+            PicaCullMode::KeepAll => false,
+            PicaCullMode::KeepClockwise => area < 0.0,
+            PicaCullMode::KeepCounterClockwise => area > 0.0,
+        };
+        if culled {
+            return Ok(());
+        }
         if area < 0.0 {
             vertices.swap(1, 2);
             area = -area;
@@ -561,6 +577,9 @@ impl PicaFragmentRasterizer {
                     orient(vertices[0], vertices[1], point),
                 ];
                 if (0..3).any(|index| !inside_edge(edges[index], edge_top_left[index])) {
+                    continue;
+                }
+                if scissor_rejects(state.scissor, x, y, self.height) {
                     continue;
                 }
 
@@ -834,6 +853,23 @@ fn to_screen(
     })
 }
 
+/// Whether the scissor discards the pixel at top-left coordinates (`x`, `y`).
+fn scissor_rejects(scissor: PicaScissorState, x: usize, y: usize, height: usize) -> bool {
+    if scissor.mode == PicaScissorMode::Disabled {
+        return false;
+    }
+    // Convert to PICA window coordinates (origin bottom-left).
+    let window_y = (height - 1 - y) as u64;
+    let window_x = x as u64;
+    let inside = (u64::from(scissor.x1)..=u64::from(scissor.x2)).contains(&window_x)
+        && (u64::from(scissor.y1)..=u64::from(scissor.y2)).contains(&window_y);
+    match scissor.mode {
+        PicaScissorMode::Include => !inside,
+        PicaScissorMode::Exclude => inside,
+        PicaScissorMode::Disabled => false,
+    }
+}
+
 fn orient(a: ScreenVertex, b: ScreenVertex, point: ScreenVertex) -> f64 {
     let ax = f64::from(a.x);
     let ay = f64::from(a.y);
@@ -1071,6 +1107,106 @@ mod tests {
         let decoded = target.read_rgba8(&memory).unwrap();
         let offset = (6 * 8 + 1) * 4;
         assert_eq!(&decoded[offset..offset + 4], &[159, 48, 48, 255]);
+    }
+
+    /// Runs the reference lower-left triangle (counter-clockwise in PICA window
+    /// space) through an 8x8 target with the given culling/scissor state.
+    fn raster_with(
+        order: [usize; 3],
+        cull_mode: PicaCullMode,
+        scissor: PicaScissorState,
+    ) -> (PicaFragmentRasterReport, PicaFragmentRasterizer) {
+        let mut pica = super::super::Pica200::new();
+        configure_tev(&mut pica);
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let target =
+            PicaRenderTargetConfig::from_registers(VRAM_BASE >> 3, 2, 0, 8 | (7 << 12) | (1 << 24))
+                .unwrap();
+        let memory = GpuPhysicalMemory::new();
+        let mut rasterizer =
+            PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
+        let corners = [
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], [0.0, 1.0, 0.0, 1.0]),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], [0.0, 0.0, 1.0, 1.0]),
+        ];
+        let draw = draw(order.map(|index| corners[index]));
+        let mut state = PicaFragmentRasterState::new(
+            Matrix4::identity(),
+            Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+        );
+        state.cull_mode = cull_mode;
+        state.scissor = scissor;
+        let report = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
+        (report, rasterizer)
+    }
+
+    #[test]
+    fn face_culling_follows_the_winding_in_pica_window_space() {
+        let none = PicaScissorState::default();
+        // Counter-clockwise (Y up) triangle.
+        let ccw = [0, 1, 2];
+        let cw = [0, 2, 1];
+        for (order, mode, expected) in [
+            (ccw, PicaCullMode::KeepAll, 28),
+            (ccw, PicaCullMode::KeepCounterClockwise, 28),
+            (ccw, PicaCullMode::KeepClockwise, 0),
+            (cw, PicaCullMode::KeepAll, 28),
+            (cw, PicaCullMode::KeepClockwise, 28),
+            (cw, PicaCullMode::KeepCounterClockwise, 0),
+        ] {
+            let (report, rasterizer) = raster_with(order, mode, none);
+            assert_eq!(report.covered_pixels, expected, "{order:?} {mode:?}");
+            if expected == 0 {
+                assert_eq!(rasterizer.color_at(1, 6), Some([0, 0, 0, 0]));
+            }
+        }
+    }
+
+    #[test]
+    fn scissor_include_and_exclude_partition_the_covered_pixels() {
+        let rect = |mode| PicaScissorState {
+            mode,
+            x1: 0,
+            y1: 0,
+            x2: 3,
+            y2: 3,
+        };
+        let (include, _) = raster_with(
+            [0, 1, 2],
+            PicaCullMode::KeepAll,
+            rect(PicaScissorMode::Include),
+        );
+        let (exclude, _) = raster_with(
+            [0, 1, 2],
+            PicaCullMode::KeepAll,
+            rect(PicaScissorMode::Exclude),
+        );
+        assert!(include.covered_pixels > 0 && exclude.covered_pixels > 0);
+        assert_eq!(include.covered_pixels + exclude.covered_pixels, 28);
+
+        let (disabled, _) = raster_with(
+            [0, 1, 2],
+            PicaCullMode::KeepAll,
+            rect(PicaScissorMode::Disabled),
+        );
+        assert_eq!(disabled.covered_pixels, 28);
+    }
+
+    #[test]
+    fn scissor_rows_use_the_pica_bottom_left_origin() {
+        // Window row 0 is the bottom row, i.e. screen row 7 of the 8x8 target.
+        let bottom_row = PicaScissorState {
+            mode: PicaScissorMode::Include,
+            x1: 0,
+            y1: 0,
+            x2: 7,
+            y2: 0,
+        };
+        let (report, rasterizer) = raster_with([0, 1, 2], PicaCullMode::KeepAll, bottom_row);
+        assert_eq!(report.covered_pixels, 7);
+        assert_ne!(rasterizer.color_at(0, 7), Some([0, 0, 0, 0]));
+        assert_eq!(rasterizer.color_at(0, 6), Some([0, 0, 0, 0]));
     }
 
     #[test]

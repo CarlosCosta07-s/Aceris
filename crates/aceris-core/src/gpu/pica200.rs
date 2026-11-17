@@ -40,6 +40,14 @@ pub const REG_DEPTHMAP_OFFSET: u16 = 0x04E;
 pub const REG_VIEWPORT_XY: u16 = 0x068;
 /// PICA depth-buffer control: the current model treats bit 0 as Z (1) / W (0).
 pub const REG_DEPTHMAP_ENABLE: u16 = 0x06D;
+/// GPUREG_FACECULLING_CONFIG: bits 0..1 select the culling mode.
+pub const REG_FACECULLING_CONFIG: u16 = 0x040;
+/// GPUREG_SCISSORTEST_MODE: bits 0..1 select disabled/exclude/include.
+pub const REG_SCISSORTEST_MODE: u16 = 0x065;
+/// GPUREG_SCISSORTEST_POS: x1 in bits 0..9, y1 in bits 16..25.
+pub const REG_SCISSORTEST_POS: u16 = 0x066;
+/// GPUREG_SCISSORTEST_DIM: x2 in bits 0..9, y2 in bits 16..25 (inclusive).
+pub const REG_SCISSORTEST_DIM: u16 = 0x067;
 /// GPUREG_DEPTH_COLOR_MASK: depth test/function, channel masks and depth write.
 pub const REG_DEPTH_COLOR_MASK: u16 = 0x107;
 /// GPUREG_COLORBUFFER_WRITE: per-channel color-buffer write access.
@@ -75,6 +83,43 @@ pub struct PicaViewportState {
 pub enum PicaDepthBuffering {
     WBuffer,
     ZBuffer,
+}
+
+/// Triangle face culling selected by the guest.
+///
+/// "Clockwise" and "counter-clockwise" refer to the triangle winding in PICA
+/// window space, where Y points up. The register encodings (0 keep all,
+/// 1 keep clockwise, 2 keep counter-clockwise) come from public 3DS
+/// documentation and are not verified on hardware; value 3 is treated as keep all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PicaCullMode {
+    #[default]
+    KeepAll,
+    KeepClockwise,
+    KeepCounterClockwise,
+}
+
+/// Scissor behavior selected by the guest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PicaScissorMode {
+    #[default]
+    Disabled,
+    /// Fragments inside the rectangle are discarded.
+    Exclude,
+    /// Only fragments inside the rectangle are kept.
+    Include,
+}
+
+/// Decoded scissor rectangle in PICA window coordinates (origin bottom-left,
+/// both corners inclusive). Encodings are not verified on hardware; the
+/// reserved mode value 2 is treated as disabled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PicaScissorState {
+    pub mode: PicaScissorMode,
+    pub x1: u32,
+    pub y1: u32,
+    pub x2: u32,
+    pub y2: u32,
 }
 
 /// Decoded guest depth-test configuration.
@@ -343,6 +388,33 @@ impl Pica200 {
         PicaDepthTestState {
             enabled: raw & 1 != 0,
             function,
+        }
+    }
+
+    /// Decodes GPUREG_FACECULLING_CONFIG.
+    pub fn cull_mode(&self) -> PicaCullMode {
+        match self.register(REG_FACECULLING_CONFIG).unwrap_or(0) & 3 {
+            1 => PicaCullMode::KeepClockwise,
+            2 => PicaCullMode::KeepCounterClockwise,
+            _ => PicaCullMode::KeepAll,
+        }
+    }
+
+    /// Decodes the scissor registers.
+    pub fn scissor_state(&self) -> PicaScissorState {
+        let mode = match self.register(REG_SCISSORTEST_MODE).unwrap_or(0) & 3 {
+            1 => PicaScissorMode::Exclude,
+            3 => PicaScissorMode::Include,
+            _ => PicaScissorMode::Disabled,
+        };
+        let pos = self.register(REG_SCISSORTEST_POS).unwrap_or(0);
+        let dim = self.register(REG_SCISSORTEST_DIM).unwrap_or(0);
+        PicaScissorState {
+            mode,
+            x1: pos & 0x3FF,
+            y1: (pos >> 16) & 0x3FF,
+            x2: dim & 0x3FF,
+            y2: (dim >> 16) & 0x3FF,
         }
     }
 
@@ -894,6 +966,43 @@ fn apply_byte_mask(target: &mut u32, value: u32, mask: u8) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cull_and_scissor_registers_decode_from_guest_writes() {
+        let mut pica = Pica200::new();
+        assert_eq!(pica.cull_mode(), PicaCullMode::KeepAll);
+        assert_eq!(pica.scissor_state(), PicaScissorState::default());
+
+        for (raw, expected) in [
+            (0, PicaCullMode::KeepAll),
+            (1, PicaCullMode::KeepClockwise),
+            (2, PicaCullMode::KeepCounterClockwise),
+            (3, PicaCullMode::KeepAll),
+        ] {
+            pica.write_register(REG_FACECULLING_CONFIG, raw).unwrap();
+            assert_eq!(pica.cull_mode(), expected);
+        }
+
+        pica.write_register(REG_SCISSORTEST_MODE, 3).unwrap();
+        pica.write_register(REG_SCISSORTEST_POS, (20 << 16) | 10)
+            .unwrap();
+        pica.write_register(REG_SCISSORTEST_DIM, (239 << 16) | 399)
+            .unwrap();
+        assert_eq!(
+            pica.scissor_state(),
+            PicaScissorState {
+                mode: PicaScissorMode::Include,
+                x1: 10,
+                y1: 20,
+                x2: 399,
+                y2: 239,
+            }
+        );
+        pica.write_register(REG_SCISSORTEST_MODE, 1).unwrap();
+        assert_eq!(pica.scissor_state().mode, PicaScissorMode::Exclude);
+        pica.write_register(REG_SCISSORTEST_MODE, 2).unwrap();
+        assert_eq!(pica.scissor_state().mode, PicaScissorMode::Disabled);
+    }
+
     use super::*;
 
     fn command(register: u16, mask: u8, consecutive: bool, extra: u8) -> u32 {
