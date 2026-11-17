@@ -5022,7 +5022,7 @@ mod tests {
         use crate::gpu::{
             ClipDepthRange, DepthFunction, GeometryPipeline, Matrix4, PicaRenderSettings,
             REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
             REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
@@ -5071,7 +5071,7 @@ mod tests {
             (REG_VIEWPORT_XY, 0),
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
             (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
-            (REG_DEPTHMAP_MODE, 1),             // Z buffering
+            (REG_DEPTHMAP_ENABLE, 1),             // Z buffering
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -5154,7 +5154,7 @@ mod tests {
             GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, GeometryPipeline, Matrix4,
             PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
             REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
-            REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE,
+            REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE,
             REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
             REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
@@ -5217,7 +5217,7 @@ mod tests {
             (REG_VIEWPORT_XY, 0),
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
             (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
-            (REG_DEPTHMAP_MODE, 1),             // Z buffering
+            (REG_DEPTHMAP_ENABLE, 1),             // Z buffering
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -5320,7 +5320,7 @@ mod tests {
             GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
             GeometryPipeline, Matrix4, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
             REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
@@ -5496,7 +5496,7 @@ mod tests {
             (REG_VIEWPORT_XY, 0),
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
             (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
-            (REG_DEPTHMAP_MODE, 1),             // Z buffering
+            (REG_DEPTHMAP_ENABLE, 1),             // Z buffering
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -5662,7 +5662,7 @@ mod tests {
             GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
             GeometryPipeline, Matrix4, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_MODE, REG_DEPTHMAP_OFFSET,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
             REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
             REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
@@ -5895,7 +5895,7 @@ mod tests {
             (REG_VIEWPORT_XY, 0),
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
             (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
-            (REG_DEPTHMAP_MODE, 1),             // Z buffering
+            (REG_DEPTHMAP_ENABLE, 1),             // Z buffering
         ] {
             command_list.extend(write(register, value));
         }
@@ -6021,7 +6021,7 @@ mod tests {
         assert_eq!(system.gpu_mut().register(REG_VIEWPORT_XY), Some(0));
         assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_SCALE), Some(0x003E_0000));
         assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_OFFSET), Some(0x003E_0000));
-        assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_MODE), Some(1));
+        assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_ENABLE), Some(1));
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
         assert!(render.pixels_written > 0);
