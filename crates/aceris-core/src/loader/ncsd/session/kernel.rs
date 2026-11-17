@@ -105,7 +105,7 @@ pub enum KernelHandleError {
     CountLimitExceeded,
     /// A timer duration is negative or cannot be represented.
     InvalidDuration,
-    /// A handle with blocked waiters cannot be closed by this bootstrap yet.
+    /// An operation cannot proceed while the referenced object has pending waiters.
     WaitersPending,
     /// A shared-memory block size is zero or not page-aligned.
     InvalidMemoryBlockSize,
