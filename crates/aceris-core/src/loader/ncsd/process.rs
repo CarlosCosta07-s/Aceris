@@ -3186,6 +3186,58 @@ mod tests {
     }
 
     #[test]
+    fn shared_memory_subviews_publish_multiple_lines_and_invalidate_through_peer_alias() {
+        let backing = SharedMemoryBacking::zeroed(0x2000).unwrap();
+        let second_page = backing.view(0x1000, 0x1000).unwrap();
+        let mut publisher = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut consumer = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        publisher
+            .map_shared_memory_region(0x0800_0000, backing, 3)
+            .unwrap();
+        consumer
+            .map_shared_memory_region(0x0900_0000, second_page.clone(), 3)
+            .unwrap();
+        consumer
+            .map_shared_memory_region(0x0B00_0000, second_page, 3)
+            .unwrap();
+
+        // The consumer maps only the backing's second page. The two bytes
+        // straddle a 32-byte cache-line boundary in that shared subview.
+        assert_eq!(consumer.read8(0x0900_001F).unwrap(), 0);
+        assert_eq!(consumer.read8(0x0900_0020).unwrap(), 0);
+        assert_eq!(consumer.data_cache_line_count(), 2);
+
+        publisher.write8(0x0800_101F, 0xA5).unwrap();
+        publisher.write8(0x0800_1020, 0x5A).unwrap();
+        assert_eq!(
+            publisher.store_data_cache_range(0x0800_101F, 2).unwrap(),
+            2
+        );
+        assert_eq!(publisher.data_cache_line_count(), 2);
+        assert_eq!(publisher.pending_write_buffer_entries(), 2);
+
+        // The producer's DMB completes both line writebacks, but does not
+        // snoop or discard the consumer's private clean cache lines.
+        publisher.data_memory_barrier().unwrap();
+        assert_eq!(publisher.pending_write_buffer_entries(), 0);
+        assert_eq!(consumer.read8(0x0900_001F).unwrap(), 0);
+        assert_eq!(consumer.read8(0x0900_0020).unwrap(), 0);
+
+        // Invalidation through a second virtual alias must evict the same
+        // backing-identified lines used by reads through the first alias.
+        assert_eq!(
+            consumer
+                .invalidate_data_cache_range(0x0B00_001F, 2)
+                .unwrap(),
+            2
+        );
+        assert_eq!(consumer.read8(0x0900_001F).unwrap(), 0xA5);
+        assert_eq!(consumer.read8(0x0900_0020).unwrap(), 0x5A);
+        assert_eq!(consumer.data_cache_line_count(), 2);
+    }
+
+    #[test]
     fn dynamic_heap_backing_is_shared_with_mapped_views_and_cache_generations() {
         let mut owner = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut peer = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
