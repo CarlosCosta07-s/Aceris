@@ -379,8 +379,7 @@ impl GeometryPipeline {
         let color = vertex
             .color
             .map(|channel| channel.round().clamp(0.0, 255.0) as u8);
-        let mut raster_vertex =
-            RasterVertex::new(x, y, depth, color).with_reciprocal_w(inverse_w);
+        let mut raster_vertex = RasterVertex::new(x, y, depth, color).with_reciprocal_w(inverse_w);
         if let Some(map) = self.pica_depth_map {
             raster_vertex = raster_vertex.with_pica_depth_map(map);
         }
@@ -540,9 +539,11 @@ mod tests {
 
         assert_eq!(output.len(), 1);
         assert!(output[0].iter().all(|vertex| vertex.depth == 0.25));
-        assert!(output[0]
-            .iter()
-            .all(|vertex| vertex.pica_depth_map == pipeline.pica_depth_map()));
+        assert!(
+            output[0]
+                .iter()
+                .all(|vertex| vertex.pica_depth_map == pipeline.pica_depth_map())
+        );
     }
 
     #[test]
