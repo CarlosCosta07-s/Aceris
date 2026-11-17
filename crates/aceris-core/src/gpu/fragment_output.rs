@@ -419,6 +419,8 @@ impl PicaFragmentOutputState {
         let alpha_test_enabled = alpha_test & 1 != 0;
         let stencil_test = pica.register(REG_STENCIL_TEST).unwrap_or(0);
         let stencil_operation = pica.register(REG_STENCIL_OP).unwrap_or(0);
+        let stencil_test = pica.register(REG_STENCIL_TEST).unwrap_or(0);
+        let stencil_operation = pica.register(REG_STENCIL_OP).unwrap_or(0);
         let (
             rgb_equation,
             alpha_equation,
@@ -732,6 +734,16 @@ mod tests {
             alpha_test_enabled: false,
             alpha_test_function: PicaAlphaTestFunction::Always,
             alpha_test_reference: 0,
+            stencil: PicaStencilState {
+                enabled: false,
+                function: PicaStencilFunction::Always,
+                write_mask: 0,
+                reference: 0,
+                compare_mask: 0xFF,
+                stencil_fail: PicaStencilOperation::Keep,
+                depth_fail: PicaStencilOperation::Keep,
+                depth_pass: PicaStencilOperation::Keep,
+            },
         };
         assert_eq!(
             state
