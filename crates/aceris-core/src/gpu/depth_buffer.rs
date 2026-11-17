@@ -186,8 +186,8 @@ impl PicaDepthBufferConfig {
         if !self.depth_write_enabled {
             return Ok(0);
         }
-        let expected = usize::from(self.width)
-            .checked_mul(usize::from(self.height))
+        let expected = self.width as usize
+            .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
         if values.len() != expected {
             return Err(PicaDepthBufferError::BufferLengthMismatch {
@@ -206,11 +206,11 @@ impl PicaDepthBufferConfig {
         // Read the existing bytes so depth updates preserve the stencil lane
         // in D24S8 surfaces even when no stencil operation is performed here.
         let mut raw = self.read_raw(memory)?;
-        let tiles_x = tile_count(usize::from(self.width))?;
+        let tiles_x = tile_count(self.width as usize)?;
         let bytes_per_pixel = self.format.bytes_per_pixel();
-        for y in 0..usize::from(self.height) {
-            for x in 0..usize::from(self.width) {
-                let source = y * usize::from(self.width) + x;
+        for y in 0..self.height as usize {
+            for x in 0..self.width as usize {
+                let source = y * self.width as usize + x;
                 let offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
                 self.format
                     .encode_depth(values[source], &mut raw[offset..offset + bytes_per_pixel]);
@@ -229,14 +229,14 @@ impl PicaDepthBufferConfig {
             return Ok(None);
         }
         let raw = self.read_raw(memory)?;
-        let pixel_count = usize::from(self.width)
-            .checked_mul(usize::from(self.height))
+        let pixel_count = self.width as usize
+            .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
         let mut values = vec![0; pixel_count];
-        let tiles_x = tile_count(usize::from(self.width))?;
-        for y in 0..usize::from(self.height) {
-            for x in 0..usize::from(self.width) {
-                let source = y * usize::from(self.width) + x;
+        let tiles_x = tile_count(self.width as usize)?;
+        for y in 0..self.height as usize {
+            for x in 0..self.width as usize {
+                let source = y * self.width as usize + x;
                 let offset = tiled_pixel_offset(x, y, tiles_x, 4)?;
                 values[source] = raw[offset + 3];
             }
@@ -256,8 +256,8 @@ impl PicaDepthBufferConfig {
         if !self.stencil_write_enabled {
             return Ok(0);
         }
-        let expected = usize::from(self.width)
-            .checked_mul(usize::from(self.height))
+        let expected = self.width as usize
+            .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
         if values.len() != expected {
             return Err(PicaDepthBufferError::BufferLengthMismatch {
@@ -267,10 +267,10 @@ impl PicaDepthBufferConfig {
         }
 
         let mut raw = self.read_raw(memory)?;
-        let tiles_x = tile_count(usize::from(self.width))?;
-        for y in 0..usize::from(self.height) {
-            for x in 0..usize::from(self.width) {
-                let source = y * usize::from(self.width) + x;
+        let tiles_x = tile_count(self.width as usize)?;
+        for y in 0..self.height as usize {
+            for x in 0..self.width as usize {
+                let source = y * self.width as usize + x;
                 let offset = tiled_pixel_offset(x, y, tiles_x, 4)?;
                 raw[offset + 3] = values[source];
             }
@@ -376,7 +376,7 @@ mod tests {
     use super::*;
     use crate::gpu::physical_memory::{FCRAM_BASE, VRAM_BASE};
 
-    fn config(format: PicaDepthBufferFormat, width: u16, height: u16) -> PicaDepthBufferConfig {
+    fn config(format: PicaDepthBufferFormat, width: u32, height: u32) -> PicaDepthBufferConfig {
         PicaDepthBufferConfig {
             address: VRAM_BASE,
             width,
