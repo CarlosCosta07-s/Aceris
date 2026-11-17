@@ -250,7 +250,11 @@ impl PicaTextureUnit {
 
         let width = ((dimensions >> 16) & 0x7FF) as u16;
         let height = (dimensions & 0x7FF) as u16;
-        if width == 0 || height == 0 {
+        if !(8..=1024).contains(&width)
+            || !(8..=1024).contains(&height)
+            || !width.is_power_of_two()
+            || !height.is_power_of_two()
+        {
             return Err(PicaTextureError::InvalidDimensions {
                 unit,
                 width,
@@ -619,6 +623,33 @@ mod tests {
     }
 
     #[test]
+    fn rejects_texture_dimensions_outside_pica_power_of_two_range() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_TEXUNIT_CONFIG, 1).unwrap();
+        pica.write_register(0x082, (12 << 16) | 8).unwrap();
+        assert!(matches!(
+            PicaTextureUnit::from_pica(&pica, 0),
+            Err(PicaTextureError::InvalidDimensions {
+                unit: 0,
+                width: 12,
+                height: 8
+            })
+        ));
+
+        pica.write_register(0x082, (1024 << 16) | 8).unwrap();
+        assert!(PicaTextureUnit::from_pica(&pica, 0).is_ok());
+        pica.write_register(0x082, (1032 << 16) | 8).unwrap();
+        assert!(matches!(
+            PicaTextureUnit::from_pica(&pica, 0),
+            Err(PicaTextureError::InvalidDimensions {
+                unit: 0,
+                width: 1032,
+                height: 8
+            })
+        ));
+    }
+
+    #[test]
     fn samples_rgba8888_from_morton_ordered_8x8_tile() {
         let mut memory = GpuPhysicalMemory::new();
         let morton = morton_index(3, 5);
@@ -679,8 +710,7 @@ mod tests {
         for y in 0..8 {
             for x in 0..8 {
                 let offset = morton_index(x, y) * 4;
-                tiled[offset..offset + 4]
-                    .copy_from_slice(&[255, 0, y as u8 * 20, x as u8 * 20]);
+                tiled[offset..offset + 4].copy_from_slice(&[255, 0, y as u8 * 20, x as u8 * 20]);
             }
         }
         memory.write(VRAM_BASE, &tiled).unwrap();
