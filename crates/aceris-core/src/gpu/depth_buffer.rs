@@ -235,7 +235,11 @@ impl PicaDepthBufferConfig {
         let pixel_count = (self.width as usize)
             .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
-        let mut values = vec![0; pixel_count];
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(pixel_count)
+            .map_err(|_| PicaDepthBufferError::AllocationFailed)?;
+        values.resize(pixel_count, 0);
         let tiles_x = tile_count(self.width as usize)?;
         for y in 0..self.height as usize {
             for x in 0..self.width as usize {
