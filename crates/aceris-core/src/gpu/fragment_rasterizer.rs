@@ -834,7 +834,8 @@ mod tests {
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
         PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
-        PicaVertexOutputMap, REG_LOGIC_OP, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
+        PicaVertexOutputMap, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP, REG_TEXUNIT_CONFIG,
+        TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn fragment_vertex(position: [f32; 4], color: [f32; 4]) -> PicaFragmentVertex {
@@ -941,6 +942,51 @@ mod tests {
         let decoded = target.read_rgba8(&memory).unwrap();
         let offset = (6 * 8 + 1) * 4;
         assert_eq!(&decoded[offset..offset + 4], &[159, 48, 48, 255]);
+    }
+
+    #[test]
+    fn alpha_test_discards_fragments_before_depth_and_color_writes() {
+        let mut pica = super::super::Pica200::new();
+        configure_tev(&mut pica);
+        // Enable alpha test with NEVER: every covered fragment is discarded.
+        pica.write_register(REG_FRAGOP_ALPHA_TEST, 1).unwrap();
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let target = PicaRenderTargetConfig::from_registers(
+            VRAM_BASE >> 3,
+            2,
+            0,
+            8 | (7 << 12) | (1 << 24),
+        )
+        .unwrap();
+
+        let mut memory = GpuPhysicalMemory::new();
+        let mut framebuffer = vec![0u8; 8 * 8 * 4];
+        for alpha in framebuffer.iter_mut().skip(3).step_by(4) {
+            *alpha = 255;
+        }
+        let mut initial = SoftwareRasterizer::new(8, 8).unwrap();
+        initial.load_color_rgba8(&framebuffer).unwrap();
+        target.write_rasterizer(&initial, &mut memory).unwrap();
+
+        let mut rasterizer =
+            PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
+        let draw = draw([
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], [0.0, 1.0, 0.0, 1.0]),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], [0.0, 0.0, 1.0, 1.0]),
+        ]);
+        let state = PicaFragmentRasterState::new(
+            Matrix4::identity(),
+            Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+        );
+        let report = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
+
+        assert_eq!(report.covered_pixels, 28);
+        assert_eq!(report.alpha_rejected_pixels, 28);
+        assert_eq!(report.depth_rejected_pixels, 0);
+        assert_eq!(report.shaded_pixels, 0);
+        assert_eq!(rasterizer.color_at(1, 6), Some([0, 0, 0, 255]));
+        assert_eq!(rasterizer.depth_buffer()[6 * 8 + 1], 1.0);
     }
 
     #[test]
