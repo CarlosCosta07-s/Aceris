@@ -1,6 +1,6 @@
 //! Top-level emulated system.
 
-use crate::cpu::Arm11Core;
+use crate::cpu::{Arm11Core, MpcoreScu};
 use crate::gpu::{
     DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
     GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
@@ -82,6 +82,8 @@ pub struct System {
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
     pending_gsp_acquires: Vec<PendingGspAcquire>,
+    /// Shared MPCore SCU state visible to the running ARM11 process.
+    mpcore_scu: MpcoreScu,
     gpu: Pica200,
     /// When set, submitted command lists are rendered, not only parsed.
     pica_render_settings: Option<PicaRenderSettings>,
@@ -240,6 +242,7 @@ impl System {
 
         self.reset_gpu_linear_memory();
         session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::ThreeDsx);
         self.ncsd_session = Some(session);
@@ -326,6 +329,7 @@ impl System {
 
         self.reset_gpu_linear_memory();
         session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Cia);
         self.ncsd_session = Some(session);
@@ -410,6 +414,7 @@ impl System {
 
         self.reset_gpu_linear_memory();
         session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Cia);
         self.ncsd_session = Some(session);
@@ -510,6 +515,7 @@ impl System {
 
         self.reset_gpu_linear_memory();
         session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Cia);
         self.ncsd_session = Some(session);
@@ -577,6 +583,7 @@ impl System {
 
         self.reset_gpu_linear_memory();
         session.attach_gpu_services(self.physical_memory.clone(), self.gpu_address_space.clone());
+        session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Ncsd);
         self.ncsd_session = Some(session);
@@ -1366,6 +1373,11 @@ impl System {
     /// Returns read-only access to the sparse ARM11 physical-memory backing.
     pub const fn physical_memory(&self) -> &GpuPhysicalMemory {
         &self.physical_memory
+    }
+
+    /// Returns the system-wide ARM11 MPCore Snoop Control Unit.
+    pub const fn mpcore_scu(&self) -> &MpcoreScu {
+        &self.mpcore_scu
     }
 
     /// Returns mutable access to physical memory for loader, DMA and display setup.
