@@ -2860,6 +2860,132 @@ mod tests {
     }
 
     #[test]
+    fn gsp_completion_interrupt_wakes_waiting_arm11_thread() {
+        let instructions = [
+            0xEF00_0008, // SVC CreateThread (main)
+            0xEAFF_FFFE, // B . (main stays runnable while the child waits)
+            0xE1A0_0000, // NOP
+            0xE1A0_0000, // NOP
+            0xE1A0_0000, // NOP
+            0xE1A0_0000, // NOP
+            0xE1A0_0000, // NOP
+            0xE1A0_0000, // NOP
+            0xE3E0_2000, // MVN r2, #0 (infinite wait timeout, low word)
+            0xE3E0_3000, // MVN r3, #0 (infinite wait timeout, high word)
+            0xEF00_0024, // SVC WaitSynchronization1 (r0 is event handle)
+            0xE3A0_105A, // MOV r1, #0x5A (proof that the child resumed)
+            0xEF00_0009, // SVC ExitThread
+        ];
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&instructions)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let (event_handle, shared_memory_handle) = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let shared_memory_handle = session.create_memory_block(0x1000, 3, 3).unwrap();
+            session
+                .map_memory_block(
+                    shared_memory_handle,
+                    GSP_SHARED_MEMORY_BASE,
+                    3,
+                    0x1000_0000,
+                )
+                .unwrap();
+            session
+                .write_memory_bytes(
+                    GSP_SHARED_MEMORY_BASE,
+                    &GspInterruptRelayQueue::new().encode(),
+                )
+                .unwrap();
+            let event_handle = session
+                .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
+                .unwrap();
+            (event_handle, shared_memory_handle)
+        };
+        system
+            .register_gsp_client(0, GSP_SHARED_MEMORY_BASE, event_handle)
+            .unwrap();
+
+        // The main thread creates a higher-priority child and passes the
+        // process-local GSP completion event as its argument (child r0).
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            assert!(session.set_current_register(0, 0x10));
+            assert!(session.set_current_register(1, 0x0010_0020));
+            assert!(session.set_current_register(2, event_handle));
+            assert!(session.set_current_register(3, 0x0020_2000));
+            assert!(session.set_current_register(4, 0));
+        }
+        let create_report = system.run_instructions(1).unwrap();
+        assert_eq!(create_report.instructions_executed, 1);
+        let child_id = system.ncsd_session().unwrap().current_thread_id().unwrap();
+
+        // The child blocks in the real ARM11 WaitSynchronization1 SVC.
+        let wait_report = system.run_instructions(3).unwrap();
+        assert_eq!(wait_report.instructions_executed, 3);
+        assert_eq!(
+            system.ncsd_session().unwrap().thread_info(child_id).unwrap().state,
+            crate::loader::ncsd::session::ThreadState::Waiting
+        );
+        assert_eq!(
+            system.ncsd_session().unwrap().current_thread_id(),
+            Some(crate::loader::ncsd::session::MAIN_THREAD_ID)
+        );
+
+        // A PPF completion is inserted in the registered GSP relay queue.
+        // The one-shot event handoff wakes the exact ARM11 thread waiting on it.
+        let delivery = system.dispatch_gsp_interrupt(GspInterruptId::Ppf).unwrap();
+        assert_eq!(delivery.deliveries.len(), 1);
+        assert_eq!(
+            system.ncsd_session().unwrap().thread_info(child_id).unwrap().state,
+            crate::loader::ncsd::session::ThreadState::Running
+        );
+        assert_eq!(
+            system.ncsd_session().unwrap().current_thread_id(),
+            Some(child_id)
+        );
+        assert_eq!(
+            system.ncsd_session().unwrap().current_core().unwrap().regs[0],
+            0
+        );
+        assert_eq!(
+            system
+                .ncsd_session()
+                .unwrap()
+                .event_handle_is_signaled(event_handle),
+            Some(false)
+        );
+
+        let mut relay_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session_mut()
+            .unwrap()
+            .read_memory_bytes(GSP_SHARED_MEMORY_BASE, &mut relay_bytes)
+            .unwrap();
+        let relay_queue = GspInterruptRelayQueue::parse(&relay_bytes).unwrap();
+        assert_eq!(
+            relay_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf]
+        );
+
+        // The first post-wakeup guest instruction executes, proving the
+        // scheduler returned control to the blocked child rather than merely
+        // setting the event object's host-side signaled bit.
+        let resumed = system.run_instructions(1).unwrap();
+        assert_eq!(resumed.instructions_executed, 1);
+        assert_eq!(
+            system.ncsd_session().unwrap().current_core().unwrap().regs[1],
+            0x5A
+        );
+        assert_ne!(shared_memory_handle, 0);
+    }
+
+    #[test]
     fn acquire_right_blocks_and_resumes_after_rendering_handoff() {
         let mut system = System::new();
         system
