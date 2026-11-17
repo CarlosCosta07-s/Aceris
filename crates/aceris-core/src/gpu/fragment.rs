@@ -643,9 +643,11 @@ mod tests {
     fn evaluates_replace_modulate_add_and_subtract() {
         let a = [0.2, 0.4, 0.6, 0.8];
         let b = [0.5, 0.25, 0.1, 0.5];
-        let mut inputs = PicaFragmentInputs::default();
-        inputs.primary_color = a;
-        inputs.textures[0] = b;
+        let inputs = PicaFragmentInputs {
+            primary_color: a,
+            textures: [b, [0.0; 4], [0.0; 4], [0.0; 4]],
+            ..PicaFragmentInputs::default()
+        };
 
         let replace = simple_stage(
             [
@@ -692,9 +694,16 @@ mod tests {
 
     #[test]
     fn evaluates_interpolate_signed_add_dot3_and_scales() {
-        let mut inputs = PicaFragmentInputs::default();
-        inputs.primary_color = [0.75, 0.25, 0.5, 0.75];
-        inputs.textures[0] = [0.25, 0.75, 0.5, 0.25];
+        let inputs = PicaFragmentInputs {
+            primary_color: [0.75, 0.25, 0.5, 0.75],
+            textures: [
+                [0.25, 0.75, 0.5, 0.25],
+                [0.0; 4],
+                [0.0; 4],
+                [0.0; 4],
+            ],
+            ..PicaFragmentInputs::default()
+        };
 
         let interpolate = simple_stage(
             [
@@ -720,8 +729,16 @@ mod tests {
             [0.5, 0.5, 0.5, 0.75]
         );
 
-        inputs.primary_color = [0.75, 0.75, 0.75, 1.0];
-        inputs.textures[0] = [0.75, 0.75, 0.75, 1.0];
+        let dot_inputs = PicaFragmentInputs {
+            primary_color: [0.75, 0.75, 0.75, 1.0],
+            textures: [
+                [0.75, 0.75, 0.75, 1.0],
+                [0.0; 4],
+                [0.0; 4],
+                [0.0; 4],
+            ],
+            ..PicaFragmentInputs::default()
+        };
         let dot = PicaTevStage {
             rgb_sources: [
                 PicaTevSource::PrimaryColor,
@@ -733,7 +750,7 @@ mod tests {
             alpha_combine: PicaTevCombine::Replace,
             ..interpolate
         };
-        let dot = dot.evaluate(0, [0.0; 4], &inputs);
+        let dot = dot.evaluate(0, [0.0; 4], &dot_inputs);
         assert_eq!(dot.unwrap(), [0.75, 0.75, 0.75, 0.75]);
 
         let scaled = PicaTevStage {
