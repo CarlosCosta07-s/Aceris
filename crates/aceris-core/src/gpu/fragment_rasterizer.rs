@@ -259,7 +259,8 @@ impl PicaFragmentRasterizer {
         memory: &mut GpuPhysicalMemory,
     ) -> Result<u64, PicaFragmentRasterError> {
         if usize::try_from(config.width).ok() != Some(self.width)
-            || usize::try_from(config.height).ok() != Some(self.height) {
+            || usize::try_from(config.height).ok() != Some(self.height)
+        {
             return Err(PicaFragmentRasterError::InvalidDimensions);
         }
         config
