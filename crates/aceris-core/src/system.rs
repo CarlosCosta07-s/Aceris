@@ -6153,13 +6153,10 @@ mod tests {
         );
         assert_eq!(system.gpu_mut().register(REG_DEPTHBUFFER_FORMAT), Some(2));
         assert_eq!(system.gpu_mut().register(REG_DEPTHBUFFER_READ), Some(2));
-        let depth_config = PicaDepthBufferConfig::from_pica(
-            system.gpu_mut(),
-            WIDTH as u32,
-            HEIGHT as u32,
-        )
-        .unwrap()
-        .unwrap();
+        let depth_config =
+            PicaDepthBufferConfig::from_pica(system.gpu_mut(), WIDTH as u32, HEIGHT as u32)
+                .unwrap()
+                .unwrap();
         let depth_values = depth_config
             .read_depth_values(system.physical_memory(), 1.0)
             .unwrap();
