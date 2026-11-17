@@ -538,6 +538,15 @@ impl<R: Read + Seek> CiaArchiveReader<R> {
     }
 }
 
+fn read_retry_interrupted<R: Read>(reader: &mut R, buffer: &mut [u8]) -> io::Result<usize> {
+    loop {
+        match reader.read(buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 fn verify_content_stream_bytes<R: Read>(
     content_index: u16,
     expected_size: u64,
@@ -552,8 +561,7 @@ fn verify_content_stream_bytes<R: Read>(
         let remaining = expected_size - total_read;
         let requested = usize::try_from(remaining.min(HASH_BUFFER_SIZE as u64))
             .expect("bounded by the fixed hash buffer");
-        let read = reader
-            .read(&mut buffer[..requested])
+        let read = read_retry_interrupted(reader, &mut buffer[..requested])
             .map_err(CiaArchiveError::Reader)?;
         if read == 0 {
             return Err(CiaArchiveError::ContentTruncated {
@@ -570,8 +578,7 @@ fn verify_content_stream_bytes<R: Read>(
     }
 
     let mut trailing_byte = [0u8; 1];
-    if reader
-        .read(&mut trailing_byte)
+    if read_retry_interrupted(reader, &mut trailing_byte)
         .map_err(CiaArchiveError::Reader)?
         != 0
     {
@@ -1533,6 +1540,62 @@ mod tests {
         assert!(matches!(
             archive.open_verified_ncch_content_reader(0),
             Err(CiaArchiveError::InvalidNcchHeader(_))
+        ));
+    }
+
+    struct InterruptingShortReader<R> {
+        inner: R,
+        maximum_read: usize,
+        interrupt_next: bool,
+    }
+
+    impl<R> InterruptingShortReader<R> {
+        fn new(inner: R, maximum_read: usize) -> Self {
+            Self {
+                inner,
+                maximum_read,
+                interrupt_next: true,
+            }
+        }
+    }
+
+    impl<R: Read> Read for InterruptingShortReader<R> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if buffer.is_empty() {
+                return Ok(0);
+            }
+            if self.interrupt_next {
+                self.interrupt_next = false;
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "synthetic interrupt"));
+            }
+            self.interrupt_next = true;
+            let amount = buffer.len().min(self.maximum_read);
+            self.inner.read(&mut buffer[..amount])
+        }
+    }
+
+    #[test]
+    fn content_hash_verification_retries_interrupted_short_reads() {
+        let content = b"CIA stream with short reads";
+        let (data, _) = make_cia(&[(0x1000, 0, 0, content)]);
+        let archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let reader = InterruptingShortReader::new(Cursor::new(content.to_vec()), 3);
+
+        archive.verify_content_stream(0, reader).unwrap();
+    }
+
+    #[test]
+    fn content_hash_verification_retries_interrupted_trailing_byte_check() {
+        let content = b"bounded CIA content";
+        let mut oversized = content.to_vec();
+        oversized.push(0xA5);
+        let (data, _) = make_cia(&[(0x1000, 0, 0, content)]);
+        let archive = CiaArchiveReader::open(Cursor::new(data)).unwrap();
+        let reader = InterruptingShortReader::new(Cursor::new(oversized), 4);
+
+        assert!(matches!(
+            archive.verify_content_stream(0, reader),
+            Err(CiaArchiveError::ContentStreamHasTrailingBytes(0))
         ));
     }
 
