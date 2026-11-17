@@ -1816,3 +1816,12 @@ Extensão do benchmark isolado, a pedido do mantenedor:
 Arquivos alterados nesta extensão: somente `crates/aceris-core/examples/benchmark.rs` e `docs/PERFORMANCE_TESTING.md`. A CI associada aos commits de captura ainda precisa confirmar Rustfmt, Clippy, testes, build desktop e build Android ARM64 antes de declarar essa nova opção aprovada.
 
 Limite: as capturas mostram apenas o conteúdo das superfícies que o núcleo produziu ao final do benchmark; não equivalem à apresentação ao vivo no frontend nem demonstram correção de renderização do título.
+
+
+## Leitura resiliente na verificação de conteúdo CIA — 17/11/2026
+
+- Commit `91b5e5e5bbd8786142b18a78ff83387bbb44ff30` altera somente `crates/aceris-core/src/loader/cia/archive.rs`.
+- A verificação SHA-256 dos conteúdos agora repete leituras que retornam `io::ErrorKind::Interrupted`, tanto no corpo do fluxo quanto na leitura final usada para detectar bytes além do tamanho declarado no TMD.
+- Foram adicionadas regressões com leitor sintético que alterna interrupções e leituras curtas: uma confirma a validação correta do hash e outra confirma que um byte excedente continua sendo rejeitado mesmo quando a primeira tentativa da checagem final é interrompida.
+- A semântica de tamanho exato, SHA-256, limites do leitor e tratamento dos demais erros permanece inalterada. Nenhum arquivo de CPU, GPU/PICA, memória, LCD ou sessão ARM11 foi modificado.
+- A CI para este commit ainda precisa ser observada. Não marcar Rustfmt, Clippy, testes do workspace ou build Android como aprovados antes do resultado do workflow.
