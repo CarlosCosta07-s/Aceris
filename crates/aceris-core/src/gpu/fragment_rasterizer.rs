@@ -1005,13 +1005,9 @@ mod tests {
         let mut pica = super::super::Pica200::new();
         configure_tev(&mut pica);
         let pipeline = pica.fragment_pipeline().unwrap();
-        let target = PicaRenderTargetConfig::from_registers(
-            VRAM_BASE >> 3,
-            2,
-            0,
-            8 | (7 << 12) | (1 << 24),
-        )
-        .unwrap();
+        let target =
+            PicaRenderTargetConfig::from_registers(VRAM_BASE >> 3, 2, 0, 8 | (7 << 12) | (1 << 24))
+                .unwrap();
 
         let mut memory = GpuPhysicalMemory::new();
         let initial_color = [20, 30, 40, 50];
@@ -1039,14 +1035,18 @@ mod tests {
         state.color_write_mask = [false, true, false, false];
         state.depth_write_enabled = false;
 
-        let report = rasterizer.draw(&guest_draw, &pipeline, &memory, state).unwrap();
+        let report = rasterizer
+            .draw(&guest_draw, &pipeline, &memory, state)
+            .unwrap();
         assert!(report.shaded_pixels > 0);
         assert_eq!(rasterizer.color_at(1, 6), Some([20, 100, 40, 50]));
         assert_eq!(rasterizer.depth_buffer()[6 * 8 + 1], 1.0);
 
         state.color_write_mask = [true; 4];
         state.depth_write_enabled = true;
-        rasterizer.draw(&guest_draw, &pipeline, &memory, state).unwrap();
+        rasterizer
+            .draw(&guest_draw, &pipeline, &memory, state)
+            .unwrap();
         assert_eq!(rasterizer.color_at(1, 6), Some([200, 100, 50, 255]));
         assert!((rasterizer.depth_buffer()[6 * 8 + 1] - 0.5).abs() < 1.0e-6);
     }
