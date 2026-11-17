@@ -1,38 +1,52 @@
 # Pesquisa técnica independente
 
-> Revisão inicial: 17/11/2026. Este documento define como aproveitar conhecimento público sobre o Nintendo 3DS sem consultar nem incorporar código-fonte de outros emuladores.
+> Revisão: 17/11/2026. Este documento define como estudar documentação, testes e código-fonte público de outros emuladores como referência técnica, mantendo toda implementação do Aceris original e escrita em Rust.
 
 ## 1. Objetivo
 
 Acelerar o Aceris usando especificações públicas, documentação de hardware, descrições independentes de formatos e protocolos, testes próprios e comportamento observável. O resultado de cada pesquisa deve ser uma especificação verificável que oriente uma implementação original em Rust.
 
-A pesquisa não é um atalho para copiar uma implementação existente. Ela serve para reduzir incertezas sobre o comportamento esperado do hardware e transformar essas informações em testes independentes.
+A pesquisa não é um atalho para incorporar implementações existentes. Código de outros emuladores pode ser consultado para compreender abordagens e casos-limite, mas o resultado precisa ser convertido em especificação independente, validado por evidências e implementado do zero no Aceris.
 
 ## 2. Limites obrigatórios
 
-- Não abrir, pesquisar, baixar, indexar, citar ou utilizar o código-fonte interno de Azahar, Citra, Lime3DS ou qualquer outro emulador.
-- Não copiar, traduzir, portar, adaptar ou derivar código, algoritmos, testes, fixtures, shaders, assets, interface ou documentação interna de outro emulador.
-- Não usar commits, patches, nomes de funções privadas ou estrutura interna de outro emulador como especificação.
-- Usar somente documentação pública independente de hardware, arquitetura, protocolos e formatos; manuais do fabricante; documentação pública de APIs; e resultados de testes próprios.
-- Outros emuladores podem ser avaliados apenas por sua superfície observável, conforme `docs/REGRAS_PARA_IA.md`.
-- Toda funcionalidade do produto continua sendo implementada em Rust, sem novas dependências de implementação sem autorização do mantenedor.
-- Jogos, firmware, chaves, dumps e arquivos protegidos fornecidos para testes permanecem fora do repositório, CI, issues e releases.
-- Cada agente respeita os arquivos e subsistemas atribuídos aos demais. Pesquisa documental não concede autorização para editar trabalho de outro agente.
+- É permitido consultar código-fonte publicamente disponível de Azahar, Citra, Lime3DS e outros emuladores como referência técnica.
+- A consulta é somente para estudo: não copiar, colar, traduzir, portar, adaptar ou reproduzir trechos, funções, estruturas, testes, fixtures, shaders, patches, assets ou organização interna.
+- Não faça tradução linha a linha nem reproduza a estrutura expressiva do código consultado. A implementação do Aceris deve ter arquitetura, interfaces, nomes, testes e código próprios, escritos em Rust.
+- Não incorpore commits, patches, dependências, assets ou outros recursos de implementação desses projetos. Não trate nomes de funções privadas ou a organização de arquivos como especificação do hardware.
+- Registre projeto, URL, arquivo ou área consultada, commit/revisão, licença, data e pergunta técnica. Registre a conclusão conceitual em uma especificação independente, sem colar trechos de código.
+- A licença de cada referência deve ser identificada. Se houver dúvida sobre compatibilidade de licença ou risco de obra derivada, pare antes de aplicar aquele conhecimento na implementação e peça orientação a Carlos Costa.
+- Cruze conclusões relevantes com documentação pública independente, testes originais do Aceris e, quando possível, comportamento observado em hardware legítimo. Código de um emulador não é, por si só, prova do comportamento físico correto.
+- Assets e recursos visuais/sonoros de terceiros continuam proibidos. Novas dependências que forneçam implementação do emulador continuam sujeitas à autorização explícita do mantenedor.
+- Toda funcionalidade do produto continua sendo implementada em Rust. Permanecem em vigor o uso exclusivo de `main`, o isolamento entre agentes, a autoria própria e a proteção de jogos, firmware, chaves e dumps.
 
-Estas regras complementam `docs/REGRAS_PARA_IA.md` e `CONTRIBUTING.md`; não criam exceções.
+Estas regras complementam `docs/REGRAS_PARA_IA.md` e `CONTRIBUTING.md`; não criam exceções às demais regras.
 
 ## 3. Processo de pesquisa
 
 Cada tarefa técnica deve seguir esta sequência:
 
 1. **Definir a pergunta:** formular um comportamento observável e delimitado, evitando objetivos vagos como “melhorar a GPU”.
-2. **Localizar fontes independentes:** priorizar manuais oficiais, documentação de arquitetura e especificações públicas. Wikis de engenharia reversa são úteis, mas suas afirmações devem ser identificadas como não oficiais.
+2. **Localizar fontes:** priorizar manuais oficiais, documentação de arquitetura e especificações públicas; código-fonte público de emuladores também pode ser consultado como referência técnica, com licença e revisão registradas. Wikis de engenharia reversa e implementações de terceiros devem ser identificadas como fontes não oficiais.
 3. **Registrar evidências:** anotar a afirmação, a URL, o tipo de fonte, a data de consulta, o nível de confiança e eventuais divergências.
-4. **Escrever o contrato:** descrever entradas, saídas, estados, erros, efeitos colaterais, ordenação e limites de memória sem reproduzir implementação de terceiros.
+4. **Escrever o contrato:** descrever entradas, saídas, estados, erros, efeitos colaterais, ordenação e limites de memória em termos independentes, sem reproduzir trechos nem a estrutura expressiva da implementação consultada.
 5. **Derivar testes próprios:** construir casos pequenos e determinísticos diretamente do contrato. Para cada caso, registrar os bytes/valores de entrada e o resultado esperado.
-6. **Implementar separadamente:** escrever o código Aceris em Rust, sem consultar código de emuladores.
+6. **Implementar separadamente:** escrever o código Aceris em Rust de forma independente. A consulta técnica não autoriza copiar, traduzir, portar, adaptar ou reproduzir a organização interna do código estudado.
 7. **Validar em camadas:** testes unitários, integração no caminho real do guest, CI multiplataforma e, quando possível, comparação com comportamento em hardware legítimo.
 8. **Atualizar o estado:** marcar cada afirmação como documentada, inferida, testada sinteticamente ou confirmada externamente. Uma etapa não se torna compatível apenas por compilar.
+
+## 3.1 Registro de referências a código-fonte
+
+Quando uma pesquisa consultar o código de outro emulador, acrescente à ficha:
+
+- Nome do projeto e URL do repositório.
+- Arquivo(s) ou área(s) consultada(s), sem copiar trechos para a documentação do Aceris.
+- Commit, tag ou revisão exata.
+- Licença identificada e eventual obrigação relevante.
+- Pergunta técnica investigada e resumo conceitual escrito em linguagem própria.
+- Documentação independente ou testes Aceris usados para confirmar ou contestar a conclusão.
+
+O registro de consulta não é uma autorização para incorporar código, assets, testes ou dependências. Se não for possível separar o aprendizado técnico de uma reprodução protegível da implementação, não use aquela referência para orientar a funcionalidade sem decisão explícita do mantenedor e revisão de licença.
 
 ## 4. Níveis de evidência
 
