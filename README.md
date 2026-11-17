@@ -8,7 +8,7 @@
   Um emulador de um certo console de 2 telas, escrito em Rust, para PC e Android.
 </p>
 
-> **Status: fase inicial (v0.0.1).** O projeto ainda não executa jogos. O núcleo Rust já reúne uma base inicial de CPU ARM11, MMU, loader, kernel e GPU PICA200. No PC Linux há uma janela experimental X11 com abertura e biblioteca animada, incluindo fundos personalizados. O crate Android compila como biblioteca nativa e já expõe contratos de renderização, orientação vertical/horizontal e controles virtuais, mas ainda não existe um aplicativo Android instalável completo. Veja o [roadmap](docs/ROADMAP.md), a [arquitetura](docs/ARCHITECTURE.md), os [frontends](docs/FRONTENDS.md) o [método de pesquisa técnica independente](docs/INDEPENDENT_RESEARCH.md) e o [guia de benchmark](docs/PERFORMANCE_TESTING.md).
+> **Status: fase inicial (v0.0.1).** O projeto ainda não executa jogos. O núcleo Rust já reúne uma base inicial de CPU ARM11, MMU, loader, kernel e GPU PICA200. No PC Linux há uma janela experimental X11 com abertura e biblioteca animada, incluindo fundos personalizados. O crate Android compila como biblioteca nativa e já expõe contratos de renderização, orientação vertical/horizontal e controles virtuais, mas ainda não existe um aplicativo Android instalável completo. Veja o [roadmap](docs/ROADMAP.md), a [arquitetura](docs/ARCHITECTURE.md), os [frontends](docs/FRONTENDS.md), o [método de pesquisa técnica independente](docs/INDEPENDENT_RESEARCH.md) e o [guia de benchmark](docs/PERFORMANCE_TESTING.md).
 
 O nome vem da **acerola**, a pequena fruta vermelha cheia de energia.
 
@@ -35,7 +35,7 @@ aceris/
 │   └── android/          biblioteca Rust nativa (cdylib) + recursos de identidade
 ├── assets/icon/          ícone (SVG, PNGs, .ico)
 ├── tools/                scripts de desenvolvimento
-└── docs/                 arquitetura, roadmap e pesquisa independente
+└── docs/                 arquitetura, roadmap, pesquisa e benchmark
 ```
 
 Mais detalhes em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
