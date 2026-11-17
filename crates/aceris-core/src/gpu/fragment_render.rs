@@ -27,6 +27,7 @@ pub enum PicaFragmentRenderSessionError {
     Pipeline(PicaFragmentPipelineError),
     DepthBuffer(PicaDepthBufferError),
     StencilBufferRequired,
+    StencilReadDisabled,
     UnresolvedVertexBase,
 }
 
@@ -41,6 +42,9 @@ impl std::fmt::Display for PicaFragmentRenderSessionError {
             Self::DepthBuffer(error) => write!(formatter, "physical depth buffer failed: {error}"),
             Self::StencilBufferRequired => {
                 formatter.write_str("PICA stencil testing requires a physical D24S8 depth buffer")
+            }
+            Self::StencilReadDisabled => {
+                formatter.write_str("PICA stencil testing requires stencil-buffer read access")
             }
             Self::UnresolvedVertexBase => {
                 formatter.write_str("vertex base address was not resolved")
@@ -142,10 +146,13 @@ impl PicaFragmentRenderSession {
             .vertex_output_map()
             .map_err(PicaFragmentRenderSessionError::OutputMap)?;
         let stencil_state = fragment_pipeline.stencil_state();
-        if stencil_state.enabled
-            && !depth_config.is_some_and(|depth| depth.format == PicaDepthBufferFormat::D24S8)
-        {
-            return Err(PicaFragmentRenderSessionError::StencilBufferRequired);
+        if stencil_state.enabled {
+            let depth = depth_config
+                .filter(|depth| depth.format == PicaDepthBufferFormat::D24S8)
+                .ok_or(PicaFragmentRenderSessionError::StencilBufferRequired)?;
+            if !depth.stencil_read_enabled {
+                return Err(PicaFragmentRenderSessionError::StencilReadDisabled);
+            }
         }
         let vertex_program = pica.vertex_shader_program();
         let shaded = pica
