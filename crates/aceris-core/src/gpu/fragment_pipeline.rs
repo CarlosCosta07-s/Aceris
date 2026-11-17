@@ -400,10 +400,7 @@ impl PicaFragmentPipeline {
     }
 
     /// Evaluates the guest-configured alpha test for a shaded fragment.
-    pub fn alpha_test_passes(
-        &self,
-        source: [f32; 4],
-    ) -> Result<bool, PicaFragmentPipelineError> {
+    pub fn alpha_test_passes(&self, source: [f32; 4]) -> Result<bool, PicaFragmentPipelineError> {
         self.output_state
             .alpha_test_passes(source[3])
             .map_err(PicaFragmentPipelineError::Output)
