@@ -369,16 +369,22 @@ impl Arm11Core {
     /// With fault-exception entry enabled (see `set_fault_exception_entry_enabled`),
     /// undefined instructions and aborts become hardware exceptions instead of errors.
     pub fn step<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
-        if !self.fault_exception_entry_enabled {
-            return self.step_instruction(bus);
-        }
-        let snapshot = (self.regs, self.cpsr);
-        self.prefetch_fault = false;
-        self.fault_latched = false;
-        match self.step_instruction(bus) {
-            Err(error) => self.take_fault_exception(snapshot, error),
-            ok => ok,
-        }
+        let outcome = if !self.fault_exception_entry_enabled {
+            self.step_instruction(bus)
+        } else {
+            let snapshot = (self.regs, self.cpsr);
+            self.prefetch_fault = false;
+            self.fault_latched = false;
+            match self.step_instruction(bus) {
+                Err(error) => self.take_fault_exception(snapshot, error),
+                ok => ok,
+            }
+        };
+
+        // ACTLR.SMP is a core-level setting, not a cached page-table attribute.
+        // Publish writes made by this instruction even when SCTLR.M is clear.
+        bus.set_arm11_smp_mode(self.cp15.core_id(), self.cp15.smp_mode_enabled());
+        outcome
     }
 
     fn step_instruction<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
