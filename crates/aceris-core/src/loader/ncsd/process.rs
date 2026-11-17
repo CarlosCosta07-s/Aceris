@@ -3029,6 +3029,40 @@ mod tests {
     }
 
     #[test]
+    fn guest_arm11_code_configures_scu_and_enters_smp_mode() {
+        let mut prepared = prepared_image();
+        // STR r2,[r0] ; MCR p15,0,r1,c1,c0,1 (ACTLR)
+        prepared.text[..8].copy_from_slice(
+            &[0xE580_2000u32, 0xEE01_1F30u32]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared).unwrap();
+        let scu = MpcoreScu::default();
+        address_space.attach_mpcore_scu(scu.clone());
+
+        let mut cpu = Arm11Core::new();
+        address_space.initialize_core(&mut cpu);
+        cpu.switch_mode(crate::cpu::Psr::SUPERVISOR_MODE).unwrap();
+        cpu.regs[0] = crate::cpu::MPCORE_PRIVATE_MEMORY_BASE;
+        cpu.regs[1] = 1 << 5;
+        cpu.regs[2] = 0x0000_1FFF;
+
+        assert!(!scu.is_enabled());
+        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert!(scu.is_enabled());
+        assert_eq!(scu.control_register(), 0x0000_1FFF);
+
+        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert!(cpu.cp15().smp_mode_enabled());
+        assert_eq!(
+            address_space.read32(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE + 4).unwrap(),
+            0b1_0001
+        );
+    }
+
+    #[test]
     fn mpcore_scu_registers_are_mapped_on_the_arm11_process_bus() {
         let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let scu = MpcoreScu::default();
