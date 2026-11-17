@@ -65,6 +65,7 @@ pub struct PicaFragmentRenderSession {
         PicaFragmentRasterizer,
     )>,
     dirty: bool,
+    reload_on_next_draw: bool,
     totals: PicaRenderReport,
     draws_rendered: u64,
 }
@@ -75,6 +76,7 @@ impl PicaFragmentRenderSession {
             settings,
             active: None,
             dirty: false,
+            reload_on_next_draw: true,
             totals: PicaRenderReport::default(),
             draws_rendered: 0,
         }
@@ -103,7 +105,14 @@ impl PicaFragmentRenderSession {
             .map_err(PicaFragmentRenderSessionError::Target)?;
         let depth_config = PicaDepthBufferConfig::from_pica(pica, config.width, config.height)
             .map_err(PicaFragmentRenderSessionError::DepthBuffer)?;
-        self.select_target(config, depth_config, memory)?;
+        let target_changed = self.select_target(config, depth_config, memory)?;
+        if self.reload_on_next_draw {
+            if !target_changed {
+                let rasterizer = Self::load_target(config, depth_config, memory)?;
+                self.active = Some((config, depth_config, rasterizer));
+            }
+            self.reload_on_next_draw = false;
+        }
 
         let guest_viewport = pica.viewport_state();
         let viewport_width = guest_viewport.half_width * 2.0;
@@ -253,6 +262,8 @@ impl PicaFragmentRenderSession {
         (PicaCommandListReport, PicaRenderReport),
         PicaCommandListRunError<PicaFragmentRenderSessionError>,
     > {
+        self.flush(memory).map_err(PicaCommandListRunError::Draw)?;
+        self.reload_on_next_draw = true;
         let before = self.totals;
         let command_report = pica.execute_command_list_with_draws(words, |pica, request| {
             let vertex_base = resolve_vertex_base(pica, request);
@@ -317,16 +328,26 @@ impl PicaFragmentRenderSession {
         config: PicaRenderTargetConfig,
         depth_config: Option<PicaDepthBufferConfig>,
         memory: &mut GpuPhysicalMemory,
-    ) -> Result<(), PicaFragmentRenderSessionError> {
+    ) -> Result<bool, PicaFragmentRenderSessionError> {
         if matches!(
             &self.active,
             Some((current, current_depth, _))
                 if *current == config && *current_depth == depth_config
         ) {
-            return Ok(());
+            return Ok(false);
         }
         // Publish the previous target before switching to a new one.
         self.flush(memory)?;
+        let rasterizer = Self::load_target(config, depth_config, memory)?;
+        self.active = Some((config, depth_config, rasterizer));
+        Ok(true)
+    }
+
+    fn load_target(
+        config: PicaRenderTargetConfig,
+        depth_config: Option<PicaDepthBufferConfig>,
+        memory: &GpuPhysicalMemory,
+    ) -> Result<PicaFragmentRasterizer, PicaFragmentRenderSessionError> {
         let mut rasterizer = PicaFragmentRasterizer::from_render_target(config, memory, 1.0)
             .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
         if let Some(depth_config) = depth_config {
@@ -334,8 +355,7 @@ impl PicaFragmentRenderSession {
                 .load_depth_buffer(depth_config, memory, 1.0)
                 .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
         }
-        self.active = Some((config, depth_config, rasterizer));
-        Ok(())
+        Ok(rasterizer)
     }
 }
 
