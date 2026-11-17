@@ -5250,8 +5250,9 @@ mod tests {
             GSP_GX_COMMAND_QUEUE_SIZE, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
             REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
-            REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
-            REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
+            REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_LOGIC_OP,
+            REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
+            REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
             REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, VRAM_BASE,
         };
@@ -5303,6 +5304,7 @@ mod tests {
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
             (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
             (REG_DEPTHMAP_ENABLE, 1),           // Z buffering
+            (REG_LOGIC_OP, 3),                  // Logic COPY for the fragment output
         ] {
             gpu.write_register(register, value).unwrap();
         }
@@ -5313,7 +5315,7 @@ mod tests {
         configure_guest_clip_transform(gpu);
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
-        system.set_pica_rendering(Some(PicaRenderSettings {
+        system.set_pica_fragment_rendering(Some(PicaRenderSettings {
             clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
         }));
