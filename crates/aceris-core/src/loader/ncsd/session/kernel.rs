@@ -484,7 +484,7 @@ impl Arm11KernelObjectTable {
             .object_key(handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
 
-        let primary_handle = if self.objects.contains_key(&object_key) {
+        let primary_handle: u64 = if self.objects.contains_key(&object_key) {
             1
         } else {
             0
