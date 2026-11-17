@@ -80,6 +80,12 @@ pub const RESULT_OUT_OF_THREAD_RESOURCES: u32 = 0xC860_1801;
 /// Nintendo 3DS result: a synchronization wait timed out.
 pub const RESULT_TIMEOUT: u32 = 0x0940_1BFE;
 
+/// Kernel result returned when the guest passes a null handle-array pointer.
+pub const RESULT_INVALID_POINTER: u32 = 0xD8E0_07F6;
+
+/// Kernel result returned when a timeout is negative and is not -1.
+pub const RESULT_INVALID_TIMEOUT: u32 = 0xD8E0_07FD;
+
 /// Kernel OutOfRange result, returned for an invalid handle count.
 pub const RESULT_OUT_OF_RANGE: u32 = 0xE0E0_1BFD;
 
@@ -2572,7 +2578,7 @@ impl Arm11ProcessSession {
             return self.write_svc_result(caller, RESULT_TIMEOUT);
         }
         if timeout < -1 {
-            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+            return self.write_svc_result(caller, RESULT_INVALID_TIMEOUT);
         }
         if let Err(error) = self.kernel_objects.enqueue_waiter(handle, caller) {
             return self.write_svc_result(caller, kernel_handle_result_code(error));
@@ -2599,13 +2605,18 @@ impl Arm11ProcessSession {
         }
     }
 
-    /// Handles WaitSynchronizationN in wait-any mode.
+    /// Handles the raw ARM11 SVC ABI for WaitSynchronizationN.
     ///
-    /// r0/r4 hold the signed 64-bit timeout (low/high), r1 the guest handle
-    /// array, r2 the handle count and r3 the wait-all flag. On success r0 is the
-    /// result and r1 the index of the handle that satisfied the wait. Wait-all
-    /// with more than one handle is not modelled and stops the run loudly
-    /// instead of returning a wrong answer.
+    /// The libctru C wrapper keeps its `out` pointer in a callee-saved register
+    /// and writes the returned `r1` value through that pointer after the SVC.
+    /// At the SVC boundary, `r0/r4` hold the signed 64-bit timeout (low/high),
+    /// `r1` is the guest handle-array pointer, `r2` is the handle count and
+    /// `r3` is the wait-all flag. The kernel returns the result in `r0` and
+    /// the selected index in `r1`. Since the wrapper stores `r1` even when
+    /// the SVC fails, the handler initializes it to zero before validation.
+    ///
+    /// Wait-all with more than one handle is not modelled yet and stops the run
+    /// loudly instead of returning a misleading success.
     fn svc_wait_synchronization_n(&mut self, caller: ThreadId) -> SvcRunDisposition {
         let registers = self
             .scheduler
@@ -2617,6 +2628,16 @@ impl Arm11ProcessSession {
         let wait_all = registers[3] & 1 != 0;
         let timeout = (u64::from(registers[0]) | (u64::from(registers[4]) << 32)) as i64;
 
+        // The raw SVC ABI returns the selected index in r1. Initialize it
+        // before any validation because the guest's libctru veneer copies r1
+        // to its public out pointer even when the service returns an error.
+        if let Some(core) = self.scheduler.core_mut(caller) {
+            core.regs[1] = 0;
+        }
+
+        if handles_address == 0 {
+            return self.write_svc_result(caller, RESULT_INVALID_POINTER);
+        }
         if !(0..=0x40).contains(&count) {
             return self.write_svc_result(caller, RESULT_OUT_OF_RANGE);
         }
@@ -5126,6 +5147,135 @@ mod tests {
         )
     }
 
+    /// Guest-side reproduction of libctru's public C ABI veneer:
+    /// out, handles, count and wait_all arrive in r0-r3; the i64 timeout is
+    /// passed on the guest stack; the veneer moves it into SVC r0/r4, invokes
+    /// SVC 0x25, then writes the returned SVC r1 through the original out ptr.
+    fn libctru_wait_n_wrapper_session() -> Arm11ProcessSession {
+        test_session_with_program(&[
+            0xE52D_5004, // STR r5, [sp, #-4]!
+            0xE52D_4004, // STR r4, [sp, #-4]!
+            0xE1A0_5000, // MOV r5, r0 (preserve the public out pointer)
+            0xE59D_0008, // LDR r0, [sp, #8] (timeout low)
+            0xE59D_400C, // LDR r4, [sp, #12] (timeout high)
+            0xEF00_0025, // SVC 0x25
+            0xE585_1000, // STR r1, [r5] (publish selected index to *out)
+            0xE49D_4004, // LDR r4, [sp], #4
+            0xE49D_5004, // LDR r5, [sp], #4
+            0xE12F_FF1E, // BX lr
+            0xE120_0070, // BKPT #0 (return sentinel)
+        ])
+    }
+
+    #[test]
+    fn wait_synchronization_n_runs_the_guest_abi_veneer_and_writes_out_index() {
+        let mut session = libctru_wait_n_wrapper_session();
+        let (first, second) = two_events(&mut session);
+        let out_address = 0x0020_0180;
+        let handles_address = 0x0020_0100;
+        let stack_pointer = 0x0020_1F00;
+        let timeout = (1_i64 << 32) + 100;
+
+        session.address_space.write32(out_address, 0xCAFE_BABE).unwrap();
+        session.address_space.write32(handles_address, first).unwrap();
+        session
+            .address_space
+            .write32(handles_address + 4, second)
+            .unwrap();
+        session
+            .address_space
+            .write32(stack_pointer, timeout as u32)
+            .unwrap();
+        session
+            .address_space
+            .write32(stack_pointer + 4, (timeout >> 32) as u32)
+            .unwrap();
+
+        {
+            let core = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            // Public libctru C signature at function entry.
+            core.regs[0] = out_address;
+            core.regs[1] = handles_address;
+            core.regs[2] = 2;
+            core.regs[3] = 0;
+            core.regs[4] = 0x4444_4444;
+            core.regs[5] = 0x5555_5555;
+            core.regs[13] = stack_pointer;
+            core.regs[14] = 0x0010_0028;
+        }
+
+        // The guest executes the prologue and SVC. Both handles are initially
+        // unsignaled, so the ARM11 thread blocks with the full 64-bit deadline.
+        let report = session.run_instructions(6).unwrap();
+        assert_eq!(report.stop_reason, Arm11RunStopReason::NoRunnableThread);
+        assert_eq!(
+            session.wait_deadlines.get(&MAIN_THREAD_ID),
+            Some(&(first, timeout as u64))
+        );
+        assert_eq!(session.address_space.read32(out_address), Ok(0xCAFE_BABE));
+
+        // Signalling handle 1 resumes the same guest wrapper. It observes the
+        // selected index in r1 and stores it through the original C out pointer.
+        session.signal_event_handle(second).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(
+            (session.core().regs[0], session.core().regs[1]),
+            (0, 1)
+        );
+
+        let epilogue = session.run_instructions(5).unwrap();
+        assert_eq!(epilogue.stop_reason, Arm11RunStopReason::Breakpoint(0));
+        assert_eq!(session.read_memory_u32(out_address), Ok(1));
+        assert_eq!(session.core().regs[4], 0x4444_4444);
+        assert_eq!(session.core().regs[5], 0x5555_5555);
+        assert_eq!(session.core().regs[13], stack_pointer);
+    }
+
+    #[test]
+    fn wait_synchronization_n_guest_abi_uses_both_timeout_words_and_zeroes_out_on_error() {
+        let mut session = libctru_wait_n_wrapper_session();
+        let (event, _) = two_events(&mut session);
+        let out_address = 0x0020_0180;
+        let handles_address = 0x0020_0100;
+        let stack_pointer = 0x0020_1F00;
+        let timeout = -2_i64;
+
+        session.address_space.write32(out_address, 0xCAFE_BABE).unwrap();
+        session.address_space.write32(handles_address, event).unwrap();
+        session
+            .address_space
+            .write32(stack_pointer, timeout as u32)
+            .unwrap();
+        session
+            .address_space
+            .write32(stack_pointer + 4, (timeout >> 32) as u32)
+            .unwrap();
+
+        {
+            let core = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            core.regs[0] = out_address;
+            core.regs[1] = handles_address;
+            core.regs[2] = 1;
+            core.regs[3] = 0;
+            core.regs[4] = 0x4444_4444;
+            core.regs[5] = 0x5555_5555;
+            core.regs[13] = stack_pointer;
+            core.regs[14] = 0x0010_0028;
+        }
+
+        // If the high timeout word were ignored, 0xFFFF_FFFE could be
+        // misinterpreted as a large positive timeout. The actual signed 64-bit
+        // value is -2, which the 3DS kernel rejects with InvalidTimeout.
+        let report = session.run_instructions(11).unwrap();
+        assert_eq!(report.stop_reason, Arm11RunStopReason::Breakpoint(0));
+        assert_eq!(session.core().regs[0], RESULT_INVALID_TIMEOUT);
+        // The wrapper always stores r1, so errors must return index zero.
+        assert_eq!(session.read_memory_u32(out_address), Ok(0));
+        assert_eq!(session.core().regs[4], 0x4444_4444);
+        assert_eq!(session.core().regs[5], 0x5555_5555);
+        assert_eq!(session.core().regs[13], stack_pointer);
+    }
+
     #[test]
     fn wait_synchronization_n_returns_the_first_signaled_handle_index_immediately() {
         let mut session = test_session_with_program(&[0xEF00_0025]);
@@ -5168,7 +5318,9 @@ mod tests {
 
         wait_n_setup(&mut session, MAIN_THREAD_ID, &[first], -2);
         session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
-        assert_eq!(session.core().regs[0], RESULT_INVALID_ENUM);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_TIMEOUT);
+        // The libctru wrapper stores r1 into *out even on failure.
+        assert_eq!(session.core().regs[1], 0);
     }
 
     #[test]
