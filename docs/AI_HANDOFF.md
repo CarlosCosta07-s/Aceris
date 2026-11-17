@@ -1827,35 +1827,36 @@ Limite: as capturas mostram apenas o conteúdo das superfícies que o núcleo pr
 - O primeiro workflow do commit funcional identificou apenas diferenças de Rustfmt; elas foram corrigidas em `c89c01d`. A validação completa do commit de correção ainda está pendente.
 
 
-## PICA200 — viewport e mapeamento guest-side de profundidade (17/11/2026)
+## PICA200 — viewport guest-side e mapeamento de profundidade (17/11/2026)
 
 Carlos autorizou a intervenção nas áreas anteriormente atribuídas a outro agente. A implementação desta etapa é nova e escrita em Rust no Aceris; referências de terceiros foram usadas apenas para estudo técnico, conforme o registro em `docs/INDEPENDENT_RESEARCH.md`.
 
 ### Comportamento ligado ao caminho de desenho
 
 - O estado PICA decodifica os registradores guest `0x041` e `0x043` como meia largura/meia altura float24, `0x068` como origem X/Y signed de 10 bits, e preserva `0x042`/`0x044` brutos para diagnósticos e uso futuro.
-- `0x04C` (bit 0) controla se a transformação de profundidade está habilitada; `0x04D` e `0x04E` são os coeficientes float24 de escala e offset. `0x06D` é um controle separado que seleciona Z-buffer (bit 0) ou W-buffer (bit 0 limpo).
+- `0x04D` e `0x04E` são os coeficientes float24 de escala e offset da profundidade. O caminho software calcula `(z/w) × scale + offset`.
+- `0x06D` é interpretado pelo Aceris como seleção Z/W: Z quando bit 0 está ligado; W quando está apagado. A documentação Mikage o descreve como enable de faixa de profundidade, enquanto o enum Azahar consultado chama os valores de WBuffering/ZBuffering. Registrar essa interpretação como hipótese até comparação em hardware.
+- `0x04C` não é usado. As fontes consultadas o deixam sem nome ou o tratam como palavra reservada; uma interpretação inicial como controle de transformação independente foi retirada antes de consolidar o comportamento.
 - `PicaRenderSession` lê a viewport e os controles de profundidade do banco PICA ativo no instante do draw. A origem PICA bottom-left/Y-up é convertida para a superfície software top-left/Y-down.
-- `GeometryPipeline` preserva o valor de profundidade clip-space para o mapeamento PICA quando o modo está ativo e anexa o estado de profundidade ao vértice rasterizado.
-- O rasterizador aplica escala/offset quando `0x04C` está ligado; quando desligado, ignora os coeficientes e usa `-z/w`. No W-buffer, o resultado é multiplicado pelo W interpolado; no Z-buffer, permanece como valor de profundidade normalizado. A escala/offset não finitos só são erro quando a transformação está habilitada.
-- As fixtures de renderização e o teste contínuo guest→GSP→PICA→LCD programam viewport, transformação de profundidade e modo Z/W por escritas PICA. A lista usada pelo teste de cadeia é construída e copiada pelo próprio guest; as asserções verificam o estado após a execução.
+- `GeometryPipeline` preserva `z/w` para o mapeamento PICA e anexa o estado de profundidade ao vértice rasterizado. No W-buffer, o resultado da escala/offset é multiplicado pelo W interpolado (divisão pelo reciprocal-W interpolado); no Z-buffer permanece como profundidade normalizada.
+- As fixtures de renderização e o teste contínuo guest→GSP→PICA→LCD programam viewport, escala, offset e modo Z/W por escritas PICA. A command list do teste de cadeia é construída e copiada pelo próprio guest; as asserções verificam o estado após a execução.
 
 ### Arquivos e commits desta etapa
 
-- `crates/aceris-core/src/gpu/pica200.rs`: decodificação dos registradores, estado viewport/depth e testes; correção final da presença do controle `0x04C` no commit `cb698f3922f31e73194b524ab006643d80b1b785`.
-- `crates/aceris-core/src/gpu/geometry.rs`: transporte do mapa de profundidade para RasterVertex.
-- `crates/aceris-core/src/gpu/rasterizer.rs`: cálculo Z/W, validação consistente por triângulo e regressões, incluindo coeficientes não finitos ignorados com transformação desabilitada; commits `1c2a11b0ff0c30b2bd43e5902a36133c28ecb3be` e `145ce7a374bcddb7c954c9ca6a08a3773d0b76df`.
-- `crates/aceris-core/src/gpu/render.rs`: leitura do estado guest e configuração da viewport/profundidade no draw.
-- `crates/aceris-core/src/gpu/mod.rs`: exports dos tipos e registradores.
-- `crates/aceris-core/src/system.rs`: as quatro fixtures relevantes programam `0x04C`; o teste guest chain também verifica o valor publicado pelo guest; commits `5237d96cdf8349e09ad976cb4e55895e2f04680c` e `79e57c046d32a7adcbdffd14b36c17fadd911b9c`.
-- `docs/INDEPENDENT_RESEARCH.md`: fontes, revisão, licenças observadas, pergunta técnica e limites registrados no commit `f889ca88eeda4e47ba21031f8bb65d6a6d1e8b8c`.
+- `pica200.rs`: decodificação dos registradores viewport/depth e testes; a tentativa intermediária de incluir `0x04C` foi revertida em `014715c21fc78369f75ae6636c5c96616deb5d30`.
+- `geometry.rs`: transporte do mapa de profundidade para `RasterVertex`.
+- `rasterizer.rs`: cálculo Z/W, validação consistente por triângulo e testes do mapeamento; commits funcionais `f01de8f`, `a36f163` e `2c24a0b`.
+- `render.rs`: leitura do estado guest e configuração de viewport/profundidade no draw.
+- `gpu/mod.rs`: exports dos tipos de profundidade/viewport; o export provisório de `0x04C` foi removido em `fa571e068bd656ed2e28cf3b22ecf23e2ea37952`.
+- `system.rs`: fixtures host/guest programam somente os registradores conhecidos `0x04D`, `0x04E` e `0x06D`; os writes experimentais de `0x04C` foram removidos em `db389083e0f1c9719812b1914a2376509d7c7a2b`.
+- `docs/INDEPENDENT_RESEARCH.md`: divergências e nível de confiança registrados.
 
 ### Limites que continuam abertos
 
 - A matriz 4×4 usada para transformar vértices ainda é fornecida por `set_pica_rendering`; esta etapa não tornou o vertex shader ou o conjunto de uniforms guest-driven.
-- O PICA clipper continua no modelo genérico de seis planos. Scissor, face culling, polygon offset/depth bias, precisão/quantização de profundidade e todos os estados de stencil/blending não foram concluídos.
+- O PICA clipper continua no modelo genérico de seis planos. Scissor, face culling, polygon offset/depth bias, precisão/quantização exata e todos os estados de stencil/blending não foram concluídos.
 - A profundidade ainda é armazenada no alvo software em memória do host e não possui backing persistente no framebuffer físico; troca/limpeza de alvo e concorrência GPU precisam de integração adicional.
-- Os inversos de viewport são preservados sem uso em derivatives/texture filtering. Ainda faltam validação discriminante em hardware legítimo e comparação de imagens.
-- A CI da série de commits de integração detectou diferenças de Rustfmt nas primeiras tentativas; os ajustes foram publicados em `79e57c0`. Conferir o workflow associado ao HEAD antes de declarar build, Clippy, testes completos ou Android ARM64 aprovados.
+- Os inversos de viewport são preservados sem uso em derivatives/texture filtering. A interpretação Z/W do bit 0 de `0x06D` ainda precisa de validação em hardware; não foi adicionada uma hipótese sobre `0x04C`.
+- A CI anterior falhou em Rustfmt, antes de build, Clippy e testes completos. Conferir o workflow associado ao HEAD depois dos ajustes e correções conceituais antes de declarar validação multiplataforma.
 
-**Resultado:** viewport e o primeiro mapeamento de profundidade são agora estado guest-side ligado ao draw. Isso é um avanço parcial da pipeline PICA200, não uma declaração de compatibilidade gráfica comercial.
+**Resultado:** viewport e mapeamento básico de profundidade guest-side estão ligados ao draw, com a interpretação Z/W marcada como hipótese. Isto é um avanço parcial da pipeline PICA200, não uma declaração de compatibilidade gráfica comercial.
