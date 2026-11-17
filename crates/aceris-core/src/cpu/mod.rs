@@ -485,16 +485,18 @@ mod tests {
     }
 
     #[test]
-    fn core_step_publishes_actlr_smp_even_when_mmu_is_disabled() {
+    fn core_step_publishes_guest_mcr_actlr_smp_even_when_mmu_is_disabled() {
         let mut bus = SmpTrackingBus {
-            memory: memory_with(0xE1A0_0000), // MOV r0,r0
+            // MCR p15,0,r1,c1,c0,1 (ACTLR)
+            memory: memory_with(0xEE01_1F30),
             last_smp_mode: None,
         };
         let mut cpu = Arm11Core::new();
         cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
-        cpu.cp15.write(true, 0, 1, 0, 1, 1 << 5).unwrap();
+        cpu.regs[1] = 1 << 5;
 
         assert_eq!(cpu.step(&mut bus).unwrap(), StepEvent::Executed);
+        assert!(cpu.cp15.smp_mode_enabled());
         assert_eq!(bus.last_smp_mode, Some((0, true)));
     }
 
