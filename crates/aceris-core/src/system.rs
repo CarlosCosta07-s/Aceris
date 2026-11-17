@@ -3202,7 +3202,19 @@ mod tests {
             .load_ncsd_with_keys(
                 std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
                     0xEF00_002D, // SVC ConnectToPort
+                    // Guest-authored srv:RegisterClient request.
+                    0xE584_5000, // STR r5, [r4] (IPC header)
+                    0xE584_6004, // STR r6, [r4, #4] (PID translation descriptor)
+                    0xE584_7008, // STR r7, [r4, #8] (PID value)
+                    0xE1A0_000C, // MOV r0, r12 (srv: session handle)
                     0xEF00_0032, // srv:RegisterClient
+                    // Guest-authored srv:GetServiceHandle("gsp::Gpu", 8, 0).
+                    0xE584_5000, // STR r5, [r4] (IPC header)
+                    0xE584_6004, // STR r6, [r4, #4] (service name word 0)
+                    0xE584_7008, // STR r7, [r4, #8] (service name word 1)
+                    0xE584_800C, // STR r8, [r4, #12] (service name length)
+                    0xE584_9010, // STR r9, [r4, #16] (flags)
+                    0xE1A0_000C, // MOV r0, r12 (srv: session handle)
                     0xEF00_0032, // srv:GetServiceHandle
                     // Guest-authored RegisterInterruptRelayQueue message.
                     0xE584_5000, // STR r5, [r4] (IPC header)
@@ -3298,9 +3310,25 @@ mod tests {
             })
         ));
 
-        // srv:RegisterClient supplies the process-ID translation descriptor.
-        let register_client_buffer =
-            write_tls_ipc_request(&mut system, service_manager, &[0x0001_0002, 0x20, 0]);
+        // srv:RegisterClient is written by the guest to its actual TLS:
+        // header, PID translation descriptor/value and service handle in r0.
+        let register_client_buffer = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let buffer = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET;
+            assert!(session.set_current_register(4, buffer));
+            assert!(session.set_current_register(5, 0x0001_0002));
+            assert!(session.set_current_register(6, 0x20));
+            assert!(session.set_current_register(7, 0));
+            assert!(session.set_current_register(12, service_manager));
+            for _ in 0..4 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            assert_eq!(session.read_memory_u32(buffer).unwrap(), 0x0001_0002);
+            assert_eq!(session.read_memory_u32(buffer + 4).unwrap(), 0x20);
+            assert_eq!(session.read_memory_u32(buffer + 8).unwrap(), 0);
+            assert_eq!(session.current_registers().unwrap()[0], service_manager);
+            buffer
+        };
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, register_client_buffer, 2),
@@ -3314,12 +3342,28 @@ mod tests {
             Some(true)
         );
 
-        // srv:GetServiceHandle("gsp::Gpu", 8, 0)
-        let srv_buffer = write_tls_ipc_request(
-            &mut system,
-            service_manager,
-            &[0x0005_0100, 0x3A70_7367, 0x7570_473A, 8, 0],
-        );
+        // srv:GetServiceHandle is also authored by guest STR/MOV instructions.
+        let srv_buffer = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let buffer = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET;
+            assert!(session.set_current_register(4, buffer));
+            assert!(session.set_current_register(5, 0x0005_0100));
+            assert!(session.set_current_register(6, 0x3A70_7367));
+            assert!(session.set_current_register(7, 0x7570_473A));
+            assert!(session.set_current_register(8, 8));
+            assert!(session.set_current_register(9, 0));
+            assert!(session.set_current_register(12, service_manager));
+            for _ in 0..6 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            assert_eq!(session.read_memory_u32(buffer).unwrap(), 0x0005_0100);
+            assert_eq!(session.read_memory_u32(buffer + 4).unwrap(), 0x3A70_7367);
+            assert_eq!(session.read_memory_u32(buffer + 8).unwrap(), 0x7570_473A);
+            assert_eq!(session.read_memory_u32(buffer + 12).unwrap(), 8);
+            assert_eq!(session.read_memory_u32(buffer + 16).unwrap(), 0);
+            assert_eq!(session.current_registers().unwrap()[0], service_manager);
+            buffer
+        };
         run_one_ipc_svc(&mut system);
         let srv_response = read_tls_ipc_response(&mut system, srv_buffer, 4);
         assert_eq!(srv_response[0], 0x0005_0042);
