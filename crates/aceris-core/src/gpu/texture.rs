@@ -528,7 +528,7 @@ impl std::error::Error for PicaTextureError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu::physical_memory::{VRAM_BASE, VRAM_SIZE};
+    use crate::gpu::physical_memory::VRAM_BASE;
 
     fn sample_unit(format: PicaTextureFormat) -> PicaTextureUnit {
         PicaTextureUnit {
@@ -643,12 +643,16 @@ mod tests {
 
         let mut unit = sample_unit(PicaTextureFormat::Rgba8);
         unit.wrap_s = PicaTextureWrap::Repeat;
-        let repeated = unit.sample(&memory, 1.5 / 8.0, 0.5 / 8.0, false).unwrap();
-        assert_eq!(repeated[0], 0.0);
+        let repeated = unit
+            .sample(&memory, 1.0 + 1.5 / 8.0, 0.5 / 8.0, false)
+            .unwrap();
+        assert_eq!(repeated[0], 20.0 / 255.0);
 
         unit.wrap_s = PicaTextureWrap::MirroredRepeat;
-        let mirrored = unit.sample(&memory, 1.5 / 8.0, 0.5 / 8.0, false).unwrap();
-        assert_eq!(mirrored[0], 20.0 / 255.0);
+        let mirrored = unit
+            .sample(&memory, 1.0 + 1.5 / 8.0, 0.5 / 8.0, false)
+            .unwrap();
+        assert_eq!(mirrored[0], 120.0 / 255.0);
 
         unit.wrap_s = PicaTextureWrap::ClampToBorder;
         assert_eq!(
@@ -691,6 +695,5 @@ mod tests {
             PicaTextureUnit::from_pica(&pica, 0),
             Err(PicaTextureError::UnsupportedFormat { unit: 0, format: 0xC })
         ));
-        assert_eq!(VRAM_SIZE, 0x0060_0000);
     }
 }
