@@ -31,8 +31,6 @@ pub const REG_VIEWPORT_INV_WIDTH: u16 = 0x042;
 pub const REG_VIEWPORT_HEIGHT: u16 = 0x043;
 /// Reciprocal viewport height (retained for diagnostics and future derivative rules).
 pub const REG_VIEWPORT_INV_HEIGHT: u16 = 0x044;
-/// PICA depth-map transform enable (bit 0).
-pub const REG_DEPTHMAP_TRANSFORM_ENABLE: u16 = 0x04C;
 /// PICA normalized-depth scale, encoded as float24.
 pub const REG_DEPTHMAP_SCALE: u16 = 0x04D;
 /// PICA normalized-depth offset, encoded as float24.
@@ -69,8 +67,6 @@ pub enum PicaDepthBuffering {
 /// Decoded guest controls for PICA depth mapping and interpolation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaDepthState {
-    /// Whether the guest enabled the scale/offset transform at register 0x04C.
-    pub transform_enabled: bool,
     /// Float24 scale applied when the depth transform is enabled.
     pub scale: f32,
     /// Float24 offset applied when the depth transform is enabled.
@@ -296,7 +292,6 @@ impl Pica200 {
     pub fn depth_state(&self) -> PicaDepthState {
         let mode = self.register(REG_DEPTHMAP_ENABLE).unwrap_or(0);
         PicaDepthState {
-            transform_enabled: self.register(REG_DEPTHMAP_TRANSFORM_ENABLE).unwrap_or(0) & 1 != 0,
             scale: Float24::from_bits(self.register(REG_DEPTHMAP_SCALE).unwrap_or(0)).to_f32(),
             offset: Float24::from_bits(self.register(REG_DEPTHMAP_OFFSET).unwrap_or(0)).to_f32(),
             buffering: if mode & 1 == 0 {
@@ -1208,7 +1203,6 @@ mod tests {
         assert_eq!(
             gpu.depth_state(),
             PicaDepthState {
-                transform_enabled: false,
                 scale: 0.5,
                 offset: 0.5,
                 buffering: PicaDepthBuffering::WBuffer,
@@ -1225,24 +1219,6 @@ mod tests {
                 buffering: PicaDepthBuffering::ZBuffer,
             }
         );
-    }
-
-    #[test]
-    fn decodes_guest_depthmap_transform_enable_independently_of_buffer_mode() {
-        let mut gpu = Pica200::new();
-        gpu.write_register(REG_DEPTHMAP_ENABLE, 1).unwrap();
-
-        assert!(!gpu.depth_state().transform_enabled);
-        assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::ZBuffer);
-
-        gpu.write_register(REG_DEPTHMAP_TRANSFORM_ENABLE, 1)
-            .unwrap();
-        assert!(gpu.depth_state().transform_enabled);
-        assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::ZBuffer);
-
-        gpu.write_register(REG_DEPTHMAP_ENABLE, 0).unwrap();
-        assert!(gpu.depth_state().transform_enabled);
-        assert_eq!(gpu.depth_state().buffering, PicaDepthBuffering::WBuffer);
     }
 
     #[test]
