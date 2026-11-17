@@ -26,7 +26,7 @@ pub const SCU_INVALIDATE_ALL_REGISTER_OFFSET: u32 = 0x0C;
 const SCU_CONTROL_RESET: u32 = 0x0000_1FFE;
 const SCU_CONTROL_WRITABLE: u32 = 0x0000_1FFF;
 const SCU_CPU_COUNT_ENCODING: u32 = 0b01;
-const SCU_CPU_SMP_MASK: u32 = 0b1111;
+const SCU_CPU_SMP_MASK: u32 = 0b0011;
 
 /// Shared register state for the MPCore Snoop Control Unit.
 #[derive(Clone, Debug)]
@@ -96,7 +96,7 @@ impl MpcoreScu {
 
     /// Updates the configuration status corresponding to one CPU's ACTLR.SMP.
     pub fn set_cpu_smp_mode(&self, core_id: u32, enabled: bool) {
-        if core_id >= 4 {
+        if core_id >= 2 {
             return;
         }
         let mut state = self
@@ -215,6 +215,11 @@ mod tests {
         assert_eq!(scu.configuration_register(), 0b11_0001);
 
         scu.set_cpu_smp_mode(0, false);
+        assert_eq!(scu.configuration_register(), 0b10_0001);
+
+        // This 3DS profile contains two MPCore CPUs; other IDs are ignored.
+        scu.set_cpu_smp_mode(2, true);
+        scu.set_cpu_smp_mode(3, true);
         assert_eq!(scu.configuration_register(), 0b10_0001);
     }
 
