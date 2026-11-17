@@ -81,8 +81,8 @@ impl PicaDepthBufferFormat {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PicaDepthBufferConfig {
     pub address: u32,
-    pub width: u16,
-    pub height: u16,
+    pub width: u32,
+    pub height: u32,
     pub format: PicaDepthBufferFormat,
     pub depth_read_enabled: bool,
     pub stencil_read_enabled: bool,
@@ -95,8 +95,8 @@ impl PicaDepthBufferConfig {
     /// means that no physical depth surface has been configured.
     pub fn from_pica(
         pica: &Pica200,
-        width: u16,
-        height: u16,
+        width: u32,
+        height: u32,
     ) -> Result<Option<Self>, PicaDepthBufferError> {
         let location = pica.register(REG_DEPTHBUFFER_LOC).unwrap_or(0);
         if location == 0 {
@@ -124,8 +124,8 @@ impl PicaDepthBufferConfig {
 
     /// Returns the complete padded 8x8 tile-grid allocation size.
     pub fn tiled_storage_size(self) -> Result<usize, PicaDepthBufferError> {
-        tile_count(usize::from(self.width))?
-            .checked_mul(tile_count(usize::from(self.height))?)
+        tile_count(self.width as usize)?
+            .checked_mul(tile_count(self.height as usize)?)
             .and_then(|tiles| tiles.checked_mul(TILE_PIXELS))
             .and_then(|pixels| pixels.checked_mul(self.format.bytes_per_pixel()))
             .ok_or(PicaDepthBufferError::SizeOverflow)
@@ -142,8 +142,8 @@ impl PicaDepthBufferConfig {
         if !clear_depth.is_finite() || !(0.0..=1.0).contains(&clear_depth) {
             return Err(PicaDepthBufferError::InvalidDepth { depth: clear_depth });
         }
-        let pixel_count = usize::from(self.width)
-            .checked_mul(usize::from(self.height))
+        let pixel_count = (self.width as usize)
+            .checked_mul(self.height as usize)
             .ok_or(PicaDepthBufferError::SizeOverflow)?;
         if !self.depth_read_enabled {
             let mut values = Vec::new();
@@ -161,12 +161,12 @@ impl PicaDepthBufferConfig {
             .map_err(|_| PicaDepthBufferError::AllocationFailed)?;
         values.resize(pixel_count, clear_depth);
 
-        let tiles_x = tile_count(usize::from(self.width))?;
+        let tiles_x = tile_count(self.width as usize)?;
         let bytes_per_pixel = self.format.bytes_per_pixel();
-        for y in 0..usize::from(self.height) {
-            for x in 0..usize::from(self.width) {
+        for y in 0..self.height as usize {
+            for x in 0..self.width as usize {
                 let offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
-                let destination = y * usize::from(self.width) + x;
+                let destination = y * self.width as usize + x;
                 values[destination] =
                     self.format.decode_depth(&raw[offset..offset + bytes_per_pixel]);
             }
@@ -330,7 +330,7 @@ fn morton_index(x: usize, y: usize) -> usize {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PicaDepthBufferError {
     UnsupportedFormat { value: u8 },
-    InvalidDimensions { width: u16, height: u16 },
+    InvalidDimensions { width: u32, height: u32 },
     InvalidDepth { depth: f32 },
     SizeOverflow,
     AllocationFailed,
@@ -360,6 +360,12 @@ impl std::fmt::Display for PicaDepthBufferError {
             }
             Self::Memory(error) => write!(formatter, "PICA depth memory access failed: {error}"),
         }
+    }
+}
+
+impl From<GpuPhysicalMemoryError> for PicaDepthBufferError {
+    fn from(error: GpuPhysicalMemoryError) -> Self {
+        Self::Memory(error)
     }
 }
 
