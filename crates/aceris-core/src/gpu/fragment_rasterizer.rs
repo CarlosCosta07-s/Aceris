@@ -238,7 +238,8 @@ impl PicaFragmentRasterizer {
         memory: &GpuPhysicalMemory,
         clear_depth: f32,
     ) -> Result<(), PicaFragmentRasterError> {
-        if usize::from(config.width) != self.width || usize::from(config.height) != self.height {
+        if usize::try_from(config.width).ok() != Some(self.width)
+            || usize::try_from(config.height).ok() != Some(self.height) {
             return Err(PicaFragmentRasterError::InvalidDimensions);
         }
         self.depth = config
@@ -253,7 +254,8 @@ impl PicaFragmentRasterizer {
         config: PicaDepthBufferConfig,
         memory: &mut GpuPhysicalMemory,
     ) -> Result<u64, PicaFragmentRasterError> {
-        if usize::from(config.width) != self.width || usize::from(config.height) != self.height {
+        if usize::try_from(config.width).ok() != Some(self.width)
+            || usize::try_from(config.height).ok() != Some(self.height) {
             return Err(PicaFragmentRasterError::InvalidDimensions);
         }
         config
