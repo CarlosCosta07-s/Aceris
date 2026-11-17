@@ -478,10 +478,7 @@ mod tests {
         assert_eq!(cp15.read(true, 0, 1, 0, 1), Ok(1 << 5));
 
         assert_eq!(cp15.read(false, 0, 1, 0, 1), Err(Cp15Fault::Undefined));
-        assert_eq!(
-            cp15.write(false, 0, 1, 0, 1, 0),
-            Err(Cp15Fault::Undefined)
-        );
+        assert_eq!(cp15.write(false, 0, 1, 0, 1, 0), Err(Cp15Fault::Undefined));
     }
 
     #[test]
