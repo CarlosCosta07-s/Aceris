@@ -869,6 +869,7 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Event(event)) => !event.waiters.is_empty(),
             Some(KernelObject::Mutex(mutex)) => !mutex.waiters.is_empty(),
             Some(KernelObject::Semaphore(semaphore)) => !semaphore.waiters.is_empty(),
+            Some(KernelObject::Timer(timer)) => !timer.waiters.is_empty(),
             Some(KernelObject::Thread(thread)) => !thread.waiters.is_empty(),
             Some(KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_)) => false,
             None => return Err(KernelHandleError::InvalidHandle),
