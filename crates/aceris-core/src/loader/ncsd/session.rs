@@ -544,8 +544,8 @@ impl Arm11ProcessSession {
     ///
     /// A live thread is terminated when its final thread handle closes. An
     /// exited thread's saved CPU context is reclaimed when its final handle
-    /// closes. Wait-all requests that refer to the closed handle are rechecked
-    /// and complete with InvalidHandle rather than retaining a dangling handle.
+    /// closes. Objects already pinned by a synchronization wait survive handle
+    /// closure until that wait completes, times out or the waiting thread exits.
     pub fn close_handle(&mut self, handle: u32) -> std::result::Result<(), KernelHandleError> {
         let thread_target = self.kernel_objects.thread_handle_target(handle);
         if let Some(target) = thread_target {
@@ -2760,6 +2760,12 @@ impl Arm11ProcessSession {
                 return self.write_svc_result(caller, RESULT_TIMEOUT);
             }
 
+            if let Err(error) = self
+                .kernel_objects
+                .retain_wait_all_handles(&handles, caller)
+            {
+                return self.write_svc_result(caller, kernel_handle_result_code(error));
+            }
             self.wait_all_waits.insert(caller, handles.clone());
             if timeout > 0 {
                 let deadline = self
@@ -2776,6 +2782,7 @@ impl Arm11ProcessSession {
                 Err(_) => {
                     self.wait_deadlines.remove(&caller);
                     self.wait_all_waits.remove(&caller);
+                    self.kernel_objects.release_wait_all_handles(caller);
                     SvcRunDisposition::KernelServiceError {
                         number: SVC_WAIT_SYNCHRONIZATION_N,
                         result: RESULT_INVALID_ENUM,
@@ -2842,12 +2849,14 @@ impl Arm11ProcessSession {
             self.wait_deadlines.remove(&waiter);
             let released_by = self.kernel_objects.take_handoff(waiter);
             let index = self.multi_waits.remove(&waiter).map(|handles| {
-                // The other handles' queues must not wake this thread again.
-                self.kernel_objects.remove_waiter(waiter);
                 released_by
                     .and_then(|handle| handles.iter().position(|candidate| *candidate == handle))
                     .unwrap_or(0) as u32
             });
+            // Drop this wait's references from every object. This is required
+            // even for WaitSynchronization1, whose queue contains only one
+            // waiter entry and may now live in the retired-object table.
+            self.kernel_objects.remove_waiter(waiter);
             if let Some(core) = self.scheduler.core_mut(waiter) {
                 core.regs[0] = 0;
                 if let Some(index) = index {
@@ -2885,6 +2894,7 @@ impl Arm11ProcessSession {
         for (thread, result) in completed {
             self.wait_all_waits.remove(&thread);
             self.wait_deadlines.remove(&thread);
+            self.kernel_objects.release_wait_all_handles(thread);
             if let Some(core) = self.scheduler.core_mut(thread) {
                 core.regs[0] = result;
                 // Wait-all has no single selected handle index.
@@ -3013,6 +3023,9 @@ impl Arm11ProcessSession {
             .core(caller)
             .expect("current thread context exists")
             .regs[0];
+        if !self.kernel_objects.is_open_handle(handle) {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
         match self.signal_event_handle(handle) {
             Ok(()) => self.write_svc_result(caller, 0),
             Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
