@@ -1868,7 +1868,8 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 
 ### Implementação
 
-- Commit `c6f6fe52498fcfb4589347ce6ce5ea3d1d5840af` adiciona os opcodes `EX2` (`0x05`) e `LG2` (`0x06`) à enumeração, à tabela de decodificação e ao formato unário.
+- Commits `c6f6fe52498fcfb4589347ce6ce5ea3d1d5840af` (implementação) e `c250811c76ec24e93e7c438bc858d50967f3f47c` (Rustfmt) alteram somente `crates/aceris-core/src/gpu/shader_exec.rs`. A primeira CI encontrou apenas uma divergência de formatação numa asserção, corrigida no commit de estilo.
+- Commit de implementação `c6f6fe52498fcfb4589347ce6ce5ea3d1d5840af` adiciona os opcodes `EX2` (`0x05`) e `LG2` (`0x06`) à enumeração, à tabela de decodificação e ao formato unário.
 - A entrada é o primeiro lane do SRC1 depois do swizzle e da negação do operand descriptor. O escalar `exp2` ou `log2` é replicado para os quatro lanes; a máscara do destino continua aplicada no writeback existente.
 - Testes novos: `ex2_and_lg2_broadcast_the_first_swizzled_source_lane` e `ex2_and_lg2_respect_destination_masks_and_ieee_domain_results`. A regressão da tabela de opcodes confirma EX2/LG2 reconhecidos e mantém MOVA, CMP, CALL, DST e LITP rejeitados.
 - A implementação usa funções IEEE `f32`; não afirma reproduzir precisão float24 ou aproximações numéricas do PICA200.
