@@ -20,7 +20,7 @@ O resultado inclui:
 Use um build release e o caminho da sua própria imagem:
 
 ```sh
-cargo run --release -p aceris-core --example benchmark -- "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300
+cargo run --release -p aceris-core --example benchmark -- "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300 --dump-lcd ./aceris-pc-lcd
 ```
 
 Também são aceitos arquivos 3DSX e imagens NCSD `.3ds`/`.cci`, desde que o caminho de carregamento atual consiga preparar o conteúdo. Parâmetros:
@@ -31,7 +31,7 @@ Também são aceitos arquivos 3DSX e imagens NCSD `.3ds`/`.cci`, desde que o cam
 No Windows PowerShell:
 
 ```powershell
-cargo run --release -p aceris-core --example benchmark -- "D:\Jogos\seu-jogo.cia" --warmup 30 --frames 300
+cargo run --release -p aceris-core --example benchmark -- "D:\Jogos\seu-jogo.cia" --warmup 30 --frames 300 --dump-lcd ./aceris-pc-lcd
 ```
 
 A janela gráfica não é necessária para esse exemplo. O benchmark é um utilitário de linha de comando desktop.
@@ -109,18 +109,18 @@ Baixe-os em [GitHub Actions](https://github.com/CarlosCosta07-s/Aceris/actions/w
 Linux:
 ```sh
 chmod +x ./benchmark
-./benchmark "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300
+./benchmark "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300 --dump-lcd ./aceris-pc-lcd
 ```
 
 Windows PowerShell:
 ```powershell
-.\\benchmark.exe "D:\\Jogos\\seu-jogo.cia" --warmup 30 --frames 300
+.\\benchmark.exe "D:\\Jogos\\seu-jogo.cia" --warmup 30 --frames 300 --dump-lcd .\\aceris-pc-lcd
 ```
 
 Também é possível compilar e rodar pelo Rust:
 
 ```sh
-cargo run --release -p aceris-core --example benchmark -- "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300
+cargo run --release -p aceris-core --example benchmark -- "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300 --dump-lcd ./aceris-pc-lcd
 ```
 
 ### Android ARM64 físico por ADB
@@ -135,14 +135,15 @@ adb shell getprop ro.product.cpu.abi
 adb push aceris-benchmark /data/local/tmp/aceris-benchmark
 adb push "/caminho/para/seu-jogo.cia" /data/local/tmp/seu-jogo.cia
 adb shell chmod 700 /data/local/tmp/aceris-benchmark
-adb shell /data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300 > aceris-android-report.txt 2>&1
+adb shell /data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300 --dump-lcd /data/local/tmp/aceris-android-lcd > aceris-android-report.txt 2>&1
 ```
 
 O valor de `ro.product.cpu.abi` deve incluir `arm64-v8a`. Para salvar o relatório diretamente no telefone e copiá-lo depois:
 
 ```sh
-adb shell '/data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300 > /data/local/tmp/aceris-report.txt 2>&1'
+adb shell '/data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300 --dump-lcd /data/local/tmp/aceris-android-lcd > /data/local/tmp/aceris-report.txt 2>&1'
 adb pull /data/local/tmp/aceris-report.txt .
+adb pull /data/local/tmp/aceris-android-lcd ./aceris-android-lcd
 ```
 
 Para imagens criptografadas, entre no shell do aparelho e configure localmente as variáveis exigidas pelo caminho de carga. Não coloque valores reais no repositório, em relatórios ou em mensagens compartilhadas.
@@ -152,14 +153,14 @@ NCSD criptografado:
 adb shell
 export ACERIS_MENU_INFO_KEY="<32 caracteres hexadecimais>"
 export ACERIS_CONTENT_KEY="<32 caracteres hexadecimais>"
-/data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.3ds --warmup 30 --frames 300
+/data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.3ds --warmup 30 --frames 300 --dump-lcd /data/local/tmp/aceris-android-lcd
 unset ACERIS_MENU_INFO_KEY ACERIS_CONTENT_KEY
 exit
 ```
 
 CIA criptografado também exige `ACERIS_COMMON_KEY_INDEX` e uma das opções documentadas acima: `ACERIS_NORMAL_COMMON_KEY` ou o par `ACERIS_COMMON_KEY_X` + `ACERIS_COMMON_KEY_Y`. O benchmark não descobre, imprime nem persiste esse material.
 
-O programa executa no processador ARM64 do telefone, sem emulação de CPU do host e sem depender de uma Activity Android. O arquivo do jogo permanece no aparelho. Para repetir com o mesmo título no PC, use exatamente o mesmo arquivo e as mesmas opções.
+O programa executa no processador ARM64 do telefone, sem emulação de CPU do host e sem depender de uma Activity Android. O arquivo do jogo permanece no aparelho. Para repetir com o mesmo título no PC, use exatamente o mesmo arquivo e as mesmas opções. As três capturas PNG são gravadas somente depois da janela medida; o custo de codificação/gravação não entra nos tempos reportados.
 
 Alguns firmwares podem impedir a execução direta de binários em `/data/local/tmp`. Nesse caso, a medição por ADB não está disponível nesse aparelho sem um host Android instalável; não interprete uma falha de permissão do Android como falha do núcleo Aceris.
 
