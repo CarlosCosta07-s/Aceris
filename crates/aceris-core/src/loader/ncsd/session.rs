@@ -2578,7 +2578,7 @@ impl Arm11ProcessSession {
             return self.write_svc_result(caller, RESULT_TIMEOUT);
         }
         if timeout < -1 {
-            return self.write_svc_result(caller, RESULT_INVALID_TIMEOUT);
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
         }
         if let Err(error) = self.kernel_objects.enqueue_waiter(handle, caller) {
             return self.write_svc_result(caller, kernel_handle_result_code(error));
@@ -2648,7 +2648,7 @@ impl Arm11ProcessSession {
             };
         }
         if timeout < -1 {
-            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+            return self.write_svc_result(caller, RESULT_INVALID_TIMEOUT);
         }
         let mut handles = Vec::with_capacity(count as usize);
         for index in 0..count as u32 {
