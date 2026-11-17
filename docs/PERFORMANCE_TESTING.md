@@ -96,4 +96,45 @@ O teste acima e o benchmark são passos complementares: o primeiro verifica a pr
 
 ## PC versus Android
 
-Este exemplo mede o build desktop. O crate Android atual é uma biblioteca nativa Rust, não um aplicativo instalável com Activity/superfície/ciclo de vida completos. A build Android ARM64 no CI não é uma medição de desempenho em celular. Um teste físico Android exige primeiro o host Android instalável e o envio de frames/entrada conectados ao mesmo núcleo.
+O exemplo desktop e o executável Android usam a mesma implementação do benchmark e o mesmo `aceris-core`. A diferença é somente a plataforma na qual o processo do host é executado.
+
+### PC
+
+Linux:
+```sh
+cargo run --release -p aceris-core --example benchmark -- "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300
+```
+
+Windows PowerShell:
+```powershell
+cargo run --release -p aceris-core --example benchmark -- "D:\\Jogos\\seu-jogo.cia" --warmup 30 --frames 300
+```
+
+### Android ARM64 físico por ADB
+
+A CI Android compila o executável `aceris-benchmark` para `arm64-v8a` e publica o arquivo como artefato `aceris-android-benchmark-arm64-v8a` no workflow. Baixe o artefato da execução mais recente aprovada em [GitHub Actions](https://github.com/CarlosCosta07-s/Aceris/actions/workflows/ci.yml).
+
+Com a depuração USB habilitada e `adb` disponível no PC, copie o executável e a sua própria imagem de jogo para o aparelho. Exemplo:
+
+```sh
+adb devices
+adb push aceris-benchmark /data/local/tmp/aceris-benchmark
+adb push "/caminho/para/seu-jogo.cia" /data/local/tmp/seu-jogo.cia
+adb shell chmod 700 /data/local/tmp/aceris-benchmark
+adb shell /data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300
+```
+
+O programa executa no processador ARM64 do telefone, sem emulação de CPU do host e sem depender de uma Activity Android. O arquivo do jogo permanece no aparelho. Para repetir com o mesmo título no PC, use exatamente o mesmo arquivo e as mesmas opções.
+
+Alguns firmwares podem impedir a execução direta de binários em `/data/local/tmp`. Nesse caso, a medição por ADB não está disponível nesse aparelho sem um host Android instalável; não interprete uma falha de permissão do Android como falha do núcleo Aceris.
+
+### O que este teste Android entrega — e o que não entrega
+
+- Entrega medição do tempo de processamento de frames limitados, throughput de instruções ARM11, GSP e operações LCD executadas pelo mesmo núcleo no processador do celular.
+- Não apresenta as telas do jogo na interface do Android, não mede custo de composição da superfície, entrada touchscreen ou áudio.
+- Não é um APK de emulador instalável. É um executável de diagnóstico para teste de desempenho via ADB.
+- A build Android ARM64 aprovada no CI comprova compilação para a ABI; somente uma execução no aparelho físico comprova o comportamento naquele telefone.
+
+Para uma comparação minimamente útil, mantenha o mesmo arquivo, o mesmo número de frames de aquecimento/medição, o mesmo orçamento de instruções e builds `--release`. Execute três rodadas em cada plataforma, sem outros processos pesados, e compare p50/p95, instruções por segundo e motivos de parada. Anote modelo do aparelho, versão do Android, arquitetura, temperatura aproximada e modo de energia.
+
+**Limite de compatibilidade:** o benchmark mede o caminho de execução que o carregador consegue preparar. Se o jogo parar em SVC/serviço não implementado, se não executar instruções em frames sucessivos ou se a renderização estiver incompleta, o relatório deve ser tratado como diagnóstico de progresso, não como FPS jogável. O executável Android não transforma sozinho o Aceris em um aplicativo gráfico completo.
