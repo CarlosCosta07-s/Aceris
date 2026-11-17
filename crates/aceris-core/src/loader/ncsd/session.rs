@@ -41,7 +41,7 @@ use svc::{
     SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
-    SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX,
+    SVC_GET_PROCESS_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX,
     SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER,
     SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
     SVC_WAIT_SYNCHRONIZATION1,
@@ -1958,6 +1958,7 @@ impl Arm11ProcessSession {
             SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
             SVC_DUPLICATE_HANDLE => self.svc_duplicate_handle(caller),
             SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
+            SVC_GET_PROCESS_INFO => self.svc_get_process_info(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
@@ -3075,6 +3076,38 @@ impl Arm11ProcessSession {
             },
             0x0003_2107 => (0, 0),
             _ => (RESULT_INVALID_ENUM, 0),
+        };
+
+        if let Some(core) = self.scheduler.core_mut(caller) {
+            core.regs[1] = value as u32;
+            core.regs[2] = (value >> 32) as u32;
+        }
+        self.write_svc_result(caller, result)
+    }
+
+    /// Handles GetProcessInfo using r1 = process handle and r2 = information type.
+    ///
+    /// The raw SVC returns the Result in r0 and the 64-bit output in r1-r2.
+    /// Types 4 and 5 expose the current and peak counts of regular guest-visible
+    /// handles for the current process. Process memory statistics (types 0-3)
+    /// are not modelled yet and are rejected instead of returning guessed data.
+    fn svc_get_process_info(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        let process = registers[1];
+        let info_type = registers[2];
+
+        let (result, value) = if process != CURRENT_PROCESS_HANDLE {
+            (RESULT_INVALID_HANDLE, 0)
+        } else {
+            match info_type {
+                4 => (0, self.kernel_objects.handle_count() as u64),
+                5 => (0, self.kernel_objects.handle_high_water_mark() as u64),
+                _ => (RESULT_INVALID_ENUM, 0),
+            }
         };
 
         if let Some(core) = self.scheduler.core_mut(caller) {
@@ -5458,6 +5491,96 @@ mod tests {
             main.regs[2] = 0xFFFF;
         }
         session.dispatch_svc(SVC_GET_HANDLE_INFO);
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+            RESULT_INVALID_ENUM
+        );
+    }
+
+    #[test]
+    fn get_process_info_svc_reports_current_and_peak_handle_counts() {
+        let mut session = test_session();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        let duplicate = session.kernel_objects.duplicate_handle(event).unwrap();
+
+        // Type 4 returns the live count; type 5 returns the historical peak.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[0] = 0xDEAD_BEEF; // unused at the raw SVC boundary
+            main.regs[1] = CURRENT_PROCESS_HANDLE;
+            main.regs[2] = 4;
+        }
+        assert!(matches!(
+            session.dispatch_svc(SVC_GET_PROCESS_INFO),
+            SvcRunDisposition::Resume
+        ));
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 2);
+
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = CURRENT_PROCESS_HANDLE;
+            main.regs[2] = 5;
+        }
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 2);
+
+        // Closing one alias decreases the current count but never the peak.
+        session.close_handle(event).unwrap();
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = CURRENT_PROCESS_HANDLE;
+            main.regs[2] = 4;
+        }
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 1);
+
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = CURRENT_PROCESS_HANDLE;
+            main.regs[2] = 5;
+        }
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 2);
+
+        // Further allocations can establish a new high-water mark.
+        session.kernel_objects.insert_semaphore(0, 2).unwrap();
+        session.kernel_objects.insert_timer(EventResetType::OneShot).unwrap();
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = CURRENT_PROCESS_HANDLE;
+            main.regs[2] = 5;
+        }
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 3);
+
+        // The current-process pseudo-handle is the only process handle modeled.
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = 0xDEAD_BEEF;
+            main.regs[2] = 4;
+        }
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
+        assert_eq!(
+            session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
+            RESULT_INVALID_HANDLE
+        );
+
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[1] = CURRENT_PROCESS_HANDLE;
+            main.regs[2] = 0; // Process memory usage is not modelled.
+        }
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
         assert_eq!(
             session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
             RESULT_INVALID_ENUM
