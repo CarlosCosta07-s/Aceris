@@ -5722,6 +5722,7 @@ mod tests {
             REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
             REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
             REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
+            REG_LOGIC_OP,
         };
         use crate::video::{
             PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_SELECT,
@@ -5941,6 +5942,7 @@ mod tests {
             (REG_DEPTHMAP_SCALE, 0x003E_0000),  // Float24 0.5
             (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
             (REG_DEPTHMAP_ENABLE, 1),           // Z buffering
+            (REG_LOGIC_OP, 3),                  // Guest selects logic COPY for fragment output
         ] {
             command_list.extend(write(register, value));
         }
@@ -6014,10 +6016,9 @@ mod tests {
             tls_base
         );
 
-        // The guest command list now supplies the viewport and depth-map
-        // registers. The generic reference transform and render switch remain
-        // host-side until the guest shader matrix path is connected.
-        system.set_pica_rendering(Some(PicaRenderSettings {
+        // The guest command list supplies viewport, depth map and fragment
+        // output mode. The host only selects the PICA fragment backend.
+        system.set_pica_fragment_rendering(Some(PicaRenderSettings {
             clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
         }));
