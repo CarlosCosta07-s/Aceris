@@ -8,8 +8,8 @@
 //! and the framebuffer formats of the real GPU are not modeled.
 
 use super::{
-    DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex,
-    GpuPhysicalMemory, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDepthBuffering,
+    DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, GpuPhysicalMemory,
+    Matrix4, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDepthBuffering,
     PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest, PicaOutputMapError,
     PicaRenderTargetConfig, PicaRenderTargetError, PicaShadedDraw, PicaVertexOutputMap,
     PicaVertexShaderProgram, RasterizerError, SoftwareRasterizer, Viewport,
@@ -245,12 +245,12 @@ impl PicaRenderSession {
                 PicaDepthBuffering::ZBuffer => PicaDepthMode::ZBuffer,
             },
         };
-        let target_pipeline = GeometryPipeline::new(
-            self.settings.pipeline.transform(),
-            viewport,
-            self.settings.pipeline.depth_range(),
-        )
-        .with_pica_depth_map(depth_map);
+        // The guest vertex shader already emits clip-space position through
+        // the PICA output map. Do not apply a second host-side model/view/projection
+        // transform here; the host pipeline contributes only the clip convention.
+        let target_pipeline =
+            GeometryPipeline::new(Matrix4::identity(), viewport, self.settings.pipeline.depth_range())
+                .with_pica_depth_map(depth_map);
         let program = pica.vertex_shader_program();
         let rasterizer = &mut self.active.as_mut().expect("target selected above").1;
         // Mark dirty first: triangles drawn before an error stay in the buffer.
@@ -413,7 +413,8 @@ mod tests {
         REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
         REG_DRAWARRAYS, REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
         REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX,
-        REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
+        REG_VSH_FLOATUNIFORM_DATA0, REG_VSH_FLOATUNIFORM_INDEX, REG_VSH_INPUTBUFFER_CONFIG,
+        REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, Viewport,
     };
 
     const SIZE: usize = 8;
@@ -632,13 +633,9 @@ mod tests {
         memory.write(BASE, &[0, 0, 8, 0, 0, 8]).unwrap();
 
         // Scale x, y by 1/4 and shift by -1 so the 0..8 space fills clip space.
-        let transform = Matrix4::from_column_major([
-            0.25, 0.0, 0.0, 0.0, //
-            0.0, 0.25, 0.0, 0.0, //
-            0.0, 0.0, 1.0, 0.0, //
-            -1.0, -1.0, 0.0, 1.0,
-        ])
-        .unwrap();
+        // A singular host matrix must not affect the PICA session: the guest
+        // vertex shader is responsible for producing the clip-space position.
+        let transform = Matrix4::from_column_major([0.0; 16]).unwrap();
         let pipeline =
             GeometryPipeline::new(transform, viewport(), ClipDepthRange::NegativeOneToOne);
 
@@ -689,9 +686,46 @@ mod tests {
         }
     }
 
-    fn configure_vertex_path(gpu: &mut Pica200) {
-        const MOV_O0_V0: u32 = 0x13 << 26;
+    fn configure_guest_clip_transform(gpu: &mut Pica200) {
         const END: u32 = 0x22 << 26;
+        let identity_descriptor = |mask: u32| {
+            mask | (0x1B << 5) | (0x1B << 14) | (0x1B << 23)
+        };
+        let dphi = |uniform: u32, descriptor: u32| {
+            (0x18 << 26) | ((0x20 + uniform) << 7) | descriptor
+        };
+
+        gpu.write_register(REG_VSH_OPDESCS_INDEX, 0).unwrap();
+        for lane in 0..4 {
+            gpu.write_register(REG_VSH_OPDESCS_DATA0, identity_descriptor(1 << (3 - lane)))
+                .unwrap();
+        }
+
+        gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0).unwrap();
+        for uniform in 0..4 {
+            gpu.write_register(REG_VSH_CODETRANSFER_DATA0, dphi(uniform, uniform))
+                .unwrap();
+        }
+        gpu.write_register(REG_VSH_CODETRANSFER_DATA0, END).unwrap();
+
+        // The guest shader computes o0 = M * v0 with four DPHI instructions.
+        // Float32 uniforms are transferred W, Z, Y, X for each constant.
+        gpu.write_register(REG_VSH_FLOATUNIFORM_INDEX, 0x8000_0000)
+            .unwrap();
+        for vector in [
+            [0.25f32, 0.0, 0.0, -1.0],
+            [0.0, 0.25, 0.0, -1.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ] {
+            for component in vector.into_iter().rev() {
+                gpu.write_register(REG_VSH_FLOATUNIFORM_DATA0, component.to_bits())
+                    .unwrap();
+            }
+        }
+    }
+
+    fn configure_vertex_path(gpu: &mut Pica200) {
         for (register, value) in [
             (REG_ATTRIBBUFFERS_LOC, 0x0BAD_F000),
             (REG_ATTRIBBUFFERS_FORMAT_LOW, 0x1),
@@ -702,17 +736,10 @@ mod tests {
             (REG_VSH_INPUTBUFFER_CONFIG, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
-            (REG_VSH_OPDESCS_INDEX, 0),
-            (
-                REG_VSH_OPDESCS_DATA0,
-                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
-            ),
-            (REG_VSH_CODETRANSFER_INDEX, 0),
-            (REG_VSH_CODETRANSFER_DATA0, MOV_O0_V0),
-            (REG_VSH_CODETRANSFER_DATA0, END),
         ] {
             gpu.write_register(register, value).unwrap();
         }
+        configure_guest_clip_transform(gpu);
         for index in 0..7u16 {
             gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
                 .unwrap();
