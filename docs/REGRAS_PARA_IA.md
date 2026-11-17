@@ -30,20 +30,22 @@ Estas regras são obrigatórias para qualquer IA, agente automatizado ou colabor
 ## 4. Código e recursos inteiramente próprios
 
 - Todo código-fonte de implementação deve ser escrito especificamente para o Aceris.
-- É proibido copiar, colar, traduzir, portar, adaptar, derivar ou reimplementar a partir da leitura de código-fonte de terceiros.
+- É proibido copiar, colar, traduzir, portar ou adaptar código-fonte de terceiros para o Aceris. A consulta de código-fonte como referência técnica é permitida somente nos limites da seção 5. Toda implementação deve ser escrita independentemente em Rust, com estrutura própria; não faça tradução linha a linha, reprodução estrutural ou adaptação de trechos.
 - É proibido incorporar assets de terceiros: imagens, ícones, fontes, modelos, texturas, shaders, áudio, animações, layouts, temas ou outros recursos.
 - Não adicionar dependências de terceiros que forneçam implementação de funcionalidades do emulador ou recursos do produto sem autorização explícita do mantenedor.
 - Priorizar implementações próprias em Rust e APIs públicas de plataforma. Qualquer dependência técnica inevitável deve ser identificada, justificada e submetida ao mantenedor antes de ser introduzida.
 - Não declarar o projeto integralmente livre de dependências externas sem antes auditar e resolver as dependências já existentes.
 
-## 5. Análise de outros emuladores
+## 5. Referências técnicas de outros emuladores
 
-- Outros emuladores podem ser analisados exclusivamente por sua superfície observável: interface em execução, menus, configurações expostas, fluxos de usuário, compatibilidade anunciada, comportamento visível e resultados de testes legítimos.
-- É terminantemente proibido abrir, navegar, pesquisar, consultar, copiar ou usar como referência o código-fonte interno de qualquer emulador de terceiros.
-- A proibição inclui Azahar, Citra, Lime3DS e quaisquer outros projetos, independentemente da licença.
-- Não usar trechos de código, patches, commits, algoritmos extraídos de código, assets ou recursos internos desses projetos.
-- Documentação pública de hardware, protocolos e formatos, bem como especificações técnicas independentes, pode ser consultada. Ela não autoriza consultar código-fonte de emuladores.
-- Quando uma informação técnica não puder ser confirmada sem consultar código interno de terceiros, registrar a dúvida e buscar documentação independente ou testes próprios.
+- Outros emuladores podem ser estudados como referências técnicas, inclusive por consulta ao código-fonte publicamente disponível, para compreender abordagens, arquitetura, tratamento de casos-limite e hipóteses de comportamento.
+- Essa permissão é exclusivamente de pesquisa. Não autoriza copiar, colar, traduzir, portar, adaptar ou reproduzir trechos, funções, estruturas, testes, fixtures, shaders, patches, assets ou organização interna.
+- Não faça tradução linha a linha nem uma reimplementação que reproduza a estrutura expressiva do código consultado. O código do Aceris deve ser concebido e escrito independentemente em Rust, com arquitetura, interfaces, nomes e testes próprios.
+- A permissão inclui, entre outros, Azahar, Citra, Lime3DS e outros projetos, independentemente da licença. A licença de cada referência deve ser registrada; se houver dúvida sobre compatibilidade de licença ou risco de obra derivada, interrompa o uso daquela referência na implementação e peça orientação ao mantenedor.
+- Para cada consulta de código, registre projeto, URL, arquivo ou área consultada, commit/revisão, licença, data e a pergunta técnica investigada. Registre conclusões conceituais em uma especificação independente, sem colar trechos de código.
+- Confirme conclusões relevantes com documentação de hardware/protocolos, testes originais do Aceris e, quando possível, observações em hardware legítimo. Código de outro emulador não é, sozinho, prova de comportamento fiel ao console.
+- Assets e recursos visuais/sonoros de terceiros continuam proibidos. Não incorporar dependências que forneçam implementação do emulador sem autorização explícita.
+- Todas as demais regras deste documento permanecem inalteradas: Rust em todo o produto, autoria própria, somente `main`, isolamento entre agentes e proteção de conteúdo.
 
 ## 6. Verificação e proteção do trabalho
 
