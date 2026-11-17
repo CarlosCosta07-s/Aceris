@@ -5033,7 +5033,9 @@ mod tests {
             (0x18 << 26) | ((0x20 + uniform) << 7) | descriptor_index
         };
 
-        let mut writes = Vec::with_capacity(2 + 4 + 2 + 5 + 1 + 16);
+        let mut writes = Vec::with_capacity(2 + 4 + 2 + 5 + 1 + 16 + 1);
+        // The guest also enables the depth test (function: less).
+        writes.push((crate::gpu::REG_DEPTH_COLOR_MASK, 0x41));
         writes.push((OPDESC_INDEX, 0));
         for lane in 0..4 {
             writes.push((OPDESC_DATA, descriptor(1 << (3 - lane))));
@@ -5067,13 +5069,13 @@ mod tests {
     /// triangle covering the lower-left half of an 8x8 RGBA8 target.
     fn render_fixture(system: &mut System) -> RenderFixture {
         use crate::gpu::{
-            ClipDepthRange, DepthFunction, GeometryPipeline, Matrix4, PicaRenderSettings,
-            REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
-            REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
-            REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
+            ClipDepthRange, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
+            REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_COLORBUFFER_FORMAT,
+            REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE,
+            REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
+            REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, Viewport,
+            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
         };
 
         system
@@ -5121,15 +5123,8 @@ mod tests {
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
         system.set_pica_rendering(Some(PicaRenderSettings {
-            pipeline: GeometryPipeline::new(
-                // Deliberately singular: session rendering must use the guest
-                // vertex shader's clip-space output, not a host transform.
-                Matrix4::from_column_major([0.0; 16]).unwrap(),
-                Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
-                ClipDepthRange::NegativeOneToOne,
-            ),
+            clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
-            depth_function: DepthFunction::Less,
         }));
         RenderFixture {
             command_list_address,
@@ -5184,16 +5179,15 @@ mod tests {
     #[test]
     fn gsp_render_transfer_and_lcd_scanout_form_one_complete_frame() {
         use crate::gpu::{
-            ClipDepthRange, DepthFunction, GSP_GX_COMMAND_DISPLAY_TRANSFER,
-            GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
-            GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, GeometryPipeline, Matrix4,
-            PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
-            REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
-            REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE,
-            REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
-            REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
+            ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_ENTRY_SIZE,
+            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
+            GSP_GX_COMMAND_QUEUE_SIZE, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
+            REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
+            REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
+            REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, VRAM_BASE, Viewport,
+            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, VRAM_BASE,
         };
         use crate::video::{
             LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
@@ -5254,15 +5248,8 @@ mod tests {
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
         system.set_pica_rendering(Some(PicaRenderSettings {
-            pipeline: GeometryPipeline::new(
-                // Deliberately singular: session rendering must use the guest
-                // vertex shader's clip-space output, not a host transform.
-                Matrix4::from_column_major([0.0; 16]).unwrap(),
-                Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
-                ClipDepthRange::NegativeOneToOne,
-            ),
+            clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
-            depth_function: DepthFunction::Less,
         }));
 
         system
@@ -5338,15 +5325,14 @@ mod tests {
     #[test]
     fn arm11_cpu_gsp_render_transfer_and_lcd_scanout_share_published_fcram() {
         use crate::gpu::{
-            ClipDepthRange, DepthFunction, GSP_GX_COMMAND_DISPLAY_TRANSFER,
-            GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
-            GeometryPipeline, Matrix4, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
+            ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
             REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES,
             REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
-            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, Viewport,
+            REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
         };
         use crate::video::{
             LcdPanel, PDC_CONTROL, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
@@ -5521,15 +5507,8 @@ mod tests {
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
         system.set_pica_rendering(Some(PicaRenderSettings {
-            pipeline: GeometryPipeline::new(
-                // Deliberately singular: session rendering must use the guest
-                // vertex shader's clip-space output, not a host transform.
-                Matrix4::from_column_major([0.0; 16]).unwrap(),
-                Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
-                ClipDepthRange::NegativeOneToOne,
-            ),
+            clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
-            depth_function: DepthFunction::Less,
         }));
 
         // The command ring is not constructed by the test host: its header
@@ -5668,16 +5647,14 @@ mod tests {
     #[test]
     fn arm11_guest_runs_the_srv_gsp_pica_lcd_chain_in_one_continuous_run() {
         use crate::gpu::{
-            ClipDepthRange, DepthFunction, GSP_GX_COMMAND_DISPLAY_TRANSFER,
-            GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
-            GeometryPipeline, Matrix4, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
+            ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
             REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
             REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
             REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
             REG_VSH_ATTRIBUTES_PERMUTATION_LOW, REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG,
-            Viewport,
         };
         use crate::video::{
             PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST, PDC_FRAMEBUFFER_SELECT,
@@ -5974,15 +5951,8 @@ mod tests {
         // registers. The generic reference transform and render switch remain
         // host-side until the guest shader matrix path is connected.
         system.set_pica_rendering(Some(PicaRenderSettings {
-            pipeline: GeometryPipeline::new(
-                // Deliberately singular: session rendering must use the guest
-                // vertex shader's clip-space output, not a host transform.
-                Matrix4::from_column_major([0.0; 16]).unwrap(),
-                Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
-                ClipDepthRange::NegativeOneToOne,
-            ),
+            clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
-            depth_function: DepthFunction::Less,
         }));
         // Nothing the guest will create exists yet: no client, no right, and
         // every PICA register is at its reset value.

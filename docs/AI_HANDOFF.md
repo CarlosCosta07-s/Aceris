@@ -1887,3 +1887,11 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Wait-all com mais de um handle retorna `KernelServiceError` (não modelado, de propósito).
 - Premissas NÃO verificadas contra hardware: ABI (r0 timeout baixo, r4 timeout alto, r1 handles, r2 contagem, r3 wait_all) e `RESULT_OUT_OF_RANGE = 0xE0E0_1BFD`.
 - Verificado localmente: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.
+
+## PICA200: remoção do estado de desenho host-side
+
+- A matriz de transformação já vinha dos uniforms float do guest (vertex shader); agora `PicaRenderSettings` também não tem `pipeline` (matriz) nem `depth_function`. Restam `clip_depth_range` e `default_color`.
+- Função e habilitação de profundidade vêm de 0x107 (`Pica200::depth_test_state`). `DepthFunction` ganhou Equal/NotEqual/Greater/GreaterEqual.
+- Os guests dos testes de sistema agora escrevem 0x107 = 0x41 (teste habilitado, função less); sem isso o teste fica desabilitado.
+- Pendente: ligar o render por padrão sem `set_pica_rendering`, culling (reg 0x40), scissor, máscaras de escrita, convenção real de clip em Z (NegativeOneToOne é suposição).
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.

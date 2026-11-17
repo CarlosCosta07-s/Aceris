@@ -56,6 +56,10 @@ pub enum DepthFunction {
     Less,
     LessEqual,
     Always,
+    Equal,
+    NotEqual,
+    Greater,
+    GreaterEqual,
 }
 
 /// PICA depth-buffer interpretation for the interpolated guest depth.
@@ -443,6 +447,10 @@ fn depth_passes(function: DepthFunction, incoming: f32, stored: f32) -> bool {
         DepthFunction::Less => incoming < stored,
         DepthFunction::LessEqual => incoming <= stored,
         DepthFunction::Always => true,
+        DepthFunction::Equal => incoming == stored,
+        DepthFunction::NotEqual => incoming != stored,
+        DepthFunction::Greater => incoming > stored,
+        DepthFunction::GreaterEqual => incoming >= stored,
     }
 }
 

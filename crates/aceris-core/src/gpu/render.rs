@@ -8,7 +8,7 @@
 //! and the framebuffer formats of the real GPU are not modeled.
 
 use super::{
-    DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex,
+    ClipDepthRange, DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex,
     GpuPhysicalMemory, Matrix4, Pica200, PicaCommandListReport, PicaCommandListRunError,
     PicaDepthBuffering, PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest,
     PicaOutputMapError, PicaRenderTargetConfig, PicaRenderTargetError, PicaShadedDraw,
@@ -145,11 +145,12 @@ impl Pica200 {
 /// Fixed (non-register) inputs of a render session.
 #[derive(Clone, Copy, Debug)]
 pub struct PicaRenderSettings {
-    /// Supplies the clip-depth convention. Its host transform is deliberately
-    /// ignored by PicaRenderSession because the guest vertex shader emits clip space.
-    pub pipeline: GeometryPipeline,
+    /// Clip-depth convention. The transform itself is never host-supplied: the
+    /// guest vertex shader emits clip space and the viewport, depth map and
+    /// depth test come from the guest's registers.
+    pub clip_depth_range: ClipDepthRange,
+    /// Color for vertices whose output map has no color component.
     pub default_color: [u8; 4],
-    pub depth_function: DepthFunction,
 }
 
 /// Failure while rendering into the live render target.
@@ -253,9 +254,15 @@ impl PicaRenderSession {
         let target_pipeline = GeometryPipeline::new(
             Matrix4::identity(),
             viewport,
-            self.settings.pipeline.depth_range(),
+            self.settings.clip_depth_range,
         )
         .with_pica_depth_map(depth_map);
+        let depth_test = pica.depth_test_state();
+        let depth_function = if depth_test.enabled {
+            depth_test.function
+        } else {
+            DepthFunction::Always
+        };
         let program = pica.vertex_shader_program();
         let rasterizer = &mut self.active.as_mut().expect("target selected above").1;
         // Mark dirty first: triangles drawn before an error stay in the buffer.
@@ -269,7 +276,7 @@ impl PicaRenderSession {
                 &target_pipeline,
                 self.settings.default_color,
                 rasterizer,
-                self.settings.depth_function,
+                depth_function,
             )
             .map_err(PicaRenderSessionError::Render)?;
         self.draws_rendered += 1;
@@ -416,8 +423,9 @@ mod tests {
     use crate::gpu::{
         ClipDepthRange, FCRAM_BASE, Matrix4, PicaShadedVertex, REG_ATTRIBBUFFER0_OFFSET,
         REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-        REG_DRAWARRAYS, REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
-        REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+        REG_DEPTH_COLOR_MASK, REG_DRAWARRAYS, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
+        REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
+        REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
         REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_FLOATUNIFORM_DATA0,
         REG_VSH_FLOATUNIFORM_INDEX, REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0,
         REG_VSH_OPDESCS_INDEX, Viewport,
@@ -678,21 +686,15 @@ mod tests {
     const TARGET_B: u32 = FCRAM_BASE + 0x4000;
 
     fn session_settings() -> PicaRenderSettings {
-        // A singular matrix proves that session rendering consumes the guest
-        // shader's clip-space output instead of applying this host transform.
-        let transform = Matrix4::from_column_major([0.0; 16]).unwrap();
         PicaRenderSettings {
-            pipeline: GeometryPipeline::new(
-                transform,
-                viewport(),
-                ClipDepthRange::NegativeOneToOne,
-            ),
+            clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
-            depth_function: DepthFunction::Less,
         }
     }
 
     fn configure_guest_clip_transform(gpu: &mut Pica200) {
+        // The guest also enables the depth test (function: less).
+        gpu.write_register(REG_DEPTH_COLOR_MASK, 0x41).unwrap();
         const END: u32 = 0x22 << 26;
         let identity_descriptor = |mask: u32| mask | (0x1B << 5) | (0x1B << 14) | (0x1B << 23);
         let dphi =
@@ -841,6 +843,44 @@ mod tests {
         // Handled draws are not also queued for later.
         assert!(gpu.take_draw_requests().is_empty());
         assert_eq!(gpu.draw_requests_triggered(), 1);
+    }
+
+    #[test]
+    fn guest_depth_test_register_controls_the_draw_outcome() {
+        let run_second_draw = |depth_register: u32| {
+            let mut gpu = Pica200::new();
+            configure_vertex_path(&mut gpu);
+            point_target(&mut gpu, TARGET_A);
+            let mut memory = memory_with_triangle();
+            let mut session = PicaRenderSession::new(session_settings());
+            session
+                .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| Some(VERTEX_BASE))
+                .unwrap();
+            gpu.write_register(REG_DEPTH_COLOR_MASK, depth_register)
+                .unwrap();
+            session
+                .execute_command_list(&mut gpu, &DRAW_LIST, &mut memory, |_, _| Some(VERTEX_BASE))
+                .unwrap()
+                .1
+        };
+
+        // Test disabled: the identical second triangle is not rejected.
+        let disabled = run_second_draw(0);
+        assert!(disabled.pixels_written > 0);
+        assert_eq!(disabled.depth_rejected_pixels, 0);
+        // Enabled "never": everything is rejected.
+        let never = run_second_draw(1);
+        assert_eq!(never.pixels_written, 0);
+        assert!(never.depth_rejected_pixels > 0);
+        // Enabled "equal": identical depth passes.
+        let equal = run_second_draw(1 | (2 << 4));
+        assert!(equal.pixels_written > 0);
+        // Enabled "not equal": identical depth fails.
+        let not_equal = run_second_draw(1 | (3 << 4));
+        assert_eq!(not_equal.pixels_written, 0);
+        // Enabled "greater": identical depth fails; "greater-equal" passes.
+        assert_eq!(run_second_draw(1 | (6 << 4)).pixels_written, 0);
+        assert!(run_second_draw(1 | (7 << 4)).pixels_written > 0);
     }
 
     #[test]
@@ -1033,16 +1073,10 @@ mod tests {
         const TOP_LINEAR: u32 = FCRAM_BASE + 0x40_0000;
         const BOTTOM_LINEAR: u32 = FCRAM_BASE + 0x50_0000;
 
-        fn settings_for(width: usize, height: usize) -> PicaRenderSettings {
-            let transform = Matrix4::from_column_major([0.0; 16]).unwrap();
+        fn settings() -> PicaRenderSettings {
             PicaRenderSettings {
-                pipeline: GeometryPipeline::new(
-                    transform,
-                    Viewport::new(0.0, 0.0, width as f32, height as f32).unwrap(),
-                    ClipDepthRange::NegativeOneToOne,
-                ),
+                clip_depth_range: ClipDepthRange::NegativeOneToOne,
                 default_color: [200, 100, 50, 255],
-                depth_function: DepthFunction::Less,
             }
         }
 
@@ -1086,12 +1120,9 @@ mod tests {
 
         configure_target(&mut gpu, TOP_TILED, TOP_SCREEN_WIDTH, TOP_SCREEN_HEIGHT);
         configure_guest_viewport(&mut gpu, TOP_SCREEN_WIDTH, TOP_SCREEN_HEIGHT);
-        gpu.execute_command_list_rendering(
-            &DRAW_LIST,
-            &mut memory,
-            settings_for(TOP_SCREEN_WIDTH, TOP_SCREEN_HEIGHT),
-            |_, _| Some(VERTEX_BASE),
-        )
+        gpu.execute_command_list_rendering(&DRAW_LIST, &mut memory, settings(), |_, _| {
+            Some(VERTEX_BASE)
+        })
         .unwrap();
 
         configure_target(
@@ -1101,12 +1132,9 @@ mod tests {
             BOTTOM_SCREEN_HEIGHT,
         );
         configure_guest_viewport(&mut gpu, BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT);
-        gpu.execute_command_list_rendering(
-            &DRAW_LIST,
-            &mut memory,
-            settings_for(BOTTOM_SCREEN_WIDTH, BOTTOM_SCREEN_HEIGHT),
-            |_, _| Some(VERTEX_BASE),
-        )
+        gpu.execute_command_list_rendering(&DRAW_LIST, &mut memory, settings(), |_, _| {
+            Some(VERTEX_BASE)
+        })
         .unwrap();
 
         transfer(

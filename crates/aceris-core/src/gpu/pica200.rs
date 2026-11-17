@@ -6,6 +6,7 @@
 
 use std::fmt;
 
+use super::DepthFunction;
 use super::draw::{
     MAX_PENDING_DRAW_REQUESTS, PicaCommandListRunError, PicaDrawKind, PicaDrawRequest,
     REG_DRAWARRAYS, REG_DRAWELEMENTS,
@@ -39,6 +40,9 @@ pub const REG_DEPTHMAP_OFFSET: u16 = 0x04E;
 pub const REG_VIEWPORT_XY: u16 = 0x068;
 /// PICA depth-buffer control: the current model treats bit 0 as Z (1) / W (0).
 pub const REG_DEPTHMAP_ENABLE: u16 = 0x06D;
+/// GPUREG_DEPTH_COLOR_MASK: bit 0 depth test enable, bits 4..6 function.
+/// Layout taken from public 3DS documentation; not verified on hardware.
+pub const REG_DEPTH_COLOR_MASK: u16 = 0x107;
 
 /// Decoded viewport data written by the guest through PICA registers.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -62,6 +66,13 @@ pub struct PicaViewportState {
 pub enum PicaDepthBuffering {
     WBuffer,
     ZBuffer,
+}
+
+/// Decoded guest depth-test configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaDepthTestState {
+    pub enabled: bool,
+    pub function: DepthFunction,
 }
 
 /// Decoded guest controls for PICA depth range mapping and interpolation.
@@ -299,6 +310,30 @@ impl Pica200 {
             } else {
                 PicaDepthBuffering::ZBuffer
             },
+        }
+    }
+
+    /// Decodes the live guest depth-test configuration (GPUREG_DEPTH_COLOR_MASK).
+    ///
+    /// Only the enable bit and comparison function are modeled; the color
+    /// write mask and the depth write enable are ignored. Function codes:
+    /// 0 never, 1 always, 2 equal, 3 not equal, 4 less, 5 less-equal,
+    /// 6 greater, 7 greater-equal. A disabled test always passes.
+    pub fn depth_test_state(&self) -> PicaDepthTestState {
+        let raw = self.register(REG_DEPTH_COLOR_MASK).unwrap_or(0);
+        let function = match (raw >> 4) & 7 {
+            0 => DepthFunction::Never,
+            1 => DepthFunction::Always,
+            2 => DepthFunction::Equal,
+            3 => DepthFunction::NotEqual,
+            4 => DepthFunction::Less,
+            5 => DepthFunction::LessEqual,
+            6 => DepthFunction::Greater,
+            _ => DepthFunction::GreaterEqual,
+        };
+        PicaDepthTestState {
+            enabled: raw & 1 != 0,
+            function,
         }
     }
 
