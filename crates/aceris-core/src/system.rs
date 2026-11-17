@@ -5111,8 +5111,7 @@ mod tests {
         use crate::gpu::{
             ClipDepthRange, DepthFunction, GSP_GX_COMMAND_DISPLAY_TRANSFER,
             GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
-            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
-            GSP_GX_COMMAND_QUEUE_SIZE, GeometryPipeline, Matrix4, PicaRenderSettings,
+            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GeometryPipeline, Matrix4, PicaRenderSettings,
             REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW,
             REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
             REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
@@ -5142,18 +5141,18 @@ mod tests {
             0xEE07_0FBA, // DMB
             0xEE07_0F9A, // DSB
             0xE587_8000, // STR r8, [r7] (GX queue header: three commands)
-            0xE587_9020, // STR r9, [r7, #0x20] (FlushCacheRegions)
-            0xE587_4024, // STR r4, [r7, #0x24] (vertex address)
-            0xE587_E028, // STR r14, [r7, #0x28] (vertex size)
-            0xE587_A040, // STR r10, [r7, #0x40] (ProcessCommandList)
-            0xE587_0044, // STR r0, [r7, #0x44] (command-list address)
-            0xE587_E048, // STR r14, [r7, #0x48] (command-list size)
-            0xE587_105C, // STR r1, [r7, #0x5C] (flush command-list cache)
-            0xE587_3060, // STR r3, [r7, #0x60] (DisplayTransfer)
-            0xE587_B064, // STR r11, [r7, #0x64] (PICA target address)
-            0xE587_C068, // STR r12, [r7, #0x68] (linear framebuffer address)
-            0xE587_D06C, // STR r13, [r7, #0x6C] (input dimensions)
-            0xE587_D070, // STR r13, [r7, #0x70] (output dimensions)
+            0xE587_9008, // STR r9, [r7, #8] (FlushCacheRegions)
+            0xE587_400C, // STR r4, [r7, #12] (vertex address)
+            0xE587_E010, // STR r14, [r7, #16] (vertex size)
+            0xE587_A028, // STR r10, [r7, #0x28] (ProcessCommandList)
+            0xE587_002C, // STR r0, [r7, #0x2C] (command-list address)
+            0xE587_E030, // STR r14, [r7, #0x30] (command-list size)
+            0xE587_1044, // STR r1, [r7, #0x44] (flush command-list cache)
+            0xE587_3048, // STR r3, [r7, #0x48] (DisplayTransfer)
+            0xE587_B04C, // STR r11, [r7, #0x4C] (PICA target address)
+            0xE587_C050, // STR r12, [r7, #0x50] (linear framebuffer address)
+            0xE587_D054, // STR r13, [r7, #0x54] (input dimensions)
+            0xE587_D058, // STR r13, [r7, #0x58] (output dimensions)
             0xEE07_0FBA, // DMB
             0xEE07_0F9A, // DSB
         ];
@@ -5298,12 +5297,12 @@ mod tests {
         // PICA submission, DisplayTransfer and the PPF completion notification.
         for (offset, expected) in [
             (0, 0x0000_0300),
-            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32),
-            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 4, vertex_address),
-            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 8, 8),
-            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32),
-            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + GSP_GX_COMMAND_ENTRY_SIZE + 4, command_list_address),
-            (GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 2 * GSP_GX_COMMAND_ENTRY_SIZE, GSP_GX_COMMAND_DISPLAY_TRANSFER as u32),
+            (8, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32),
+            (12, vertex_address),
+            (16, 8),
+            (40, GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32),
+            (44, command_list_address),
+            (72, GSP_GX_COMMAND_DISPLAY_TRANSFER as u32),
         ] {
             assert_eq!(
                 system
