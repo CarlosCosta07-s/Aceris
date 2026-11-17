@@ -7,8 +7,9 @@
 
 use super::{
     GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
-    PicaFragmentOutputState, PicaResolvedVertex, PicaTevError, PicaTextureEnvironment,
-    PicaTextureError, PicaTextureUnit, REG_TEXUNIT_CONFIG,
+    PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw,
+    PicaTevError, PicaTextureEnvironment, PicaTextureError, PicaTextureUnit,
+    PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
 };
 
 /// Perspective-correct attributes at one fragment sample.
@@ -63,6 +64,104 @@ impl PicaFragmentVertex {
         }
     }
 }
+
+/// One vertex-shaded draw after semantic output-map resolution.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PicaFragmentDraw {
+    vertices: Vec<PicaFragmentVertex>,
+    source_indices: Vec<u32>,
+    triangles: Vec<[usize; 3]>,
+    executed_instructions: u64,
+}
+
+impl PicaFragmentDraw {
+    /// Adapts a completed guest vertex-shader draw without changing its producer.
+    pub fn from_shaded_draw(
+        shaded: &PicaShadedDraw,
+        output_map: &PicaVertexOutputMap,
+        default_primary_color: [f32; 4],
+        default_texture_coordinates: [[f32; 2]; 3],
+    ) -> Result<Self, PicaFragmentDrawError> {
+        let mut vertices = Vec::with_capacity(shaded.vertices.len());
+        let mut source_indices = Vec::with_capacity(shaded.vertices.len());
+
+        for shaded_vertex in &shaded.vertices {
+            let resolved = output_map
+                .resolve(&shaded_vertex.outputs)
+                .map_err(PicaFragmentDrawError::OutputMap)?;
+            vertices.push(PicaFragmentVertex::from_resolved(
+                &resolved,
+                default_primary_color,
+                default_texture_coordinates,
+            ));
+            source_indices.push(shaded_vertex.source_index);
+        }
+
+        for (triangle_index, triangle) in shaded.triangles.iter().enumerate() {
+            for &vertex_index in triangle {
+                if vertex_index >= vertices.len() {
+                    return Err(PicaFragmentDrawError::InvalidTriangleVertex {
+                        triangle: triangle_index,
+                        vertex: vertex_index,
+                        vertex_count: vertices.len(),
+                    });
+                }
+            }
+        }
+
+        Ok(Self {
+            vertices,
+            source_indices,
+            triangles: shaded.triangles.clone(),
+            executed_instructions: shaded.executed_instructions,
+        })
+    }
+
+    pub fn vertices(&self) -> &[PicaFragmentVertex] {
+        &self.vertices
+    }
+
+    pub fn source_indices(&self) -> &[u32] {
+        &self.source_indices
+    }
+
+    pub fn triangles(&self) -> &[[usize; 3]] {
+        &self.triangles
+    }
+
+    pub fn executed_instructions(&self) -> u64 {
+        self.executed_instructions
+    }
+}
+
+/// Failure while adapting a shaded draw to fragment-stage vertices.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PicaFragmentDrawError {
+    OutputMap(PicaOutputMapError),
+    InvalidTriangleVertex {
+        triangle: usize,
+        vertex: usize,
+        vertex_count: usize,
+    },
+}
+
+impl std::fmt::Display for PicaFragmentDrawError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OutputMap(error) => write!(formatter, "PICA output map failed: {error}"),
+            Self::InvalidTriangleVertex {
+                triangle,
+                vertex,
+                vertex_count,
+            } => write!(
+                formatter,
+                "PICA triangle {triangle} references vertex {vertex}, but draw has {vertex_count} vertices"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PicaFragmentDrawError {}
 
 /// Failure while interpolating vertex outputs for one covered fragment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,6 +347,27 @@ impl PicaFragmentPipeline {
             .map_err(PicaFragmentSampleError::Pipeline)
     }
 
+    /// Shades one triangle from an already resolved vertex-shader draw.
+    pub fn shade_draw_triangle_sample(
+        &self,
+        memory: &GpuPhysicalMemory,
+        draw: &PicaFragmentDraw,
+        triangle_index: usize,
+        barycentric: [f32; 3],
+        minifying: [bool; 3],
+    ) -> Result<[f32; 4], PicaFragmentSampleError> {
+        let triangle = draw
+            .triangles
+            .get(triangle_index)
+            .ok_or(PicaFragmentSampleError::InvalidTriangle { triangle: triangle_index })?;
+        let vertices = [
+            draw.vertices[triangle[0]],
+            draw.vertices[triangle[1]],
+            draw.vertices[triangle[2]],
+        ];
+        self.shade_triangle_sample(memory, vertices, barycentric, minifying)
+    }
+
     /// Resolves output-map vertices directly into a perspective-correct fragment.
     ///
     /// This adapter keeps the existing vertex output-map and rasterizer modules
@@ -309,6 +429,7 @@ fn validate_color(name: &'static str, color: [f32; 4]) -> Result<(), PicaFragmen
 pub enum PicaFragmentSampleError {
     Interpolation(PicaFragmentInterpolationError),
     Pipeline(PicaFragmentPipelineError),
+    InvalidTriangle { triangle: usize },
 }
 
 impl std::fmt::Display for PicaFragmentSampleError {
@@ -318,6 +439,9 @@ impl std::fmt::Display for PicaFragmentSampleError {
                 write!(formatter, "PICA fragment interpolation failed: {error}")
             }
             Self::Pipeline(error) => write!(formatter, "{error}"),
+            Self::InvalidTriangle { triangle } => {
+                write!(formatter, "PICA fragment draw has no triangle {triangle}")
+            }
         }
     }
 }
@@ -562,6 +686,65 @@ mod tests {
                 [0.25, 0.5, 0.25],
                 [1.0; 4],
                 [[0.0; 2]; 3],
+                [false; 3],
+            )
+            .unwrap();
+        assert!((output[0] - 4.0 / 9.0).abs() < 1.0e-6);
+        assert!((output[1] - 4.0 / 9.0).abs() < 1.0e-6);
+        assert!((output[2] - 1.0 / 9.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn shaded_draw_output_map_flows_into_perspective_fragment_interpolation() {
+        let output_map = PicaVertexOutputMap::from_registers([
+            0x0302_0100,
+            0x1F1F_1F1F,
+            0x0B0A_0908,
+            0x1F1F_1F1F,
+            0x1F1F_1F1F,
+            0x1F1F_1F1F,
+            0x1F1F_1F1F,
+        ])
+        .unwrap();
+        let make_vertex = |source_index, position, color, uv| {
+            let mut outputs = [[0.0; 4]; super::super::SHADER_OUTPUT_REGISTERS];
+            outputs[0] = position;
+            outputs[2] = color;
+            outputs[3][0] = uv[0];
+            outputs[3][1] = uv[1];
+            PicaShadedVertex {
+                source_index,
+                outputs,
+            }
+        };
+        let shaded = PicaShadedDraw {
+            vertices: vec![
+                make_vertex(4, [-1.0, -1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 1.0], [0.0, 0.0]),
+                make_vertex(7, [2.0, -2.0, 0.0, 2.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0]),
+                make_vertex(9, [0.0, 4.0, 0.0, 4.0], [0.0, 0.0, 1.0, 1.0], [0.0, 1.0]),
+            ],
+            triangles: vec![[0, 1, 2]],
+            executed_instructions: 42,
+        };
+        let draw = PicaFragmentDraw::from_shaded_draw(
+            &shaded,
+            &output_map,
+            [1.0; 4],
+            [[0.0; 2]; 3],
+        )
+        .unwrap();
+        assert_eq!(draw.source_indices(), &[4, 7, 9]);
+        assert_eq!(draw.executed_instructions(), 42);
+
+        let mut pica = Pica200::new();
+        configure_tev(&mut pica, PicaTevSource::PrimaryColor);
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let output = pipeline
+            .shade_draw_triangle_sample(
+                &GpuPhysicalMemory::new(),
+                &draw,
+                0,
+                [0.25, 0.5, 0.25],
                 [false; 3],
             )
             .unwrap();
