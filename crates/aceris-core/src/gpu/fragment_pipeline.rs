@@ -399,6 +399,11 @@ impl PicaFragmentPipeline {
         self.output_state.alpha_test_enabled
     }
 
+    /// Returns the guest's stencil-test and stencil-operation snapshot.
+    pub const fn stencil_state(&self) -> super::PicaStencilState {
+        self.output_state.stencil
+    }
+
     /// Evaluates the guest-configured alpha test for a shaded fragment.
     pub fn alpha_test_passes(&self, source: [f32; 4]) -> Result<bool, PicaFragmentPipelineError> {
         self.output_state
