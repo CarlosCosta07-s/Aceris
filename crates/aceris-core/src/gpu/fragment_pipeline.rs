@@ -35,6 +35,61 @@ impl Default for PicaFragmentVaryings {
     }
 }
 
+/// Vertex-shader varyings before perspective-correct interpolation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PicaFragmentVertex {
+    pub clip_position: [f32; 4],
+    pub primary_color: [f32; 4],
+    pub fragment_primary_color: [f32; 4],
+    pub fragment_secondary_color: [f32; 4],
+    pub texture_coordinates: [[f32; 2]; 3],
+}
+
+impl PicaFragmentVertex {
+    /// Converts output-map data into fragment varyings with explicit defaults.
+    pub fn from_resolved(
+        vertex: &PicaResolvedVertex,
+        default_primary_color: [f32; 4],
+        default_texture_coordinates: [[f32; 2]; 3],
+    ) -> Self {
+        Self {
+            clip_position: vertex.position,
+            primary_color: vertex.color.unwrap_or(default_primary_color),
+            fragment_primary_color: [1.0; 4],
+            fragment_secondary_color: [0.0; 4],
+            texture_coordinates: std::array::from_fn(|index| {
+                vertex.texcoords[index].unwrap_or(default_texture_coordinates[index])
+            }),
+        }
+    }
+}
+
+/// Failure while interpolating vertex outputs for one covered fragment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaFragmentInterpolationError {
+    InvalidBarycentricCoordinates,
+    InvalidClipW { vertex: usize },
+    InvalidPerspectiveDenominator,
+}
+
+impl std::fmt::Display for PicaFragmentInterpolationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidBarycentricCoordinates => {
+                formatter.write_str("PICA fragment barycentric coordinates are invalid")
+            }
+            Self::InvalidClipW { vertex } => {
+                write!(formatter, "PICA fragment vertex {vertex} has invalid clip-space W")
+            }
+            Self::InvalidPerspectiveDenominator => {
+                formatter.write_str("PICA fragment perspective denominator is invalid")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PicaFragmentInterpolationError {}
+
 /// Decoded fixed-function fragment state for one PICA draw.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaFragmentPipeline {
@@ -113,6 +168,83 @@ impl PicaFragmentPipeline {
             .map_err(PicaFragmentPipelineError::Tev)
     }
 
+    /// Interpolates one covered triangle sample and evaluates textures/TEV.
+    ///
+    /// Barycentric coordinates are measured in screen space after clipping and
+    /// viewport conversion. Varyings use reciprocal clip W; depth and coverage
+    /// remain the responsibility of the rasterizer.
+    pub fn shade_triangle_sample(
+        &self,
+        memory: &GpuPhysicalMemory,
+        vertices: [PicaFragmentVertex; 3],
+        barycentric: [f32; 3],
+        minifying: [bool; 3],
+    ) -> Result<[f32; 4], PicaFragmentSampleError> {
+        let weight_sum = barycentric.iter().sum::<f32>();
+        if barycentric.iter().any(|value| !value.is_finite())
+            || !weight_sum.is_finite()
+            || weight_sum.abs() <= f32::EPSILON
+        {
+            return Err(PicaFragmentSampleError::Interpolation(
+                PicaFragmentInterpolationError::InvalidBarycentricCoordinates,
+            ));
+        }
+
+        let weights = barycentric.map(|value| value / weight_sum);
+        let mut reciprocal_w = [0.0; 3];
+        for (index, vertex) in vertices.iter().enumerate() {
+            let w = vertex.clip_position[3];
+            if !w.is_finite() || w <= 0.0 {
+                return Err(PicaFragmentSampleError::Interpolation(
+                    PicaFragmentInterpolationError::InvalidClipW { vertex: index },
+                ));
+            }
+            reciprocal_w[index] = 1.0 / w;
+        }
+
+        let denominator = (0..3)
+            .map(|index| weights[index] * reciprocal_w[index])
+            .sum::<f32>();
+        if !denominator.is_finite() || denominator.abs() <= f32::EPSILON {
+            return Err(PicaFragmentSampleError::Interpolation(
+                PicaFragmentInterpolationError::InvalidPerspectiveDenominator,
+            ));
+        }
+
+        let interpolate4 = |select: fn(&PicaFragmentVertex) -> [f32; 4]| {
+            std::array::from_fn(|lane| {
+                (0..3)
+                    .map(|index| {
+                        weights[index] * reciprocal_w[index] * select(&vertices[index])[lane]
+                    })
+                    .sum::<f32>()
+                    / denominator
+            })
+        };
+        let interpolate2 = |coordinate: usize| {
+            std::array::from_fn(|lane| {
+                (0..3)
+                    .map(|index| {
+                        weights[index]
+                            * reciprocal_w[index]
+                            * vertices[index].texture_coordinates[coordinate][lane]
+                    })
+                    .sum::<f32>()
+                    / denominator
+            })
+        };
+
+        let varyings = PicaFragmentVaryings {
+            primary_color: interpolate4(|vertex| vertex.primary_color),
+            fragment_primary_color: interpolate4(|vertex| vertex.fragment_primary_color),
+            fragment_secondary_color: interpolate4(|vertex| vertex.fragment_secondary_color),
+            texture_coordinates: [interpolate2(0), interpolate2(1), interpolate2(2)],
+            minifying,
+        };
+        self.shade_fragment(memory, &varyings)
+            .map_err(PicaFragmentSampleError::Pipeline)
+    }
+
     /// Applies the captured blend or logic operation to a shaded fragment and
     /// the destination pixel already stored in the RGBA8 color target.
     pub fn apply_fragment_output(
@@ -144,6 +276,26 @@ fn validate_color(name: &'static str, color: [f32; 4]) -> Result<(), PicaFragmen
     }
     Ok(())
 }
+
+/// Error while interpolating or shading a fragment sample.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PicaFragmentSampleError {
+    Interpolation(PicaFragmentInterpolationError),
+    Pipeline(PicaFragmentPipelineError),
+}
+
+impl std::fmt::Display for PicaFragmentSampleError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interpolation(error) => {
+                write!(formatter, "PICA fragment interpolation failed: {error}")
+            }
+            Self::Pipeline(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for PicaFragmentSampleError {}
 
 /// Failures while preparing or evaluating the fixed-function fragment stage.
 #[derive(Clone, Debug, PartialEq)]
@@ -308,6 +460,72 @@ mod tests {
         assert_eq!(
             pipeline.apply_fragment_output([1.0, 0.0, 0.0, 0.5], [0.0, 0.0, 1.0, 1.0],),
             Ok([128, 0, 128, 128])
+        );
+    }
+
+    #[test]
+    fn perspective_correctly_interpolates_output_map_color_and_uvs() {
+        let mut pica = Pica200::new();
+        configure_tev(&mut pica, PicaTevSource::PrimaryColor);
+        let pipeline = pica.fragment_pipeline().unwrap();
+
+        let vertices = [
+            PicaFragmentVertex {
+                clip_position: [-1.0, -1.0, 0.0, 1.0],
+                primary_color: [1.0, 0.0, 0.0, 1.0],
+                fragment_primary_color: [1.0; 4],
+                fragment_secondary_color: [0.0; 4],
+                texture_coordinates: [[0.0, 0.0]; 3],
+            },
+            PicaFragmentVertex {
+                clip_position: [2.0, -2.0, 0.0, 2.0],
+                primary_color: [0.0, 1.0, 0.0, 1.0],
+                fragment_primary_color: [1.0; 4],
+                fragment_secondary_color: [0.0; 4],
+                texture_coordinates: [[1.0, 0.0]; 3],
+            },
+            PicaFragmentVertex {
+                clip_position: [0.0, 4.0, 0.0, 4.0],
+                primary_color: [0.0, 0.0, 1.0, 1.0],
+                fragment_primary_color: [1.0; 4],
+                fragment_secondary_color: [0.0; 4],
+                texture_coordinates: [[0.0, 1.0]; 3],
+            },
+        ];
+
+        let output = pipeline
+            .shade_triangle_sample(
+                &GpuPhysicalMemory::new(),
+                vertices,
+                [0.25, 0.5, 0.25],
+                [false; 3],
+            )
+            .unwrap();
+        assert!((output[0] - 4.0 / 9.0).abs() < 1.0e-6);
+        assert!((output[1] - 4.0 / 9.0).abs() < 1.0e-6);
+        assert!((output[2] - 1.0 / 9.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn rejects_invalid_perspective_coordinates_before_texture_fetch() {
+        let pipeline = Pica200::new().fragment_pipeline().unwrap();
+        let vertex = PicaFragmentVertex {
+            clip_position: [0.0, 0.0, 0.0, 0.0],
+            primary_color: [1.0; 4],
+            fragment_primary_color: [1.0; 4],
+            fragment_secondary_color: [0.0; 4],
+            texture_coordinates: [[0.0; 2]; 3],
+        };
+        assert_eq!(
+            pipeline.shade_triangle_sample(
+                &GpuPhysicalMemory::new(),
+                [vertex; 3],
+                [1.0, 0.0, 0.0],
+                [false; 3],
+            ),
+            Err(PicaFragmentSampleError::Interpolation(
+                PicaFragmentInterpolationError::InvalidClipW { vertex: 0 }
+            ))
         );
     }
 
