@@ -590,6 +590,9 @@ mod tests {
             alpha_destination_factor: PicaBlendFactor::Zero,
             logic_operation: PicaLogicOperation::Copy,
             constant_color: [0; 4],
+            alpha_test_enabled: false,
+            alpha_test_function: PicaAlphaTestFunction::Always,
+            alpha_test_reference: 0,
         };
         assert_eq!(
             state
