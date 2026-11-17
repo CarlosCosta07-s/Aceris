@@ -176,7 +176,7 @@ pub enum ServiceSessionKind {
 
 #[derive(Debug, PartialEq, Eq)]
 enum KernelObject {
-    Thread(ThreadId),
+    Thread(KernelThread),
     Event(KernelEvent),
     Mutex(KernelMutex),
     Semaphore(KernelSemaphore),
