@@ -707,10 +707,7 @@ mod tests {
     fn linear_filter_interpolates_four_texels_and_edge_clamp_is_stable() {
         let mut memory = GpuPhysicalMemory::new();
         let mut tiled = vec![0; TILE_PIXELS * 4];
-        for (x, color) in [
-            (0u8, [0, 0, 0, 255]),
-            (1u8, [255, 0, 0, 255]),
-        ] {
+        for (x, color) in [(0u8, [0, 0, 0, 255]), (1u8, [255, 0, 0, 255])] {
             let offset = morton_index(x as usize, 0) * 4;
             tiled[offset..offset + 4].copy_from_slice(&color);
         }
