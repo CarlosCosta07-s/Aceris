@@ -373,8 +373,7 @@ impl SoftwareRasterizer {
                     let mapped = match map.mode {
                         PicaDepthMode::ZBuffer => scaled,
                         PicaDepthMode::WBuffer => {
-                            let reciprocal_w = weight_0
-                                * f64::from(vertices[0].reciprocal_w)
+                            let reciprocal_w = weight_0 * f64::from(vertices[0].reciprocal_w)
                                 + weight_1 * f64::from(vertices[1].reciprocal_w)
                                 + weight_2 * f64::from(vertices[2].reciprocal_w);
                             scaled / reciprocal_w as f32
@@ -582,7 +581,9 @@ mod tests {
             vertex(0.0, 4.0, 0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
         ];
 
-        rasterizer.draw_triangle(triangle, DepthFunction::Always).unwrap();
+        rasterizer
+            .draw_triangle(triangle, DepthFunction::Always)
+            .unwrap();
 
         assert_eq!(rasterizer.depth_at(0, 0), Some(0.5));
     }
