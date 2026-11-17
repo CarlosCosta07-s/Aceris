@@ -1709,14 +1709,19 @@ Verificado localmente sobre `main` em 95aedc1: fmt, clippy `-D warnings` e `carg
 4. Projetar testes de interleavings concorrentes reais entre processos e dispositivos; não confundir gerações sob demanda com snooping automático.
 5. Evoluir os modelos de outer cache, temporização e arbitração apenas quando houver comportamento arquitetural documentado e fixtures reproduzíveis.
 
-## Guest programa o PICA200 e publica framebuffers (Claude, 17/11/2026)
+## Cadeia guest → IPC/GSP → command lists → PICA200 → LCD contínua (Claude, 17/11/2026)
 
-Pedido do mantenedor: o guest ARM11 deve escrever IPC no TLS, executar a chamada GSP, produzir command lists, configurar o PICA200, publicar framebuffers e sincronizar com o evento de conclusão. Os itens de IPC/TLS, fila GX, command lists em FCRAM/VRAM e despertar por evento já estavam cobertos por outras sessões (ver ROADMAP). Faltavam registradores PICA e metadados de framebuffer, ainda escritos pelo host. Fechado por um teste só em `system.rs` (sem comportamento novo):
+Prioridade do mantenedor: concluir essa cadeia. O teste `arm11_guest_runs_the_srv_gsp_pica_lcd_chain_in_one_continuous_run` (só `system.rs`, sem comportamento novo) executa a cadeia inteira em uma única chamada a `run_instructions`, com um programa ARM11 escrito à mão (BL/BX, loop LDR/STR, MRC do TLS):
 
-- `arm11_guest_programs_pica_registers_and_publishes_framebuffers_without_host_register_writes`: carregador de tabela ARM11 copia (LDR/STR) a imagem de dados para FCRAM/Shared Memory/TLS; depois DMB/DSB, `SendSyncRequest` e `WaitSynchronization1`. O host não escreve nenhum registrador PICA nem registrador de framebuffer do PDC; o teste afirma que os registradores partem de zero e passam a ter os valores da command list do guest.
-- Auto-verificação: trocar o valor de DRAWARRAYS por 0 faz o teste falhar (rodado e revertido).
+1. `CreateEvent`, `ConnectToPort("srv:")`, `srv:RegisterClient`, `srv:GetServiceHandle`, `RegisterInterruptRelayQueue`, `MapMemoryBlock` e `TryAcquireRight`, com handles lidos pelo guest das respostas em TLS (r8 evento, r9 srv:, r10 gsp::Gpu, r11 shared memory).
+2. Um carregador de tabela copia a command list (todos os registradores de desenho), os vértices, o ring GX, os metadados de framebuffer do topo e o cabeçalho de `TriggerCmdReqQueue`.
+3. DMB/DSB, `TriggerCmdReqQueue` e `WaitSynchronization1` no evento; marcador em r6.
 
-**Limites honestos:** (1) os endereços na tabela são calculados pelo teste (relocação), com asserção de determinismo da alocação; (2) `PDC_CONTROL` do topo é habilitado pelo host por ser trabalho de boot do módulo GSP; (3) matriz e viewport do `GeometryPipeline` vêm de `set_pica_rendering`, pois não há registradores de viewport modelados; (4) o evento já está sinalizado quando o guest espera, então o bloqueio real continua coberto só por `gsp_completion_interrupt_wakes_waiting_arm11_thread`; (5) shader mínimo de dois opcodes, não de jogo comercial; (6) não alterei o teste de DisplayTransfer FCRAM descartado antes (WIP em branco: o conjunto de trabalho de 16 KiB expulsa linhas por LRU; precisa de redesenho).
+O host não cria evento, client GSP, shared memory nem direito de renderização, e não escreve registradores PICA nem de framebuffer do PDC. O teste afirma que nenhum cliente existe e que os registradores estão zerados antes do run. Mutações verificadas: DRAWARRAYS=0 e não carregar o handle GSP fazem o teste falhar (a primeira tentativa de mutação com `sed` não casou com o texto formatado e foi refeita com Python).
 
-Verificado localmente sobre `main` em d0416ec: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
+**Limites honestos:** (1) tabela de dados relocada pelo teste (endereços de uma sonda determinística, com asserção); (2) não há SVC guest de alocação linear, então o mapeamento linear/DMA de FCRAM é do host; (3) `PDC_CONTROL` do topo habilitado pelo host (boot do módulo GSP); (4) matriz e viewport via `set_pica_rendering`, pois não há registradores de viewport modelados, e o shader é mínimo de dois opcodes; (5) o evento já está sinalizado quando o guest espera, o bloqueio real segue coberto só por `gsp_completion_interrupt_wakes_waiting_arm11_thread`; (6) o teste de DisplayTransfer FCRAM do item de cache ainda precisa de redesenho (conjunto de trabalho de 16 KiB expulsa linhas por LRU).
+
+**Próximos passos naturais, em ordem:** viewport/escala de profundidade por registradores e transformação feita pelo shader do guest (hoje a matriz é do host); `ControlMemory` linear guest-side; habilitação do PDC pelo HLE do GSP.
+
+Verificado localmente sobre `main` em b49df8c: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remota não consultada.
 
