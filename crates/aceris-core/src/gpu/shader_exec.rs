@@ -350,7 +350,7 @@ impl Machine<'_> {
         let mut values = [[0.0f32; 4]; 3];
         for (slot, source) in sources.iter().enumerate() {
             if let Some(source) = source {
-                let raw = self.read_register(index, *source)?;
+                let raw = self.read_register(*source);
                 values[slot] = swizzle(raw, selectors[slot].0, selectors[slot].1);
             }
         }
