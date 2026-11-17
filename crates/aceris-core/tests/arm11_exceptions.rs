@@ -830,6 +830,100 @@ fn thumb_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores(
 }
 
 #[test]
+fn thumb_ldmia_full_low_register_list_translation_abort_is_atomic() {
+    const REGISTER_LIST: u32 = 0xFF; // r0-r7; r0 is the lowest register and base.
+    const TRANSFER_COUNT: u32 = 8;
+    const FAULT_ADDRESS: u32 = 0x0010_0000;
+    let base = FAULT_ADDRESS - (TRANSFER_COUNT - 1) * 4;
+
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write16(0x100, 0xC800 | REGISTER_LIST).unwrap(); // LDMIA r0!, {r0-r7}
+
+    for index in 0..TRANSFER_COUNT - 1 {
+        memory
+            .write32(base + index * 4, 0x3300_0000 + index)
+            .unwrap();
+    }
+
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    cpu.regs[0] = base;
+    for (register, value) in cpu.regs.iter_mut().enumerate().take(8).skip(1) {
+        *value = 0xA000_0000 + register as u32;
+    }
+    let interrupted_regs = cpu.regs;
+    let interrupted_cpsr = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), FAULT_ADDRESS);
+    assert_eq!(cpu.cp15().dfsr(), 0x5);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+    assert_eq!(cpu.regs[..8], interrupted_regs[..8]);
+    for index in 0..TRANSFER_COUNT - 1 {
+        assert_eq!(
+            memory.read32(base + index * 4).unwrap(),
+            0x3300_0000 + index
+        );
+    }
+
+    cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+    assert_eq!(cpu.regs[13], interrupted_regs[13]);
+    assert_eq!(cpu.regs[14], interrupted_regs[14]);
+}
+
+#[test]
+fn thumb_stmia_full_low_register_list_translation_abort_keeps_completed_stores() {
+    const REGISTER_LIST: u32 = 0xFF; // r0-r7; r0 is the lowest register and base.
+    const TRANSFER_COUNT: u32 = 8;
+    const FAULT_ADDRESS: u32 = 0x0010_0000;
+    let base = FAULT_ADDRESS - (TRANSFER_COUNT - 1) * 4;
+
+    let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+    memory.write16(0x100, 0xC000 | REGISTER_LIST).unwrap(); // STMIA r0!, {r0-r7}
+
+    for index in 0..TRANSFER_COUNT - 1 {
+        memory.write32(base + index * 4, 0xCAFEBABE).unwrap();
+    }
+
+    cpu.cpsr.set_thumb(true);
+    cpu.set_pc(0x100);
+    cpu.regs[0] = base;
+    for (register, value) in cpu.regs.iter_mut().enumerate().take(8).skip(1) {
+        *value = 0x4400_0000 + register as u32;
+    }
+    let interrupted_regs = cpu.regs;
+    let interrupted_cpsr = cpu.cpsr;
+
+    cpu.step(&mut memory).unwrap();
+
+    assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE);
+    assert!(!cpu.cpsr.thumb());
+    assert_eq!(cpu.pc(), 0x10);
+    assert_eq!(cpu.regs[14], 0x108);
+    assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr));
+    assert_eq!(cpu.cp15().dfar(), FAULT_ADDRESS);
+    assert_eq!(cpu.cp15().dfsr(), 0x805);
+    assert_eq!(cpu.cpsr.0 & (Psr::A | Psr::I), Psr::A | Psr::I);
+    assert_eq!(cpu.regs[..8], interrupted_regs[..8]);
+    for index in 0..TRANSFER_COUNT - 1 {
+        assert_eq!(
+            memory.read32(base + index * 4).unwrap(),
+            interrupted_regs[index as usize]
+        );
+    }
+
+    cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+    assert_eq!(cpu.regs[13], interrupted_regs[13]);
+    assert_eq!(cpu.regs[14], interrupted_regs[14]);
+}
+
+#[test]
 fn a32_ldm_translation_abort_in_all_addressing_modes_keeps_registers_and_writeback_atomic() {
     for (mode, pre_index, up) in [("IA", 0, 1), ("IB", 1, 1), ("DA", 0, 0), ("DB", 1, 0)] {
         for (register_list, transfer_count) in [(0x000E, 3usize), (0x001E, 4usize)] {
