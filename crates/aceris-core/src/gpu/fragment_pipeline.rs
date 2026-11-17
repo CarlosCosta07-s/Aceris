@@ -309,10 +309,7 @@ mod tests {
         let pipeline = pica.fragment_pipeline().unwrap();
 
         assert_eq!(
-            pipeline.apply_fragment_output(
-                [1.0, 0.0, 0.0, 0.5],
-                [0.0, 0.0, 1.0, 1.0],
-            ),
+            pipeline.apply_fragment_output([1.0, 0.0, 0.0, 0.5], [0.0, 0.0, 1.0, 1.0],),
             Ok([128, 0, 128, 128])
         );
     }
