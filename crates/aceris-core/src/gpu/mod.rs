@@ -8,6 +8,7 @@ mod fragment;
 mod fragment_output;
 mod fragment_pipeline;
 mod fragment_rasterizer;
+mod fragment_render;
 mod geometry;
 mod gsp_interrupt;
 mod gsp_queue;
@@ -57,6 +58,7 @@ pub use fragment_pipeline::{
     PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentInterpolationError, PicaFragmentPipeline,
     PicaFragmentPipelineError, PicaFragmentSampleError, PicaFragmentVaryings, PicaFragmentVertex,
 };
+pub use fragment_render::{PicaFragmentRenderSession, PicaFragmentRenderSessionError};
 pub use fragment_rasterizer::{
     PicaFragmentRasterError, PicaFragmentRasterReport, PicaFragmentRasterState,
     PicaFragmentRasterizer, PicaFragmentVertexDefaults,
