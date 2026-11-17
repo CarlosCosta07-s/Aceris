@@ -3235,6 +3235,50 @@ mod tests {
     }
 
     #[test]
+    fn shared_memory_writeback_invalidates_peer_exclusive_reservation_across_subviews() {
+        let backing = SharedMemoryBacking::zeroed(0x2000).unwrap();
+        let second_page = backing.view(0x1000, 0x1000).unwrap();
+        let mut publisher = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut consumer = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        publisher
+            .map_shared_memory_region(0x0800_0000, backing, 3)
+            .unwrap();
+        consumer
+            .map_shared_memory_region(0x0900_0000, second_page, 3)
+            .unwrap();
+
+        // The consumer reserves a word through a view whose offset differs
+        // from the publisher's full-backing mapping.
+        let (_, reservation) = consumer.exclusive_read(0x0900_0000, 4).unwrap();
+        publisher.write32(0x0800_1000, 0xCAFE_BABE).unwrap();
+        publisher
+            .flush_data_cache_range(0x0800_1000, 4)
+            .unwrap();
+        assert_eq!(publisher.pending_write_buffer_entries(), 1);
+
+        // Publishing the CPU cache line updates the shared exclusive-monitor
+        // generation even though the consumer owns a distinct D-cache.
+        publisher.data_memory_barrier().unwrap();
+        assert!(
+            !consumer
+                .exclusive_write(0x0900_0000, 4, 0xDEAD_BEEF, Some(reservation))
+                .unwrap()
+        );
+
+        // Reservation invalidation does not implicitly invalidate the peer's
+        // ordinary data-cache copy; the process must perform both operations.
+        assert_eq!(consumer.read32(0x0900_0000).unwrap(), 0);
+        assert_eq!(
+            consumer
+                .invalidate_data_cache_range(0x0900_0000, 4)
+                .unwrap(),
+            1
+        );
+        assert_eq!(consumer.read32(0x0900_0000).unwrap(), 0xCAFE_BABE);
+    }
+
+    #[test]
     fn dynamic_heap_backing_is_shared_with_mapped_views_and_cache_generations() {
         let mut owner = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let mut peer = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
