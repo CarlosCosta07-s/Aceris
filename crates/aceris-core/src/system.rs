@@ -5751,11 +5751,10 @@ mod tests {
             REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
             REG_DEPTHBUFFER_FORMAT, REG_DEPTHBUFFER_LOC, REG_DEPTHBUFFER_READ,
             REG_DEPTHBUFFER_WRITE, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE,
-            REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32,
-            REG_FRAMEBUFFER_DIM, REG_LOGIC_OP, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
-            REG_STENCIL_OP, REG_STENCIL_TEST, REG_TEXUNIT_CONFIG, REG_VIEWPORT_HEIGHT,
-            REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
-            REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
+            REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_LOGIC_OP,
+            REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_STENCIL_OP, REG_STENCIL_TEST,
+            REG_TEXUNIT_CONFIG, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
+            REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
             REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
         };
         use crate::video::{
@@ -6175,7 +6174,10 @@ mod tests {
             .read_depth_values(system.physical_memory(), 1.0)
             .unwrap();
         assert!((depth_values[180 * WIDTH + 40] - 0.5).abs() < 1.0e-3);
-        assert_eq!(depth_config.format, crate::gpu::PicaDepthBufferFormat::D24S8);
+        assert_eq!(
+            depth_config.format,
+            crate::gpu::PicaDepthBufferFormat::D24S8
+        );
         let stencil_values = depth_config
             .read_stencil_values(system.physical_memory())
             .unwrap()
