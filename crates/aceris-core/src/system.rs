@@ -6001,7 +6001,8 @@ mod tests {
 
     #[test]
     fn loads_encrypted_cia_boot_content_with_caller_supplied_ticket_keys() {
-        let (cia, normal_key, _, _) = encrypted_cia_archive_fixture(false);        let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
+        let (cia, normal_key, _, _) = encrypted_cia_archive_fixture(false);
+        let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
         keys.set_normal_key(0, normal_key).unwrap();
 
         let mut system = System::new();
@@ -6028,7 +6029,8 @@ mod tests {
         let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
         keys.set_normal_key(0, normal_key).unwrap();
 
-        let mut system = System::new();        let result =
+        let mut system = System::new();
+        let result =
             system.load_cia_with_keys(std::io::Cursor::new(cia), &keys, menu_info_key, content_key);
 
         assert_eq!(result.unwrap(), ImageFormat::Cia);
