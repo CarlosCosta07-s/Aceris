@@ -2722,11 +2722,7 @@ impl Bus for Arm11CodeAddressSpace {
         self.write_bytes_with_cache_policy(address, &[value], policy)
     }
 
-    fn read32_with_cache_policy(
-        &mut self,
-        address: u32,
-        policy: CachePolicy,
-    ) -> BusResult<u32> {
+    fn read32_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u32> {
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.read_mpcore_scu_register(address);
         }
@@ -2773,9 +2769,7 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn arm11_scu_enabled(&mut self) -> bool {
-        self.mpcore_scu
-            .as_ref()
-            .is_some_and(MpcoreScu::is_enabled)
+        self.mpcore_scu.as_ref().is_some_and(MpcoreScu::is_enabled)
     }
 
     fn set_arm11_smp_mode(&mut self, core_id: u32, enabled: bool) {
@@ -3046,14 +3040,22 @@ mod tests {
         cpu.regs[2] = 0x0000_1FFF;
 
         assert!(!scu.is_enabled());
-        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
         assert!(scu.is_enabled());
         assert_eq!(scu.control_register(), 0x0000_1FFF);
 
-        assert_eq!(cpu.step(&mut address_space).unwrap(), crate::cpu::StepEvent::Executed);
+        assert_eq!(
+            cpu.step(&mut address_space).unwrap(),
+            crate::cpu::StepEvent::Executed
+        );
         assert!(cpu.cp15().smp_mode_enabled());
         assert_eq!(
-            address_space.read32(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE + 4).unwrap(),
+            address_space
+                .read32(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE + 4)
+                .unwrap(),
             0b1_0001
         );
     }
