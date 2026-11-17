@@ -155,29 +155,30 @@ Uma funcionalidade só pode ser declarada concluída quando:
 Nenhuma data estimada ou quantidade de testes substitui esses critérios.
 
 
-## 10. PICA200 — viewport e transformação de profundidade (17/11/2026)
+## 10. PICA200 — viewport e mapeamento de profundidade (17/11/2026)
 
 ### Pergunta técnica
 
-Quais registradores do bloco PICA controlam o retângulo de viewport, a transformação de profundidade e a escolha entre Z-buffer e W-buffer, e como o sistema de coordenadas se relaciona com uma superfície de apresentação cuja origem fica no canto superior esquerdo?
+Quais registradores configuram o retângulo de viewport, a faixa de profundidade e os modos Z/W, e como converter a orientação PICA para superfícies Aceris com origem no canto superior esquerdo?
 
 ### Referências documentais independentes
 
-- Mikage, *GPU Internal Registers*: https://docs.mikage.app/GPU/Internal_Registers/ — documentação técnica pública, não oficial; consultada em 17/11/2026. A página identifica os registradores de largura/altura pela metade em float24, os inversos, a origem signed 10-bit, depth scale/offset e os controles de profundidade. A licença da documentação não foi identificada nesta consulta.
-- 3dbrew, *GPU Internal Registers*: https://www.3dbrew.org/wiki/GPU/Internal_Registers — wiki pública de engenharia reversa, não oficial; consultada em 17/11/2026. Usada como segunda descrição dos endereços/campos, não como especificação oficial.
-- Azahar, repositório https://github.com/azahar-emu/azahar, revisão `11eceda5e0e682a1f44e396bf954a1b9137097ca`, arquivo `src/video_core/pica/regs_rasterizer.h` (blob `f0f25fb54e5d6808f480a2bf97bee030cd1241b9`) e arquivo `src/video_core/renderer_software/sw_rasterizer.cpp` (blob `1e82f87667dda0c6ccc145cb318c789707b5ac23`). Cabeçalho dos dois arquivos declara GPLv2 ou posterior; o `LICENSE.txt` no mesmo commit apresenta GNU GPLv3. A diferença foi registrada como observada, sem emitir conclusão jurídica. Consulta somente para entender os campos e confrontar a interpretação; nenhum trecho, teste, shader ou estrutura foi copiado/adaptado. Data: 17/11/2026.
+- Mikage, *GPU Internal Registers*: https://docs.mikage.app/GPU/Internal_Registers/ — documentação pública, não oficial, consultada em 17/11/2026. Identifica largura/altura do viewport, inversos, origem signed 10-bit, depth scale/offset e os controles de profundidade. A página lista `0x04C` como sem nome e descreve `0x06D` como habilitação da faixa de profundidade. A licença da documentação não foi identificada nesta consulta.
+- 3dbrew, *GPU Internal Registers*: https://www.3dbrew.org/wiki/GPU/Internal_Registers — wiki pública de engenharia reversa, não oficial; consultada em 17/11/2026. Usada como segunda fonte de documentação do mapa de registradores, não como especificação oficial.
+- Azahar, repositório https://github.com/azahar-emu/azahar, revisão `11eceda5e0e682a1f44e396bf954a1b9137097ca`: `src/video_core/pica/regs_rasterizer.h` (blob `f0f25fb54e5d6808f480a2bf97bee030cd1241b9`), `src/video_core/pica/regs_internal.h` (blob `0af60a0e556d069f029c9905215cb1df6657061d`) e `src/video_core/renderer_software/sw_rasterizer.cpp` (blob `1e82f87667dda0c6ccc145cb318c789707b5ac23`). Os cabeçalhos dos arquivos declaram GPLv2 ou posterior; o `LICENSE.txt` no mesmo commit apresenta GNU GPLv3. A diferença é registrada como observada, sem conclusão jurídica. Consulta apenas conceitual; nenhum trecho, teste, shader ou estrutura foi copiado/adaptado. Data: 17/11/2026.
 
 ### Conclusão independente para o Aceris
 
-- `0x041` e `0x043` guardam metade da largura e da altura do viewport como float24; o tamanho em pixels é duas vezes esses valores.
-- `0x042` e `0x044` são os recíprocos associados à largura/altura. O Aceris os retém em forma bruta para inspeção; ainda não os usa em derivadas ou filtragem.
-- `0x068` guarda origem X/Y signed de 10 bits. A referência consultada descreve o retângulo em convenção PICA bottom-left/Y-up. A ponte para as superfícies Aceris top-left/Y-down converte o limite superior usando a altura do alvo.
-- `0x04C` controla, no bit 0, a transformação de profundidade. Quando ligado, a escala e o offset de `0x04D`/`0x04E` participam da transformação; quando desligado, esses coeficientes não devem influenciar o resultado.
-- `0x06D` seleciona a interpolação de profundidade: bit 0 claro para Z-buffer e apagado para W-buffer. É um controle separado de `0x04C`.
-- Para o caminho software atual, a representação do guest é carregada como estado da PICA e aplicada no rasterizador. O teste independente exercita transformação Z/W, profundidade com transformação desativada e rejeição atômica de estado inconsistente.
+- `0x041` e `0x043` armazenam metade da largura/altura do viewport em float24; o tamanho em pixels é duas vezes o valor.
+- `0x042` e `0x044` armazenam os recíprocos associados à largura/altura. O Aceris os preserva em bruto para diagnóstico e uso futuro em derivadas/filtragem.
+- `0x068` contém origem X/Y signed de 10 bits. A declaração de viewport consultada usa convenção PICA bottom-left/Y-up; o Aceris converte o limite inferior para a superfície top-left/Y-down usando a altura do alvo.
+- `0x04D` é a escala de profundidade float24 (Near − Far) e `0x04E` o offset float24 (Near + polygon offset). A transformação usada no caminho de referência é `(z/w) × scale + offset`.
+- `0x06D` é descrito pela documentação Mikage como controle de enable da faixa de profundidade. A revisão Azahar consultada representa o bit 0 como enum WBuffering=0/ZBuffering=1 e, no rasterizador software, aplica o fator W interpolado apenas no modo W. O Aceris segue essa interpretação para distinguir Z/W, mas a diferença de terminologia entre as fontes fica registrada como hipótese a confirmar em hardware legítimo.
+- `0x04C` não foi implementado: a tabela Mikage o deixa sem nome e o layout Azahar consultado o reserva. Uma tentativa intermediária de tratá-lo como enable independente foi removida após essa verificação adicional.
+- A profundidade Z é calculada como `(z/w) × scale + offset`. No modo W, o resultado recebe o W interpolado, equivalente a dividir pelo reciprocal-W interpolado no rasterizador Aceris.
 
 ### Limites e nível de confiança
 
-A leitura dos campos é apoiada por documentação técnica pública não oficial e pelo estudo da declaração de registradores do Azahar. Os testes Aceris verificam apenas o contrato implementado, não equivalência física. Ainda faltam comparação em hardware legítimo, clipping/culling do PICA, precisão/quantização exata de profundidade, scissor, depth bias e persistência do depth buffer em memória. A matriz de transformação/shader continua host-side no caminho de referência; o trabalho desta etapa não torna a transformação de vértices inteira guest-driven.
+A viewport é sustentada por documentação técnica pública não oficial e pelo layout de registradores estudado. A escala/offset está descrita em documentação; a interpretação Z/W de `0x06D` tem divergência de terminologia e permanece pendente de hardware. Os testes Aceris verificam o contrato implementado, não equivalência física. Ainda faltam comparação em hardware legítimo, precisão/quantização exata, scissor, culling, polygon offset aplicado como estado real, depth/stencil e persistência do depth buffer em memória.
 
 A implementação Aceris foi escrita separadamente em Rust. Não foi copiado, traduzido, portado ou adaptado código-fonte, testes, assets ou shaders dos projetos consultados.
