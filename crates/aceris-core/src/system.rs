@@ -3286,8 +3286,7 @@ mod tests {
         // The guest creates its own one-shot event handle through SVC CreateEvent.
         let event_output_address = {
             let session = system.ncsd_session.as_mut().unwrap();
-            let address =
-                session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET - 4;
+            let address = session.current_tls_address().unwrap() + ARM11_TLS_IPC_BUFFER_OFFSET - 4;
             assert!(session.set_current_register(4, 0x0010_2000));
             assert!(session.set_current_register(5, 0x3A76_7273));
             assert!(session.set_current_register(6, 0x0010_2010));
