@@ -1531,6 +1531,25 @@ mod tests {
     }
 
     #[test]
+    fn handle_reference_count_includes_mutex_owner_until_release() {
+        let owner = thread_id(1);
+        let mut table = Arm11KernelObjectTable::default();
+        let mutex = table.insert_mutex(true, owner).unwrap();
+
+        assert_eq!(table.handle_reference_count(mutex), Ok(2));
+        let duplicate = table.duplicate_handle(mutex).unwrap();
+        assert_eq!(table.handle_reference_count(duplicate), Ok(3));
+
+        table.close_handle(mutex).unwrap();
+        assert_eq!(table.handle_reference_count(duplicate), Ok(2));
+        assert_eq!(table.release_mutex(duplicate, owner), Ok(None));
+        assert_eq!(table.handle_reference_count(duplicate), Ok(1));
+
+        table.close_handle(duplicate).unwrap();
+        assert_eq!(table.retained_object_count(), 0);
+    }
+
+    #[test]
     fn handle_reference_count_tracks_aliases_waiters_and_wait_all_pins() {
         let waiter = thread_id(1);
         let wait_all_thread = thread_id(2);
