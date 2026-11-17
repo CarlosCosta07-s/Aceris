@@ -842,13 +842,9 @@ mod tests {
         let mut pica = super::super::Pica200::new();
         configure_tev(&mut pica);
         let pipeline = pica.fragment_pipeline().unwrap();
-        let target = PicaRenderTargetConfig::from_registers(
-            VRAM_BASE >> 3,
-            2,
-            0,
-            8 | (7 << 12) | (1 << 24),
-        )
-        .unwrap();
+        let target =
+            PicaRenderTargetConfig::from_registers(VRAM_BASE >> 3, 2, 0, 8 | (7 << 12) | (1 << 24))
+                .unwrap();
         let mut memory = GpuPhysicalMemory::new();
         let mut framebuffer = vec![0u8; 8 * 8 * 4];
         for alpha in framebuffer.iter_mut().skip(3).step_by(4) {
