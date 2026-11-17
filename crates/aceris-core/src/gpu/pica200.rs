@@ -13,8 +13,8 @@ use super::draw::{
 
 type DrawObserver<'a, E> = dyn FnMut(&Pica200, &PicaDrawRequest) -> Result<(), E> + 'a;
 use super::fixed_attribute::{
-    FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0, REG_FIXEDATTRIB_DATA1,
-    REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
+    Float24, FIXED_ATTRIBUTE_COUNT, FixedVertexAttribute, REG_FIXEDATTRIB_DATA0,
+    REG_FIXEDATTRIB_DATA1, REG_FIXEDATTRIB_DATA2, REG_FIXEDATTRIB_INDEX,
 };
 use super::vertex_shader::{
     PicaShaderOperandDescriptor, PicaVertexShaderInstruction, PicaVertexShaderInstructionFormat,
@@ -22,6 +22,59 @@ use super::vertex_shader::{
 
 /// Number of 32-bit internal PICA200 registers addressable by command ID.
 pub const REGISTER_COUNT: usize = 0x400;
+
+/// PICA viewport horizontal half-size, encoded as float24.
+pub const REG_VIEWPORT_WIDTH: u16 = 0x041;
+/// Reciprocal viewport width (retained for diagnostics and future derivative rules).
+pub const REG_VIEWPORT_INV_WIDTH: u16 = 0x042;
+/// PICA viewport vertical half-size, encoded as float24.
+pub const REG_VIEWPORT_HEIGHT: u16 = 0x043;
+/// Reciprocal viewport height (retained for diagnostics and future derivative rules).
+pub const REG_VIEWPORT_INV_HEIGHT: u16 = 0x044;
+/// PICA normalized-depth scale, encoded as float24.
+pub const REG_DEPTHMAP_SCALE: u16 = 0x04D;
+/// PICA normalized-depth offset, encoded as float24.
+pub const REG_DEPTHMAP_OFFSET: u16 = 0x04E;
+/// PICA viewport origin; signed 10-bit X and Y fields.
+pub const REG_VIEWPORT_XY: u16 = 0x068;
+/// PICA depth-buffer mode: bit 0 selects Z buffering when set, W buffering otherwise.
+pub const REG_DEPTHMAP_MODE: u16 = 0x06D;
+
+/// Decoded viewport data written by the guest through PICA registers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PicaViewportState {
+    /// Half of the viewport width, in pixels.
+    pub half_width: f32,
+    /// Half of the viewport height, in pixels.
+    pub half_height: f32,
+    /// Left edge in PICA screen coordinates.
+    pub origin_x: i32,
+    /// Bottom edge in PICA screen coordinates (Y increases upward).
+    pub origin_y: i32,
+    /// Raw reciprocal-width register, retained without interpretation.
+    pub inverse_width_raw: u32,
+    /// Raw reciprocal-height register, retained without interpretation.
+    pub inverse_height_raw: u32,
+}
+
+/// PICA's depth interpolation mode selected by GPUREG_DEPTHMAP_ENABLE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaDepthBuffering {
+    WBuffer,
+    ZBuffer,
+}
+
+/// Decoded scale, offset and interpolation mode for the PICA depth buffer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PicaDepthState {
+    pub scale: f32,
+    pub offset: f32,
+    pub buffering: PicaDepthBuffering,
+}
+
+fn sign_extend_10(value: u32) -> i32 {
+    ((value & 0x03FF) << 22) as i32 >> 22
+}
 /// First documented framebuffer-state register.
 pub const REG_COLOR_OPERATION: u16 = 0x100;
 /// First documented geometry-state register.
@@ -208,6 +261,47 @@ impl Pica200 {
     /// Reads an internal register, or returns None for an invalid ID.
     pub fn register(&self, id: u16) -> Option<u32> {
         self.registers.get(usize::from(id)).copied()
+    }
+
+    /// Decodes the live guest viewport registers.
+    ///
+    /// PICA stores half-width/half-height in float24 registers and a signed
+    /// 10-bit origin. The origin's Y coordinate is measured from the bottom;
+    /// the presentation surface uses a top-left origin, so the render session
+    /// performs that coordinate conversion after it knows the target height.
+    pub fn viewport_state(&self) -> PicaViewportState {
+        let origin = self.register(REG_VIEWPORT_XY).unwrap_or(0);
+        PicaViewportState {
+            half_width: Float24::from_bits(
+                self.register(REG_VIEWPORT_WIDTH).unwrap_or(0),
+            )
+            .to_f32(),
+            half_height: Float24::from_bits(
+                self.register(REG_VIEWPORT_HEIGHT).unwrap_or(0),
+            )
+            .to_f32(),
+            origin_x: sign_extend_10(origin),
+            origin_y: sign_extend_10(origin >> 16),
+            inverse_width_raw: self.register(REG_VIEWPORT_INV_WIDTH).unwrap_or(0),
+            inverse_height_raw: self.register(REG_VIEWPORT_INV_HEIGHT).unwrap_or(0),
+        }
+    }
+
+    /// Decodes the live guest depth-map registers.
+    ///
+    /// The scale and offset are float24 values. Bit zero of the mode register
+    /// selects Z buffering when set and W buffering when clear.
+    pub fn depth_state(&self) -> PicaDepthState {
+        let mode = self.register(REG_DEPTHMAP_MODE).unwrap_or(0);
+        PicaDepthState {
+            scale: Float24::from_bits(self.register(REG_DEPTHMAP_SCALE).unwrap_or(0)).to_f32(),
+            offset: Float24::from_bits(self.register(REG_DEPTHMAP_OFFSET).unwrap_or(0)).to_f32(),
+            buffering: if mode & 1 == 0 {
+                PicaDepthBuffering::WBuffer
+            } else {
+                PicaDepthBuffering::ZBuffer
+            },
+        }
     }
 
     /// Writes one complete internal register.
@@ -1071,6 +1165,57 @@ mod tests {
             .unwrap();
         assert_eq!(gpu.vertex_shader_uniform(VSH_FLOAT_UNIFORM_COUNT), None);
         assert_eq!(gpu.pending_vertex_shader_uniform_words(), 0);
+    }
+
+    #[test]
+    fn decodes_guest_viewport_half_sizes_and_signed_origin() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_VIEWPORT_WIDTH, 0x0041_0000).unwrap(); // 4.0
+        gpu.write_register(REG_VIEWPORT_HEIGHT, 0x0040_0000).unwrap(); // 2.0
+        gpu.write_register(REG_VIEWPORT_INV_WIDTH, 0x1234_5678).unwrap();
+        gpu.write_register(REG_VIEWPORT_INV_HEIGHT, 0x8765_4321).unwrap();
+        let origin_x = (-7i32 as u32) & 0x03FF;
+        let origin_y = 11u32 & 0x03FF;
+        gpu.write_register(REG_VIEWPORT_XY, origin_x | (origin_y << 16))
+            .unwrap();
+
+        assert_eq!(
+            gpu.viewport_state(),
+            PicaViewportState {
+                half_width: 4.0,
+                half_height: 2.0,
+                origin_x: -7,
+                origin_y: 11,
+                inverse_width_raw: 0x1234_5678,
+                inverse_height_raw: 0x8765_4321,
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_guest_z_and_w_depth_modes_and_float24_mapping() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_DEPTHMAP_SCALE, 0x003E_0000).unwrap(); // 0.5
+        gpu.write_register(REG_DEPTHMAP_OFFSET, 0x003E_0000).unwrap(); // 0.5
+
+        assert_eq!(
+            gpu.depth_state(),
+            PicaDepthState {
+                scale: 0.5,
+                offset: 0.5,
+                buffering: PicaDepthBuffering::WBuffer,
+            }
+        );
+
+        gpu.write_register(REG_DEPTHMAP_MODE, 1).unwrap();
+        assert_eq!(
+            gpu.depth_state(),
+            PicaDepthState {
+                scale: 0.5,
+                offset: 0.5,
+                buffering: PicaDepthBuffering::ZBuffer,
+            }
+        );
     }
 
     #[test]
