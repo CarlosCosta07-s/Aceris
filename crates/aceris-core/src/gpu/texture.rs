@@ -240,7 +240,7 @@ impl PicaTextureUnit {
         let format_register = pica.register(registers[4]).unwrap_or(0);
 
         let texture_type = (parameters >> 28) & 0x7;
-        if texture_type != 0 {
+        if unit == 0 && texture_type != 0 {
             return Err(PicaTextureError::UnsupportedType {
                 unit,
                 texture_type: texture_type as u8,
