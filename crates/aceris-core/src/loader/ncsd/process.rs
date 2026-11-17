@@ -3029,6 +3029,40 @@ mod tests {
     }
 
     #[test]
+    fn mpcore_scu_registers_are_mapped_on_the_arm11_process_bus() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let scu = MpcoreScu::default();
+        address_space.attach_mpcore_scu(scu.clone());
+        let base = crate::cpu::MPCORE_PRIVATE_MEMORY_BASE;
+
+        assert_eq!(address_space.read32(base).unwrap(), 0x0000_1FFE);
+        assert_eq!(address_space.read32(base + 4).unwrap(), 0b01);
+        assert!(!Bus::arm11_scu_enabled(&mut address_space));
+
+        // Guest software enables the SCU through its architected control bit.
+        address_space.write32(base, 0x0000_1FFF).unwrap();
+        assert!(Bus::arm11_scu_enabled(&mut address_space));
+        assert_eq!(scu.control_register(), 0x0000_1FFF);
+
+        // ACTLR.SMP is reflected in the read-only SCU configuration register.
+        Bus::set_arm11_smp_mode(&mut address_space, 0, true);
+        assert_eq!(address_space.read32(base + 4).unwrap(), 0b1_0001);
+        address_space.write32(base + 4, 0).unwrap();
+        assert_eq!(address_space.read32(base + 4).unwrap(), 0b1_0001);
+
+        // The write-only invalidate command is accounted for, but no tag RAM
+        // maintenance is claimed until the emulator has per-core L1 tag arrays.
+        address_space.write32(base + 0x0C, u32::MAX).unwrap();
+        assert_eq!(scu.invalidate_all_request_count(), 1);
+        assert_eq!(address_space.read32(base + 0x0C).unwrap(), 0);
+
+        assert!(matches!(
+            address_space.read32(base + 0x10),
+            Err(Error::InvalidAccess { .. })
+        ));
+    }
+
+    #[test]
     fn shared_memory_blocks_alias_between_process_address_spaces() {
         let backing = SharedMemoryBacking::zeroed(0x1000).unwrap();
         let mut first = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
