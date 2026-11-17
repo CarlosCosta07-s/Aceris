@@ -474,6 +474,45 @@ impl Arm11KernelObjectTable {
         self.objects.len() + self.retired_objects.len()
     }
 
+    /// Reports the reference count that this process-local table currently models.
+    ///
+    /// The count includes open primary/duplicate handles, registered synchronization
+    /// waiters, wait-all pins and mutex ownership. It deliberately excludes the
+    /// temporary reference a GetHandleInfo SVC implementation would use itself.
+    pub fn handle_reference_count(&self, handle: u32) -> Result<u64, KernelHandleError> {
+        let object_key = self
+            .object_key(handle)
+            .ok_or(KernelHandleError::InvalidHandle)?;
+
+        let primary_handle = u64::from(self.objects.contains_key(&object_key));
+        let duplicate_handles = self
+            .handle_aliases
+            .values()
+            .filter(|key| **key == object_key)
+            .count() as u64;
+        let waiter_references = self
+            .waiter_handles
+            .keys()
+            .filter(|(_, key)| *key == object_key)
+            .count() as u64;
+        let wait_all_references = self
+            .wait_all_refs
+            .values()
+            .flat_map(|handles| handles.iter())
+            .filter(|(_, key)| *key == object_key)
+            .count() as u64;
+        let owner_reference = u64::from(matches!(
+            self.object_by_key(object_key),
+            Some(KernelObject::Mutex(KernelMutex { owner: Some(_), .. }))
+        ));
+
+        Ok(primary_handle
+            .saturating_add(duplicate_handles)
+            .saturating_add(waiter_references)
+            .saturating_add(wait_all_references)
+            .saturating_add(owner_reference))
+    }
+
     /// Creates a new process-local handle that refers to the same kernel object.
     pub fn duplicate_handle(&mut self, original: u32) -> Result<u32, KernelHandleError> {
         let object_key = self
@@ -1481,6 +1520,38 @@ mod tests {
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
         assert!(!table.try_wait_synchronization(semaphore, third).unwrap());
         assert_eq!(table.semaphore_counts(semaphore), Some((0, 2)));
+    }
+
+    #[test]
+    fn handle_reference_count_tracks_aliases_waiters_and_wait_all_pins() {
+        let waiter = thread_id(1);
+        let wait_all_thread = thread_id(2);
+        let mut table = Arm11KernelObjectTable::default();
+        let event = table.insert_event(EventResetType::Sticky).unwrap();
+        let duplicate = table.duplicate_handle(event).unwrap();
+
+        assert_eq!(table.handle_reference_count(event), Ok(2));
+        table.enqueue_waiter(duplicate, waiter).unwrap();
+        assert_eq!(table.handle_reference_count(event), Ok(3));
+
+        table
+            .retain_wait_all_handles(&[event, duplicate], wait_all_thread)
+            .unwrap();
+        assert_eq!(table.handle_reference_count(duplicate), Ok(5));
+
+        table.close_handle(event).unwrap();
+        assert_eq!(table.handle_reference_count(duplicate), Ok(4));
+        assert!(table.remove_waiter(waiter));
+        assert_eq!(table.handle_reference_count(duplicate), Ok(3));
+        assert!(table.release_wait_all_handles(wait_all_thread));
+        assert_eq!(table.handle_reference_count(duplicate), Ok(1));
+
+        table.close_handle(duplicate).unwrap();
+        assert_eq!(
+            table.handle_reference_count(duplicate),
+            Err(KernelHandleError::InvalidHandle)
+        );
+        assert_eq!(table.retained_object_count(), 0);
     }
 
     #[test]
