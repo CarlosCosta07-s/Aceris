@@ -318,17 +318,24 @@ impl PicaTextureUnit {
             return Ok(self.border_color);
         };
 
-        let x = s * f32::from(self.width) - 0.5;
-        let y = t * f32::from(self.height) - 0.5;
-        let x0 = x.floor() as i64;
-        let y0 = y.floor() as i64;
-        let amount_x = x - x.floor();
-        let amount_y = y - y.floor();
+        let x = f64::from(s) * f64::from(self.width) - 0.5;
+        let y = f64::from(t) * f64::from(self.height) - 0.5;
+        if !x.is_finite() || !y.is_finite() {
+            return Err(PicaTextureError::InvalidCoordinates { s, t });
+        }
+        let x_floor = x.floor();
+        let y_floor = y.floor();
+        let x0 = x_floor as i64;
+        let y0 = y_floor as i64;
+        let x1 = x0.saturating_add(1);
+        let y1 = y0.saturating_add(1);
+        let amount_x = (x - x_floor) as f32;
+        let amount_y = (y - y_floor) as f32;
 
         let c00 = self.read_wrapped_texel(memory, x0, y0)?;
-        let c10 = self.read_wrapped_texel(memory, x0 + 1, y0)?;
-        let c01 = self.read_wrapped_texel(memory, x0, y0 + 1)?;
-        let c11 = self.read_wrapped_texel(memory, x0 + 1, y0 + 1)?;
+        let c10 = self.read_wrapped_texel(memory, x1, y0)?;
+        let c01 = self.read_wrapped_texel(memory, x0, y1)?;
+        let c11 = self.read_wrapped_texel(memory, x1, y1)?;
 
         let mut result = [0; 4];
         for channel in 0..4 {
@@ -388,13 +395,10 @@ impl PicaTextureUnit {
 fn wrap_coordinate(value: f32, mode: PicaTextureWrap) -> Option<f32> {
     match mode {
         PicaTextureWrap::ClampToEdge => Some(value.clamp(0.0, 1.0)),
-        PicaTextureWrap::ClampToBorder => {
-            if !(0.0..=1.0).contains(&value) {
-                None
-            } else {
-                Some(value)
-            }
-        }
+        // Keep the coordinate outside [0, 1] so the individual bilinear
+        // taps can blend border color with edge texels. Nearest sampling still
+        // resolves to border through wrap_index.
+        PicaTextureWrap::ClampToBorder => Some(value),
         PicaTextureWrap::Repeat => Some(value.rem_euclid(1.0)),
         PicaTextureWrap::MirroredRepeat => {
             let mirrored = value.rem_euclid(2.0);
