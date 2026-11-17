@@ -593,11 +593,8 @@ mod tests {
             3 | (4 << 4) | (14 << 8) | (6 << 16) | (15 << 20) | (13 << 24),
         )
         .unwrap();
-        pica.write_register(
-            base + 1,
-            (1 << 4) | (12 << 8) | (1 << 16) | (7 << 20),
-        )
-        .unwrap();
+        pica.write_register(base + 1, (1 << 4) | (12 << 8) | (1 << 16) | (7 << 20))
+            .unwrap();
         pica.write_register(base + 2, 4 | (1 << 16)).unwrap();
         pica.write_register(base + 3, 0x8040_2010).unwrap();
         pica.write_register(base + 4, 1 | (2 << 16)).unwrap();
