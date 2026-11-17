@@ -3000,8 +3000,8 @@ mod tests {
                     0xE584_B030, // STR r11, [r4, #48] (entry 1: command-list size)
                     0xE584_5000, // STR r5, [r4] (first VRAM command word)
                     0xE584_6004, // STR r6, [r4, #4] (first command header)
-                    0xE584_7000, // STR r7, [r4] (second VRAM command word)
-                    0xE584_8004, // STR r8, [r4, #4] (second command header)
+                    0xE584_7010, // STR r7, [r4, #16] (second VRAM command word)
+                    0xE584_8014, // STR r8, [r4, #20] (second command header)
                     0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
                     0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
                     0xE584_5000, // STR r5, [r4] (guest-authored TriggerCmdReqQueue IPC header)
@@ -3176,6 +3176,10 @@ mod tests {
             assert!(session.set_current_register(7, 0xCAFE_BABE));
             assert!(session.set_current_register(8, 0x000F_0101));
             for _ in 0..4 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            // Publish guest-written queue and command-list data before GSP reads it.
+            for _ in 0..2 {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             }
 
@@ -5997,8 +6001,7 @@ mod tests {
 
     #[test]
     fn loads_encrypted_cia_boot_content_with_caller_supplied_ticket_keys() {
-        let (cia, normal_key, _, _) = encrypted_cia_archive_fixture(false);
-        let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
+        let (cia, normal_key, _, _) = encrypted_cia_archive_fixture(false);        let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
         keys.set_normal_key(0, normal_key).unwrap();
 
         let mut system = System::new();
