@@ -23,6 +23,19 @@ struct Options {
     instruction_budget: usize,
 }
 
+struct BenchmarkSummary<'a> {
+    format: ImageFormat,
+    samples_ns: &'a [u128],
+    instructions: u128,
+    gpu_lists: u128,
+    lcd_scans: u128,
+    zero_instruction_frames: usize,
+    stop_reasons: &'a BTreeMap<String, u64>,
+    first_report: Option<SystemFrameReport>,
+    final_pc: u32,
+    final_cpsr: u32,
+}
+
 fn usage() {
     println!(
         "Aceris performance benchmark\n\
@@ -222,19 +235,19 @@ fn percentile(sorted_samples: &[u128], percentage: usize) -> u128 {
     sorted_samples[rank.saturating_sub(1).min(sorted_samples.len() - 1)]
 }
 
-fn print_summary(
-    options: &Options,
-    format: ImageFormat,
-    samples_ns: &[u128],
-    instructions: u128,
-    gpu_lists: u128,
-    lcd_scans: u128,
-    zero_instruction_frames: usize,
-    stop_reasons: &BTreeMap<String, u64>,
-    first_report: Option<SystemFrameReport>,
-    final_pc: u32,
-    final_cpsr: u32,
-) {
+fn print_summary(options: &Options, summary: BenchmarkSummary<'_>) {
+    let BenchmarkSummary {
+        format,
+        samples_ns,
+        instructions,
+        gpu_lists,
+        lcd_scans,
+        zero_instruction_frames,
+        stop_reasons,
+        first_report,
+        final_pc,
+        final_cpsr,
+    } = summary;
     let mut sorted = samples_ns.to_vec();
     sorted.sort_unstable();
 
