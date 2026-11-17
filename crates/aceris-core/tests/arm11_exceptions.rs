@@ -1073,6 +1073,126 @@ fn a32_stm_translation_abort_with_thirteen_registers_keeps_completed_stores_in_a
     }
 }
 
+#[test]
+fn a32_ldm_full_register_list_translation_abort_is_atomic_in_all_modes() {
+    // r1-r14 plus PC: the last (PC) beat crosses into the unmapped section.
+    const REGISTER_LIST: u32 = 0xFFFE;
+    const TRANSFER_COUNT: u32 = 15;
+    const SIZE: u32 = TRANSFER_COUNT * 4;
+    const FAULT_ADDRESS: u32 = 0x0010_0000;
+    let start = FAULT_ADDRESS - (TRANSFER_COUNT - 1) * 4;
+
+    for (mode, pre_index, up) in [("IA", 0, 1), ("IB", 1, 1), ("DA", 0, 0), ("DB", 1, 0)] {
+        let base = match (pre_index, up) {
+            (0, 1) => start,
+            (1, 1) => start - 4,
+            (0, 0) => start + SIZE - 4,
+            (1, 0) => start + SIZE,
+            _ => unreachable!(),
+        };
+        let instruction =
+            0xE800_0000 | (pre_index << 24) | (up << 23) | (1 << 21) | (1 << 20) | REGISTER_LIST;
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory.write32(0x100, instruction).unwrap();
+
+        for index in 0..TRANSFER_COUNT - 1 {
+            memory
+                .write32(start + index * 4, 0x7100_0000 + index)
+                .unwrap();
+        }
+
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(15).skip(1) {
+            *value = 0xA100_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE, "{mode}");
+        assert_eq!(cpu.pc(), 0x10, "{mode}");
+        assert_eq!(cpu.regs[14], 0x108, "{mode}");
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr), "{mode}");
+        assert_eq!(cpu.cp15().dfar(), FAULT_ADDRESS, "{mode}");
+        assert_eq!(cpu.cp15().dfsr(), 0x5, "{mode}");
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13], "{mode}");
+        for index in 0..TRANSFER_COUNT - 1 {
+            assert_eq!(
+                memory.read32(start + index * 4).unwrap(),
+                0x7100_0000 + index,
+                "{mode}, beat={index}"
+            );
+        }
+
+        // SP/LR are banked on Abort entry; the interrupted SVC bank is intact.
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!(cpu.regs[13], interrupted_regs[13], "{mode}, SVC SP");
+        assert_eq!(cpu.regs[14], interrupted_regs[14], "{mode}, SVC LR");
+    }
+}
+
+#[test]
+fn a32_stm_full_register_list_translation_abort_keeps_completed_stores_in_all_modes() {
+    // r1-r14 plus PC: the final PC store faults after fourteen completed beats.
+    const REGISTER_LIST: u32 = 0xFFFE;
+    const TRANSFER_COUNT: u32 = 15;
+    const SIZE: u32 = TRANSFER_COUNT * 4;
+    const FAULT_ADDRESS: u32 = 0x0010_0000;
+    let start = FAULT_ADDRESS - (TRANSFER_COUNT - 1) * 4;
+
+    for (mode, pre_index, up) in [("IA", 0, 1), ("IB", 1, 1), ("DA", 0, 0), ("DB", 1, 0)] {
+        let base = match (pre_index, up) {
+            (0, 1) => start,
+            (1, 1) => start - 4,
+            (0, 0) => start + SIZE - 4,
+            (1, 0) => start + SIZE,
+            _ => unreachable!(),
+        };
+        let instruction =
+            0xE800_0000 | (pre_index << 24) | (up << 23) | (1 << 21) | REGISTER_LIST;
+        let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
+        memory.write32(0x100, instruction).unwrap();
+
+        for index in 0..TRANSFER_COUNT - 1 {
+            memory
+                .write32(start + index * 4, 0xDEAD_BEEF)
+                .unwrap();
+        }
+
+        cpu.set_pc(0x100);
+        cpu.regs[0] = base;
+        for (register, value) in cpu.regs.iter_mut().enumerate().take(15).skip(1) {
+            *value = 0xC100_0000 + register as u32;
+        }
+        let interrupted_regs = cpu.regs;
+        let interrupted_cpsr = cpu.cpsr;
+
+        cpu.step(&mut memory).unwrap();
+
+        assert_eq!(cpu.cpsr.mode(), Psr::ABORT_MODE, "{mode}");
+        assert_eq!(cpu.pc(), 0x10, "{mode}");
+        assert_eq!(cpu.regs[14], 0x108, "{mode}");
+        assert_eq!(cpu.saved_program_status(), Some(interrupted_cpsr), "{mode}");
+        assert_eq!(cpu.cp15().dfar(), FAULT_ADDRESS, "{mode}");
+        assert_eq!(cpu.cp15().dfsr(), 0x805, "{mode}");
+        assert_eq!(cpu.regs[..13], interrupted_regs[..13], "{mode}");
+        for index in 0..TRANSFER_COUNT - 1 {
+            assert_eq!(
+                memory.read32(start + index * 4).unwrap(),
+                interrupted_regs[index as usize + 1],
+                "{mode}, beat={index}"
+            );
+        }
+
+        // The failed final beat must not commit writeback to the base register.
+        cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
+        assert_eq!(cpu.regs[13], interrupted_regs[13], "{mode}, SVC SP");
+        assert_eq!(cpu.regs[14], interrupted_regs[14], "{mode}, SVC LR");
+    }
+}
+
 fn enter_fiq_with_distinct_banks_for_abort(cpu: &mut Arm11Core) -> ([u32; 7], [u32; 7]) {
     let user = [
         0xA000_0008,
