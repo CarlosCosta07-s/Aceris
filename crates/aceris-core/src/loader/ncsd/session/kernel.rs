@@ -514,8 +514,9 @@ impl Arm11KernelObjectTable {
             .values()
             .flat_map(|handles| handles.iter().copied())
             .collect::<std::collections::BTreeSet<_>>();
-        self.retired_objects
-            .retain(|handle, object| pinned_handles.contains(handle) || object_has_internal_references(object));
+        self.retired_objects.retain(|handle, object| {
+            pinned_handles.contains(handle) || object_has_internal_references(object)
+        });
     }
 
     /// Releases every mutex owned by a terminating thread.
@@ -1042,7 +1043,8 @@ impl Arm11KernelObjectTable {
             .objects
             .remove(&handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
-        let keep_alive = object_has_internal_references(&object) || self.has_wait_all_reference(handle);
+        let keep_alive =
+            object_has_internal_references(&object) || self.has_wait_all_reference(handle);
         if keep_alive {
             self.retired_objects.insert(handle, object);
         }
