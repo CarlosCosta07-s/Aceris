@@ -41,7 +41,8 @@ use svc::{
     SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
-    SVC_GET_PROCESS_INFO, SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK,
+    SVC_GET_PROCESS_INFO, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY,
+    SVC_MAP_MEMORY_BLOCK,
     SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST,
     SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
     SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
@@ -1959,6 +1960,7 @@ impl Arm11ProcessSession {
             SVC_DUPLICATE_HANDLE => self.svc_duplicate_handle(caller),
             SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
             SVC_GET_PROCESS_INFO => self.svc_get_process_info(caller),
+            SVC_GET_SYSTEM_TICK => self.svc_get_system_tick(caller),
             SVC_GET_THREAD_INFO => self.svc_get_thread_info(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
@@ -3099,6 +3101,24 @@ impl Arm11ProcessSession {
             }
         }
         self.write_svc_result(caller, result)
+    }
+
+    /// Handles GetSystemTick and returns a 64-bit counter in r0-r1.
+    ///
+    /// The emulated counter is derived from deterministic scheduler virtual time,
+    /// not host wall-clock time. The base ARM11 tick rate is 268,111,856 Hz.
+    fn svc_get_system_tick(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        const TICKS_PER_SECOND: u128 = 268_111_856;
+        let elapsed_ns = u128::from(self.scheduler.virtual_time_ns());
+        let ticks = (elapsed_ns * TICKS_PER_SECOND) / 1_000_000_000;
+
+        let core = self
+            .scheduler
+            .core_mut(caller)
+            .expect("current thread context exists");
+        core.regs[0] = ticks as u32;
+        core.regs[1] = (ticks >> 32) as u32;
+        SvcRunDisposition::Resume
     }
 
     /// Handles GetThreadInfo using r1 = thread handle and r2 = information type.
@@ -5585,6 +5605,33 @@ mod tests {
             session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
             RESULT_INVALID_ENUM
         );
+    }
+
+    #[test]
+    fn get_system_tick_svc_returns_virtual_64_bit_arm11_ticks() {
+        let mut session = test_session();
+
+        {
+            let main = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            main.regs[0] = 0xAAAA_AAAA;
+            main.regs[1] = 0xBBBB_BBBB;
+        }
+        assert!(matches!(
+            session.dispatch_svc(SVC_GET_SYSTEM_TICK),
+            SvcRunDisposition::Resume
+        ));
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        assert_eq!(registers[0], 0);
+        assert_eq!(registers[1], 0);
+
+        // 17 virtual seconds exceed 32 bits at the base ARM11 tick rate.
+        session.advance_time(17_000_000_000);
+        session.dispatch_svc(SVC_GET_SYSTEM_TICK);
+        let registers = session.scheduler.core(MAIN_THREAD_ID).unwrap().regs;
+        let actual = u64::from(registers[0]) | (u64::from(registers[1]) << 32);
+        let expected = (17_000_000_000u128 * 268_111_856u128 / 1_000_000_000) as u64;
+        assert_eq!(actual, expected);
+        assert_ne!(registers[1], 0);
     }
 
     #[test]
