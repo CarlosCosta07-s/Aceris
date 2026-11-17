@@ -532,6 +532,82 @@ impl Arm11KernelObjectTable {
         }
     }
 
+    /// Atomically acquires every synchronization object in a wait-all request.
+    ///
+    /// Readiness is checked for the complete set before any one-shot event,
+    /// timer, mutex or semaphore is consumed. Duplicate handles are treated as
+    /// one object, so listing the same handle twice cannot consume it twice.
+    /// An empty set remains pending, matching the kernel's zero-handle wait.
+    pub fn try_wait_synchronization_all(
+        &mut self,
+        handles: &[u32],
+        thread: ThreadId,
+    ) -> Result<bool, KernelHandleError> {
+        if handles.is_empty() {
+            return Ok(false);
+        }
+
+        let mut all_ready = true;
+        for (index, handle) in handles.iter().copied().enumerate() {
+            if handles[..index].contains(&handle) {
+                continue;
+            }
+
+            let ready = match self.objects.get(&handle) {
+                Some(KernelObject::Event(event)) => event.signaled,
+                Some(KernelObject::Mutex(mutex)) => mutex.owner.is_none(),
+                Some(KernelObject::Semaphore(semaphore)) => semaphore.count > 0,
+                Some(KernelObject::Timer(timer)) => timer.signaled,
+                Some(
+                    KernelObject::Thread(_)
+                    | KernelObject::MemoryBlock(_)
+                    | KernelObject::ServiceSession(_),
+                ) => return Err(KernelHandleError::WrongType),
+                None => return Err(KernelHandleError::InvalidHandle),
+            };
+            all_ready &= ready;
+        }
+
+        if !all_ready {
+            return Ok(false);
+        }
+
+        // The preflight above guarantees that every operation below can
+        // complete. No guest code or scheduler callback can interleave this
+        // acquisition because the process kernel is driven cooperatively.
+        for (index, handle) in handles.iter().copied().enumerate() {
+            if handles[..index].contains(&handle) {
+                continue;
+            }
+
+            match self
+                .objects
+                .get_mut(&handle)
+                .expect("wait-all preflight validated every unique handle")
+            {
+                KernelObject::Event(event) => {
+                    if event.reset_type == EventResetType::OneShot {
+                        event.signaled = false;
+                    }
+                }
+                KernelObject::Mutex(mutex) => mutex.owner = Some(thread),
+                KernelObject::Semaphore(semaphore) => semaphore.count -= 1,
+                KernelObject::Timer(timer) => {
+                    if timer.reset_type == EventResetType::OneShot {
+                        timer.signaled = false;
+                    }
+                }
+                KernelObject::Thread(_)
+                | KernelObject::MemoryBlock(_)
+                | KernelObject::ServiceSession(_) => {
+                    unreachable!("wait-all preflight rejected non-waitable objects")
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
     /// Adds a thread to a synchronization object's FIFO wait queue.
     pub fn enqueue_waiter(
         &mut self,
