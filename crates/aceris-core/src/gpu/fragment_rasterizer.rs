@@ -1172,7 +1172,7 @@ mod tests {
         pica.write_register(REG_LOGIC_OP, 3).unwrap();
         pica.write_register(
             REG_STENCIL_TEST,
-            1 | (0 << 4) | (0xFF << 8) | (9 << 16) | (0xFF << 24),
+            1 | (0xFF << 8) | (9 << 16) | (0xFF << 24),
         )
         .unwrap();
         pica.write_register(REG_STENCIL_OP, 2).unwrap(); // stencil fail: replace
@@ -1201,7 +1201,7 @@ mod tests {
             .write_depth_values(&vec![1.0; 64], &mut memory)
             .unwrap();
         depth_config
-            .write_stencil_values(&vec![0; 64], &mut memory)
+            .write_stencil_values(&[0; 64], &mut memory)
             .unwrap();
 
         let mut rasterizer =
