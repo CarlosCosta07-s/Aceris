@@ -53,7 +53,8 @@ pub use fragment_output::{
 };
 pub use fragment_pipeline::{
     PicaFragmentInterpolationError, PicaFragmentPipeline, PicaFragmentPipelineError,
-    PicaFragmentSampleError, PicaFragmentVaryings, PicaFragmentVertex,
+    PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentSampleError, PicaFragmentVaryings,
+    PicaFragmentVertex,
 };
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
