@@ -575,8 +575,9 @@ impl Arm11KernelObjectTable {
                 Ok(true)
             }
             Some(KernelObject::Thread(thread)) => Ok(thread.terminated),
-            Some(KernelObject::MemoryBlock(_))
-            | Some(KernelObject::ServiceSession(_)) => Err(KernelHandleError::WrongType),
+            Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
+                Err(KernelHandleError::WrongType)
+            }
             None => Err(KernelHandleError::InvalidHandle),
         }
     }
@@ -608,8 +609,7 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Semaphore(semaphore)) => semaphore.count > 0,
                 Some(KernelObject::Timer(timer)) => timer.signaled,
                 Some(KernelObject::Thread(thread)) => thread.terminated,
-                Some(KernelObject::MemoryBlock(_))
-                | Some(KernelObject::ServiceSession(_)) => {
+                Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
                     return Err(KernelHandleError::WrongType);
                 }
                 None => return Err(KernelHandleError::InvalidHandle),
@@ -670,8 +670,7 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
             Some(KernelObject::Timer(timer)) => &mut timer.waiters,
             Some(KernelObject::Thread(thread)) => &mut thread.waiters,
-            Some(KernelObject::MemoryBlock(_))
-            | Some(KernelObject::ServiceSession(_)) => {
+            Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
                 return Err(KernelHandleError::WrongType);
             }
             None => return Err(KernelHandleError::InvalidHandle),
@@ -700,8 +699,7 @@ impl Arm11KernelObjectTable {
                 KernelObject::Semaphore(semaphore) => &mut semaphore.waiters,
                 KernelObject::Timer(timer) => &mut timer.waiters,
                 KernelObject::Thread(thread) => &mut thread.waiters,
-                KernelObject::MemoryBlock(_)
-                | KernelObject::ServiceSession(_) => continue,
+                KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_) => continue,
             };
             let previous_len = waiters.len();
             waiters.retain(|waiter| *waiter != thread);
