@@ -223,10 +223,18 @@ impl PicaFragmentRenderSession {
             .totals
             .pixels_written
             .saturating_add(report.pixels_written);
+        self.totals.alpha_rejected_pixels = self
+            .totals
+            .alpha_rejected_pixels
+            .saturating_add(report.alpha_rejected_pixels);
         self.totals.depth_rejected_pixels = self
             .totals
             .depth_rejected_pixels
             .saturating_add(report.depth_rejected_pixels);
+        self.totals.stencil_rejected_pixels = self
+            .totals
+            .stencil_rejected_pixels
+            .saturating_add(report.stencil_rejected_pixels);
         self.totals.executed_instructions = self
             .totals
             .executed_instructions
@@ -259,9 +267,15 @@ impl PicaFragmentRenderSession {
                 .output_triangles
                 .saturating_sub(before.output_triangles),
             pixels_written: after.pixels_written.saturating_sub(before.pixels_written),
+            alpha_rejected_pixels: after
+                .alpha_rejected_pixels
+                .saturating_sub(before.alpha_rejected_pixels),
             depth_rejected_pixels: after
                 .depth_rejected_pixels
                 .saturating_sub(before.depth_rejected_pixels),
+            stencil_rejected_pixels: after
+                .stencil_rejected_pixels
+                .saturating_sub(before.stencil_rejected_pixels),
             executed_instructions: after
                 .executed_instructions
                 .saturating_sub(before.executed_instructions),
@@ -330,7 +344,9 @@ fn render_report(report: PicaFragmentRasterReport) -> PicaRenderReport {
         triangles_submitted: report.input_triangles,
         output_triangles: report.clipped_triangles,
         pixels_written: report.shaded_pixels,
+        alpha_rejected_pixels: report.alpha_rejected_pixels,
         depth_rejected_pixels: report.depth_rejected_pixels,
+        stencil_rejected_pixels: report.stencil_rejected_pixels,
         executed_instructions: report.executed_instructions,
     }
 }
