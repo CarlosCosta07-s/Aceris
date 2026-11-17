@@ -23,7 +23,9 @@ pub struct PicaRenderReport {
     /// Triangles left after clipping and fan triangulation.
     pub output_triangles: u64,
     pub pixels_written: u64,
+    pub alpha_rejected_pixels: u64,
     pub depth_rejected_pixels: u64,
+    pub stencil_rejected_pixels: u64,
     /// Shader instructions executed; zero when rendering an already shaded draw.
     pub executed_instructions: u64,
 }
@@ -318,9 +320,15 @@ impl PicaRenderSession {
                 .output_triangles
                 .saturating_sub(before.output_triangles),
             pixels_written: after.pixels_written.saturating_sub(before.pixels_written),
+            alpha_rejected_pixels: after
+                .alpha_rejected_pixels
+                .saturating_sub(before.alpha_rejected_pixels),
             depth_rejected_pixels: after
                 .depth_rejected_pixels
                 .saturating_sub(before.depth_rejected_pixels),
+            stencil_rejected_pixels: after
+                .stencil_rejected_pixels
+                .saturating_sub(before.stencil_rejected_pixels),
             executed_instructions: after
                 .executed_instructions
                 .saturating_sub(before.executed_instructions),
