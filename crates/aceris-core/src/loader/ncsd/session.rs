@@ -5218,7 +5218,7 @@ mod tests {
             session.wait_deadlines.get(&MAIN_THREAD_ID),
             Some(&(first, timeout as u64))
         );
-        assert_eq!(session.address_space.read32(out_address), Ok(0xCAFE_BABE));
+        assert_eq!(session.address_space.read32(out_address).unwrap(), 0xCAFE_BABE);
 
         // Signalling handle 1 resumes the same guest wrapper. It observes the
         // selected index in r1 and stores it through the original C out pointer.
@@ -5228,7 +5228,7 @@ mod tests {
 
         let epilogue = session.run_instructions(5).unwrap();
         assert_eq!(epilogue.stop_reason, Arm11RunStopReason::Breakpoint(0));
-        assert_eq!(session.read_memory_u32(out_address), Ok(1));
+        assert_eq!(session.read_memory_u32(out_address).unwrap(), 1);
         assert_eq!(session.core().regs[4], 0x4444_4444);
         assert_eq!(session.core().regs[5], 0x5555_5555);
         assert_eq!(session.core().regs[13], stack_pointer);
@@ -5279,7 +5279,7 @@ mod tests {
         assert_eq!(report.stop_reason, Arm11RunStopReason::Breakpoint(0));
         assert_eq!(session.core().regs[0], RESULT_INVALID_TIMEOUT);
         // The wrapper always stores r1, so errors must return index zero.
-        assert_eq!(session.read_memory_u32(out_address), Ok(0));
+        assert_eq!(session.read_memory_u32(out_address).unwrap(), 0);
         assert_eq!(session.core().regs[4], 0x4444_4444);
         assert_eq!(session.core().regs[5], 0x5555_5555);
         assert_eq!(session.core().regs[13], stack_pointer);
