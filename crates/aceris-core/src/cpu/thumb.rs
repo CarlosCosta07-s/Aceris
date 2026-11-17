@@ -800,6 +800,7 @@ mod tests {
             (0b0111, ShiftKind::Ror),
         ];
         let source_values = [0, 1, 0x8000_0001, 0x7FFF_FFFF, 0xA5C3_7E19];
+        let mut memory = FlatMemory::new(0, 0x100);
 
         for (operation, kind) in operations {
             for amount in 0..=u8::MAX as u32 {
@@ -816,8 +817,7 @@ mod tests {
 
                         // LSL/LSR/ASR/ROR Rd,Rm with Rd=r0 and Rm=r1.
                         let instruction = 0x4000 | (operation << 6) | (1 << 3);
-                        cpu.execute_thumb(&mut FlatMemory::new(0, 0x100), instruction)
-                            .unwrap();
+                        cpu.execute_thumb(&mut memory, instruction).unwrap();
 
                         let (expected, expected_carry) =
                             shift_reg(kind, source, amount, carry_in);
