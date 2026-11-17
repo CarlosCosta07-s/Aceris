@@ -109,6 +109,18 @@ pub trait Bus {
         self.drain_write_buffer()
     }
 
+    /// Reports whether the ARM11 MPCore Snoop Control Unit is enabled.
+    ///
+    /// Buses that do not expose an SCU must return false.
+    fn arm11_scu_enabled(&mut self) -> bool {
+        false
+    }
+
+    /// Publishes one core's ACTLR.SMP state to the platform SCU configuration.
+    fn set_arm11_smp_mode(&mut self, core_id: u32, enabled: bool) {
+        let _ = (core_id, enabled);
+    }
+
     /// Synchronizes the instruction stream after code or execution-context changes.
     /// The interpreter has no independently cached/pipelined instruction stream by default.
     fn instruction_sync_barrier(&mut self) -> Result<()> {
