@@ -2456,7 +2456,15 @@ impl Arm11ProcessSession {
             let tls = core.cp15().tpidruro();
             self.address_space.release_thread_local_storage(tls);
         }
-        self.scheduler.exit_current()
+
+        // Commit the scheduler state transition before waking observers. A
+        // waiter must never observe a thread object as signaled while its
+        // target is still Running.
+        self.scheduler.exit_current()?;
+        let awakened = self.kernel_objects.signal_thread_exit(caller);
+        self.wake_synchronization_waiters(awakened);
+        self.service_wait_all_waiters();
+        Ok(self.scheduler.current_thread_id())
     }
 
     /// Handles CreateMutex: r0 points to the output handle and r1 is initialLocked.
@@ -4869,6 +4877,156 @@ mod tests {
         let main_exit = session.run_instructions(2).unwrap();
         assert_eq!(main_exit.stop_reason, Arm11RunStopReason::NoRunnableThread);
         assert_eq!(session.current_thread_id(), None);
+    }
+
+    #[test]
+    fn wait_synchronization1_waits_for_thread_exit_and_thread_object_stays_signaled() {
+        let mut session = test_session_with_program_and_data(&[
+            (0x00, 0xEF00_0024), // SVC WaitSynchronization1 (main)
+            (0x04, 0xE120_0070), // BKPT #0 (main resumes)
+            (0x20, 0xEF00_0009), // SVC ExitThread (target)
+        ]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x3F, 0)
+            .unwrap();
+        let target_handle = session.kernel_objects.insert_thread(target).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = target_handle;
+            main.regs[2] = u32::MAX;
+            main.regs[3] = u32::MAX;
+        }
+
+        let blocked = session.run_instructions(1).unwrap();
+        assert_eq!(
+            blocked.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.thread_info(MAIN_THREAD_ID).unwrap().state, ThreadState::Waiting);
+        assert_eq!(session.current_thread_id(), Some(target));
+
+        let exited = session.run_instructions(1).unwrap();
+        assert_eq!(
+            exited.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.thread_info(target).unwrap().state, ThreadState::Exited);
+        assert_eq!(session.kernel_objects.thread_is_terminated(target_handle), Some(true));
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.core().regs[0], 0);
+
+        // Thread objects are manual-reset: every later wait succeeds too.
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = target_handle;
+            main.regs[2] = 0;
+            main.regs[3] = 0;
+        }
+        assert!(matches!(
+            session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION1),
+            SvcRunDisposition::Resume
+        ));
+        assert_eq!(session.core().regs[0], 0);
+    }
+
+    #[test]
+    fn wait_synchronization_n_wait_any_reports_exited_thread_index() {
+        let mut session = test_session_with_program_and_data(&[
+            (0x00, 0xEF00_0025), // SVC WaitSynchronizationN (main)
+            (0x04, 0xE120_0070), // BKPT #0 (main resumes)
+            (0x20, 0xEF00_0009), // SVC ExitThread (target)
+        ]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x3F, 0)
+            .unwrap();
+        let target_handle = session.kernel_objects.insert_thread(target).unwrap();
+        session.address_space.write32(0x0020_0100, target_handle).unwrap();
+
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = u32::MAX; // timeout low
+            main.regs[1] = 0x0020_0100; // handle array
+            main.regs[2] = 1;
+            main.regs[3] = 0; // wait-any
+            main.regs[4] = u32::MAX; // timeout high (-1)
+        }
+
+        let blocked = session.run_instructions(1).unwrap();
+        assert_eq!(
+            blocked.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.current_thread_id(), Some(target));
+
+        let exited = session.run_instructions(1).unwrap();
+        assert_eq!(
+            exited.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!((session.core().regs[0], session.core().regs[1]), (0, 0));
+        assert_eq!(session.kernel_objects.thread_is_terminated(target_handle), Some(true));
+    }
+
+    #[test]
+    fn wait_synchronization_n_wait_all_combines_thread_exit_with_event() {
+        let mut session = test_session_with_program_and_data(&[
+            (0x00, 0xEF00_0025), // SVC WaitSynchronizationN (main)
+            (0x04, 0xE120_0070), // BKPT #0 (main resumes)
+            (0x20, 0xEF00_0009), // SVC ExitThread (target)
+        ]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x3F, 0)
+            .unwrap();
+        let target_handle = session.kernel_objects.insert_thread(target).unwrap();
+        let event_handle = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
+        session
+            .address_space
+            .write32(0x0020_0100, event_handle)
+            .unwrap();
+        session
+            .address_space
+            .write32(0x0020_0104, target_handle)
+            .unwrap();
+
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = u32::MAX;
+            main.regs[1] = 0x0020_0100;
+            main.regs[2] = 2;
+            main.regs[3] = 1; // wait-all
+            main.regs[4] = u32::MAX;
+        }
+
+        let blocked = session.run_instructions(1).unwrap();
+        assert_eq!(
+            blocked.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
+        assert_eq!(session.current_thread_id(), Some(target));
+
+        let target_exit = session.run_instructions(1).unwrap();
+        assert_eq!(target_exit.stop_reason, Arm11RunStopReason::NoRunnableThread);
+        assert_eq!(session.current_thread_id(), None);
+        assert_eq!(session.kernel_objects.thread_is_terminated(target_handle), Some(true));
+        assert_eq!(session.event_handle_is_signaled(event_handle), Some(false));
+
+        // Thread exit alone does not partially complete the wait-all set.
+        session.signal_event_handle(event_handle).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.event_handle_is_signaled(event_handle), Some(false));
+        assert_eq!((session.core().regs[0], session.core().regs[1]), (0, 0));
+
+        let resumed = session.run_instructions(1).unwrap();
+        assert_eq!(resumed.stop_reason, Arm11RunStopReason::Breakpoint(0));
     }
 
     #[test]
