@@ -713,11 +713,13 @@ impl Machine<'_> {
         let count = self
             .control_stack
             .iter()
-            .filter(|frame| match (required, frame) {
-                (ControlStackKind::Call, ControlFrame::Call { .. }) => true,
-                (ControlStackKind::If, ControlFrame::If { .. }) => true,
-                (ControlStackKind::Loop, ControlFrame::Loop { .. }) => true,
-                _ => false,
+            .filter(|frame| {
+                matches!(
+                    (required, frame),
+                    (ControlStackKind::Call, ControlFrame::Call { .. })
+                        | (ControlStackKind::If, ControlFrame::If { .. })
+                        | (ControlStackKind::Loop, ControlFrame::Loop { .. })
+                )
             })
             .count();
         let limit = match required {
