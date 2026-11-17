@@ -55,6 +55,7 @@ const SCTLR_WRITABLE: u32 = 0x10C0_FB07;
 const SCTLR_M: u32 = 1;
 const SCTLR_XP: u32 = 1 << 23;
 const SCTLR_TRE: u32 = 1 << 28;
+const ACTLR_SMP: u32 = 1 << 5;
 const FSR_WRITE_NOT_READ: u32 = 1 << 11;
 const SCTLR_V: u32 = 1 << 13;
 const SCTLR_EE: u32 = 1 << 15;
@@ -130,6 +131,16 @@ impl Cp15 {
     /// Raw system control register.
     pub fn sctlr(&self) -> u32 {
         self.sctlr
+    }
+
+    /// ARM11 MPCore ACTLR.SMP (bit 5): this CPU participates in the SMP domain.
+    pub fn smp_mode_enabled(&self) -> bool {
+        self.actlr & ACTLR_SMP != 0
+    }
+
+    /// Logical MPCore CPU number represented by this CP15 register bank.
+    pub fn core_id(&self) -> u32 {
+        self.core_id
     }
 
     /// SCTLR.M: address translation is enabled.
@@ -450,6 +461,27 @@ mod tests {
 
         cp15.write(true, 0, 1, 0, 0, 0).unwrap();
         assert!(!cp15.memory_region_remap_enabled());
+    }
+
+    #[test]
+    fn actlr_smp_mode_is_bit_five_and_privileged() {
+        let mut cp15 = Cp15::new(1);
+        assert_eq!(cp15.core_id(), 1);
+        assert!(!cp15.smp_mode_enabled());
+        assert_eq!(cp15.read(true, 0, 1, 0, 1), Ok(0));
+
+        // Bit 6 is not the MP11 SMP control; bit 5 is ACTLR.SMP.
+        cp15.write(true, 0, 1, 0, 1, 1 << 6).unwrap();
+        assert!(!cp15.smp_mode_enabled());
+        cp15.write(true, 0, 1, 0, 1, 1 << 5).unwrap();
+        assert!(cp15.smp_mode_enabled());
+        assert_eq!(cp15.read(true, 0, 1, 0, 1), Ok(1 << 5));
+
+        assert_eq!(cp15.read(false, 0, 1, 0, 1), Err(Cp15Fault::Undefined));
+        assert_eq!(
+            cp15.write(false, 0, 1, 0, 1, 0),
+            Err(Cp15Fault::Undefined)
+        );
     }
 
     #[test]
