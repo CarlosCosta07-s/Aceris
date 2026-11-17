@@ -759,7 +759,10 @@ mod tests {
         let mut scheduler = scheduler_with_priority(0x30);
         let ready = create(&mut scheduler, 0x0020_0000, 0x30);
         scheduler.terminate_thread(ready).unwrap();
-        assert_eq!(scheduler.thread_info(ready).unwrap().state, ThreadState::Exited);
+        assert_eq!(
+            scheduler.thread_info(ready).unwrap().state,
+            ThreadState::Exited
+        );
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
 
         let waiting = create(&mut scheduler, 0x0030_0000, 0x30);
@@ -767,11 +770,17 @@ mod tests {
         assert_eq!(scheduler.current_thread_id(), Some(waiting));
         scheduler.wait_current().unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
-        assert_eq!(scheduler.thread_info(waiting).unwrap().state, ThreadState::Waiting);
+        assert_eq!(
+            scheduler.thread_info(waiting).unwrap().state,
+            ThreadState::Waiting
+        );
 
         scheduler.terminate_thread(waiting).unwrap();
         assert_eq!(scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
-        assert_eq!(scheduler.thread_info(waiting).unwrap().state, ThreadState::Exited);
+        assert_eq!(
+            scheduler.thread_info(waiting).unwrap().state,
+            ThreadState::Exited
+        );
     }
 
     #[test]
