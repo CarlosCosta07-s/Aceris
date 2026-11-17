@@ -5099,7 +5099,9 @@ mod tests {
                 &mut linear_pixel,
             )
             .unwrap();
-        assert_eq!(linear_pixel, [200, 100, 50, 255]);
+        // PICA's RGBA8 render-target storage is A, B, G, R; LCD scanout
+        // converts that native byte order back to the displayed RGBA order.
+        assert_eq!(linear_pixel, [255, 50, 100, 200]);
     }
 
     #[test]
