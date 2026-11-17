@@ -5121,6 +5121,109 @@ mod tests {
     }
 
     #[test]
+    fn exit_thread_releases_every_owned_mutex_to_waiting_threads() {
+        let mut session = test_session_with_program(&[0xEF00_0009]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x30, 0)
+            .unwrap();
+        let target_handle = session.kernel_objects.insert_thread(target).unwrap();
+        let mutex = session.kernel_objects.insert_mutex(true, target).unwrap();
+        session
+            .kernel_objects
+            .enqueue_waiter(mutex, MAIN_THREAD_ID)
+            .unwrap();
+
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        session.scheduler.wait_current().unwrap();
+        assert_eq!(session.current_thread_id(), Some(target));
+
+        assert!(matches!(
+            session.dispatch_svc(SVC_EXIT_THREAD),
+            SvcRunDisposition::Resume
+        ));
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.kernel_objects.mutex_owner(mutex), Some(MAIN_THREAD_ID));
+        assert_eq!(
+            session.kernel_objects.thread_is_terminated(target_handle),
+            Some(true)
+        );
+        assert_eq!(
+            session.thread_info(target).unwrap().state,
+            ThreadState::Exited
+        );
+    }
+
+    #[test]
+    fn closing_last_thread_handle_terminates_target_and_completes_wait_all_error() {
+        let mut session = test_session_with_program(&[0xEF00_0025]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x30, 0)
+            .unwrap();
+        let target_handle = session.kernel_objects.insert_thread(target).unwrap();
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
+        session.address_space.write32(0x0020_0100, event).unwrap();
+        session
+            .address_space
+            .write32(0x0020_0104, target_handle)
+            .unwrap();
+        {
+            let main = session.scheduler.current_core_mut().unwrap();
+            main.regs[0] = u32::MAX;
+            main.regs[1] = 0x0020_0100;
+            main.regs[2] = 2;
+            main.regs[3] = 1;
+            main.regs[4] = u32::MAX;
+        }
+
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.current_thread_id(), Some(target));
+        assert_eq!(
+            session.thread_info(MAIN_THREAD_ID).unwrap().state,
+            ThreadState::Waiting
+        );
+
+        session.close_handle(target_handle).unwrap();
+
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(session.thread_info(target), None);
+        assert_eq!(session.scheduler.thread_count(), 1);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_HANDLE);
+        assert_eq!(session.event_handle_is_signaled(event), Some(false));
+        assert!(!session.wait_all_waits.contains_key(&MAIN_THREAD_ID));
+    }
+
+    #[test]
+    fn closing_final_handle_after_exit_reclaims_saved_thread_context() {
+        let mut session = test_session_with_program(&[0xEF00_0009]);
+        let target = session
+            .scheduler
+            .create_thread(0x0010_0020, 0, 0x0020_2000, 0x30, 0)
+            .unwrap();
+        let target_handle = session.kernel_objects.insert_thread(target).unwrap();
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        session.scheduler.yield_current().unwrap();
+        assert_eq!(session.current_thread_id(), Some(target));
+        session.dispatch_svc(SVC_EXIT_THREAD);
+
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert_eq!(
+            session.thread_info(target).unwrap().state,
+            ThreadState::Exited
+        );
+        assert_eq!(session.scheduler.thread_count(), 2);
+
+        session.close_handle(target_handle).unwrap();
+        assert_eq!(session.thread_info(target), None);
+        assert_eq!(session.scheduler.thread_count(), 1);
+    }
+
+    #[test]
     fn create_thread_rejects_non_executable_entrypoints_and_unmapped_stacks() {
         let mut session = test_session_with_program(&[0xEF00_0008]);
         {
