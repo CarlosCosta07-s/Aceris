@@ -618,12 +618,29 @@ impl PicaFragmentRasterizer {
                     vertices[1].varying,
                     vertices[2].varying,
                 ];
+                // Barycentrics one pixel to the right and down give the texture
+                // coordinate derivatives that select the mip level.
+                let step_weights = |dx: f32, dy: f32| {
+                    let shifted = ScreenVertex {
+                        x: point.x + dx,
+                        y: point.y + dy,
+                        ..point
+                    };
+                    [
+                        orient(vertices[1], vertices[2], shifted) / area,
+                        orient(vertices[2], vertices[0], shifted) / area,
+                        orient(vertices[0], vertices[1], shifted) / area,
+                    ]
+                    .map(|weight| weight as f32)
+                };
                 let shade_fragment = || {
                     pipeline
-                        .shade_triangle_sample(
+                        .shade_triangle_sample_with_derivatives(
                             memory,
                             varyings,
                             weights.map(|weight| weight as f32),
+                            step_weights(1.0, 0.0),
+                            step_weights(0.0, 1.0),
                             state.minifying,
                         )
                         .map_err(PicaFragmentRasterError::Fragment)
@@ -1207,6 +1224,74 @@ mod tests {
         assert_eq!(report.covered_pixels, 7);
         assert_ne!(rasterizer.color_at(0, 7), Some([0, 0, 0, 0]));
         assert_eq!(rasterizer.color_at(0, 6), Some([0, 0, 0, 0]));
+    }
+
+    /// Draws the reference triangle with texture unit 0 (Intensity8) mapped
+    /// over the whole target and returns the shaded red channel at pixel (1, 6).
+    fn textured_red(texture_size: u16, max_level: u32) -> u8 {
+        let mut pica = super::super::Pica200::new();
+        configure_tev(&mut pica);
+        pica.write_register(TEXENV_STAGE_SOURCE_REGISTERS[0], 3 | (3 << 16))
+            .unwrap();
+        let texture_address = VRAM_BASE + 0x1_0000;
+        pica.write_register(REG_TEXUNIT_CONFIG, 1).unwrap();
+        pica.write_register(
+            0x082,
+            (u32::from(texture_size) << 16) | u32::from(texture_size),
+        )
+        .unwrap();
+        pica.write_register(0x083, 0).unwrap();
+        pica.write_register(0x084, max_level << 16).unwrap();
+        pica.write_register(0x085, texture_address >> 3).unwrap();
+        pica.write_register(0x08E, 7).unwrap();
+        let pipeline = pica.fragment_pipeline().unwrap();
+
+        // Mip chain: each level is filled with a distinct intensity.
+        let mut memory = GpuPhysicalMemory::new();
+        let mut address = texture_address;
+        let mut size = u32::from(texture_size);
+        for level in 0..=max_level {
+            let bytes = (size.div_ceil(8) * size.div_ceil(8) * 64) as usize;
+            memory
+                .write(address, &vec![10 + 80 * level as u8; bytes])
+                .unwrap();
+            address += bytes as u32;
+            size = (size / 2).max(1);
+        }
+
+        let target =
+            PicaRenderTargetConfig::from_registers(VRAM_BASE >> 3, 2, 0, 8 | (7 << 12) | (1 << 24))
+                .unwrap();
+        let mut rasterizer =
+            PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
+        let mut corners = [
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], [1.0; 4]),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], [1.0; 4]),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], [1.0; 4]),
+        ];
+        corners[0].texture_coordinates[0] = [0.0, 0.0];
+        corners[1].texture_coordinates[0] = [1.0, 0.0];
+        corners[2].texture_coordinates[0] = [0.0, 1.0];
+        let state = PicaFragmentRasterState::new(
+            Matrix4::identity(),
+            Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+        );
+        rasterizer
+            .draw(&draw(corners), &pipeline, &memory, state)
+            .unwrap();
+        rasterizer.color_at(1, 6).unwrap()[0]
+    }
+
+    #[test]
+    fn minified_texture_samples_the_mip_level_chosen_by_screen_derivatives() {
+        // 8x8 texture on 8 pixels: 1 texel per pixel, level 0 (value 10).
+        assert_eq!(textured_red(8, 0), 10);
+        // 64x64 on 8 pixels: 8 texels per pixel -> LOD 3 -> level 3 (value 250).
+        assert_eq!(textured_red(64, 3), 250);
+        // Same minification without stored mip levels stays on level 0.
+        assert_eq!(textured_red(64, 0), 10);
+        // Fewer stored levels clamp the selection to the last one (level 2).
+        assert_eq!(textured_red(64, 2), 170);
     }
 
     #[test]

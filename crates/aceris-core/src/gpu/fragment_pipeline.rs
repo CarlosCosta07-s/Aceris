@@ -22,6 +22,9 @@ pub struct PicaFragmentVaryings {
     pub texture_coordinates: [[f32; 2]; 3],
     /// Caller-provided LOD classification for texture units 0, 1 and 2.
     pub minifying: [bool; 3],
+    /// Screen-derivative LOD per texture unit; `Some` takes precedence over
+    /// `minifying` and selects mip levels through `PicaTextureUnit::sample_lod`.
+    pub texture_lod: [Option<f32>; 3],
 }
 
 impl Default for PicaFragmentVaryings {
@@ -32,6 +35,7 @@ impl Default for PicaFragmentVaryings {
             fragment_secondary_color: [0.0; 4],
             texture_coordinates: [[0.0; 2]; 3],
             minifying: [false; 3],
+            texture_lod: [None; 3],
         }
     }
 }
@@ -260,9 +264,11 @@ impl PicaFragmentPipeline {
                 index
             };
             let [s, t] = varyings.texture_coordinates[coordinate_index];
-            inputs.textures[index] = unit
-                .sample(memory, s, t, varyings.minifying[index])
-                .map_err(PicaFragmentPipelineError::Texture)?;
+            inputs.textures[index] = match varyings.texture_lod[index] {
+                Some(lod) => unit.sample_lod(memory, s, t, lod),
+                None => unit.sample(memory, s, t, varyings.minifying[index]),
+            }
+            .map_err(PicaFragmentPipelineError::Texture)?;
         }
 
         self.texture_environment
@@ -282,67 +288,57 @@ impl PicaFragmentPipeline {
         barycentric: [f32; 3],
         minifying: [bool; 3],
     ) -> Result<[f32; 4], PicaFragmentSampleError> {
-        let weight_sum = barycentric.iter().sum::<f32>();
-        if barycentric.iter().any(|value| !value.is_finite())
-            || !weight_sum.is_finite()
-            || weight_sum.abs() <= f32::EPSILON
-        {
-            return Err(PicaFragmentSampleError::Interpolation(
-                PicaFragmentInterpolationError::InvalidBarycentricCoordinates,
-            ));
-        }
+        let varyings = interpolate_triangle_varyings(vertices, barycentric, minifying)?;
+        self.shade_fragment(memory, &varyings)
+            .map_err(PicaFragmentSampleError::Pipeline)
+    }
 
-        let weights = barycentric.map(|value| value / weight_sum);
-        let mut reciprocal_w = [0.0; 3];
-        for (index, vertex) in vertices.iter().enumerate() {
-            let w = vertex.clip_position[3];
-            if !w.is_finite() || w <= 0.0 {
-                return Err(PicaFragmentSampleError::Interpolation(
-                    PicaFragmentInterpolationError::InvalidClipW { vertex: index },
-                ));
+    /// Like [`Self::shade_triangle_sample`], but derives each texture unit's
+    /// level of detail from screen-space derivatives.
+    ///
+    /// `barycentric_dx` and `barycentric_dy` are the barycentric coordinates of
+    /// the pixels one step to the right and one step down. The LOD is the log2
+    /// of the larger of the two coordinate steps measured in texels. A unit
+    /// whose neighbouring samples cannot be interpolated falls back to the
+    /// `minifying` flag. Derivative noise below `LOD_EPSILON` counts as zero.
+    pub fn shade_triangle_sample_with_derivatives(
+        &self,
+        memory: &GpuPhysicalMemory,
+        vertices: [PicaFragmentVertex; 3],
+        barycentric: [f32; 3],
+        barycentric_dx: [f32; 3],
+        barycentric_dy: [f32; 3],
+        minifying: [bool; 3],
+    ) -> Result<[f32; 4], PicaFragmentSampleError> {
+        let mut varyings = interpolate_triangle_varyings(vertices, barycentric, minifying)?;
+        let neighbours = (
+            interpolate_triangle_varyings(vertices, barycentric_dx, minifying),
+            interpolate_triangle_varyings(vertices, barycentric_dy, minifying),
+        );
+        if let (Ok(dx), Ok(dy)) = neighbours {
+            for (index, unit) in self.texture_units.iter().enumerate() {
+                if !unit.enabled {
+                    continue;
+                }
+                let coordinate = if index == 2 {
+                    self.texture2_coordinate_index
+                } else {
+                    index
+                };
+                let [s, t] = varyings.texture_coordinates[coordinate];
+                let step = |other: [f32; 2]| {
+                    let ds = (other[0] - s) * f32::from(unit.width);
+                    let dt = (other[1] - t) * f32::from(unit.height);
+                    ds.hypot(dt)
+                };
+                let longest = step(dx.texture_coordinates[coordinate])
+                    .max(step(dy.texture_coordinates[coordinate]));
+                if longest.is_finite() {
+                    let lod = longest.max(f32::MIN_POSITIVE).log2();
+                    varyings.texture_lod[index] = Some(if lod < LOD_EPSILON { 0.0 } else { lod });
+                }
             }
-            reciprocal_w[index] = 1.0 / w;
         }
-
-        let denominator = (0..3)
-            .map(|index| weights[index] * reciprocal_w[index])
-            .sum::<f32>();
-        if !denominator.is_finite() || denominator.abs() <= f32::EPSILON {
-            return Err(PicaFragmentSampleError::Interpolation(
-                PicaFragmentInterpolationError::InvalidPerspectiveDenominator,
-            ));
-        }
-
-        let interpolate4 = |select: fn(&PicaFragmentVertex) -> [f32; 4]| {
-            std::array::from_fn(|lane| {
-                (0..3)
-                    .map(|index| {
-                        weights[index] * reciprocal_w[index] * select(&vertices[index])[lane]
-                    })
-                    .sum::<f32>()
-                    / denominator
-            })
-        };
-        let interpolate2 = |coordinate: usize| {
-            std::array::from_fn(|lane| {
-                (0..3)
-                    .map(|index| {
-                        weights[index]
-                            * reciprocal_w[index]
-                            * vertices[index].texture_coordinates[coordinate][lane]
-                    })
-                    .sum::<f32>()
-                    / denominator
-            })
-        };
-
-        let varyings = PicaFragmentVaryings {
-            primary_color: interpolate4(|vertex| vertex.primary_color),
-            fragment_primary_color: interpolate4(|vertex| vertex.fragment_primary_color),
-            fragment_secondary_color: interpolate4(|vertex| vertex.fragment_secondary_color),
-            texture_coordinates: [interpolate2(0), interpolate2(1), interpolate2(2)],
-            minifying,
-        };
         self.shade_fragment(memory, &varyings)
             .map_err(PicaFragmentSampleError::Pipeline)
     }
@@ -500,6 +496,78 @@ impl std::fmt::Display for PicaFragmentPipelineError {
 }
 
 impl std::error::Error for PicaFragmentPipelineError {}
+
+/// Derivative noise below this LOD is treated as exact 1:1 sampling.
+const LOD_EPSILON: f32 = 1.0e-3;
+
+/// Perspective-correct interpolation of one triangle sample.
+fn interpolate_triangle_varyings(
+    vertices: [PicaFragmentVertex; 3],
+    barycentric: [f32; 3],
+    minifying: [bool; 3],
+) -> Result<PicaFragmentVaryings, PicaFragmentSampleError> {
+    let weight_sum = barycentric.iter().sum::<f32>();
+    if barycentric.iter().any(|value| !value.is_finite())
+        || !weight_sum.is_finite()
+        || weight_sum.abs() <= f32::EPSILON
+    {
+        return Err(PicaFragmentSampleError::Interpolation(
+            PicaFragmentInterpolationError::InvalidBarycentricCoordinates,
+        ));
+    }
+
+    let weights = barycentric.map(|value| value / weight_sum);
+    let mut reciprocal_w = [0.0; 3];
+    for (index, vertex) in vertices.iter().enumerate() {
+        let w = vertex.clip_position[3];
+        if !w.is_finite() || w <= 0.0 {
+            return Err(PicaFragmentSampleError::Interpolation(
+                PicaFragmentInterpolationError::InvalidClipW { vertex: index },
+            ));
+        }
+        reciprocal_w[index] = 1.0 / w;
+    }
+
+    let denominator = (0..3)
+        .map(|index| weights[index] * reciprocal_w[index])
+        .sum::<f32>();
+    if !denominator.is_finite() || denominator.abs() <= f32::EPSILON {
+        return Err(PicaFragmentSampleError::Interpolation(
+            PicaFragmentInterpolationError::InvalidPerspectiveDenominator,
+        ));
+    }
+
+    let interpolate4 = |select: fn(&PicaFragmentVertex) -> [f32; 4]| {
+        std::array::from_fn(|lane| {
+            (0..3)
+                .map(|index| weights[index] * reciprocal_w[index] * select(&vertices[index])[lane])
+                .sum::<f32>()
+                / denominator
+        })
+    };
+    let interpolate2 = |coordinate: usize| {
+        std::array::from_fn(|lane| {
+            (0..3)
+                .map(|index| {
+                    weights[index]
+                        * reciprocal_w[index]
+                        * vertices[index].texture_coordinates[coordinate][lane]
+                })
+                .sum::<f32>()
+                / denominator
+        })
+    };
+
+    let varyings = PicaFragmentVaryings {
+        primary_color: interpolate4(|vertex| vertex.primary_color),
+        fragment_primary_color: interpolate4(|vertex| vertex.fragment_primary_color),
+        fragment_secondary_color: interpolate4(|vertex| vertex.fragment_secondary_color),
+        texture_coordinates: [interpolate2(0), interpolate2(1), interpolate2(2)],
+        minifying,
+        texture_lod: [None; 3],
+    };
+    Ok(varyings)
+}
 
 #[cfg(test)]
 mod tests {

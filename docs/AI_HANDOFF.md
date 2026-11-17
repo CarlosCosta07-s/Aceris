@@ -1906,3 +1906,11 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Commit seguinte, sem integração: `crates/aceris-core/src/input.rs` (modelo de entrada: botões, circle pad, toque), ainda não ligado a `System`, ABI Android nem desktop.
 
 - `input.rs`: modelo comum de entrada (botões em ordem de hardware, circle pad ±156, toque 320x240, bordas press/release). Ainda não ligado a `System`, à ABI Android nem ao desktop; layout dos bits e faixas vêm de documentação pública, não verificados em hardware.
+
+## Texturas: formatos, mipmaps e LOD por derivadas
+
+- `texture.rs` (arquivo de outra sessão, alterado em coordenação com o pedido do mantenedor): novos formatos I4/A4/ETC1/ETC1A4; `PicaTextureUnit` ganhou `max_level`, `min_level` e `lod_bias_fixed` (campos públicos novos: quem construir a struct por literal precisa preenchê-los); `sample_lod` novo, `sample` continua no nível 0.
+- `fragment_pipeline.rs`: `PicaFragmentVaryings.texture_lod` (None por padrão), `shade_triangle_sample_with_derivatives` e o helper `interpolate_triangle_varyings`. `fragment_rasterizer.rs` passou a chamar a variante com derivadas; `state.minifying` vira fallback.
+- Ruído de derivada abaixo de 1e-3 em LOD conta como zero para preservar o caso 1:1.
+- Todas as premissas de layout listadas no ROADMAP são não verificadas em hardware; os testes de ETC1 usam blocos construídos por mim a partir da definição pública, não texturas reais.
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.
