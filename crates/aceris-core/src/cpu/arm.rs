@@ -3262,6 +3262,7 @@ mod tests {
             0x7FFF_FFFF,
             0xA5C3_7E19,
         ];
+        let mut memory = FlatMemory::new(0, 0x100);
 
         for shift_code in 0..4u32 {
             let kind = ShiftKind::from_bits(shift_code);
@@ -3283,7 +3284,6 @@ mod tests {
                             | (1 << 8)
                             | (shift_code << 5)
                             | (1 << 4);
-                        let mut memory = FlatMemory::new(0, 0x100);
                         cpu.execute_arm(&mut memory, instruction).unwrap();
 
                         let (expected, expected_carry) =
