@@ -802,6 +802,11 @@ mod tests {
 
         assert_eq!(list.commands, 1);
         assert_eq!(render.triangles_submitted, 1);
+        assert_eq!(render.executed_instructions, 15);
+        assert_eq!(gpu.vertex_shader_uniform(0), Some([0.25, 0.0, 0.0, -1.0]));
+        assert_eq!(gpu.vertex_shader_uniform(1), Some([0.0, 0.25, 0.0, -1.0]));
+        assert_eq!(gpu.vertex_shader_uniform(2), Some([0.0, 0.0, 1.0, 0.0]));
+        assert_eq!(gpu.vertex_shader_uniform(3), Some([0.0, 0.0, 0.0, 1.0]));
         assert!(render.pixels_written >= 28);
         assert_eq!(target_pixel(&memory, TARGET_A, 1, 6), [200, 100, 50, 255]);
         assert_eq!(target_pixel(&memory, TARGET_A, 6, 1), [0, 0, 0, 0]);
