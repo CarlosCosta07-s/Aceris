@@ -13,7 +13,8 @@
 //! multisample coverage remain separate work.
 
 use super::{
-    DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthMap, PicaDepthMode, PicaFragmentDraw,
+    DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthBufferConfig, PicaDepthBufferError,
+    PicaDepthMap, PicaDepthMode, PicaFragmentDraw,
     PicaFragmentDrawError, PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex,
     PicaRenderTargetConfig, PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw,
     PicaVertexOutputMap, SoftwareRasterizer, Viewport,
@@ -225,6 +226,39 @@ impl PicaFragmentRasterizer {
             color,
             depth,
         })
+    }
+
+    /// Loads guest depth values from a separately addressed PICA depth surface.
+    ///
+    /// The viewport/rasterizer uses top-left screen coordinates; the depth
+    /// plane follows the same logical row order as the PICA color target.
+    pub fn load_depth_buffer(
+        &mut self,
+        config: PicaDepthBufferConfig,
+        memory: &GpuPhysicalMemory,
+        clear_depth: f32,
+    ) -> Result<(), PicaFragmentRasterError> {
+        if usize::from(config.width) != self.width || usize::from(config.height) != self.height {
+            return Err(PicaFragmentRasterError::InvalidDimensions);
+        }
+        self.depth = config
+            .read_depth_values(memory, clear_depth)
+            .map_err(PicaFragmentRasterError::DepthBuffer)?;
+        Ok(())
+    }
+
+    /// Publishes the current depth plane into the guest's physical depth target.
+    pub fn write_depth_buffer(
+        &self,
+        config: PicaDepthBufferConfig,
+        memory: &mut GpuPhysicalMemory,
+    ) -> Result<u64, PicaFragmentRasterError> {
+        if usize::from(config.width) != self.width || usize::from(config.height) != self.height {
+            return Err(PicaFragmentRasterError::InvalidDimensions);
+        }
+        config
+            .write_depth_values(&self.depth, memory)
+            .map_err(PicaFragmentRasterError::DepthBuffer)
     }
 
     pub const fn width(&self) -> usize {
@@ -783,6 +817,7 @@ pub enum PicaFragmentRasterError {
     Draw(PicaFragmentDrawError),
     Fragment(PicaFragmentSampleError),
     FragmentOutput(super::PicaFragmentPipelineError),
+    DepthBuffer(PicaDepthBufferError),
     Rasterizer(super::RasterizerError),
     RenderTarget(PicaRenderTargetError),
 }
