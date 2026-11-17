@@ -15,6 +15,49 @@ pub const REG_BLEND_FUNC: u16 = 0x101;
 pub const REG_LOGIC_OP: u16 = 0x102;
 /// GPUREG_BLEND_COLOR.
 pub const REG_BLEND_COLOR: u16 = 0x103;
+/// GPUREG_FRAGOP_ALPHA_TEST.
+pub const REG_FRAGOP_ALPHA_TEST: u16 = 0x104;
+
+/// Alpha-test comparison configured by GPUREG_FRAGOP_ALPHA_TEST.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaAlphaTestFunction {
+    Never,
+    Always,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+}
+
+impl PicaAlphaTestFunction {
+    fn decode(value: u32) -> Self {
+        match value & 0x7 {
+            0 => Self::Never,
+            1 => Self::Always,
+            2 => Self::Equal,
+            3 => Self::NotEqual,
+            4 => Self::Less,
+            5 => Self::LessEqual,
+            6 => Self::Greater,
+            _ => Self::GreaterEqual,
+        }
+    }
+
+    fn compare(self, alpha: u8, reference: u8) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Always => true,
+            Self::Equal => alpha == reference,
+            Self::NotEqual => alpha != reference,
+            Self::Less => alpha < reference,
+            Self::LessEqual => alpha <= reference,
+            Self::Greater => alpha > reference,
+            Self::GreaterEqual => alpha >= reference,
+        }
+    }
+}
 
 /// Supported fixed-function fragment operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,6 +274,9 @@ pub struct PicaFragmentOutputState {
     pub alpha_destination_factor: PicaBlendFactor,
     pub logic_operation: PicaLogicOperation,
     pub constant_color: [u8; 4],
+    pub alpha_test_enabled: bool,
+    pub alpha_test_function: PicaAlphaTestFunction,
+    pub alpha_test_reference: u8,
 }
 
 impl PicaFragmentOutputState {
@@ -252,6 +298,8 @@ impl PicaFragmentOutputState {
         };
 
         let blend_color = pica.register(REG_BLEND_COLOR).unwrap_or(0);
+        let alpha_test = pica.register(REG_FRAGOP_ALPHA_TEST).unwrap_or(0);
+        let alpha_test_enabled = alpha_test & 1 != 0;
         let (
             rgb_equation,
             alpha_equation,
@@ -300,7 +348,33 @@ impl PicaFragmentOutputState {
                 (blend_color >> 16) as u8,
                 (blend_color >> 24) as u8,
             ],
+            alpha_test_enabled,
+            alpha_test_function: if alpha_test_enabled {
+                PicaAlphaTestFunction::decode(alpha_test >> 4)
+            } else {
+                PicaAlphaTestFunction::Always
+            },
+            alpha_test_reference: (alpha_test >> 8) as u8,
         })
+    }
+
+    /// Tests fragment alpha before depth/stencil and color operations.
+    ///
+    /// The PICA alpha reference is 8-bit, so fragment alpha is quantized to
+    /// target precision before comparison.
+    pub fn alpha_test_passes(&self, alpha: f32) -> Result<bool, PicaFragmentOutputError> {
+        if !alpha.is_finite() {
+            return Err(PicaFragmentOutputError::NonFiniteColor {
+                name: "source",
+                channel: 3,
+            });
+        }
+        if !self.alpha_test_enabled {
+            return Ok(true);
+        }
+        Ok(self
+            .alpha_test_function
+            .compare(to_u8(alpha), self.alpha_test_reference))
     }
 
     /// Applies blend/logic operations to one normalized source/destination RGBA pair.
@@ -491,6 +565,9 @@ mod tests {
             alpha_destination_factor: PicaBlendFactor::Zero,
             logic_operation: PicaLogicOperation::Copy,
             constant_color: [0; 4],
+            alpha_test_enabled: false,
+            alpha_test_function: PicaAlphaTestFunction::Always,
+            alpha_test_reference: 0,
         };
         assert_eq!(
             state
@@ -584,6 +661,26 @@ mod tests {
                 value: 15
             })
         );
+    }
+
+    #[test]
+    fn decodes_and_applies_guest_configured_alpha_test_functions() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_FRAGOP_ALPHA_TEST, 1 | (4 << 4) | (128 << 8))
+            .unwrap();
+        let mut state = PicaFragmentOutputState::from_pica(&pica).unwrap();
+        assert!(state.alpha_test_enabled);
+        assert_eq!(state.alpha_test_function, PicaAlphaTestFunction::Less);
+        assert_eq!(state.alpha_test_reference, 128);
+        assert!(state.alpha_test_passes(127.0 / 255.0).unwrap());
+        assert!(!state.alpha_test_passes(128.0 / 255.0).unwrap());
+
+        state.alpha_test_function = PicaAlphaTestFunction::GreaterEqual;
+        assert!(state.alpha_test_passes(128.0 / 255.0).unwrap());
+        state.alpha_test_function = PicaAlphaTestFunction::Never;
+        assert!(!state.alpha_test_passes(1.0).unwrap());
+        state.alpha_test_function = PicaAlphaTestFunction::Always;
+        assert!(state.alpha_test_passes(0.0).unwrap());
     }
 
     #[test]
