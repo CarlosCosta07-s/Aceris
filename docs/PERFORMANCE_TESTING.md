@@ -131,10 +131,18 @@ Com a depuração USB habilitada e `adb` disponível no PC, copie o executável 
 
 ```sh
 adb devices
+adb shell getprop ro.product.cpu.abi
 adb push aceris-benchmark /data/local/tmp/aceris-benchmark
 adb push "/caminho/para/seu-jogo.cia" /data/local/tmp/seu-jogo.cia
 adb shell chmod 700 /data/local/tmp/aceris-benchmark
-adb shell /data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300
+adb shell /data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300 > aceris-android-report.txt 2>&1
+```
+
+O valor de `ro.product.cpu.abi` deve incluir `arm64-v8a`. Para salvar o relatório diretamente no telefone e copiá-lo depois:
+
+```sh
+adb shell '/data/local/tmp/aceris-benchmark /data/local/tmp/seu-jogo.cia --warmup 30 --frames 300 > /data/local/tmp/aceris-report.txt 2>&1'
+adb pull /data/local/tmp/aceris-report.txt .
 ```
 
 O programa executa no processador ARM64 do telefone, sem emulação de CPU do host e sem depender de uma Activity Android. O arquivo do jogo permanece no aparelho. Para repetir com o mesmo título no PC, use exatamente o mesmo arquivo e as mesmas opções.
