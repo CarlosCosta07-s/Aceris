@@ -16,8 +16,8 @@ use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthBufferConfig, PicaDepthBufferError,
     PicaDepthBufferFormat, PicaDepthMap, PicaDepthMode, PicaFragmentDraw, PicaFragmentDrawError,
     PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex, PicaRenderTargetConfig,
-    PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw, PicaVertexOutputMap,
-    SoftwareRasterizer, Viewport,
+    PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw, PicaStencilState,
+    PicaVertexOutputMap, SoftwareRasterizer, Viewport,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
@@ -144,6 +144,8 @@ pub struct PicaFragmentRasterState {
     pub color_write_mask: [bool; 4],
     /// Depth writes require the guest's depth/color mask and depth-write access.
     pub depth_write_enabled: bool,
+    /// Whether guest permission allows physical stencil updates.
+    pub stencil_write_enabled: bool,
     /// Precision used by the physical depth target, if one is configured.
     pub depth_format: Option<PicaDepthBufferFormat>,
     /// Guest PICA depth-map scale/offset and Z/W-buffer selection.
@@ -161,6 +163,7 @@ impl PicaFragmentRasterState {
             depth_function: DepthFunction::Less,
             color_write_mask: [true; 4],
             depth_write_enabled: true,
+            stencil_write_enabled: false,
             depth_format: None,
             depth_map: None,
             minifying: [false; 3],
@@ -176,6 +179,7 @@ pub struct PicaFragmentRasterReport {
     pub covered_pixels: u64,
     pub alpha_rejected_pixels: u64,
     pub depth_rejected_pixels: u64,
+    pub stencil_rejected_pixels: u64,
     pub shaded_pixels: u64,
     pub executed_instructions: u64,
 }
@@ -187,6 +191,7 @@ pub struct PicaFragmentRasterizer {
     height: usize,
     color: Vec<u8>,
     depth: Vec<f32>,
+    stencil: Vec<u8>,
 }
 
 impl PicaFragmentRasterizer {
@@ -222,12 +227,18 @@ impl PicaFragmentRasterizer {
             .try_reserve_exact(pixel_count)
             .map_err(|_| PicaFragmentRasterError::AllocationFailed)?;
         depth.resize(pixel_count, clear_depth);
+        let mut stencil = Vec::new();
+        stencil
+            .try_reserve_exact(pixel_count)
+            .map_err(|_| PicaFragmentRasterError::AllocationFailed)?;
+        stencil.resize(pixel_count, 0);
 
         Ok(Self {
             width,
             height,
             color,
             depth,
+            stencil,
         })
     }
 
@@ -249,6 +260,11 @@ impl PicaFragmentRasterizer {
         self.depth = config
             .read_depth_values(memory, clear_depth)
             .map_err(PicaFragmentRasterError::DepthBuffer)?;
+        let stencil_count = self.width * self.height;
+        self.stencil = config
+            .read_stencil_values(memory)
+            .map_err(PicaFragmentRasterError::DepthBuffer)?
+            .unwrap_or_else(|| vec![0; stencil_count]);
         Ok(())
     }
 
@@ -263,9 +279,21 @@ impl PicaFragmentRasterizer {
         {
             return Err(PicaFragmentRasterError::InvalidDimensions);
         }
-        config
+        let depth_bytes = config
             .write_depth_values(&self.depth, memory)
-            .map_err(PicaFragmentRasterError::DepthBuffer)
+            .map_err(PicaFragmentRasterError::DepthBuffer)?;
+        let stencil_bytes = if config.format == PicaDepthBufferFormat::D24S8 {
+            config
+                .write_stencil_values(&self.stencil, memory)
+                .map_err(PicaFragmentRasterError::DepthBuffer)?
+        } else {
+            0
+        };
+        Ok(depth_bytes.saturating_add(stencil_bytes))
+    }
+
+    pub fn stencil_buffer(&self) -> &[u8] {
+        &self.stencil
     }
 
     pub const fn width(&self) -> usize {
@@ -305,6 +333,7 @@ impl PicaFragmentRasterizer {
             pixel.copy_from_slice(&color);
         }
         self.depth.fill(depth);
+        self.stencil.fill(0);
         Ok(())
     }
 
@@ -591,11 +620,27 @@ impl PicaFragmentRasterizer {
                     None
                 };
 
+                let stencil_state = pipeline.stencil_state();
+                let stored_stencil = self.stencil[pixel_index];
+                if stencil_state.enabled && !stencil_state.test_passes(stored_stencil) {
+                    if state.stencil_write_enabled {
+                        self.stencil[pixel_index] =
+                            stencil_state.apply(stencil_state.stencil_fail, stored_stencil);
+                    }
+                    report.stencil_rejected_pixels =
+                        report.stencil_rejected_pixels.saturating_add(1);
+                    continue;
+                }
+
                 if !depth_passes(
                     state.depth_function,
                     fragment_depth,
                     self.depth[pixel_index],
                 ) {
+                    if stencil_state.enabled && state.stencil_write_enabled {
+                        self.stencil[pixel_index] =
+                            stencil_state.apply(stencil_state.depth_fail, stored_stencil);
+                    }
                     report.depth_rejected_pixels = report.depth_rejected_pixels.saturating_add(1);
                     continue;
                 }
@@ -614,6 +659,10 @@ impl PicaFragmentRasterizer {
                 let output = pipeline
                     .apply_fragment_output(source, destination)
                     .map_err(PicaFragmentRasterError::FragmentOutput)?;
+                if stencil_state.enabled && state.stencil_write_enabled {
+                    self.stencil[pixel_index] =
+                        stencil_state.apply(stencil_state.depth_pass, stored_stencil);
+                }
                 for (channel, enabled) in state.color_write_mask.iter().copied().enumerate() {
                     if enabled {
                         self.color[color_offset + channel] = output[channel];
