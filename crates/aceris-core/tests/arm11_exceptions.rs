@@ -831,7 +831,7 @@ fn thumb_stmia_translation_abort_on_third_or_fourth_beat_keeps_completed_stores(
 
 #[test]
 fn thumb_ldmia_full_low_register_list_translation_abort_is_atomic() {
-    const REGISTER_LIST: u32 = 0xFF; // r0-r7; r0 is the lowest register and base.
+    const REGISTER_LIST: u16 = 0xFF; // r0-r7; r0 is the lowest register and base.
     const TRANSFER_COUNT: u32 = 8;
     const FAULT_ADDRESS: u32 = 0x0010_0000;
     let base = FAULT_ADDRESS - (TRANSFER_COUNT - 1) * 4;
@@ -879,7 +879,7 @@ fn thumb_ldmia_full_low_register_list_translation_abort_is_atomic() {
 
 #[test]
 fn thumb_stmia_full_low_register_list_translation_abort_keeps_completed_stores() {
-    const REGISTER_LIST: u32 = 0xFF; // r0-r7; r0 is the lowest register and base.
+    const REGISTER_LIST: u16 = 0xFF; // r0-r7; r0 is the lowest register and base.
     const TRANSFER_COUNT: u32 = 8;
     const FAULT_ADDRESS: u32 = 0x0010_0000;
     let base = FAULT_ADDRESS - (TRANSFER_COUNT - 1) * 4;
