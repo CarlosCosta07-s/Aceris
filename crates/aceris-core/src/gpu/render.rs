@@ -10,9 +10,9 @@
 use super::{
     DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex,
     GpuPhysicalMemory, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDrawExecError,
-    PicaDrawRequest, PicaOutputMapError, PicaRenderTargetConfig, PicaRenderTargetError,
-    PicaShadedDraw, PicaVertexOutputMap, PicaVertexShaderProgram, RasterizerError,
-    SoftwareRasterizer, Viewport,
+    PicaDepthBuffering, PicaDepthMap, PicaDepthMode, PicaDrawRequest, PicaOutputMapError,
+    PicaRenderTargetConfig, PicaRenderTargetError, PicaShadedDraw, PicaVertexOutputMap,
+    PicaVertexShaderProgram, RasterizerError, SoftwareRasterizer, Viewport,
 };
 
 /// Totals for one rendered draw.
@@ -222,18 +222,35 @@ impl PicaRenderSession {
             .render_target_config()
             .map_err(PicaRenderSessionError::Target)?;
         self.select_target(config, memory)?;
-        let configured_viewport = self.settings.pipeline.viewport();
+        let guest_viewport = pica.viewport_state();
+        let viewport_width = guest_viewport.half_width * 2.0;
+        let viewport_height = guest_viewport.half_height * 2.0;
+        // PICA's origin is bottom-left and its Y axis points upward. The
+        // software target uses a top-left origin with Y pointing downward.
+        let viewport_top =
+            config.height as f32 - (guest_viewport.origin_y as f32 + viewport_height);
+        let viewport = Viewport::new(
+            guest_viewport.origin_x as f32,
+            viewport_top,
+            viewport_width,
+            viewport_height,
+        )
+        .map_err(|error| PicaRenderSessionError::Render(PicaRenderError::Geometry(error)))?;
+        let guest_depth = pica.depth_state();
+        let depth_map = PicaDepthMap {
+            scale: guest_depth.scale,
+            offset: guest_depth.offset,
+            mode: match guest_depth.buffering {
+                PicaDepthBuffering::WBuffer => PicaDepthMode::WBuffer,
+                PicaDepthBuffering::ZBuffer => PicaDepthMode::ZBuffer,
+            },
+        };
         let target_pipeline = GeometryPipeline::new(
             self.settings.pipeline.transform(),
-            Viewport::new(
-                configured_viewport.x,
-                configured_viewport.y,
-                config.width as f32,
-                config.height as f32,
-            )
-            .map_err(|error| PicaRenderSessionError::Render(PicaRenderError::Geometry(error)))?,
+            viewport,
             self.settings.pipeline.depth_range(),
-        );
+        )
+        .with_pica_depth_map(depth_map);
         let program = pica.vertex_shader_program();
         let rasterizer = &mut self.active.as_mut().expect("target selected above").1;
         // Mark dirty first: triangles drawn before an error stay in the buffer.
