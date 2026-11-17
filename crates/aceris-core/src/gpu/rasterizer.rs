@@ -576,9 +576,15 @@ mod tests {
         };
         let mut rasterizer = SoftwareRasterizer::new(4, 4).unwrap();
         let triangle = [
-            vertex(0.0, 0.0, 0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
-            vertex(4.0, 0.0, 0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
-            vertex(0.0, 4.0, 0.5, [80, 90, 100, 255]).with_pica_depth_map(mapping),
+            vertex(0.0, 0.0, 0.5, [80, 90, 100, 255])
+                .with_reciprocal_w(0.5)
+                .with_pica_depth_map(mapping),
+            vertex(4.0, 0.0, 0.5, [80, 90, 100, 255])
+                .with_reciprocal_w(0.25)
+                .with_pica_depth_map(mapping),
+            vertex(0.0, 4.0, 0.5, [80, 90, 100, 255])
+                .with_reciprocal_w(1.0)
+                .with_pica_depth_map(mapping),
         ];
 
         rasterizer
@@ -601,10 +607,10 @@ mod tests {
                 .with_reciprocal_w(0.5)
                 .with_pica_depth_map(mapping),
             vertex(4.0, 0.0, 0.5, [80, 90, 100, 255])
-                .with_reciprocal_w(0.5)
+                .with_reciprocal_w(0.25)
                 .with_pica_depth_map(mapping),
             vertex(0.0, 4.0, 0.5, [80, 90, 100, 255])
-                .with_reciprocal_w(0.5)
+                .with_reciprocal_w(1.0)
                 .with_pica_depth_map(mapping),
         ];
 
@@ -612,7 +618,9 @@ mod tests {
             .draw_triangle(triangle, DepthFunction::Always)
             .unwrap();
 
-        assert_eq!(rasterizer.depth_at(0, 0), Some(1.0));
+        let actual_depth = rasterizer.depth_at(0, 0).unwrap();
+        let expected_depth = 0.5f32 / 0.53125;
+        assert!((actual_depth - expected_depth).abs() < 1.0e-6);
     }
 
     #[test]
