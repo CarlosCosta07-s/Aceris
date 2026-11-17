@@ -38,7 +38,7 @@ pub const REG_DEPTHMAP_OFFSET: u16 = 0x04E;
 /// PICA viewport origin; signed 10-bit X and Y fields.
 pub const REG_VIEWPORT_XY: u16 = 0x068;
 /// PICA depth-buffer mode: bit 0 selects Z buffering when set, W buffering otherwise.
-pub const REG_DEPTHMAP_MODE: u16 = 0x06D;
+pub const REG_DEPTHMAP_ENABLE: u16 = 0x06D;
 
 /// Decoded viewport data written by the guest through PICA registers.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -287,7 +287,7 @@ impl Pica200 {
     /// The scale and offset are float24 values. Bit zero of the mode register
     /// selects Z buffering when set and W buffering when clear.
     pub fn depth_state(&self) -> PicaDepthState {
-        let mode = self.register(REG_DEPTHMAP_MODE).unwrap_or(0);
+        let mode = self.register(REG_DEPTHMAP_ENABLE).unwrap_or(0);
         PicaDepthState {
             scale: Float24::from_bits(self.register(REG_DEPTHMAP_SCALE).unwrap_or(0)).to_f32(),
             offset: Float24::from_bits(self.register(REG_DEPTHMAP_OFFSET).unwrap_or(0)).to_f32(),
@@ -1206,7 +1206,7 @@ mod tests {
             }
         );
 
-        gpu.write_register(REG_DEPTHMAP_MODE, 1).unwrap();
+        gpu.write_register(REG_DEPTHMAP_ENABLE, 1).unwrap();
         assert_eq!(
             gpu.depth_state(),
             PicaDepthState {
