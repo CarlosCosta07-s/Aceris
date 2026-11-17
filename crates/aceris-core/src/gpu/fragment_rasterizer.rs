@@ -866,6 +866,9 @@ impl std::fmt::Display for PicaFragmentRasterError {
             Self::FragmentOutput(error) => {
                 write!(formatter, "PICA fragment output failed: {error}")
             }
+            Self::DepthBuffer(error) => {
+                write!(formatter, "PICA physical depth buffer failed: {error}")
+            }
             Self::Rasterizer(error) => {
                 write!(formatter, "PICA fragment output rasterizer failed: {error}")
             }
