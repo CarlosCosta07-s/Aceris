@@ -1782,3 +1782,17 @@ A revisão mais recente da CI que inclui também os artefatos de desktop precisa
 - Imagens de jogos e qualquer material de chave continuam locais; nada disso foi adicionado ao repositório ou CI.
 
 Os próximos passos dependem de executar o mesmo título localmente em PC e Android, comparar relatórios e usar PC/CPSR, motivos de parada, instruções, GSP e LCD para priorizar os bloqueios reais de compatibilidade.
+
+
+### Captura LCD pós-benchmark (ChatGPT, 17/11/2026)
+
+Extensão do benchmark isolado, a pedido do mantenedor:
+
+- O CLI aceita `--dump-lcd <DIR>` e exporta `top_left.png`, `top_right.png` e `bottom.png` após o período cronometrado.
+- A gravação PNG ocorre somente depois das amostras, portanto não entra no tempo médio/p50/p95/p99.
+- O mesmo código-fonte é compartilhado pelo exemplo desktop e pelo binário Android.
+- Documentação PC/ADB atualizada para coletar os relatórios e as superfícies.
+
+Arquivos alterados nesta extensão: somente `crates/aceris-core/examples/benchmark.rs` e `docs/PERFORMANCE_TESTING.md`. A CI associada aos commits de captura ainda precisa confirmar Rustfmt, Clippy, testes, build desktop e build Android ARM64 antes de declarar essa nova opção aprovada.
+
+Limite: as capturas mostram apenas o conteúdo das superfícies que o núcleo produziu ao final do benchmark; não equivalem à apresentação ao vivo no frontend nem demonstram correção de renderização do título.
