@@ -87,6 +87,9 @@ pub const SVC_DUPLICATE_HANDLE: u32 = 0x27;
 /// Query information about a process-local kernel object handle.
 pub const SVC_GET_HANDLE_INFO: u32 = 0x29;
 
+/// Query resource information about a process.
+pub const SVC_GET_PROCESS_INFO: u32 = 0x2B;
+
 /// Wait for one synchronization object.
 pub const SVC_WAIT_SYNCHRONIZATION1: u32 = 0x24;
 
@@ -198,6 +201,7 @@ mod tests {
             SVC_CLOSE_HANDLE,
             SVC_DUPLICATE_HANDLE,
             SVC_GET_HANDLE_INFO,
+            SVC_GET_PROCESS_INFO,
         ] {
             assert_eq!(
                 dispatcher.dispatch(number, &mut registers),
