@@ -247,35 +247,45 @@ impl PicaFragmentOutputState {
             PicaColorOperationMode::Logic
         };
 
-        let blend = pica.register(REG_BLEND_FUNC).unwrap_or(0);
         let blend_color = pica.register(REG_BLEND_COLOR).unwrap_or(0);
-        let logic = pica.register(REG_LOGIC_OP).unwrap_or(0);
+        let (rgb_equation, alpha_equation, rgb_source_factor, rgb_destination_factor,
+            alpha_source_factor, alpha_destination_factor, logic_operation) = match mode {
+            PicaColorOperationMode::Logic => (
+                PicaBlendEquation::Add,
+                PicaBlendEquation::Add,
+                PicaBlendFactor::One,
+                PicaBlendFactor::Zero,
+                PicaBlendFactor::One,
+                PicaBlendFactor::Zero,
+                PicaLogicOperation::decode(pica.register(REG_LOGIC_OP).unwrap_or(0) & 0xF)?,
+            ),
+            PicaColorOperationMode::Blend => {
+                let blend = pica.register(REG_BLEND_FUNC).unwrap_or(0);
+                (
+                    PicaBlendEquation::decode(PicaBlendChannel::Rgb, blend & 0x7)?,
+                    PicaBlendEquation::decode(
+                        PicaBlendChannel::Alpha,
+                        (blend >> 8) & 0x7,
+                    )?,
+                    PicaBlendFactor::decode(PicaBlendChannel::Rgb, (blend >> 16) & 0xF)?,
+                    PicaBlendFactor::decode(PicaBlendChannel::Rgb, (blend >> 20) & 0xF)?,
+                    PicaBlendFactor::decode(PicaBlendChannel::Alpha, (blend >> 24) & 0xF)?,
+                    PicaBlendFactor::decode(PicaBlendChannel::Alpha, (blend >> 28) & 0xF)?,
+                    PicaLogicOperation::Copy,
+                )
+            }
+        };
 
         Ok(Self {
             operation,
             mode,
-            rgb_equation: PicaBlendEquation::decode(PicaBlendChannel::Rgb, blend & 0x7)?,
-            alpha_equation: PicaBlendEquation::decode(
-                PicaBlendChannel::Alpha,
-                (blend >> 8) & 0x7,
-            )?,
-            rgb_source_factor: PicaBlendFactor::decode(
-                PicaBlendChannel::Rgb,
-                (blend >> 16) & 0xF,
-            )?,
-            rgb_destination_factor: PicaBlendFactor::decode(
-                PicaBlendChannel::Rgb,
-                (blend >> 20) & 0xF,
-            )?,
-            alpha_source_factor: PicaBlendFactor::decode(
-                PicaBlendChannel::Alpha,
-                (blend >> 24) & 0xF,
-            )?,
-            alpha_destination_factor: PicaBlendFactor::decode(
-                PicaBlendChannel::Alpha,
-                (blend >> 28) & 0xF,
-            )?,
-            logic_operation: PicaLogicOperation::decode(logic & 0xF)?,
+            rgb_equation,
+            alpha_equation,
+            rgb_source_factor,
+            rgb_destination_factor,
+            alpha_source_factor,
+            alpha_destination_factor,
+            logic_operation,
             constant_color: [
                 blend_color as u8,
                 (blend_color >> 8) as u8,
