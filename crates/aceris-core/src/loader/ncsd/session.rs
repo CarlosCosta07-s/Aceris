@@ -5143,7 +5143,10 @@ mod tests {
             SvcRunDisposition::Resume
         ));
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
-        assert_eq!(session.kernel_objects.mutex_owner(mutex), Some(MAIN_THREAD_ID));
+        assert_eq!(
+            session.kernel_objects.mutex_owner(mutex),
+            Some(MAIN_THREAD_ID)
+        );
         assert_eq!(
             session.kernel_objects.thread_is_terminated(target_handle),
             Some(true)
