@@ -6205,6 +6205,8 @@ mod tests {
         );
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
+        assert_eq!(render.alpha_rejected_pixels, 0);
+        assert_eq!(render.stencil_rejected_pixels, 0);
         assert!(render.pixels_written > 0);
 
         // The guest-published metadata reached the LCD controller.
