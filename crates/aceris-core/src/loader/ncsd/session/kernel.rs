@@ -118,6 +118,13 @@ pub enum KernelHandleError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+struct KernelThread {
+    id: ThreadId,
+    terminated: bool,
+    waiters: VecDeque<ThreadId>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 struct KernelEvent {
     reset_type: EventResetType,
     signaled: bool,
@@ -356,9 +363,51 @@ impl Arm11KernelObjectTable {
         }
     }
 
-    /// Inserts a newly created thread and returns its guest-visible handle.
+    /// Inserts a newly created, initially unsignaled thread object.
     pub fn insert_thread(&mut self, thread_id: ThreadId) -> Result<u32, KernelHandleError> {
-        self.insert(KernelObject::Thread(thread_id))
+        self.insert(KernelObject::Thread(KernelThread {
+            id: thread_id,
+            terminated: false,
+            waiters: VecDeque::new(),
+        }))
+    }
+
+    /// Marks a thread object signaled when its owning thread permanently exits.
+    ///
+    /// Thread objects are manual-reset synchronization objects: every waiter
+    /// is released, and future waits continue to succeed while the handle stays
+    /// open. A thread may have more than one handle in the process table.
+    pub fn signal_thread_exit(&mut self, thread_id: ThreadId) -> Vec<ThreadId> {
+        let mut awakened = Vec::new();
+        let mut handoffs = Vec::new();
+
+        for (handle, object) in self.objects.iter_mut() {
+            let KernelObject::Thread(thread) = object else {
+                continue;
+            };
+            if thread.id != thread_id {
+                continue;
+            }
+
+            thread.terminated = true;
+            for waiter in thread.waiters.drain(..) {
+                handoffs.push((waiter, *handle));
+                if !awakened.contains(&waiter) {
+                    awakened.push(waiter);
+                }
+            }
+        }
+
+        self.handoffs.extend(handoffs);
+        awakened
+    }
+
+    /// Returns whether a thread handle has observed permanent thread exit.
+    pub fn thread_is_terminated(&self, handle: u32) -> Option<bool> {
+        match self.objects.get(&handle) {
+            Some(KernelObject::Thread(thread)) => Some(thread.terminated),
+            _ => None,
+        }
     }
 
     /// Creates an unsignaled event and returns its guest-visible handle.
@@ -416,7 +465,7 @@ impl Arm11KernelObjectTable {
         }
 
         match self.objects.get(&handle) {
-            Some(KernelObject::Thread(thread_id)) => Some(*thread_id),
+            Some(KernelObject::Thread(thread)) => Some(thread.id),
             _ => None,
         }
     }
@@ -525,8 +574,8 @@ impl Arm11KernelObjectTable {
                 }
                 Ok(true)
             }
-            Some(KernelObject::Thread(_))
-            | Some(KernelObject::MemoryBlock(_))
+            Some(KernelObject::Thread(thread)) => Ok(thread.terminated),
+            Some(KernelObject::MemoryBlock(_))
             | Some(KernelObject::ServiceSession(_)) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
         }
@@ -558,11 +607,11 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Mutex(mutex)) => mutex.owner.is_none(),
                 Some(KernelObject::Semaphore(semaphore)) => semaphore.count > 0,
                 Some(KernelObject::Timer(timer)) => timer.signaled,
-                Some(
-                    KernelObject::Thread(_)
-                    | KernelObject::MemoryBlock(_)
-                    | KernelObject::ServiceSession(_),
-                ) => return Err(KernelHandleError::WrongType),
+                Some(KernelObject::Thread(thread)) => thread.terminated,
+                Some(KernelObject::MemoryBlock(_))
+                | Some(KernelObject::ServiceSession(_)) => {
+                    return Err(KernelHandleError::WrongType);
+                }
                 None => return Err(KernelHandleError::InvalidHandle),
             };
             all_ready &= ready;
@@ -597,6 +646,7 @@ impl Arm11KernelObjectTable {
                         timer.signaled = false;
                     }
                 }
+                // Thread objects are sticky: termination is never consumed.
                 KernelObject::Thread(_)
                 | KernelObject::MemoryBlock(_)
                 | KernelObject::ServiceSession(_) => {
@@ -619,8 +669,8 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Mutex(mutex)) => &mut mutex.waiters,
             Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
             Some(KernelObject::Timer(timer)) => &mut timer.waiters,
-            Some(KernelObject::Thread(_))
-            | Some(KernelObject::MemoryBlock(_))
+            Some(KernelObject::Thread(thread)) => &mut thread.waiters,
+            Some(KernelObject::MemoryBlock(_))
             | Some(KernelObject::ServiceSession(_)) => {
                 return Err(KernelHandleError::WrongType);
             }
@@ -649,8 +699,8 @@ impl Arm11KernelObjectTable {
                 KernelObject::Mutex(mutex) => &mut mutex.waiters,
                 KernelObject::Semaphore(semaphore) => &mut semaphore.waiters,
                 KernelObject::Timer(timer) => &mut timer.waiters,
-                KernelObject::Thread(_)
-                | KernelObject::MemoryBlock(_)
+                KernelObject::Thread(thread) => &mut thread.waiters,
+                KernelObject::MemoryBlock(_)
                 | KernelObject::ServiceSession(_) => continue,
             };
             let previous_len = waiters.len();
@@ -821,12 +871,8 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Event(event)) => !event.waiters.is_empty(),
             Some(KernelObject::Mutex(mutex)) => !mutex.waiters.is_empty(),
             Some(KernelObject::Semaphore(semaphore)) => !semaphore.waiters.is_empty(),
-            Some(KernelObject::Timer(timer)) => !timer.waiters.is_empty(),
-            Some(
-                KernelObject::Thread(_)
-                | KernelObject::MemoryBlock(_)
-                | KernelObject::ServiceSession(_),
-            ) => false,
+            Some(KernelObject::Thread(thread)) => !thread.waiters.is_empty(),
+            Some(KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_)) => false,
             None => return Err(KernelHandleError::InvalidHandle),
         };
         if has_waiters {
