@@ -960,8 +960,8 @@ impl Arm11CodeAddressSpace {
     }
 
     fn mpcore_scu_register_offset(&self, address: u32) -> Option<u32> {
-        let offset = address.checked_sub(crate::cpu::mpcore_scu::MPCORE_PRIVATE_MEMORY_BASE)?;
-        (offset < crate::cpu::mpcore_scu::SCU_REGISTER_WINDOW_SIZE).then_some(offset & !3)
+        let offset = address.checked_sub(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE)?;
+        (offset < crate::cpu::SCU_REGISTER_WINDOW_SIZE).then_some(offset & !3)
     }
 
     fn read_mpcore_scu_register(&self, address: u32) -> BusResult<u32> {
