@@ -515,7 +515,7 @@ impl Arm11KernelObjectTable {
             .flat_map(|handles| handles.iter().copied())
             .collect::<std::collections::BTreeSet<_>>();
         self.retired_objects
-            .retain(|handle, object| pinned_handles.contains(handle) || object_has_waiters(object));
+            .retain(|handle, object| pinned_handles.contains(handle) || object_has_internal_references(object));
     }
 
     /// Releases every mutex owned by a terminating thread.
@@ -559,6 +559,7 @@ impl Arm11KernelObjectTable {
             }
         }
 
+        self.collect_retired_objects();
         awakened
     }
 
@@ -1041,7 +1042,7 @@ impl Arm11KernelObjectTable {
             .objects
             .remove(&handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
-        let keep_alive = object_has_waiters(&object) || self.has_wait_all_reference(handle);
+        let keep_alive = object_has_internal_references(&object) || self.has_wait_all_reference(handle);
         if keep_alive {
             self.retired_objects.insert(handle, object);
         }
@@ -1106,11 +1107,13 @@ impl Arm11KernelObjectTable {
     }
 }
 
-fn object_has_waiters(object: &KernelObject) -> bool {
+fn object_has_internal_references(object: &KernelObject) -> bool {
     match object {
         KernelObject::Thread(thread) => !thread.waiters.is_empty(),
         KernelObject::Event(event) => !event.waiters.is_empty(),
-        KernelObject::Mutex(mutex) => !mutex.waiters.is_empty(),
+        // The current mutex owner is also an internal user of the object. A
+        // closed mutex must survive a handoff until that owner exits/releases it.
+        KernelObject::Mutex(mutex) => mutex.owner.is_some() || !mutex.waiters.is_empty(),
         KernelObject::Semaphore(semaphore) => !semaphore.waiters.is_empty(),
         KernelObject::Timer(timer) => !timer.waiters.is_empty(),
         KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_) => false,
@@ -1143,6 +1146,24 @@ mod tests {
         assert_eq!(table.thread_handle_count(target), 1);
         table.close_handle(handle).unwrap();
         assert_eq!(table.thread_handle_count(target), 0);
+    }
+
+    #[test]
+    fn retired_mutex_survives_owner_handoff_until_new_owner_exits() {
+        let owner = thread_id(2);
+        let waiter = thread_id(3);
+        let mut table = Arm11KernelObjectTable::default();
+        let mutex = table.insert_mutex(true, owner).unwrap();
+        table.enqueue_waiter(mutex, waiter).unwrap();
+
+        assert_eq!(table.close_handle(mutex), Ok(()));
+        assert_eq!(table.retained_object_count(), 1);
+
+        assert_eq!(table.release_owned_mutexes(owner), vec![waiter]);
+        assert_eq!(table.retained_object_count(), 1);
+
+        assert!(table.release_owned_mutexes(waiter).is_empty());
+        assert_eq!(table.retained_object_count(), 0);
     }
 
     #[test]
