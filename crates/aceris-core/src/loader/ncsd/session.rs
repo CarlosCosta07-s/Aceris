@@ -540,9 +540,36 @@ impl Arm11ProcessSession {
         )
     }
 
-    /// Closes a process-local handle through the kernel object table.
+    /// Closes a process-local handle and applies KThread last-handle semantics.
+    ///
+    /// A live thread is terminated when its final thread handle closes. An
+    /// exited thread's saved CPU context is reclaimed when its final handle
+    /// closes. Wait-all requests that refer to the closed handle are rechecked
+    /// and complete with InvalidHandle rather than retaining a dangling handle.
     pub fn close_handle(&mut self, handle: u32) -> std::result::Result<(), KernelHandleError> {
+        let thread_target = self.kernel_objects.thread_handle_target(handle);
+        if let Some(target) = thread_target {
+            if self.scheduler.thread_info(target).is_none() {
+                return Err(KernelHandleError::InvalidHandle);
+            }
+        }
+
         self.kernel_objects.close_handle(handle)?;
+        if let Some(target) = thread_target {
+            if self.kernel_objects.thread_handle_count(target) == 0 {
+                match self.scheduler.thread_info(target).map(|info| info.state) {
+                    Some(ThreadState::Exited) => {
+                        self.scheduler.reap_exited_thread(target);
+                    }
+                    Some(_) => {
+                        self.terminate_thread_context(target)
+                            .map_err(|_| KernelHandleError::InvalidHandle)?;
+                    }
+                    None => return Err(KernelHandleError::InvalidHandle),
+                }
+            }
+        }
+
         self.service_wait_all_waiters();
         Ok(())
     }
@@ -2452,19 +2479,53 @@ impl Arm11ProcessSession {
         &mut self,
         caller: ThreadId,
     ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
-        if let Some(core) = self.scheduler.core(caller) {
+        self.terminate_thread_context(caller)
+    }
+
+    /// Terminates a thread, abandons its kernel waits and mutexes, signals its
+    /// thread objects, then reclaims its CPU context when no thread handle
+    /// keeps that context observable.
+    fn terminate_thread_context(
+        &mut self,
+        target: ThreadId,
+    ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
+        let info = self
+            .scheduler
+            .thread_info(target)
+            .ok_or(ThreadSchedulerError::UnknownThread(target))?;
+        if info.state == ThreadState::Exited {
+            return Ok(self.scheduler.current_thread_id());
+        }
+
+        if let Some(core) = self.scheduler.core(target) {
             let tls = core.cp15().tpidruro();
             self.address_space.release_thread_local_storage(tls);
         }
 
-        // Commit the scheduler state transition before waking observers. A
-        // waiter must never observe a thread object as signaled while its
-        // target is still Running.
-        self.scheduler.exit_current()?;
-        let awakened = self.kernel_objects.signal_thread_exit(caller);
-        self.wake_synchronization_waiters(awakened);
+        // A forcibly closed thread may have been blocked on any wait shape.
+        // Remove it from all queues and bookkeeping before it can be reaped.
+        self.kernel_objects.remove_waiter(target);
+        self.kernel_objects.take_handoff(target);
+        self.wait_deadlines.remove(&target);
+        self.multi_waits.remove(&target);
+        self.wait_all_waits.remove(&target);
+
+        // Publish Exited before releasing resources or waking observers.
+        let next = self.scheduler.terminate_thread(target)?;
+
+        // 3DS ExitThread releases every mutex owned by the exiting thread.
+        let mutex_waiters = self.kernel_objects.release_owned_mutexes(target);
+        self.wake_synchronization_waiters(mutex_waiters);
+
+        let thread_waiters = self.kernel_objects.signal_thread_exit(target);
+        self.wake_synchronization_waiters(thread_waiters);
         self.service_wait_all_waiters();
-        Ok(self.scheduler.current_thread_id())
+
+        if target != MAIN_THREAD_ID && self.kernel_objects.thread_handle_count(target) == 0 {
+            self.scheduler.reap_exited_thread(target);
+        }
+
+        Ok(self.scheduler.current_thread_id().or(next))
     }
 
     /// Handles CreateMutex: r0 points to the output handle and r1 is initialLocked.
@@ -2980,6 +3041,15 @@ impl Arm11ProcessSession {
             .close_handle(handle)
             .map(|()| 0)
             .unwrap_or_else(kernel_handle_result_code);
+        // Closing the final handle to the calling thread terminates it. In
+        // that case there is no guest context to receive a return value.
+        if self.scheduler.core(caller).is_none() {
+            return if self.scheduler.current_thread_id().is_some() {
+                SvcRunDisposition::Resume
+            } else {
+                SvcRunDisposition::NoRunnableThread
+            };
+        }
         self.write_svc_result(caller, result)
     }
 
