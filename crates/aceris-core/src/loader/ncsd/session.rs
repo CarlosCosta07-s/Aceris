@@ -2625,7 +2625,7 @@ impl Arm11ProcessSession {
             .regs;
         let handles_address = registers[1];
         let count = registers[2] as i32;
-        let wait_all = registers[3] & 1 != 0;
+        let wait_all = registers[3] != 0;
         let timeout = (u64::from(registers[0]) | (u64::from(registers[4]) << 32)) as i64;
 
         // The raw SVC ABI returns the selected index in r1. Initialize it
@@ -5176,8 +5176,14 @@ mod tests {
         let stack_pointer = 0x0020_1F00;
         let timeout = (1_i64 << 32) + 100;
 
-        session.address_space.write32(out_address, 0xCAFE_BABE).unwrap();
-        session.address_space.write32(handles_address, first).unwrap();
+        session
+            .address_space
+            .write32(out_address, 0xCAFE_BABE)
+            .unwrap();
+        session
+            .address_space
+            .write32(handles_address, first)
+            .unwrap();
         session
             .address_space
             .write32(handles_address + 4, second)
@@ -5218,10 +5224,7 @@ mod tests {
         // selected index in r1 and stores it through the original C out pointer.
         session.signal_event_handle(second).unwrap();
         assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
-        assert_eq!(
-            (session.core().regs[0], session.core().regs[1]),
-            (0, 1)
-        );
+        assert_eq!((session.core().regs[0], session.core().regs[1]), (0, 1));
 
         let epilogue = session.run_instructions(5).unwrap();
         assert_eq!(epilogue.stop_reason, Arm11RunStopReason::Breakpoint(0));
@@ -5240,8 +5243,14 @@ mod tests {
         let stack_pointer = 0x0020_1F00;
         let timeout = -2_i64;
 
-        session.address_space.write32(out_address, 0xCAFE_BABE).unwrap();
-        session.address_space.write32(handles_address, event).unwrap();
+        session
+            .address_space
+            .write32(out_address, 0xCAFE_BABE)
+            .unwrap();
+        session
+            .address_space
+            .write32(handles_address, event)
+            .unwrap();
         session
             .address_space
             .write32(stack_pointer, timeout as u32)
@@ -5320,6 +5329,12 @@ mod tests {
         session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
         assert_eq!(session.core().regs[0], RESULT_INVALID_TIMEOUT);
         // The libctru wrapper stores r1 into *out even on failure.
+        assert_eq!(session.core().regs[1], 0);
+
+        wait_n_setup(&mut session, MAIN_THREAD_ID, &[first], -1);
+        session.scheduler.current_core_mut().unwrap().regs[1] = 0;
+        session.dispatch_svc(SVC_WAIT_SYNCHRONIZATION_N);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_POINTER);
         assert_eq!(session.core().regs[1], 0);
     }
 
