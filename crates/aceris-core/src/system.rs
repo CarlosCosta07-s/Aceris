@@ -5415,13 +5415,14 @@ mod tests {
         }
         let trigger = system.run_instructions(3).unwrap();
         assert_eq!(trigger.instructions_executed, 3);
+        let trigger_buffer = system
+            .ncsd_session()
+            .unwrap()
+            .current_tls_address()
+            .unwrap()
+            + ARM11_TLS_IPC_BUFFER_OFFSET;
         assert_eq!(
-            read_tls_ipc_response(
-                &mut system,
-                system.ncsd_session().unwrap().current_tls_address().unwrap()
-                    + ARM11_TLS_IPC_BUFFER_OFFSET,
-                2,
-            ),
+            read_tls_ipc_response(&mut system, trigger_buffer, 2),
             vec![0x000C_0040, 0]
         );
         let mut completed_queue_header = [0u8; GSP_GX_COMMAND_QUEUE_HEADER_SIZE];
