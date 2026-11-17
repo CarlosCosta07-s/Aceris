@@ -37,7 +37,7 @@ pub const REG_DEPTHMAP_SCALE: u16 = 0x04D;
 pub const REG_DEPTHMAP_OFFSET: u16 = 0x04E;
 /// PICA viewport origin; signed 10-bit X and Y fields.
 pub const REG_VIEWPORT_XY: u16 = 0x068;
-/// PICA depth-buffer mode: bit 0 selects Z buffering when set, W buffering otherwise.
+/// PICA depth-buffer control: the current model treats bit 0 as Z (1) / W (0).
 pub const REG_DEPTHMAP_ENABLE: u16 = 0x06D;
 
 /// Decoded viewport data written by the guest through PICA registers.
@@ -64,12 +64,12 @@ pub enum PicaDepthBuffering {
     ZBuffer,
 }
 
-/// Decoded guest controls for PICA depth mapping and interpolation.
+/// Decoded guest controls for PICA depth range mapping and interpolation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaDepthState {
-    /// Float24 scale applied when the depth transform is enabled.
+    /// Float24 depth-range scale applied to interpolated Z/W.
     pub scale: f32,
-    /// Float24 offset applied when the depth transform is enabled.
+    /// Float24 depth-range offset added after scaling Z/W.
     pub offset: f32,
     /// Z/W selection from register 0x06D.
     pub buffering: PicaDepthBuffering,
