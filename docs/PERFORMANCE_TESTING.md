@@ -27,6 +27,7 @@ Também são aceitos arquivos 3DSX e imagens NCSD `.3ds`/`.cci`, desde que o cam
 - `--warmup N`: chamadas descartadas antes da medição (padrão 15);
 - `--frames N`: chamadas medidas (padrão 120);
 - `--instruction-budget N`: limite de instruções por chamada (padrão igual a `DEFAULT_FRAME_INSTRUCTION_BUDGET`).
+- `--dump-lcd DIR`: salva `top_left.png`, `top_right.png` e `bottom.png` depois da medição, sem incluir a gravação no tempo reportado.
 
 No Windows PowerShell:
 
