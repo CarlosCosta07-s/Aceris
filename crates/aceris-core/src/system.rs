@@ -2944,9 +2944,28 @@ mod tests {
         assert_eq!(create_report.instructions_executed, 1);
         let child_id = system.ncsd_session().unwrap().current_thread_id().unwrap();
 
+        // Verify the child has the expected event handle and builds the
+        // infinite timeout in guest registers before entering WaitSynchronization1.
+        assert_eq!(
+            system.ncsd_session().unwrap().current_core().unwrap().regs[0],
+            event_handle
+        );
+        let low_timeout = system.run_instructions(1).unwrap();
+        assert_eq!(low_timeout.instructions_executed, 1);
+        assert_eq!(
+            system.ncsd_session().unwrap().current_core().unwrap().regs[2],
+            u32::MAX
+        );
+        let high_timeout = system.run_instructions(1).unwrap();
+        assert_eq!(high_timeout.instructions_executed, 1);
+        assert_eq!(
+            system.ncsd_session().unwrap().current_core().unwrap().regs[3],
+            u32::MAX
+        );
+
         // The child blocks in the real ARM11 WaitSynchronization1 SVC.
-        let wait_report = system.run_instructions(3).unwrap();
-        assert_eq!(wait_report.instructions_executed, 3);
+        let wait_report = system.run_instructions(1).unwrap();
+        assert_eq!(wait_report.instructions_executed, 1);
         let child_state = system
             .ncsd_session()
             .unwrap()
@@ -3170,7 +3189,9 @@ mod tests {
                     0xE584_9028, // STR r9, [r4, #40] (entry 1: ProcessCommandList)
                     0xE584_A02C, // STR r10, [r4, #44] (entry 1: command-list address)
                     0xE584_B030, // STR r11, [r4, #48] (entry 1: command-list size)
-                    0xE584_5000, // STR r5, [r4] (first VRAM command word)
+                    0xE584_C024, // STR r12, [r4, #36] (entry 0: flush command-list cache)
+                    0xE584_C044, // STR r12, [r4, #68] (entry 1: flush command-list cache)
+                    0xE584_5000, // STR r5, [r4] (first FCRAM command word)
                     0xE584_6004, // STR r6, [r4, #4] (first command header)
                     0xE584_7010, // STR r7, [r4, #16] (second VRAM command word)
                     0xE584_8014, // STR r8, [r4, #20] (second command header)
@@ -3339,8 +3360,9 @@ mod tests {
             assert!(session.set_current_register(9, 0x0000_0001));
             assert!(session.set_current_register(10, second_command_address));
             assert!(session.set_current_register(11, 8));
+            assert!(session.set_current_register(12, 1));
 
-            for _ in 0..7 {
+            for _ in 0..9 {
                 assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
             }
 
@@ -3366,6 +3388,8 @@ mod tests {
                 (40, 1),
                 (44, second_command_address),
                 (48, 8),
+                (36, 1),
+                (68, 1),
             ] {
                 assert_eq!(
                     session.read_memory_u32(queue_address + offset).unwrap(),
