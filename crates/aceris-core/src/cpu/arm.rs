@@ -2974,6 +2974,204 @@ mod tests {
     }
 
     #[test]
+    fn arm_immediate_operand2_exhaustively_covers_all_rotations_opcodes_and_carry_inputs() {
+        let mut cpu = Arm11Core::new();
+        let mut memory = FlatMemory::new(0, 0x1000);
+        let input_patterns = [0x7FFF_FFFF, 0x8000_0000, 0xFFFF_FFFF, 0x1234_5678];
+
+        for opcode in 0u32..16 {
+            let is_compare = (8..=11).contains(&opcode);
+            let rn = if matches!(opcode, 13 | 15) { 0 } else { 1 };
+            let rd = if is_compare { 0 } else { 2 };
+            let flag_forms: &[bool] = if is_compare { &[true] } else { &[false, true] };
+
+            for &set_flags in flag_forms {
+                for rotate in 0u32..16 {
+                    for immediate in 0u32..=0xFF {
+                        let operand = (immediate as u32).rotate_right(rotate * 2);
+                        let shifter_carry_changes = rotate != 0;
+                        for &carry_in in &[false, true] {
+                            for &a in &input_patterns {
+                                let initial_v = true;
+                                cpu.regs[0] = 0x1357_9BDF;
+                                cpu.regs[1] = a;
+                                cpu.regs[2] = 0xCAFE_BABE;
+                                cpu.cpsr.set_flags(true, false, carry_in, initial_v);
+                                cpu.set_pc(0);
+
+                                let word = 0xE200_0000
+                                    | (opcode << 21)
+                                    | (u32::from(set_flags) << 20)
+                                    | (rn << 16)
+                                    | (rd << 12)
+                                    | (rotate << 8)
+                                    | immediate;
+                                cpu.execute_arm(&mut memory, word).unwrap();
+
+                                let (expected, expected_flags) = match opcode {
+                                    0x0 | 0x8 => {
+                                        (a & operand, (false, false, false, initial_v))
+                                    }
+                                    0x1 | 0x9 => {
+                                        (a ^ operand, (false, false, false, initial_v))
+                                    }
+                                    0x2 | 0xA => {
+                                        let value = a.wrapping_sub(operand);
+                                        let overflow =
+                                            ((a ^ operand) & (a ^ value) & 0x8000_0000) != 0;
+                                        (
+                                            value,
+                                            (value >> 31 != 0, value == 0, a >= operand, overflow),
+                                        )
+                                    }
+                                    0x3 => {
+                                        let value = operand.wrapping_sub(a);
+                                        let overflow =
+                                            ((operand ^ a) & (operand ^ value) & 0x8000_0000) != 0;
+                                        (
+                                            value,
+                                            (
+                                                value >> 31 != 0,
+                                                value == 0,
+                                                operand >= a,
+                                                overflow,
+                                            ),
+                                        )
+                                    }
+                                    0x4 | 0xB => {
+                                        let wide = u64::from(a) + u64::from(operand);
+                                        let value = wide as u32;
+                                        let overflow =
+                                            (!(a ^ operand) & (a ^ value) & 0x8000_0000) != 0;
+                                        (
+                                            value,
+                                            (
+                                                value >> 31 != 0,
+                                                value == 0,
+                                                wide > u64::from(u32::MAX),
+                                                overflow,
+                                            ),
+                                        )
+                                    }
+                                    0x5 => {
+                                        let wide = u64::from(a)
+                                            + u64::from(operand)
+                                            + u64::from(carry_in);
+                                        let value = wide as u32;
+                                        let overflow =
+                                            (!(a ^ operand) & (a ^ value) & 0x8000_0000) != 0;
+                                        (
+                                            value,
+                                            (
+                                                value >> 31 != 0,
+                                                value == 0,
+                                                wide > u64::from(u32::MAX),
+                                                overflow,
+                                            ),
+                                        )
+                                    }
+                                    0x6 => {
+                                        let borrow = u64::from(!carry_in);
+                                        let rhs = u64::from(operand) + borrow;
+                                        let value = a.wrapping_sub(operand).wrapping_sub(borrow as u32);
+                                        let overflow =
+                                            ((a ^ operand) & (a ^ value) & 0x8000_0000) != 0;
+                                        (
+                                            value,
+                                            (
+                                                value >> 31 != 0,
+                                                value == 0,
+                                                u64::from(a) >= rhs,
+                                                overflow,
+                                            ),
+                                        )
+                                    }
+                                    0x7 => {
+                                        let borrow = u64::from(!carry_in);
+                                        let rhs = u64::from(a) + borrow;
+                                        let value = operand.wrapping_sub(a).wrapping_sub(borrow as u32);
+                                        let overflow =
+                                            ((operand ^ a) & (operand ^ value) & 0x8000_0000) != 0;
+                                        (
+                                            value,
+                                            (
+                                                value >> 31 != 0,
+                                                value == 0,
+                                                u64::from(operand) >= rhs,
+                                                overflow,
+                                            ),
+                                        )
+                                    }
+                                    0xC => (a | operand, (false, false, false, initial_v)),
+                                    0xD => (operand, (false, false, false, initial_v)),
+                                    0xE => (a & !operand, (false, false, false, initial_v)),
+                                    0xF => (!operand, (false, false, false, initial_v)),
+                                    _ => unreachable!(),
+                                };
+
+                                let shifter_carry = if shifter_carry_changes {
+                                    operand >> 31 != 0
+                                } else {
+                                    carry_in
+                                };
+                                let expected_flags = if matches!(opcode, 0 | 1 | 8 | 9 | 12 | 13 | 14 | 15) {
+                                    (
+                                        expected >> 31 != 0,
+                                        expected == 0,
+                                        shifter_carry,
+                                        initial_v,
+                                    )
+                                } else {
+                                    expected_flags
+                                };
+
+                                let old_destination = if is_compare {
+                                    Some(cpu.regs[rd as usize])
+                                } else {
+                                    None
+                                };
+                                if is_compare {
+                                    assert_eq!(cpu.regs[rd as usize], old_destination.unwrap());
+                                } else {
+                                    assert_eq!(
+                                        cpu.regs[rd as usize],
+                                        expected,
+                                        "opcode={opcode:#x} rotate={rotate} imm8={immediate:#04x} carry_in={carry_in} set_flags={set_flags} a={a:#010x}"
+                                    );
+                                }
+
+                                if set_flags {
+                                    assert_eq!(
+                                        (
+                                            cpu.cpsr.n(),
+                                            cpu.cpsr.z(),
+                                            cpu.cpsr.c(),
+                                            cpu.cpsr.v(),
+                                        ),
+                                        expected_flags,
+                                        "flags: opcode={opcode:#x} rotate={rotate} imm8={immediate:#04x} carry_in={carry_in} a={a:#010x}"
+                                    );
+                                } else {
+                                    assert_eq!(
+                                        (
+                                            cpu.cpsr.n(),
+                                            cpu.cpsr.z(),
+                                            cpu.cpsr.c(),
+                                            cpu.cpsr.v(),
+                                        ),
+                                        (true, false, carry_in, initial_v),
+                                        "S=0 must preserve NZCV"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn mov_immediate_then_add_registers() {
         // MOV r0,#1 ; MOV r1,#2 ; ADD r2,r0,r1
         let mut m = Machine::new(&[0xE3A0_0001, 0xE3A0_1002, 0xE080_2001]);
