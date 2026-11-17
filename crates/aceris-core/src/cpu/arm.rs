@@ -2988,7 +2988,7 @@ mod tests {
             for &set_flags in flag_forms {
                 for rotate in 0u32..16 {
                     for immediate in 0u32..=0xFF {
-                        let operand = (immediate as u32).rotate_right(rotate * 2);
+                        let operand = immediate.rotate_right(rotate * 2);
                         let shifter_carry_changes = rotate != 0;
                         for &carry_in in &[false, true] {
                             for &a in &input_patterns {
