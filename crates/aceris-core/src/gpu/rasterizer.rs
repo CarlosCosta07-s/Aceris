@@ -625,7 +625,9 @@ mod tests {
                 .with_pica_depth_map(mapping),
         ];
 
-        rasterizer.draw_triangle(triangle, DepthFunction::Always).unwrap();
+        rasterizer
+            .draw_triangle(triangle, DepthFunction::Always)
+            .unwrap();
 
         assert_eq!(rasterizer.depth_at(0, 0), Some(1.0));
     }
