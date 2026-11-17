@@ -524,7 +524,7 @@ impl Machine<'_> {
                 self.comparison_flags = [a[0] >= 0.0, a[3] >= 0.0];
                 [
                     if a[0] > 0.0 { a[0] } else { 0.0 },
-                    a[1].clamp(-127.996_093_75, 127.996_093_75),
+                    a[1].clamp(-127.996_09, 127.996_09),
                     0.0,
                     if a[3] > 0.0 { a[3] } else { 0.0 },
                 ]
@@ -540,8 +540,20 @@ impl Machine<'_> {
             }
             PicaShaderOpcode::Mova
             | PicaShaderOpcode::Cmp
+            | PicaShaderOpcode::Break
             | PicaShaderOpcode::Nop
-            | PicaShaderOpcode::End => unreachable!("handled by the caller"),
+            | PicaShaderOpcode::End
+            | PicaShaderOpcode::BreakC
+            | PicaShaderOpcode::Call
+            | PicaShaderOpcode::CallC
+            | PicaShaderOpcode::CallU
+            | PicaShaderOpcode::IfU
+            | PicaShaderOpcode::IfC
+            | PicaShaderOpcode::Loop
+            | PicaShaderOpcode::Emit
+            | PicaShaderOpcode::SetEmit
+            | PicaShaderOpcode::JmpC
+            | PicaShaderOpcode::JmpU => unreachable!("handled by the caller"),
         };
 
         let target = if destination < 0x10 {
@@ -1652,7 +1664,7 @@ mod tests {
         let result = program
             .run(0, &inputs([-1.0, 200.0, 3.0, 0.5], [0.0; 4]))
             .unwrap();
-        assert_eq!(result.outputs[0], [0.0, 127.996_093_75, 0.0, 0.5]);
+        assert_eq!(result.outputs[0], [0.0, 127.996_09, 0.0, 0.5]);
         assert_eq!(result.comparison_flags, [false, true]);
     }
 
