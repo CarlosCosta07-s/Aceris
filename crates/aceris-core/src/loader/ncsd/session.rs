@@ -2455,10 +2455,14 @@ impl Arm11ProcessSession {
                 let handle = match self.kernel_objects.insert_thread(id) {
                     Ok(handle) => handle,
                     Err(KernelHandleError::Exhausted) => {
+                        // CreateThread must be rolled back completely if no
+                        // kernel handle can be allocated for the new context.
+                        let _ = self.terminate_thread_context(id);
                         return self
                             .write_create_thread_error(caller, RESULT_OUT_OF_THREAD_RESOURCES);
                     }
                     Err(_) => {
+                        let _ = self.terminate_thread_context(id);
                         return self.write_create_thread_error(caller, RESULT_INVALID_HANDLE);
                     }
                 };
