@@ -58,7 +58,7 @@ pub use fragment_pipeline::{
 };
 pub use fragment_rasterizer::{
     PicaFragmentRasterError, PicaFragmentRasterReport, PicaFragmentRasterState,
-    PicaFragmentRasterizer,
+    PicaFragmentRasterizer, PicaFragmentVertexDefaults,
 };
 pub use geometry::{
     ClipDepthRange, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, Matrix4,
