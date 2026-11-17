@@ -52,6 +52,13 @@ impl PicaDepthBufferFormat {
         }
     }
 
+    /// Quantizes a fragment depth to the precision physically stored by this format.
+    pub fn quantize_depth(self, value: f32) -> f32 {
+        let value = value.clamp(0.0, 1.0);
+        let maximum = self.depth_max();
+        ((value * maximum as f32).round() as u32) as f32 / maximum as f32
+    }
+
     fn decode_depth(self, bytes: &[u8]) -> f32 {
         let value = match self {
             Self::D16 => u32::from(u16::from_le_bytes([bytes[0], bytes[1]])),
