@@ -1,9 +1,9 @@
 //! PICA200 framebuffer color-operation stage.
 //!
-//! This module models the color operation after TEV: fixed-function blending
-//! or per-channel logic operations. It intentionally accepts and returns
-//! normalized/8-bit RGBA values and does not yet model framebuffer formats
-//! other than RGBA8, alpha testing, stencil, or depth/color write masks.
+//! This module models the color operation after TEV: alpha/stencil tests,
+ //! fixed-function blending or per-channel logic operations. It accepts and
+//! returns normalized/8-bit RGBA values; framebuffer format conversion and
+//! physical depth/stencil storage are handled by their own GPU modules.
 
 use super::pica200::Pica200;
 
@@ -164,8 +164,10 @@ impl PicaStencilState {
         if !self.enabled {
             return true;
         }
-        self.function
-            .compare(self.reference & self.compare_mask, stored & self.compare_mask)
+        self.function.compare(
+            self.reference & self.compare_mask,
+            stored & self.compare_mask,
+        )
     }
 
     /// Applies an action and merges it through the guest's stencil write mask.
@@ -417,8 +419,6 @@ impl PicaFragmentOutputState {
         let blend_color = pica.register(REG_BLEND_COLOR).unwrap_or(0);
         let alpha_test = pica.register(REG_FRAGOP_ALPHA_TEST).unwrap_or(0);
         let alpha_test_enabled = alpha_test & 1 != 0;
-        let stencil_test = pica.register(REG_STENCIL_TEST).unwrap_or(0);
-        let stencil_operation = pica.register(REG_STENCIL_OP).unwrap_or(0);
         let stencil_test = pica.register(REG_STENCIL_TEST).unwrap_or(0);
         let stencil_operation = pica.register(REG_STENCIL_OP).unwrap_or(0);
         let (
@@ -845,11 +845,8 @@ mod tests {
             1 | (2 << 4) | (0x0F << 8) | (0xA5 << 16) | (0xF0 << 24),
         )
         .unwrap();
-        pica.write_register(
-            REG_STENCIL_OP,
-            2 | (3 << 4) | (7 << 8),
-        )
-        .unwrap();
+        pica.write_register(REG_STENCIL_OP, 2 | (3 << 4) | (7 << 8))
+            .unwrap();
 
         let state = PicaFragmentOutputState::from_pica(&pica).unwrap().stencil;
         assert!(state.enabled);
@@ -877,7 +874,10 @@ mod tests {
             depth_fail: PicaStencilOperation::Keep,
             depth_pass: PicaStencilOperation::Keep,
         };
-        assert_eq!(state.apply(PicaStencilOperation::IncrementClamp, 0xFF), 0xFF);
+        assert_eq!(
+            state.apply(PicaStencilOperation::IncrementClamp, 0xFF),
+            0xFF
+        );
         assert_eq!(state.apply(PicaStencilOperation::DecrementClamp, 0), 0);
         assert_eq!(state.apply(PicaStencilOperation::IncrementWrap, 0xFF), 0);
         assert_eq!(state.apply(PicaStencilOperation::DecrementWrap, 0), 0xFF);
