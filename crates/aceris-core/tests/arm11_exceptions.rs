@@ -1150,15 +1150,12 @@ fn a32_stm_full_register_list_translation_abort_keeps_completed_stores_in_all_mo
             (1, 0) => start + SIZE,
             _ => unreachable!(),
         };
-        let instruction =
-            0xE800_0000 | (pre_index << 24) | (up << 23) | (1 << 21) | REGISTER_LIST;
+        let instruction = 0xE800_0000 | (pre_index << 24) | (up << 23) | (1 << 21) | REGISTER_LIST;
         let (mut cpu, mut memory) = mmu_enabled_thumb_machine();
         memory.write32(0x100, instruction).unwrap();
 
         for index in 0..TRANSFER_COUNT - 1 {
-            memory
-                .write32(start + index * 4, 0xDEAD_BEEF)
-                .unwrap();
+            memory.write32(start + index * 4, 0xDEAD_BEEF).unwrap();
         }
 
         cpu.set_pc(0x100);
