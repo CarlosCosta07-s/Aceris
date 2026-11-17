@@ -140,4 +140,118 @@ mod tests {
         // 5 - 5 does not borrow.
         assert_eq!(add_with_carry(5, !5, true), (0, true, false));
     }
+
+    /// Independent bit-at-a-time oracle for the ARM register-controlled
+    /// barrel shifter. Stepping one bit at a time deliberately avoids using
+    /// the same rotate/shift primitives as the implementation under test.
+    fn reference_register_shift(
+        kind: ShiftKind,
+        value: u32,
+        amount: u32,
+        carry_in: bool,
+    ) -> (u32, bool) {
+        let mut result = value;
+        let mut carry = carry_in;
+        for _ in 0..amount {
+            match kind {
+                ShiftKind::Lsl => {
+                    carry = result >> 31 != 0;
+                    result <<= 1;
+                }
+                ShiftKind::Lsr => {
+                    carry = result & 1 != 0;
+                    result >>= 1;
+                }
+                ShiftKind::Asr => {
+                    carry = result & 1 != 0;
+                    result = ((result as i32) >> 1) as u32;
+                }
+                ShiftKind::Ror => {
+                    carry = result & 1 != 0;
+                    result = (u32::from(carry) << 31) | (result >> 1);
+                }
+            }
+        }
+        (result, carry)
+    }
+
+    #[test]
+    fn register_shifter_matches_bitwise_oracle_for_every_arm11_amount() {
+        let kinds = [Lsl, Lsr, Asr, Ror];
+        let mut values = vec![
+            0,
+            1,
+            2,
+            0x7FFF_FFFF,
+            0x8000_0000,
+            0x8000_0001,
+            0xFFFF_FFFE,
+            u32::MAX,
+            0x1234_5678,
+            0xA5C3_7E19,
+        ];
+        // Deterministic pseudo-random coverage without an external crate.
+        let mut state = 0x6D2B_79F5u32;
+        for _ in 0..64 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            values.push(state);
+        }
+
+        for kind in kinds {
+            for value in values.iter().copied() {
+                for amount in 0..=u8::MAX as u32 {
+                    for carry_in in [false, true] {
+                        assert_eq!(
+                            shift_reg(kind, value, amount, carry_in),
+                            reference_register_shift(kind, value, amount, carry_in),
+                            "kind={kind:?} value={value:#010x} amount={amount} carry_in={carry_in}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn immediate_shifter_matches_armv6_special_shift_encodings() {
+        let kinds = [Lsl, Lsr, Asr, Ror];
+        let values = [
+            0,
+            1,
+            2,
+            0x7FFF_FFFF,
+            0x8000_0000,
+            0x8000_0001,
+            0xFFFF_FFFE,
+            u32::MAX,
+            0x1234_5678,
+            0xA5C3_7E19,
+        ];
+
+        for kind in kinds {
+            for value in values {
+                for imm5 in 0..32 {
+                    for carry_in in [false, true] {
+                        let expected = match (kind, imm5) {
+                            (Lsl, 0) => (value, carry_in),
+                            (Lsr | Asr, 0) => {
+                                reference_register_shift(kind, value, 32, carry_in)
+                            }
+                            (Ror, 0) => (
+                                (u32::from(carry_in) << 31) | (value >> 1),
+                                value & 1 != 0,
+                            ),
+                            _ => reference_register_shift(kind, value, imm5, carry_in),
+                        };
+                        assert_eq!(
+                            shift_imm(kind, value, imm5, carry_in),
+                            expected,
+                            "kind={kind:?} value={value:#010x} imm5={imm5} carry_in={carry_in}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
 }
