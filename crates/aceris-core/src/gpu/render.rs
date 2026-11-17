@@ -145,6 +145,8 @@ impl Pica200 {
 /// Fixed (non-register) inputs of a render session.
 #[derive(Clone, Copy, Debug)]
 pub struct PicaRenderSettings {
+    /// Supplies the clip-depth convention. Its host transform is deliberately
+    /// ignored by PicaRenderSession because the guest vertex shader emits clip space.
     pub pipeline: GeometryPipeline,
     pub default_color: [u8; 4],
     pub depth_function: DepthFunction,
@@ -668,13 +670,9 @@ mod tests {
     const TARGET_B: u32 = FCRAM_BASE + 0x4000;
 
     fn session_settings() -> PicaRenderSettings {
-        let transform = Matrix4::from_column_major([
-            0.25, 0.0, 0.0, 0.0, //
-            0.0, 0.25, 0.0, 0.0, //
-            0.0, 0.0, 1.0, 0.0, //
-            -1.0, -1.0, 0.0, 1.0,
-        ])
-        .unwrap();
+        // A singular matrix proves that session rendering consumes the guest
+        // shader's clip-space output instead of applying this host transform.
+        let transform = Matrix4::from_column_major([0.0; 16]).unwrap();
         PicaRenderSettings {
             pipeline: GeometryPipeline::new(
                 transform,
