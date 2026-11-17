@@ -5249,9 +5249,11 @@ mod tests {
         use crate::gpu::{
             ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_ENTRY_SIZE,
             GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
-            GSP_GX_COMMAND_QUEUE_SIZE, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
+            GSP_GX_COMMAND_QUEUE_SIZE, PicaDepthBufferConfig, PicaRenderSettings,
+            REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
+            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHBUFFER_FORMAT,
+            REG_DEPTHBUFFER_LOC, REG_DEPTHBUFFER_READ, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
             REG_DEPTHMAP_SCALE, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_LOGIC_OP,
             REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH,
             REG_VIEWPORT_XY, REG_VSH_ATTRIBUTES_PERMUTATION_HIGH,
@@ -5270,6 +5272,7 @@ mod tests {
         const VERTICES: u32 = VRAM_BASE + 0x20_000;
         const TILED_TARGET: u32 = VRAM_BASE + 0x40_000;
         const LINEAR_FRAMEBUFFER: u32 = VRAM_BASE + 0xA0_000;
+        const DEPTH_TARGET: u32 = VRAM_BASE + 0x10_0000;
 
         let mut system = System::new();
         system
@@ -5295,6 +5298,9 @@ mod tests {
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, TILED_TARGET >> 3),
             (REG_COLORBUFFER_FORMAT, 2),
+            (REG_DEPTHBUFFER_LOC, DEPTH_TARGET >> 3),
+            (REG_DEPTHBUFFER_FORMAT, 2),
+            (REG_DEPTHBUFFER_READ, 2),
             (REG_FRAMEBUFFER_BLOCK32, 0),
             (
                 REG_FRAMEBUFFER_DIM,
@@ -5321,6 +5327,12 @@ mod tests {
             clip_depth_range: ClipDepthRange::NegativeOneToOne,
             default_color: [200, 100, 50, 255],
         }));
+        // Start the guest's D24 surface at the far plane. The GPU then reads,
+        // tests and updates the same physical tiled depth buffer per draw.
+        system
+            .physical_memory_mut()
+            .write(DEPTH_TARGET, &vec![0xFF; WIDTH * HEIGHT * 3])
+            .unwrap();
 
         system
             .physical_memory_mut()
@@ -5365,6 +5377,17 @@ mod tests {
         let render = system.last_pica_render_report().unwrap();
         assert_eq!(render.triangles_submitted, 1);
         assert!(render.pixels_written > 0);
+        let depth_config = PicaDepthBufferConfig::from_pica(
+            system.gpu_mut(),
+            WIDTH as u16,
+            HEIGHT as u16,
+        )
+        .unwrap()
+        .unwrap();
+        let depth_values = depth_config
+            .read_depth_values(system.physical_memory(), 1.0)
+            .unwrap();
+        assert!((depth_values[180 * WIDTH + 40] - 0.5).abs() < 1.0e-3);
 
         let lcd = system.lcd_controller_mut();
         for (register, value) in [
