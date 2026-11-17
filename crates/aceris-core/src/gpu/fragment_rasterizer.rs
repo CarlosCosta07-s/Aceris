@@ -13,11 +13,12 @@
 //! multisample coverage remain separate work.
 
 use super::{
-    DepthFunction, GpuPhysicalMemory, Matrix4, PicaCullMode, PicaDepthBufferConfig,
-    PicaDepthBufferError, PicaDepthBufferFormat, PicaDepthMap, PicaDepthMode, PicaFragmentDraw,
-    PicaFragmentDrawError, PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex,
-    PicaRenderTargetConfig, PicaRenderTargetError, PicaRenderTargetWriteReport, PicaScissorMode,
-    PicaScissorState, PicaShadedDraw, PicaVertexOutputMap, SoftwareRasterizer, Viewport,
+    DepthFunction, GpuPhysicalMemory, Matrix4, PicaColorBufferFormat, PicaCullMode,
+    PicaDepthBufferConfig, PicaDepthBufferError, PicaDepthBufferFormat, PicaDepthMap,
+    PicaDepthMode, PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentPipeline,
+    PicaFragmentSampleError, PicaFragmentVertex, PicaRenderTargetConfig, PicaRenderTargetError,
+    PicaRenderTargetWriteReport, PicaScissorMode, PicaScissorState, PicaShadedDraw,
+    PicaVertexOutputMap, SoftwareRasterizer, Viewport,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
@@ -199,6 +200,8 @@ pub struct PicaFragmentRasterizer {
     depth: Vec<f32>,
     stencil: Vec<u8>,
     stencil_dirty: bool,
+    /// Storage format of the render target; written pixels are quantized to it.
+    format: PicaColorBufferFormat,
 }
 
 impl PicaFragmentRasterizer {
@@ -247,6 +250,7 @@ impl PicaFragmentRasterizer {
             depth,
             stencil,
             stencil_dirty: false,
+            format: target.format,
         })
     }
 
@@ -715,11 +719,18 @@ impl PicaFragmentRasterizer {
                         self.stencil_dirty = true;
                     }
                 }
+                // Masked channels keep the stored pixel; the merged pixel is then
+                // rounded to the target format, as a later blend reads it back.
+                let mut merged = [0u8; 4];
                 for (channel, enabled) in state.color_write_mask.iter().copied().enumerate() {
-                    if enabled {
-                        self.color[color_offset + channel] = output[channel];
-                    }
+                    merged[channel] = if enabled {
+                        output[channel]
+                    } else {
+                        self.color[color_offset + channel]
+                    };
                 }
+                self.color[color_offset..color_offset + 4]
+                    .copy_from_slice(&self.format.quantize(merged));
                 if state.depth_write_enabled {
                     self.depth[pixel_index] = fragment_depth;
                 }
@@ -1016,8 +1027,9 @@ mod tests {
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
         PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
-        PicaVertexOutputMap, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP, REG_STENCIL_OP, REG_STENCIL_TEST,
-        REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
+        PicaVertexOutputMap, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_FRAGOP_ALPHA_TEST,
+        REG_LOGIC_OP, REG_STENCIL_OP, REG_STENCIL_TEST, REG_TEXUNIT_CONFIG,
+        TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn fragment_vertex(position: [f32; 4], color: [f32; 4]) -> PicaFragmentVertex {
@@ -1292,6 +1304,96 @@ mod tests {
         assert_eq!(textured_red(64, 0), 10);
         // Fewer stored levels clamp the selection to the last one (level 2).
         assert_eq!(textured_red(64, 2), 170);
+    }
+
+    /// Draws the reference triangle `draws` times onto an 8x8 target of the
+    /// given color format and returns the pixel at (1, 6).
+    fn draw_on_format(
+        color_format: u32,
+        configure: impl Fn(&mut super::super::Pica200),
+        color: [f32; 4],
+        mask: [bool; 4],
+        draws: usize,
+    ) -> [u8; 4] {
+        let mut pica = super::super::Pica200::new();
+        configure_tev(&mut pica);
+        configure(&mut pica);
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let target = PicaRenderTargetConfig::from_registers(
+            VRAM_BASE >> 3,
+            color_format,
+            0,
+            8 | (7 << 12) | (1 << 24),
+        )
+        .unwrap();
+        let memory = GpuPhysicalMemory::new();
+        let mut rasterizer =
+            PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
+        let corners = [
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], color),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], color),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], color),
+        ];
+        let draw = draw(corners);
+        let mut state = PicaFragmentRasterState::new(
+            Matrix4::identity(),
+            Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+        );
+        state.depth_function = DepthFunction::Always;
+        state.color_write_mask = mask;
+        for _ in 0..draws {
+            rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
+        }
+        rasterizer.color_at(1, 6).unwrap()
+    }
+
+    const FORMAT_RGBA8: u32 = 2;
+    const FORMAT_RGB565: u32 = 3 << 16;
+
+    #[test]
+    fn written_pixels_are_quantized_to_the_target_format() {
+        let color = [100.0 / 255.0, 150.0 / 255.0, 200.0 / 255.0, 0.3];
+        let exact = draw_on_format(FORMAT_RGBA8, |_| {}, color, [true; 4], 1);
+        assert_eq!(exact, [100, 150, 200, 77]);
+        let packed = draw_on_format(FORMAT_RGB565, |_| {}, color, [true; 4], 1);
+        assert_eq!(
+            packed,
+            PicaColorBufferFormat::Rgb565.quantize([100, 150, 200, 77])
+        );
+        assert_eq!(packed[3], 255);
+        assert_ne!(packed[..3], exact[..3]);
+    }
+
+    #[test]
+    fn repeated_blends_read_back_the_quantized_destination() {
+        // Blend: source alpha / one minus source alpha for color and alpha.
+        let configure = |pica: &mut super::super::Pica200| {
+            pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
+            let factors = 6 | (7 << 4);
+            pica.write_register(REG_BLEND_FUNC, (factors << 16) | (factors << 24))
+                .unwrap();
+        };
+        let color = [1.0, 1.0, 1.0, 0.5];
+        let format = PicaColorBufferFormat::Rgb565;
+        // Reference chain: each draw reads the previous quantized pixel.
+        let mut stored = format.quantize([0, 0, 0, 255]);
+        for _ in 0..3 {
+            let blended = 0.5 + (f32::from(stored[0]) / 255.0) * 0.5;
+            stored = format.quantize([(blended * 255.0).round() as u8, 0, 0, 255]);
+        }
+        let result = draw_on_format(FORMAT_RGB565, configure, color, [true; 4], 3);
+        assert_eq!(result[0], stored[0]);
+    }
+
+    #[test]
+    fn color_write_mask_keeps_masked_channels_of_the_stored_pixel() {
+        let color = [100.0 / 255.0, 150.0 / 255.0, 200.0 / 255.0, 1.0];
+        let only_red_and_blue =
+            draw_on_format(FORMAT_RGBA8, |_| {}, color, [true, false, true, false], 1);
+        // Green and alpha keep the initial destination (all zero in fresh memory).
+        assert_eq!(only_red_and_blue, [100, 0, 200, 0]);
+        let none = draw_on_format(FORMAT_RGBA8, |_| {}, color, [false; 4], 1);
+        assert_eq!(none, [0, 0, 0, 0]);
     }
 
     #[test]

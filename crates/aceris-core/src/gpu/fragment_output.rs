@@ -902,4 +902,95 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn all_sixteen_logic_operations_match_their_truth_tables() {
+        use PicaLogicOperation as Op;
+        // Source 0b1100, destination 0b1010 on the low nibble.
+        let (s, d) = (0b1100u8, 0b1010u8);
+        let expected = [
+            (Op::Clear, 0),
+            (Op::And, s & d),
+            (Op::ReverseAnd, s & !d),
+            (Op::Copy, s),
+            (Op::Set, 0xFF),
+            (Op::InvertedCopy, !s),
+            (Op::Noop, d),
+            (Op::Invert, !d),
+            (Op::Nand, !(s & d)),
+            (Op::Or, s | d),
+            (Op::Nor, !(s | d)),
+            (Op::Xor, s ^ d),
+            (Op::Equivalent, !(s ^ d)),
+            (Op::InvertedAnd, !s & d),
+            (Op::ReverseOr, s | !d),
+            (Op::InvertedOr, !s | d),
+        ];
+        for (index, (operation, value)) in expected.into_iter().enumerate() {
+            assert_eq!(PicaLogicOperation::decode(index as u32).unwrap(), operation);
+            assert_eq!(operation.apply(s, d), value, "{operation:?}");
+        }
+    }
+
+    #[test]
+    fn every_blend_factor_evaluates_per_channel_and_alpha() {
+        use PicaBlendFactor as F;
+        let source = [0.2, 0.4, 0.6, 0.5];
+        let destination = [0.9, 0.8, 0.7, 0.25];
+        let constant = [0.1, 0.3, 0.5, 0.75];
+        let close = |a: f32, b: f32| (a - b).abs() < 1.0e-6;
+        for (factor, red, alpha) in [
+            (F::Zero, 0.0, 0.0),
+            (F::One, 1.0, 1.0),
+            (F::SourceColor, 0.2, 0.5),
+            (F::OneMinusSourceColor, 0.8, 0.5),
+            (F::DestinationColor, 0.9, 0.25),
+            (F::OneMinusDestinationColor, 0.1, 0.75),
+            (F::SourceAlpha, 0.5, 0.5),
+            (F::OneMinusSourceAlpha, 0.5, 0.5),
+            (F::DestinationAlpha, 0.25, 0.25),
+            (F::OneMinusDestinationAlpha, 0.75, 0.75),
+            (F::ConstantColor, 0.1, 0.75),
+            (F::OneMinusConstantColor, 0.9, 0.25),
+            (F::ConstantAlpha, 0.75, 0.75),
+            (F::OneMinusConstantAlpha, 0.25, 0.25),
+            // min(source alpha, 1 - destination alpha) for color, 1 for alpha.
+            (F::SourceAlphaSaturate, 0.5, 1.0),
+        ] {
+            assert!(
+                close(factor.evaluate(0, source, destination, constant), red),
+                "{factor:?} red"
+            );
+            assert!(
+                close(factor.evaluate(3, source, destination, constant), alpha),
+                "{factor:?} alpha"
+            );
+        }
+        // The saturate factor limits itself by the remaining destination alpha.
+        let nearly_full = [0.9, 0.8, 0.7, 0.9];
+        assert!(close(
+            F::SourceAlphaSaturate.evaluate(0, source, nearly_full, constant),
+            0.1
+        ));
+    }
+
+    #[test]
+    fn blend_results_are_clamped_and_equations_use_independent_channels() {
+        let mut pica = Pica200::new();
+        // Blend mode; RGB: add, source color + destination color (overflows);
+        // alpha: subtract with both factors one.
+        pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
+        pica.write_register(
+            REG_BLEND_FUNC,
+            (1 << 8) | (1 << 16) | (1 << 20) | (1 << 24) | (1 << 28),
+        )
+        .unwrap();
+        let state = pica.fragment_output_state().unwrap();
+        let out = state
+            .apply([0.8, 0.8, 0.8, 0.6], [0.7, 0.7, 0.7, 0.25])
+            .unwrap();
+        // RGB saturates at 1.0; alpha is 0.6 - 0.25.
+        assert_eq!(out[..3], [255, 255, 255]);
+        assert_eq!(out[3], to_u8(0.35));
+    }
 }

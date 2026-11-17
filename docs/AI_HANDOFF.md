@@ -1914,3 +1914,10 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Ruído de derivada abaixo de 1e-3 em LOD conta como zero para preservar o caso 1:1.
 - Todas as premissas de layout listadas no ROADMAP são não verificadas em hardware; os testes de ETC1 usam blocos construídos por mim a partir da definição pública, não texturas reais.
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.
+
+## Blending e máscaras: quantização por escrita
+
+- `PicaFragmentRasterizer` guarda o formato do alvo (`format`) e quantiza cada pixel escrito por `PicaColorBufferFormat::quantize` (encode+decode); canais mascarados mantêm o pixel armazenado antes da quantização. Antes, a precisão de 8 bits se acumulava entre draws em alvos 16 bits.
+- Testes novos: quantização por formato, 16 logic ops, 15 fatores de blend, saturação/equações independentes e acúmulo de blends em 565. Dois deles falham sem a correção (verificado revertendo-a).
+- Não implementado: `COLORBUFFER_READ`, bloco 32x32, gas/shadow. Arredondamento do blend continua em float com `round`, não validado contra hardware.
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.

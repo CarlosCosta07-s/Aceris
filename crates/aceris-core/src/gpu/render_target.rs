@@ -49,6 +49,15 @@ impl PicaColorBufferFormat {
         }
     }
 
+    /// Rounds an RGBA8 pixel to what this format can store: encoding and
+    /// decoding it again. Alpha reads back as 255 for formats without alpha.
+    pub(super) fn quantize(self, rgba: [u8; 4]) -> [u8; 4] {
+        let size = self.bytes_per_pixel();
+        let mut stored = [0u8; 4];
+        self.encode_pixel(rgba, &mut stored[..size]);
+        self.decode_pixel(&stored[..size])
+    }
+
     fn decode_register(value: u32) -> Result<Self, PicaRenderTargetError> {
         let pixel_size = (value & 0x3) as u8;
         let format = ((value >> 16) & 0x7) as u8;
@@ -713,5 +722,32 @@ mod tests {
             .read(target.color_buffer_address, &mut bytes)
             .unwrap();
         assert_eq!(bytes, [0; 4]);
+    }
+
+    #[test]
+    fn quantize_rounds_to_each_formats_precision_and_alpha() {
+        let pixel = [100, 150, 200, 77];
+        assert_eq!(PicaColorBufferFormat::Rgba8.quantize(pixel), pixel);
+        // 565 has no alpha: it always reads back as opaque.
+        let rgb565 = PicaColorBufferFormat::Rgb565.quantize(pixel);
+        assert_eq!(rgb565[3], 255);
+        assert_ne!(rgb565[..3], pixel[..3]);
+        // 5A1 keeps one alpha bit.
+        assert_eq!(PicaColorBufferFormat::Rgb5A1.quantize(pixel)[3], 0);
+        assert_eq!(
+            PicaColorBufferFormat::Rgb5A1.quantize([0, 0, 0, 200])[3],
+            255
+        );
+        // 4-bit channels expand by repetition, so quantizing is idempotent.
+        let rgba4 = PicaColorBufferFormat::Rgba4.quantize(pixel);
+        assert_eq!(rgba4.map(|channel| channel % 17), [0; 4]);
+        for format in [
+            PicaColorBufferFormat::Rgb565,
+            PicaColorBufferFormat::Rgb5A1,
+            PicaColorBufferFormat::Rgba4,
+        ] {
+            let once = format.quantize(pixel);
+            assert_eq!(format.quantize(once), once, "{format:?}");
+        }
     }
 }
