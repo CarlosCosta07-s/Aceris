@@ -100,14 +100,27 @@ O exemplo desktop e o executável Android usam a mesma implementação do benchm
 
 ### PC
 
+Também serão publicados executáveis prontos pela CI:
+- Windows: artefato `aceris-pc-benchmark-windows-latest`;
+- Linux: artefato `aceris-pc-benchmark-ubuntu-latest`.
+
+Baixe-os em [GitHub Actions](https://github.com/CarlosCosta07-s/Aceris/actions/workflows/ci.yml), na execução aprovada mais recente, e execute no diretório do binário:
+
 Linux:
 ```sh
-cargo run --release -p aceris-core --example benchmark -- "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300
+chmod +x ./benchmark
+./benchmark "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300
 ```
 
 Windows PowerShell:
 ```powershell
-cargo run --release -p aceris-core --example benchmark -- "D:\\Jogos\\seu-jogo.cia" --warmup 30 --frames 300
+.\\benchmark.exe "D:\\Jogos\\seu-jogo.cia" --warmup 30 --frames 300
+```
+
+Também é possível compilar e rodar pelo Rust:
+
+```sh
+cargo run --release -p aceris-core --example benchmark -- "/caminho/para/seu-jogo.cia" --warmup 30 --frames 300
 ```
 
 ### Android ARM64 físico por ADB
