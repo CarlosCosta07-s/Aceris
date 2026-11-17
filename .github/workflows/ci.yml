@@ -43,3 +43,9 @@ jobs:
         with:
           tool: cargo-ndk
       - run: cargo ndk -t arm64-v8a build -p aceris-android --release
+      - run: cargo ndk -t arm64-v8a build -p aceris-android --bin aceris-benchmark --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aceris-android-benchmark-arm64-v8a
+          path: target/aarch64-linux-android/release/aceris-benchmark
+          if-no-files-found: error
