@@ -457,7 +457,9 @@ impl Arm11KernelObjectTable {
             .handle_aliases
             .values()
             .filter_map(|key| self.object_by_key(*key))
-            .filter(|object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id))
+            .filter(
+                |object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id),
+            )
             .count();
         primary_handles + duplicate_handles
     }
