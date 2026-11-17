@@ -3376,14 +3376,6 @@ mod tests {
             Some(true)
         );
 
-        // The instruction after GetServiceHandle loads the event handle
-        // created by the guest from TLS-1 word, without host-side injection.
-        {
-            let session = system.ncsd_session.as_mut().unwrap();
-            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
-            assert_eq!(session.current_registers().unwrap()[8], event_handle);
-        }
-
         // srv:GetServiceHandle is also authored by guest STR/MOV instructions.
         let srv_buffer = {
             let session = system.ncsd_session.as_mut().unwrap();
@@ -3423,6 +3415,14 @@ mod tests {
                 ..
             })
         ));
+
+        // Now that GetServiceHandle has completed, the next guest LDR reads
+        // the CreateEvent result from TLS-1 word without host-side injection.
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            assert_eq!(session.current_registers().unwrap()[8], event_handle);
+        }
 
         // gsp::Gpu:RegisterInterruptRelayQueue is assembled entirely by
         // guest STR instructions; the guest also places the GSP handle in r0.
