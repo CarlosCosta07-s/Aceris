@@ -5743,9 +5743,11 @@ mod tests {
             ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
             GSP_GX_COMMAND_PROCESS_COMMAND_LIST, PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET,
             REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-            REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET,
-            REG_DEPTHMAP_SCALE, REG_DRAWARRAYS, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
-            REG_LOGIC_OP, REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_TEXUNIT_CONFIG,
+            PicaDepthBufferConfig, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
+            REG_DEPTHBUFFER_FORMAT, REG_DEPTHBUFFER_LOC, REG_DEPTHBUFFER_READ,
+            REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE, REG_DRAWARRAYS,
+            REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_LOGIC_OP, REG_NUMVERTICES,
+            REG_SH_OUTMAP_O0, REG_TEXUNIT_CONFIG,
             REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
             REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
             REG_VSH_ENTRYPOINT, REG_VSH_INPUTBUFFER_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
@@ -5758,6 +5760,8 @@ mod tests {
         const WIDTH: usize = 400;
         const HEIGHT: usize = 240;
         const TEXTURE_ADDRESS: u32 = VRAM_BASE + 0x10_0000;
+        const DEPTH_BUFFER_ADDRESS: u32 = VRAM_BASE + 0x18_0000;
+        const DEPTH_BUFFER_BYTES: usize = WIDTH * HEIGHT * 3;
         const FRAME_ALLOCATION: u32 = ((WIDTH * HEIGHT * 4) as u32 + 0xFFF) & !0xFFF;
         const MEMOP_ALLOC_LINEAR: u32 = 0x0001_0003;
         const PERMISSION_READ_WRITE: u32 = 3;
@@ -5958,6 +5962,9 @@ mod tests {
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, tiled_target_physical >> 3),
             (REG_COLORBUFFER_FORMAT, 2),
+            (REG_DEPTHBUFFER_LOC, DEPTH_BUFFER_ADDRESS >> 3),
+            (REG_DEPTHBUFFER_FORMAT, 2),
+            (REG_DEPTHBUFFER_READ, 2),
             (REG_FRAMEBUFFER_BLOCK32, 0),
             (
                 REG_FRAMEBUFFER_DIM,
@@ -6079,6 +6086,11 @@ mod tests {
             .physical_memory_mut()
             .write(TEXTURE_ADDRESS, &texture_data)
             .unwrap();
+        // The separate VRAM depth surface starts at maximum D24 depth.
+        system
+            .physical_memory_mut()
+            .write(DEPTH_BUFFER_ADDRESS, &vec![0xFF; DEPTH_BUFFER_BYTES])
+            .unwrap();
 
         // Nothing the guest will create exists yet: no client, no right, and
         // every PICA register is at its reset value.
@@ -6131,6 +6143,23 @@ mod tests {
         );
         assert_eq!(system.gpu_mut().register(REG_DEPTHMAP_ENABLE), Some(1));
         assert_eq!(system.gpu_mut().register(REG_TEXUNIT_CONFIG), Some(1));
+        assert_eq!(
+            system.gpu_mut().register(REG_DEPTHBUFFER_LOC),
+            Some(DEPTH_BUFFER_ADDRESS >> 3)
+        );
+        assert_eq!(system.gpu_mut().register(REG_DEPTHBUFFER_FORMAT), Some(2));
+        assert_eq!(system.gpu_mut().register(REG_DEPTHBUFFER_READ), Some(2));
+        let depth_config = PicaDepthBufferConfig::from_pica(
+            system.gpu_mut(),
+            WIDTH as u16,
+            HEIGHT as u16,
+        )
+        .unwrap()
+        .unwrap();
+        let depth_values = depth_config
+            .read_depth_values(system.physical_memory(), 1.0)
+            .unwrap();
+        assert!((depth_values[180 * WIDTH + 40] - 0.5).abs() < 1.0e-3);
         assert_eq!(
             system.gpu_mut().register(TEXENV_STAGE_SOURCE_REGISTERS[0]),
             Some(3 | (3 << 16))
