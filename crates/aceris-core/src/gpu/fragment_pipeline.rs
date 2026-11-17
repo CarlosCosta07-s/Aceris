@@ -79,7 +79,10 @@ impl std::fmt::Display for PicaFragmentInterpolationError {
                 formatter.write_str("PICA fragment barycentric coordinates are invalid")
             }
             Self::InvalidClipW { vertex } => {
-                write!(formatter, "PICA fragment vertex {vertex} has invalid clip-space W")
+                write!(
+                    formatter,
+                    "PICA fragment vertex {vertex} has invalid clip-space W"
+                )
             }
             Self::InvalidPerspectiveDenominator => {
                 formatter.write_str("PICA fragment perspective denominator is invalid")
