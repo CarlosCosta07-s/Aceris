@@ -114,6 +114,22 @@ struct ScreenVertex {
     reciprocal_w: f32,
 }
 
+/// Default attributes used when the guest vertex output map omits an output.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PicaFragmentVertexDefaults {
+    pub primary_color: [f32; 4],
+    pub texture_coordinates: [[f32; 2]; 3],
+}
+
+impl Default for PicaFragmentVertexDefaults {
+    fn default() -> Self {
+        Self {
+            primary_color: [1.0; 4],
+            texture_coordinates: [[0.0; 2]; 3],
+        }
+    }
+}
+
 /// Configuration for one independent PICA fragment-rasterizer invocation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaFragmentRasterState {
@@ -338,8 +354,7 @@ impl PicaFragmentRasterizer {
         &mut self,
         shaded: &PicaShadedDraw,
         output_map: &PicaVertexOutputMap,
-        default_primary_color: [f32; 4],
-        default_texture_coordinates: [[f32; 2]; 3],
+        defaults: PicaFragmentVertexDefaults,
         pipeline: &PicaFragmentPipeline,
         memory: &GpuPhysicalMemory,
         state: PicaFragmentRasterState,
@@ -347,8 +362,8 @@ impl PicaFragmentRasterizer {
         let draw = PicaFragmentDraw::from_shaded_draw(
             shaded,
             output_map,
-            default_primary_color,
-            default_texture_coordinates,
+            defaults.primary_color,
+            defaults.texture_coordinates,
         )
         .map_err(PicaFragmentRasterError::Draw)?;
         self.draw(&draw, pipeline, memory, state)
