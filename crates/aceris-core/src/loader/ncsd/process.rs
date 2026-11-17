@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{Arm11MemoryType, CodeFileLayout, CodeSetInfo};
-use crate::cpu::{Arm11Core, SP};
+use crate::cpu::{Arm11Core, MpcoreScu, SP};
 use crate::gpu::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
     OLD_LINEAR_END,
@@ -767,6 +767,8 @@ pub struct Arm11CodeAddressSpace {
     /// Linear CPU mappings that alias the GPU-visible physical FCRAM backing.
     linear_regions: Vec<LinearMemoryRegion>,
     gpu_memory: Option<GpuPhysicalMemory>,
+    /// Shared ARM11 MPCore Snoop Control Unit registers for this system.
+    mpcore_scu: Option<MpcoreScu>,
     /// Stable identities for the process' private static segments.
     static_backing_ids: [u64; 5],
     /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
@@ -821,6 +823,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            mpcore_scu: None,
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
@@ -914,6 +917,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            mpcore_scu: None,
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
@@ -948,6 +952,36 @@ impl Arm11CodeAddressSpace {
     /// Attaches the shared physical backing used by linear CPU mappings and devices.
     pub fn attach_gpu_memory(&mut self, memory: GpuPhysicalMemory) {
         self.gpu_memory = Some(memory);
+    }
+
+    /// Attaches the system-wide MPCore SCU peripheral visible to this process.
+    pub fn attach_mpcore_scu(&mut self, scu: MpcoreScu) {
+        self.mpcore_scu = Some(scu);
+    }
+
+    fn mpcore_scu_register_offset(&self, address: u32) -> Option<u32> {
+        let offset = address.checked_sub(crate::cpu::mpcore_scu::MPCORE_PRIVATE_MEMORY_BASE)?;
+        (offset < crate::cpu::mpcore_scu::SCU_REGISTER_WINDOW_SIZE).then_some(offset & !3)
+    }
+
+    fn read_mpcore_scu_register(&self, address: u32) -> BusResult<u32> {
+        let offset = self
+            .mpcore_scu_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        self.mpcore_scu
+            .as_ref()
+            .and_then(|scu| scu.read_register(offset))
+            .ok_or(Error::InvalidAccess { addr: address })
+    }
+
+    fn write_mpcore_scu_register(&mut self, address: u32, value: u32) -> BusResult<()> {
+        let offset = self
+            .mpcore_scu_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        match self.mpcore_scu.as_ref() {
+            Some(scu) if scu.write_register(offset, value) => Ok(()),
+            _ => Err(Error::InvalidAccess { addr: address }),
+        }
     }
 
     /// Maps a shared memory block into this process at a page-aligned address.
@@ -2643,6 +2677,10 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn read8_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u8> {
+        if self.mpcore_scu_register_offset(address).is_some() {
+            let register = self.read_mpcore_scu_register(address)?;
+            return Ok((register >> ((address & 3) * 8)) as u8);
+        }
         let location = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -2662,6 +2700,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn write8(&mut self, address: u32, value: u8) -> BusResult<()> {
+        if self.mpcore_scu_register_offset(address).is_some() {
+            return self.write8_with_cache_policy(address, value, CachePolicy::NonCacheable);
+        }
         self.write_bytes(address, &[value])
     }
 
@@ -2671,14 +2712,50 @@ impl Bus for Arm11CodeAddressSpace {
         value: u8,
         policy: CachePolicy,
     ) -> BusResult<()> {
+        if self.mpcore_scu_register_offset(address).is_some() {
+            let register = self.read_mpcore_scu_register(address)?;
+            let shift = (address & 3) * 8;
+            let mask = 0xFFu32 << shift;
+            let updated = (register & !mask) | (u32::from(value) << shift);
+            return self.write_mpcore_scu_register(address, updated);
+        }
         self.write_bytes_with_cache_policy(address, &[value], policy)
     }
 
+    fn read32_with_cache_policy(
+        &mut self,
+        address: u32,
+        policy: CachePolicy,
+    ) -> BusResult<u32> {
+        if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
+            return self.read_mpcore_scu_register(address);
+        }
+        Bus::read32_with_cache_policy(self, address, policy)
+    }
+
+    fn write32_with_cache_policy(
+        &mut self,
+        address: u32,
+        value: u32,
+        policy: CachePolicy,
+    ) -> BusResult<()> {
+        if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
+            return self.write_mpcore_scu_register(address, value);
+        }
+        Bus::write32_with_cache_policy(self, address, value, policy)
+    }
+
     fn write16(&mut self, address: u32, value: u16) -> BusResult<()> {
+        if self.mpcore_scu_register_offset(address).is_some() {
+            return Bus::write16_with_cache_policy(self, address, value, CachePolicy::NonCacheable);
+        }
         self.write_bytes(address, &value.to_le_bytes())
     }
 
     fn write32(&mut self, address: u32, value: u32) -> BusResult<()> {
+        if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
+            return self.write_mpcore_scu_register(address, value);
+        }
         self.write_bytes(address, &value.to_le_bytes())
     }
 
@@ -2693,6 +2770,18 @@ impl Bus for Arm11CodeAddressSpace {
     fn instruction_sync_barrier(&mut self) -> BusResult<()> {
         // Instruction fetch is not independently cached/pipelined in this interpreter.
         Ok(())
+    }
+
+    fn arm11_scu_enabled(&mut self) -> bool {
+        self.mpcore_scu
+            .as_ref()
+            .is_some_and(MpcoreScu::is_enabled)
+    }
+
+    fn set_arm11_smp_mode(&mut self, core_id: u32, enabled: bool) {
+        if let Some(scu) = &self.mpcore_scu {
+            scu.set_cpu_smp_mode(core_id, enabled);
+        }
     }
 
     fn exclusive_read(&mut self, address: u32, size: usize) -> BusResult<(u64, u64)> {
