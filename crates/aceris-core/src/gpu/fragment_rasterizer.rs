@@ -16,8 +16,8 @@ use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, PicaDepthBufferConfig, PicaDepthBufferError,
     PicaDepthBufferFormat, PicaDepthMap, PicaDepthMode, PicaFragmentDraw, PicaFragmentDrawError,
     PicaFragmentPipeline, PicaFragmentSampleError, PicaFragmentVertex, PicaRenderTargetConfig,
-    PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw, PicaStencilState,
-    PicaVertexOutputMap, SoftwareRasterizer, Viewport,
+    PicaRenderTargetError, PicaRenderTargetWriteReport, PicaShadedDraw, PicaVertexOutputMap,
+    SoftwareRasterizer, Viewport,
 };
 
 const CLIP_W_EPSILON: f32 = 1.0e-6;
