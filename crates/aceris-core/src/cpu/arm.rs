@@ -3010,12 +3010,8 @@ mod tests {
                                 cpu.execute_arm(&mut memory, word).unwrap();
 
                                 let (expected, expected_flags) = match opcode {
-                                    0x0 | 0x8 => {
-                                        (a & operand, (false, false, false, initial_v))
-                                    }
-                                    0x1 | 0x9 => {
-                                        (a ^ operand, (false, false, false, initial_v))
-                                    }
+                                    0x0 | 0x8 => (a & operand, (false, false, false, initial_v)),
+                                    0x1 | 0x9 => (a ^ operand, (false, false, false, initial_v)),
                                     0x2 | 0xA => {
                                         let value = a.wrapping_sub(operand);
                                         let overflow =
@@ -3031,12 +3027,7 @@ mod tests {
                                             ((operand ^ a) & (operand ^ value) & 0x8000_0000) != 0;
                                         (
                                             value,
-                                            (
-                                                value >> 31 != 0,
-                                                value == 0,
-                                                operand >= a,
-                                                overflow,
-                                            ),
+                                            (value >> 31 != 0, value == 0, operand >= a, overflow),
                                         )
                                     }
                                     0x4 | 0xB => {
@@ -3055,9 +3046,8 @@ mod tests {
                                         )
                                     }
                                     0x5 => {
-                                        let wide = u64::from(a)
-                                            + u64::from(operand)
-                                            + u64::from(carry_in);
+                                        let wide =
+                                            u64::from(a) + u64::from(operand) + u64::from(carry_in);
                                         let value = wide as u32;
                                         let overflow =
                                             (!(a ^ operand) & (a ^ value) & 0x8000_0000) != 0;
@@ -3074,7 +3064,8 @@ mod tests {
                                     0x6 => {
                                         let borrow = u64::from(!carry_in);
                                         let rhs = u64::from(operand) + borrow;
-                                        let value = a.wrapping_sub(operand).wrapping_sub(borrow as u32);
+                                        let value =
+                                            a.wrapping_sub(operand).wrapping_sub(borrow as u32);
                                         let overflow =
                                             ((a ^ operand) & (a ^ value) & 0x8000_0000) != 0;
                                         (
@@ -3090,7 +3081,8 @@ mod tests {
                                     0x7 => {
                                         let borrow = u64::from(!carry_in);
                                         let rhs = u64::from(a) + borrow;
-                                        let value = operand.wrapping_sub(a).wrapping_sub(borrow as u32);
+                                        let value =
+                                            operand.wrapping_sub(a).wrapping_sub(borrow as u32);
                                         let overflow =
                                             ((operand ^ a) & (operand ^ value) & 0x8000_0000) != 0;
                                         (
@@ -3115,35 +3107,30 @@ mod tests {
                                 } else {
                                     carry_in
                                 };
-                                let expected_flags = if matches!(opcode, 0 | 1 | 8 | 9 | 12 | 13 | 14 | 15) {
-                                    (
-                                        expected >> 31 != 0,
-                                        expected == 0,
-                                        shifter_carry,
-                                        initial_v,
-                                    )
-                                } else {
-                                    expected_flags
-                                };
+                                let expected_flags =
+                                    if matches!(opcode, 0 | 1 | 8 | 9 | 12 | 13 | 14 | 15) {
+                                        (
+                                            expected >> 31 != 0,
+                                            expected == 0,
+                                            shifter_carry,
+                                            initial_v,
+                                        )
+                                    } else {
+                                        expected_flags
+                                    };
 
                                 if is_compare {
                                     assert_eq!(cpu.regs[rd as usize], original_destination);
                                 } else {
                                     assert_eq!(
-                                        cpu.regs[rd as usize],
-                                        expected,
+                                        cpu.regs[rd as usize], expected,
                                         "opcode={opcode:#x} rotate={rotate} imm8={immediate:#04x} carry_in={carry_in} set_flags={set_flags} a={a:#010x}"
                                     );
                                 }
 
                                 if set_flags {
                                     assert_eq!(
-                                        (
-                                            cpu.cpsr.n(),
-                                            cpu.cpsr.z(),
-                                            cpu.cpsr.c(),
-                                            cpu.cpsr.v(),
-                                        ),
+                                        (cpu.cpsr.n(), cpu.cpsr.z(), cpu.cpsr.c(), cpu.cpsr.v(),),
                                         expected_flags,
                                         "flags: opcode={opcode:#x} rotate={rotate} imm8={immediate:#04x} carry_in={carry_in} a={a:#010x}"
                                     );
@@ -3253,7 +3240,7 @@ mod tests {
 
     #[test]
     fn register_controlled_shift_decode_exhausts_armv6_amounts_and_types() {
-        use super::super::shifter::{shift_reg, ShiftKind};
+        use super::super::shifter::{ShiftKind, shift_reg};
 
         let source_values = [0, 1, 0x8000_0001, 0x7FFF_FFFF, 0xA5C3_7E19];
         let mut memory = FlatMemory::new(0, 0x100);
@@ -3273,32 +3260,18 @@ mod tests {
                         cpu.set_pc(0);
 
                         // MOVS r2, r0, <shift> r1
-                        let instruction = 0xE1B0_0000
-                            | (2 << 12)
-                            | (1 << 8)
-                            | (shift_code << 5)
-                            | (1 << 4);
+                        let instruction =
+                            0xE1B0_0000 | (2 << 12) | (1 << 8) | (shift_code << 5) | (1 << 4);
                         cpu.execute_arm(&mut memory, instruction).unwrap();
 
-                        let (expected, expected_carry) =
-                            shift_reg(kind, source, amount, carry_in);
+                        let (expected, expected_carry) = shift_reg(kind, source, amount, carry_in);
                         assert_eq!(
                             cpu.regs[2], expected,
                             "shift={kind:?} amount={amount} source={source:#010x}"
                         );
                         assert_eq!(
-                            (
-                                cpu.cpsr.n(),
-                                cpu.cpsr.z(),
-                                cpu.cpsr.c(),
-                                cpu.cpsr.v(),
-                            ),
-                            (
-                                expected >> 31 != 0,
-                                expected == 0,
-                                expected_carry,
-                                true,
-                            ),
+                            (cpu.cpsr.n(), cpu.cpsr.z(), cpu.cpsr.c(), cpu.cpsr.v(),),
+                            (expected >> 31 != 0, expected == 0, expected_carry, true,),
                             "flags: shift={kind:?} amount={amount} source={source:#010x} carry_in={carry_in}"
                         );
                     }
