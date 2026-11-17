@@ -1568,14 +1568,14 @@ mod tests {
         let descriptors = [plain_descriptor(0b1111)];
         let input = inputs([0.0; 4], [0.0; 4]);
 
-        // CALL (0x24) is flow control and not part of the supported subset.
-        let call = 0x24u32 << 26;
-        let program = PicaVertexShaderProgram::from_words(&[call, END], &descriptors, &[]);
+        // Reserved opcode values must still report an unsupported instruction.
+        let reserved = 0x10u32 << 26;
+        let program = PicaVertexShaderProgram::from_words(&[reserved, END], &descriptors, &[]);
         assert_eq!(
             program.run(0, &input),
             Err(PicaShaderExecError::UnsupportedOpcode {
                 index: 0,
-                word: call
+                word: reserved
             })
         );
 
