@@ -3006,6 +3006,7 @@ mod tests {
                                     | (rd << 12)
                                     | (rotate << 8)
                                     | immediate;
+                                let original_destination = cpu.regs[rd as usize];
                                 cpu.execute_arm(&mut memory, word).unwrap();
 
                                 let (expected, expected_flags) = match opcode {
@@ -3125,13 +3126,8 @@ mod tests {
                                     expected_flags
                                 };
 
-                                let old_destination = if is_compare {
-                                    Some(cpu.regs[rd as usize])
-                                } else {
-                                    None
-                                };
                                 if is_compare {
-                                    assert_eq!(cpu.regs[rd as usize], old_destination.unwrap());
+                                    assert_eq!(cpu.regs[rd as usize], original_destination);
                                 } else {
                                     assert_eq!(
                                         cpu.regs[rd as usize],
