@@ -26,7 +26,6 @@ pub const SCU_INVALIDATE_ALL_REGISTER_OFFSET: u32 = 0x0C;
 const SCU_CONTROL_RESET: u32 = 0x0000_1FFE;
 const SCU_CONTROL_WRITABLE: u32 = 0x0000_1FFF;
 const SCU_CPU_COUNT_ENCODING: u32 = 0b01;
-const SCU_CPU_COUNT_MASK: u32 = 0b11;
 const SCU_CPU_SMP_MASK: u32 = 0b1111;
 
 /// Shared register state for the MPCore Snoop Control Unit.
@@ -151,8 +150,8 @@ impl MpcoreScu {
     /// Writes one aligned, modeled SCU register.
     ///
     /// Configuration writes are ignored because the register is read-only.
-    /// CPU status is retained as a limited register value; it does not power
-    /// down or start an independently scheduled CPU.
+    /// CPU status is retained as a raw value only; it does not power down or
+    /// start an independently scheduled CPU.
     pub fn write_register(&self, offset: u32, value: u32) -> bool {
         if offset & 3 != 0 {
             return false;
@@ -169,7 +168,7 @@ impl MpcoreScu {
             }
             SCU_CONFIGURATION_REGISTER_OFFSET => true,
             SCU_CPU_STATUS_REGISTER_OFFSET => {
-                state.cpu_status = value & SCU_CPU_COUNT_MASK;
+                state.cpu_status = value;
                 true
             }
             SCU_INVALIDATE_ALL_REGISTER_OFFSET => {
