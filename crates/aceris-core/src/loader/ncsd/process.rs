@@ -2726,7 +2726,11 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.read_mpcore_scu_register(address);
         }
-        Bus::read32_with_cache_policy(self, address, policy)
+        let mut bytes = [0u8; 4];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = self.read8_with_cache_policy(address.wrapping_add(index as u32), policy)?;
+        }
+        Ok(u32::from_le_bytes(bytes))
     }
 
     fn write32_with_cache_policy(
@@ -2738,7 +2742,10 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.write_mpcore_scu_register(address, value);
         }
-        Bus::write32_with_cache_policy(self, address, value, policy)
+        for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write8_with_cache_policy(address.wrapping_add(index as u32), byte, policy)?;
+        }
+        Ok(())
     }
 
     fn write16(&mut self, address: u32, value: u16) -> BusResult<()> {
