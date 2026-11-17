@@ -8,11 +8,11 @@
 //! and the framebuffer formats of the real GPU are not modeled.
 
 use super::{
-    DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex, GpuPhysicalMemory,
-    Matrix4, Pica200, PicaCommandListReport, PicaCommandListRunError, PicaDepthBuffering,
-    PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest, PicaOutputMapError,
-    PicaRenderTargetConfig, PicaRenderTargetError, PicaShadedDraw, PicaVertexOutputMap,
-    PicaVertexShaderProgram, RasterizerError, SoftwareRasterizer, Viewport,
+    DepthFunction, GeometryError, GeometryPipeline, GeometryReport, GeometryVertex,
+    GpuPhysicalMemory, Matrix4, Pica200, PicaCommandListReport, PicaCommandListRunError,
+    PicaDepthBuffering, PicaDepthMap, PicaDepthMode, PicaDrawExecError, PicaDrawRequest,
+    PicaOutputMapError, PicaRenderTargetConfig, PicaRenderTargetError, PicaShadedDraw,
+    PicaVertexOutputMap, PicaVertexShaderProgram, RasterizerError, SoftwareRasterizer, Viewport,
 };
 
 /// Totals for one rendered draw.
@@ -250,9 +250,12 @@ impl PicaRenderSession {
         // The guest vertex shader already emits clip-space position through
         // the PICA output map. Do not apply a second host-side model/view/projection
         // transform here; the host pipeline contributes only the clip convention.
-        let target_pipeline =
-            GeometryPipeline::new(Matrix4::identity(), viewport, self.settings.pipeline.depth_range())
-                .with_pica_depth_map(depth_map);
+        let target_pipeline = GeometryPipeline::new(
+            Matrix4::identity(),
+            viewport,
+            self.settings.pipeline.depth_range(),
+        )
+        .with_pica_depth_map(depth_map);
         let program = pica.vertex_shader_program();
         let rasterizer = &mut self.active.as_mut().expect("target selected above").1;
         // Mark dirty first: triangles drawn before an error stay in the buffer.
@@ -686,12 +689,9 @@ mod tests {
 
     fn configure_guest_clip_transform(gpu: &mut Pica200) {
         const END: u32 = 0x22 << 26;
-        let identity_descriptor = |mask: u32| {
-            mask | (0x1B << 5) | (0x1B << 14) | (0x1B << 23)
-        };
-        let dphi = |uniform: u32, descriptor: u32| {
-            (0x18 << 26) | ((0x20 + uniform) << 7) | descriptor
-        };
+        let identity_descriptor = |mask: u32| mask | (0x1B << 5) | (0x1B << 14) | (0x1B << 23);
+        let dphi =
+            |uniform: u32, descriptor: u32| (0x18 << 26) | ((0x20 + uniform) << 7) | descriptor;
 
         gpu.write_register(REG_VSH_OPDESCS_INDEX, 0).unwrap();
         for lane in 0..4 {
