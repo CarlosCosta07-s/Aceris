@@ -70,7 +70,7 @@ pub use physical_memory::{
 };
 pub use pica200::{
     Pica200, PicaCommandBufferDescriptor, PicaCommandError, PicaCommandListReport,
-    PicaDepthBuffering, PicaDepthState, PicaViewportState, REG_DEPTHMAP_MODE,
+    PicaDepthBuffering, PicaDepthState, PicaViewportState, REG_DEPTHMAP_ENABLE,
     REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_INV_HEIGHT,
     REG_VIEWPORT_INV_WIDTH, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY, REG_ATTRIBUTE_BUFFERS,
     REG_COLOR_OPERATION, REG_COMMAND_BUFFER_ADDRESS_0,
