@@ -494,11 +494,7 @@ impl Arm11KernelObjectTable {
         })
     }
 
-    fn wait_all_object_mut(
-        &mut self,
-        handle: u32,
-        thread: ThreadId,
-    ) -> Option<&mut KernelObject> {
+    fn wait_all_object_mut(&mut self, handle: u32, thread: ThreadId) -> Option<&mut KernelObject> {
         if self.objects.contains_key(&handle) {
             return self.objects.get_mut(&handle);
         }
@@ -518,9 +514,8 @@ impl Arm11KernelObjectTable {
             .values()
             .flat_map(|handles| handles.iter().copied())
             .collect::<std::collections::BTreeSet<_>>();
-        self.retired_objects.retain(|handle, object| {
-            pinned_handles.contains(handle) || object_has_waiters(object)
-        });
+        self.retired_objects
+            .retain(|handle, object| pinned_handles.contains(handle) || object_has_waiters(object));
     }
 
     /// Releases every mutex owned by a terminating thread.
@@ -546,9 +541,7 @@ impl Arm11KernelObjectTable {
                 let waiter = mutex.waiters.pop_front();
                 mutex.owner = waiter;
                 waiter
-            } else if let Some(KernelObject::Mutex(mutex)) =
-                self.retired_objects.get_mut(&handle)
-            {
+            } else if let Some(KernelObject::Mutex(mutex)) = self.retired_objects.get_mut(&handle) {
                 let waiter = mutex.waiters.pop_front();
                 mutex.owner = waiter;
                 waiter
