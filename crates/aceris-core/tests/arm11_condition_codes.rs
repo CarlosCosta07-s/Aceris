@@ -125,6 +125,44 @@ fn failed_a32_conditions_suppress_undefined_instruction_exceptions() {
 }
 
 #[test]
+fn all_thumb_conditional_branches_match_every_nzcv_combination() {
+    // BEQ/BNE/etc. with imm8=0 targets the instruction at PC+4.
+    for condition in 0..=0xD {
+        for flags_index in 0..16 {
+            let (n, z, c, v) = flags_from_index(flags_index);
+            let expected_to_branch = condition_passes(condition, n, z, c, v);
+            let instruction = 0xD000 | (condition << 8);
+
+            let mut memory = FlatMemory::new(0, 4);
+            memory.write16(0, instruction as u16).unwrap();
+
+            let mut cpu = Arm11Core::new();
+            cpu.cpsr.set_thumb(true);
+            cpu.set_pc(0);
+            cpu.cpsr.set_flags(n, z, c, v);
+            let status_before = cpu.cpsr;
+
+            cpu.step(&mut memory).unwrap();
+
+            assert_eq!(
+                cpu.pc(),
+                if expected_to_branch { 4 } else { 2 },
+                "Thumb condition={condition:#x} NZCV={n}{z}{c}{v}"
+            );
+            assert_eq!(
+                cpu.cpsr,
+                status_before,
+                "Thumb condition={condition:#x} NZCV={n}{z}{c}{v}"
+            );
+            assert!(
+                cpu.cpsr.thumb(),
+                "conditional branch must preserve Thumb state: condition={condition:#x}"
+            );
+        }
+    }
+}
+
+#[test]
 fn unconditional_condition_code_is_not_part_of_the_conditional_table() {
     // 0xF is the unconditional encoding space, not an ordinary AL condition.
     let mut memory = FlatMemory::new(0, 4);
