@@ -81,6 +81,9 @@ pub const SVC_CLEAR_EVENT: u32 = 0x19;
 /// Close a process-local kernel object handle.
 pub const SVC_CLOSE_HANDLE: u32 = 0x23;
 
+/// Duplicate a process-local kernel object handle.
+pub const SVC_DUPLICATE_HANDLE: u32 = 0x27;
+
 /// Wait for one synchronization object.
 pub const SVC_WAIT_SYNCHRONIZATION1: u32 = 0x24;
 
@@ -190,6 +193,7 @@ mod tests {
             SVC_SIGNAL_EVENT,
             SVC_CLEAR_EVENT,
             SVC_CLOSE_HANDLE,
+            SVC_DUPLICATE_HANDLE,
         ] {
             assert_eq!(
                 dispatcher.dispatch(number, &mut registers),
