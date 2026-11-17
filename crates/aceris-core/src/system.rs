@@ -5016,6 +5016,55 @@ mod tests {
 
     const RENDER_TARGET_REGISTERS: (u32, u32) = (2, (7 << 12) | 8);
 
+    /// Register writes for a guest-side 4x4 clip transform implemented by four
+    /// DPHI instructions. The four float32 constants are matrix rows:
+    /// x' = 0.25*x - 1, y' = 0.25*y - 1, z' = z, w' = 1.
+    fn guest_clip_transform_register_writes() -> Vec<(u16, u32)> {
+        const OPDESC_DATA: u16 = crate::gpu::REG_VSH_OPDESCS_DATA0;
+        const OPDESC_INDEX: u16 = crate::gpu::REG_VSH_OPDESCS_INDEX;
+        const CODE_DATA: u16 = crate::gpu::REG_VSH_CODETRANSFER_DATA0;
+        const CODE_INDEX: u16 = crate::gpu::REG_VSH_CODETRANSFER_INDEX;
+        const UNIFORM_DATA: u16 = crate::gpu::REG_VSH_FLOATUNIFORM_DATA0;
+        const UNIFORM_INDEX: u16 = crate::gpu::REG_VSH_FLOATUNIFORM_INDEX;
+        const END: u32 = 0x22 << 26;
+
+        let descriptor = |mask: u32| {
+            mask | (0x1B << 5) | (0x1B << 14) | (0x1B << 23)
+        };
+        let dphi = |uniform: u32, descriptor_index: u32| {
+            (0x18 << 26) | ((0x20 + uniform) << 7) | descriptor_index
+        };
+
+        let mut writes = Vec::with_capacity(2 + 4 + 2 + 5 + 1 + 16);
+        writes.push((OPDESC_INDEX, 0));
+        for lane in 0..4 {
+            writes.push((OPDESC_DATA, descriptor(1 << (3 - lane))));
+        }
+        writes.push((CODE_INDEX, 0));
+        for uniform in 0..4 {
+            writes.push((CODE_DATA, dphi(uniform, uniform)));
+        }
+        writes.push((CODE_DATA, END));
+        writes.push((UNIFORM_INDEX, 0x8000_0000));
+        for vector in [
+            [0.25f32, 0.0, 0.0, -1.0],
+            [0.0, 0.25, 0.0, -1.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ] {
+            for component in vector.into_iter().rev() {
+                writes.push((UNIFORM_DATA, component.to_bits()));
+            }
+        }
+        writes
+    }
+
+    fn configure_guest_clip_transform(gpu: &mut crate::gpu::Pica200) {
+        for (register, value) in guest_clip_transform_register_writes() {
+            gpu.write_register(register, value).unwrap();
+        }
+    }
+
     /// Loads a process, maps linear FCRAM buffers and programs the GPU for a
     /// triangle covering the lower-left half of an 8x8 RGBA8 target.
     fn render_fixture(system: &mut System) -> RenderFixture {
@@ -5053,13 +5102,7 @@ mod tests {
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
             (REG_VSH_OPDESCS_INDEX, 0),
-            (
-                REG_VSH_OPDESCS_DATA0,
-                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
-            ),
-            (REG_VSH_CODETRANSFER_INDEX, 0),
-            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
-            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, target_physical >> 3),
@@ -5079,17 +5122,14 @@ mod tests {
             gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
                 .unwrap();
         }
+        configure_guest_clip_transform(gpu);
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
         system.set_pica_rendering(Some(PicaRenderSettings {
             pipeline: GeometryPipeline::new(
-                Matrix4::from_column_major([
-                    0.25, 0.0, 0.0, 0.0, //
-                    0.0, 0.25, 0.0, 0.0, //
-                    0.0, 0.0, 1.0, 0.0, //
-                    -1.0, -1.0, 0.0, 1.0,
-                ])
-                .unwrap(),
+                // Deliberately singular: session rendering must use the guest
+                // vertex shader's clip-space output, not a host transform.
+                Matrix4::from_column_major([0.0; 16]).unwrap(),
                 Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
                 ClipDepthRange::NegativeOneToOne,
             ),
@@ -5196,13 +5236,7 @@ mod tests {
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
             (REG_VSH_OPDESCS_INDEX, 0),
-            (
-                REG_VSH_OPDESCS_DATA0,
-                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
-            ),
-            (REG_VSH_CODETRANSFER_INDEX, 0),
-            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
-            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, TILED_TARGET >> 3),
@@ -5225,17 +5259,14 @@ mod tests {
             gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
                 .unwrap();
         }
+        configure_guest_clip_transform(gpu);
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
         system.set_pica_rendering(Some(PicaRenderSettings {
             pipeline: GeometryPipeline::new(
-                Matrix4::from_column_major([
-                    0.25, 0.0, 0.0, 0.0, //
-                    0.0, 0.25, 0.0, 0.0, //
-                    0.0, 0.0, 1.0, 0.0, //
-                    -1.0, -1.0, 0.0, 1.0,
-                ])
-                .unwrap(),
+                // Deliberately singular: session rendering must use the guest
+                // vertex shader's clip-space output, not a host transform.
+                Matrix4::from_column_major([0.0; 16]).unwrap(),
                 Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
                 ClipDepthRange::NegativeOneToOne,
             ),
@@ -5475,13 +5506,7 @@ mod tests {
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
             (REG_VSH_OPDESCS_INDEX, 0),
-            (
-                REG_VSH_OPDESCS_DATA0,
-                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
-            ),
-            (REG_VSH_CODETRANSFER_INDEX, 0),
-            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
-            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, tiled_target_physical >> 3),
@@ -5504,17 +5529,14 @@ mod tests {
             gpu.write_register(REG_SH_OUTMAP_O0 + index, 0x1F1F_1F1F)
                 .unwrap();
         }
+        configure_guest_clip_transform(gpu);
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
 
         system.set_pica_rendering(Some(PicaRenderSettings {
             pipeline: GeometryPipeline::new(
-                Matrix4::from_column_major([
-                    0.25, 0.0, 0.0, 0.0, //
-                    0.0, 0.25, 0.0, 0.0, //
-                    0.0, 0.0, 1.0, 0.0, //
-                    -1.0, -1.0, 0.0, 1.0,
-                ])
-                .unwrap(),
+                // Deliberately singular: session rendering must use the guest
+                // vertex shader's clip-space output, not a host transform.
+                Matrix4::from_column_major([0.0; 16]).unwrap(),
                 Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
                 ClipDepthRange::NegativeOneToOne,
             ),
@@ -5874,13 +5896,7 @@ mod tests {
             (REG_VSH_ATTRIBUTES_PERMUTATION_LOW, 0),
             (REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, 0),
             (REG_VSH_OPDESCS_INDEX, 0),
-            (
-                REG_VSH_OPDESCS_DATA0,
-                0b1111 | (0x1B << 5) | (0x1B << 14) | (0x1B << 23),
-            ),
-            (REG_VSH_CODETRANSFER_INDEX, 0),
-            (REG_VSH_CODETRANSFER_DATA0, 0x13 << 26),
-            (REG_VSH_CODETRANSFER_DATA0, 0x22 << 26),
+
             (REG_VSH_ENTRYPOINT, 0),
             (REG_NUMVERTICES, 3),
             (REG_COLORBUFFER_LOC, tiled_target_physical >> 3),
@@ -5897,6 +5913,9 @@ mod tests {
             (REG_DEPTHMAP_OFFSET, 0x003E_0000), // Float24 0.5
             (REG_DEPTHMAP_ENABLE, 1),           // Z buffering
         ] {
+            command_list.extend(write(register, value));
+        }
+        for (register, value) in guest_clip_transform_register_writes() {
             command_list.extend(write(register, value));
         }
         for index in 1..7u16 {
@@ -5971,13 +5990,9 @@ mod tests {
         // host-side until the guest shader matrix path is connected.
         system.set_pica_rendering(Some(PicaRenderSettings {
             pipeline: GeometryPipeline::new(
-                Matrix4::from_column_major([
-                    0.25, 0.0, 0.0, 0.0, //
-                    0.0, 0.25, 0.0, 0.0, //
-                    0.0, 0.0, 1.0, 0.0, //
-                    -1.0, -1.0, 0.0, 1.0,
-                ])
-                .unwrap(),
+                // Deliberately singular: session rendering must use the guest
+                // vertex shader's clip-space output, not a host transform.
+                Matrix4::from_column_major([0.0; 16]).unwrap(),
                 Viewport::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32).unwrap(),
                 ClipDepthRange::NegativeOneToOne,
             ),
