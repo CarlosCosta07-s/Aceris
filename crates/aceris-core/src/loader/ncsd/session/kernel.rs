@@ -449,7 +449,9 @@ impl Arm11KernelObjectTable {
         let primary_handles = self
             .objects
             .values()
-            .filter(|object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id))
+            .filter(
+                |object| matches!(object, KernelObject::Thread(thread) if thread.id == thread_id),
+            )
             .count();
         let duplicate_handles = self
             .handle_aliases
@@ -493,7 +495,10 @@ impl Arm11KernelObjectTable {
             let object_key = self
                 .object_key(handle)
                 .ok_or(KernelHandleError::InvalidHandle)?;
-            if !retained.iter().any(|(saved_handle, _)| *saved_handle == handle) {
+            if !retained
+                .iter()
+                .any(|(saved_handle, _)| *saved_handle == handle)
+            {
                 retained.push((handle, object_key));
             }
         }
@@ -510,9 +515,9 @@ impl Arm11KernelObjectTable {
     }
 
     fn has_wait_all_reference(&self, object_key: u32) -> bool {
-        self.wait_all_refs.values().any(|handles| {
-            handles.iter().any(|(_, key)| *key == object_key)
-        })
+        self.wait_all_refs
+            .values()
+            .any(|handles| handles.iter().any(|(_, key)| *key == object_key))
     }
 
     fn wait_all_object_key(&self, handle: u32, thread: ThreadId) -> Option<u32> {
