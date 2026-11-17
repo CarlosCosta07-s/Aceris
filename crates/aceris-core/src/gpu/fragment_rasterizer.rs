@@ -192,6 +192,7 @@ pub struct PicaFragmentRasterizer {
     color: Vec<u8>,
     depth: Vec<f32>,
     stencil: Vec<u8>,
+    stencil_dirty: bool,
 }
 
 impl PicaFragmentRasterizer {
@@ -239,6 +240,7 @@ impl PicaFragmentRasterizer {
             color,
             depth,
             stencil,
+            stencil_dirty: false,
         })
     }
 
@@ -265,12 +267,13 @@ impl PicaFragmentRasterizer {
             .read_stencil_values(memory)
             .map_err(PicaFragmentRasterError::DepthBuffer)?
             .unwrap_or_else(|| vec![0; stencil_count]);
+        self.stencil_dirty = false;
         Ok(())
     }
 
     /// Publishes the current depth plane into the guest's physical depth target.
     pub fn write_depth_buffer(
-        &self,
+        &mut self,
         config: PicaDepthBufferConfig,
         memory: &mut GpuPhysicalMemory,
     ) -> Result<u64, PicaFragmentRasterError> {
@@ -282,10 +285,12 @@ impl PicaFragmentRasterizer {
         let depth_bytes = config
             .write_depth_values(&self.depth, memory)
             .map_err(PicaFragmentRasterError::DepthBuffer)?;
-        let stencil_bytes = if config.format == PicaDepthBufferFormat::D24S8 {
-            config
+        let stencil_bytes = if config.format == PicaDepthBufferFormat::D24S8 && self.stencil_dirty {
+            let bytes = config
                 .write_stencil_values(&self.stencil, memory)
-                .map_err(PicaFragmentRasterError::DepthBuffer)?
+                .map_err(PicaFragmentRasterError::DepthBuffer)?;
+            self.stencil_dirty = false;
+            bytes
         } else {
             0
         };
@@ -334,6 +339,7 @@ impl PicaFragmentRasterizer {
         }
         self.depth.fill(depth);
         self.stencil.fill(0);
+        self.stencil_dirty = true;
         Ok(())
     }
 
@@ -624,8 +630,12 @@ impl PicaFragmentRasterizer {
                 let stored_stencil = self.stencil[pixel_index];
                 if stencil_state.enabled && !stencil_state.test_passes(stored_stencil) {
                     if state.stencil_write_enabled {
-                        self.stencil[pixel_index] =
+                        let updated =
                             stencil_state.apply(stencil_state.stencil_fail, stored_stencil);
+                        if updated != stored_stencil {
+                            self.stencil[pixel_index] = updated;
+                            self.stencil_dirty = true;
+                        }
                     }
                     report.stencil_rejected_pixels =
                         report.stencil_rejected_pixels.saturating_add(1);
@@ -638,8 +648,12 @@ impl PicaFragmentRasterizer {
                     self.depth[pixel_index],
                 ) {
                     if stencil_state.enabled && state.stencil_write_enabled {
-                        self.stencil[pixel_index] =
+                        let updated =
                             stencil_state.apply(stencil_state.depth_fail, stored_stencil);
+                        if updated != stored_stencil {
+                            self.stencil[pixel_index] = updated;
+                            self.stencil_dirty = true;
+                        }
                     }
                     report.depth_rejected_pixels = report.depth_rejected_pixels.saturating_add(1);
                     continue;
@@ -660,8 +674,11 @@ impl PicaFragmentRasterizer {
                     .apply_fragment_output(source, destination)
                     .map_err(PicaFragmentRasterError::FragmentOutput)?;
                 if stencil_state.enabled && state.stencil_write_enabled {
-                    self.stencil[pixel_index] =
-                        stencil_state.apply(stencil_state.depth_pass, stored_stencil);
+                    let updated = stencil_state.apply(stencil_state.depth_pass, stored_stencil);
+                    if updated != stored_stencil {
+                        self.stencil[pixel_index] = updated;
+                        self.stencil_dirty = true;
+                    }
                 }
                 for (channel, enabled) in state.color_write_mask.iter().copied().enumerate() {
                     if enabled {
