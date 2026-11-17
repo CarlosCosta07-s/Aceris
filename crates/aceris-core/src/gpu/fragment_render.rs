@@ -300,11 +300,11 @@ impl PicaFragmentRenderSession {
         memory: &mut GpuPhysicalMemory,
     ) -> Result<(), PicaFragmentRenderSessionError> {
         if self.dirty {
-            if let Some((config, depth_config, rasterizer)) = &self.active {
+            if let Some((config, depth_config, rasterizer)) = self.active.as_mut() {
                 rasterizer
                     .write_render_target(*config, memory)
                     .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
-                if let Some(depth_config) = depth_config {
+                if let Some(depth_config) = depth_config.as_ref() {
                     rasterizer
                         .write_depth_buffer(*depth_config, memory)
                         .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
