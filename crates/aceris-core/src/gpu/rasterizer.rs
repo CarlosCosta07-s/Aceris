@@ -591,7 +591,6 @@ mod tests {
     #[test]
     fn pica_w_buffer_restores_interpolated_perspective_w() {
         let mapping = PicaDepthMap {
-            transform_enabled: true,
             scale: 0.5,
             offset: 0.25,
             mode: PicaDepthMode::WBuffer,
@@ -619,7 +618,6 @@ mod tests {
     #[test]
     fn mixed_pica_depth_mappings_are_rejected_before_target_changes() {
         let mapping = PicaDepthMap {
-            transform_enabled: true,
             scale: 1.0,
             offset: 0.0,
             mode: PicaDepthMode::ZBuffer,
