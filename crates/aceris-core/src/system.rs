@@ -3201,6 +3201,9 @@ mod tests {
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
+                    0xE584_5000, // STR r5, [r4] (guest writes "srv:")
+                    0xE1A0_0006, // MOV r0, r6 (ConnectToPort output pointer)
+                    0xE1A0_1004, // MOV r1, r4 (ConnectToPort service-name pointer)
                     0xEF00_002D, // SVC ConnectToPort
                     // Guest-authored srv:RegisterClient request.
                     0xE584_5000, // STR r5, [r4] (IPC header)
@@ -3276,23 +3279,20 @@ mod tests {
             .create_event_handle(crate::loader::ncsd::session::kernel::EventResetType::OneShot)
             .unwrap();
 
-        // ConnectToPort("srv:") creates the service-manager client handle.
-        system
-            .ncsd_session
-            .as_mut()
-            .unwrap()
-            .write_memory_bytes(0x0010_2000, b"srv:")
-            .unwrap();
-        system
-            .ncsd_session
-            .as_mut()
-            .unwrap()
-            .set_current_register(0, 0x0010_2010);
-        system
-            .ncsd_session
-            .as_mut()
-            .unwrap()
-            .set_current_register(1, 0x0010_2000);
+        // The guest writes "srv:", supplies both ConnectToPort pointers
+        // through ordinary ARM11 instructions and executes the SVC itself.
+        {
+            let session = system.ncsd_session.as_mut().unwrap();
+            assert!(session.set_current_register(4, 0x0010_2000));
+            assert!(session.set_current_register(5, 0x3A76_7273));
+            assert!(session.set_current_register(6, 0x0010_2010));
+            for _ in 0..3 {
+                assert_eq!(session.step().unwrap(), crate::cpu::StepEvent::Executed);
+            }
+            assert_eq!(session.read_memory_u32(0x0010_2000).unwrap(), 0x3A76_7273);
+            assert_eq!(session.current_registers().unwrap()[0], 0x0010_2010);
+            assert_eq!(session.current_registers().unwrap()[1], 0x0010_2000);
+        }
         run_one_ipc_svc(&mut system);
         let service_manager = system
             .ncsd_session
