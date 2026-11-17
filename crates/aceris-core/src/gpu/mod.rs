@@ -51,7 +51,7 @@ pub use fragment_output::{
     PicaAlphaTestFunction, PicaBlendChannel, PicaBlendEquation, PicaBlendFactor,
     PicaColorOperationMode,
     PicaFragmentOperation, PicaFragmentOutputError, PicaFragmentOutputState, PicaLogicOperation,
-    REG_BLEND_COLOR, REG_BLEND_FUNC, REG_LOGIC_OP,
+    REG_BLEND_COLOR, REG_BLEND_FUNC, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP,
 };
 pub use fragment_pipeline::{
     PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentInterpolationError, PicaFragmentPipeline,
