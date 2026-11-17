@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn register_shift_alu_exhausts_armv6_thumb_amounts_and_flags() {
-        use super::super::shifter::{shift_reg, ShiftKind};
+        use super::super::shifter::{ShiftKind, shift_reg};
 
         let operations = [
             (0b0010u32, ShiftKind::Lsl),
@@ -819,25 +819,14 @@ mod tests {
                         let instruction = 0x4000 | (operation << 6) | (1 << 3);
                         cpu.execute_thumb(&mut memory, instruction).unwrap();
 
-                        let (expected, expected_carry) =
-                            shift_reg(kind, source, amount, carry_in);
+                        let (expected, expected_carry) = shift_reg(kind, source, amount, carry_in);
                         assert_eq!(
                             cpu.regs[0], expected,
                             "shift={kind:?} amount={amount} source={source:#010x}"
                         );
                         assert_eq!(
-                            (
-                                cpu.cpsr.n(),
-                                cpu.cpsr.z(),
-                                cpu.cpsr.c(),
-                                cpu.cpsr.v(),
-                            ),
-                            (
-                                expected >> 31 != 0,
-                                expected == 0,
-                                expected_carry,
-                                true,
-                            ),
+                            (cpu.cpsr.n(), cpu.cpsr.z(), cpu.cpsr.c(), cpu.cpsr.v(),),
+                            (expected >> 31 != 0, expected == 0, expected_carry, true,),
                             "flags: shift={kind:?} amount={amount} source={source:#010x} carry_in={carry_in}"
                         );
                         assert!(cpu.cpsr.thumb(), "ALU shifts must remain in Thumb state");
