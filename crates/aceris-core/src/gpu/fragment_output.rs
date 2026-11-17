@@ -576,12 +576,12 @@ mod tests {
         );
 
         pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
-        pica.write_register(REG_BLEND_FUNC, 5 | (15 << 16)).unwrap();
+        pica.write_register(REG_BLEND_FUNC, 15 << 16).unwrap();
         assert_eq!(
             pica.fragment_output_state(),
-            Err(PicaFragmentOutputError::UnsupportedBlendEquation {
+            Err(PicaFragmentOutputError::UnsupportedBlendFactor {
                 channel: PicaBlendChannel::Rgb,
-                value: 5
+                value: 15
             })
         );
     }
