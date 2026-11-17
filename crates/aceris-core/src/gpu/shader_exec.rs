@@ -835,26 +835,6 @@ impl Machine<'_> {
             })
     }
 
-    fn absolute_target(&self, index: usize, target: u16) -> Result<usize, PicaShaderExecError> {
-        let target = usize::from(target);
-        if target > self.program.code.len() {
-            return Err(PicaShaderExecError::InvalidControlFlowTarget { index, target });
-        }
-        Ok(target)
-    }
-
-    fn flow_condition(&self, operator: u8, reference_x: bool, reference_y: bool) -> bool {
-        let x_matches = self.comparison_flags[0] == reference_x;
-        let y_matches = self.comparison_flags[1] == reference_y;
-        match operator {
-            0 => x_matches || y_matches,
-            1 => x_matches && y_matches,
-            2 => x_matches,
-            3 => y_matches,
-            _ => false,
-        }
-    }
-
     fn call(
         &mut self,
         index: usize,
