@@ -829,14 +829,11 @@ mod tests {
 
         let mut rasterizer =
             PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
-        let draw = PicaFragmentDraw::from_test_vertices(
-            [
-                fragment_vertex([-1.0, -1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
-                fragment_vertex([1.0, -1.0, -0.5, 1.0], [0.0, 1.0, 0.0, 1.0]),
-                fragment_vertex([-1.0, 1.0, -0.5, 1.0], [0.0, 0.0, 1.0, 1.0]),
-            ],
-            vec![[0, 1, 2]],
-        );
+        let draw = draw([
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], [0.0, 1.0, 0.0, 1.0]),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], [0.0, 0.0, 1.0, 1.0]),
+        ]);
         let state = PicaFragmentRasterState::new(
             Matrix4::identity(),
             Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
@@ -851,10 +848,7 @@ mod tests {
             .unwrap();
         let decoded = target.read_rgba8(&memory).unwrap();
         let offset = (6 * 8 + 1) * 4;
-        assert_eq!(
-            &decoded[offset..offset + 4],
-            &[159, 48, 48, 255]
-        );
+        assert_eq!(&decoded[offset..offset + 4], &[159, 48, 48, 255]);
     }
 
     #[test]
