@@ -10,6 +10,7 @@ mod coprocessor;
 mod cp15;
 mod faults;
 mod mmu;
+mod mpcore_scu;
 mod psr;
 mod shifter;
 mod thumb;
@@ -17,6 +18,7 @@ mod vfp;
 
 pub use condition::Condition;
 pub use cp15::Cp15;
+pub use mpcore_scu::MpcoreScu;
 pub use psr::Psr;
 pub use vfp::Vfp;
 
