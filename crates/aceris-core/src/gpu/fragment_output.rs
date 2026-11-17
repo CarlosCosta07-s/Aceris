@@ -1,7 +1,7 @@
 //! PICA200 framebuffer color-operation stage.
 //!
 //! This module models the color operation after TEV: alpha/stencil tests,
- //! fixed-function blending or per-channel logic operations. It accepts and
+//! fixed-function blending or per-channel logic operations. It accepts and
 //! returns normalized/8-bit RGBA values; framebuffer format conversion and
 //! physical depth/stencil storage are handled by their own GPU modules.
 
