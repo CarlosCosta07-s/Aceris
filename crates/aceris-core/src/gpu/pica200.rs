@@ -44,8 +44,14 @@ pub const REG_DEPTHMAP_ENABLE: u16 = 0x06D;
 pub const REG_DEPTH_COLOR_MASK: u16 = 0x107;
 /// GPUREG_COLORBUFFER_WRITE: per-channel color-buffer write access.
 pub const REG_COLORBUFFER_WRITE: u16 = 0x113;
+/// GPUREG_DEPTHBUFFER_READ: stencil/depth read access.
+pub const REG_DEPTHBUFFER_READ: u16 = 0x114;
 /// GPUREG_DEPTHBUFFER_WRITE: stencil/depth write access.
 pub const REG_DEPTHBUFFER_WRITE: u16 = 0x115;
+/// GPUREG_DEPTHBUFFER_FORMAT: D16, D24 or D24S8.
+pub const REG_DEPTHBUFFER_FORMAT: u16 = 0x116;
+/// GPUREG_DEPTHBUFFER_LOC: physical depth-buffer address >> 3.
+pub const REG_DEPTHBUFFER_LOC: u16 = 0x11C;
 
 /// Decoded viewport data written by the guest through PICA registers.
 #[derive(Clone, Copy, Debug, PartialEq)]
