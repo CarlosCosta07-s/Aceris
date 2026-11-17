@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 pub const MPCORE_PRIVATE_MEMORY_BASE: u32 = 0x17E0_0000;
 /// Size of the ARM11 MPCore private peripheral region on Nintendo 3DS.
 pub const MPCORE_PRIVATE_MEMORY_SIZE: u32 = 0x0000_2000;
+/// Size of the SCU register window within the private peripheral region.
+pub const SCU_REGISTER_WINDOW_SIZE: u32 = 0x0000_0100;
 
 /// Offset of the SCU Control Register.
 pub const SCU_CONTROL_REGISTER_OFFSET: u32 = 0x00;
