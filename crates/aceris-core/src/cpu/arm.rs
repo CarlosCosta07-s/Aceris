@@ -3252,6 +3252,68 @@ mod tests {
     }
 
     #[test]
+    fn register_controlled_shift_decode_exhausts_armv6_amounts_and_types() {
+        use super::super::shifter::{shift_reg, ShiftKind};
+
+        let source_values = [
+            0,
+            1,
+            0x8000_0001,
+            0x7FFF_FFFF,
+            0xA5C3_7E19,
+        ];
+
+        for shift_code in 0..4u32 {
+            let kind = ShiftKind::from_bits(shift_code);
+            for amount in 0..=u8::MAX as u32 {
+                for source in source_values {
+                    for carry_in in [false, true] {
+                        let mut cpu = Arm11Core::new();
+                        cpu.regs[0] = source;
+                        // High bits must be ignored; only Rs[7:0] controls
+                        // a register-specified ARM shift.
+                        cpu.regs[1] = 0xCAFE_BA00 | amount;
+                        cpu.regs[2] = 0xDEAD_BEEF;
+                        cpu.cpsr = Psr::from_flags(false, false, carry_in, true);
+                        cpu.set_pc(0);
+
+                        // MOVS r2, r0, <shift> r1
+                        let instruction = 0xE1B0_0000
+                            | (2 << 12)
+                            | (1 << 8)
+                            | (shift_code << 5)
+                            | (1 << 4);
+                        let mut memory = FlatMemory::new(0, 0x100);
+                        cpu.execute_arm(&mut memory, instruction).unwrap();
+
+                        let (expected, expected_carry) =
+                            shift_reg(kind, source, amount, carry_in);
+                        assert_eq!(
+                            cpu.regs[2], expected,
+                            "shift={kind:?} amount={amount} source={source:#010x}"
+                        );
+                        assert_eq!(
+                            (
+                                cpu.cpsr.n(),
+                                cpu.cpsr.z(),
+                                cpu.cpsr.c(),
+                                cpu.cpsr.v(),
+                            ),
+                            (
+                                expected >> 31 != 0,
+                                expected == 0,
+                                expected_carry,
+                                true,
+                            ),
+                            "flags: shift={kind:?} amount={amount} source={source:#010x} carry_in={carry_in}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn reading_pc_yields_instruction_address_plus_eight() {
         // MOV r1,r1 ; MOV r0,pc
         let mut m = Machine::new(&[0xE1A0_1001, 0xE1A0_000F]);
