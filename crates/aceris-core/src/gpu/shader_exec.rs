@@ -1762,6 +1762,70 @@ mod tests {
     }
 
     #[test]
+    fn relative_addressing_uses_signed_mova_offsets_and_loop_counter() {
+        let mut uniforms = [[0.0; 4]; 96];
+        uniforms[0] = [10.0; 4];
+        uniforms[1] = [11.0; 4];
+        uniforms[3] = [13.0; 4];
+        uniforms[5] = [15.0; 4];
+        let program = PicaVertexShaderProgram::from_words(
+            &[
+                format1_unary(0x12, 0, V0), // a0.x = trunc(-1.9), a0.y = trunc(2.9)
+                format1_unary(0x13, O0, C0 + 1) | (1 << 19), // c1 + a0.x = c0
+                format1_unary(0x13, O1, C0 + 1) | (2 << 19), // c1 + a0.y = c3
+                format3(0x29, 0, 4, 0), // LOOP sets aL=5 for its one instruction
+                format1_unary(0x13, O2, C0) | (3 << 19), // c0 + aL = c5
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &uniforms,
+        )
+        .with_special_registers(0, [[0, 5, 1, 0], [0; 4], [0; 4], [0; 4]]);
+        let result = program
+            .run(0, &inputs([-1.9, 2.9, 0.0, 0.0], [0.0; 4]))
+            .unwrap();
+        assert_eq!(result.outputs[0], [10.0; 4]);
+        assert_eq!(result.outputs[1], [13.0; 4]);
+        assert_eq!(result.outputs[2], [15.0; 4]);
+        assert_eq!(result.address_registers, [-1, 2]);
+        assert_eq!(result.loop_counter, 6);
+    }
+
+    #[test]
+    fn out_of_range_relative_offsets_are_ignored_and_uniform_oob_returns_ones() {
+        let mut uniforms = [[0.0; 4]; 96];
+        uniforms[1] = [21.0; 4];
+        let ignored_offset = PicaVertexShaderProgram::from_words(
+            &[
+                format1_unary(0x12, 0, V0), // a0.x = 200
+                format1_unary(0x13, O0, C0 + 1) | (1 << 19), // out-of-range offset means c1
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &uniforms,
+        );
+        let result = ignored_offset
+            .run(0, &inputs([200.0, 0.0, 0.0, 0.0], [0.0; 4]))
+            .unwrap();
+        assert_eq!(result.outputs[0], [21.0; 4]);
+
+        let mut uniforms = [[0.0; 4]; 96];
+        uniforms[95] = [95.0; 4];
+        let masked_oob = PicaVertexShaderProgram::from_words(
+            &[
+                format1_unary(0x13, O0, 0x7F) | (1 << 19), // c95 + a0.x(1) -> c96
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &uniforms,
+        );
+        let result = masked_oob
+            .run(0, &inputs([0.0, 0.0, 0.0, 0.0], [0.0; 4]))
+            .unwrap();
+        assert_eq!(result.outputs[0], [1.0; 4]);
+    }
+
+    #[test]
     fn cmp_sets_independent_x_and_y_flags() {
         let program = PicaVertexShaderProgram::from_words(
             &[format1_compare(V0, V1, 2, 5), END],
