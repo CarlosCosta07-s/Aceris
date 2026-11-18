@@ -1,13 +1,14 @@
-//! PICA200 render-target register decoding and 8x8 Morton color-buffer storage.
+//! PICA200 render-target register decoding and Morton color-buffer storage.
 //!
 //! The render target is described by GPUREG_COLORBUFFER_LOC/FORMAT,
 //! GPUREG_FRAMEBUFFER_BLOCK32 and GPUREG_FRAMEBUFFER_DIM. This module decodes
-//! those values and provides an 8x8-block Morton encoder/decoder for the
+//! those values and provides 8x8 and 32x32 block encoders/decoders for the
 //! software rasterizer's RGBA8 color output.
 //!
-//! The 32x32 block mode is retained in the decoded configuration but rejected
-//! by the current codec. The tentative vertical-flip flag is exposed without
-//! applying it; orientation must be resolved separately before presentation.
+//! Public documentation identifies both block sizes but does not specify the
+//! 32x32 intra-block order. That mode is modeled as a row-major grid of tiles,
+//! each using 5-bit-per-axis Morton order, and remains unverified on hardware.
+//! The tentative vertical-flip flag is exposed without applying it.
 
 use std::fmt;
 
@@ -22,8 +23,8 @@ pub const REG_COLORBUFFER_LOC: u16 = 0x11D;
 /// GPUREG_FRAMEBUFFER_DIM.
 pub const REG_FRAMEBUFFER_DIM: u16 = 0x11E;
 
-const TILE_EDGE: usize = 8;
-const TILE_PIXELS: usize = TILE_EDGE * TILE_EDGE;
+const TILE_EDGE_8X8: usize = 8;
+const TILE_EDGE_32X32: usize = 32;
 const COLOR_LOCATION_MASK: u32 = 0x0FFF_FFFF;
 const DIMENSION_WIDTH_MASK: u32 = 0x7FF;
 const DIMENSION_HEIGHT_MASK: u32 = 0x3FF;
@@ -134,18 +135,20 @@ impl PicaRenderTargetConfig {
         })
     }
 
-    /// Returns the number of bytes occupied by the padded 8x8 tile grid.
+    /// Returns the number of bytes occupied by the padded block grid.
     ///
-    /// The current implementation intentionally supports only the 8x8 block
-    /// mode. Width and height need not be multiples of eight; the final tile
-    /// row/column is padded and pixels outside the logical image are zeroed.
+    /// Width and height need not be exact multiples of the selected block edge;
+    /// the final tile row/column is padded in the backing storage.
     pub fn tiled_storage_size(self) -> Result<usize, PicaRenderTargetError> {
-        self.ensure_supported_block_mode()?;
-        let tiles_x = tile_count(self.width as usize)?;
-        let tiles_y = tile_count(self.height as usize)?;
+        let tile_edge = self.block_edge();
+        let tiles_x = tile_count(self.width as usize, tile_edge)?;
+        let tiles_y = tile_count(self.height as usize, tile_edge)?;
+        let tile_pixels = tile_edge
+            .checked_mul(tile_edge)
+            .ok_or(PicaRenderTargetError::SizeOverflow)?;
         tiles_x
             .checked_mul(tiles_y)
-            .and_then(|tiles| tiles.checked_mul(TILE_PIXELS))
+            .and_then(|tiles| tiles.checked_mul(tile_pixels))
             .and_then(|pixels| pixels.checked_mul(self.format.bytes_per_pixel()))
             .ok_or(PicaRenderTargetError::SizeOverflow)
     }
@@ -156,10 +159,10 @@ impl PicaRenderTargetConfig {
         rasterizer: &SoftwareRasterizer,
     ) -> Result<Vec<u8>, PicaRenderTargetError> {
         self.validate_rasterizer_dimensions(rasterizer)?;
-        self.ensure_supported_block_mode()?;
         let output_len = self.tiled_storage_size()?;
         let bytes_per_pixel = self.format.bytes_per_pixel();
-        let tiles_x = tile_count(self.width as usize)?;
+        let tile_edge = self.block_edge();
+        let tiles_x = tile_count(self.width as usize, tile_edge)?;
         let mut output = Vec::new();
         output
             .try_reserve_exact(output_len)
@@ -170,7 +173,8 @@ impl PicaRenderTargetConfig {
         for y in 0..self.height as usize {
             for x in 0..self.width as usize {
                 let source_offset = (y * self.width as usize + x) * 4;
-                let destination_offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
+                let destination_offset =
+                    tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel, tile_edge)?;
                 self.format.encode_pixel(
                     [
                         source[source_offset],
@@ -195,14 +199,14 @@ impl PicaRenderTargetConfig {
         memory: &mut GpuPhysicalMemory,
     ) -> Result<PicaRenderTargetWriteReport, PicaRenderTargetError> {
         self.validate_rasterizer_dimensions(rasterizer)?;
-        self.ensure_supported_block_mode()?;
         let bytes_written = self.tiled_storage_size()?;
         memory.validate_range(self.color_buffer_address, bytes_written)?;
         let encoded = self.encode_rasterizer(rasterizer)?;
         memory.write(self.color_buffer_address, &encoded)?;
 
-        let tiles_x = tile_count(self.width as usize)?;
-        let tiles_y = tile_count(self.height as usize)?;
+        let tile_edge = self.block_edge();
+        let tiles_x = tile_count(self.width as usize, tile_edge)?;
+        let tiles_y = tile_count(self.height as usize, tile_edge)?;
         Ok(PicaRenderTargetWriteReport {
             width: self.width,
             height: self.height,
@@ -213,7 +217,6 @@ impl PicaRenderTargetConfig {
 
     /// Reads and untile-decodes the color target into tightly packed RGBA8.
     pub fn read_rgba8(self, memory: &GpuPhysicalMemory) -> Result<Vec<u8>, PicaRenderTargetError> {
-        self.ensure_supported_block_mode()?;
         let storage_size = self.tiled_storage_size()?;
         memory.validate_range(self.color_buffer_address, storage_size)?;
         let mut tiled = Vec::new();
@@ -234,11 +237,12 @@ impl PicaRenderTargetConfig {
             .map_err(|_| PicaRenderTargetError::AllocationFailed)?;
         rgba.resize(output_len, 0);
 
-        let tiles_x = tile_count(self.width as usize)?;
+        let tile_edge = self.block_edge();
+        let tiles_x = tile_count(self.width as usize, tile_edge)?;
         let bytes_per_pixel = self.format.bytes_per_pixel();
         for y in 0..self.height as usize {
             for x in 0..self.width as usize {
-                let source_offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel)?;
+                let source_offset = tiled_pixel_offset(x, y, tiles_x, bytes_per_pixel, tile_edge)?;
                 let destination_offset = (y * self.width as usize + x) * 4;
                 let pixel = self
                     .format
@@ -265,11 +269,11 @@ impl PicaRenderTargetConfig {
         Ok(())
     }
 
-    fn ensure_supported_block_mode(self) -> Result<(), PicaRenderTargetError> {
-        if self.block_mode != PicaRenderBlockMode::Blocks8x8 {
-            return Err(PicaRenderTargetError::UnsupportedBlockMode { value: 32 });
+    const fn block_edge(self) -> usize {
+        match self.block_mode {
+            PicaRenderBlockMode::Blocks8x8 => TILE_EDGE_8X8,
+            PicaRenderBlockMode::Blocks32x32 => TILE_EDGE_32X32,
         }
-        Ok(())
     }
 }
 
@@ -289,41 +293,46 @@ impl Pica200 {
     }
 }
 
-/// Counts the 8x8 tiles needed to cover a nonzero dimension.
-fn tile_count(dimension: usize) -> Result<usize, PicaRenderTargetError> {
+/// Counts the row-major tiles needed to cover a nonzero dimension.
+fn tile_count(dimension: usize, tile_edge: usize) -> Result<usize, PicaRenderTargetError> {
     dimension
-        .checked_add(TILE_EDGE - 1)
-        .map(|rounded| rounded / TILE_EDGE)
+        .checked_add(tile_edge - 1)
+        .map(|rounded| rounded / tile_edge)
         .filter(|count| *count != 0)
         .ok_or(PicaRenderTargetError::SizeOverflow)
 }
 
 /// Computes the byte offset for one logical pixel in row-major tile order and
-/// Morton order within its 8x8 tile.
+/// Morton order within the selected square tile.
 fn tiled_pixel_offset(
     x: usize,
     y: usize,
     tiles_x: usize,
     bytes_per_pixel: usize,
+    tile_edge: usize,
 ) -> Result<usize, PicaRenderTargetError> {
-    let tile_x = x / TILE_EDGE;
-    let tile_y = y / TILE_EDGE;
+    let tile_x = x / tile_edge;
+    let tile_y = y / tile_edge;
     let tile_index = tile_y
         .checked_mul(tiles_x)
         .and_then(|index| index.checked_add(tile_x))
         .ok_or(PicaRenderTargetError::SizeOverflow)?;
-    let morton = morton_index(x & 7, y & 7);
+    let tile_pixels = tile_edge
+        .checked_mul(tile_edge)
+        .ok_or(PicaRenderTargetError::SizeOverflow)?;
+    let morton = morton_index(x % tile_edge, y % tile_edge, tile_edge);
     tile_index
-        .checked_mul(TILE_PIXELS)
+        .checked_mul(tile_pixels)
         .and_then(|pixel| pixel.checked_add(morton))
         .and_then(|pixel| pixel.checked_mul(bytes_per_pixel))
         .ok_or(PicaRenderTargetError::SizeOverflow)
 }
 
-/// Interleaves the low three X/Y bits into a six-bit 8x8 Morton index.
-fn morton_index(x: usize, y: usize) -> usize {
+/// Interleaves the X/Y coordinate bits into a Morton index.
+fn morton_index(x: usize, y: usize, tile_edge: usize) -> usize {
+    let bits = tile_edge.trailing_zeros() as usize;
     let mut index = 0usize;
-    for bit in 0..3 {
+    for bit in 0..bits {
         index |= ((x >> bit) & 1) << (bit * 2);
         index |= ((y >> bit) & 1) << (bit * 2 + 1);
     }
@@ -596,20 +605,26 @@ mod tests {
     }
 
     #[test]
-    fn morton_index_is_a_bijection_over_an_eight_by_eight_tile() {
-        let mut indices = Vec::with_capacity(TILE_PIXELS);
-        for y in 0..TILE_EDGE {
-            for x in 0..TILE_EDGE {
-                indices.push(morton_index(x, y));
+    fn morton_index_is_a_bijection_over_eight_by_eight_and_32_by_32_tiles() {
+        for tile_edge in [TILE_EDGE_8X8, TILE_EDGE_32X32] {
+            let tile_pixels = tile_edge * tile_edge;
+            let mut indices = Vec::with_capacity(tile_pixels);
+            for y in 0..tile_edge {
+                for x in 0..tile_edge {
+                    indices.push(morton_index(x, y, tile_edge));
+                }
             }
+            indices.sort_unstable();
+            assert_eq!(indices, (0..tile_pixels).collect::<Vec<_>>());
         }
-        indices.sort_unstable();
-        assert_eq!(indices, (0..TILE_PIXELS).collect::<Vec<_>>());
-        assert_eq!(morton_index(1, 0), 1);
-        assert_eq!(morton_index(0, 1), 2);
-        assert_eq!(morton_index(1, 1), 3);
-        assert_eq!(morton_index(2, 0), 4);
-        assert_eq!(morton_index(0, 2), 8);
+
+        assert_eq!(morton_index(1, 0, TILE_EDGE_8X8), 1);
+        assert_eq!(morton_index(0, 1, TILE_EDGE_8X8), 2);
+        assert_eq!(morton_index(1, 1, TILE_EDGE_8X8), 3);
+        assert_eq!(morton_index(2, 0, TILE_EDGE_8X8), 4);
+        assert_eq!(morton_index(0, 2, TILE_EDGE_8X8), 8);
+        assert_eq!(morton_index(16, 0, TILE_EDGE_32X32), 256);
+        assert_eq!(morton_index(0, 16, TILE_EDGE_32X32), 512);
     }
 
     #[test]
@@ -681,25 +696,27 @@ mod tests {
     }
 
     #[test]
-    fn rejects_32_by_32_blocks_before_writing_memory() {
-        let rasterizer = patterned_rasterizer(8, 8);
+    fn rgba8_rasterizer_round_trips_through_32_by_32_morton_tiles() {
+        let rasterizer = patterned_rasterizer(64, 32);
         let target = target_config(
             FCRAM_BASE + 0xC0_000,
-            8,
-            8,
+            64,
+            32,
             PicaColorBufferFormat::Rgba8,
             PicaRenderBlockMode::Blocks32x32,
         );
         let mut memory = GpuPhysicalMemory::new();
+        let report = target.write_rasterizer(&rasterizer, &mut memory).unwrap();
+
+        assert_eq!(target.tiled_storage_size().unwrap(), 64 * 32 * 4);
+        assert_eq!(report.width, 64);
+        assert_eq!(report.height, 32);
+        assert_eq!(report.tiles_written, 2);
+        assert_eq!(report.bytes_written, 64 * 32 * 4);
         assert_eq!(
-            target.write_rasterizer(&rasterizer, &mut memory),
-            Err(PicaRenderTargetError::UnsupportedBlockMode { value: 32 })
+            target.read_rgba8(&memory).unwrap(),
+            rasterizer.color_buffer()
         );
-        let mut bytes = [0xA5; 4];
-        memory
-            .read(target.color_buffer_address, &mut bytes)
-            .unwrap();
-        assert_eq!(bytes, [0; 4]);
     }
 
     #[test]
