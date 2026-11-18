@@ -47,6 +47,50 @@ struct PendingGspAcquire {
     thread_id: ThreadId,
 }
 
+const GSP_BUSY_MEMORY_FILL: u8 = 1 << 0;
+const GSP_BUSY_DISPLAY_TRANSFER: u8 = 1 << 1;
+const GSP_BUSY_TEXTURE_COPY: u8 = 1 << 2;
+const GSP_BUSY_FLUSH_CACHE_REGIONS: u8 = 1 << 3;
+
+/// Relative GX busy flags retained until their matching completion path runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct GspBusyState {
+    command_mask: u8,
+}
+
+impl GspBusyState {
+    const fn flag_for_command(command_id: u8) -> u8 {
+        match command_id {
+            GSP_GX_COMMAND_MEMORY_FILL => GSP_BUSY_MEMORY_FILL,
+            GSP_GX_COMMAND_DISPLAY_TRANSFER => GSP_BUSY_DISPLAY_TRANSFER,
+            GSP_GX_COMMAND_TEXTURE_COPY => GSP_BUSY_TEXTURE_COPY,
+            GSP_GX_COMMAND_FLUSH_CACHE_REGIONS => GSP_BUSY_FLUSH_CACHE_REGIONS,
+            _ => 0,
+        }
+    }
+
+    const fn rejects(self, command_id: u8, fail_if_busy: bool) -> bool {
+        if fail_if_busy {
+            self.command_mask != 0
+        } else {
+            let flag = Self::flag_for_command(command_id);
+            flag != 0 && self.command_mask & flag != 0
+        }
+    }
+
+    fn begin(&mut self, command_id: u8) {
+        self.command_mask |= Self::flag_for_command(command_id);
+    }
+
+    fn complete(&mut self, command_id: u8) {
+        self.command_mask &= !Self::flag_for_command(command_id);
+    }
+
+    const fn is_busy(self, command_id: u8) -> bool {
+        self.command_mask & Self::flag_for_command(command_id) != 0
+    }
+}
+
 const GSP_TOP_FRAMEBUFFER_INFO_OFFSET: u32 = 0x200;
 const GSP_BOTTOM_FRAMEBUFFER_INFO_OFFSET: u32 = 0x240;
 const GSP_FRAMEBUFFER_INFO_CLIENT_STRIDE: u32 = 0x80;
@@ -82,6 +126,8 @@ pub struct System {
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
+    /// Device-wide GX busy flags; completion interrupts release asynchronous kinds.
+    gsp_busy_state: GspBusyState,
     pending_gsp_acquires: Vec<PendingGspAcquire>,
     /// Shared MPCore SCU state visible to the running ARM11 process.
     mpcore_scu: MpcoreScu,
@@ -144,6 +190,8 @@ pub struct GspGxCommandQueueReport {
     pub cache_flush_requested: bool,
     pub gas_blend_update_requested: bool,
     pub busy_check_requested: bool,
+    /// Number of commands rejected by the GX relative busy flags.
+    pub busy_commands_rejected: u8,
     pub halted: bool,
     pub status: u8,
     pub last_result: u32,
@@ -222,6 +270,7 @@ impl System {
         self.image = Some(format);
         self.ncsd_session = None;
         self.gsp_service = GspServiceRegistry::new();
+        self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
         self.cpu = Arm11Core::new();
         Ok(format)
@@ -251,6 +300,7 @@ impl System {
         self.image = Some(ImageFormat::ThreeDsx);
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
+        self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
         Ok(ImageFormat::ThreeDsx)
     }
@@ -338,6 +388,7 @@ impl System {
         self.image = Some(ImageFormat::Cia);
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
+        self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
         Ok(ImageFormat::Cia)
     }
@@ -423,6 +474,7 @@ impl System {
         self.image = Some(ImageFormat::Cia);
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
+        self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
         Ok(ImageFormat::Cia)
     }
@@ -524,6 +576,7 @@ impl System {
         self.image = Some(ImageFormat::Cia);
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
+        self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
         Ok(ImageFormat::Cia)
     }
@@ -592,6 +645,7 @@ impl System {
         self.image = Some(ImageFormat::Ncsd);
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
+        self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
         Ok(ImageFormat::Ncsd)
     }
@@ -1970,6 +2024,7 @@ impl System {
             cache_flush_requested: false,
             gas_blend_update_requested: false,
             busy_check_requested: false,
+            busy_commands_rejected: 0,
             halted: queue.is_halted(),
             status: queue.status(),
             last_result: queue.last_result(),
@@ -1980,6 +2035,28 @@ impl System {
             while let Some(command) = queue.consume_next() {
                 report.commands_consumed = report.commands_consumed.saturating_add(1);
                 report.busy_check_requested |= command.fail_if_busy;
+
+                if client_has_rendering_right
+                    && self
+                        .gsp_busy_state
+                        .rejects(command.command_id, command.fail_if_busy)
+                {
+                    report.busy_commands_rejected =
+                        report.busy_commands_rejected.saturating_add(1);
+                    let error = GspGxCommandQueueError::CommandBusy {
+                        command_id: command.command_id,
+                        busy_commands_mask: self.gsp_busy_state.command_mask,
+                        fail_if_busy: command.fail_if_busy,
+                    };
+                    queue.mark_error(None);
+                    queue.halt();
+                    report.error = Some(error);
+                    break;
+                }
+
+                if client_has_rendering_right {
+                    self.gsp_busy_state.begin(command.command_id);
+                }
 
                 let dispatch_result = match command.command_id {
                     GSP_GX_COMMAND_REQUEST_DMA => {
@@ -2034,13 +2111,23 @@ impl System {
                                         None
                                     };
                                     if let Some(interrupt) = completion_interrupt {
-                                        self.dispatch_gsp_interrupt(interrupt).map(|_| ()).map_err(
-                                            |error| {
+                                        let dispatch = self
+                                            .dispatch_gsp_interrupt(interrupt)
+                                            .map_err(|error| {
                                                 GspGxCommandQueueError::ProcessMemory(
                                                     error.to_string(),
                                                 )
-                                            },
-                                        )
+                                            })?;
+                                        if dispatch.deliveries.iter().any(|delivery| {
+                                            matches!(
+                                                delivery.push_result,
+                                                GspInterruptQueuePushResult::Queued { .. }
+                                            )
+                                        }) {
+                                            self.gsp_busy_state
+                                                .complete(GSP_GX_COMMAND_MEMORY_FILL);
+                                        }
+                                        Ok(())
                                     } else {
                                         Ok(())
                                     }
@@ -2065,13 +2152,23 @@ impl System {
                                     report.display_transfers_completed =
                                         report.display_transfers_completed.saturating_add(1);
                                     if signals_ppf {
-                                        self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
-                                            .map(|_| ())
+                                        let dispatch = self
+                                            .dispatch_gsp_interrupt(GspInterruptId::Ppf)
                                             .map_err(|error| {
                                                 GspGxCommandQueueError::DisplayTransfer(
                                                     error.to_string(),
                                                 )
-                                            })
+                                            })?;
+                                        if dispatch.deliveries.iter().any(|delivery| {
+                                            matches!(
+                                                delivery.push_result,
+                                                GspInterruptQueuePushResult::Queued { .. }
+                                            )
+                                        }) {
+                                            self.gsp_busy_state
+                                                .complete(GSP_GX_COMMAND_DISPLAY_TRANSFER);
+                                        }
+                                        Ok(())
                                     } else {
                                         Ok(())
                                     }
@@ -2087,6 +2184,10 @@ impl System {
                         report.cache_flush_requested = true;
                         if client_has_rendering_right {
                             self.validate_gsp_cache_regions(arguments, &mut report)
+                                .map(|()| {
+                                    self.gsp_busy_state
+                                        .complete(GSP_GX_COMMAND_FLUSH_CACHE_REGIONS);
+                                })
                         } else {
                             Err(GspGxCommandQueueError::RenderingRightRequired)
                         }
@@ -2099,11 +2200,20 @@ impl System {
                             self.dispatch_gsp_texture_copy(arguments).and_then(|()| {
                                 report.texture_copies_completed =
                                     report.texture_copies_completed.saturating_add(1);
-                                self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
-                                    .map(|_| ())
+                                let dispatch = self
+                                    .dispatch_gsp_interrupt(GspInterruptId::Ppf)
                                     .map_err(|error| {
                                         GspGxCommandQueueError::TextureCopy(error.to_string())
-                                    })
+                                    })?;
+                                if dispatch.deliveries.iter().any(|delivery| {
+                                    matches!(
+                                        delivery.push_result,
+                                        GspInterruptQueuePushResult::Queued { .. }
+                                    )
+                                }) {
+                                    self.gsp_busy_state.complete(GSP_GX_COMMAND_TEXTURE_COPY);
+                                }
+                                Ok(())
                             })
                         } else {
                             Ok(())
