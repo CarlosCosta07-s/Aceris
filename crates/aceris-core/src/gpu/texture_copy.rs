@@ -253,7 +253,7 @@ pub fn execute_texture_copy(
 }
 
 fn row_count(total_bytes: usize, line_bytes: usize) -> usize {
-    (total_bytes + line_bytes - 1) / line_bytes
+    total_bytes.div_ceil(line_bytes)
 }
 
 fn row_size(total_bytes: usize, line_bytes: usize, row: usize) -> usize {
@@ -367,7 +367,8 @@ mod tests {
             report,
             TextureCopyReport {
                 bytes_transferred: 64,
-                rows_transferred: 1,
+                source_rows_transferred: 1,
+                destination_rows_transferred: 1,
                 used_gaps: false,
             }
         );
