@@ -13,6 +13,9 @@ use crate::gpu::{
     TextureCopyError, TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
     display_transfer_signals_ppf, execute_display_transfer, execute_texture_copy,
 };
+use crate::hid::{
+    HID_EVENT_COUNT, HID_SHARED_MEMORY_BLOCK_SIZE, HidSharedMemory, event as hid_event,
+};
 use crate::input::InputState;
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore, tmd::CONTENT_TYPE_ENCRYPTED};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -125,8 +128,10 @@ struct ResolvedGspFramebufferInfo {
 #[derive(Debug, Default)]
 pub struct System {
     cpu: Arm11Core,
-    /// Host-fed controller and touch state; not yet visible to the guest.
+    /// Host-fed controller and touch state, published to the guest through
+    /// `hid:USER` once the guest has requested its IPC handles.
     input: InputState,
+    hid: Option<HidService>,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -243,6 +248,15 @@ fn gsp_service_result_code(error: GspServiceError) -> u32 {
         | GspServiceError::InvalidRelayQueue { .. }
         | GspServiceError::EventSignalFailed { .. } => RESULT_INVALID_HANDLE,
     }
+}
+
+/// HLE `hid:USER` state: the published shared memory and its events.
+#[derive(Debug)]
+struct HidService {
+    memory: HidSharedMemory,
+    backing: crate::loader::ncsd::process::SharedMemoryBacking,
+    memory_handle: u32,
+    events: [u32; HID_EVENT_COUNT],
 }
 
 /// Result of one completed development frame.
@@ -1031,6 +1045,7 @@ impl System {
             ServiceSessionKind::ServiceManager { .. } => {
                 self.dispatch_service_manager_request(service_handle, message)?
             }
+            ServiceSessionKind::Hid => self.dispatch_hid_request(message)?,
             ServiceSessionKind::GspGpu {
                 client_id,
                 shared_memory_handle,
@@ -1153,6 +1168,18 @@ impl System {
                 requested_name[0..4].copy_from_slice(&parameters[0].to_le_bytes());
                 requested_name[4..8].copy_from_slice(&parameters[1].to_le_bytes());
                 let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
+                if name_length == 8 && &requested_name == b"hid:USER" {
+                    let hid_handle = match self
+                        .ncsd_session
+                        .as_mut()
+                        .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                        .create_hid_session()
+                    {
+                        Ok(handle) => handle,
+                        Err(_) => return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]),
+                    };
+                    return Ok(vec![0x0005_0042, 0, 0, hid_handle]);
+                }
                 if name_length != 8 || &requested_name != b"gsp::Gpu" {
                     return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
                 }
@@ -1172,6 +1199,91 @@ impl System {
             }
             _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
         }
+    }
+
+    /// Handles `hid:USER` requests (public 3dbrew command IDs; not hardware-verified).
+    fn dispatch_hid_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        const GET_IPC_HANDLES: u32 = 0x000A_0000;
+        const ENABLE_ACCELEROMETER: u32 = 0x0011_0000;
+        const DISABLE_ACCELEROMETER: u32 = 0x0012_0000;
+        const ENABLE_GYROSCOPE: u32 = 0x0013_0000;
+        const DISABLE_GYROSCOPE: u32 = 0x0014_0000;
+        const GET_GYROSCOPE_RAW_TO_DPS: u32 = 0x0015_0000;
+
+        let raw_header = message.header().raw();
+        match raw_header {
+            GET_IPC_HANDLES => {
+                if self.hid.is_none() {
+                    let session = self
+                        .ncsd_session
+                        .as_mut()
+                        .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                    let memory_handle =
+                        match session.create_memory_block(HID_SHARED_MEMORY_BLOCK_SIZE, 3, 1) {
+                            Ok(handle) => handle,
+                            Err(_) => return Ok(vec![0x000A_0040, RESULT_OUT_OF_MEMORY]),
+                        };
+                    let backing = match session.memory_block_backing(memory_handle) {
+                        Ok(backing) => backing,
+                        Err(_) => return Ok(vec![0x000A_0040, RESULT_INVALID_HANDLE]),
+                    };
+                    let mut events = [0u32; HID_EVENT_COUNT];
+                    for slot in &mut events {
+                        *slot = match session.create_event_handle(
+                            crate::loader::ncsd::session::kernel::EventResetType::OneShot,
+                        ) {
+                            Ok(handle) => handle,
+                            Err(_) => return Ok(vec![0x000A_0040, RESULT_OUT_OF_MEMORY]),
+                        };
+                    }
+                    self.hid = Some(HidService {
+                        memory: HidSharedMemory::new(),
+                        backing,
+                        memory_handle,
+                        events,
+                    });
+                    // Publish a first sample so the guest never reads an empty ring.
+                    self.update_hid(false)?;
+                }
+                let hid = self.hid.as_ref().expect("hid state was just created");
+                let mut response = vec![0x000A_0047, 0, 0x1400_0000, hid.memory_handle];
+                response.extend_from_slice(&hid.events);
+                Ok(response)
+            }
+            ENABLE_ACCELEROMETER | DISABLE_ACCELEROMETER | ENABLE_GYROSCOPE | DISABLE_GYROSCOPE => {
+                Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, 0])
+            }
+            GET_GYROSCOPE_RAW_TO_DPS => Ok(vec![0x0015_0080, 0, 14.375f32.to_bits()]),
+            _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
+        }
+    }
+
+    /// Samples host input into the HID shared memory and optionally signals
+    /// the pad events. Does nothing until the guest has requested the handles.
+    fn update_hid(&mut self, signal: bool) -> Result<()> {
+        let (Some(hid), Some(session)) = (self.hid.as_mut(), self.ncsd_session.as_mut()) else {
+            return Ok(());
+        };
+        let snapshot = self.input.snapshot();
+        hid.memory.update(&snapshot, session.system_tick());
+        if !hid.backing.write_bytes(0, hid.memory.image()) {
+            return Err(Error::Io(io::Error::other(
+                "HID shared memory could not be updated",
+            )));
+        }
+        session.invalidate_shared_backing_cache(&hid.backing)?;
+        if signal {
+            for index in [hid_event::PAD0, hid_event::PAD1] {
+                session
+                    .signal_event_handle(hid.events[index])
+                    .map_err(|error| {
+                        Error::Io(io::Error::other(format!(
+                            "HID event signal failed: {error:?}"
+                        )))
+                    })?;
+            }
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2908,6 +3020,7 @@ impl System {
             return Err(Error::NoImageLoaded);
         }
 
+        self.update_hid(true)?;
         let cpu_report = self.run_instructions(instruction_budget)?;
         {
             let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
@@ -8485,6 +8598,101 @@ mod tests {
         );
         assert_eq!(report.last_result, RESULT_GSP_NO_RIGHT);
         assert!(report.halted);
+    }
+
+    #[test]
+    fn hid_user_publishes_host_input_to_guest_mapped_shared_memory() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(2)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let service_manager = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let handle = session.create_service_manager_session().unwrap();
+            session.register_service_manager_client(handle).unwrap();
+            handle
+        };
+
+        // srv:GetServiceHandle("hid:USER", 8, 0)
+        let reply = write_tls_ipc_request(
+            &mut system,
+            service_manager,
+            &[0x0005_0100, 0x3A64_6968, 0x5245_5355, 8, 0],
+        );
+        run_one_ipc_svc(&mut system);
+        let response = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&response[..3], &[0x0005_0042, 0, 0]);
+        let hid_handle = response[3];
+
+        // hid:USER GetIPCHandles
+        let reply = write_tls_ipc_request(&mut system, hid_handle, &[0x000A_0000]);
+        run_one_ipc_svc(&mut system);
+        let response = read_tls_ipc_response(&mut system, reply, 10);
+        assert_eq!(&response[..3], &[0x000A_0047, 0, 0x1400_0000]);
+        let memory_handle = response[3];
+        let events = &response[4..9];
+
+        // The guest maps the block read-only and sees the first published sample.
+        const HID_BASE: u32 = 0x1020_0000;
+        let session = system.ncsd_session.as_mut().unwrap();
+        session
+            .map_memory_block(memory_handle, HID_BASE, 1, 0x1000_0000)
+            .unwrap();
+        assert_eq!(session.read_memory_u32(HID_BASE + 0x10).unwrap(), 0);
+        assert_eq!(session.read_memory_u32(HID_BASE + 0x28).unwrap(), 0);
+
+        // Host input becomes guest-visible on the next update and signals pad0.
+        system
+            .input_mut()
+            .press(crate::input::pad::A | crate::input::pad::UP);
+        system.input_mut().touch(33, 44);
+        system.update_hid(true).unwrap();
+        let session = system.ncsd_session.as_mut().unwrap();
+        assert_eq!(
+            session.event_handle_is_signaled(events[hid_event::PAD0]),
+            Some(true)
+        );
+        assert_eq!(session.read_memory_u32(HID_BASE + 0x10).unwrap(), 1);
+        assert_eq!(
+            session.read_memory_u32(HID_BASE + 0x38).unwrap(),
+            crate::input::pad::A | crate::input::pad::UP
+        );
+        assert_eq!(
+            session.read_memory_u32(HID_BASE + 0x3C).unwrap(),
+            crate::input::pad::A | crate::input::pad::UP
+        );
+        assert_eq!(session.read_memory_u32(HID_BASE + 0xB8).unwrap(), 1);
+        let touch = session.read_memory_u32(HID_BASE + 0xC8 + 8).unwrap();
+        assert_eq!(touch & 0xFFFF, 33);
+        assert_eq!(touch >> 16, 44);
+    }
+
+    #[test]
+    fn hid_user_rejects_unknown_commands() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(1)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let hid_handle = system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .create_hid_session()
+            .unwrap();
+        let reply = write_tls_ipc_request(&mut system, hid_handle, &[0x0099_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            vec![0x0099_0040, RESULT_INVALID_ENUM]
+        );
     }
 
     #[test]

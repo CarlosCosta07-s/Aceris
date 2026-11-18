@@ -173,6 +173,8 @@ pub enum ServiceSessionKind {
         event_handle: Option<u32>,
         flags: u32,
     },
+    /// HLE `hid:USER` client endpoint.
+    Hid,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -345,6 +347,11 @@ impl Arm11KernelObjectTable {
             event_handle: None,
             flags: 0,
         }))
+    }
+
+    /// Creates a process-local `hid:USER` client session.
+    pub fn insert_hid_session(&mut self) -> Result<u32, KernelHandleError> {
+        self.insert(KernelObject::ServiceSession(ServiceSessionKind::Hid))
     }
 
     /// Returns the service endpoint state associated with a guest handle.

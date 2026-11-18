@@ -3,7 +3,7 @@
 //! Hosts (desktop windows, Android surfaces) translate their own events into
 //! this model; the emulated system reads it through [`InputState::snapshot`].
 //! The model contains no window-system code. Guest-visible delivery (the HID
-//! shared memory and `hid:USER` service) is not implemented yet.
+//! shared memory and `hid:USER` service) lives in `crate::hid` and `System`.
 //!
 //! The button bit order, the circle-pad range and the touch resolution follow
 //! public 3DS documentation and have not been verified on hardware.

@@ -1978,5 +1978,14 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 
 - `System` ganhou o campo `input` com `input()/input_mut()`. ABI Android: `aceris_system_set_buttons/_set_circle_pad/_touch/_touch_release/_input_reset` (toque em pixels da superfície com a mesma regra de layout da composição). Desktop: `WindowEvent::{Game, Pointer, FocusLost}`, `GameKey`, `KeyboardInput` e `touch_from_window_point` em `window.rs`; X11 agora seleciona KeyRelease/ButtonRelease/Button1Motion/FocusChange.
 - O autorepeat do X11 manda release+press em sequência; todos os eventos de um poll são aplicados antes do quadro, então o estado final fica pressionado.
-- Lacuna principal: o guest não vê nada disso. Próximo passo é `hid:USER` + memória compartilhada HID (layout a conferir em fonte pública, sem verificação em hardware).
+- O guest passou a ver a entrada via `hid:USER` (seção abaixo).
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado; o backend X11 só foi coberto pelos testes de mapeamento (sem servidor X aqui).
+
+## hid:USER e memória compartilhada HID (18/11/2026)
+
+- Novo `crates/aceris-core/src/hid.rs` (`HidSharedMemory`): imagem de 0x2B0 bytes, anéis de 8 entradas para PAD (0x28) e toque (0xC8), ticks atual/anterior, índice da última entrada, bits 28–31 do circle pad (limiar ±41), ZL/ZR omitidos. Fonte: 3dbrew/libctru; sem verificação em hardware.
+- `system.rs`: `srv:GetServiceHandle("hid:USER")` cria `ServiceSessionKind::Hid`; `GetIPCHandles` (0x000A0000) responde `0x000A0047, 0, 0x14000000, memória, 5 eventos`. `run_frame_with_budget` chama `update_hid(true)` antes de executar a CPU: amostra `InputState`, escreve no backing, invalida linhas da D-cache do guest e sinaliza pad0/pad1.
+- Toques em arquivos de outras áreas (aditivos): `loader/ncsd/process.rs` (`SharedMemoryBacking::write_bytes`, `invalidate_shared_backing_data_cache`), `session/kernel.rs` (`ServiceSessionKind::Hid`, `insert_hid_session`), `session.rs` (`create_hid_session`, `memory_block_backing`, `system_tick`, `invalidate_shared_backing_cache`).
+- Decisão de modelo: o serviço HLE age como agente coerente (SCU) e invalida as linhas stale do guest; sem isso o guest lia valores antigos, pois as D-caches por processo exigem invalidação explícita.
+- Pendente: comandos hid restantes (volume, calibração), acelerômetro/giroscópio, `SetSoundVolume`, e demais serviços para rodar jogos (fs:USER, apt:U, cfg:*, am, ptm, dsp::DSP, ndm, etc.).
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace`, todos com saída 0. CI remoto não consultado.

@@ -416,6 +416,15 @@ impl Arm11ProcessSession {
             .invalidate_data_cache_range(address, size_bytes)
     }
 
+    /// Drops cached lines of every guest mapping of a backing an HLE service just wrote.
+    pub fn invalidate_shared_backing_cache(
+        &mut self,
+        backing: &SharedMemoryBacking,
+    ) -> Result<usize> {
+        self.address_space
+            .invalidate_shared_backing_data_cache(backing)
+    }
+
     /// Completes the process ARM11 D-cache writeback queue in FIFO order.
     pub fn drain_write_buffer(&mut self) -> Result<usize> {
         self.address_space.drain_arm11_write_buffer()
@@ -509,6 +518,26 @@ impl Arm11ProcessSession {
     /// Creates a `gsp::Gpu` client endpoint in this process.
     pub fn create_gsp_gpu_session(&mut self) -> std::result::Result<u32, KernelHandleError> {
         self.kernel_objects.insert_gsp_gpu_session()
+    }
+
+    /// Creates a `hid:USER` client endpoint in this process.
+    pub fn create_hid_session(&mut self) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.insert_hid_session()
+    }
+
+    /// Returns the shared backing of a memory-block handle for HLE services.
+    pub fn memory_block_backing(
+        &self,
+        handle: u32,
+    ) -> std::result::Result<SharedMemoryBacking, KernelHandleError> {
+        self.kernel_objects.memory_block_backing(handle)
+    }
+
+    /// Current emulated ARM11 system tick (268,111,856 Hz, virtual time).
+    pub fn system_tick(&self) -> u64 {
+        const TICKS_PER_SECOND: u128 = 268_111_856;
+        let elapsed_ns = u128::from(self.scheduler.virtual_time_ns());
+        ((elapsed_ns * TICKS_PER_SECOND) / 1_000_000_000) as u64
     }
 
     /// Creates an event handle for a process-local service or device client.

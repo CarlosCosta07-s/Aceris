@@ -317,6 +317,15 @@ impl SharedMemoryBacking {
         true
     }
 
+    /// Writes bytes into the shared view, bumping exclusive-monitor versions.
+    ///
+    /// Returns false when the range lies outside the view or the lock is poisoned.
+    /// HLE services use this to publish data (for example HID state) that the
+    /// guest reads through its own mapping of the same block.
+    pub fn write_bytes(&self, offset: usize, input: &[u8]) -> bool {
+        self.write_range(offset, input)
+    }
+
     fn write_range(&self, offset: usize, input: &[u8]) -> bool {
         let Some(start) = self.root_offset(offset) else {
             return false;
@@ -2614,6 +2623,28 @@ impl Arm11CodeAddressSpace {
             }
         }
 
+        Ok(evicted)
+    }
+
+    /// Invalidates cached lines of every mapping of one shared backing.
+    ///
+    /// An HLE service that publishes into shared memory is not an emulated
+    /// process, so it models the coherent agent whose store the cores observe:
+    /// stale lines in this process' cache are dropped before the guest reads.
+    pub fn invalidate_shared_backing_data_cache(
+        &mut self,
+        backing: &SharedMemoryBacking,
+    ) -> BusResult<usize> {
+        let ranges: Vec<(u32, u32)> = self
+            .shared_regions
+            .iter()
+            .filter(|region| region.backing.shares_backing_with(backing))
+            .filter_map(|region| Some((region.address, region.size()?)))
+            .collect();
+        let mut evicted = 0;
+        for (address, size) in ranges {
+            evicted += self.invalidate_data_cache_range(address, size)?;
+        }
         Ok(evicted)
     }
 

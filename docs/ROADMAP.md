@@ -141,6 +141,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [ ] IPC genérico entre processos/sessões independentes, gestão de múltiplos processos ARM11, tradução efetiva dos tipos restantes de buffers/handles e ciclo completo de portas, sessões e objetos de kernel.
 - [ ] Implementar e validar os serviços adicionais necessários ao boot de homebrew, guiados por logs reais de execução; `srv:` e `gsp::Gpu` são apenas o primeiro subconjunto.
 - [~] Eventos de conclusão GSP já passam pela relay queue e event handle e podem acordar uma thread ARM11 bloqueada em `WaitSynchronization1` (teste `MemoryFill`→`PSC0`→despertar→execução guest). O controlador geral de interrupções de dispositivos, timers de hardware, IRQ/FIQ de origem real e temporização ainda estão pendentes.
+- [~] `hid:USER` HLE + memória compartilhada HID: `srv:GetServiceHandle("hid:USER")`, `GetIPCHandles` (bloco de 0x1000 bytes com camada 0x2B0, 5 eventos OneShot) e Enable/Disable de acelerômetro/giroscópio; a cada quadro `System` amostra `InputState`, avança os anéis de 8 entradas de PAD e toque (ticks virtuais, bordas pressed/released, bits de direção do circle pad com limiar ±41, ZL/ZR omitidos), invalida as linhas stale da D-cache do guest e sinaliza pad0/pad1. Teste cobre srv→IPC→`MapMemoryBlock`→leitura pelo guest. Layout vem de 3dbrew/libctru e NÃO foi verificado em hardware; acelerômetro, giroscópio, debug pad, slider 3D, GPIO e campos brutos continuam zerados, e sem `SetSoundVolume`/`GetSoundVolume` e demais comandos.
 
 ## 4. GPU PICA200, rasterização e LCD
 
