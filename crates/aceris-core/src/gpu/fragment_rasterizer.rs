@@ -3,7 +3,7 @@
 //! This path consumes the guest vertex-shader draw and output-map results,
 //! clips varyings in the PICA clip volume, rasterizes pixel centers with a
 //! top-left rule, and shades perspective-correct color/texture varyings.
-//! Covered samples pass through texture sampling, TEV, linear fog, alpha,
+//! Covered samples pass through texture sampling, TEV, linear/LUT fog, alpha,
 //! depth/stencil tests and operations, blending/logic ops, and channel masks;
 //! color and depth/stencil results are written through the PICA surface codecs.
 //!

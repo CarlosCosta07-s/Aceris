@@ -3,8 +3,9 @@
 //!
 //! The PICA fragment rasterizer supplies perspective-correct interpolated
 //! colors/coordinates and derivative-based LOD. This pipeline evaluates texture
-//! fetch and TEV, captures linear fog state, and exposes alpha/depth-independent
-//! output operations for the rasterizer to apply in the hardware stage order.
+//! fetch and TEV, captures linear or LUT fog state per draw, and exposes
+//! alpha/depth-independent output operations for the rasterizer to apply in
+//! the intended fragment-stage order.
 
 use super::{
     FOG_LUT_ENTRY_COUNT, GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
