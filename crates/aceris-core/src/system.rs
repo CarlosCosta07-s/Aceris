@@ -4972,6 +4972,7 @@ mod tests {
         assert_eq!(report.pending_commands, 0);
         assert!(report.halted);
         assert!(report.error.is_none());
+        assert!(!system.gsp_busy_state.is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
 
         // The selected GSP framebuffers are physically resolved and applied
         // to the two LCD PDCs before the completion interrupt is delivered.
