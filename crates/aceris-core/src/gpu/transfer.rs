@@ -994,7 +994,7 @@ mod tests {
                             2
                         } else {
                             4
-                        } + u8::from(scale_flag == DISPLAY_TRANSFER_SCALE_XY))
+                        } + usize::from(scale_flag == DISPLAY_TRANSFER_SCALE_XY))
                             as u8,
                         (x * 4) as u8 + 1,
                         255,
