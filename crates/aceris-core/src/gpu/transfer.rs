@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn ppf_completion_matches_the_documented_tiled_conversion_matrix() {
-        use DisplayTransferFormat::{Rgb5A1, Rgb565, Rgb8, Rgba4, Rgba8};
+        use DisplayTransferFormat::{Rgb5A1, Rgb8, Rgb565, Rgba4, Rgba8};
 
         let formats = [Rgba8, Rgb8, Rgb565, Rgb5A1, Rgba4];
         let expected = [
@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn linear_to_tiled_keeps_the_existing_completion_behavior() {
-        use DisplayTransferFormat::{Rgb5A1, Rgb565, Rgb8, Rgba4, Rgba8};
+        use DisplayTransferFormat::{Rgb5A1, Rgb8, Rgb565, Rgba4, Rgba8};
 
         let formats = [Rgba8, Rgb8, Rgb565, Rgb5A1, Rgba4];
         for source in formats {
