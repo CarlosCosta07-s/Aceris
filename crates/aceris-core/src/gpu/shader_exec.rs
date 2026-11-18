@@ -4,8 +4,9 @@
 //! relative constant addressing and the PICA200's independent CALL/IF/LOOP
 //! stacks. Geometry-shader emits remain outside this vertex-only execution stage.
 //!
-//! Arithmetic uses IEEE f32. PICA200 float24 intermediate precision and
-//! hardware-specific transcendental approximations are not modeled.
+//! Arithmetic uses f32 intermediates. Observed PICA zero, infinity, NaN and
+//! float24-subnormal rules are modeled; 16-bit mantissa rounding and the
+//! hardware's reciprocal/transcendental approximation are not yet modeled.
 
 use super::pica200::{
     Pica200, REG_VSH_BOOLUNIFORM, REG_VSH_INTUNIFORM_I0, VSH_CODE_TRANSFER_WORDS,
@@ -526,8 +527,8 @@ impl Machine<'_> {
             PicaShaderOpcode::Dst => [1.0, pica_mul(a[1], b[1]), a[2], b[3]],
             PicaShaderOpcode::Dsti => [1.0, pica_mul(b[1], a[1]), b[2], a[3]],
             PicaShaderOpcode::Mul => lanewise(a, b, pica_mul),
-            PicaShaderOpcode::Max => lanewise(a, b, |x, y| if x >= y { x } else { y }),
-            PicaShaderOpcode::Min => lanewise(a, b, |x, y| if x < y { x } else { y }),
+            PicaShaderOpcode::Max => lanewise(a, b, pica_max),
+            PicaShaderOpcode::Min => lanewise(a, b, pica_min),
             PicaShaderOpcode::Slt | PicaShaderOpcode::Slti => {
                 lanewise(a, b, |x, y| if x < y { 1.0 } else { 0.0 })
             }
@@ -544,16 +545,16 @@ impl Machine<'_> {
             PicaShaderOpcode::Litp => {
                 self.comparison_flags = [a[0] >= 0.0, a[3] >= 0.0];
                 [
-                    if a[0] > 0.0 { a[0] } else { 0.0 },
-                    a[1].clamp(-127.996_09, 127.996_09),
+                    pica_max(a[0], 0.0),
+                    pica_max(pica_min(a[1], 127.996_09), -127.996_09),
                     0.0,
-                    if a[3] > 0.0 { a[3] } else { 0.0 },
+                    pica_max(a[3], 0.0),
                 ]
             }
             PicaShaderOpcode::Ex2 => [a[0].exp2(); 4],
             PicaShaderOpcode::Lg2 => [a[0].log2(); 4],
-            PicaShaderOpcode::Rcp => [1.0 / a[0]; 4],
-            PicaShaderOpcode::Rsq => [1.0 / a[0].sqrt(); 4],
+            PicaShaderOpcode::Rcp => [pica_rcp(a[0]); 4],
+            PicaShaderOpcode::Rsq => [pica_rsq(a[0]); 4],
             PicaShaderOpcode::Mov => a,
             PicaShaderOpcode::Mad | PicaShaderOpcode::Madi => {
                 let product = lanewise(a, b, pica_mul);
@@ -1132,12 +1133,56 @@ fn lanewise(a: [f32; 4], b: [f32; 4], operation: impl Fn(f32, f32) -> f32) -> [f
     ]
 }
 
-/// PICA multiplication: infinity times zero is zero, while NaN times zero
-/// remains NaN. Negative zero is canonicalized to positive zero.
+/// Flushes values below the PICA float1.7.16 normal range to positive zero.
+fn flush_pica_subnormal(value: f32) -> f32 {
+    let exponent = (value.to_bits() >> 23) & 0xFF;
+    if exponent < 65 { 0.0 } else { value }
+}
+
+/// PICA multiplication: subnormal inputs/results are flushed, infinity times
+/// zero is zero, NaN times zero remains NaN, and negative zero becomes +0.
 fn pica_mul(a: f32, b: f32) -> f32 {
+    let a = flush_pica_subnormal(a);
+    let b = flush_pica_subnormal(b);
     let product = a * b;
     let should_be_zero = product == 0.0 || (product.is_nan() && !a.is_nan() && !b.is_nan());
-    if should_be_zero { 0.0 } else { product }
+    if should_be_zero {
+        0.0
+    } else {
+        flush_pica_subnormal(product)
+    }
+}
+
+/// PICA MAX returns its second operand when the first operand is NaN.
+fn pica_max(a: f32, b: f32) -> f32 {
+    if a >= b { a } else { b }
+}
+
+/// PICA MIN returns its second operand when the first operand is NaN.
+fn pica_min(a: f32, b: f32) -> f32 {
+    if a < b { a } else { b }
+}
+
+/// Reciprocal with PICA's lack of negative zero and float24 subnormal flushing.
+fn pica_rcp(value: f32) -> f32 {
+    let value = flush_pica_subnormal(value);
+    if value == 0.0 {
+        f32::INFINITY
+    } else {
+        flush_pica_subnormal(1.0 / value)
+    }
+}
+
+/// Reciprocal square root with PICA's zero and negative-domain behavior.
+fn pica_rsq(value: f32) -> f32 {
+    let value = flush_pica_subnormal(value);
+    if value == 0.0 {
+        f32::INFINITY
+    } else if value < 0.0 {
+        f32::NAN
+    } else {
+        flush_pica_subnormal(1.0 / value.sqrt())
+    }
 }
 
 fn dot(a: [f32; 4], b: [f32; 4], lanes: usize) -> f32 {
@@ -1900,6 +1945,50 @@ mod tests {
         assert_eq!(pica_mul(f32::INFINITY, 0.0), 0.0);
         assert!(pica_mul(f32::NAN, 0.0).is_nan());
         assert_eq!(pica_mul(-0.0, 2.0).to_bits(), 0.0f32.to_bits());
+    }
+
+    #[test]
+    fn pica_mul_flushes_float24_subnormal_inputs_and_outputs() {
+        let largest_subnormal = f32::from_bits((64 << 23) | 0x7F_FFFF);
+        let smallest_normal = f32::from_bits(65 << 23);
+        assert_eq!(pica_mul(largest_subnormal, 2.0), 0.0);
+        assert_eq!(pica_mul(smallest_normal, 0.5), 0.0);
+        assert!(pica_mul(f32::NAN, 0.0).is_nan());
+        assert_eq!(pica_mul(f32::INFINITY, 0.0), 0.0);
+    }
+
+    #[test]
+    fn pica_reciprocal_and_rsq_handle_zero_infinity_and_negative_values() {
+        assert_eq!(pica_rcp(0.0), f32::INFINITY);
+        assert_eq!(pica_rcp(-0.0), f32::INFINITY);
+        assert_eq!(pica_rcp(f32::NEG_INFINITY).to_bits(), 0.0f32.to_bits());
+        assert_eq!(pica_rcp(f32::INFINITY), 0.0);
+
+        assert_eq!(pica_rsq(0.0), f32::INFINITY);
+        assert_eq!(pica_rsq(-0.0), f32::INFINITY);
+        assert_eq!(pica_rsq(f32::INFINITY), 0.0);
+        assert!(pica_rsq(-2.0).is_nan());
+        assert!(pica_rsq(f32::NEG_INFINITY).is_nan());
+        assert!(pica_rsq(f32::NAN).is_nan());
+    }
+
+    #[test]
+    fn pica_max_min_and_litp_preserve_measured_nan_operand_order() {
+        assert!(pica_max(0.0, f32::NAN).is_nan());
+        assert_eq!(pica_max(f32::NAN, 0.0), 0.0);
+        assert!(pica_min(0.0, f32::NAN).is_nan());
+        assert_eq!(pica_min(f32::NAN, 0.0), 0.0);
+
+        let program = PicaVertexShaderProgram::from_words(
+            &[format1_unary(0x07, O0, V0), END],
+            &[plain_descriptor(0b1111)],
+            &[],
+        );
+        let result = program
+            .run(0, &inputs([f32::NAN, f32::NAN, 0.0, f32::NAN], [0.0; 4]))
+            .unwrap();
+        assert_eq!(result.outputs[0], [0.0, 127.996_09, 0.0, 0.0]);
+        assert_eq!(result.comparison_flags, [false, false]);
     }
 
     #[test]
