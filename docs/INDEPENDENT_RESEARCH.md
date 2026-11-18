@@ -202,3 +202,32 @@ Quais são os números de opcode e o formato de operandos de EX2/LG2, qual compo
 - A implementação própria em Rust usa `f32::exp2` e `f32::log2`. Isso não declara precisão float24 nem equivalência com as aproximações internas do hardware PICA200.
 - Foram adicionados testes de valores positivos e negativos para EX2, logaritmo de potência de dois, swizzle de componente, máscara parcial e os resultados IEEE de `log2(0)` e `log2(negativo)`.
 - DST permanece explicitamente não implementada: 3dbrew a lista como opcode `0x04`, mas a tabela JIT consultada em Azahar o deixa como desconhecido. A divergência exige investigação independente antes de habilitar a instrução. LITP também permanece fora do subconjunto porque seus efeitos sobre condition codes não estão implementados.
+
+
+
+## 12. PICA200 — DisplayTransfer, layouts tiled e recorte (18/11/2026)
+
+### Pergunta técnica
+
+Quais flags selecionam o layout da entrada/saída do GX DisplayTransfer, quando o bit de crop deve ser informado e quais restrições de dimensão e blocos precisam ser preservadas?
+
+### Referências consultadas
+
+- Mikage, *GPU / External Registers*: https://docs.mikage.app/GPU/External_Registers/ — documentação comunitária de engenharia reversa, não oficial, consultada em 18/11/2026. Descreve os bits 0, 1, 2, 3, 5, 8–10, 12–14, 16 e 24–25 do registrador de flags do Transfer Engine; o bit 1 seleciona entrada linear/saída tiled, o bit 5 seleciona tiled→tiled e é incompatível com bit 1, e o bit 2 é necessário quando a largura de saída é menor que a largura de entrada. A mesma página registra o mínimo 64×16 para tiled→linear, alinhamento de largura dependente do formato, blocos 32×32 e downscale com box filter 2×1/2×2. Licença da documentação não identificada.
+- 3dbrew, *GPU / External Registers*: https://www.3dbrew.org/wiki/GPU/External_Registers — wiki pública de engenharia reversa, não oficial, consultada em 18/11/2026. Registra o mesmo mapa de flags e restrições. Como os dados são semelhantes aos da documentação Mikage, esta consulta é corroborativa, mas não é tratada como prova independente de hardware.
+- devkitPro/libctru, `libctru/include/3ds/gpu/gx.h`, commit `6ef91576ae20d6bc9f9af261ec5989ffc0c1e0f4` (blob `da32c98bfad0ebdb6267ab33e1eae1fe3a0fe556`): https://github.com/devkitPro/libctru/blob/6ef91576ae20d6bc9f9af261ec5989ffc0c1e0f4/libctru/include/3ds/gpu/gx.h — consultado apenas para compreender os nomes públicos das flags e os modos de escala GX. O README da mesma revisão contém uma licença permissiva no estilo zlib. Não foi usado como especificação de comportamento físico e nenhum código, função, estrutura ou teste foi incorporado.
+ 
+### Contrato adotado no Aceris
+
+- Com bit 1 limpo, a entrada é tiled 8×8 Morton; a saída é linear por padrão.
+- Com bit 1 ativo, a entrada é linear e a saída é tiled 8×8 Morton.
+- Com bit 5 ativo, a entrada e a saída são tiled 8×8 Morton. A combinação simultânea com bit 1 é rejeitada.
+- Quando a largura de saída é menor que a largura de entrada, bit 2 deve estar ativo. A rotina usa dimensões de entrada para endereçar a origem e dimensões de saída para endereçar a superfície de destino, sem assumir pitches idênticos.
+- A implementação mantém a política de staging: valida e lê a origem, prepara a saída completa e somente então escreve o destino. Isso preserva o destino em erros de validação/leitura e permite origem/destino sobrepostos.
+- Os testes próprios cobrem conversão linear↔tiled, tiled→tiled, flip, crop retangular e ausência de escrita quando falta a flag de crop ou a faixa de origem é inválida.
+
+### Limites e nível de confiança
+
+O trabalho publicado cobre somente blocos 8×8 e execução síncrona no backend software. O modo 32×32, o downscale por box filter, as restrições de alinhamento por formato, a matriz de conversões que produz PPF, os efeitos em combinações atípicas de dimensões e a temporização real precisam de fixtures adicionais e, quando possível, observação em hardware legítimo. A implementação não declara precisão ou compatibilidade física integral.
+
+A alteração do Aceris foi escrita independentemente em Rust. Nenhum código, teste, shader, asset ou dependência de terceiros foi copiado ou adaptado.
