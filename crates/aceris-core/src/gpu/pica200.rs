@@ -770,8 +770,7 @@ impl Pica200 {
             if written_mask & 0x3 != 0 && self.registers[REG_COLOR_OPERATION_FOR_GAS] & 3 == 1 {
                 self.gas_accmax_feedback_max = initial as u16;
             }
-            self.registers[index] =
-                initial | (u32::from(self.gas_accmax_feedback_readback) << 16);
+            self.registers[index] = initial | (u32::from(self.gas_accmax_feedback_readback) << 16);
             return;
         }
 
