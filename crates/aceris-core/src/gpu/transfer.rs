@@ -832,18 +832,25 @@ mod tests {
         let output_height = 32usize;
         let mut input_linear = vec![0u8; input_width * input_height * 4];
 
-        // Each 2x2 source footprint has a constant color. This makes the
-        // expected box-filter result independent of the unverified tie rule
-        // for integer averages.
+        // The four source texels differ, but every channel sum is
+        // divisible by four. This verifies the actual box average without
+        // assuming the hardware's tie-breaking rule for fractional results.
+        const SAMPLE_OFFSETS: [[u8; 3]; 4] = [
+            [0, 0, 0],
+            [2, 0, 4],
+            [2, 4, 0],
+            [0, 0, 0],
+        ];
         for y in 0..input_height {
             for x in 0..input_width {
                 let block_x = x / 2;
                 let block_y = y / 2;
+                let sample = SAMPLE_OFFSETS[(y % 2) * 2 + (x % 2)];
                 let offset = (y * input_width + x) * 4;
                 input_linear[offset..offset + 4].copy_from_slice(&[
-                    (block_x * 3) as u8,
-                    (block_y * 5) as u8,
-                    ((block_x ^ block_y) * 7) as u8,
+                    (block_x * 3) as u8 + sample[0],
+                    (block_y * 5) as u8 + sample[1],
+                    ((block_x ^ block_y) * 7) as u8 + sample[2],
                     200,
                 ]);
             }
@@ -897,7 +904,12 @@ mod tests {
                     DisplayTransferLayout::Tiled8x8Morton,
                 )
                 .unwrap();
-                let expected = [(x * 3) as u8, (y * 5) as u8, ((x ^ y) * 7) as u8, 200];
+                let expected = [
+                    (x * 3) as u8 + 1,
+                    (y * 5) as u8 + 1,
+                    ((x ^ y) * 7) as u8 + 1,
+                    200,
+                ];
                 assert_eq!(&actual_tiled[offset..offset + 4], &expected);
             }
         }
