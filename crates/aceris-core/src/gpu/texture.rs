@@ -1,11 +1,11 @@
 //! PICA200 2D texture-unit decoding and software sampling.
 //!
-//! Supported storage includes RGBA8/RGB8, packed 16-bit color, intensity and
-//! alpha formats, I4/A4, ETC1 and ETC1A4. Texels use 8x8 Morton tiles; the
-//! sampler supports wrap modes, nearest/bilinear filtering and mip-level
-//! selection/blending. HILO8, cube maps and projection/shadow sampling remain
-//! explicit unsupported cases; they are never silently decoded as another
-//! format.
+//! Supported storage includes RGBA8/RGB8, HILO8, packed 16-bit color,
+ //! intensity and alpha formats, I4/A4, ETC1 and ETC1A4. Texels use 8x8 Morton
+//! tiles; the sampler supports wrap modes, nearest/bilinear filtering and
+//! mip-level selection/blending. Cube maps and projection/shadow sampling
+//! remain explicit unsupported cases; they are never silently decoded as
+//! another format.
 //!
 //! The fragment pipeline consumes perspective-correct interpolated coordinates
 //! and screen-derivative LOD values to connect texture sampling to TEV.
@@ -41,6 +41,8 @@ pub enum PicaTextureFormat {
     Rgb565,
     Rgba4444,
     IntensityAlpha8,
+    /// Two 8-bit components: HI is returned as red, LO as green.
+    HiLo8,
     Intensity8,
     Alpha8,
     IntensityAlpha44,
@@ -63,6 +65,7 @@ impl PicaTextureFormat {
             0x3 => Ok(Self::Rgb565),
             0x4 => Ok(Self::Rgba4444),
             0x5 => Ok(Self::IntensityAlpha8),
+            0x6 => Ok(Self::HiLo8),
             0x7 => Ok(Self::Intensity8),
             0x8 => Ok(Self::Alpha8),
             0x9 => Ok(Self::IntensityAlpha44),
@@ -92,7 +95,11 @@ impl PicaTextureFormat {
             Self::Intensity4 | Self::Alpha4 | Self::Etc1 | Self::Etc1A4 => 0,
             Self::Rgba8 => 4,
             Self::Rgb8 => 3,
-            Self::Rgba5551 | Self::Rgb565 | Self::Rgba4444 | Self::IntensityAlpha8 => 2,
+            Self::Rgba5551
+            | Self::Rgb565
+            | Self::Rgba4444
+            | Self::IntensityAlpha8
+            | Self::HiLo8 => 2,
             Self::Intensity8 | Self::Alpha8 | Self::IntensityAlpha44 => 1,
         }
     }
@@ -102,6 +109,8 @@ impl PicaTextureFormat {
             // PICA RGBA8 is stored in little-endian ABGR byte order.
             Self::Rgba8 => [data[3], data[2], data[1], data[0]],
             Self::Rgb8 => [data[0], data[1], data[2], 255],
+            // PICA HILO8 is an RG8 pair: HI maps to red and LO to green.
+            Self::HiLo8 => [data[0], data[1], 0, 255],
             Self::Rgba5551 => {
                 let packed = u16::from_le_bytes([data[0], data[1]]);
                 [
@@ -913,6 +922,10 @@ mod tests {
             [1, 2, 3, 255]
         );
         assert_eq!(
+            PicaTextureFormat::HiLo8.decode_texel(&[0x12, 0x34]),
+            [0x12, 0x34, 0, 255]
+        );
+        assert_eq!(
             PicaTextureFormat::Rgba5551.decode_texel(&0xFFFFu16.to_le_bytes()),
             [255; 4]
         );
@@ -1000,19 +1013,33 @@ mod tests {
     }
 
     #[test]
-    fn reports_unsupported_hilo_format() {
+    fn decodes_hilo8_from_guest_texture_registers() {
         let mut pica = Pica200::new();
         pica.write_register(REG_TEXUNIT_CONFIG, 1).unwrap();
         pica.write_register(0x082, (8 << 16) | 8).unwrap();
         pica.write_register(0x083, 0).unwrap();
+        pica.write_register(0x085, VRAM_BASE >> 3).unwrap();
         pica.write_register(0x08E, 0x6).unwrap();
-        assert!(matches!(
-            PicaTextureUnit::from_pica(&pica, 0),
-            Err(PicaTextureError::UnsupportedFormat {
-                unit: 0,
-                format: 0x6
-            })
-        ));
+
+        let unit = PicaTextureUnit::from_pica(&pica, 0).unwrap();
+        assert_eq!(unit.format, PicaTextureFormat::HiLo8);
+        assert_eq!(unit.address, VRAM_BASE);
+    }
+
+    #[test]
+    fn samples_hilo8_hi_red_and_lo_green_from_morton_tile() {
+        let mut memory = GpuPhysicalMemory::new();
+        let morton = morton_index(3, 5);
+        memory
+            .write(VRAM_BASE + (morton * 2) as u32, &[0x12, 0xE4])
+            .unwrap();
+        let unit = sample_unit(PicaTextureFormat::HiLo8);
+
+        assert_eq!(
+            unit.sample(&memory, 3.5 / 8.0, 5.5 / 8.0, false)
+                .unwrap(),
+            [0x12 as f32 / 255.0, 0xE4 as f32 / 255.0, 0.0, 1.0]
+        );
     }
 
     fn mip_unit(max_level: u8) -> PicaTextureUnit {
