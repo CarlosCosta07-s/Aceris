@@ -304,6 +304,11 @@ pub enum GspGxCommandQueueError {
     UnsupportedCommand {
         command_id: u8,
     },
+    CommandBusy {
+        command_id: u8,
+        busy_commands_mask: u8,
+        fail_if_busy: bool,
+    },
     InvalidCommandListAddress {
         address: u32,
         size_bytes: u32,
