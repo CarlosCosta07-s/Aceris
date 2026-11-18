@@ -18,6 +18,35 @@ pub const DISPLAY_TRANSFER_TILED_TO_TILED: u32 = 1 << 5;
 pub const DISPLAY_TRANSFER_BLOCKS_32X32: u32 = 1 << 16;
 pub const MAX_DISPLAY_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 
+/// Reports whether the documented tiled transfer format pair raises PPF.
+///
+/// The published conversion matrix covers tiled-to-linear and tiled-to-tiled.
+/// Linear-to-tiled keeps its earlier completion behavior until independently
+/// verified.
+pub const fn display_transfer_signals_ppf(
+    flags: u32,
+    source_format: DisplayTransferFormat,
+    destination_format: DisplayTransferFormat,
+) -> bool {
+    if flags & DISPLAY_TRANSFER_LINEAR_TO_TILED != 0 {
+        return true;
+    }
+
+    match (source_format, destination_format) {
+        (DisplayTransferFormat::Rgba8, _) => true,
+        (DisplayTransferFormat::Rgb8, DisplayTransferFormat::Rgb8) => true,
+        (
+            DisplayTransferFormat::Rgb565
+            | DisplayTransferFormat::Rgb5A1
+            | DisplayTransferFormat::Rgba4,
+            DisplayTransferFormat::Rgb565
+            | DisplayTransferFormat::Rgb5A1
+            | DisplayTransferFormat::Rgba4,
+        ) => true,
+        _ => false,
+    }
+}
+
 const TILE_EDGE: usize = 8;
 const TILE_PIXELS: usize = TILE_EDGE * TILE_EDGE;
 const MIN_OUTPUT_WIDTH: u16 = 64;
@@ -671,6 +700,46 @@ mod tests {
             let mut actual = [0; 16];
             memory.read(DESTINATION, &mut actual).unwrap();
             assert_eq!(actual, sentinel);
+        }
+    }
+
+    #[test]
+    fn ppf_completion_matches_the_documented_tiled_conversion_matrix() {
+        use DisplayTransferFormat::{Rgb5A1, Rgb565, Rgb8, Rgba4, Rgba8};
+
+        let formats = [Rgba8, Rgb8, Rgb565, Rgb5A1, Rgba4];
+        let expected = [
+            [true, true, true, true, true],
+            [false, true, false, false, false],
+            [false, false, true, true, true],
+            [false, false, true, true, true],
+            [false, false, true, true, true],
+        ];
+
+        for (source_index, source) in formats.into_iter().enumerate() {
+            for (destination_index, destination) in formats.into_iter().enumerate() {
+                assert_eq!(
+                    display_transfer_signals_ppf(0, source, destination),
+                    expected[source_index][destination_index],
+                    "unexpected PPF result for {source:?} -> {destination:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn linear_to_tiled_keeps_the_existing_completion_behavior() {
+        use DisplayTransferFormat::{Rgb5A1, Rgb565, Rgb8, Rgba4, Rgba8};
+
+        let formats = [Rgba8, Rgb8, Rgb565, Rgb5A1, Rgba4];
+        for source in formats {
+            for destination in formats {
+                assert!(display_transfer_signals_ppf(
+                    DISPLAY_TRANSFER_LINEAR_TO_TILED,
+                    source,
+                    destination
+                ));
+            }
         }
     }
 
