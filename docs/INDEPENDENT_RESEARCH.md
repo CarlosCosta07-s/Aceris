@@ -264,4 +264,4 @@ Ordem das colunas: RGBA8, RGB8, RGB565, RGB5A1, RGBA4. `PPF` indica que a fonte 
 
 ### Limites
 
-A matriz é documentação não oficial e ainda não foi comparada com hardware físico. Linear→tiled permanece com regra conservadora e precisa de fonte/testes específicos. Também faltam testes de integração GSP que observem explicitamente a ausência de evento PPF e as combinações 32×32/downscale.
+A matriz é documentação não oficial e ainda não foi comparada com hardware físico. Linear→tiled permanece com regra conservadora e precisa de fonte/testes específicos. A integração `gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion` agora verifica duas execuções na fila real: RGBA8→RGBA8 enfileira PPF; RGB8→RGBA8 converte os bytes de destino, incrementa a conclusão, mas não acrescenta um segundo PPF. As combinações 32×32/downscale e a temporização real permanecem pendentes.
