@@ -1070,10 +1070,10 @@ mod tests {
     fn hilo8_supports_linear_mipmap_blending_for_both_channels() {
         let mut memory = GpuPhysicalMemory::new();
         // 16x16 level zero occupies four 8x8 Morton tiles (256 texels).
-        memory.write(VRAM_BASE, &vec![20, 40].repeat(256)).unwrap();
+        memory.write(VRAM_BASE, &[20, 40].repeat(256)).unwrap();
         // The contiguous 8x8 mip level follows level zero.
         memory
-            .write(VRAM_BASE + 512, &vec![100, 200].repeat(64))
+            .write(VRAM_BASE + 512, &[100, 200].repeat(64))
             .unwrap();
 
         let mut unit = sample_unit(PicaTextureFormat::HiLo8);
