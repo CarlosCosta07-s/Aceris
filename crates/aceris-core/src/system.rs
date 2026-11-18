@@ -4938,6 +4938,109 @@ mod tests {
             [GspInterruptId::Ppf],
             "RGB8 -> RGBA8 must not enqueue an additional PPF"
         );
+
+        // Exercise the tiled-to-linear 2x1 box filter through the GSP GX
+        // queue. Register dimensions remain equal; the physical output width
+        // is reduced by the transfer engine.
+        let scaled_linear_source = VRAM_BASE + 0xD0_000;
+        let scaled_tiled_source = VRAM_BASE + 0xE0_000;
+        let scaled_linear_output = VRAM_BASE + 0xF0_000;
+        let input_width = 128usize;
+        let input_height = 64usize;
+        let mut scaled_input = vec![0u8; input_width * input_height * 4];
+        let mut expected_scaled = vec![0u8; (input_width / 2) * input_height * 4];
+        for y in 0..input_height {
+            for x in 0..input_width {
+                let pair_x = x / 2;
+                let sample_x = x % 2;
+                let offset = (y * input_width + x) * 4;
+                let red = (pair_x * 3 + sample_x * 2) as u8;
+                let green = (y * 2) as u8;
+                let blue = (pair_x * 4 + sample_x * 2) as u8;
+                // RGBA8 memory order is A, B, G, R.
+                scaled_input[offset..offset + 4]
+                    .copy_from_slice(&[255, blue, green, red]);
+            }
+        }
+        for y in 0..input_height {
+            for x in 0..(input_width / 2) {
+                let offset = (y * (input_width / 2) + x) * 4;
+                expected_scaled[offset..offset + 4].copy_from_slice(&[
+                    255,
+                    (x * 4 + 1) as u8,
+                    (y * 2) as u8,
+                    (x * 3 + 1) as u8,
+                ]);
+            }
+        }
+        system
+            .physical_memory_mut()
+            .write(scaled_linear_source, &scaled_input)
+            .unwrap();
+        execute_display_transfer(
+            system.physical_memory_mut(),
+            DisplayTransferRequest {
+                input_address: scaled_linear_source,
+                output_address: scaled_tiled_source,
+                input_width: input_width as u16,
+                input_height: input_height as u16,
+                output_width: input_width as u16,
+                output_height: input_height as u16,
+                flags: crate::gpu::DISPLAY_TRANSFER_LINEAR_TO_TILED,
+            },
+        )
+        .unwrap();
+
+        let mut scaled_queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        scaled_queue_bytes[1] = 1;
+        let scaled_entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        scaled_queue_bytes[scaled_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        scaled_queue_bytes[scaled_entry + 2] = 1;
+        scaled_queue_bytes[scaled_entry + 4..scaled_entry + 8]
+            .copy_from_slice(&scaled_tiled_source.to_le_bytes());
+        scaled_queue_bytes[scaled_entry + 8..scaled_entry + 12]
+            .copy_from_slice(&scaled_linear_output.to_le_bytes());
+        let scaled_dimensions = ((input_height as u32) << 16) | input_width as u32;
+        scaled_queue_bytes[scaled_entry + 12..scaled_entry + 16]
+            .copy_from_slice(&scaled_dimensions.to_le_bytes());
+        scaled_queue_bytes[scaled_entry + 16..scaled_entry + 20]
+            .copy_from_slice(&scaled_dimensions.to_le_bytes());
+        scaled_queue_bytes[scaled_entry + 20..scaled_entry + 24]
+            .copy_from_slice(&crate::gpu::DISPLAY_TRANSFER_SCALE_X.to_le_bytes());
+
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(queue_address, &scaled_queue_bytes)
+            .unwrap();
+        let scaled_report = system
+            .process_gsp_gx_command_queue(shared_memory_base, 0)
+            .unwrap();
+        assert_eq!(scaled_report.commands_consumed, 1);
+        assert_eq!(scaled_report.display_transfers_completed, 1);
+        assert!(scaled_report.error.is_none());
+
+        let mut actual_scaled = vec![0u8; expected_scaled.len()];
+        system
+            .physical_memory()
+            .read(scaled_linear_output, &mut actual_scaled)
+            .unwrap();
+        assert_eq!(actual_scaled, expected_scaled);
+
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf, GspInterruptId::Ppf],
+            "successful 2x1 tiled-to-linear transfer must enqueue PPF"
+        );
     }
 
     #[test]
