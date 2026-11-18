@@ -623,8 +623,7 @@ impl Pica200 {
         let index_register = usize::from(REG_FOG_LUT_INDEX);
         let index = (self.registers[index_register] as usize) % FOG_LUT_ENTRY_COUNT;
         self.fog_lut[index] = self.registers[usize::from(id)] & 0x00FF_FFFF;
-        self.registers[index_register] =
-            ((index + 1) % FOG_LUT_ENTRY_COUNT) as u32;
+        self.registers[index_register] = ((index + 1) % FOG_LUT_ENTRY_COUNT) as u32;
     }
 
     fn apply_fixed_attribute_register_write(&mut self, id: u16) {

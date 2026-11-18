@@ -7,10 +7,10 @@
 //! output operations for the rasterizer to apply in the hardware stage order.
 
 use super::{
-    GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
-    PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw, PicaTevError,
-    PicaTextureEnvironment, PicaTextureError, PicaTextureUnit, PicaVertexOutputMap,
-    FOG_LUT_ENTRY_COUNT, REG_TEXUNIT_CONFIG,
+    FOG_LUT_ENTRY_COUNT, GpuPhysicalMemory, Pica200, PicaFragmentInputs,
+    PicaFragmentOutputError, PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex,
+    PicaShadedDraw, PicaTevError, PicaTextureEnvironment, PicaTextureError, PicaTextureUnit,
+    PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
 };
 
 /// GPUREG_TEXENV_UPDATE_BUFFER: fog mode and depth-flip control.
@@ -78,9 +78,7 @@ impl PicaFog {
                 color,
                 z_flip,
             }))),
-            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode {
-                mode: mode as u8,
-            }),
+            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode { mode: mode as u8 }),
         }
     }
 }
@@ -903,7 +901,7 @@ mod tests {
     fn fog_lut_clamps_factor_and_respects_z_flip() {
         let mut pica = Pica200::new();
         pica.write_register(REG_FOG_COLOR, 0).unwrap();
-        pica.write_register(REG_FOG_LUT_INDEX, 0).unwrap();
+        pica.write_register(REG_FOG_LUT_INDEX, 127).unwrap();
         // A negative table delta clamps the resulting fog factor at zero.
         pica.write_register(REG_FOG_LUT_DATA0, 0x1C00).unwrap();
         pica.write_register(REG_TEXENV_UPDATE_BUFFER, 5 | (1 << 16))
