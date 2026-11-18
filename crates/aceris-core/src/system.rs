@@ -86,6 +86,7 @@ impl GspBusyState {
         self.command_mask &= !Self::flag_for_command(command_id);
     }
 
+    #[cfg(test)]
     const fn is_busy(self, command_id: u8) -> bool {
         self.command_mask & Self::flag_for_command(command_id) != 0
     }
@@ -1867,7 +1868,8 @@ impl System {
     /// ProcessCommandList, MemoryFill, DisplayTransfer, TextureCopy and
     /// FlushCacheRegions. FlushCacheRegions currently validates guest ranges only;
     /// the process D-cache performs writeback/invalidation for mapped FCRAM
-    /// ranges. Busy arbitration and asynchronous device timing remain pending.
+    /// ranges. Relative busy flags follow their completion paths; device timing
+    /// remains synchronous.
     pub fn process_gsp_gx_command_queue(
         &mut self,
         shared_memory_base: u32,
@@ -2964,6 +2966,113 @@ mod tests {
     };
 
     #[test]
+    fn gsp_busy_arbitration_distinguishes_same_kind_and_global_checks() {
+        let mut system = System::new();
+        system
+            .gsp_busy_state
+            .begin(GSP_GX_COMMAND_DISPLAY_TRANSFER);
+
+        let mut same_kind = test_gsp_command_queue(
+            GSP_GX_COMMAND_DISPLAY_TRANSFER,
+            false,
+            [0; 7],
+        );
+        let same_kind_report =
+            system.dispatch_gsp_gx_command_queue_with_right(&mut same_kind, true);
+        assert_eq!(same_kind_report.busy_commands_rejected, 1);
+        assert!(matches!(
+            same_kind_report.error,
+            Some(GspGxCommandQueueError::CommandBusy {
+                command_id: GSP_GX_COMMAND_DISPLAY_TRANSFER,
+                busy_commands_mask: GSP_BUSY_DISPLAY_TRANSFER,
+                fail_if_busy: false,
+            })
+        ));
+        assert!(system
+            .gsp_busy_state
+            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+
+        // A different command kind may proceed when fail-if-busy is clear.
+        // Empty FlushCacheRegions is a synchronous no-op and releases only its
+        // own relative flag, not the already-busy DisplayTransfer flag.
+        let mut different_kind =
+            test_gsp_command_queue(GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, false, [0; 7]);
+        let different_kind_report =
+            system.dispatch_gsp_gx_command_queue_with_right(&mut different_kind, true);
+        assert!(different_kind_report.error.is_none());
+        assert_eq!(different_kind_report.busy_commands_rejected, 0);
+        assert!(system
+            .gsp_busy_state
+            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+        assert!(!system
+            .gsp_busy_state
+            .is_busy(GSP_GX_COMMAND_FLUSH_CACHE_REGIONS));
+
+        // With fail-if-busy set, any outstanding relative flag blocks the
+        // command, even when its command ID differs.
+        let mut global_check =
+            test_gsp_command_queue(GSP_GX_COMMAND_FLUSH_CACHE_REGIONS, true, [0; 7]);
+        let global_report =
+            system.dispatch_gsp_gx_command_queue_with_right(&mut global_check, true);
+        assert_eq!(global_report.busy_commands_rejected, 1);
+        assert!(matches!(
+            global_report.error,
+            Some(GspGxCommandQueueError::CommandBusy {
+                command_id: GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
+                busy_commands_mask: GSP_BUSY_DISPLAY_TRANSFER,
+                fail_if_busy: true,
+            })
+        ));
+        assert!(system
+            .gsp_busy_state
+            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+    }
+
+    #[test]
+    fn failed_display_transfer_keeps_its_busy_flag_until_a_completion_interrupt() {
+        let mut system = System::new();
+        let dimensions = (64u32 << 16) | 64;
+        let mut invalid_transfer = test_gsp_command_queue(
+            GSP_GX_COMMAND_DISPLAY_TRANSFER,
+            false,
+            [
+                VRAM_BASE + 1,
+                VRAM_BASE + 0x1000,
+                dimensions,
+                dimensions,
+                0,
+                0,
+                0,
+            ],
+        );
+        let failed_report =
+            system.dispatch_gsp_gx_command_queue_with_right(&mut invalid_transfer, true);
+        assert!(matches!(
+            failed_report.error,
+            Some(GspGxCommandQueueError::InvalidDisplayTransferAddress { .. })
+        ));
+        assert!(system
+            .gsp_busy_state
+            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+
+        // No PPF was produced by the invalid transfer, so the relative busy
+        // flag remains set and blocks a later command with fail-if-busy.
+        let mut later_command =
+            test_gsp_command_queue(GSP_GX_COMMAND_TEXTURE_COPY, true, [0; 7]);
+        let blocked_report =
+            system.dispatch_gsp_gx_command_queue_with_right(&mut later_command, true);
+        assert_eq!(blocked_report.busy_commands_rejected, 1);
+        assert!(matches!(
+            blocked_report.error,
+            Some(GspGxCommandQueueError::CommandBusy {
+                command_id: GSP_GX_COMMAND_TEXTURE_COPY,
+                fail_if_busy: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn running_without_an_image_fails() {
         let mut system = System::new();
         assert!(matches!(system.run_frame(), Err(Error::NoImageLoaded)));
@@ -3003,6 +3112,24 @@ mod tests {
             report.stop_reason,
             Arm11RunStopReason::InstructionBudgetExhausted
         );
+    }
+
+    fn test_gsp_command_queue(
+        command_id: u8,
+        fail_if_busy: bool,
+        arguments: [u32; 7],
+    ) -> GspGxCommandQueue {
+        let mut bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
+        bytes[1] = 1;
+        let entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        bytes[entry] = command_id;
+        bytes[entry + 2] = 1;
+        bytes[entry + 3] = u8::from(fail_if_busy);
+        for (index, argument) in arguments.into_iter().enumerate() {
+            let offset = entry + 4 + index * 4;
+            bytes[offset..offset + 4].copy_from_slice(&argument.to_le_bytes());
+        }
+        GspGxCommandQueue::parse(&bytes).unwrap()
     }
 
     fn write_tls_ipc_request(system: &mut System, session_handle: u32, words: &[u32]) -> u32 {
