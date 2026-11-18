@@ -849,11 +849,7 @@ mod tests {
             }
         }
         memory.write(SOURCE, &input_linear).unwrap();
-        let mut linear_to_tiled = request(
-            SOURCE,
-            DESTINATION,
-            DISPLAY_TRANSFER_LINEAR_TO_TILED,
-        );
+        let mut linear_to_tiled = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_LINEAR_TO_TILED);
         linear_to_tiled.input_width = input_width as u16;
         linear_to_tiled.input_height = input_height as u16;
         linear_to_tiled.output_width = input_width as u16;
@@ -863,9 +859,7 @@ mod tests {
         let mut tiled_to_tiled = request(
             DESTINATION,
             SOURCE,
-            DISPLAY_TRANSFER_TILED_TO_TILED
-                | DISPLAY_TRANSFER_CROP
-                | (2 << 24),
+            DISPLAY_TRANSFER_TILED_TO_TILED | DISPLAY_TRANSFER_CROP | (2 << 24),
         );
         tiled_to_tiled.input_width = input_width as u16;
         tiled_to_tiled.input_height = input_height as u16;
@@ -875,11 +869,20 @@ mod tests {
 
         assert_eq!(report.width, output_width as u16);
         assert_eq!(report.height, output_height as u16);
-        assert_eq!(report.pixels_transferred, (output_width * output_height) as u64);
+        assert_eq!(
+            report.pixels_transferred,
+            (output_width * output_height) as u64
+        );
         assert_eq!(report.bytes_read, (input_width * input_height * 4) as u64);
-        assert_eq!(report.bytes_written, (output_width * output_height * 4) as u64);
+        assert_eq!(
+            report.bytes_written,
+            (output_width * output_height * 4) as u64
+        );
         assert_eq!(report.source_layout, DisplayTransferLayout::Tiled8x8Morton);
-        assert_eq!(report.destination_layout, DisplayTransferLayout::Tiled8x8Morton);
+        assert_eq!(
+            report.destination_layout,
+            DisplayTransferLayout::Tiled8x8Morton
+        );
 
         let mut actual_tiled = vec![0u8; report.bytes_written as usize];
         memory.read(SOURCE, &mut actual_tiled).unwrap();
@@ -894,12 +897,7 @@ mod tests {
                     DisplayTransferLayout::Tiled8x8Morton,
                 )
                 .unwrap();
-                let expected = [
-                    (x * 3) as u8,
-                    (y * 5) as u8,
-                    ((x ^ y) * 7) as u8,
-                    200,
-                ];
+                let expected = [(x * 3) as u8, (y * 5) as u8, ((x ^ y) * 7) as u8, 200];
                 assert_eq!(&actual_tiled[offset..offset + 4], &expected);
             }
         }
