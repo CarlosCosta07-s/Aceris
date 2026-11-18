@@ -45,41 +45,41 @@ struct PicaFogLut {
     z_flip: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum PicaFog {
-    Linear(PicaLinearFog),
-    Lut(PicaFogLut),
-}
+fn decode_fog_state(
+    pica: &Pica200,
+) -> Result<(Option<PicaLinearFog>, Option<PicaFogLut>), PicaFragmentPipelineError> {
+    let update = pica.register(REG_TEXENV_UPDATE_BUFFER).unwrap_or(0);
+    let packed_color = pica.register(REG_FOG_COLOR).unwrap_or(0);
+    let color = [
+        (packed_color & 0xFF) as f32 / 255.0,
+        ((packed_color >> 8) & 0xFF) as f32 / 255.0,
+        ((packed_color >> 16) & 0xFF) as f32 / 255.0,
+    ];
+    let z_flip = update & FOG_Z_FLIP != 0;
 
-impl PicaFog {
-    fn from_pica(pica: &Pica200) -> Result<Option<Self>, PicaFragmentPipelineError> {
-        let update = pica.register(REG_TEXENV_UPDATE_BUFFER).unwrap_or(0);
-        let packed_color = pica.register(REG_FOG_COLOR).unwrap_or(0);
-        let color = [
-            (packed_color & 0xFF) as f32 / 255.0,
-            ((packed_color >> 8) & 0xFF) as f32 / 255.0,
-            ((packed_color >> 16) & 0xFF) as f32 / 255.0,
-        ];
-        let z_flip = update & FOG_Z_FLIP != 0;
-
-        match update & FOG_MODE_MASK {
-            FOG_MODE_DISABLED => Ok(None),
-            FOG_MODE_LINEAR => {
-                let decode_fixed = |value: u32| (value as u16 as i16) as f32 / 2048.0;
-                Ok(Some(Self::Linear(PicaLinearFog {
+    match update & FOG_MODE_MASK {
+        FOG_MODE_DISABLED => Ok((None, None)),
+        FOG_MODE_LINEAR => {
+            let decode_fixed = |value: u32| (value as u16 as i16) as f32 / 2048.0;
+            Ok((
+                Some(PicaLinearFog {
                     slope: decode_fixed(pica.register(REG_FOG_LINEAR_SLOPE).unwrap_or(0)),
                     offset: decode_fixed(pica.register(REG_FOG_LINEAR_OFFSET).unwrap_or(0)),
                     color,
                     z_flip,
-                })))
-            }
-            FOG_MODE_LUT => Ok(Some(Self::Lut(PicaFogLut {
+                }),
+                None,
+            ))
+        }
+        FOG_MODE_LUT => Ok((
+            None,
+            Some(PicaFogLut {
                 entries: std::array::from_fn(|index| pica.fog_lut_entry(index).unwrap_or(0)),
                 color,
                 z_flip,
-            }))),
-            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode { mode: mode as u8 }),
-        }
+            }),
+        )),
+        mode => Err(PicaFragmentPipelineError::UnsupportedFogMode { mode: mode as u8 }),
     }
 }
 
@@ -314,7 +314,8 @@ pub struct PicaFragmentPipeline {
     texture_environment: PicaTextureEnvironment,
     texture_units: [PicaTextureUnit; 3],
     output_state: PicaFragmentOutputState,
-    fog: Option<PicaFog>,
+    linear_fog: Option<PicaLinearFog>,
+    fog_lut: Option<PicaFogLut>,
     /// Unit 2 can read either oTexCoord2 or oTexCoord1.
     texture2_coordinate_index: usize,
 }
@@ -327,7 +328,7 @@ impl PicaFragmentPipeline {
             return Err(PicaFragmentPipelineError::ProceduralTextureUnitUnsupported);
         }
 
-        let fog = PicaFog::from_pica(pica)?;
+        let (linear_fog, fog_lut) = decode_fog_state(pica)?;
 
         Ok(Self {
             texture_environment: pica
@@ -341,7 +342,8 @@ impl PicaFragmentPipeline {
             output_state: pica
                 .fragment_output_state()
                 .map_err(PicaFragmentPipelineError::Output)?,
-            fog,
+            linear_fog,
+            fog_lut,
             texture2_coordinate_index: if config & (1 << 13) != 0 { 1 } else { 2 },
         })
     }
@@ -508,10 +510,12 @@ impl PicaFragmentPipeline {
 
     /// Applies the draw's captured fog state after TEV and before fragment output.
     pub(super) fn apply_fog(&self, color: [f32; 4], depth: f32) -> [f32; 4] {
-        match self.fog {
-            Some(PicaFog::Linear(fog)) => fog.apply(color, depth),
-            Some(PicaFog::Lut(fog)) => fog.apply(color, depth),
-            None => color,
+        if let Some(fog) = self.linear_fog {
+            fog.apply(color, depth)
+        } else if let Some(fog) = self.fog_lut {
+            fog.apply(color, depth)
+        } else {
+            color
         }
     }
 
