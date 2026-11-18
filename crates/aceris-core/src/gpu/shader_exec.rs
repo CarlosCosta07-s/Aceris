@@ -1773,7 +1773,7 @@ mod tests {
                 format1_unary(0x12, 0, V0), // a0.x = trunc(-1.9), a0.y = trunc(2.9)
                 format1_unary(0x13, O0, C0 + 1) | (1 << 19), // c1 + a0.x = c0
                 format1_unary(0x13, O1, C0 + 1) | (2 << 19), // c1 + a0.y = c3
-                format3(0x29, 0, 4, 0), // LOOP sets aL=5 for its one instruction
+                format3(0x29, 0, 4, 0),     // LOOP sets aL=5 for its one instruction
                 format1_unary(0x13, O2, C0) | (3 << 19), // c0 + aL = c5
                 END,
             ],
@@ -1797,7 +1797,7 @@ mod tests {
         uniforms[1] = [21.0; 4];
         let ignored_offset = PicaVertexShaderProgram::from_words(
             &[
-                format1_unary(0x12, 0, V0), // a0.x = 200
+                format1_unary(0x12, 0, V0),                  // a0.x = 200
                 format1_unary(0x13, O0, C0 + 1) | (1 << 19), // out-of-range offset means c1
                 END,
             ],
@@ -1813,7 +1813,7 @@ mod tests {
         uniforms[95] = [95.0; 4];
         let masked_oob = PicaVertexShaderProgram::from_words(
             &[
-                format1_unary(0x12, 0, V0), // a0.x = 1
+                format1_unary(0x12, 0, V0),                // a0.x = 1
                 format1_unary(0x13, O0, 0x7F) | (1 << 19), // c95 + a0.x -> c96
                 END,
             ],
