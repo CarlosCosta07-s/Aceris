@@ -7,10 +7,10 @@
 //! output operations for the rasterizer to apply in the hardware stage order.
 
 use super::{
-    FOG_LUT_ENTRY_COUNT, GpuPhysicalMemory, Pica200, PicaFragmentInputs,
-    PicaFragmentOutputError, PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex,
-    PicaShadedDraw, PicaTevError, PicaTextureEnvironment, PicaTextureError, PicaTextureUnit,
-    PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
+    FOG_LUT_ENTRY_COUNT, GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
+    PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw, PicaTevError,
+    PicaTextureEnvironment, PicaTextureError, PicaTextureUnit, PicaVertexOutputMap,
+    REG_TEXUNIT_CONFIG,
 };
 
 /// GPUREG_TEXENV_UPDATE_BUFFER: fog mode and depth-flip control.
