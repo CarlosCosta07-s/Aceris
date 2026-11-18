@@ -1921,3 +1921,14 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Testes novos: quantização por formato, 16 logic ops, 15 fatores de blend, saturação/equações independentes e acúmulo de blends em 565. Dois deles falham sem a correção (verificado revertendo-a).
 - Não implementado: `COLORBUFFER_READ`, bloco 32x32, gas/shadow. Arredondamento do blend continua em float com `round`, não validado contra hardware.
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado.
+
+
+
+## GSP DisplayTransfer — tiled→tiled e crop 8×8 (18/11/2026)
+
+- Escopo publicado: somente `crates/aceris-core/src/gpu/transfer.rs` para código e testes. Commits: `3ce66d518cb460465769bd25121c16079877e125` (tiled→tiled + crop); `47e0c6dedc6241db89f734dae8eb6ac06cf73d9c` (fixtures e dimensões alinhadas ao mínimo documentado); `729e51082bc3a4aaffca12fb2c05cc2f543bfada` (formatação de `transfer.rs`).
+- A flag bit 5 seleciona tiled→tiled; a combinação com bit 1 é recusada. A flag bit 2 é exigida quando a largura de saída é menor que a de entrada. A rotina endereça a origem pela largura de entrada e a saída pela largura de saída, validando os tamanhos de memória independentemente e concluindo o staging antes do writeback.
+- Testes adicionados: `tiled_to_tiled_transfer_preserves_the_tiled_pixel_order`, `tiled_to_linear_crop_copies_the_requested_top_left_rectangle`, `horizontal_crop_requires_the_guest_crop_flag` e o teste do mínimo tiled→linear. O crop válido usa entrada 96×64 e saída 64×32.
+- Fontes e limites estão registrados na seção 12 de `docs/INDEPENDENT_RESEARCH.md`. O código continua limitado a tiles 8×8. Bit 16 (blocos 32×32), bits 24–25 (box downscale), alinhamento de largura por formato, matriz de conversões que completa PPF e temporização real permanecem abertos.
+- CI do commit `47e0c6dedc6241db89f734dae8eb6ac06cf73d9c`: workflow `44352488069`; Android ARM64 release concluiu com sucesso. Linux e Windows pararam em `cargo fmt --all --check`; os logs também apontam uma divergência em `crates/aceris-core/src/gpu/texture.rs:1070`, fora do arquivo deste escopo e alterado em trabalho anterior de outro agente. O commit `729e510` corrige exclusivamente o estilo de `transfer.rs`; a nova CI precisa ser inspecionada antes de declarar testes/build/Clippy aprovados. A execução macOS ainda estava em fila na última consulta.
+- Não editar `texture.rs` para corrigir esse estilo sem autorização explícita do mantenedor, pois o arquivo pertence a alteração anterior de outro agente. Nenhum teste completo local foi possível neste ambiente, que não possui `cargo`, `rustc` ou `rustfmt`.
