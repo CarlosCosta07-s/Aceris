@@ -294,3 +294,30 @@ Como o modo GX tiled→tiled deve gerar níveis menores de textura ou superfíci
 A documentação pública não especifica o arredondamento interno do box filter, a precisão intermediária, a ordem de quantização, nem a temporização. O Aceris usa divisão inteira truncada por quatro como modelo determinístico; isso não é declaração de equivalência física. A interpretação de dimensões como entrada = 2× saída é o contrato adotado para uma redução 2×2 explícita, testado sinteticamente, mas ainda não confirmado em hardware legítimo. Downscale 2×1, escala no caminho tiled→linear, blocos 32×32 e combinações 32×32 + scale continuam sem suporte.
 
 A implementação foi escrita independentemente em Rust e não incorpora código, assets, shaders, fixtures ou dependências de terceiros.
+
+## 15. PICA200 — blocos 32×32 no render target e DisplayTransfer (18/11/2026)
+
+### Pergunta técnica
+
+Como o registrador de framebuffer seleciona o modo de blocos 32×32 e qual contrato a transferência exige para ler um framebuffer nesse modo?
+
+### Referências documentais independentes
+
+- 3dbrew, *GPU/Internal Registers*: https://www.3dbrew.org/wiki/GPU/Internal_Registers — descreve `GPUREG_FRAMEBUFFER_BLOCK32` (`0x11B`), bit 0: 0 = blocos 8×8; 1 = blocos 32×32. A própria documentação indica que, para untile do color buffer nesse modo, deve-se usar o bit 16 das flags de DisplayTransfer; também registra que as vantagens do modo não são conhecidas. Fonte comunitária de engenharia reversa, não oficial, consulta em 18/11/2026.
+- 3dbrew, *GPU/External Registers*: https://www.3dbrew.org/wiki/GPU/External_Registers — bit 16 seleciona blocos 32×32 em vez dos 8×8 habituais e as dimensões efetivas de saída devem ser múltiplas de 32, mesmo com crop bit 2. Fonte comunitária de engenharia reversa, não oficial, consulta em 18/11/2026.
+- Mikage, *Internal Registers*: https://docs.mikage.app/GPU/Internal_Registers/ — confirma a seleção 8×8/32×32 e a necessidade do bit 16 do DisplayTransfer para untile. A documentação não descreve a ordem interna dos pixels do bloco 32×32. Fonte comunitária não oficial, consulta em 18/11/2026.
+- Mikage, *External Registers*: https://docs.mikage.app/GPU/External_Registers/ — confirma o bit 16 e o requisito de dimensões de saída múltiplas de 32, inclusive com crop. Fonte comunitária não oficial, consulta em 18/11/2026.
+
+### Modelo implementado no Aceris
+
+- `PicaRenderTargetConfig` escolhe tile edge 8 ou 32 a partir de `GPUREG_FRAMEBUFFER_BLOCK32`.
+- O armazenamento usa uma grade row-major de blocos quadrados; dentro de cada bloco, os bits X/Y são intercalados em ordem Morton/Z. Para 8×8, são 3 bits por eixo; para 32×32, são 5 bits por eixo.
+- `DisplayTransferLayout` agora distingue `Tiled8x8Morton` e `Tiled32x32Morton`. O bit 16 seleciona a mesma organização para o lado tiled da transferência: entrada em tiled→linear, saída em linear→tiled e ambos os lados em tiled→tiled.
+- `display_transfer_buffer_sizes` calcula os spans padded pelo tamanho do tile escolhido; `execute_display_transfer` usa a mesma função de offset para leitura e gravação, preservando o staging e a validação de intervalos.
+- A validação exige que as dimensões físicas efetivas de saída sejam múltiplas de 32 no modo bit 16.
+- Testes próprios cobrem bijeção Morton 32×32, round-trip rasterizer→memória física→RGBA8, round-trip linear→tiled→linear e rejeição de dimensões de saída que não são múltiplas de 32.
+- A integração `gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion` adiciona uma terceira chamada pela fila GX, com bit 16, e verifica pixels no framebuffer linear e a terceira notificação PPF.
+
+### Limites e confiança
+
+A documentação identifica a seleção do bloco e a flag de transferência, mas não especifica explicitamente a ordem interna dos pixels dentro de um bloco 32×32. O Aceris generaliza a organização Morton usada em 8×8 para cinco bits por eixo, mantendo tiles em ordem row-major. Isso é uma hipótese explícita e testável, não uma afirmação de equivalência física. Não houve comparação com framebuffer capturado de hardware legítimo. Também permanecem pendentes o sentido exato do bit de flip do render target, o arredondamento físico do box filter e a temporização assíncrona.
