@@ -1,9 +1,9 @@
 //! Bounded raw TextureCopy transfers for the GSP GX queue.
 //!
-//! TextureCopy bypasses pixel-format conversion. In gap mode, line widths and
-//! gaps are expressed in 16-byte units; the transfer size counts copied bytes,
-//! not skipped gap bytes. The implementation stages all input before writing
-//! output so overlapping source/destination regions are deterministic.
+//! TextureCopy bypasses pixel-format conversion. In gap mode, source and
+//! destination line widths/gaps are independent 16-byte units; transfer size
+//! counts copied bytes, not skipped gap bytes. The implementation stages all
+//! input before writing output so overlapping ranges are deterministic.
 
 use super::{GpuDmaAddressSpace, GpuPhysicalMemory, VRAM_BASE, VRAM_SIZE};
 
@@ -32,7 +32,8 @@ pub struct TextureCopyRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextureCopyReport {
     pub bytes_transferred: u32,
-    pub rows_transferred: u32,
+    pub source_rows_transferred: u32,
+    pub destination_rows_transferred: u32,
     pub used_gaps: bool,
 }
 
@@ -55,10 +56,6 @@ pub enum TextureCopyError {
         size_bytes: u32,
     },
     MissingLineWidth,
-    MismatchedLineWidths {
-        source_line_width: usize,
-        destination_line_width: usize,
-    },
     AddressOverflow {
         base: u32,
         offset: u64,
@@ -105,13 +102,6 @@ impl std::fmt::Display for TextureCopyError {
             Self::MissingLineWidth => formatter.write_str(
                 "TextureCopy gap mode requires non-zero source and destination line widths",
             ),
-            Self::MismatchedLineWidths {
-                source_line_width,
-                destination_line_width,
-            } => write!(
-                formatter,
-                "TextureCopy line widths differ ({source_line_width} != {destination_line_width})"
-            ),
             Self::AddressOverflow { base, offset } => write!(
                 formatter,
                 "TextureCopy row address overflows from {base:#010x} with offset {offset:#x}"
@@ -135,10 +125,9 @@ impl std::error::Error for TextureCopyError {}
 /// Executes a raw copy from the GSP-visible source to destination ranges.
 ///
 /// When bit 2 is clear, the operation is contiguous and the line parameter
-/// words are ignored. When bit 2 is set, each row copies the common line width
-/// and then independently skips the source/destination gap. This implementation
-/// deliberately rejects unequal copied line widths instead of guessing how
-/// the hardware reconciles different byte counts on each side.
+/// words are ignored. In gap mode, source and destination bytes are consumed
+/// as one logical stream, but each side wraps at its own line width and skips
+/// its own gap. Every physical row is validated before the first write.
 pub fn execute_texture_copy(
     memory: &mut GpuPhysicalMemory,
     address_space: &GpuDmaAddressSpace,
@@ -179,61 +168,54 @@ pub fn execute_texture_copy(
     }
 
     let size_bytes = request.size_bytes as usize;
-    let (line_bytes, source_gap, destination_gap) = if used_gaps {
-        let source_line = (request.source_line_width_and_gap & 0xFFFF) as usize * 16;
-        let destination_line = (request.destination_line_width_and_gap & 0xFFFF) as usize * 16;
-        if source_line == 0 || destination_line == 0 {
-            return Err(TextureCopyError::MissingLineWidth);
-        }
-        if source_line != destination_line {
-            return Err(TextureCopyError::MismatchedLineWidths {
-                source_line_width: source_line,
-                destination_line_width: destination_line,
-            });
-        }
-        (
-            source_line,
-            (request.source_line_width_and_gap >> 16) as usize * 16,
-            (request.destination_line_width_and_gap >> 16) as usize * 16,
-        )
-    } else {
-        (size_bytes, 0, 0)
-    };
+    let (source_line_bytes, destination_line_bytes, source_gap, destination_gap) =
+        if used_gaps {
+            let source_line = (request.source_line_width_and_gap & 0xFFFF) as usize * 16;
+            let destination_line =
+                (request.destination_line_width_and_gap & 0xFFFF) as usize * 16;
+            if source_line == 0 || destination_line == 0 {
+                return Err(TextureCopyError::MissingLineWidth);
+            }
+            (
+                source_line,
+                destination_line,
+                (request.source_line_width_and_gap >> 16) as usize * 16,
+                (request.destination_line_width_and_gap >> 16) as usize * 16,
+            )
+        } else {
+            (size_bytes, size_bytes, 0, 0)
+        };
 
-    let source_stride =
-        line_bytes
-            .checked_add(source_gap)
-            .ok_or(TextureCopyError::AddressOverflow {
-                base: request.source_address,
-                offset: u64::MAX,
-            })?;
-    let destination_stride =
-        line_bytes
-            .checked_add(destination_gap)
-            .ok_or(TextureCopyError::AddressOverflow {
-                base: request.destination_address,
-                offset: u64::MAX,
-            })?;
-    let row_count =
-        size_bytes
-            .checked_add(line_bytes - 1)
-            .ok_or(TextureCopyError::InvalidSize {
-                size_bytes: request.size_bytes,
-                minimum_bytes,
-            })?
-            / line_bytes;
+    let source_stride = source_line_bytes.checked_add(source_gap).ok_or(
+        TextureCopyError::AddressOverflow {
+            base: request.source_address,
+            offset: u64::MAX,
+        },
+    )?;
+    let destination_stride = destination_line_bytes.checked_add(destination_gap).ok_or(
+        TextureCopyError::AddressOverflow {
+            base: request.destination_address,
+            offset: u64::MAX,
+        },
+    )?;
+    let source_row_count = row_count(size_bytes, source_line_bytes);
+    let destination_row_count = row_count(size_bytes, destination_line_bytes);
 
-    // Validate every row on both sides before reading or changing any bytes.
-    for row in 0..row_count {
-        let count = row_size(size_bytes, line_bytes, row);
+    // Validate every source and destination row independently before reading
+    // any data or changing the destination.
+    for row in 0..source_row_count {
+        let count = row_size(size_bytes, source_line_bytes, row);
         let source = row_address(request.source_address, source_stride, row)?;
-        let destination = row_address(request.destination_address, destination_stride, row)?;
         resolve_texture_copy_range(memory, address_space, source, count)?;
+    }
+    for row in 0..destination_row_count {
+        let count = row_size(size_bytes, destination_line_bytes, row);
+        let destination = row_address(request.destination_address, destination_stride, row)?;
         resolve_texture_copy_range(memory, address_space, destination, count)?;
     }
 
-    // Stage all source bytes before writing any destination row. This also
-    // preserves copy semantics when the source and destination overlap.
+    // Stage the complete logical byte stream before writing, preserving
+    // deterministic behavior for overlapping source and destination ranges.
     let mut staged = Vec::new();
     staged
         .try_reserve_exact(size_bytes)
@@ -241,8 +223,8 @@ pub fn execute_texture_copy(
     staged.resize(size_bytes, 0);
 
     let mut copied = 0usize;
-    for row in 0..row_count {
-        let count = row_size(size_bytes, line_bytes, row);
+    for row in 0..source_row_count {
+        let count = row_size(size_bytes, source_line_bytes, row);
         let source = row_address(request.source_address, source_stride, row)?;
         let physical_source = resolve_texture_copy_range(memory, address_space, source, count)?;
         memory
@@ -252,8 +234,8 @@ pub fn execute_texture_copy(
     }
 
     copied = 0;
-    for row in 0..row_count {
-        let count = row_size(size_bytes, line_bytes, row);
+    for row in 0..destination_row_count {
+        let count = row_size(size_bytes, destination_line_bytes, row);
         let destination = row_address(request.destination_address, destination_stride, row)?;
         let physical_destination =
             resolve_texture_copy_range(memory, address_space, destination, count)?;
@@ -265,9 +247,14 @@ pub fn execute_texture_copy(
 
     Ok(TextureCopyReport {
         bytes_transferred: request.size_bytes,
-        rows_transferred: row_count as u32,
+        source_rows_transferred: source_row_count as u32,
+        destination_rows_transferred: destination_row_count as u32,
         used_gaps,
     })
+}
+
+fn row_count(total_bytes: usize, line_bytes: usize) -> usize {
+    (total_bytes + line_bytes - 1) / line_bytes
 }
 
 fn row_size(total_bytes: usize, line_bytes: usize, row: usize) -> usize {
@@ -420,7 +407,8 @@ mod tests {
         }
         assert_eq!(actual, expected);
         assert_eq!(report.bytes_transferred, 192);
-        assert_eq!(report.rows_transferred, 6);
+        assert_eq!(report.source_rows_transferred, 6);
+        assert_eq!(report.destination_rows_transferred, 6);
         assert!(report.used_gaps);
     }
 
@@ -455,27 +443,68 @@ mod tests {
     }
 
     #[test]
-    fn rejects_mismatched_line_widths_in_gap_mode() {
+    fn gap_mode_copies_different_source_and_destination_line_widths() {
         let mut memory = GpuPhysicalMemory::new();
-        let result = execute_texture_copy(
+        let address_space = mapped_linear_memory();
+        let source = 0x1400_2000;
+        let destination = 0x1400_4000;
+        let source_line = 32usize;
+        let source_gap = 16usize;
+        let destination_line = 16usize;
+        let destination_gap = 16usize;
+        let size_bytes = 192usize;
+
+        // Six 32-byte source rows with a 16-byte gap between rows.
+        let stream: Vec<u8> = (0..size_bytes).map(|value| (value * 7) as u8).collect();
+        let mut source_storage = vec![0xEE; 6 * (source_line + source_gap)];
+        for row in 0..6 {
+            let source_offset = row * (source_line + source_gap);
+            let stream_offset = row * source_line;
+            source_storage[source_offset..source_offset + source_line]
+                .copy_from_slice(&stream[stream_offset..stream_offset + source_line]);
+        }
+        memory
+            .write(FCRAM_BASE + 0x2000, &source_storage)
+            .unwrap();
+
+        let destination_storage_bytes = 12 * (destination_line + destination_gap);
+        memory
+            .write(FCRAM_BASE + 0x4000, &vec![0xCC; destination_storage_bytes])
+            .unwrap();
+
+        let report = execute_texture_copy(
             &mut memory,
-            &GpuDmaAddressSpace::new(),
+            &address_space,
             TextureCopyRequest {
-                source_address: 0x1400_0000,
-                destination_address: 0x1400_1000,
-                size_bytes: 192,
-                source_line_width_and_gap: 0x0000_0002,
-                destination_line_width_and_gap: 0x0000_0001,
+                source_address: source,
+                destination_address: destination,
+                size_bytes: size_bytes as u32,
+                source_line_width_and_gap: 0x0001_0002,
+                destination_line_width_and_gap: 0x0001_0001,
                 flags: TEXTURE_COPY_ENGINE_MODE | TEXTURE_COPY_GAP_MODE,
             },
-        );
-        assert!(matches!(
-            result,
-            Err(TextureCopyError::MismatchedLineWidths {
-                source_line_width: 32,
-                destination_line_width: 16,
-            })
-        ));
+        )
+        .unwrap();
+
+        let mut actual = vec![0; destination_storage_bytes];
+        memory.read(FCRAM_BASE + 0x4000, &mut actual).unwrap();
+        for row in 0..12 {
+            let output_offset = row * (destination_line + destination_gap);
+            let stream_offset = row * destination_line;
+            assert_eq!(
+                &actual[output_offset..output_offset + destination_line],
+                &stream[stream_offset..stream_offset + destination_line],
+            );
+            assert_eq!(
+                &actual[output_offset + destination_line..output_offset + destination_line + destination_gap],
+                &[0xCC; 16],
+                "destination gap for row {row} must remain untouched"
+            );
+        }
+        assert_eq!(report.bytes_transferred, size_bytes as u32);
+        assert_eq!(report.source_rows_transferred, 6);
+        assert_eq!(report.destination_rows_transferred, 12);
+        assert!(report.used_gaps);
     }
 
     #[test]
