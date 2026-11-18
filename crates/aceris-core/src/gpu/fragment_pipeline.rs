@@ -57,9 +57,7 @@ impl PicaLinearFog {
                     z_flip: update & FOG_Z_FLIP != 0,
                 }))
             }
-            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode {
-                mode: mode as u8,
-            }),
+            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode { mode: mode as u8 }),
         }
     }
 
@@ -71,9 +69,8 @@ impl PicaLinearFog {
     fn apply(self, mut color: [f32; 4], depth: f32) -> [f32; 4] {
         let depth = if self.z_flip { 1.0 - depth } else { depth };
         let factor = self.slope.mul_add(depth, self.offset).clamp(0.0, 1.0);
-        for channel in 0..3 {
-            color[channel] =
-                factor.mul_add(color[channel], (1.0 - factor) * self.color[channel]);
+        for (channel, fog_channel) in color[..3].iter_mut().zip(self.color) {
+            *channel = factor.mul_add(*channel, (1.0 - factor) * fog_channel);
         }
         color
     }
@@ -549,7 +546,9 @@ pub enum PicaFragmentPipelineError {
     Tev(PicaTevError),
     Output(PicaFragmentOutputError),
     ProceduralTextureUnitUnsupported,
-    UnsupportedFogMode { mode: u8 },
+    UnsupportedFogMode {
+        mode: u8,
+    },
     NonFiniteColor {
         attribute: &'static str,
         channel: usize,
@@ -659,9 +658,8 @@ mod tests {
     use crate::gpu::PicaShadedVertex;
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
-        PicaTevSource, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_FOG_COLOR,
-        REG_FOG_LINEAR_OFFSET, REG_FOG_LINEAR_SLOPE, REG_TEXENV_UPDATE_BUFFER,
-        TEXENV_STAGE_SOURCE_REGISTERS,
+        PicaTevSource, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_FOG_COLOR, REG_FOG_LINEAR_OFFSET,
+        REG_FOG_LINEAR_SLOPE, REG_TEXENV_UPDATE_BUFFER, TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn configure_texture(pica: &mut Pica200, unit: usize, address: u32, width: u16, height: u16) {
@@ -819,9 +817,13 @@ mod tests {
         assert!((flipped[1] - 0.375).abs() < 1.0e-6);
         assert!((flipped[2] - 0.1875).abs() < 1.0e-6);
 
-        pica.write_register(REG_FOG_LINEAR_OFFSET, 0xF000).unwrap();
-        let clamped = pica.fragment_pipeline().unwrap().apply_fog([1.0; 4], 0.0);
-        assert_eq!(clamped, [0.0, 0.0, 0.0, 1.0]);
+        pica.write_register(REG_FOG_LINEAR_OFFSET, 0xD000).unwrap();
+        let below_range = pica.fragment_pipeline().unwrap().apply_fog([1.0; 4], 0.0);
+        assert_eq!(below_range, [0.0, 0.0, 0.0, 1.0]);
+
+        pica.write_register(REG_FOG_LINEAR_OFFSET, 0x4000).unwrap();
+        let above_range = pica.fragment_pipeline().unwrap().apply_fog([1.0; 4], 0.0);
+        assert_eq!(above_range, [1.0; 4]);
     }
 
     #[test]
