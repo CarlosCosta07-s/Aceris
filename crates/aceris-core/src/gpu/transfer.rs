@@ -18,6 +18,8 @@ pub const DISPLAY_TRANSFER_CROP: u32 = 1 << 2;
 pub const DISPLAY_TRANSFER_TEXTURE_COPY: u32 = 1 << 3;
 pub const DISPLAY_TRANSFER_TILED_TO_TILED: u32 = 1 << 5;
 pub const DISPLAY_TRANSFER_BLOCKS_32X32: u32 = 1 << 16;
+pub const DISPLAY_TRANSFER_SCALE_X: u32 = 1 << 24;
+pub const DISPLAY_TRANSFER_SCALE_XY: u32 = 2 << 24;
 pub const MAX_DISPLAY_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 
 /// Reports whether the documented tiled transfer format pair raises PPF.
@@ -282,6 +284,26 @@ impl From<GpuPhysicalMemoryError> for DisplayTransferError {
     }
 }
 
+/// Returns the effective output dimensions after the transfer engine's box filter.
+fn effective_output_dimensions(
+    request: DisplayTransferRequest,
+) -> Result<(usize, usize), DisplayTransferError> {
+    let width = usize::from(request.output_width);
+    let height = usize::from(request.output_height);
+    let scale = (request.flags >> 24) & 3;
+    let tiled_to_tiled = request.flags & DISPLAY_TRANSFER_TILED_TO_TILED != 0;
+
+    if tiled_to_tiled || scale == 0 {
+        return Ok((width, height));
+    }
+
+    match scale {
+        1 => Ok((width / 2, height)),
+        2 => Ok((width / 2, height / 2)),
+        other => Err(DisplayTransferError::UnsupportedScaling(other as u8)),
+    }
+}
+
 /// Returns exact input/output span sizes after validating the transfer modes.
 /// Useful to resolve guest virtual addresses before executing the transfer.
 pub fn display_transfer_buffer_sizes(
@@ -308,9 +330,10 @@ pub fn display_transfer_buffer_sizes(
         source_format,
         source_layout,
     )?;
+    let (output_width, output_height) = effective_output_dimensions(request)?;
     let destination_bytes = storage_size(
-        usize::from(request.output_width),
-        usize::from(request.output_height),
+        output_width,
+        output_height,
         destination_format,
         destination_layout,
     )?;
@@ -362,8 +385,7 @@ pub fn execute_display_transfer(
     let vertical_flip = request.flags & DISPLAY_TRANSFER_FLIP_VERTICAL != 0;
     let input_width = usize::from(request.input_width);
     let input_height = usize::from(request.input_height);
-    let output_width = usize::from(request.output_width);
-    let output_height = usize::from(request.output_height);
+    let (output_width, output_height) = effective_output_dimensions(request)?;
     let source_tiles_x = tile_count(input_width)?;
     let destination_tiles_x = tile_count(output_width)?;
 
@@ -382,58 +404,43 @@ pub fn execute_display_transfer(
 
     let source_bpp = source_format.bytes_per_pixel();
     let destination_bpp = destination_format.bytes_per_pixel();
-    let scale_x = if tiled_to_tiled { 2 } else { 1 };
-    let scale_y = if tiled_to_tiled { 2 } else { 1 };
+    let scale = (request.flags >> 24) & 3;
+    let scale_x = if scale == 0 { 1 } else { 2 };
+    let scale_y = if scale == 2 { 2 } else { 1 };
+    let sample_count = (scale_x * scale_y) as u16;
 
     for y in 0..output_height {
         for x in 0..output_width {
-            let rgba = if tiled_to_tiled {
-                let mut channel_sums = [0u16; 4];
-                for sample_y in 0..scale_y {
-                    let logical_y = y * scale_y + sample_y;
-                    let source_y = if vertical_flip {
-                        input_height - 1 - logical_y
-                    } else {
-                        logical_y
-                    };
-                    for sample_x in 0..scale_x {
-                        let source_x = x * scale_x + sample_x;
-                        let src = pixel_offset(
-                            source_x,
-                            source_y,
-                            input_width,
-                            source_tiles_x,
-                            source_bpp,
-                            source_layout,
-                        )?;
-                        let rgba = source_format.decode(&source[src..src + source_bpp]);
-                        for (sum, component) in channel_sums.iter_mut().zip(rgba) {
-                            *sum += u16::from(component);
-                        }
+            let mut channel_sums = [0u16; 4];
+            for sample_y in 0..scale_y {
+                let logical_y = y * scale_y + sample_y;
+                let source_y = if vertical_flip {
+                    input_height - 1 - logical_y
+                } else {
+                    logical_y
+                };
+                for sample_x in 0..scale_x {
+                    let source_x = x * scale_x + sample_x;
+                    let src = pixel_offset(
+                        source_x,
+                        source_y,
+                        input_width,
+                        source_tiles_x,
+                        source_bpp,
+                        source_layout,
+                    )?;
+                    let rgba = source_format.decode(&source[src..src + source_bpp]);
+                    for (sum, component) in channel_sums.iter_mut().zip(rgba) {
+                        *sum += u16::from(component);
                     }
                 }
-                [
-                    (channel_sums[0] / 4) as u8,
-                    (channel_sums[1] / 4) as u8,
-                    (channel_sums[2] / 4) as u8,
-                    (channel_sums[3] / 4) as u8,
-                ]
-            } else {
-                let source_y = if vertical_flip {
-                    input_height - 1 - y
-                } else {
-                    y
-                };
-                let src = pixel_offset(
-                    x,
-                    source_y,
-                    input_width,
-                    source_tiles_x,
-                    source_bpp,
-                    source_layout,
-                )?;
-                source_format.decode(&source[src..src + source_bpp])
-            };
+            }
+            let rgba = [
+                (channel_sums[0] / sample_count) as u8,
+                (channel_sums[1] / sample_count) as u8,
+                (channel_sums[2] / sample_count) as u8,
+                (channel_sums[3] / sample_count) as u8,
+            ];
 
             let dst = pixel_offset(
                 x,
@@ -449,8 +456,8 @@ pub fn execute_display_transfer(
 
     memory.write(request.output_address, &output)?;
     Ok(DisplayTransferReport {
-        width: request.output_width,
-        height: request.output_height,
+        width: output_width as u16,
+        height: output_height as u16,
         source_format,
         destination_format,
         source_layout,
@@ -506,10 +513,18 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         {
             return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
         }
-    } else if scale != 0 {
-        // The 2x1 and tiled-to-linear 2x2 transfer cases have documented
-        // dimension/stride caveats which are not yet modeled by this backend.
+    } else if linear_to_tiled && scale != 0 {
         return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
+    } else if !linear_to_tiled && scale != 0 {
+        // The tiled-to-linear filter consumes the registered input footprint,
+        // so the guest programs equal input/output dimensions. The physical
+        // linear destination is half width for 2x1 and half width/height for
+        // 2x2; those effective rows carry the alignment requirement.
+        if request.input_width != request.output_width
+            || request.input_height != request.output_height
+        {
+            return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
+        }
     }
 
     // Tiled-to-linear writes a linear output row. The PICA transfer engine
@@ -521,7 +536,12 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         } else {
             8
         };
-        let row_bytes = usize::from(request.output_width) * destination_format.bytes_per_pixel();
+        let effective_width = if scale == 0 {
+            usize::from(request.output_width)
+        } else {
+            usize::from(request.output_width) / 2
+        };
+        let row_bytes = effective_width * destination_format.bytes_per_pixel();
         if row_bytes % required_alignment != 0 {
             return Err(DisplayTransferError::MisalignedOutputRow {
                 width: request.output_width,
@@ -909,6 +929,105 @@ mod tests {
                 assert_eq!(&actual_tiled[offset..offset + 4], &expected);
             }
         }
+    }
+
+    #[test]
+    fn tiled_to_linear_box_filters_2x1_and_2x2_with_equal_register_dimensions() {
+        let input_width = 128usize;
+        let input_height = 64usize;
+        let mut memory = GpuPhysicalMemory::new();
+        let mut linear = vec![0u8; input_width * input_height * 4];
+        for y in 0..input_height {
+            for x in 0..input_width {
+                let pair_x = x / 2;
+                let sample_x = x % 2;
+                let offset = (y * input_width + x) * 4;
+                linear[offset..offset + 4].copy_from_slice(&[
+                    (pair_x * 3) as u8 + (sample_x * 2) as u8,
+                    (y * 2) as u8,
+                    (pair_x * 4) as u8 + (sample_x * 2) as u8,
+                    255,
+                ]);
+            }
+        }
+        memory.write(SOURCE, &linear).unwrap();
+
+        let mut prepare_tiled = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_LINEAR_TO_TILED);
+        prepare_tiled.input_width = input_width as u16;
+        prepare_tiled.input_height = input_height as u16;
+        prepare_tiled.output_width = input_width as u16;
+        prepare_tiled.output_height = input_height as u16;
+        execute_display_transfer(&mut memory, prepare_tiled).unwrap();
+
+        for (scale_flag, expected_height) in [
+            (DISPLAY_TRANSFER_SCALE_X, input_height),
+            (DISPLAY_TRANSFER_SCALE_XY, input_height / 2),
+        ] {
+            let mut transfer = request(DESTINATION, SOURCE, scale_flag);
+            transfer.input_width = input_width as u16;
+            transfer.input_height = input_height as u16;
+            transfer.output_width = input_width as u16;
+            transfer.output_height = input_height as u16;
+
+            let report = execute_display_transfer(&mut memory, transfer).unwrap();
+            assert_eq!(report.width, (input_width / 2) as u16);
+            assert_eq!(report.height, expected_height as u16);
+            assert_eq!(
+                report.pixels_transferred,
+                ((input_width / 2) * expected_height) as u64
+            );
+            assert_eq!(
+                report.bytes_written,
+                (input_width / 2 * expected_height * 4) as u64
+            );
+
+            let mut actual = vec![0u8; input_width / 2 * expected_height * 4];
+            memory.read(SOURCE, &mut actual).unwrap();
+            for y in 0..expected_height {
+                for x in 0..input_width / 2 {
+                    let offset = (y * (input_width / 2) + x) * 4;
+                    let expected = [
+                        (x * 3) as u8 + 1,
+                        (y * if scale_flag == DISPLAY_TRANSFER_SCALE_X { 2 } else { 4 }) as u8,
+                        (x * 4) as u8 + 1,
+                        255,
+                    ];
+                    assert_eq!(&actual[offset..offset + 4], &expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tiled_to_linear_downscale_requires_equal_register_dimensions_and_aligned_half_width() {
+        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_SCALE_X);
+        bad.input_width = 128;
+        bad.input_height = 64;
+        bad.output_width = 64;
+        bad.output_height = 64;
+        assert_eq!(
+            display_transfer_buffer_sizes(bad),
+            Err(DisplayTransferError::UnsupportedScaling(1))
+        );
+
+        let mut misaligned = request(
+            SOURCE,
+            DESTINATION,
+            DISPLAY_TRANSFER_SCALE_X | (1 << 12),
+        );
+        misaligned.input_width = 130;
+        misaligned.input_height = 64;
+        misaligned.output_width = 130;
+        misaligned.output_height = 64;
+        assert_eq!(
+            display_transfer_buffer_sizes(misaligned),
+            Err(DisplayTransferError::MisalignedOutputRow {
+                width: 65,
+                format: DisplayTransferFormat::Rgb8,
+                row_bytes: 195,
+                required_alignment: 16,
+            })
+        );
     }
 
     #[test]
