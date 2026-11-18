@@ -88,6 +88,7 @@ pub const REG_GAS_ACCMAX_FEEDBACK: u16 = 0x125;
 /// GPUREG_GAS_DELTAZ_DEPTH: depth attenuation and comparison-family selector.
 pub const REG_GAS_DELTAZ_DEPTH: u16 = 0x126;
 const REG_COLOR_OPERATION_FOR_GAS: usize = 0x100;
+const REG_TEXENV_UPDATE_BUFFER_FOR_GAS: usize = 0x0E0;
 
 /// Gas depth-comparison family selected by GPUREG_GAS_DELTAZ_DEPTH.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +105,13 @@ pub struct PicaGasLightState {
     pub minimum_intensity: u8,
     pub maximum_intensity: u8,
     pub density_attenuation: u8,
+}
+
+/// Source used to generate the gas density before attenuation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaGasDensitySource {
+    Plain,
+    Depth,
 }
 
 /// Input selected for the signed/unsigned gas color lookup-table halves.
@@ -126,6 +134,7 @@ pub struct PicaGasState {
     pub planar_light: PicaGasLightState,
     pub view_light: PicaGasLightState,
     pub view_shading_intensity: u8,
+    pub density_source: PicaGasDensitySource,
     pub color_lut_input: PicaGasColorLutInput,
     pub depth_attenuation_fixed0_16_8: u32,
     pub depth_function: PicaGasDepthFunction,
@@ -452,6 +461,9 @@ impl Pica200 {
         let light_z_color = self.register(REG_GAS_LIGHT_Z_COLOR).unwrap_or(0);
         let delta_z_depth = self.register(REG_GAS_DELTAZ_DEPTH).unwrap_or(0);
         let feedback = self.register(REG_GAS_ACCMAX_FEEDBACK).unwrap_or(0);
+        let density_config = self
+            .register(REG_TEXENV_UPDATE_BUFFER_FOR_GAS as u16)
+            .unwrap_or(0);
 
         let decode_light = |value: u32| PicaGasLightState {
             minimum_intensity: value as u8,
@@ -467,6 +479,11 @@ impl Pica200 {
             planar_light: decode_light(light_xy),
             view_light: decode_light(light_z),
             view_shading_intensity: light_z_color as u8,
+            density_source: if density_config & (1 << 3) == 0 {
+                PicaGasDensitySource::Plain
+            } else {
+                PicaGasDensitySource::Depth
+            },
             color_lut_input: if light_z_color & (1 << 8) == 0 {
                 PicaGasColorLutInput::Density
             } else {
@@ -1463,6 +1480,8 @@ mod tests {
     #[test]
     fn gas_state_decodes_raw_fixed_fields_and_light_selectors() {
         let mut gpu = Pica200::new();
+        gpu.write_register(REG_TEXENV_UPDATE_BUFFER_FOR_GAS as u16, 7 | (1 << 3))
+            .unwrap();
         gpu.write_register(REG_GAS_ATTENUATION, 0xA55A).unwrap();
         gpu.write_register(REG_GAS_ACCMAX, 0x1234).unwrap();
         gpu.write_register(REG_GAS_LIGHT_XY, 0x0033_2211).unwrap();
@@ -1490,6 +1509,7 @@ mod tests {
                     density_attenuation: 0x66,
                 },
                 view_shading_intensity: 0x77,
+                density_source: PicaGasDensitySource::Depth,
                 color_lut_input: PicaGasColorLutInput::LightFactor,
                 depth_attenuation_fixed0_16_8: 0x00AB_CDEF,
                 depth_function: PicaGasDepthFunction::GreaterThanOrGreaterEqual,
@@ -1500,6 +1520,13 @@ mod tests {
         assert_eq!(
             gpu.gas_state().color_lut_input,
             PicaGasColorLutInput::Density
+        );
+
+        gpu.write_register(REG_TEXENV_UPDATE_BUFFER_FOR_GAS as u16, 7)
+            .unwrap();
+        assert_eq!(
+            gpu.gas_state().density_source,
+            PicaGasDensitySource::Plain
         );
     }
 

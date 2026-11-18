@@ -102,8 +102,8 @@ pub use physical_memory::{
 pub use pica200::{
     FOG_LUT_ENTRY_COUNT, GAS_LUT_ENTRY_COUNT, Pica200, PicaCommandBufferDescriptor,
     PicaCommandError, PicaCommandListReport, PicaCullMode, PicaDepthBuffering, PicaDepthState,
-    PicaDepthTestState, PicaGasColorLutInput, PicaGasDepthFunction, PicaGasLightState,
-    PicaGasState, PicaScissorMode, PicaScissorState, PicaViewportState, REG_ATTRIBUTE_BUFFERS,
+    PicaDepthTestState, PicaGasColorLutInput, PicaGasDensitySource, PicaGasDepthFunction,
+    PicaGasLightState, PicaGasState, PicaScissorMode, PicaScissorState, PicaViewportState, REG_ATTRIBUTE_BUFFERS,
     REG_COLOR_OPERATION, REG_COLORBUFFER_WRITE, REG_COMMAND_BUFFER_ADDRESS_0,
     REG_COMMAND_BUFFER_ADDRESS_1, REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_JUMP_1,
     REG_COMMAND_BUFFER_SIZE_0, REG_COMMAND_BUFFER_SIZE_1, REG_DEPTH_COLOR_MASK,
