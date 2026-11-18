@@ -1894,7 +1894,7 @@ mod tests {
         );
 
         let endless = PicaVertexShaderProgram::from_words(
-            &[format3(0x29, 0, 1, 0), format3(0x2D, 0, 1, 0), END],
+            &[format3(0x2D, 0, 0, 0), END],
             &[],
             &[],
         )
