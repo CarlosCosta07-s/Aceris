@@ -1929,7 +1929,7 @@ mod tests {
             &[
                 format3(0x29, 0, 2, 0), // one iteration, body ends at pc 2
                 NOP,
-                format3(0x2D, 0, 4, 0), // JMPU b0 -> pc 4
+                format3(0x2D, 0, 4, 0),      // JMPU b0 -> pc 4
                 format1_unary(0x13, O0, V0), // must execute: LOOP pop outranks JMP
                 END,
             ],
