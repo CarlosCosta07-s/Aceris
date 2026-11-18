@@ -371,11 +371,7 @@ impl Pica200 {
     /// unsigned 8-bit channels. The result is widened to i16 without scaling.
     pub fn gas_lut_rgb_entry(&self, index: usize) -> Option<[i16; 3]> {
         let value = self.gas_lut_entry(index)?;
-        let channels = [
-            value as u8,
-            (value >> 8) as u8,
-            (value >> 16) as u8,
-        ];
+        let channels = [value as u8, (value >> 8) as u8, (value >> 16) as u8];
 
         Some(if index < GAS_LUT_ENTRY_COUNT / 2 {
             channels.map(|channel| i16::from(channel as i8))
