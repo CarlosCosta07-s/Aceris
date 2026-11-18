@@ -11,7 +11,7 @@ use crate::gpu::{
     GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES, Pica200, PicaFragmentRenderSession,
     PicaRenderReport, PicaRenderSession, PicaRenderSettings, REG_ATTRIBBUFFERS_LOC,
     TextureCopyError, TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
-    execute_display_transfer, execute_texture_copy,
+    display_transfer_signals_ppf, execute_display_transfer, execute_texture_copy,
 };
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore, tmd::CONTENT_TYPE_ENCRYPTED};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
@@ -2055,7 +2055,7 @@ impl System {
                             .expect("command ID was checked immediately above");
                         if client_has_rendering_right {
                             self.dispatch_gsp_display_transfer(arguments)
-                                .and_then(|()| {
+                                .and_then(|signals_ppf| {
                                     if let Some((shared_memory_base, client_id)) = client_context {
                                         self.update_lcd_from_gsp_shared_memory(
                                             shared_memory_base,
@@ -2064,13 +2064,17 @@ impl System {
                                     }
                                     report.display_transfers_completed =
                                         report.display_transfers_completed.saturating_add(1);
-                                    self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
-                                        .map(|_| ())
-                                        .map_err(|error| {
-                                            GspGxCommandQueueError::DisplayTransfer(
-                                                error.to_string(),
-                                            )
-                                        })
+                                    if signals_ppf {
+                                        self.dispatch_gsp_interrupt(GspInterruptId::Ppf)
+                                            .map(|_| ())
+                                            .map_err(|error| {
+                                                GspGxCommandQueueError::DisplayTransfer(
+                                                    error.to_string(),
+                                                )
+                                            })
+                                    } else {
+                                        Ok(())
+                                    }
                                 })
                         } else {
                             Ok(())
@@ -2494,14 +2498,15 @@ impl System {
             .map_err(|error| GspGxCommandQueueError::ProcessMemory(error.to_string()))
     }
 
-    /// Executes one basic DisplayTransfer operation.
+    /// Executes one DisplayTransfer operation and reports whether the format
+    /// pair triggers a PPF completion interrupt.
     ///
-    /// The software backend completes the memory copy synchronously. Its caller
-    /// queues the PPF event only after the destination bytes are committed.
+    /// Destination bytes are committed synchronously before returning; event
+    /// delivery is kept separate from transfer completion.
     fn dispatch_gsp_display_transfer(
         &mut self,
         command: GspDisplayTransfer,
-    ) -> std::result::Result<(), GspGxCommandQueueError> {
+    ) -> std::result::Result<bool, GspGxCommandQueueError> {
         if command.input_address & 7 != 0 {
             return Err(GspGxCommandQueueError::InvalidDisplayTransferAddress {
                 address: command.input_address,
@@ -2529,9 +2534,13 @@ impl System {
         request.output_address =
             self.resolve_gsp_physical_range(command.output_address, destination_length)?;
 
-        execute_display_transfer(&mut self.physical_memory, request)
-            .map(|_| ())
-            .map_err(|error| GspGxCommandQueueError::DisplayTransfer(error.to_string()))
+        let report = execute_display_transfer(&mut self.physical_memory, request)
+            .map_err(|error| GspGxCommandQueueError::DisplayTransfer(error.to_string()))?;
+        Ok(display_transfer_signals_ppf(
+            command.flags,
+            report.source_format,
+            report.destination_format,
+        ))
     }
 
     /// Validates the non-empty address ranges supplied to GX FlushCacheRegions.
