@@ -129,11 +129,13 @@ fn draw_elements_runs_guest_vertex_shader_and_fragment_pipeline_into_tiled_targe
     gpu.write_register(REG_NUMVERTICES, 3).unwrap();
 
     let mut memory = GpuPhysicalMemory::new();
-    // The guest's vertex loader reads three packed unsigned-byte XY pairs.
-    memory.write(VERTEX_BASE, &[0, 0, 8, 0, 0, 8]).unwrap();
-    // DRAWELEMENTS selects the order from a U16 index buffer.
+    // The guest's vertex loader reads four packed unsigned-byte XY pairs.
     memory
-        .write(VERTEX_BASE + INDEX_OFFSET, &[0, 0, 1, 0, 2, 0])
+        .write(VERTEX_BASE, &[0, 0, 8, 0, 0, 8, 8, 8])
+        .unwrap();
+    // U16 indices [3, 2, 1] select the upper-right triangle, not [0, 1, 2].
+    memory
+        .write(VERTEX_BASE + INDEX_OFFSET, &[3, 0, 2, 0, 1, 0])
         .unwrap();
 
     let mut session = PicaFragmentRenderSession::new(PicaRenderSettings {
@@ -170,6 +172,6 @@ fn draw_elements_runs_guest_vertex_shader_and_fragment_pipeline_into_tiled_targe
         ]
     };
 
-    assert_eq!(pixel_at(1, 6), [200, 100, 50, 255]);
-    assert_eq!(pixel_at(6, 1), [0, 0, 0, 0]);
+    assert_eq!(pixel_at(6, 1), [200, 100, 50, 255]);
+    assert_eq!(pixel_at(1, 6), [0, 0, 0, 0]);
 }
