@@ -365,6 +365,25 @@ impl Pica200 {
         self.gas_lut.get(index).copied()
     }
 
+    /// Decodes one gas LUT entry into signed or unsigned RGB channel values.
+    ///
+    /// Entries 0..7 contain signed 8-bit channels; entries 8..15 contain
+    /// unsigned 8-bit channels. The result is widened to i16 without scaling.
+    pub fn gas_lut_rgb_entry(&self, index: usize) -> Option<[i16; 3]> {
+        let value = self.gas_lut_entry(index)?;
+        let channels = [
+            value as u8,
+            (value >> 8) as u8,
+            (value >> 16) as u8,
+        ];
+
+        Some(if index < GAS_LUT_ENTRY_COUNT / 2 {
+            channels.map(|channel| i16::from(channel as i8))
+        } else {
+            channels.map(i16::from)
+        })
+    }
+
     /// Decodes the live guest viewport registers.
     ///
     /// PICA stores half-width/half-height in float24 registers and a signed
@@ -1296,6 +1315,19 @@ mod tests {
 
         assert_eq!(gpu.gas_lut_entry(0), Some(0x0012_3456));
         assert_eq!(gpu.register(REG_GAS_LUT_INDEX), Some(1));
+    }
+
+    #[test]
+    fn gas_lut_decodes_signed_and_unsigned_rgb_halves() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_GAS_LUT_INDEX, 0).unwrap();
+        gpu.write_register(REG_GAS_LUT_DATA, 0x007F_80FF).unwrap();
+        gpu.write_register(REG_GAS_LUT_INDEX, 8).unwrap();
+        gpu.write_register(REG_GAS_LUT_DATA, 0x00FF_807F).unwrap();
+
+        assert_eq!(gpu.gas_lut_rgb_entry(0), Some([-1, -128, 127]));
+        assert_eq!(gpu.gas_lut_rgb_entry(8), Some([127, 128, 255]));
+        assert_eq!(gpu.gas_lut_rgb_entry(16), None);
     }
 
     #[test]
