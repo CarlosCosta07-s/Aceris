@@ -4866,8 +4866,7 @@ mod tests {
                 let red = x as u8;
                 let green = y as u8;
                 let blue = (x ^ y) as u8;
-                rgb8_source[source_offset..source_offset + 3]
-                    .copy_from_slice(&[blue, green, red]);
+                rgb8_source[source_offset..source_offset + 3].copy_from_slice(&[blue, green, red]);
                 expected_rgba8[output_offset..output_offset + 4]
                     .copy_from_slice(&[255, blue, green, red]);
             }
@@ -4885,9 +4884,7 @@ mod tests {
                 input_height: 64,
                 output_width: 64,
                 output_height: 64,
-                flags: crate::gpu::DISPLAY_TRANSFER_LINEAR_TO_TILED
-                    | (1 << 8)
-                    | (1 << 12),
+                flags: crate::gpu::DISPLAY_TRANSFER_LINEAR_TO_TILED | (1 << 8) | (1 << 12),
             },
         )
         .unwrap();
