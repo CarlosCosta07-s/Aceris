@@ -1893,12 +1893,8 @@ mod tests {
             })
         );
 
-        let endless = PicaVertexShaderProgram::from_words(
-            &[format3(0x2D, 0, 0, 0), END],
-            &[],
-            &[],
-        )
-        .with_special_registers(1, [[0; 4]; 4]);
+        let endless = PicaVertexShaderProgram::from_words(&[format3(0x2D, 0, 0, 0), END], &[], &[])
+            .with_special_registers(1, [[0; 4]; 4]);
         assert_eq!(
             endless.run(0, &input),
             Err(PicaShaderExecError::InstructionBudgetExceeded {
