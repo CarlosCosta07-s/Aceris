@@ -321,3 +321,35 @@ Como o registrador de framebuffer seleciona o modo de blocos 32×32 e qual contr
 ### Limites e confiança
 
 A documentação identifica a seleção do bloco e a flag de transferência, mas não especifica explicitamente a ordem interna dos pixels dentro de um bloco 32×32. O Aceris generaliza a organização Morton usada em 8×8 para cinco bits por eixo, mantendo tiles em ordem row-major. Isso é uma hipótese explícita e testável, não uma afirmação de equivalência física. Não houve comparação com framebuffer capturado de hardware legítimo. Também permanecem pendentes o sentido exato do bit de flip do render target, o arredondamento físico do box filter e a temporização assíncrona.
+## 16. GSP/GX TextureCopy — pitches independentes de origem e destino (18/11/2026)
+
+### Pergunta técnica
+
+Como o GX TextureCopy interpreta largura de linha, gap e tamanho total quando a superfície de origem e a de destino possuem pitches diferentes?
+
+### Referências consultadas
+
+- 3dbrew, *GPU/External Registers — TextureCopy*: https://www.3dbrew.org/wiki/GPU/External_Registers — descreve TextureCopy como cópia raw sem conversão de formato. Os parâmetros de entrada e saída definem largura de linha e gap; o registrador de tamanho define o total de bytes efetivamente copiados, sem contar os gaps. A documentação também informa que a engine lê e escreve linhas até consumir esse total. Fonte comunitária de engenharia reversa, não oficial, consulta em 18/11/2026.
+- Mikage, *GPU/External Registers — TextureCopy*: https://docs.mikage.app/GPU/External_Registers/ — documenta larguras/gaps de entrada e saída separadas, cada campo em unidades de 16 bytes, e exemplifica recorte de retângulos entre surfaces com pitches diferentes. Afirma que gaps não entram no tamanho total copiado. Fonte comunitária não oficial, consulta em 18/11/2026.
+- 3dbrew, *GSP Shared Memory — TextureCopy*: https://www.3dbrew.org/wiki/GSP_Shared_Memory — descreve os campos da entrada GX: source, destination, total size, parâmetros independentes e flags. Fonte comunitária de engenharia reversa, não oficial, consulta em 18/11/2026.
+- Mikage, *GSPGPU:SetTextureCopy*: https://docs.mikage.app/GSPGPUSetTextureCopy/ — confirma o contrato IPC: endereço de origem/destino, tamanho, parâmetros separados e bit 2/bit 3. Fonte comunitária não oficial, consulta em 18/11/2026.
+
+### Interpretação implementada no Aceris
+
+- Em gap mode (bit 2), cada parâmetro de lado é decodificado como `line_width = low16 * 16` e `gap = high16 * 16`. Bit 3 habilita TextureCopy raw.
+- O tamanho é interpretado como um fluxo lógico contínuo de bytes copiados. A origem é consumida em blocos de até `source_line_width`; após cada bloco, o cursor avança por `source_line_width + source_gap`. O destino recebe o mesmo fluxo, mas segmentado em blocos de até `destination_line_width`, avançando por `destination_line_width + destination_gap`.
+- Assim, o número de linhas de leitura é `ceil(size/source_line_width)` e o número de linhas de escrita é `ceil(size/destination_line_width)`. A última linha de cada lado pode ser parcial; gaps nunca contam para o tamanho total.
+- Antes de ler ou escrever, o backend valida separadamente cada span de origem e cada span de destino. Depois faz staging de todo o fluxo de origem e só então grava o destino, mantendo comportamento determinístico em caso de sobreposição.
+- `TextureCopyReport` agora informa `source_rows_transferred` e `destination_rows_transferred`, além de bytes transferidos e uso de gaps.
+
+### Cobertura de testes
+
+- `gap_mode_copies_rows_and_skips_independent_source_and_destination_gaps`: mesmo pitch com gaps distintos.
+- `gap_mode_copies_different_source_and_destination_line_widths`: origem 32 bytes + gap16, destino16 + gap16; 192 bytes resultam em 6 linhas lidas e 12 gravadas.
+- `gap_mode_copies_different_line_widths_with_partial_final_rows`: origem16 + gap16, destino32 + gap16; 200 bytes resultam em 13 linhas lidas e 7 gravadas, com última linha parcial em ambos os lados.
+- `gsp_gx_texture_copy_copies_gapped_rows_and_signals_ppf`: envia a configuração assimétrica pela GX queue e verifica os bytes e gaps de destino, além do evento PPF.
+- Os testes anteriores de transferência contígua, preservação do destino em faixa inválida, aliases VRAM e regiões sobrepostas continuam no módulo.
+
+### Limites e confiança
+
+A interpretação é sustentada pelas descrições públicas de parâmetros separados e de cópia até o total de bytes, mas ainda não foi comparada a um console físico. A execução do Aceris continua síncrona; a temporização do Transfer Engine, `fail-if-busy`, arbitragem GSP e comportamento em parâmetros que travam o hardware permanecem fora deste modelo. O limite defensivo de 64 MiB é política do emulador, não afirmação sobre o hardware.
