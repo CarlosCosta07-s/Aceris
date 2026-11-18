@@ -407,8 +407,8 @@ pub fn execute_display_transfer(
                             source_layout,
                         )?;
                         let rgba = source_format.decode(&source[src..src + source_bpp]);
-                        for channel in 0..4 {
-                            channel_sums[channel] += u16::from(rgba[channel]);
+                        for (sum, component) in channel_sums.iter_mut().zip(rgba) {
+                            *sum += u16::from(component);
                         }
                     }
                 }
