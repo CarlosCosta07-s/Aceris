@@ -425,7 +425,7 @@ mod tests {
         let size_bytes = 200usize;
         let stream: Vec<u8> = (0..size_bytes).map(|value| (255 - value) as u8).collect();
 
-        let source_rows = (size_bytes + source_line - 1) / source_line;
+        let source_rows = size_bytes.div_ceil(source_line);
         let mut source_storage = vec![0xEE; source_rows * (source_line + source_gap)];
         for row in 0..source_rows {
             let stream_offset = row * source_line;
@@ -436,7 +436,7 @@ mod tests {
         }
         memory.write(FCRAM_BASE + 0x2000, &source_storage).unwrap();
 
-        let destination_rows = (size_bytes + destination_line - 1) / destination_line;
+        let destination_rows = size_bytes.div_ceil(destination_line);
         let destination_storage_bytes = destination_rows * (destination_line + destination_gap);
         memory
             .write(FCRAM_BASE + 0x4000, &vec![0xCC; destination_storage_bytes])
