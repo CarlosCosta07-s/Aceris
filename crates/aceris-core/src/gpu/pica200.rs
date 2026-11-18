@@ -67,6 +67,12 @@ pub const REG_FOG_LUT_DATA0: u16 = 0x0E8;
 /// Number of entries in the PICA200 fog lookup table.
 pub const FOG_LUT_ENTRY_COUNT: usize = 128;
 const FOG_LUT_DATA_REGISTER_COUNT: u16 = 8;
+/// GPUREG_GAS_LUT_INDEX: next entry written by the gas LUT FIFO.
+pub const REG_GAS_LUT_INDEX: u16 = 0x123;
+/// GPUREG_GAS_LUT_DATA: single FIFO data port for the 16-entry gas color table.
+pub const REG_GAS_LUT_DATA: u16 = 0x124;
+/// Number of entries in the PICA200 gas color lookup table.
+pub const GAS_LUT_ENTRY_COUNT: usize = 16;
 
 /// Decoded viewport data written by the guest through PICA registers.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -292,6 +298,8 @@ pub struct PicaCommandListReport {
 pub struct Pica200 {
     registers: [u32; REGISTER_COUNT],
     fog_lut: [u32; FOG_LUT_ENTRY_COUNT],
+    /// Raw 24-bit RGB gas LUT entries; gas rendering is not implemented yet.
+    gas_lut: [u32; GAS_LUT_ENTRY_COUNT],
     fixed_attributes: [[u32; 3]; FIXED_ATTRIBUTE_COUNT],
     immediate_mode_attribute: [u32; 3],
     vertex_shader_code: [u32; VSH_CODE_TRANSFER_WORDS],
@@ -314,6 +322,7 @@ impl Default for Pica200 {
         Self {
             registers: [0; REGISTER_COUNT],
             fog_lut: [0; FOG_LUT_ENTRY_COUNT],
+            gas_lut: [0; GAS_LUT_ENTRY_COUNT],
             fixed_attributes: [[0; 3]; FIXED_ATTRIBUTE_COUNT],
             immediate_mode_attribute: [0; 3],
             vertex_shader_code: [0; VSH_CODE_TRANSFER_WORDS],
@@ -347,6 +356,13 @@ impl Pica200 {
     /// Reads one uploaded 24-bit fog LUT entry.
     pub fn fog_lut_entry(&self, index: usize) -> Option<u32> {
         self.fog_lut.get(index).copied()
+    }
+
+    /// Reads one uploaded raw RGB gas LUT entry.
+    ///
+    /// This exposes table storage only; fragment gas shading is not modeled yet.
+    pub fn gas_lut_entry(&self, index: usize) -> Option<u32> {
+        self.gas_lut.get(index).copied()
     }
 
     /// Decodes the live guest viewport registers.
@@ -447,7 +463,7 @@ impl Pica200 {
         *register = value;
         self.apply_fixed_attribute_register_write(id);
         self.apply_vertex_shader_register_write(id);
-        self.apply_fog_register_write(id);
+        self.apply_lookup_register_write(id);
         self.apply_draw_trigger_register_write(id, 0xF);
         self.register_writes = self.register_writes.saturating_add(1);
         Ok(())
@@ -605,25 +621,38 @@ impl Pica200 {
         self.pending_uniform_words.len()
     }
 
-    /// Applies the fog lookup-table index/data FIFO side effects.
+    /// Applies the fog and gas lookup-table FIFO side effects.
     ///
-    /// Each write to one of the eight data ports commits one 24-bit entry at
-    /// the selected index and advances the 128-entry write pointer.
-    fn apply_fog_register_write(&mut self, id: u16) {
+    /// Each write to one of the eight fog data ports commits a 24-bit entry
+    /// and advances the 128-entry pointer. The single gas data port commits
+    /// one RGB entry and advances its 16-entry pointer. Gas table storage is
+    /// modeled independently of the still-unimplemented gas fragment stage.
+    fn apply_lookup_register_write(&mut self, id: u16) {
         if id == REG_FOG_LUT_INDEX {
             self.registers[usize::from(REG_FOG_LUT_INDEX)] &= 0xFFFF;
             return;
         }
 
-        let data_end = REG_FOG_LUT_DATA0 + FOG_LUT_DATA_REGISTER_COUNT - 1;
-        if !(REG_FOG_LUT_DATA0..=data_end).contains(&id) {
+        let fog_data_end = REG_FOG_LUT_DATA0 + FOG_LUT_DATA_REGISTER_COUNT - 1;
+        if (REG_FOG_LUT_DATA0..=fog_data_end).contains(&id) {
+            let index_register = usize::from(REG_FOG_LUT_INDEX);
+            let index = (self.registers[index_register] as usize) % FOG_LUT_ENTRY_COUNT;
+            self.fog_lut[index] = self.registers[usize::from(id)] & 0x00FF_FFFF;
+            self.registers[index_register] = ((index + 1) % FOG_LUT_ENTRY_COUNT) as u32;
             return;
         }
 
-        let index_register = usize::from(REG_FOG_LUT_INDEX);
-        let index = (self.registers[index_register] as usize) % FOG_LUT_ENTRY_COUNT;
-        self.fog_lut[index] = self.registers[usize::from(id)] & 0x00FF_FFFF;
-        self.registers[index_register] = ((index + 1) % FOG_LUT_ENTRY_COUNT) as u32;
+        if id == REG_GAS_LUT_INDEX {
+            self.registers[usize::from(REG_GAS_LUT_INDEX)] &= 0xFFFF;
+            return;
+        }
+
+        if id == REG_GAS_LUT_DATA {
+            let index_register = usize::from(REG_GAS_LUT_INDEX);
+            let index = (self.registers[index_register] as usize) % GAS_LUT_ENTRY_COUNT;
+            self.gas_lut[index] = self.registers[usize::from(REG_GAS_LUT_DATA)] & 0x00FF_FFFF;
+            self.registers[index_register] = ((index + 1) % GAS_LUT_ENTRY_COUNT) as u32;
+        }
     }
 
     fn apply_fixed_attribute_register_write(&mut self, id: u16) {
@@ -825,7 +854,7 @@ impl Pica200 {
                 apply_byte_mask(&mut self.registers[register as usize], value, byte_mask);
                 self.apply_fixed_attribute_register_write(register as u16);
                 self.apply_vertex_shader_register_write(register as u16);
-                self.apply_fog_register_write(register as u16);
+                self.apply_lookup_register_write(register as u16);
                 match observer.as_deref_mut() {
                     Some(on_draw) => {
                         if let Some(request) = self.capture_draw_trigger(register as u16, byte_mask)
@@ -938,6 +967,7 @@ impl Pica200 {
     pub fn reset(&mut self) {
         self.registers.fill(0);
         self.fog_lut.fill(0);
+        self.gas_lut.fill(0);
         self.fixed_attributes.fill([0; 3]);
         self.immediate_mode_attribute.fill(0);
         self.vertex_shader_code.fill(0);
@@ -1236,6 +1266,46 @@ mod tests {
         assert_eq!(gpu.fog_lut_entry(0), Some(0x0077_8899));
         assert_eq!(gpu.fog_lut_entry(1), Some(0x00AA_BBCC));
         assert_eq!(gpu.register(REG_FOG_LUT_INDEX), Some(2));
+    }
+
+    #[test]
+    fn gas_lut_fifo_uploads_repeated_data_port_and_wraps_at_16_entries() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_GAS_LUT_INDEX, 14).unwrap();
+        gpu.execute_command_list(&[
+            0xFF11_2233,
+            command(REG_GAS_LUT_DATA, 0xF, false, 3),
+            0xFF44_5566,
+            0xFF77_8899,
+            0xFFAA_BBCC,
+        ])
+        .unwrap();
+
+        assert_eq!(gpu.gas_lut_entry(14), Some(0x0011_2233));
+        assert_eq!(gpu.gas_lut_entry(15), Some(0x0044_5566));
+        assert_eq!(gpu.gas_lut_entry(0), Some(0x0077_8899));
+        assert_eq!(gpu.gas_lut_entry(1), Some(0x00AA_BBCC));
+        assert_eq!(gpu.register(REG_GAS_LUT_INDEX), Some(2));
+    }
+
+    #[test]
+    fn gas_lut_index_is_16_bit_and_direct_data_writes_advance_it() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_GAS_LUT_INDEX, 0x0010).unwrap();
+        gpu.write_register(REG_GAS_LUT_DATA, 0xFF12_3456).unwrap();
+
+        assert_eq!(gpu.gas_lut_entry(0), Some(0x0012_3456));
+        assert_eq!(gpu.register(REG_GAS_LUT_INDEX), Some(1));
+    }
+
+    #[test]
+    fn gas_lut_is_cleared_on_gpu_reset() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_GAS_LUT_INDEX, 7).unwrap();
+        gpu.write_register(REG_GAS_LUT_DATA, 0x0012_3456).unwrap();
+        gpu.reset();
+        assert_eq!(gpu.gas_lut_entry(7), Some(0));
+        assert_eq!(gpu.register(REG_GAS_LUT_INDEX), Some(0));
     }
 
     #[test]
