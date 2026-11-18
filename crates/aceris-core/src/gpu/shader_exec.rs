@@ -1774,7 +1774,7 @@ mod tests {
                 format1_unary(0x13, O0, C0 + 1) | (1 << 19), // c1 + a0.x = c0
                 format1_unary(0x13, O1, C0 + 1) | (2 << 19), // c1 + a0.y = c3
                 format3(0x29, 0, 4, 0),     // LOOP sets aL=5 for its one instruction
-                format1_unary(0x13, O2, C0) | (3 << 19), // c0 + aL = c5
+                format1_unary(0x13, 2, C0) | (3 << 19), // c0 + aL = c5
                 END,
             ],
             &[plain_descriptor(0b1111)],
