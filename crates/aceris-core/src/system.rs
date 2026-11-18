@@ -2043,8 +2043,7 @@ impl System {
                         .gsp_busy_state
                         .rejects(command.command_id, command.fail_if_busy)
                 {
-                    report.busy_commands_rejected =
-                        report.busy_commands_rejected.saturating_add(1);
+                    report.busy_commands_rejected = report.busy_commands_rejected.saturating_add(1);
                     let error = GspGxCommandQueueError::CommandBusy {
                         command_id: command.command_id,
                         busy_commands_mask: self.gsp_busy_state.command_mask,
@@ -2968,15 +2967,9 @@ mod tests {
     #[test]
     fn gsp_busy_arbitration_distinguishes_same_kind_and_global_checks() {
         let mut system = System::new();
-        system
-            .gsp_busy_state
-            .begin(GSP_GX_COMMAND_DISPLAY_TRANSFER);
+        system.gsp_busy_state.begin(GSP_GX_COMMAND_DISPLAY_TRANSFER);
 
-        let mut same_kind = test_gsp_command_queue(
-            GSP_GX_COMMAND_DISPLAY_TRANSFER,
-            false,
-            [0; 7],
-        );
+        let mut same_kind = test_gsp_command_queue(GSP_GX_COMMAND_DISPLAY_TRANSFER, false, [0; 7]);
         let same_kind_report =
             system.dispatch_gsp_gx_command_queue_with_right(&mut same_kind, true);
         assert_eq!(same_kind_report.busy_commands_rejected, 1);
@@ -2988,9 +2981,11 @@ mod tests {
                 fail_if_busy: false,
             })
         ));
-        assert!(system
-            .gsp_busy_state
-            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+        assert!(
+            system
+                .gsp_busy_state
+                .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER)
+        );
 
         // A different command kind may proceed when fail-if-busy is clear.
         // Empty FlushCacheRegions is a synchronous no-op and releases only its
@@ -3001,9 +2996,11 @@ mod tests {
             system.dispatch_gsp_gx_command_queue_with_right(&mut different_kind, true);
         assert!(different_kind_report.error.is_none());
         assert_eq!(different_kind_report.busy_commands_rejected, 0);
-        assert!(system
-            .gsp_busy_state
-            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+        assert!(
+            system
+                .gsp_busy_state
+                .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER)
+        );
         assert!(!system
             .gsp_busy_state
             .is_busy(GSP_GX_COMMAND_FLUSH_CACHE_REGIONS));
@@ -3023,9 +3020,11 @@ mod tests {
                 fail_if_busy: true,
             })
         ));
-        assert!(system
-            .gsp_busy_state
-            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+        assert!(
+            system
+                .gsp_busy_state
+                .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER)
+        );
     }
 
     #[test]
@@ -3051,14 +3050,15 @@ mod tests {
             failed_report.error,
             Some(GspGxCommandQueueError::InvalidDisplayTransferAddress { .. })
         ));
-        assert!(system
-            .gsp_busy_state
-            .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+        assert!(
+            system
+                .gsp_busy_state
+                .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER)
+        );
 
         // No PPF was produced by the invalid transfer, so the relative busy
         // flag remains set and blocks a later command with fail-if-busy.
-        let mut later_command =
-            test_gsp_command_queue(GSP_GX_COMMAND_TEXTURE_COPY, true, [0; 7]);
+        let mut later_command = test_gsp_command_queue(GSP_GX_COMMAND_TEXTURE_COPY, true, [0; 7]);
         let blocked_report =
             system.dispatch_gsp_gx_command_queue_with_right(&mut later_command, true);
         assert_eq!(blocked_report.busy_commands_rejected, 1);
@@ -4972,7 +4972,11 @@ mod tests {
         assert_eq!(report.pending_commands, 0);
         assert!(report.halted);
         assert!(report.error.is_none());
-        assert!(!system.gsp_busy_state.is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER));
+        assert!(
+            !system
+                .gsp_busy_state
+                .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER)
+        );
 
         // The selected GSP framebuffers are physically resolved and applied
         // to the two LCD PDCs before the completion interrupt is delivered.
