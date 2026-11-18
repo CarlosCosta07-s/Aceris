@@ -1045,7 +1045,7 @@ mod tests {
                     x,
                     y,
                     output_width,
-                    tile_count(output_width).unwrap(),
+                    tile_count(output_width, DisplayTransferLayout::Tiled8x8Morton).unwrap(),
                     4,
                     DisplayTransferLayout::Tiled8x8Morton,
                 )
