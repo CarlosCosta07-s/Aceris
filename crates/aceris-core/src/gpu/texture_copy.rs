@@ -168,30 +168,29 @@ pub fn execute_texture_copy(
     }
 
     let size_bytes = request.size_bytes as usize;
-    let (source_line_bytes, destination_line_bytes, source_gap, destination_gap) =
-        if used_gaps {
-            let source_line = (request.source_line_width_and_gap & 0xFFFF) as usize * 16;
-            let destination_line =
-                (request.destination_line_width_and_gap & 0xFFFF) as usize * 16;
-            if source_line == 0 || destination_line == 0 {
-                return Err(TextureCopyError::MissingLineWidth);
-            }
-            (
-                source_line,
-                destination_line,
-                (request.source_line_width_and_gap >> 16) as usize * 16,
-                (request.destination_line_width_and_gap >> 16) as usize * 16,
-            )
-        } else {
-            (size_bytes, size_bytes, 0, 0)
-        };
+    let (source_line_bytes, destination_line_bytes, source_gap, destination_gap) = if used_gaps {
+        let source_line = (request.source_line_width_and_gap & 0xFFFF) as usize * 16;
+        let destination_line = (request.destination_line_width_and_gap & 0xFFFF) as usize * 16;
+        if source_line == 0 || destination_line == 0 {
+            return Err(TextureCopyError::MissingLineWidth);
+        }
+        (
+            source_line,
+            destination_line,
+            (request.source_line_width_and_gap >> 16) as usize * 16,
+            (request.destination_line_width_and_gap >> 16) as usize * 16,
+        )
+    } else {
+        (size_bytes, size_bytes, 0, 0)
+    };
 
-    let source_stride = source_line_bytes.checked_add(source_gap).ok_or(
-        TextureCopyError::AddressOverflow {
-            base: request.source_address,
-            offset: u64::MAX,
-        },
-    )?;
+    let source_stride =
+        source_line_bytes
+            .checked_add(source_gap)
+            .ok_or(TextureCopyError::AddressOverflow {
+                base: request.source_address,
+                offset: u64::MAX,
+            })?;
     let destination_stride = destination_line_bytes.checked_add(destination_gap).ok_or(
         TextureCopyError::AddressOverflow {
             base: request.destination_address,
@@ -434,9 +433,7 @@ mod tests {
             source_storage[source_offset..source_offset + count]
                 .copy_from_slice(&stream[stream_offset..stream_offset + count]);
         }
-        memory
-            .write(FCRAM_BASE + 0x2000, &source_storage)
-            .unwrap();
+        memory.write(FCRAM_BASE + 0x2000, &source_storage).unwrap();
 
         let destination_rows = (size_bytes + destination_line - 1) / destination_line;
         let destination_storage_bytes = destination_rows * (destination_line + destination_gap);
@@ -472,7 +469,8 @@ mod tests {
                 &stream[stream_offset..stream_offset + count],
             );
             assert_eq!(
-                &actual[output_offset + count..output_offset + destination_line + destination_gap],
+                &actual[output_offset + count
+                    ..output_offset + destination_line + destination_gap],
                 vec![0xCC; destination_line + destination_gap - count].as_slice(),
                 "unused row tail and destination gap for row {row} must remain untouched"
             );
@@ -533,9 +531,7 @@ mod tests {
             source_storage[source_offset..source_offset + source_line]
                 .copy_from_slice(&stream[stream_offset..stream_offset + source_line]);
         }
-        memory
-            .write(FCRAM_BASE + 0x2000, &source_storage)
-            .unwrap();
+        memory.write(FCRAM_BASE + 0x2000, &source_storage).unwrap();
 
         let destination_storage_bytes = 12 * (destination_line + destination_gap);
         memory
