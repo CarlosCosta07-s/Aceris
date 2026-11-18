@@ -858,8 +858,7 @@ mod tests {
         // The four source texels differ, but every channel sum is
         // divisible by four. This verifies the actual box average without
         // assuming the hardware's tie-breaking rule for fractional results.
-        const SAMPLE_OFFSETS: [[u8; 3]; 4] =
-            [[0, 0, 0], [2, 0, 4], [2, 4, 0], [0, 0, 0]];
+        const SAMPLE_OFFSETS: [[u8; 3]; 4] = [[0, 0, 0], [2, 0, 4], [2, 4, 0], [0, 0, 0]];
         for y in 0..input_height {
             for x in 0..input_width {
                 let block_x = x / 2;
@@ -991,13 +990,12 @@ mod tests {
                     let offset = (y * (input_width / 2) + x) * 4;
                     let expected = [
                         (x * 3) as u8 + 1,
-                        (y
-                            * if scale_flag == DISPLAY_TRANSFER_SCALE_X {
-                                2
-                            } else {
-                                4
-                            }
-                            + u8::from(scale_flag == DISPLAY_TRANSFER_SCALE_XY)) as u8,
+                        (y * if scale_flag == DISPLAY_TRANSFER_SCALE_X {
+                            2
+                        } else {
+                            4
+                        } + u8::from(scale_flag == DISPLAY_TRANSFER_SCALE_XY))
+                            as u8,
                         (x * 4) as u8 + 1,
                         255,
                     ];
@@ -1023,11 +1021,7 @@ mod tests {
             Err(DisplayTransferError::UnsupportedScaling(1))
         );
 
-        let mut misaligned = request(
-            SOURCE,
-            DESTINATION,
-            DISPLAY_TRANSFER_SCALE_X | (1 << 12),
-        );
+        let mut misaligned = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_SCALE_X | (1 << 12));
         misaligned.input_width = 130;
         misaligned.input_height = 64;
         misaligned.output_width = 130;
