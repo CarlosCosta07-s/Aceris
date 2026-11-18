@@ -1029,8 +1029,9 @@ mod tests {
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
         PicaFragmentDraw, PicaFragmentVertex, PicaShadedDraw, PicaShadedVertex,
-        PicaVertexOutputMap, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_FRAGOP_ALPHA_TEST,
-        REG_LOGIC_OP, REG_STENCIL_OP, REG_STENCIL_TEST, REG_TEXUNIT_CONFIG,
+        PicaVertexOutputMap, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_FOG_COLOR,
+        REG_FOG_LINEAR_OFFSET, REG_FOG_LINEAR_SLOPE, REG_FRAGOP_ALPHA_TEST, REG_LOGIC_OP,
+        REG_STENCIL_OP, REG_STENCIL_TEST, REG_TEXENV_UPDATE_BUFFER, REG_TEXUNIT_CONFIG,
         TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
@@ -1138,6 +1139,37 @@ mod tests {
         let decoded = target.read_rgba8(&memory).unwrap();
         let offset = (6 * 8 + 1) * 4;
         assert_eq!(&decoded[offset..offset + 4], &[159, 48, 48, 255]);
+    }
+
+    #[test]
+    fn linear_fog_is_applied_to_fragments_written_by_the_rasterizer() {
+        let mut pica = super::super::Pica200::new();
+        configure_tev(&mut pica);
+        pica.write_register(REG_TEXENV_UPDATE_BUFFER, 1).unwrap();
+        pica.write_register(REG_FOG_COLOR, 0x00FF_0000).unwrap();
+        pica.write_register(REG_FOG_LINEAR_SLOPE, 0).unwrap();
+        pica.write_register(REG_FOG_LINEAR_OFFSET, 0).unwrap();
+        let pipeline = pica.fragment_pipeline().unwrap();
+
+        let target =
+            PicaRenderTargetConfig::from_registers(VRAM_BASE >> 3, 2, 0, 8 | (7 << 12) | (1 << 24))
+                .unwrap();
+        let memory = GpuPhysicalMemory::new();
+        let mut rasterizer =
+            PicaFragmentRasterizer::from_render_target(target, &memory, 1.0).unwrap();
+        let shaded = draw([
+            fragment_vertex([-1.0, -1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
+            fragment_vertex([1.0, -1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
+            fragment_vertex([-1.0, 1.0, -0.5, 1.0], [1.0, 0.0, 0.0, 1.0]),
+        ]);
+        let state = PicaFragmentRasterState::new(
+            Matrix4::identity(),
+            Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
+        );
+
+        let report = rasterizer.draw(&shaded, &pipeline, &memory, state).unwrap();
+        assert!(report.shaded_pixels > 0);
+        assert_eq!(rasterizer.color_at(1, 6), Some([0, 0, 255, 255]));
     }
 
     /// Runs the reference lower-left triangle (counter-clockwise in PICA window
