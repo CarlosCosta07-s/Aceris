@@ -1958,3 +1958,12 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Evidência: seção 14 de `docs/INDEPENDENT_RESEARCH.md`; 3dbrew descreve o modo como 2×2, as restrições 64×32 e os alinhamentos por formato. Mikage descreve os bits de escala. Nenhuma dessas fontes substitui comparação em hardware físico.
 - O filtro usa média inteira truncada (soma/4). O hardware pode arredondar de modo diferente; precisão e arredondamento ainda não foram comparados fisicamente. O requisito entrada = 2× saída é a interpretação adotada e coberta por teste sintético, ainda sem captura de hardware.
 - A CI do commit `1f47fc156e72f8f791956ff43afa4bc8bd42a3cb` passou integralmente em Linux e Windows (fmt, build, Clippy, testes, benchmark) e em Android ARM64 (library + benchmark); macOS estava em fila na última consulta. A CI da implementação 2×2 ainda deve ser consultada após a correção de formatação `046c1b98` e o commit de estilo `a7aac9a9`. O ambiente de edição não possui cargo/rustc local.
+
+## PICA200 — suporte modelado a blocos 32×32 (18/11/2026)
+
+- Commits: `508529e7e291e01633a186f8da72dce9a832ccd3` (codec de render target), `ceca40574ea83a5268c28e111e84b7046e61c2cf` (DisplayTransfer), `96e852d2575670615ea0f4db787e9e3877464acc` (passagem do layout ao cálculo de tiles), `d07eb092a19ed7b88f4b90e6e29019e58ad2c4f0` (Rustfmt).
+- `render_target.rs`: `block_edge()` seleciona 8 ou 32; tamanho, offset e Morton são calculados por tile edge. O round-trip 64×32 testa dois blocos 32×32 e o codec de 8×8 permanece coberto.
+- `transfer.rs`: bit 16 escolhe `Tiled32x32Morton` no lado tiled. `storage_size`, `tile_count` e `pixel_offset` usam o layout selecionado; o modo bit 16 rejeita dimensões efetivas de saída que não sejam múltiplas de 32.
+- O contrato de ordem interna 32×32 é inferencial: grade de tiles row-major e Morton de 5 bits por eixo. 3dbrew/Mikage documentam a seleção 8×8/32×32 e a flag bit 16, mas não dão a ordem interna. Não declarar confirmado em hardware.
+- Commit `049d3baa0756aa47440047845ffc010fde8b038a` acrescenta integração GX para bloco 32×32; `8af846c944e95969de1dfd96a5c6fe6e2acce45c` troca um helper de fixture indisponível por `expected.clone()`.
+- CI do commit `508529e` passou Linux com fmt/build/Clippy/testes e Android ARM64; Windows estava em testes e macOS em fila na última consulta. CI dos commits de DisplayTransfer/GSP deve ser verificada no HEAD atual antes de declarar todos os jobs aprovados. O ambiente não possui cargo/rustc local.
