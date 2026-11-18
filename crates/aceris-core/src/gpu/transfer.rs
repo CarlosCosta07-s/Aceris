@@ -1,9 +1,9 @@
-//! Basic GSP/PICA200 DisplayTransfer conversion between tiled and linear buffers.
+//! GSP/PICA200 DisplayTransfer conversion between tiled and linear buffers.
 //!
-//! The implementation supports same-sized images, 8x8 Morton tiles, vertical
-//! flip, and the five documented transfer pixel formats. Scaling, cropping,
-//! 32x32 blocks, TextureCopy, and tiled-to-tiled transfers fail explicitly.
-//! The full source and destination ranges are validated and staged before the
+//! The software backend supports 8x8 Morton tiled-to-linear, linear-to-tiled,
+//! and tiled-to-tiled transfers, vertical flip, horizontal crop, and five pixel
+//! formats. Downscaling and 32x32 blocks remain explicit unsupported cases.
+//! Complete source and destination ranges are validated and staged before the
 //! destination is modified.
 
 use std::fmt;
@@ -162,6 +162,12 @@ pub enum DisplayTransferError {
         width: u16,
         height: u16,
     },
+    MisalignedOutputRow {
+        width: u16,
+        format: DisplayTransferFormat,
+        row_bytes: usize,
+        required_alignment: usize,
+    },
     UnsupportedFormat(u8),
     UnsupportedScaling(u8),
     UnsupportedCropMode,
@@ -198,6 +204,15 @@ impl fmt::Display for DisplayTransferError {
             Self::OutputDimensionsTooSmall { width, height } => {
                 write!(f, "DisplayTransfer tiled-to-linear output {width}x{height} is below 64x16")
             }
+            Self::MisalignedOutputRow {
+                width,
+                format,
+                row_bytes,
+                required_alignment,
+            } => write!(
+                f,
+                "DisplayTransfer {format:?} output row ({width} pixels, {row_bytes} bytes) is not aligned to {required_alignment} bytes"
+            ),
             Self::UnsupportedFormat(value) => {
                 write!(f, "DisplayTransfer pixel format {value} is unsupported")
             }
@@ -411,6 +426,28 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
     let scale = (request.flags >> 24) & 3;
     if scale != 0 {
         return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
+    }
+
+    // Tiled-to-linear writes a linear output row. The PICA transfer engine
+    // requires 16-byte rows for RGB8 and 8-byte rows for the other formats.
+    if !linear_to_tiled && !tiled_to_tiled {
+        let destination_format =
+            DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
+        let required_alignment = if destination_format == DisplayTransferFormat::Rgb8 {
+            16
+        } else {
+            8
+        };
+        let row_bytes =
+            usize::from(request.output_width) * destination_format.bytes_per_pixel();
+        if row_bytes % required_alignment != 0 {
+            return Err(DisplayTransferError::MisalignedOutputRow {
+                width: request.output_width,
+                format: destination_format,
+                row_bytes,
+                required_alignment,
+            });
+        }
     }
 
     // The documented 64x16 minimum applies to the common tiled-to-linear
@@ -725,6 +762,38 @@ mod tests {
         let mut actual = [0; 32];
         memory.read(SOURCE, &mut actual).unwrap();
         assert_eq!(actual, sentinel);
+    }
+
+    #[test]
+    fn tiled_to_linear_rgb8_requires_sixteen_byte_output_rows() {
+        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_CROP | (1 << 12));
+        bad.input_width = 80;
+        bad.output_width = 65;
+        assert_eq!(
+            display_transfer_buffer_sizes(bad),
+            Err(DisplayTransferError::MisalignedOutputRow {
+                width: 65,
+                format: DisplayTransferFormat::Rgb8,
+                row_bytes: 195,
+                required_alignment: 16,
+            })
+        );
+    }
+
+    #[test]
+    fn tiled_to_linear_non_rgb8_requires_eight_byte_output_rows() {
+        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_CROP);
+        bad.input_width = 80;
+        bad.output_width = 65;
+        assert_eq!(
+            display_transfer_buffer_sizes(bad),
+            Err(DisplayTransferError::MisalignedOutputRow {
+                width: 65,
+                format: DisplayTransferFormat::Rgba8,
+                row_bytes: 260,
+                required_alignment: 8,
+            })
+        );
     }
 
     #[test]
