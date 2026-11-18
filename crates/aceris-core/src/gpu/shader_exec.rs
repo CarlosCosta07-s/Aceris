@@ -1863,6 +1863,102 @@ mod tests {
     }
 
     #[test]
+    fn callc_and_callu_gate_subroutines_from_cmp_and_boolean_flags() {
+        let callc = PicaVertexShaderProgram::from_words(
+            &[
+                format1_compare(V0, V1, 2, 5),
+                format2(0x25, 1, 4, 2, true, false), // CALLC on cmp.x
+                format1_unary(0x13, O0, V0),
+                END,
+                format1_unary(0x13, O1, V1),
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &[],
+        );
+        let called = callc
+            .run(0, &inputs([1.0; 4], [2.0; 4]))
+            .unwrap();
+        assert_eq!(called.outputs[0], [1.0; 4]);
+        assert_eq!(called.outputs[1], [2.0; 4]);
+
+        let skipped = callc
+            .run(0, &inputs([3.0; 4], [2.0; 4]))
+            .unwrap();
+        assert_eq!(skipped.outputs[0], [3.0; 4]);
+        assert_eq!(skipped.outputs[1], [0.0; 4]);
+
+        let callu = PicaVertexShaderProgram::from_words(
+            &[
+                format3(0x26, 1, 3, 5), // CALLU b5
+                format1_unary(0x13, O0, V0),
+                END,
+                format1_unary(0x13, O1, V1),
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &[],
+        )
+        .with_special_registers(1 << 5, [[0; 4]; 4]);
+        let called = callu
+            .run(0, &inputs([4.0; 4], [8.0; 4]))
+            .unwrap();
+        assert_eq!(called.outputs[0], [4.0; 4]);
+        assert_eq!(called.outputs[1], [8.0; 4]);
+    }
+
+    #[test]
+    fn jmpc_and_breakc_apply_condition_flags_to_the_next_pc() {
+        let jmpc = PicaVertexShaderProgram::from_words(
+            &[
+                format1_compare(V0, V1, 2, 5),
+                format2(0x2C, 0, 4, 2, true, false), // JMPC on cmp.x to pc 4
+                format1_unary(0x13, O0, V0),
+                END,
+                format1_unary(0x13, O1, V1),
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &[],
+        );
+        let taken = jmpc
+            .run(0, &inputs([1.0; 4], [2.0; 4]))
+            .unwrap();
+        assert_eq!(taken.outputs[0], [0.0; 4]);
+        assert_eq!(taken.outputs[1], [2.0; 4]);
+
+        let not_taken = jmpc
+            .run(0, &inputs([3.0; 4], [2.0; 4]))
+            .unwrap();
+        assert_eq!(not_taken.outputs[0], [3.0; 4]);
+        assert_eq!(not_taken.outputs[1], [0.0; 4]);
+
+        let breakc = PicaVertexShaderProgram::from_words(
+            &[
+                format3(0x29, 0, 5, 0), // LOOP body 1..=5
+                format1_compare(V0, V1, 2, 5),
+                format2(0x23, 0, 0, 2, true, false), // BREAKC on cmp.x
+                format1_unary(0x13, O0, V0),
+                NOP,
+                NOP,
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &[],
+        )
+        .with_special_registers(0, [[1, 0, 1, 0], [0; 4], [0; 4], [0; 4]]);
+        let broken = breakc
+            .run(0, &inputs([1.0; 4], [2.0; 4]))
+            .unwrap();
+        assert_eq!(broken.outputs[0], [0.0; 4]);
+
+        let continued = breakc
+            .run(0, &inputs([3.0; 4], [2.0; 4]))
+            .unwrap();
+        assert_eq!(continued.outputs[0], [3.0; 4]);
+    }
+
+    #[test]
     fn call_runs_the_absolute_subroutine_range_then_returns() {
         let program = PicaVertexShaderProgram::from_words(
             &[
