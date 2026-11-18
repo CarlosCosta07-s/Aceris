@@ -166,7 +166,8 @@ pub enum DisplayTransferLayout {
     Tiled8x8Morton,
 }
 
-/// Summary of a completed software transfer.
+/// Summary of a completed software transfer. Width and height are the effective
+/// physical destination dimensions after any box-filter downscale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DisplayTransferReport {
     pub width: u16,
@@ -522,6 +523,8 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         // 2x2; those effective rows carry the alignment requirement.
         if request.input_width != request.output_width
             || request.input_height != request.output_height
+            || request.input_width % 2 != 0
+            || (scale == 2 && request.input_height % 2 != 0)
         {
             return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
         }
@@ -1006,7 +1009,11 @@ mod tests {
 
     #[test]
     fn tiled_to_linear_downscale_requires_equal_register_dimensions_and_aligned_half_width() {
-        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_SCALE_X);
+        let mut bad = request(
+            SOURCE,
+            DESTINATION,
+            DISPLAY_TRANSFER_SCALE_X | DISPLAY_TRANSFER_CROP,
+        );
         bad.input_width = 128;
         bad.input_height = 64;
         bad.output_width = 64;
@@ -1033,6 +1040,20 @@ mod tests {
                 row_bytes: 195,
                 required_alignment: 16,
             })
+        );
+
+        let mut odd_height = request(
+            SOURCE,
+            DESTINATION,
+            DISPLAY_TRANSFER_SCALE_XY,
+        );
+        odd_height.input_width = 128;
+        odd_height.input_height = 63;
+        odd_height.output_width = 128;
+        odd_height.output_height = 63;
+        assert_eq!(
+            display_transfer_buffer_sizes(odd_height),
+            Err(DisplayTransferError::UnsupportedScaling(2))
         );
     }
 
