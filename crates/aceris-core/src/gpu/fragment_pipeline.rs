@@ -833,7 +833,7 @@ mod tests {
             pica.write_register(REG_TEXENV_UPDATE_BUFFER, mode).unwrap();
             assert_eq!(
                 pica.fragment_pipeline(),
-                Err(PicaFragmentPipelineError::UnsupportedFogMode { mode })
+                Err(PicaFragmentPipelineError::UnsupportedFogMode { mode: mode as u8 })
             );
         }
     }
