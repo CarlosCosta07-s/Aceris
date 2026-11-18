@@ -1136,8 +1136,7 @@ fn lanewise(a: [f32; 4], b: [f32; 4], operation: impl Fn(f32, f32) -> f32) -> [f
 /// remains NaN. Negative zero is canonicalized to positive zero.
 fn pica_mul(a: f32, b: f32) -> f32 {
     let product = a * b;
-    let should_be_zero =
-        product == 0.0 || (product.is_nan() && !a.is_nan() && !b.is_nan());
+    let should_be_zero = product == 0.0 || (product.is_nan() && !a.is_nan() && !b.is_nan());
     if should_be_zero { 0.0 } else { product }
 }
 
