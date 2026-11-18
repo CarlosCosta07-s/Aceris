@@ -1,7 +1,7 @@
 //! PICA200 2D texture-unit decoding and software sampling.
 //!
 //! Supported storage includes RGBA8/RGB8, HILO8, packed 16-bit color,
- //! intensity and alpha formats, I4/A4, ETC1 and ETC1A4. Texels use 8x8 Morton
+//! intensity and alpha formats, I4/A4, ETC1 and ETC1A4. Texels use 8x8 Morton
 //! tiles; the sampler supports wrap modes, nearest/bilinear filtering and
 //! mip-level selection/blending. Cube maps and projection/shadow sampling
 //! remain explicit unsupported cases; they are never silently decoded as
@@ -1036,8 +1036,7 @@ mod tests {
         let unit = sample_unit(PicaTextureFormat::HiLo8);
 
         assert_eq!(
-            unit.sample(&memory, 3.5 / 8.0, 5.5 / 8.0, false)
-                .unwrap(),
+            unit.sample(&memory, 3.5 / 8.0, 5.5 / 8.0, false).unwrap(),
             [0x12 as f32 / 255.0, 0xE4 as f32 / 255.0, 0.0, 1.0]
         );
     }
