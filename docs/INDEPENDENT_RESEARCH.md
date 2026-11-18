@@ -265,3 +265,32 @@ Ordem das colunas: RGBA8, RGB8, RGB565, RGB5A1, RGBA4. `PPF` indica que a fonte 
 ### Limites
 
 A matriz é documentação não oficial e ainda não foi comparada com hardware físico. Linear→tiled permanece com regra conservadora e precisa de fonte/testes específicos. A integração `gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion` agora verifica duas execuções na fila real: RGBA8→RGBA8 enfileira PPF; RGB8→RGBA8 converte os bytes de destino, incrementa a conclusão, mas não acrescenta um segundo PPF. As combinações 32×32/downscale e a temporização real permanecem pendentes.
+
+## 14. PICA200 — tiled→tiled com downscale 2×2 (18/11/2026)
+
+### Pergunta técnica
+
+Como o modo GX tiled→tiled deve gerar níveis menores de textura ou superfícies antialiasing, e quais dimensões/alinhamentos precisam ser validados antes de aceitar a transferência?
+
+### Referências consultadas
+
+- 3dbrew, *GPU/External Registers*: https://www.3dbrew.org/wiki/GPU/External_Registers — descreve tiled→tiled como modo utilizado com downscale 2×2, registra as restrições de saída não maior que a entrada, largura mínima 64, altura mínima 32 e alinhamento em bytes por formato. A mesma seção afirma que a matriz de conversões e a conclusão PPF seguem tiled→linear. Fonte comunitária de engenharia reversa, não oficial, consulta em 18/11/2026.
+- Mikage, *GPU/External Registers*: https://docs.mikage.app/GPU/External_Registers/ — documenta bit 5 como tiled→tiled, incompatibilidade com bit 1, bit 16 para blocos 32×32 e bits 24–25 como downscale box-filter 2×1/2×2. Consulta em 18/11/2026. Fonte comunitária não oficial.
+- devkitPro/libctru, `libctru/include/3ds/gpu/gx.h`, commit `6ef91576ae20d6bc9f9af261ec5989ffc0c1e0f4`: https://github.com/devkitPro/libctru/blob/6ef91576ae20d6bc9f9af261ec5989ffc0c1e0f4/libctru/include/3ds/gpu/gx.h — enum pública `GX_TRANSFER_SCALE_XY` para 2×2 AA e `GX_TRANSFER_SCALE_X` para 2×1. Usada apenas para nomenclatura API; sem código incorporado.
+- Citro3D, `source/texture.c`, versão consultada em 18/11/2026: https://github.com/devkitPro/citro3d/blob/master/source/texture.c — consulta contextual sobre geração de mipmaps e a existência de um caminho CPU separado; não usada como especificação do Transfer Engine. Nenhum código, shader, teste ou estrutura foi copiado, traduzido ou adaptado.
+
+### Contrato implementado
+
+- O modo bit 5 usa entrada e saída em tiles Morton 8×8; a combinação com bit 1 continua recusada.
+- O campo de escala deve ser 2 (2×2). O Aceris adota dimensões explícitas: largura e altura da entrada iguais ao dobro das dimensões da saída.
+- A saída deve ter largura mínima 64 e altura mínima 32. O alinhamento da linha de saída é de 64 bytes para RGB8/RGBA8 e 128 bytes para RGB565/RGB5A1/RGBA4.
+- Cada pixel de saída consome o bloco correspondente de 2×2 pixels de entrada. Os quatro valores RGBA são acumulados em inteiros de 16 bits e divididos por quatro; a saída passa pelo codec do formato de destino.
+- A flag crop bit 2 é exigida pelo contrato comum quando a largura da saída é menor que a largura de entrada.
+- A origem inteira é staged antes da escrita do destino. Os testes usam cores constantes por bloco 2×2 para verificar o mapeamento sem depender do arredondamento de amostras fracionárias.
+- A tabela PPF para tiled→tiled continua a mesma matriz documentada para tiled→linear.
+
+### Limites e hipóteses
+
+A documentação pública não especifica o arredondamento interno do box filter, a precisão intermediária, a ordem de quantização, nem a temporização. O Aceris usa divisão inteira truncada por quatro como modelo determinístico; isso não é declaração de equivalência física. A interpretação de dimensões como entrada = 2× saída é o contrato adotado para uma redução 2×2 explícita, testado sinteticamente, mas ainda não confirmado em hardware legítimo. Downscale 2×1, escala no caminho tiled→linear, blocos 32×32 e combinações 32×32 + scale continuam sem suporte.
+
+A implementação foi escrita independentemente em Rust e não incorpora código, assets, shaders, fixtures ou dependências de terceiros.
