@@ -1,9 +1,10 @@
 //! GSP/PICA200 DisplayTransfer conversion between tiled and linear buffers.
 //!
-//! The software backend supports 8x8 Morton tiled-to-linear and linear-to-tiled
-//! conversion, 2x1/2x2 tiled-to-linear box filtering, and the 2x2 tiled-to-tiled
-//! mipmap/AA path. It also supports vertical flip, horizontal crop, and five
-//! pixel formats. 32x32 blocks remain explicitly unsupported.
+//! The software backend supports 8x8 and 32x32 Morton tile models for
+//! tiled-to-linear, linear-to-tiled, and tiled-to-tiled transfers, plus 2x1/2x2
+//! box filters, vertical flip, horizontal crop, and five pixel formats.
+//! The 32x32 intra-block Morton model is inferred from the public block-mode
+//! description and still requires validation against legitimate hardware.
 //! Complete source and destination ranges are validated and staged before the
 //! destination is modified. The integer box-filter rounding is a software
 //! reference choice and has not been compared against physical hardware.
@@ -51,8 +52,8 @@ pub const fn display_transfer_signals_ppf(
     )
 }
 
-const TILE_EDGE: usize = 8;
-const TILE_PIXELS: usize = TILE_EDGE * TILE_EDGE;
+const TILE_EDGE_8X8: usize = 8;
+const TILE_EDGE_32X32: usize = 32;
 const MIN_OUTPUT_WIDTH: u16 = 64;
 const MIN_OUTPUT_HEIGHT: u16 = 16;
 const MIN_TILED_TO_TILED_HEIGHT: u16 = 32;
@@ -164,6 +165,7 @@ pub struct DisplayTransferRequest {
 pub enum DisplayTransferLayout {
     Linear,
     Tiled8x8Morton,
+    Tiled32x32Morton,
 }
 
 /// Summary of a completed software transfer. Width and height are the effective
@@ -207,6 +209,10 @@ pub enum DisplayTransferError {
     UnsupportedScaling(u8),
     UnsupportedCropMode,
     UnsupportedBlock32,
+    Block32DimensionsNotAligned {
+        width: u16,
+        height: u16,
+    },
     UnsupportedTextureCopyMode,
     UnsupportedTiledToTiledMode,
     SizeOverflow,
@@ -257,7 +263,11 @@ impl fmt::Display for DisplayTransferError {
             Self::UnsupportedCropMode => f.write_str(
                 "DisplayTransfer output width is smaller than input width but crop mode is disabled",
             ),
-            Self::UnsupportedBlock32 => f.write_str("DisplayTransfer 32x32 blocks are unsupported"),
+            Self::UnsupportedBlock32 => f.write_str("DisplayTransfer 32x32 block mode is unavailable"),
+            Self::Block32DimensionsNotAligned { width, height } => write!(
+                f,
+                "DisplayTransfer 32x32 block output {width}x{height} must use dimensions divisible by 32"
+            ),
             Self::UnsupportedTextureCopyMode => {
                 f.write_str("TextureCopy mode is not a DisplayTransfer")
             }
@@ -315,13 +325,19 @@ pub fn display_transfer_buffer_sizes(
     let destination_format = DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
     let linear_to_tiled = request.flags & DISPLAY_TRANSFER_LINEAR_TO_TILED != 0;
     let tiled_to_tiled = request.flags & DISPLAY_TRANSFER_TILED_TO_TILED != 0;
-    let source_layout = if linear_to_tiled {
-        DisplayTransferLayout::Linear
+    let block32 = request.flags & DISPLAY_TRANSFER_BLOCKS_32X32 != 0;
+    let tiled_layout = if block32 {
+        DisplayTransferLayout::Tiled32x32Morton
     } else {
         DisplayTransferLayout::Tiled8x8Morton
     };
+    let source_layout = if linear_to_tiled {
+        DisplayTransferLayout::Linear
+    } else {
+        tiled_layout
+    };
     let destination_layout = if linear_to_tiled || tiled_to_tiled {
-        DisplayTransferLayout::Tiled8x8Morton
+        tiled_layout
     } else {
         DisplayTransferLayout::Linear
     };
@@ -373,13 +389,19 @@ pub fn execute_display_transfer(
     let destination_format = DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
     let linear_to_tiled = request.flags & DISPLAY_TRANSFER_LINEAR_TO_TILED != 0;
     let tiled_to_tiled = request.flags & DISPLAY_TRANSFER_TILED_TO_TILED != 0;
-    let source_layout = if linear_to_tiled {
-        DisplayTransferLayout::Linear
+    let block32 = request.flags & DISPLAY_TRANSFER_BLOCKS_32X32 != 0;
+    let tiled_layout = if block32 {
+        DisplayTransferLayout::Tiled32x32Morton
     } else {
         DisplayTransferLayout::Tiled8x8Morton
     };
+    let source_layout = if linear_to_tiled {
+        DisplayTransferLayout::Linear
+    } else {
+        tiled_layout
+    };
     let destination_layout = if linear_to_tiled || tiled_to_tiled {
-        DisplayTransferLayout::Tiled8x8Morton
+        tiled_layout
     } else {
         DisplayTransferLayout::Linear
     };
@@ -387,8 +409,8 @@ pub fn execute_display_transfer(
     let input_width = usize::from(request.input_width);
     let input_height = usize::from(request.input_height);
     let (output_width, output_height) = effective_output_dimensions(request)?;
-    let source_tiles_x = tile_count(input_width)?;
-    let destination_tiles_x = tile_count(output_width)?;
+    let source_tiles_x = tile_count(input_width, source_layout)?;
+    let destination_tiles_x = tile_count(output_width, destination_layout)?;
 
     let mut source = Vec::new();
     source
@@ -497,9 +519,6 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
     if request.output_width < request.input_width && request.flags & DISPLAY_TRANSFER_CROP == 0 {
         return Err(DisplayTransferError::UnsupportedCropMode);
     }
-    if request.flags & DISPLAY_TRANSFER_BLOCKS_32X32 != 0 {
-        return Err(DisplayTransferError::UnsupportedBlock32);
-    }
     let scale = (request.flags >> 24) & 3;
     if scale == 3 {
         return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
@@ -528,6 +547,16 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         {
             return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
         }
+    }
+
+    let block32 = request.flags & DISPLAY_TRANSFER_BLOCKS_32X32 != 0;
+    let (effective_output_width, effective_output_height) =
+        effective_output_dimensions(request)?;
+    if block32 && (effective_output_width % 32 != 0 || effective_output_height % 32 != 0) {
+        return Err(DisplayTransferError::Block32DimensionsNotAligned {
+            width: effective_output_width as u16,
+            height: effective_output_height as u16,
+        });
     }
 
     // Tiled-to-linear writes a linear output row. The PICA transfer engine
@@ -603,10 +632,16 @@ fn storage_size(
         DisplayTransferLayout::Linear => width
             .checked_mul(height)
             .ok_or(DisplayTransferError::SizeOverflow)?,
-        DisplayTransferLayout::Tiled8x8Morton => tile_count(width)?
-            .checked_mul(tile_count(height)?)
-            .and_then(|tiles| tiles.checked_mul(TILE_PIXELS))
-            .ok_or(DisplayTransferError::SizeOverflow)?,
+        DisplayTransferLayout::Tiled8x8Morton | DisplayTransferLayout::Tiled32x32Morton => {
+            let tile_edge = layout_tile_edge(layout);
+            let tile_pixels = tile_edge
+                .checked_mul(tile_edge)
+                .ok_or(DisplayTransferError::SizeOverflow)?;
+            tile_count(width, layout)?
+                .checked_mul(tile_count(height, layout)?)
+                .and_then(|tiles| tiles.checked_mul(tile_pixels))
+                .ok_or(DisplayTransferError::SizeOverflow)?
+        }
     };
     pixels
         .checked_mul(format.bytes_per_pixel())
@@ -627,30 +662,49 @@ fn pixel_offset(
             .and_then(|index| index.checked_add(x))
             .and_then(|index| index.checked_mul(bytes_per_pixel))
             .ok_or(DisplayTransferError::SizeOverflow),
-        DisplayTransferLayout::Tiled8x8Morton => {
-            let tile = (y / TILE_EDGE)
-                .checked_mul(tiles_x)
-                .and_then(|index| index.checked_add(x / TILE_EDGE))
+        DisplayTransferLayout::Tiled8x8Morton | DisplayTransferLayout::Tiled32x32Morton => {
+            let tile_edge = layout_tile_edge(layout);
+            let tile_pixels = tile_edge
+                .checked_mul(tile_edge)
                 .ok_or(DisplayTransferError::SizeOverflow)?;
-            tile.checked_mul(TILE_PIXELS)
-                .and_then(|pixel| pixel.checked_add(morton_index(x & 7, y & 7)))
+            let tile = (y / tile_edge)
+                .checked_mul(tiles_x)
+                .and_then(|index| index.checked_add(x / tile_edge))
+                .ok_or(DisplayTransferError::SizeOverflow)?;
+            tile.checked_mul(tile_pixels)
+                .and_then(|pixel| {
+                    pixel.checked_add(morton_index(x % tile_edge, y % tile_edge, tile_edge))
+                })
                 .and_then(|pixel| pixel.checked_mul(bytes_per_pixel))
                 .ok_or(DisplayTransferError::SizeOverflow)
         }
     }
 }
 
-fn tile_count(dimension: usize) -> Result<usize, DisplayTransferError> {
+fn layout_tile_edge(layout: DisplayTransferLayout) -> usize {
+    match layout {
+        DisplayTransferLayout::Linear => 1,
+        DisplayTransferLayout::Tiled8x8Morton => TILE_EDGE_8X8,
+        DisplayTransferLayout::Tiled32x32Morton => TILE_EDGE_32X32,
+    }
+}
+
+fn tile_count(dimension: usize, layout: DisplayTransferLayout) -> Result<usize, DisplayTransferError> {
+    let tile_edge = layout_tile_edge(layout);
+    if layout == DisplayTransferLayout::Linear {
+        return Ok(1);
+    }
     dimension
-        .checked_add(TILE_EDGE - 1)
-        .map(|rounded| rounded / TILE_EDGE)
+        .checked_add(tile_edge - 1)
+        .map(|rounded| rounded / tile_edge)
         .filter(|count| *count != 0)
         .ok_or(DisplayTransferError::SizeOverflow)
 }
 
-fn morton_index(x: usize, y: usize) -> usize {
+fn morton_index(x: usize, y: usize, tile_edge: usize) -> usize {
+    let bits = tile_edge.trailing_zeros() as usize;
     let mut index = 0usize;
-    for bit in 0..3 {
+    for bit in 0..bits {
         index |= ((x >> bit) & 1) << (bit * 2);
         index |= ((y >> bit) & 1) << (bit * 2 + 1);
     }
@@ -790,7 +844,6 @@ mod tests {
         let sentinel = [0xA5; 16];
         memory.write(DESTINATION, &sentinel).unwrap();
         for flags in [
-            DISPLAY_TRANSFER_BLOCKS_32X32,
             DISPLAY_TRANSFER_TEXTURE_COPY,
             3 << 24,
             DISPLAY_TRANSFER_LINEAR_TO_TILED | DISPLAY_TRANSFER_TILED_TO_TILED,
@@ -802,6 +855,81 @@ mod tests {
             memory.read(DESTINATION, &mut actual).unwrap();
             assert_eq!(actual, sentinel);
         }
+    }
+
+    #[test]
+    fn block32_tiled_round_trips_linear_pixels_with_five_bit_morton_tiles() {
+        let mut memory = GpuPhysicalMemory::new();
+        let expected = patterned_linear_dimensions(64, 64);
+        memory.write(SOURCE, &expected).unwrap();
+
+        let block32 = DISPLAY_TRANSFER_BLOCKS_32X32;
+        let mut linear_to_tiled =
+            request(SOURCE, DESTINATION, block32 | DISPLAY_TRANSFER_LINEAR_TO_TILED);
+        linear_to_tiled.input_width = 64;
+        linear_to_tiled.input_height = 64;
+        linear_to_tiled.output_width = 64;
+        linear_to_tiled.output_height = 64;
+        let tiled_report = execute_display_transfer(&mut memory, linear_to_tiled).unwrap();
+        assert_eq!(tiled_report.source_layout, DisplayTransferLayout::Linear);
+        assert_eq!(
+            tiled_report.destination_layout,
+            DisplayTransferLayout::Tiled32x32Morton
+        );
+        assert_eq!(tiled_report.bytes_written, (64 * 64 * 4) as u64);
+
+        let mut tiled_to_linear = request(DESTINATION, SOURCE, block32);
+        tiled_to_linear.input_width = 64;
+        tiled_to_linear.input_height = 64;
+        tiled_to_linear.output_width = 64;
+        tiled_to_linear.output_height = 64;
+        let linear_report = execute_display_transfer(&mut memory, tiled_to_linear).unwrap();
+        let mut actual = vec![0u8; expected.len()];
+        memory.read(SOURCE, &mut actual).unwrap();
+
+        assert_eq!(actual, expected);
+        assert_eq!(
+            linear_report.source_layout,
+            DisplayTransferLayout::Tiled32x32Morton
+        );
+        assert_eq!(linear_report.destination_layout, DisplayTransferLayout::Linear);
+        assert_eq!(linear_report.bytes_read, (64 * 64 * 4) as u64);
+    }
+
+    #[test]
+    fn block32_mode_requires_effective_output_dimensions_aligned_to_32() {
+        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_BLOCKS_32X32 | DISPLAY_TRANSFER_CROP);
+        bad.input_width = 96;
+        bad.input_height = 64;
+        bad.output_width = 64;
+        bad.output_height = 64;
+        assert_eq!(
+            display_transfer_buffer_sizes(bad).unwrap().1,
+            (64 * 64 * 4) as usize
+        );
+
+        bad.output_width = 48;
+        assert_eq!(
+            display_transfer_buffer_sizes(bad),
+            Err(DisplayTransferError::Block32DimensionsNotAligned {
+                width: 48,
+                height: 64,
+            })
+        );
+    }
+
+    #[test]
+    fn morton_index_is_a_bijection_over_a_32_by_32_tile() {
+        let mut indices = Vec::with_capacity(32 * 32);
+        for y in 0..32 {
+            for x in 0..32 {
+                indices.push(morton_index(x, y, TILE_EDGE_32X32));
+            }
+        }
+        indices.sort_unstable();
+        assert_eq!(indices, (0..32 * 32).collect::<Vec<_>>());
+        assert_eq!(morton_index(16, 0, TILE_EDGE_32X32), 256);
+        assert_eq!(morton_index(0, 16, TILE_EDGE_32X32), 512);
     }
 
     #[test]
