@@ -910,8 +910,8 @@ mod tests {
         let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_TILED_TO_TILED);
         bad.input_width = 128;
         bad.input_height = 64;
-        bad.output_width = 64;
-        bad.output_height = 32;
+        bad.output_width = 128;
+        bad.output_height = 64;
         assert_eq!(
             display_transfer_buffer_sizes(bad),
             Err(DisplayTransferError::UnsupportedScaling(0))
