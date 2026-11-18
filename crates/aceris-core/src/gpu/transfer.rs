@@ -544,7 +544,7 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         let row_bytes = effective_width * destination_format.bytes_per_pixel();
         if row_bytes % required_alignment != 0 {
             return Err(DisplayTransferError::MisalignedOutputRow {
-                width: request.output_width,
+                width: effective_width as u16,
                 format: destination_format,
                 row_bytes,
                 required_alignment,
@@ -988,7 +988,13 @@ mod tests {
                     let offset = (y * (input_width / 2) + x) * 4;
                     let expected = [
                         (x * 3) as u8 + 1,
-                        (y * if scale_flag == DISPLAY_TRANSFER_SCALE_X { 2 } else { 4 }) as u8,
+                        (y
+                            * if scale_flag == DISPLAY_TRANSFER_SCALE_X {
+                                2
+                            } else {
+                                4
+                            }
+                            + u8::from(scale_flag == DISPLAY_TRANSFER_SCALE_XY)) as u8,
                         (x * 4) as u8 + 1,
                         255,
                     ];
