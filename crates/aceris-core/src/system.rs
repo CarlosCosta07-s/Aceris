@@ -4849,6 +4849,98 @@ mod tests {
             .read(linear_output, &mut actual)
             .unwrap();
         assert_eq!(actual, expected);
+
+        // A documented RGB8 -> RGBA8 tiled transfer completes its memory
+        // operation without raising PPF. Preserve the already-pending PPF
+        // event from the first RGBA8 -> RGBA8 transfer, but do not enqueue a
+        // second one for this unsupported completion pair.
+        let rgb8_linear_source = VRAM_BASE + 0x80_000;
+        let rgb8_tiled_source = VRAM_BASE + 0xA0_000;
+        let rgb8_rgba8_output = VRAM_BASE + 0xC0_000;
+        let mut rgb8_source = vec![0u8; 64 * 64 * 3];
+        let mut expected_rgba8 = vec![0u8; 64 * 64 * 4];
+        for y in 0..64usize {
+            for x in 0..64usize {
+                let source_offset = (y * 64 + x) * 3;
+                let output_offset = (y * 64 + x) * 4;
+                let red = x as u8;
+                let green = y as u8;
+                let blue = (x ^ y) as u8;
+                rgb8_source[source_offset..source_offset + 3]
+                    .copy_from_slice(&[blue, green, red]);
+                expected_rgba8[output_offset..output_offset + 4]
+                    .copy_from_slice(&[255, blue, green, red]);
+            }
+        }
+        system
+            .physical_memory_mut()
+            .write(rgb8_linear_source, &rgb8_source)
+            .unwrap();
+        execute_display_transfer(
+            system.physical_memory_mut(),
+            DisplayTransferRequest {
+                input_address: rgb8_linear_source,
+                output_address: rgb8_tiled_source,
+                input_width: 64,
+                input_height: 64,
+                output_width: 64,
+                output_height: 64,
+                flags: crate::gpu::DISPLAY_TRANSFER_LINEAR_TO_TILED
+                    | (1 << 8)
+                    | (1 << 12),
+            },
+        )
+        .unwrap();
+
+        let mut second_queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        second_queue_bytes[1] = 1;
+        let second_entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        second_queue_bytes[second_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        second_queue_bytes[second_entry + 2] = 1;
+        second_queue_bytes[second_entry + 4..second_entry + 8]
+            .copy_from_slice(&rgb8_tiled_source.to_le_bytes());
+        second_queue_bytes[second_entry + 8..second_entry + 12]
+            .copy_from_slice(&rgb8_rgba8_output.to_le_bytes());
+        second_queue_bytes[second_entry + 12..second_entry + 16]
+            .copy_from_slice(&dimensions.to_le_bytes());
+        second_queue_bytes[second_entry + 16..second_entry + 20]
+            .copy_from_slice(&dimensions.to_le_bytes());
+        second_queue_bytes[second_entry + 20..second_entry + 24]
+            .copy_from_slice(&(1u32 << 8).to_le_bytes());
+
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(queue_address, &second_queue_bytes)
+            .unwrap();
+        let second_report = system
+            .process_gsp_gx_command_queue(shared_memory_base, 0)
+            .unwrap();
+        assert_eq!(second_report.commands_consumed, 1);
+        assert_eq!(second_report.display_transfers_completed, 1);
+        assert!(second_report.error.is_none());
+
+        let mut actual_rgba8 = vec![0u8; expected_rgba8.len()];
+        system
+            .physical_memory()
+            .read(rgb8_rgba8_output, &mut actual_rgba8)
+            .unwrap();
+        assert_eq!(actual_rgba8, expected_rgba8);
+
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [GspInterruptId::Ppf],
+            "RGB8 -> RGBA8 must not enqueue an additional PPF"
+        );
     }
 
     #[test]
