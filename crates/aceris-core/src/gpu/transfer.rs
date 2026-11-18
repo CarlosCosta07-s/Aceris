@@ -20,7 +20,8 @@ pub const MAX_DISPLAY_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 
 const TILE_EDGE: usize = 8;
 const TILE_PIXELS: usize = TILE_EDGE * TILE_EDGE;
-const MIN_OUTPUT_DIMENSION: u16 = 64;
+const MIN_OUTPUT_WIDTH: u16 = 64;
+const MIN_OUTPUT_HEIGHT: u16 = 16;
 
 /// Pixel format selectors stored in the DisplayTransfer flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,7 +196,7 @@ impl fmt::Display for DisplayTransferError {
                 "DisplayTransfer dimensions {input_width}x{input_height} -> {output_width}x{output_height} are unsupported"
             ),
             Self::OutputDimensionsTooSmall { width, height } => {
-                write!(f, "DisplayTransfer output {width}x{height} is below 64x64")
+                write!(f, "DisplayTransfer tiled-to-linear output {width}x{height} is below 64x16")
             }
             Self::UnsupportedFormat(value) => {
                 write!(f, "DisplayTransfer pixel format {value} is unsupported")
@@ -203,13 +204,15 @@ impl fmt::Display for DisplayTransferError {
             Self::UnsupportedScaling(value) => {
                 write!(f, "DisplayTransfer scaling mode {value} is unsupported")
             }
-            Self::UnsupportedCropMode => f.write_str("DisplayTransfer crop mode is unsupported"),
+            Self::UnsupportedCropMode => f.write_str(
+                "DisplayTransfer output width is smaller than input width but crop mode is disabled",
+            ),
             Self::UnsupportedBlock32 => f.write_str("DisplayTransfer 32x32 blocks are unsupported"),
             Self::UnsupportedTextureCopyMode => {
                 f.write_str("TextureCopy mode is not a DisplayTransfer")
             }
             Self::UnsupportedTiledToTiledMode => {
-                f.write_str("tiled-to-tiled DisplayTransfer is unsupported")
+                f.write_str("DisplayTransfer linear-to-tiled and tiled-to-tiled flags cannot be combined")
             }
             Self::SizeOverflow => f.write_str("DisplayTransfer buffer size overflows"),
             Self::TransferTooLarge { bytes, maximum } => {
@@ -241,12 +244,13 @@ pub fn display_transfer_buffer_sizes(
     let source_format = DisplayTransferFormat::from_bits((request.flags >> 8) & 7)?;
     let destination_format = DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
     let linear_to_tiled = request.flags & DISPLAY_TRANSFER_LINEAR_TO_TILED != 0;
+    let tiled_to_tiled = request.flags & DISPLAY_TRANSFER_TILED_TO_TILED != 0;
     let source_layout = if linear_to_tiled {
         DisplayTransferLayout::Linear
     } else {
         DisplayTransferLayout::Tiled8x8Morton
     };
-    let destination_layout = if linear_to_tiled {
+    let destination_layout = if linear_to_tiled || tiled_to_tiled {
         DisplayTransferLayout::Tiled8x8Morton
     } else {
         DisplayTransferLayout::Linear
@@ -297,20 +301,24 @@ pub fn execute_display_transfer(
     let source_format = DisplayTransferFormat::from_bits((request.flags >> 8) & 7)?;
     let destination_format = DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
     let linear_to_tiled = request.flags & DISPLAY_TRANSFER_LINEAR_TO_TILED != 0;
+    let tiled_to_tiled = request.flags & DISPLAY_TRANSFER_TILED_TO_TILED != 0;
     let source_layout = if linear_to_tiled {
         DisplayTransferLayout::Linear
     } else {
         DisplayTransferLayout::Tiled8x8Morton
     };
-    let destination_layout = if linear_to_tiled {
+    let destination_layout = if linear_to_tiled || tiled_to_tiled {
         DisplayTransferLayout::Tiled8x8Morton
     } else {
         DisplayTransferLayout::Linear
     };
     let vertical_flip = request.flags & DISPLAY_TRANSFER_FLIP_VERTICAL != 0;
-    let width = usize::from(request.input_width);
-    let height = usize::from(request.input_height);
-    let tiles_x = tile_count(width)?;
+    let input_width = usize::from(request.input_width);
+    let input_height = usize::from(request.input_height);
+    let output_width = usize::from(request.output_width);
+    let output_height = usize::from(request.output_height);
+    let source_tiles_x = tile_count(input_width)?;
+    let destination_tiles_x = tile_count(output_width)?;
 
     let mut source = Vec::new();
     source
@@ -327,11 +335,29 @@ pub fn execute_display_transfer(
 
     let source_bpp = source_format.bytes_per_pixel();
     let destination_bpp = destination_format.bytes_per_pixel();
-    for y in 0..height {
-        let source_y = if vertical_flip { height - 1 - y } else { y };
-        for x in 0..width {
-            let src = pixel_offset(x, source_y, width, tiles_x, source_bpp, source_layout)?;
-            let dst = pixel_offset(x, y, width, tiles_x, destination_bpp, destination_layout)?;
+    for y in 0..output_height {
+        let source_y = if vertical_flip {
+            input_height - 1 - y
+        } else {
+            y
+        };
+        for x in 0..output_width {
+            let src = pixel_offset(
+                x,
+                source_y,
+                input_width,
+                source_tiles_x,
+                source_bpp,
+                source_layout,
+            )?;
+            let dst = pixel_offset(
+                x,
+                y,
+                output_width,
+                destination_tiles_x,
+                destination_bpp,
+                destination_layout,
+            )?;
             let rgba = source_format.decode(&source[src..src + source_bpp]);
             destination_format.encode(rgba, &mut output[dst..dst + destination_bpp]);
         }
@@ -346,7 +372,7 @@ pub fn execute_display_transfer(
         source_layout,
         destination_layout,
         vertical_flip,
-        pixels_transferred: (width * height) as u64,
+        pixels_transferred: (output_width * output_height) as u64,
         bytes_read: source_bytes as u64,
         bytes_written: destination_bytes as u64,
     })
@@ -355,8 +381,10 @@ pub fn execute_display_transfer(
 fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransferError> {
     if request.input_width == 0
         || request.input_height == 0
-        || request.input_width != request.output_width
-        || request.input_height != request.output_height
+        || request.output_width == 0
+        || request.output_height == 0
+        || request.output_width > request.input_width
+        || request.output_height > request.input_height
     {
         return Err(DisplayTransferError::InvalidDimensions {
             input_width: request.input_width,
@@ -365,20 +393,19 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
             output_height: request.output_height,
         });
     }
-    if request.output_width < MIN_OUTPUT_DIMENSION || request.output_height < MIN_OUTPUT_DIMENSION {
-        return Err(DisplayTransferError::OutputDimensionsTooSmall {
-            width: request.output_width,
-            height: request.output_height,
-        });
-    }
-    if request.flags & DISPLAY_TRANSFER_CROP != 0 {
-        return Err(DisplayTransferError::UnsupportedCropMode);
+
+    let linear_to_tiled = request.flags & DISPLAY_TRANSFER_LINEAR_TO_TILED != 0;
+    let tiled_to_tiled = request.flags & DISPLAY_TRANSFER_TILED_TO_TILED != 0;
+    if linear_to_tiled && tiled_to_tiled {
+        return Err(DisplayTransferError::UnsupportedTiledToTiledMode);
     }
     if request.flags & DISPLAY_TRANSFER_TEXTURE_COPY != 0 {
         return Err(DisplayTransferError::UnsupportedTextureCopyMode);
     }
-    if request.flags & DISPLAY_TRANSFER_TILED_TO_TILED != 0 {
-        return Err(DisplayTransferError::UnsupportedTiledToTiledMode);
+    if request.output_width < request.input_width
+        && request.flags & DISPLAY_TRANSFER_CROP == 0
+    {
+        return Err(DisplayTransferError::UnsupportedCropMode);
     }
     if request.flags & DISPLAY_TRANSFER_BLOCKS_32X32 != 0 {
         return Err(DisplayTransferError::UnsupportedBlock32);
@@ -386,6 +413,20 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
     let scale = (request.flags >> 24) & 3;
     if scale != 0 {
         return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
+    }
+
+    // The documented 64x16 minimum applies to the common tiled-to-linear
+    // path. Tiled-to-tiled and linear-to-tiled transfers use their own
+    // address layouts and are not constrained by this output rule.
+    if !linear_to_tiled
+        && !tiled_to_tiled
+        && (request.output_width < MIN_OUTPUT_WIDTH
+            || request.output_height < MIN_OUTPUT_HEIGHT)
+    {
+        return Err(DisplayTransferError::OutputDimensionsTooSmall {
+            width: request.output_width,
+            height: request.output_height,
+        });
     }
     Ok(())
 }
@@ -575,10 +616,9 @@ mod tests {
         memory.write(DESTINATION, &sentinel).unwrap();
         for flags in [
             DISPLAY_TRANSFER_BLOCKS_32X32,
-            DISPLAY_TRANSFER_TILED_TO_TILED,
             DISPLAY_TRANSFER_TEXTURE_COPY,
-            DISPLAY_TRANSFER_CROP,
             1 << 24,
+            DISPLAY_TRANSFER_LINEAR_TO_TILED | DISPLAY_TRANSFER_TILED_TO_TILED,
         ] {
             assert!(
                 execute_display_transfer(&mut memory, request(SOURCE, DESTINATION, flags)).is_err()
@@ -587,6 +627,84 @@ mod tests {
             memory.read(DESTINATION, &mut actual).unwrap();
             assert_eq!(actual, sentinel);
         }
+    }
+
+    #[test]
+    fn tiled_to_tiled_transfer_preserves_the_tiled_pixel_order() {
+        let mut memory = GpuPhysicalMemory::new();
+        let _ = make_tiled(&mut memory);
+        let byte_count = storage_size(
+            usize::from(WIDTH),
+            usize::from(HEIGHT),
+            DisplayTransferFormat::Rgba8,
+            DisplayTransferLayout::Tiled8x8Morton,
+        )
+        .unwrap();
+        let mut expected = vec![0; byte_count];
+        memory.read(DESTINATION, &mut expected).unwrap();
+
+        let report = execute_display_transfer(
+            &mut memory,
+            request(
+                DESTINATION,
+                SOURCE,
+                DISPLAY_TRANSFER_TILED_TO_TILED,
+            ),
+        )
+        .unwrap();
+
+        let mut actual = vec![0; byte_count];
+        memory.read(SOURCE, &mut actual).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(report.source_layout, DisplayTransferLayout::Tiled8x8Morton);
+        assert_eq!(report.destination_layout, DisplayTransferLayout::Tiled8x8Morton);
+        assert_eq!(report.pixels_transferred, 4096);
+    }
+
+    #[test]
+    fn tiled_to_linear_crop_copies_the_requested_top_left_rectangle() {
+        let mut memory = GpuPhysicalMemory::new();
+        let expected = make_tiled(&mut memory);
+        let mut cropped = request(DESTINATION, SOURCE, DISPLAY_TRANSFER_CROP);
+        cropped.output_width = 48;
+        cropped.output_height = 32;
+
+        let report = execute_display_transfer(&mut memory, cropped).unwrap();
+        let mut actual = vec![0; 48 * 32 * 4];
+        memory.read(SOURCE, &mut actual).unwrap();
+
+        for y in 0..32usize {
+            let expected_start = y * usize::from(WIDTH) * 4;
+            let actual_start = y * 48 * 4;
+            assert_eq!(
+                &actual[actual_start..actual_start + 48 * 4],
+                &expected[expected_start..expected_start + 48 * 4],
+            );
+        }
+        assert_eq!(report.width, 48);
+        assert_eq!(report.height, 32);
+        assert_eq!(report.pixels_transferred, 48 * 32);
+        assert_eq!(report.bytes_read, 64 * 64 * 4);
+        assert_eq!(report.bytes_written, 48 * 32 * 4);
+    }
+
+    #[test]
+    fn horizontal_crop_requires_the_guest_crop_flag() {
+        let mut memory = GpuPhysicalMemory::new();
+        let _ = make_tiled(&mut memory);
+        let mut cropped = request(DESTINATION, SOURCE, 0);
+        cropped.output_width = 48;
+        cropped.output_height = 32;
+
+        let sentinel = [0xA5; 32];
+        memory.write(SOURCE, &sentinel).unwrap();
+        assert_eq!(
+            execute_display_transfer(&mut memory, cropped),
+            Err(DisplayTransferError::UnsupportedCropMode)
+        );
+        let mut actual = [0; 32];
+        memory.read(SOURCE, &mut actual).unwrap();
+        assert_eq!(actual, sentinel);
     }
 
     #[test]
@@ -606,16 +724,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_output_below_documented_dimension_minimum() {
+    fn rejects_tiled_to_linear_output_below_documented_dimension_minimum() {
         let mut bad = request(SOURCE, DESTINATION, 0);
-        bad.output_width = 32;
+        bad.output_width = 48;
         assert_eq!(
             display_transfer_buffer_sizes(bad),
-            Err(DisplayTransferError::InvalidDimensions {
-                input_width: 64,
-                input_height: 64,
-                output_width: 32,
-                output_height: 64,
+            Err(DisplayTransferError::OutputDimensionsTooSmall {
+                width: 48,
+                height: 64,
             })
         );
     }
