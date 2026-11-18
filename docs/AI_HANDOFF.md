@@ -1941,3 +1941,9 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Testes unitários: matriz 5×5 completa e preservação do comportamento linear→tiled. A próxima etapa deve adicionar um teste de integração pela GX queue que observe a ausência de evento PPF para par sem interrupção e confirme que os bytes de destino/contador de conclusão ainda mudam conforme o comportamento descrito.
 - Referência: seção 13 de `docs/INDEPENDENT_RESEARCH.md`, 3dbrew GPU/External Registers (tabela PPF) e Mikage GPU/External Registers (flags de modo). Ambas são fontes comunitárias não oficiais; falta confirmação em hardware.
 - O commit `d8e26d5` corrigiu somente formatação no teste HILO8 de `texture.rs`, com autorização explícita do mantenedor. A execução CI anterior para `20d4a8c` ainda mostrava o estilo antigo porque rodou sobre snapshot anterior ao commit `d8e26d5`; a workflow do HEAD mais recente deve ser consultada antes de declarar fmt/build/test/Clippy aprovados.
+## Integração GSP — ausência de PPF para RGB8→RGBA8 (18/11/2026)
+
+- Commit `ecd74977b6512500fa999d957507b77f5e2eb119` amplia o teste `gsp_gx_display_transfer_executes_tiled_to_linear_and_reports_completion` em `system.rs`.
+- Depois do primeiro comando RGBA8→RGBA8 (que gera um PPF), o teste prepara uma imagem tiled RGB8 e envia um segundo DisplayTransfer RGB8→RGBA8 pela GX queue real.
+- Confirma bytes convertidos corretos no destino e `display_transfers_completed == 1` para a segunda execução; confirma que a relay queue continua contendo exatamente o PPF original, sem um segundo evento.
+- A CI deste HEAD precisa confirmar Rustfmt, build, Clippy e testes. Nenhum destes resultados deve ser inferido dos commits anteriores.
