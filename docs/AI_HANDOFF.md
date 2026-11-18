@@ -1947,3 +1947,14 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Depois do primeiro comando RGBA8→RGBA8 (que gera um PPF), o teste prepara uma imagem tiled RGB8 e envia um segundo DisplayTransfer RGB8→RGBA8 pela GX queue real.
 - Confirma bytes convertidos corretos no destino e `display_transfers_completed == 1` para a segunda execução; confirma que a relay queue continua contendo exatamente o PPF original, sem um segundo evento.
 - A CI deste HEAD precisa confirmar Rustfmt, build, Clippy e testes. Nenhum destes resultados deve ser inferido dos commits anteriores.
+
+## GSP DisplayTransfer — box-filter tiled→tiled 2×2 (18/11/2026)
+
+- Commits: `87115ae40676b0fba0189b6703fa2944d2e5f4f9` implementa 2×2; `7e3bec83089b810270ee3427da969e8be0bed549` adiciona guards de dimensões/alinhamento e estende a tabela PPF ao modo tiled→tiled; `f050e3e3b5181076b4cfee67db525dc15eea84ef` corrige as dimensões do teste de rejeição; `046c1b98cefca0d9116dd752fee706e1c23ae1f2` aplica Rustfmt; `a7aac9a9ef62239e1fa186d490754c2cd6951d2f` ajusta o acumulador para iteradores.
+- Com bit 5, o código exige escala 2×2, largura/altura de entrada duas vezes as de saída, saída mínima 64×32 e alinhamento da linha 64 bytes em RGB8/RGBA8 ou 128 bytes nos demais formatos.
+- O loop lê quatro pixels de fonte por pixel de destino, aplica flip às linhas de amostra antes da média, acumula RGBA em u16 e divide por quatro, converte para o formato de destino e grava em tiled 8×8. A política de staging continua em vigor.
+- Teste positivo: `tiled_to_tiled_2x2_box_filter_generates_a_half_size_mipmap`, entrada 128×64 e saída 64×32. Cada footprint 2×2 recebe cor uniforme para testar o mapeamento sem depender do arredondamento.
+- Guard tests: rejeição sem escala 2×2, dimensão de entrada/saída incompatível e alinhamento da largura RGB8. A tabela PPF 5×5 passou a verificar também bit 5.
+- Evidência: seção 14 de `docs/INDEPENDENT_RESEARCH.md`; 3dbrew descreve o modo como 2×2, as restrições 64×32 e os alinhamentos por formato. Mikage descreve os bits de escala. Nenhuma dessas fontes substitui comparação em hardware físico.
+- O filtro usa média inteira truncada (soma/4). O hardware pode arredondar de modo diferente; precisão e arredondamento ainda não foram comparados fisicamente. O requisito entrada = 2× saída é a interpretação adotada e coberta por teste sintético, ainda sem captura de hardware.
+- A CI do commit `1f47fc156e72f8f791956ff43afa4bc8bd42a3cb` passou integralmente em Linux e Windows (fmt, build, Clippy, testes, benchmark) e em Android ARM64 (library + benchmark); macOS estava em fila na última consulta. A CI da implementação 2×2 ainda deve ser consultada após a correção de formatação `046c1b98` e o commit de estilo `a7aac9a9`. O ambiente de edição não possui cargo/rustc local.
