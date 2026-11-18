@@ -153,10 +153,9 @@ pub use texture_copy::{
 };
 pub use transfer::{
     DISPLAY_TRANSFER_BLOCKS_32X32, DISPLAY_TRANSFER_CROP, DISPLAY_TRANSFER_FLIP_VERTICAL,
-    DISPLAY_TRANSFER_LINEAR_TO_TILED, DISPLAY_TRANSFER_TEXTURE_COPY,
-    DISPLAY_TRANSFER_TILED_TO_TILED, DISPLAY_TRANSFER_SCALE_X, DISPLAY_TRANSFER_SCALE_XY,
-    DisplayTransferError, DisplayTransferFormat,
-    DisplayTransferLayout, DisplayTransferReport, DisplayTransferRequest,
+    DISPLAY_TRANSFER_LINEAR_TO_TILED, DISPLAY_TRANSFER_SCALE_X, DISPLAY_TRANSFER_SCALE_XY,
+    DISPLAY_TRANSFER_TEXTURE_COPY, DISPLAY_TRANSFER_TILED_TO_TILED, DisplayTransferError,
+    DisplayTransferFormat, DisplayTransferLayout, DisplayTransferReport, DisplayTransferRequest,
     MAX_DISPLAY_TRANSFER_BYTES, display_transfer_buffer_sizes, display_transfer_signals_ppf,
     execute_display_transfer,
 };
