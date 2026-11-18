@@ -550,8 +550,7 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
     }
 
     let block32 = request.flags & DISPLAY_TRANSFER_BLOCKS_32X32 != 0;
-    let (effective_output_width, effective_output_height) =
-        effective_output_dimensions(request)?;
+    let (effective_output_width, effective_output_height) = effective_output_dimensions(request)?;
     if block32 && (effective_output_width % 32 != 0 || effective_output_height % 32 != 0) {
         return Err(DisplayTransferError::Block32DimensionsNotAligned {
             width: effective_output_width as u16,
@@ -689,7 +688,10 @@ fn layout_tile_edge(layout: DisplayTransferLayout) -> usize {
     }
 }
 
-fn tile_count(dimension: usize, layout: DisplayTransferLayout) -> Result<usize, DisplayTransferError> {
+fn tile_count(
+    dimension: usize,
+    layout: DisplayTransferLayout,
+) -> Result<usize, DisplayTransferError> {
     let tile_edge = layout_tile_edge(layout);
     if layout == DisplayTransferLayout::Linear {
         return Ok(1);
@@ -864,8 +866,11 @@ mod tests {
         memory.write(SOURCE, &expected).unwrap();
 
         let block32 = DISPLAY_TRANSFER_BLOCKS_32X32;
-        let mut linear_to_tiled =
-            request(SOURCE, DESTINATION, block32 | DISPLAY_TRANSFER_LINEAR_TO_TILED);
+        let mut linear_to_tiled = request(
+            SOURCE,
+            DESTINATION,
+            block32 | DISPLAY_TRANSFER_LINEAR_TO_TILED,
+        );
         linear_to_tiled.input_width = 64;
         linear_to_tiled.input_height = 64;
         linear_to_tiled.output_width = 64;
@@ -892,13 +897,20 @@ mod tests {
             linear_report.source_layout,
             DisplayTransferLayout::Tiled32x32Morton
         );
-        assert_eq!(linear_report.destination_layout, DisplayTransferLayout::Linear);
+        assert_eq!(
+            linear_report.destination_layout,
+            DisplayTransferLayout::Linear
+        );
         assert_eq!(linear_report.bytes_read, (64 * 64 * 4) as u64);
     }
 
     #[test]
     fn block32_mode_requires_effective_output_dimensions_aligned_to_32() {
-        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_BLOCKS_32X32 | DISPLAY_TRANSFER_CROP);
+        let mut bad = request(
+            SOURCE,
+            DESTINATION,
+            DISPLAY_TRANSFER_BLOCKS_32X32 | DISPLAY_TRANSFER_CROP,
+        );
         bad.input_width = 96;
         bad.input_height = 64;
         bad.output_width = 64;
