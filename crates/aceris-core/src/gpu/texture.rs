@@ -1041,6 +1041,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn samples_hilo8_bilinearly_in_red_and_green_channels() {
+        let mut memory = GpuPhysicalMemory::new();
+
+        for y in 0..8 {
+            for x in 0..8 {
+                let morton = morton_index(x, y);
+                let hi = (x * 30 + y * 40) as u8;
+                let lo = (x * 20 + y * 60) as u8;
+                memory
+                    .write(VRAM_BASE + (morton * 2) as u32, &[hi, lo])
+                    .unwrap();
+            }
+        }
+
+        let mut unit = sample_unit(PicaTextureFormat::HiLo8);
+        unit.magnification_filter = PicaTextureFilter::Linear;
+
+        // At (4/8, 1/8), four neighboring texels contribute equally.
+        let sampled = unit.sample(&memory, 4.0 / 8.0, 1.0 / 8.0, false).unwrap();
+        assert!((sampled[0] - 125.0 / 255.0).abs() < 1.0e-6);
+        assert!((sampled[1] - 100.0 / 255.0).abs() < 1.0e-6);
+        assert_eq!(&sampled[2..], &[0.0, 1.0]);
+    }
+
+    #[test]
+    fn hilo8_supports_linear_mipmap_blending_for_both_channels() {
+        let mut memory = GpuPhysicalMemory::new();
+        // 16x16 level zero occupies four 8x8 Morton tiles (256 texels).
+        memory
+            .write(VRAM_BASE, &vec![20, 40].repeat(256))
+            .unwrap();
+        // The contiguous 8x8 mip level follows level zero.
+        memory
+            .write(VRAM_BASE + 512, &vec![100, 200].repeat(64))
+            .unwrap();
+
+        let mut unit = sample_unit(PicaTextureFormat::HiLo8);
+        unit.width = 16;
+        unit.height = 16;
+        unit.max_level = 1;
+        unit.mipmap_filter_linear = true;
+
+        let sampled = unit.sample_lod(&memory, 0.5, 0.5, 0.5).unwrap();
+        assert!((sampled[0] - 60.0 / 255.0).abs() < 1.0e-6);
+        assert!((sampled[1] - 120.0 / 255.0).abs() < 1.0e-6);
+        assert_eq!(&sampled[2..], &[0.0, 1.0]);
+    }
+
     fn mip_unit(max_level: u8) -> PicaTextureUnit {
         let mut unit = sample_unit(PicaTextureFormat::Intensity8);
         unit.width = 16;
