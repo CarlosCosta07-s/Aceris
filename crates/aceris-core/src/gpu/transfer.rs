@@ -402,9 +402,7 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
     if request.flags & DISPLAY_TRANSFER_TEXTURE_COPY != 0 {
         return Err(DisplayTransferError::UnsupportedTextureCopyMode);
     }
-    if request.output_width < request.input_width
-        && request.flags & DISPLAY_TRANSFER_CROP == 0
-    {
+    if request.output_width < request.input_width && request.flags & DISPLAY_TRANSFER_CROP == 0 {
         return Err(DisplayTransferError::UnsupportedCropMode);
     }
     if request.flags & DISPLAY_TRANSFER_BLOCKS_32X32 != 0 {
@@ -420,8 +418,7 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
     // address layouts and are not constrained by this output rule.
     if !linear_to_tiled
         && !tiled_to_tiled
-        && (request.output_width < MIN_OUTPUT_WIDTH
-            || request.output_height < MIN_OUTPUT_HEIGHT)
+        && (request.output_width < MIN_OUTPUT_WIDTH || request.output_height < MIN_OUTPUT_HEIGHT)
     {
         return Err(DisplayTransferError::OutputDimensionsTooSmall {
             width: request.output_width,
@@ -527,8 +524,7 @@ mod tests {
         for y in 0..height {
             for x in 0..width {
                 let offset = (y * width + x) * 4;
-                bytes[offset..offset + 4]
-                    .copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
+                bytes[offset..offset + 4].copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
             }
         }
         bytes
@@ -659,11 +655,7 @@ mod tests {
 
         let report = execute_display_transfer(
             &mut memory,
-            request(
-                DESTINATION,
-                SOURCE,
-                DISPLAY_TRANSFER_TILED_TO_TILED,
-            ),
+            request(DESTINATION, SOURCE, DISPLAY_TRANSFER_TILED_TO_TILED),
         )
         .unwrap();
 
@@ -671,7 +663,10 @@ mod tests {
         memory.read(SOURCE, &mut actual).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(report.source_layout, DisplayTransferLayout::Tiled8x8Morton);
-        assert_eq!(report.destination_layout, DisplayTransferLayout::Tiled8x8Morton);
+        assert_eq!(
+            report.destination_layout,
+            DisplayTransferLayout::Tiled8x8Morton
+        );
         assert_eq!(report.pixels_transferred, 4096);
     }
 
@@ -701,9 +696,15 @@ mod tests {
         }
         assert_eq!(report.width, output_width as u16);
         assert_eq!(report.height, output_height as u16);
-        assert_eq!(report.pixels_transferred, (output_width * output_height) as u64);
+        assert_eq!(
+            report.pixels_transferred,
+            (output_width * output_height) as u64
+        );
         assert_eq!(report.bytes_read, (input_width * 64 * 4) as u64);
-        assert_eq!(report.bytes_written, (output_width * output_height * 4) as u64);
+        assert_eq!(
+            report.bytes_written,
+            (output_width * output_height * 4) as u64
+        );
     }
 
     #[test]
