@@ -1224,7 +1224,7 @@ mod tests {
         gpu.write_register(REG_FOG_LUT_INDEX, 126).unwrap();
         gpu.execute_command_list(&[
             0x0011_2233,
-            command(REG_FOG_LUT_DATA0, 0xF, true, 2),
+            command(REG_FOG_LUT_DATA0, 0xF, true, 3),
             0x0044_5566,
             0x0077_8899,
             0x00AA_BBCC,
