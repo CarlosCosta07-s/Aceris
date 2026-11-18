@@ -32,19 +32,19 @@ pub const fn display_transfer_signals_ppf(
         return true;
     }
 
-    match (source_format, destination_format) {
-        (DisplayTransferFormat::Rgba8, _) => true,
-        (DisplayTransferFormat::Rgb8, DisplayTransferFormat::Rgb8) => true,
-        (
-            DisplayTransferFormat::Rgb565
-            | DisplayTransferFormat::Rgb5A1
-            | DisplayTransferFormat::Rgba4,
-            DisplayTransferFormat::Rgb565
-            | DisplayTransferFormat::Rgb5A1
-            | DisplayTransferFormat::Rgba4,
-        ) => true,
-        _ => false,
-    }
+    matches!(
+        (source_format, destination_format),
+        (DisplayTransferFormat::Rgba8, _)
+            | (DisplayTransferFormat::Rgb8, DisplayTransferFormat::Rgb8)
+            | (
+                DisplayTransferFormat::Rgb565
+                    | DisplayTransferFormat::Rgb5A1
+                    | DisplayTransferFormat::Rgba4,
+                DisplayTransferFormat::Rgb565
+                    | DisplayTransferFormat::Rgb5A1
+                    | DisplayTransferFormat::Rgba4
+            )
+    )
 }
 
 const TILE_EDGE: usize = 8;
