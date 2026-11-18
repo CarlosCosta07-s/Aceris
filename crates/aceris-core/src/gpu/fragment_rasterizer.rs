@@ -592,7 +592,7 @@ impl PicaFragmentRasterizer {
                 let interpolated_depth = (0..3)
                     .map(|index| weights[index] * f64::from(vertices[index].depth))
                     .sum::<f64>() as f32;
-                let fragment_depth = match state.depth_map {
+                let fog_depth = match state.depth_map {
                     Some(map) => {
                         let scaled = interpolated_depth.mul_add(map.scale, map.offset);
                         match map.mode {
@@ -611,10 +611,12 @@ impl PicaFragmentRasterizer {
                     }
                     None => interpolated_depth.clamp(0.0, 1.0),
                 };
+                // Fog consumes the PICA depth-map result, before the physical
+                // D16/D24 target applies its storage precision.
                 let fragment_depth = state
                     .depth_format
-                    .map(|format| format.quantize_depth(fragment_depth))
-                    .unwrap_or(fragment_depth);
+                    .map(|format| format.quantize_depth(fog_depth))
+                    .unwrap_or(fog_depth);
 
                 let pixel_index = y * self.width + x;
                 let varyings = [
@@ -647,6 +649,7 @@ impl PicaFragmentRasterizer {
                             step_weights(0.0, 1.0),
                             state.minifying,
                         )
+                        .map(|color| pipeline.apply_fog(color, fog_depth))
                         .map_err(PicaFragmentRasterError::Fragment)
                 };
 

@@ -12,6 +12,73 @@ use super::{
     REG_TEXUNIT_CONFIG,
 };
 
+/// GPUREG_TEXENV_UPDATE_BUFFER: fog mode and depth-flip control.
+pub const REG_TEXENV_UPDATE_BUFFER: u16 = 0x0E0;
+/// GPUREG_FOG_COLOR: packed RGB fog color.
+pub const REG_FOG_COLOR: u16 = 0x0E1;
+/// GPUREG_FOG_LINEAR_SLOPE: signed 1.4.11 linear-fog slope.
+pub const REG_FOG_LINEAR_SLOPE: u16 = 0x0E2;
+/// GPUREG_FOG_LINEAR_OFFSET: signed 1.4.11 linear-fog offset.
+pub const REG_FOG_LINEAR_OFFSET: u16 = 0x0E3;
+
+const FOG_MODE_MASK: u32 = 0x7;
+const FOG_MODE_DISABLED: u32 = 0;
+const FOG_MODE_LINEAR: u32 = 1;
+const FOG_Z_FLIP: u32 = 1 << 16;
+
+/// Captured linear-fog state. Other PICA fog modes are rejected instead of
+/// silently rendering with missing fog.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PicaLinearFog {
+    slope: f32,
+    offset: f32,
+    color: [f32; 3],
+    z_flip: bool,
+}
+
+impl PicaLinearFog {
+    fn from_pica(pica: &Pica200) -> Result<Option<Self>, PicaFragmentPipelineError> {
+        let update = pica.register(REG_TEXENV_UPDATE_BUFFER).unwrap_or(0);
+        match update & FOG_MODE_MASK {
+            FOG_MODE_DISABLED => Ok(None),
+            FOG_MODE_LINEAR => {
+                let packed_color = pica.register(REG_FOG_COLOR).unwrap_or(0);
+                let decode_fixed = |value: u32| (value as u16 as i16) as f32 / 2048.0;
+                let slope = decode_fixed(pica.register(REG_FOG_LINEAR_SLOPE).unwrap_or(0));
+                let offset = decode_fixed(pica.register(REG_FOG_LINEAR_OFFSET).unwrap_or(0));
+                Ok(Some(Self {
+                    slope,
+                    offset,
+                    color: [
+                        (packed_color & 0xFF) as f32 / 255.0,
+                        ((packed_color >> 8) & 0xFF) as f32 / 255.0,
+                        ((packed_color >> 16) & 0xFF) as f32 / 255.0,
+                    ],
+                    z_flip: update & FOG_Z_FLIP != 0,
+                }))
+            }
+            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode {
+                mode: mode as u8,
+            }),
+        }
+    }
+
+    /// Applies the documented linear RGB blend. Alpha is passed through.
+    ///
+    /// PICA's fog factor has approximately eight bits of precision. This
+    /// software path currently evaluates the formula in f32 and does not claim
+    /// bit-exact hardware quantization.
+    fn apply(self, mut color: [f32; 4], depth: f32) -> [f32; 4] {
+        let depth = if self.z_flip { 1.0 - depth } else { depth };
+        let factor = self.slope.mul_add(depth, self.offset).clamp(0.0, 1.0);
+        for channel in 0..3 {
+            color[channel] =
+                factor.mul_add(color[channel], (1.0 - factor) * self.color[channel]);
+        }
+        color
+    }
+}
+
 /// Perspective-correct attributes at one fragment sample.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaFragmentVaryings {
@@ -202,6 +269,7 @@ pub struct PicaFragmentPipeline {
     texture_environment: PicaTextureEnvironment,
     texture_units: [PicaTextureUnit; 3],
     output_state: PicaFragmentOutputState,
+    linear_fog: Option<PicaLinearFog>,
     /// Unit 2 can read either oTexCoord2 or oTexCoord1.
     texture2_coordinate_index: usize,
 }
@@ -213,6 +281,8 @@ impl PicaFragmentPipeline {
         if config & (1 << 10) != 0 {
             return Err(PicaFragmentPipelineError::ProceduralTextureUnitUnsupported);
         }
+
+        let linear_fog = PicaLinearFog::from_pica(pica)?;
 
         Ok(Self {
             texture_environment: pica
@@ -226,6 +296,7 @@ impl PicaFragmentPipeline {
             output_state: pica
                 .fragment_output_state()
                 .map_err(PicaFragmentPipelineError::Output)?,
+            linear_fog,
             texture2_coordinate_index: if config & (1 << 13) != 0 { 1 } else { 2 },
         })
     }
@@ -390,6 +461,14 @@ impl PicaFragmentPipeline {
         self.shade_triangle_sample(memory, vertices, barycentric, minifying)
     }
 
+    /// Applies the draw's captured fog state after TEV and before fragment output.
+    pub(super) fn apply_fog(&self, color: [f32; 4], depth: f32) -> [f32; 4] {
+        match self.linear_fog {
+            Some(fog) => fog.apply(color, depth),
+            None => color,
+        }
+    }
+
     /// Returns whether this draw has alpha testing enabled.
     pub const fn alpha_test_enabled(&self) -> bool {
         self.output_state.alpha_test_enabled
@@ -470,6 +549,7 @@ pub enum PicaFragmentPipelineError {
     Tev(PicaTevError),
     Output(PicaFragmentOutputError),
     ProceduralTextureUnitUnsupported,
+    UnsupportedFogMode { mode: u8 },
     NonFiniteColor {
         attribute: &'static str,
         channel: usize,
@@ -487,6 +567,10 @@ impl std::fmt::Display for PicaFragmentPipelineError {
             Self::ProceduralTextureUnitUnsupported => {
                 formatter.write_str("PICA procedural texture unit 3 is not implemented")
             }
+            Self::UnsupportedFogMode { mode } => write!(
+                formatter,
+                "PICA fog mode {mode} is not implemented (only disabled and linear fog are supported)"
+            ),
             Self::NonFiniteColor { attribute, channel } => write!(
                 formatter,
                 "PICA fragment {attribute} channel {channel} is not finite"
@@ -575,7 +659,9 @@ mod tests {
     use crate::gpu::PicaShadedVertex;
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
-        PicaTevSource, REG_BLEND_FUNC, REG_COLOR_OPERATION, TEXENV_STAGE_SOURCE_REGISTERS,
+        PicaTevSource, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_FOG_COLOR,
+        REG_FOG_LINEAR_OFFSET, REG_FOG_LINEAR_SLOPE, REG_TEXENV_UPDATE_BUFFER,
+        TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn configure_texture(pica: &mut Pica200, unit: usize, address: u32, width: u16, height: u16) {
@@ -700,6 +786,54 @@ mod tests {
             pipeline.apply_fragment_output([1.0, 0.0, 0.0, 0.5], [0.0, 0.0, 1.0, 1.0],),
             Ok([128, 0, 128, 128])
         );
+    }
+
+    #[test]
+    fn linear_fog_uses_signed_fixed_point_depth_blend_and_preserves_alpha() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_TEXENV_UPDATE_BUFFER, 1).unwrap();
+        pica.write_register(REG_FOG_COLOR, 0x00FF_8040).unwrap();
+        pica.write_register(REG_FOG_LINEAR_SLOPE, 2048).unwrap();
+        pica.write_register(REG_FOG_LINEAR_OFFSET, 0).unwrap();
+
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let color = pipeline.apply_fog([1.0, 0.5, 0.0, 0.25], 0.25);
+        assert!((color[0] - (0.25 + (64.0 / 255.0) * 0.75)).abs() < 1.0e-6);
+        assert!((color[1] - (0.5 * 0.25 + (128.0 / 255.0) * 0.75)).abs() < 1.0e-6);
+        assert!((color[2] - 0.75).abs() < 1.0e-6);
+        assert_eq!(color[3], 0.25);
+    }
+
+    #[test]
+    fn linear_fog_applies_z_flip_and_clamps_its_factor() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_TEXENV_UPDATE_BUFFER, 1 | (1 << 16))
+            .unwrap();
+        pica.write_register(REG_FOG_COLOR, 0).unwrap();
+        pica.write_register(REG_FOG_LINEAR_SLOPE, 4096).unwrap();
+        pica.write_register(REG_FOG_LINEAR_OFFSET, 0).unwrap();
+
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let flipped = pipeline.apply_fog([1.0, 0.5, 0.25, 1.0], 0.25);
+        assert!((flipped[0] - 0.75).abs() < 1.0e-6);
+        assert!((flipped[1] - 0.375).abs() < 1.0e-6);
+        assert!((flipped[2] - 0.1875).abs() < 1.0e-6);
+
+        pica.write_register(REG_FOG_LINEAR_OFFSET, 0xF000).unwrap();
+        let clamped = pica.fragment_pipeline().unwrap().apply_fog([1.0; 4], 0.0);
+        assert_eq!(clamped, [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn rejects_unimplemented_lut_and_gas_fog_modes_explicitly() {
+        for mode in [5, 7] {
+            let mut pica = Pica200::new();
+            pica.write_register(REG_TEXENV_UPDATE_BUFFER, mode).unwrap();
+            assert_eq!(
+                pica.fragment_pipeline(),
+                Err(PicaFragmentPipelineError::UnsupportedFogMode { mode })
+            );
+        }
     }
 
     #[test]

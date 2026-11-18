@@ -60,6 +60,7 @@ pub use fragment_output::{
 pub use fragment_pipeline::{
     PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentInterpolationError, PicaFragmentPipeline,
     PicaFragmentPipelineError, PicaFragmentSampleError, PicaFragmentVaryings, PicaFragmentVertex,
+    REG_FOG_COLOR, REG_FOG_LINEAR_OFFSET, REG_FOG_LINEAR_SLOPE, REG_TEXENV_UPDATE_BUFFER,
 };
 pub use fragment_rasterizer::{
     PicaFragmentRasterError, PicaFragmentRasterReport, PicaFragmentRasterState,
