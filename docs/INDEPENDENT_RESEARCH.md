@@ -231,3 +231,37 @@ Quais flags selecionam o layout da entrada/saída do GX DisplayTransfer, quando 
 O trabalho publicado cobre somente blocos 8×8 e execução síncrona no backend software. O modo 32×32, o downscale por box filter, as restrições de alinhamento por formato, a matriz de conversões que produz PPF, os efeitos em combinações atípicas de dimensões e a temporização real precisam de fixtures adicionais e, quando possível, observação em hardware legítimo. A implementação não declara precisão ou compatibilidade física integral.
 
 A alteração do Aceris foi escrita independentemente em Rust. Nenhum código, teste, shader, asset ou dependência de terceiros foi copiado ou adaptado.
+
+## 13. PICA200 — DisplayTransfer e matriz de conclusão PPF (18/11/2026)
+
+### Pergunta técnica
+
+A conclusão do GX DisplayTransfer sempre sinaliza PPF? Quais combinações de formato de origem/destino documentadas produzem a interrupção no modo tiled→linear e tiled→tiled?
+
+### Referências consultadas
+
+- 3dbrew, *GPU/External Registers*: https://www.3dbrew.org/wiki/GPU/External_Registers — tabela de conversões do Transfer Engine para tiled→linear; a seção tiled→tiled declara que usa a mesma tabela. A wiki separa as combinações que geram interrupção e resultado correto das que não geram interrupção. Consulta em 18/11/2026. Fonte comunitária de engenharia reversa, não oficial.
+- Mikage, *GPU/External Registers*: https://docs.mikage.app/GPU/External_Registers/ — confirma os bits de modo e as diferenças entre tiled→linear, linear→tiled e tiled→tiled, mas a página consultada não apresenta a mesma tabela detalhada de PPF. Consulta em 18/11/2026. Fonte comunitária não oficial.
+
+### Matriz adotada (tiled→linear e tiled→tiled)
+
+Ordem das colunas: RGBA8, RGB8, RGB565, RGB5A1, RGBA4. `PPF` indica que a fonte documenta interrupção após a transferência.
+
+| Origem \ Destino | RGBA8 | RGB8 | RGB565 | RGB5A1 | RGBA4 |
+|---|---:|---:|---:|---:|---:|
+| RGBA8 | PPF | PPF | PPF | PPF | PPF |
+| RGB8 | — | PPF | — | — | — |
+| RGB565 | — | — | PPF | PPF | PPF |
+| RGB5A1 | — | — | PPF | PPF | PPF |
+| RGBA4 | — | — | PPF | PPF | PPF |
+
+### Implementação Aceris
+
+- `display_transfer_signals_ppf(flags, source_format, destination_format)` codifica a tabela como função pura e pública. Para o modo bit 1 (linear→tiled), preserva temporariamente o comportamento anterior de sinalizar PPF para todos os pares, pois a tabela consultada é descrita explicitamente para tiled→linear e tiled→tiled, não para linear→tiled.
+- `System::dispatch_gsp_display_transfer` devolve se o par exige PPF; o dispatcher GX contabiliza a transferência concluída e atualiza a metadata LCD separadamente, e só enfileira PPF quando o helper informa que a combinação dispara a interrupção.
+- Teste de tabela-verdade cobre os 25 pares para o modo tiled e um teste separado protege o comportamento atual de linear→tiled.
+- O resultado da transferência em memória continua síncrono. A condição PPF não prova latência, ordenação de barramento ou temporização real do hardware.
+
+### Limites
+
+A matriz é documentação não oficial e ainda não foi comparada com hardware físico. Linear→tiled permanece com regra conservadora e precisa de fonte/testes específicos. Também faltam testes de integração GSP que observem explicitamente a ausência de evento PPF e as combinações 32×32/downscale.
