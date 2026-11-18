@@ -1876,15 +1876,11 @@ mod tests {
             &[plain_descriptor(0b1111)],
             &[],
         );
-        let called = callc
-            .run(0, &inputs([1.0; 4], [2.0; 4]))
-            .unwrap();
+        let called = callc.run(0, &inputs([1.0; 4], [2.0; 4])).unwrap();
         assert_eq!(called.outputs[0], [1.0; 4]);
         assert_eq!(called.outputs[1], [2.0; 4]);
 
-        let skipped = callc
-            .run(0, &inputs([3.0; 4], [2.0; 4]))
-            .unwrap();
+        let skipped = callc.run(0, &inputs([3.0; 4], [2.0; 4])).unwrap();
         assert_eq!(skipped.outputs[0], [3.0; 4]);
         assert_eq!(skipped.outputs[1], [0.0; 4]);
 
@@ -1900,9 +1896,7 @@ mod tests {
             &[],
         )
         .with_special_registers(1 << 5, [[0; 4]; 4]);
-        let called = callu
-            .run(0, &inputs([4.0; 4], [8.0; 4]))
-            .unwrap();
+        let called = callu.run(0, &inputs([4.0; 4], [8.0; 4])).unwrap();
         assert_eq!(called.outputs[0], [4.0; 4]);
         assert_eq!(called.outputs[1], [8.0; 4]);
     }
@@ -1921,15 +1915,11 @@ mod tests {
             &[plain_descriptor(0b1111)],
             &[],
         );
-        let taken = jmpc
-            .run(0, &inputs([1.0; 4], [2.0; 4]))
-            .unwrap();
+        let taken = jmpc.run(0, &inputs([1.0; 4], [2.0; 4])).unwrap();
         assert_eq!(taken.outputs[0], [0.0; 4]);
         assert_eq!(taken.outputs[1], [2.0; 4]);
 
-        let not_taken = jmpc
-            .run(0, &inputs([3.0; 4], [2.0; 4]))
-            .unwrap();
+        let not_taken = jmpc.run(0, &inputs([3.0; 4], [2.0; 4])).unwrap();
         assert_eq!(not_taken.outputs[0], [3.0; 4]);
         assert_eq!(not_taken.outputs[1], [0.0; 4]);
 
@@ -1947,14 +1937,10 @@ mod tests {
             &[],
         )
         .with_special_registers(0, [[1, 0, 1, 0], [0; 4], [0; 4], [0; 4]]);
-        let broken = breakc
-            .run(0, &inputs([1.0; 4], [2.0; 4]))
-            .unwrap();
+        let broken = breakc.run(0, &inputs([1.0; 4], [2.0; 4])).unwrap();
         assert_eq!(broken.outputs[0], [0.0; 4]);
 
-        let continued = breakc
-            .run(0, &inputs([3.0; 4], [2.0; 4]))
-            .unwrap();
+        let continued = breakc.run(0, &inputs([3.0; 4], [2.0; 4])).unwrap();
         assert_eq!(continued.outputs[0], [3.0; 4]);
     }
 
