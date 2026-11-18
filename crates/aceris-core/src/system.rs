@@ -5372,7 +5372,6 @@ mod tests {
                 .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER),
             "a transfer without PPF keeps the relative DisplayTransfer busy flag"
         );
-
     }
 
     #[test]
