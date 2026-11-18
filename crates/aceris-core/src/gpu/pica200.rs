@@ -1216,6 +1216,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::gpu::REG_COLOR_OPERATION;
 
     fn command(register: u16, mask: u8, consecutive: bool, extra: u8) -> u32 {
         u32::from(register)
@@ -1458,7 +1459,8 @@ mod tests {
         gpu.write_register(REG_GAS_ACCMAX, 0x1234).unwrap();
         gpu.write_register(REG_GAS_LIGHT_XY, 0x0033_2211).unwrap();
         gpu.write_register(REG_GAS_LIGHT_Z, 0x0066_5544).unwrap();
-        gpu.write_register(REG_GAS_LIGHT_Z_COLOR, 0x100 | 0x77).unwrap();
+        gpu.write_register(REG_GAS_LIGHT_Z_COLOR, 0x100 | 0x77)
+            .unwrap();
         gpu.write_register(REG_GAS_DELTAZ_DEPTH, (2 << 24) | 0x00AB_CDEF)
             .unwrap();
 
@@ -1487,7 +1489,10 @@ mod tests {
         );
 
         gpu.write_register(REG_GAS_LIGHT_Z_COLOR, 0x33).unwrap();
-        assert_eq!(gpu.gas_state().color_lut_input, PicaGasColorLutInput::Density);
+        assert_eq!(
+            gpu.gas_state().color_lut_input,
+            PicaGasColorLutInput::Density
+        );
     }
 
     #[test]
