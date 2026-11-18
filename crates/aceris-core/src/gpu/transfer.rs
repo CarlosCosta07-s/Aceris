@@ -1036,11 +1036,7 @@ mod tests {
             })
         );
 
-        let mut odd_height = request(
-            SOURCE,
-            DESTINATION,
-            DISPLAY_TRANSFER_SCALE_XY,
-        );
+        let mut odd_height = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_SCALE_XY);
         odd_height.input_width = 128;
         odd_height.input_height = 63;
         odd_height.output_width = 128;
