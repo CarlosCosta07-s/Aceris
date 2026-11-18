@@ -926,7 +926,7 @@ mod tests {
         let mut misaligned = request(
             SOURCE,
             DESTINATION,
-            DISPLAY_TRANSFER_TILED_TO_TILED | DISPLAY_TRANSFER_CROP | (2 << 24) | (1 << 8),
+            DISPLAY_TRANSFER_TILED_TO_TILED | DISPLAY_TRANSFER_CROP | (2 << 24) | (1 << 12),
         );
         misaligned.input_width = 130;
         misaligned.input_height = 64;
