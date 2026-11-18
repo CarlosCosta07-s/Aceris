@@ -4,15 +4,14 @@ use aceris_core::gpu::{
     ClipDepthRange, FCRAM_BASE, GpuPhysicalMemory, Pica200, PicaFragmentRenderSession,
     PicaRenderSettings, PicaRenderTargetConfig, REG_ATTRIBBUFFER0_OFFSET,
     REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
-    REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_COLORBUFFER_WRITE, REG_DEPTH_COLOR_MASK,
-    REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE, REG_DRAWARRAYS,
+    REG_COLOR_OPERATION, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_COLORBUFFER_WRITE,
+    REG_DEPTH_COLOR_MASK, REG_DEPTHMAP_ENABLE, REG_DEPTHMAP_OFFSET, REG_DEPTHMAP_SCALE,
     REG_DRAWELEMENTS, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM, REG_INDEXBUFFER_CONFIG,
     REG_LOGIC_OP, REG_NUMVERTICES, REG_SH_OUTMAP_O0, REG_TEXUNIT_CONFIG,
     REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
     REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_ENTRYPOINT,
     REG_VSH_FLOATUNIFORM_DATA0, REG_VSH_FLOATUNIFORM_INDEX, REG_VSH_INPUTBUFFER_CONFIG,
     REG_VSH_OPDESCS_DATA0, REG_VSH_OPDESCS_INDEX, TEXENV_STAGE_SOURCE_REGISTERS,
-    REG_COLOR_OPERATION,
 };
 
 const VERTEX_BASE: u32 = FCRAM_BASE + 0x1000;
@@ -49,20 +48,14 @@ fn configure_vertex_stage(gpu: &mut Pica200) {
 
     gpu.write_register(REG_VSH_OPDESCS_INDEX, 0).unwrap();
     for lane in 0..4 {
-        gpu.write_register(
-            REG_VSH_OPDESCS_DATA0,
-            identity_descriptor(1 << (3 - lane)),
-        )
-        .unwrap();
+        gpu.write_register(REG_VSH_OPDESCS_DATA0, identity_descriptor(1 << (3 - lane)))
+            .unwrap();
     }
 
     gpu.write_register(REG_VSH_CODETRANSFER_INDEX, 0).unwrap();
     for uniform in 0..4 {
-        gpu.write_register(
-            REG_VSH_CODETRANSFER_DATA0,
-            dphi(uniform, uniform),
-        )
-        .unwrap();
+        gpu.write_register(REG_VSH_CODETRANSFER_DATA0, dphi(uniform, uniform))
+            .unwrap();
     }
     gpu.write_register(REG_VSH_CODETRANSFER_DATA0, 0x22 << 26)
         .unwrap();
@@ -137,15 +130,10 @@ fn draw_elements_runs_guest_vertex_shader_and_fragment_pipeline_into_tiled_targe
 
     let mut memory = GpuPhysicalMemory::new();
     // The guest's vertex loader reads three packed unsigned-byte XY pairs.
-    memory
-        .write(VERTEX_BASE, &[0, 0, 8, 0, 0, 8])
-        .unwrap();
+    memory.write(VERTEX_BASE, &[0, 0, 8, 0, 0, 8]).unwrap();
     // DRAWELEMENTS selects the order from a U16 index buffer.
     memory
-        .write(
-            VERTEX_BASE + INDEX_OFFSET,
-            &[0, 0, 1, 0, 2, 0],
-        )
+        .write(VERTEX_BASE + INDEX_OFFSET, &[0, 0, 1, 0, 2, 0])
         .unwrap();
 
     let mut session = PicaFragmentRenderSession::new(PicaRenderSettings {
@@ -153,12 +141,9 @@ fn draw_elements_runs_guest_vertex_shader_and_fragment_pipeline_into_tiled_targe
         default_color: [200, 100, 50, 255],
     });
     let (command_report, render_report) = session
-        .execute_command_list(
-            &mut gpu,
-            &DRAW_ELEMENTS_LIST,
-            &mut memory,
-            |_, _| Some(VERTEX_BASE),
-        )
+        .execute_command_list(&mut gpu, &DRAW_ELEMENTS_LIST, &mut memory, |_, _| {
+            Some(VERTEX_BASE)
+        })
         .unwrap();
 
     assert_eq!(command_report.commands, 1);
