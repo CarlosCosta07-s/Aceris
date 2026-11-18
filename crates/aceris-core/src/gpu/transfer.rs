@@ -431,15 +431,13 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
     // Tiled-to-linear writes a linear output row. The PICA transfer engine
     // requires 16-byte rows for RGB8 and 8-byte rows for the other formats.
     if !linear_to_tiled && !tiled_to_tiled {
-        let destination_format =
-            DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
+        let destination_format = DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
         let required_alignment = if destination_format == DisplayTransferFormat::Rgb8 {
             16
         } else {
             8
         };
-        let row_bytes =
-            usize::from(request.output_width) * destination_format.bytes_per_pixel();
+        let row_bytes = usize::from(request.output_width) * destination_format.bytes_per_pixel();
         if row_bytes % required_alignment != 0 {
             return Err(DisplayTransferError::MisalignedOutputRow {
                 width: request.output_width,
