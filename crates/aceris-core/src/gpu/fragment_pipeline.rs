@@ -808,7 +808,7 @@ mod tests {
         pica.write_register(REG_TEXENV_UPDATE_BUFFER, 1 | (1 << 16))
             .unwrap();
         pica.write_register(REG_FOG_COLOR, 0).unwrap();
-        pica.write_register(REG_FOG_LINEAR_SLOPE, 4096).unwrap();
+        pica.write_register(REG_FOG_LINEAR_SLOPE, 2048).unwrap();
         pica.write_register(REG_FOG_LINEAR_OFFSET, 0).unwrap();
 
         let pipeline = pica.fragment_pipeline().unwrap();
