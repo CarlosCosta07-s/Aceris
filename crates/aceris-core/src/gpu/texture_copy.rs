@@ -438,10 +438,7 @@ mod tests {
         let destination_rows = (size_bytes + destination_line - 1) / destination_line;
         let destination_storage_bytes = destination_rows * (destination_line + destination_gap);
         memory
-            .write(
-                FCRAM_BASE + 0x4000,
-                &vec![0xCC; destination_storage_bytes],
-            )
+            .write(FCRAM_BASE + 0x4000, &vec![0xCC; destination_storage_bytes])
             .unwrap();
 
         let report = execute_texture_copy(
@@ -469,8 +466,7 @@ mod tests {
                 &stream[stream_offset..stream_offset + count],
             );
             assert_eq!(
-                &actual[output_offset + count
-                    ..output_offset + destination_line + destination_gap],
+                &actual[output_offset + count..output_offset + destination_line + destination_gap],
                 vec![0xCC; destination_line + destination_gap - count].as_slice(),
                 "unused row tail and destination gap for row {row} must remain untouched"
             );
@@ -562,7 +558,8 @@ mod tests {
                 &stream[stream_offset..stream_offset + destination_line],
             );
             assert_eq!(
-                &actual[output_offset + destination_line..output_offset + destination_line + destination_gap],
+                &actual[output_offset + destination_line
+                    ..output_offset + destination_line + destination_gap],
                 &[0xCC; 16],
                 "destination gap for row {row} must remain untouched"
             );
