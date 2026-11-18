@@ -299,9 +299,9 @@ impl PicaVertexShaderProgram {
         self
     }
 
-    /// Returns one uploaded boolean constant b0-b7.
+    /// Returns one of the sixteen PICA200 boolean constants b0-b15.
     pub fn boolean_uniform(&self, index: usize) -> Option<bool> {
-        (index < 8).then(|| self.boolean_uniforms & (1 << index) != 0)
+        (index < 16).then(|| self.boolean_uniforms & (1 << index) != 0)
     }
 
     /// Returns one uploaded integer constant i0-i3 as its four guest bytes.
@@ -1887,11 +1887,13 @@ mod tests {
     }
 
     #[test]
-    fn boolean_uniform_bank_rejects_indexes_above_b7() {
+    fn boolean_uniform_bank_exposes_all_sixteen_register_bits() {
         let program = PicaVertexShaderProgram::from_words(&[END], &[], &[])
-            .with_special_registers(0xFFFF, [[0; 4]; 4]);
-        assert_eq!(program.boolean_uniform(7), Some(true));
-        assert_eq!(program.boolean_uniform(8), None);
+            .with_special_registers(0x8001, [[0; 4]; 4]);
+        assert_eq!(program.boolean_uniform(0), Some(true));
+        assert_eq!(program.boolean_uniform(7), Some(false));
+        assert_eq!(program.boolean_uniform(15), Some(true));
+        assert_eq!(program.boolean_uniform(16), None);
     }
 
     #[test]
@@ -1899,6 +1901,52 @@ mod tests {
         assert_eq!(pica_mul(f32::INFINITY, 0.0), 0.0);
         assert!(pica_mul(f32::NAN, 0.0).is_nan());
         assert_eq!(pica_mul(-0.0, 2.0).to_bits(), 0.0f32.to_bits());
+    }
+
+    #[test]
+    fn call_stack_can_unwind_multiple_frames_at_one_pc() {
+        let program = PicaVertexShaderProgram::from_words(
+            &[
+                format2(0x24, 1, 4, 0, false, false), // outer: [4, 5), return to 1
+                format1_unary(0x13, O0, V0),
+                END,
+                NOP,
+                format2(0x24, 1, 7, 0, false, false), // inner: [7, 8), return to 5
+                NOP,
+                NOP,
+                NOP,
+            ],
+            &[plain_descriptor(0b1111)],
+            &[],
+        );
+        let result = program.run(0, &inputs([12.0; 4], [0.0; 4])).unwrap();
+        assert_eq!(result.outputs[0], [12.0; 4]);
+        assert_eq!(result.executed_instructions, 5);
+    }
+
+    #[test]
+    fn loop_stack_completion_has_priority_over_a_same_instruction_jump() {
+        let program = PicaVertexShaderProgram::from_words(
+            &[
+                format3(0x29, 0, 2, 0), // one iteration, body ends at pc 2
+                NOP,
+                format3(0x2D, 0, 4, 0), // JMPU b0 -> pc 4
+                format1_unary(0x13, O0, V0), // must execute: LOOP pop outranks JMP
+                END,
+            ],
+            &[plain_descriptor(0b1111)],
+            &[],
+        )
+        .with_special_registers(1, [[0; 4]; 4]);
+        let result = program.run(0, &inputs([17.0; 4], [0.0; 4])).unwrap();
+        assert_eq!(result.outputs[0], [17.0; 4]);
+    }
+
+    #[test]
+    fn bounded_control_stack_discards_the_oldest_entry() {
+        let mut stack = vec![0, 1, 2, 3];
+        push_bounded(&mut stack, 4, CALL_STACK_LIMIT);
+        assert_eq!(stack, vec![1, 2, 3, 4]);
     }
 
     #[test]
