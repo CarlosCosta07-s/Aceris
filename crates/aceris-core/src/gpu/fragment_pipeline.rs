@@ -1,9 +1,10 @@
-//! Connects PICA200 2D texture sampling to the six-stage TEV combiner.
+//! Connects PICA200 texture sampling, the six-stage TEV combiner and fragment
+//! output state.
 //!
-//! This is a reusable per-fragment fixed-function stage. Rasterization must
-//! supply perspective-correct interpolated colors and texture coordinates.
-//! The existing reference rasterizer is intentionally left unchanged until
-//! its varying/interpolation contract is extended in a separate step.
+//! The PICA fragment rasterizer supplies perspective-correct interpolated
+//! colors/coordinates and derivative-based LOD. This pipeline evaluates texture
+//! fetch and TEV, captures linear fog state, and exposes alpha/depth-independent
+//! output operations for the rasterizer to apply in the hardware stage order.
 
 use super::{
     GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,

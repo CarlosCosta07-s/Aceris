@@ -1,15 +1,14 @@
 //! PICA200 2D texture-unit decoding and software sampling.
 //!
-//! Texture texels are stored in 8x8 tiles, with Morton/Z-order inside each
-//! tile. This module implements the documented uncompressed formats and the
-//! nearest/bilinear sampling modes. ETC1/ETC1A4, HILO8, packed 4-bit formats,
-//! cube maps, projection/shadow textures and mip-level selection remain
+//! Supported storage includes RGBA8/RGB8, packed 16-bit color, intensity and
+//! alpha formats, I4/A4, ETC1 and ETC1A4. Texels use 8x8 Morton tiles; the
+//! sampler supports wrap modes, nearest/bilinear filtering and mip-level
+//! selection/blending. HILO8, cube maps and projection/shadow sampling remain
 //! explicit unsupported cases; they are never silently decoded as another
 //! format.
 //!
-//! The sampler is deliberately independent of rasterization. The fragment
-//! stage can consume its RGBA output once interpolated texture coordinates are
-//! available in the fragment pipeline.
+//! The fragment pipeline consumes perspective-correct interpolated coordinates
+//! and screen-derivative LOD values to connect texture sampling to TEV.
 
 use super::physical_memory::{GpuPhysicalMemory, GpuPhysicalMemoryError};
 use super::pica200::Pica200;

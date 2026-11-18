@@ -1,16 +1,15 @@
-//! Independent PICA200 fragment rasterizer.
+//! Independent PICA200 software fragment rasterizer.
 //!
-//! This sidecar consumes the existing guest-authored vertex-shader draw and
-//! output-map results, clips their varyings in the PICA clip volume, rasterizes
-//! pixel centers with a top-left rule, shades each covered sample through the
-//! texture/TEV/blend stages, and writes the final color target using the
-//! existing PICA Morton render-target codec.
+//! This path consumes the guest vertex-shader draw and output-map results,
+//! clips varyings in the PICA clip volume, rasterizes pixel centers with a
+//! top-left rule, and shades perspective-correct color/texture varyings.
+//! Covered samples pass through texture sampling, TEV, linear fog, alpha,
+//! depth/stencil tests and operations, blending/logic ops, and channel masks;
+//! color and depth/stencil results are written through the PICA surface codecs.
 //!
-//! It deliberately does not modify or replace the existing generic
-//! GeometryPipeline or SoftwareRasterizer. Depth is currently kept in a
-//! software buffer for this render invocation; the PICA depth-buffer memory
-//! path, alpha test, stencil, per-channel write masks, LOD derivatives and
-//! multisample coverage remain separate work.
+//! It remains separate from the generic GeometryPipeline and SoftwareRasterizer.
+//! Multisample coverage, exact hardware fixed-point/rounding behavior and
+//! independent validation against a physical PICA200 remain outstanding.
 
 use super::{
     DepthFunction, GpuPhysicalMemory, Matrix4, PicaColorBufferFormat, PicaCullMode,

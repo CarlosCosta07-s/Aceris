@@ -5,8 +5,9 @@
 //! normalized depth; D24 stores a 24-bit normalized value; D24S8 stores the
 //! same low 24 depth bits followed by one stencil byte.
 //!
-//! This module only models storage and access permissions. Stencil comparison
-//! and stencil operations remain in the fragment tests/pipeline work.
+//! This module models physical storage and register-controlled read/write
+//! permissions. The PICA fragment rasterizer evaluates stencil comparisons
+//! and stencil operations using the state captured for each draw.
 
 use super::physical_memory::{GpuPhysicalMemory, GpuPhysicalMemoryError};
 use super::pica200::{
