@@ -7630,7 +7630,7 @@ mod tests {
             .unwrap();
         system
             .physical_memory_mut()
-            .write(destination_physical, &[0xCC; 192])
+            .write(destination_physical, &[0xCC; 384])
             .unwrap();
 
         let (shared_memory_base, event_handle) = {
@@ -7660,7 +7660,7 @@ mod tests {
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination_physical.to_le_bytes());
         queue_bytes[entry + 12..entry + 16].copy_from_slice(&192u32.to_le_bytes());
         queue_bytes[entry + 16..entry + 20].copy_from_slice(&0x0001_0002u32.to_le_bytes());
-        queue_bytes[entry + 20..entry + 24].copy_from_slice(&0x0000_0002u32.to_le_bytes());
+        queue_bytes[entry + 20..entry + 24].copy_from_slice(&0x0001_0001u32.to_le_bytes());
         queue_bytes[entry + 24..entry + 28].copy_from_slice(&0x0Cu32.to_le_bytes());
 
         let mut queue = GspGxCommandQueue::parse(&queue_bytes).unwrap();
@@ -7671,17 +7671,24 @@ mod tests {
         assert!(report.halted);
         assert!(report.error.is_none());
 
-        let mut actual = [0u8; 192];
+        let mut actual = [0u8; 384];
         system
             .physical_memory()
             .read(destination_physical, &mut actual)
             .unwrap();
-        let mut expected = Vec::new();
+        let mut stream = Vec::new();
         for row in 0..6 {
             let start = row * 48;
-            expected.extend_from_slice(&source_bytes[start..start + 32]);
+            stream.extend_from_slice(&source_bytes[start..start + 32]);
         }
-        assert_eq!(actual.as_slice(), expected.as_slice());
+        let mut expected = [0xCCu8; 384];
+        for row in 0..12 {
+            let source_start = row * 16;
+            let destination_start = row * 32;
+            expected[destination_start..destination_start + 16]
+                .copy_from_slice(&stream[source_start..source_start + 16]);
+        }
+        assert_eq!(actual, expected);
 
         let interrupt_queue_address =
             shared_memory_base + GspInterruptRelayQueue::client_queue_offset(0).unwrap();
