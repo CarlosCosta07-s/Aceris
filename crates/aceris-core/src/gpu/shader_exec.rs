@@ -1813,14 +1813,15 @@ mod tests {
         uniforms[95] = [95.0; 4];
         let masked_oob = PicaVertexShaderProgram::from_words(
             &[
-                format1_unary(0x13, O0, 0x7F) | (1 << 19), // c95 + a0.x(1) -> c96
+                format1_unary(0x12, 0, V0), // a0.x = 1
+                format1_unary(0x13, O0, 0x7F) | (1 << 19), // c95 + a0.x -> c96
                 END,
             ],
             &[plain_descriptor(0b1111)],
             &uniforms,
         );
         let result = masked_oob
-            .run(0, &inputs([0.0, 0.0, 0.0, 0.0], [0.0; 4]))
+            .run(0, &inputs([1.0, 0.0, 0.0, 0.0], [0.0; 4]))
             .unwrap();
         assert_eq!(result.outputs[0], [1.0; 4]);
     }
