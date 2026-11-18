@@ -1,10 +1,12 @@
 //! GSP/PICA200 DisplayTransfer conversion between tiled and linear buffers.
 //!
-//! The software backend supports 8x8 Morton tiled-to-linear, linear-to-tiled,
-//! and tiled-to-tiled transfers, vertical flip, horizontal crop, and five pixel
-//! formats. Downscaling and 32x32 blocks remain explicit unsupported cases.
+//! The software backend supports 8x8 Morton tiled-to-linear and linear-to-tiled
+//! conversion, plus the documented 2x2 tiled-to-tiled mipmap/AA path. It also
+//! supports vertical flip, horizontal crop, and five pixel formats. Other
+//! downscale modes and 32x32 blocks remain explicit unsupported cases.
 //! Complete source and destination ranges are validated and staged before the
-//! destination is modified.
+//! destination is modified. The integer box-filter rounding is a software
+//! reference choice and has not been compared against physical hardware.
 
 use std::fmt;
 
@@ -51,6 +53,7 @@ const TILE_EDGE: usize = 8;
 const TILE_PIXELS: usize = TILE_EDGE * TILE_EDGE;
 const MIN_OUTPUT_WIDTH: u16 = 64;
 const MIN_OUTPUT_HEIGHT: u16 = 16;
+const MIN_TILED_TO_TILED_HEIGHT: u16 = 32;
 
 /// Pixel format selectors stored in the DisplayTransfer flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -379,21 +382,59 @@ pub fn execute_display_transfer(
 
     let source_bpp = source_format.bytes_per_pixel();
     let destination_bpp = destination_format.bytes_per_pixel();
+    let scale_x = if tiled_to_tiled { 2 } else { 1 };
+    let scale_y = if tiled_to_tiled { 2 } else { 1 };
+
     for y in 0..output_height {
-        let source_y = if vertical_flip {
-            input_height - 1 - y
-        } else {
-            y
-        };
         for x in 0..output_width {
-            let src = pixel_offset(
-                x,
-                source_y,
-                input_width,
-                source_tiles_x,
-                source_bpp,
-                source_layout,
-            )?;
+            let rgba = if tiled_to_tiled {
+                let mut channel_sums = [0u16; 4];
+                for sample_y in 0..scale_y {
+                    let logical_y = y * scale_y + sample_y;
+                    let source_y = if vertical_flip {
+                        input_height - 1 - logical_y
+                    } else {
+                        logical_y
+                    };
+                    for sample_x in 0..scale_x {
+                        let source_x = x * scale_x + sample_x;
+                        let src = pixel_offset(
+                            source_x,
+                            source_y,
+                            input_width,
+                            source_tiles_x,
+                            source_bpp,
+                            source_layout,
+                        )?;
+                        let rgba = source_format.decode(&source[src..src + source_bpp]);
+                        for channel in 0..4 {
+                            channel_sums[channel] += u16::from(rgba[channel]);
+                        }
+                    }
+                }
+                [
+                    (channel_sums[0] / 4) as u8,
+                    (channel_sums[1] / 4) as u8,
+                    (channel_sums[2] / 4) as u8,
+                    (channel_sums[3] / 4) as u8,
+                ]
+            } else {
+                let source_y = if vertical_flip {
+                    input_height - 1 - y
+                } else {
+                    y
+                };
+                let src = pixel_offset(
+                    x,
+                    source_y,
+                    input_width,
+                    source_tiles_x,
+                    source_bpp,
+                    source_layout,
+                )?;
+                source_format.decode(&source[src..src + source_bpp])
+            };
+
             let dst = pixel_offset(
                 x,
                 y,
@@ -402,7 +443,6 @@ pub fn execute_display_transfer(
                 destination_bpp,
                 destination_layout,
             )?;
-            let rgba = source_format.decode(&source[src..src + source_bpp]);
             destination_format.encode(rgba, &mut output[dst..dst + destination_bpp]);
         }
     }
@@ -453,7 +493,22 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         return Err(DisplayTransferError::UnsupportedBlock32);
     }
     let scale = (request.flags >> 24) & 3;
-    if scale != 0 {
+    if scale == 3 {
+        return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
+    }
+    if tiled_to_tiled {
+        // The documented tiled-to-tiled path is the 2x2 box-filter mode.
+        // The dimensions in the request describe the logical source and
+        // destination surfaces, so each destination pixel consumes 2x2 input.
+        if scale != 2
+            || usize::from(request.input_width) != usize::from(request.output_width) * 2
+            || usize::from(request.input_height) != usize::from(request.output_height) * 2
+        {
+            return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
+        }
+    } else if scale != 0 {
+        // The 2x1 and tiled-to-linear 2x2 transfer cases have documented
+        // dimension/stride caveats which are not yet modeled by this backend.
         return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
     }
 
@@ -477,11 +532,27 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         }
     }
 
-    // The documented 64x16 minimum applies to the common tiled-to-linear
-    // path. Tiled-to-tiled and linear-to-tiled transfers use their own
-    // address layouts and are not constrained by this output rule.
-    if !linear_to_tiled
-        && !tiled_to_tiled
+    if tiled_to_tiled {
+        let destination_format = DisplayTransferFormat::from_bits((request.flags >> 12) & 7)?;
+        let required_alignment = if matches!(
+            destination_format,
+            DisplayTransferFormat::Rgb8 | DisplayTransferFormat::Rgba8
+        ) {
+            64
+        } else {
+            128
+        };
+        let row_bytes = usize::from(request.output_width) * destination_format.bytes_per_pixel();
+        if request.output_width < MIN_OUTPUT_WIDTH
+            || request.output_height < MIN_TILED_TO_TILED_HEIGHT
+            || row_bytes % required_alignment != 0
+        {
+            return Err(DisplayTransferError::OutputDimensionsTooSmall {
+                width: request.output_width,
+                height: request.output_height,
+            });
+        }
+    } else if !linear_to_tiled
         && (request.output_width < MIN_OUTPUT_WIDTH || request.output_height < MIN_OUTPUT_HEIGHT)
     {
         return Err(DisplayTransferError::OutputDimensionsTooSmall {
@@ -744,34 +815,107 @@ mod tests {
     }
 
     #[test]
-    fn tiled_to_tiled_transfer_preserves_the_tiled_pixel_order() {
+    fn tiled_to_tiled_2x2_box_filter_generates_a_half_size_mipmap() {
         let mut memory = GpuPhysicalMemory::new();
-        let _ = make_tiled(&mut memory);
-        let byte_count = storage_size(
-            usize::from(WIDTH),
-            usize::from(HEIGHT),
-            DisplayTransferFormat::Rgba8,
-            DisplayTransferLayout::Tiled8x8Morton,
-        )
-        .unwrap();
-        let mut expected = vec![0; byte_count];
-        memory.read(DESTINATION, &mut expected).unwrap();
+        let input_width = 128usize;
+        let input_height = 64usize;
+        let output_width = 64usize;
+        let output_height = 32usize;
+        let mut input_linear = vec![0u8; input_width * input_height * 4];
 
-        let report = execute_display_transfer(
-            &mut memory,
-            request(DESTINATION, SOURCE, DISPLAY_TRANSFER_TILED_TO_TILED),
-        )
-        .unwrap();
-
-        let mut actual = vec![0; byte_count];
-        memory.read(SOURCE, &mut actual).unwrap();
-        assert_eq!(actual, expected);
-        assert_eq!(report.source_layout, DisplayTransferLayout::Tiled8x8Morton);
-        assert_eq!(
-            report.destination_layout,
-            DisplayTransferLayout::Tiled8x8Morton
+        // Each 2x2 source footprint has a constant color. This makes the
+        // expected box-filter result independent of the unverified tie rule
+        // for integer averages.
+        for y in 0..input_height {
+            for x in 0..input_width {
+                let block_x = x / 2;
+                let block_y = y / 2;
+                let offset = (y * input_width + x) * 4;
+                input_linear[offset..offset + 4].copy_from_slice(&[
+                    (block_x * 3) as u8,
+                    (block_y * 5) as u8,
+                    ((block_x ^ block_y) * 7) as u8,
+                    200,
+                ]);
+            }
+        }
+        memory.write(SOURCE, &input_linear).unwrap();
+        let mut linear_to_tiled = request(
+            SOURCE,
+            DESTINATION,
+            DISPLAY_TRANSFER_LINEAR_TO_TILED,
         );
-        assert_eq!(report.pixels_transferred, 4096);
+        linear_to_tiled.input_width = input_width as u16;
+        linear_to_tiled.input_height = input_height as u16;
+        linear_to_tiled.output_width = input_width as u16;
+        linear_to_tiled.output_height = input_height as u16;
+        execute_display_transfer(&mut memory, linear_to_tiled).unwrap();
+
+        let mut tiled_to_tiled = request(
+            DESTINATION,
+            SOURCE,
+            DISPLAY_TRANSFER_TILED_TO_TILED
+                | DISPLAY_TRANSFER_CROP
+                | (2 << 24),
+        );
+        tiled_to_tiled.input_width = input_width as u16;
+        tiled_to_tiled.input_height = input_height as u16;
+        tiled_to_tiled.output_width = output_width as u16;
+        tiled_to_tiled.output_height = output_height as u16;
+        let report = execute_display_transfer(&mut memory, tiled_to_tiled).unwrap();
+
+        assert_eq!(report.width, output_width as u16);
+        assert_eq!(report.height, output_height as u16);
+        assert_eq!(report.pixels_transferred, (output_width * output_height) as u64);
+        assert_eq!(report.bytes_read, (input_width * input_height * 4) as u64);
+        assert_eq!(report.bytes_written, (output_width * output_height * 4) as u64);
+        assert_eq!(report.source_layout, DisplayTransferLayout::Tiled8x8Morton);
+        assert_eq!(report.destination_layout, DisplayTransferLayout::Tiled8x8Morton);
+
+        let mut actual_tiled = vec![0u8; report.bytes_written as usize];
+        memory.read(SOURCE, &mut actual_tiled).unwrap();
+        for y in 0..output_height {
+            for x in 0..output_width {
+                let offset = pixel_offset(
+                    x,
+                    y,
+                    output_width,
+                    tile_count(output_width).unwrap(),
+                    4,
+                    DisplayTransferLayout::Tiled8x8Morton,
+                )
+                .unwrap();
+                let expected = [
+                    (x * 3) as u8,
+                    (y * 5) as u8,
+                    ((x ^ y) * 7) as u8,
+                    200,
+                ];
+                assert_eq!(&actual_tiled[offset..offset + 4], &expected);
+            }
+        }
+    }
+
+    #[test]
+    fn tiled_to_tiled_rejects_missing_2x2_filter_and_mismatched_dimensions() {
+        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_TILED_TO_TILED);
+        bad.input_width = 128;
+        bad.input_height = 64;
+        bad.output_width = 64;
+        bad.output_height = 32;
+        assert_eq!(
+            display_transfer_buffer_sizes(bad),
+            Err(DisplayTransferError::UnsupportedScaling(0))
+        );
+
+        bad.flags |= 2 << 24;
+        bad.output_width = 64;
+        bad.output_height = 64;
+        assert!(matches!(
+            display_transfer_buffer_sizes(bad),
+            Err(DisplayTransferError::UnsupportedScaling(2))
+                | Err(DisplayTransferError::OutputDimensionsTooSmall { .. })
+        ));
     }
 
     #[test]
