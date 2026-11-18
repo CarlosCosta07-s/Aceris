@@ -9,8 +9,10 @@ use std::ffi::{CStr, c_char};
 use std::path::Path;
 use std::slice;
 
+use aceris_core::input::{pad_from_frontend_buttons, touch_from_surface_point};
 use aceris_core::loader::cia::{COMMON_KEY_COUNT, TicketCommonKeyStore};
 use aceris_core::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
+use aceris_core::video::frontend::compute_screen_layout;
 use aceris_core::video::{BOTTOM_SCREEN_HEIGHT, BOTTOM_SCREEN_WIDTH, ScreenSurface};
 use aceris_core::{DEFAULT_FRAME_INSTRUCTION_BUDGET, System};
 
@@ -482,6 +484,110 @@ pub unsafe extern "C" fn aceris_system_get_frame_number(
     ACERIS_STATUS_OK
 }
 
+/// Replaces the held controller buttons with a mask of the frontend virtual
+/// control bits (`aceris_core::video::frontend::buttons`). Unknown bits are
+/// ignored.
+///
+/// # Safety
+/// handle must be live and not used concurrently.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_set_buttons(
+    handle: *mut AcerisSystemHandle,
+    frontend_mask: u32,
+) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime and exclusivity.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    handle
+        .system
+        .input_mut()
+        .set_buttons(pad_from_frontend_buttons(frontend_mask));
+    ACERIS_STATUS_OK
+}
+
+/// Sets the circle pad deflection; each axis is clamped to the documented range.
+///
+/// # Safety
+/// handle must be live and not used concurrently.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_set_circle_pad(
+    handle: *mut AcerisSystemHandle,
+    x: i32,
+    y: i32,
+) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime and exclusivity.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    handle.system.input_mut().set_circle_pad(x, y);
+    ACERIS_STATUS_OK
+}
+
+/// Reports a touch at a point of the host surface (pixels, origin top-left).
+///
+/// The surface is laid out with the same rule as the rendered composition for
+/// `orientation` (0 portrait, 1 landscape). A point outside the bottom screen
+/// ends the current touch, so a drag that leaves the screen releases it.
+///
+/// # Safety
+/// handle must be live and not used concurrently.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_touch(
+    handle: *mut AcerisSystemHandle,
+    surface_width: u32,
+    surface_height: u32,
+    orientation: u32,
+    x: i32,
+    y: i32,
+) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime and exclusivity.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    if surface_width == 0 || surface_height == 0 {
+        return ACERIS_STATUS_INVALID_ARGUMENT;
+    }
+    let layout = compute_screen_layout(surface_width, surface_height, orientation);
+    match touch_from_surface_point(&layout, x, y) {
+        Some((tx, ty)) => handle
+            .system
+            .input_mut()
+            .touch(i32::from(tx), i32::from(ty)),
+        None => handle.system.input_mut().touch_end(),
+    }
+    ACERIS_STATUS_OK
+}
+
+/// Ends the current touch, if any.
+///
+/// # Safety
+/// handle must be live and not used concurrently.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_touch_release(handle: *mut AcerisSystemHandle) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime and exclusivity.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    handle.system.input_mut().touch_end();
+    ACERIS_STATUS_OK
+}
+
+/// Releases every button, the circle pad and the touch, for example when the
+/// app loses focus.
+///
+/// # Safety
+/// handle must be live and not used concurrently.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aceris_system_input_reset(handle: *mut AcerisSystemHandle) -> i32 {
+    // SAFETY: The caller guarantees the handle's lifetime and exclusivity.
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return ACERIS_STATUS_INVALID_HANDLE;
+    };
+    handle.system.input_mut().reset();
+    ACERIS_STATUS_OK
+}
+
 /// Describes an LCD surface. IDs: 0 top-left, 1 top-right, 2 bottom.
 ///
 /// The pixel pointer is read-only and remains valid until the owning system
@@ -864,5 +970,84 @@ mod tests {
         );
         // SAFETY: This is the single live allocation, destroyed once.
         unsafe { aceris_system_destroy(handle) };
+    }
+
+    #[test]
+    fn input_abi_feeds_buttons_circle_pad_and_touch() {
+        use aceris_core::input::pad;
+        use aceris_core::video::frontend::{ORIENTATION_LANDSCAPE, buttons};
+        let handle = aceris_system_create();
+        // SAFETY: the handle was just created and is destroyed below.
+        unsafe {
+            assert_eq!(
+                aceris_system_set_buttons(handle, buttons::A | buttons::START | 0xF000_0000),
+                ACERIS_STATUS_OK
+            );
+            assert_eq!(
+                aceris_system_set_circle_pad(handle, 900, -900),
+                ACERIS_STATUS_OK
+            );
+            let state = (*handle).system.input_mut().snapshot();
+            assert_eq!(state.held, pad::A | pad::START);
+            assert_eq!(state.circle_pad, (156, -156));
+
+            // A point in the bottom screen touches; one outside releases.
+            let layout = compute_screen_layout(1000, 1000, ORIENTATION_LANDSCAPE);
+            let inside = (layout.bottom.x + 1, layout.bottom.y + 1);
+            assert_eq!(
+                aceris_system_touch(
+                    handle,
+                    1000,
+                    1000,
+                    ORIENTATION_LANDSCAPE,
+                    inside.0,
+                    inside.1
+                ),
+                ACERIS_STATUS_OK
+            );
+            assert!((*handle).system.input_mut().snapshot().touch.is_some());
+            assert_eq!(
+                aceris_system_touch(
+                    handle,
+                    1000,
+                    1000,
+                    ORIENTATION_LANDSCAPE,
+                    layout.top.x,
+                    layout.top.y
+                ),
+                ACERIS_STATUS_OK
+            );
+            assert_eq!((*handle).system.input_mut().snapshot().touch, None);
+
+            aceris_system_touch(
+                handle,
+                1000,
+                1000,
+                ORIENTATION_LANDSCAPE,
+                inside.0,
+                inside.1,
+            );
+            assert_eq!(aceris_system_touch_release(handle), ACERIS_STATUS_OK);
+            assert_eq!((*handle).system.input_mut().snapshot().touch, None);
+
+            assert_eq!(aceris_system_input_reset(handle), ACERIS_STATUS_OK);
+            assert_eq!((*handle).system.input_mut().snapshot().held, 0);
+            assert_eq!(
+                aceris_system_touch(handle, 0, 1000, ORIENTATION_LANDSCAPE, 0, 0),
+                ACERIS_STATUS_INVALID_ARGUMENT
+            );
+            aceris_system_destroy(handle);
+        }
+        // SAFETY: null handles are rejected without being dereferenced.
+        unsafe {
+            assert_eq!(
+                aceris_system_set_buttons(std::ptr::null_mut(), 1),
+                ACERIS_STATUS_INVALID_HANDLE
+            );
+            assert_eq!(
+                aceris_system_touch_release(std::ptr::null_mut()),
+                ACERIS_STATUS_INVALID_HANDLE
+            );
+        }
     }
 }

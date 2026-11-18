@@ -275,6 +275,10 @@ fn browse_library(
                     let (x, y) = (x / scale as i32, y / scale as i32);
                     activate = library.click(x, y) == ClickResult::Activated;
                 }
+                // Controller input only matters while a game is running.
+                window::WindowEvent::Game { .. }
+                | window::WindowEvent::Pointer { .. }
+                | window::WindowEvent::FocusLost => {}
             }
             if activate {
                 if let Some(entry) = library.selected_entry() {
@@ -296,15 +300,31 @@ fn browse_library(
     }
 }
 
+/// Starts or moves a touch; a point outside the bottom screen ends it.
+fn touch_at(system: &mut System, x: i32, y: i32, scale: usize) {
+    match window::touch_from_window_point(x, y, scale) {
+        Some((tx, ty)) => system.input_mut().touch(i32::from(tx), i32::from(ty)),
+        None => system.input_mut().touch_end(),
+    }
+}
+
 /// Runs frames at roughly 60 Hz until the window closes or Esc is pressed.
 fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
+    let mut keyboard = window::KeyboardInput::default();
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
             match event {
                 window::WindowEvent::CloseRequested => return Ok(Flow::Quit),
                 window::WindowEvent::Key(window::Key::Escape) => return Ok(Flow::BackToLibrary),
+                window::WindowEvent::Game { key, pressed } => {
+                    keyboard.apply(key, pressed, system.input_mut());
+                }
+                window::WindowEvent::Click { x, y } => touch_at(system, x, y, scale),
+                window::WindowEvent::Pointer { x, y, down: true } => touch_at(system, x, y, scale),
+                window::WindowEvent::Pointer { down: false, .. } => system.input_mut().touch_end(),
+                window::WindowEvent::FocusLost => keyboard.reset(system.input_mut()),
                 _ => {}
             }
         }

@@ -138,6 +138,11 @@ impl InputState {
         };
     }
 
+    /// Currently held buttons, without sampling edges.
+    pub fn snapshot_held(&self) -> u32 {
+        self.held
+    }
+
     /// Samples the state and computes button edges since the last sample.
     pub fn snapshot(&mut self) -> InputSnapshot {
         let changed = self.held ^ self.last_sampled;

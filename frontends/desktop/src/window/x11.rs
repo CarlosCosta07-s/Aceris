@@ -5,7 +5,7 @@
 //! from [`Window::open`]. Only 24/32-bit TrueColor visuals with the usual
 //! 0xFF0000/0x00FF00/0x0000FF masks are supported.
 
-use super::{Key, WindowError, WindowEvent};
+use super::{Key, WindowError, WindowEvent, game_key_from_keysym};
 use std::ffi::{CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::ptr::{self, NonNull};
 
@@ -19,11 +19,19 @@ unsafe extern "C" {
 const RTLD_NOW: c_int = 2;
 const ZPIXMAP: c_int = 2;
 const KEY_PRESS_MASK: c_long = 1 << 0;
+const KEY_RELEASE_MASK: c_long = 1 << 1;
 const BUTTON_PRESS_MASK: c_long = 1 << 2;
+const BUTTON_RELEASE_MASK: c_long = 1 << 3;
+const BUTTON1_MOTION_MASK: c_long = 1 << 8;
+const FOCUS_CHANGE_MASK: c_long = 1 << 21;
 const EXPOSURE_MASK: c_long = 1 << 15;
 const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
 const EVENT_KEY_PRESS: c_int = 2;
+const EVENT_KEY_RELEASE: c_int = 3;
 const EVENT_BUTTON_PRESS: c_int = 4;
+const EVENT_BUTTON_RELEASE: c_int = 5;
+const EVENT_MOTION_NOTIFY: c_int = 6;
+const EVENT_FOCUS_OUT: c_int = 10;
 const EVENT_EXPOSE: c_int = 12;
 const EVENT_CLIENT_MESSAGE: c_int = 33;
 
@@ -237,7 +245,14 @@ impl Window {
             (xlib.select_input)(
                 d,
                 window,
-                KEY_PRESS_MASK | BUTTON_PRESS_MASK | EXPOSURE_MASK | STRUCTURE_NOTIFY_MASK,
+                KEY_PRESS_MASK
+                    | KEY_RELEASE_MASK
+                    | BUTTON_PRESS_MASK
+                    | BUTTON_RELEASE_MASK
+                    | BUTTON1_MOTION_MASK
+                    | FOCUS_CHANGE_MASK
+                    | EXPOSURE_MASK
+                    | STRUCTURE_NOTIFY_MASK,
             );
             let protocol = CString::new("WM_DELETE_WINDOW").expect("no NUL");
             let mut delete_atom = (xlib.intern_atom)(d, protocol.as_ptr(), 0);
@@ -400,7 +415,39 @@ impl Window {
                         if let Some(key) = key_from_keysym(keysym) {
                             events.push(WindowEvent::Key(key));
                         }
+                        if let Some(key) = game_key_from_keysym(keysym) {
+                            events.push(WindowEvent::Game { key, pressed: true });
+                        }
                     }
+                    EVENT_KEY_RELEASE => {
+                        let keycode = (buffer[10] >> 32) as u8;
+                        let keysym =
+                            (self.xlib.keycode_to_keysym)(self.display.as_ptr(), keycode, 0);
+                        if let Some(key) = game_key_from_keysym(keysym) {
+                            events.push(WindowEvent::Game {
+                                key,
+                                pressed: false,
+                            });
+                        }
+                    }
+                    EVENT_MOTION_NOTIFY => {
+                        // XMotionEvent shares the x/y offsets of XButtonEvent.
+                        events.push(WindowEvent::Pointer {
+                            x: buffer[8] as u32 as i32,
+                            y: (buffer[8] >> 32) as u32 as i32,
+                            down: true,
+                        });
+                    }
+                    EVENT_BUTTON_RELEASE => {
+                        if (buffer[10] >> 32) as u32 == 1 {
+                            events.push(WindowEvent::Pointer {
+                                x: buffer[8] as u32 as i32,
+                                y: (buffer[8] >> 32) as u32 as i32,
+                                down: false,
+                            });
+                        }
+                    }
+                    EVENT_FOCUS_OUT => events.push(WindowEvent::FocusLost),
                     EVENT_BUTTON_PRESS => {
                         // XButtonEvent: x/y at bytes 64/68, button at byte 84.
                         let x = buffer[8] as u32 as i32;

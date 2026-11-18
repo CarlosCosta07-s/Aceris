@@ -1974,3 +1974,9 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - `TextureCopyReport` expõe `source_rows_transferred` e `destination_rows_transferred`, removendo o antigo campo único ambíguo `rows_transferred`.
 - Seção 16 de `docs/INDEPENDENT_RESEARCH.md` documenta as fontes (3dbrew/Mikage) e a interpretação adotada. O contrato ainda precisa ser confrontado com hardware legítimo; não declarar temporização física.
 - CI `44360390588` para `a34b4312` passou Linux em fmt, build, Clippy e `cargo test --workspace`; o build do benchmark estava em execução na última consulta. Android ARM64 release e benchmark passaram. Windows estava em build/Clippy e macOS na fila. Consultar os jobs atuais antes de declarar a matriz completa aprovada.
+## Entrada ligada a System, Android e desktop
+
+- `System` ganhou o campo `input` com `input()/input_mut()`. ABI Android: `aceris_system_set_buttons/_set_circle_pad/_touch/_touch_release/_input_reset` (toque em pixels da superfície com a mesma regra de layout da composição). Desktop: `WindowEvent::{Game, Pointer, FocusLost}`, `GameKey`, `KeyboardInput` e `touch_from_window_point` em `window.rs`; X11 agora seleciona KeyRelease/ButtonRelease/Button1Motion/FocusChange.
+- O autorepeat do X11 manda release+press em sequência; todos os eventos de um poll são aplicados antes do quadro, então o estado final fica pressionado.
+- Lacuna principal: o guest não vê nada disso. Próximo passo é `hid:USER` + memória compartilhada HID (layout a conferir em fonte pública, sem verificação em hardware).
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` com saída 0. CI remoto não consultado; o backend X11 só foi coberto pelos testes de mapeamento (sem servidor X aqui).

@@ -13,6 +13,7 @@ use crate::gpu::{
     TextureCopyError, TextureCopyRequest, VRAM_BASE, VRAM_SIZE, display_transfer_buffer_sizes,
     display_transfer_signals_ppf, execute_display_transfer, execute_texture_copy,
 };
+use crate::input::InputState;
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore, tmd::CONTENT_TYPE_ENCRYPTED};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::session::gsp_service::{
@@ -124,6 +125,8 @@ struct ResolvedGspFramebufferInfo {
 #[derive(Debug, Default)]
 pub struct System {
     cpu: Arm11Core,
+    /// Host-fed controller and touch state; not yet visible to the guest.
+    input: InputState,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -256,6 +259,16 @@ pub struct SystemFrameReport {
 }
 
 impl System {
+    /// Host-fed controller and touch state.
+    pub fn input(&self) -> &InputState {
+        &self.input
+    }
+
+    /// Mutable access for frontends that translate their own events.
+    pub fn input_mut(&mut self) -> &mut InputState {
+        &mut self.input
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -8472,5 +8485,16 @@ mod tests {
         );
         assert_eq!(report.last_result, RESULT_GSP_NO_RIGHT);
         assert!(report.halted);
+    }
+
+    #[test]
+    fn system_keeps_host_fed_input_between_frames() {
+        let mut system = System::new();
+        system.input_mut().press(crate::input::pad::A);
+        system.input_mut().touch(10, 20);
+        let first = system.input_mut().snapshot();
+        assert_eq!(first.held, crate::input::pad::A);
+        assert_eq!(first.touch, Some((10, 20)));
+        assert_eq!(system.input().snapshot_held(), crate::input::pad::A);
     }
 }

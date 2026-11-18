@@ -7,6 +7,7 @@
 //! Layout: the top LCD (400x240) is always left of the bottom LCD (320x240).
 //! The two screens share a 736x240 gameplay canvas and are scaled together.
 
+use aceris_core::input::{CIRCLE_PAD_LIMIT, InputState, pad, touch_from_surface_point};
 use aceris_core::video::{
     DualScreenDisplay,
     frontend::{ORIENTATION_LANDSCAPE, compute_screen_layout},
@@ -71,6 +72,108 @@ pub enum WindowEvent {
     Click { x: i32, y: i32 },
     /// The mouse wheel moved: negative is up (towards the list start).
     Scroll(i32),
+    /// A mapped controller key changed state.
+    Game { key: GameKey, pressed: bool },
+    /// The primary mouse button is held (`down`) or was released at a window
+    /// pixel; sent for motion while held and on release.
+    Pointer { x: i32, y: i32, down: bool },
+    /// The window lost keyboard focus; held input must be released.
+    FocusLost,
+}
+
+/// A controller input produced by a keyboard key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub enum GameKey {
+    /// One or more hardware pad bits (`aceris_core::input::pad`).
+    Button(u32),
+    /// A circle-pad direction: each axis is -1, 0 or 1 (Y up is positive).
+    Stick { x: i32, y: i32 },
+}
+
+/// Maps an X11 keysym to a controller input.
+///
+/// Arrows are the D-pad; I/J/K/L the circle pad; X/Z/S/A are A/B/X/Y;
+/// Q/W are L/R; 1/2 are ZL/ZR; Return is Start and Backspace is Select.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn game_key_from_keysym(keysym: u64) -> Option<GameKey> {
+    let button = |bit| Some(GameKey::Button(bit));
+    match keysym {
+        0xFF51 => button(pad::LEFT),
+        0xFF52 => button(pad::UP),
+        0xFF53 => button(pad::RIGHT),
+        0xFF54 => button(pad::DOWN),
+        0xFF0D | 0xFF8D => button(pad::START),
+        0xFF08 => button(pad::SELECT),
+        0x78 => button(pad::A),
+        0x7A => button(pad::B),
+        0x73 => button(pad::X),
+        0x61 => button(pad::Y),
+        0x71 => button(pad::L),
+        0x77 => button(pad::R),
+        0x31 => button(pad::ZL),
+        0x32 => button(pad::ZR),
+        0x69 => Some(GameKey::Stick { x: 0, y: 1 }),
+        0x6B => Some(GameKey::Stick { x: 0, y: -1 }),
+        0x6A => Some(GameKey::Stick { x: -1, y: 0 }),
+        0x6C => Some(GameKey::Stick { x: 1, y: 0 }),
+        _ => None,
+    }
+}
+
+/// Tracks keyboard-driven input and writes it into an [`InputState`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KeyboardInput {
+    /// Held circle-pad direction keys: left, right, up, down.
+    stick_keys: [bool; 4],
+}
+
+impl KeyboardInput {
+    pub fn apply(&mut self, key: GameKey, pressed: bool, input: &mut InputState) {
+        match key {
+            GameKey::Button(bits) => {
+                if pressed {
+                    input.press(bits);
+                } else {
+                    input.release(bits);
+                }
+            }
+            GameKey::Stick { x, y } => {
+                let slot = match (x, y) {
+                    (-1, 0) => 0,
+                    (1, 0) => 1,
+                    (0, 1) => 2,
+                    _ => 3,
+                };
+                self.stick_keys[slot] = pressed;
+                let axis = |negative: bool, positive: bool| {
+                    (i32::from(positive) - i32::from(negative)) * i32::from(CIRCLE_PAD_LIMIT)
+                };
+                input.set_circle_pad(
+                    axis(self.stick_keys[0], self.stick_keys[1]),
+                    axis(self.stick_keys[3], self.stick_keys[2]),
+                );
+            }
+        }
+    }
+
+    /// Forgets held keys, for example on focus loss.
+    pub fn reset(&mut self, input: &mut InputState) {
+        *self = Self::default();
+        input.reset();
+    }
+}
+
+/// Converts a game-window pixel into bottom-screen touch coordinates.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn touch_from_window_point(x: i32, y: i32, scale: usize) -> Option<(u16, u16)> {
+    let scale = i32::try_from(scale.max(1)).ok()?;
+    let layout = compute_screen_layout(
+        GAME_CANVAS_WIDTH as u32,
+        GAME_CANVAS_HEIGHT as u32,
+        ORIENTATION_LANDSCAPE,
+    );
+    touch_from_surface_point(&layout, x.div_euclid(scale), y.div_euclid(scale))
 }
 
 /// Keys the front-end reacts to.
@@ -195,5 +298,62 @@ mod tests {
         }
         // The second LCD starts at x=416 and is scaled without a vertical offset.
         assert_eq!(pixel(&scaled, 3, 416 * 3, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn keysyms_map_to_controller_inputs() {
+        assert_eq!(game_key_from_keysym(0xFF52), Some(GameKey::Button(pad::UP)));
+        assert_eq!(game_key_from_keysym(0x78), Some(GameKey::Button(pad::A)));
+        assert_eq!(
+            game_key_from_keysym(0xFF0D),
+            Some(GameKey::Button(pad::START))
+        );
+        assert_eq!(
+            game_key_from_keysym(0x69),
+            Some(GameKey::Stick { x: 0, y: 1 })
+        );
+        assert_eq!(game_key_from_keysym(0x7E), None);
+    }
+
+    #[test]
+    fn keyboard_buttons_and_stick_combine_opposite_keys() {
+        let mut input = InputState::default();
+        let mut keyboard = KeyboardInput::default();
+        keyboard.apply(GameKey::Button(pad::A), true, &mut input);
+        keyboard.apply(GameKey::Stick { x: 1, y: 0 }, true, &mut input);
+        keyboard.apply(GameKey::Stick { x: 0, y: 1 }, true, &mut input);
+        let state = input.snapshot();
+        assert_eq!(state.held, pad::A);
+        assert_eq!(state.circle_pad, (156, 156));
+        // Opposite keys cancel; releasing one leaves the other axis.
+        keyboard.apply(GameKey::Stick { x: -1, y: 0 }, true, &mut input);
+        assert_eq!(input.snapshot().circle_pad, (0, 156));
+        keyboard.apply(GameKey::Stick { x: 0, y: 1 }, false, &mut input);
+        keyboard.apply(GameKey::Stick { x: -1, y: 0 }, false, &mut input);
+        keyboard.apply(GameKey::Stick { x: 1, y: 0 }, false, &mut input);
+        assert_eq!(input.snapshot().circle_pad, (0, 0));
+        keyboard.reset(&mut input);
+        assert_eq!(input.snapshot().held, 0);
+    }
+
+    #[test]
+    fn window_points_map_onto_the_bottom_screen_at_any_scale() {
+        let layout = compute_screen_layout(
+            GAME_CANVAS_WIDTH as u32,
+            GAME_CANVAS_HEIGHT as u32,
+            ORIENTATION_LANDSCAPE,
+        );
+        for scale in [1, 2, 3] {
+            let x = layout.bottom.x * scale as i32;
+            let y = layout.bottom.y * scale as i32;
+            assert_eq!(touch_from_window_point(x, y, scale), Some((0, 0)));
+            assert_eq!(
+                touch_from_window_point(x + scale as i32 * 160, y + scale as i32 * 120, scale),
+                Some((160, 120))
+            );
+            // The top screen is not touch sensitive.
+            let top = (layout.top.x * scale as i32, layout.top.y * scale as i32);
+            assert_eq!(touch_from_window_point(top.0, top.1, scale), None);
+        }
     }
 }
