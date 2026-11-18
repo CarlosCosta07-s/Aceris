@@ -1,9 +1,9 @@
 //! GSP/PICA200 DisplayTransfer conversion between tiled and linear buffers.
 //!
 //! The software backend supports 8x8 Morton tiled-to-linear and linear-to-tiled
-//! conversion, plus the documented 2x2 tiled-to-tiled mipmap/AA path. It also
-//! supports vertical flip, horizontal crop, and five pixel formats. Other
-//! downscale modes and 32x32 blocks remain explicit unsupported cases.
+//! conversion, 2x1/2x2 tiled-to-linear box filtering, and the 2x2 tiled-to-tiled
+//! mipmap/AA path. It also supports vertical flip, horizontal crop, and five
+//! pixel formats. 32x32 blocks remain explicitly unsupported.
 //! Complete source and destination ranges are validated and staged before the
 //! destination is modified. The integer box-filter rounding is a software
 //! reference choice and has not been compared against physical hardware.
@@ -792,7 +792,7 @@ mod tests {
         for flags in [
             DISPLAY_TRANSFER_BLOCKS_32X32,
             DISPLAY_TRANSFER_TEXTURE_COPY,
-            1 << 24,
+            3 << 24,
             DISPLAY_TRANSFER_LINEAR_TO_TILED | DISPLAY_TRANSFER_TILED_TO_TILED,
         ] {
             assert!(
@@ -868,7 +868,7 @@ mod tests {
                 input_linear[offset..offset + 4].copy_from_slice(&[
                     (block_x * 3) as u8 + sample[0],
                     (block_y * 5) as u8 + sample[1],
-                    ((block_x ^ block_y) * 7) as u8 + sample[2],
+                    ((block_x ^ block_y) * 3) as u8 + sample[2],
                     200,
                 ]);
             }
@@ -925,7 +925,7 @@ mod tests {
                 let expected = [
                     (x * 3) as u8 + 1,
                     (y * 5) as u8 + 1,
-                    ((x ^ y) * 7) as u8 + 1,
+                    ((x ^ y) * 3) as u8 + 1,
                     200,
                 ];
                 assert_eq!(&actual_tiled[offset..offset + 4], &expected);
