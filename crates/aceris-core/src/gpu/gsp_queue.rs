@@ -5,7 +5,8 @@
 //! DisplayTransfer, TextureCopy and FlushCacheRegions entries through the guest
 //! TriggerCmdReqQueue path. FCRAM cache maintenance is delegated to the owning
 //! ARM11 process for commands that request it; VRAM is validated without using
-//! the ARM11 data cache. Hardware-accurate busy arbitration remains incomplete.
+//! the ARM11 data cache. The System layer models relative command-kind busy flags
+//! and fail-if-busy rejection; command execution and device timing remain synchronous.
 
 use std::fmt;
 
@@ -52,10 +53,8 @@ pub struct GspGxCommand {
     pub command_id: u8,
     /// Header byte 2 bit 0: halt queue processing after this entry.
     pub stop_after: bool,
-    /// Header byte 3 bit 0: reject if GSP is busy.
-    ///
-    /// The first Aceris queue processor records this flag but does not yet
-    /// model GSP busy-state arbitration.
+    /// Header byte 3 bit 0: reject if any GX command kind is busy instead of
+    /// checking only whether this command kind is busy.
     pub fail_if_busy: bool,
     /// Seven command-specific parameter words.
     pub arguments: [u32; 7],
