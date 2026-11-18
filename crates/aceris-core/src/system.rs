@@ -4958,8 +4958,7 @@ mod tests {
                 let green = (y * 2) as u8;
                 let blue = (pair_x * 4 + sample_x * 2) as u8;
                 // RGBA8 memory order is A, B, G, R.
-                scaled_input[offset..offset + 4]
-                    .copy_from_slice(&[255, blue, green, red]);
+                scaled_input[offset..offset + 4].copy_from_slice(&[255, blue, green, red]);
             }
         }
         for y in 0..input_height {
