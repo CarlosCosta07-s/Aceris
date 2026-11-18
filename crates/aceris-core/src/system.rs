@@ -5040,6 +5040,84 @@ mod tests {
             [GspInterruptId::Ppf, GspInterruptId::Ppf],
             "successful 2x1 tiled-to-linear transfer must enqueue PPF"
         );
+
+        // Exercise the 32x32 render-block untile path through the GSP GX queue.
+        let block32_linear_source = VRAM_BASE + 0x11_0000;
+        let block32_tiled_source = VRAM_BASE + 0x12_0000;
+        let block32_linear_output = VRAM_BASE + 0x13_0000;
+        let block32_expected = patterned_linear();
+        system
+            .physical_memory_mut()
+            .write(block32_linear_source, &block32_expected)
+            .unwrap();
+        execute_display_transfer(
+            system.physical_memory_mut(),
+            DisplayTransferRequest {
+                input_address: block32_linear_source,
+                output_address: block32_tiled_source,
+                input_width: 64,
+                input_height: 64,
+                output_width: 64,
+                output_height: 64,
+                flags: crate::gpu::DISPLAY_TRANSFER_LINEAR_TO_TILED
+                    | crate::gpu::DISPLAY_TRANSFER_BLOCKS_32X32,
+            },
+        )
+        .unwrap();
+
+        let mut block32_queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
+        block32_queue_bytes[1] = 1;
+        let block32_entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        block32_queue_bytes[block32_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
+        block32_queue_bytes[block32_entry + 2] = 1;
+        block32_queue_bytes[block32_entry + 4..block32_entry + 8]
+            .copy_from_slice(&block32_tiled_source.to_le_bytes());
+        block32_queue_bytes[block32_entry + 8..block32_entry + 12]
+            .copy_from_slice(&block32_linear_output.to_le_bytes());
+        block32_queue_bytes[block32_entry + 12..block32_entry + 16]
+            .copy_from_slice(&dimensions.to_le_bytes());
+        block32_queue_bytes[block32_entry + 16..block32_entry + 20]
+            .copy_from_slice(&dimensions.to_le_bytes());
+        block32_queue_bytes[block32_entry + 20..block32_entry + 24]
+            .copy_from_slice(&crate::gpu::DISPLAY_TRANSFER_BLOCKS_32X32.to_le_bytes());
+
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(queue_address, &block32_queue_bytes)
+            .unwrap();
+        let block32_report = system
+            .process_gsp_gx_command_queue(shared_memory_base, 0)
+            .unwrap();
+        assert_eq!(block32_report.commands_consumed, 1);
+        assert_eq!(block32_report.display_transfers_completed, 1);
+        assert!(block32_report.error.is_none());
+
+        let mut actual_block32 = vec![0u8; block32_expected.len()];
+        system
+            .physical_memory()
+            .read(block32_linear_output, &mut actual_block32)
+            .unwrap();
+        assert_eq!(actual_block32, block32_expected);
+
+        let mut interrupt_bytes = [0u8; GSP_INTERRUPT_QUEUE_SIZE];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(interrupt_queue_address, &mut interrupt_bytes)
+            .unwrap();
+        let interrupt_queue = GspInterruptRelayQueue::parse(&interrupt_bytes).unwrap();
+        assert_eq!(
+            interrupt_queue.pending_interrupts().unwrap(),
+            [
+                GspInterruptId::Ppf,
+                GspInterruptId::Ppf,
+                GspInterruptId::Ppf
+            ],
+            "32x32 tiled-to-linear transfer must enqueue PPF"
+        );
     }
 
     #[test]
