@@ -156,7 +156,8 @@ pub use transfer::{
     DISPLAY_TRANSFER_LINEAR_TO_TILED, DISPLAY_TRANSFER_TEXTURE_COPY,
     DISPLAY_TRANSFER_TILED_TO_TILED, DisplayTransferError, DisplayTransferFormat,
     DisplayTransferLayout, DisplayTransferReport, DisplayTransferRequest,
-    MAX_DISPLAY_TRANSFER_BYTES, display_transfer_buffer_sizes, execute_display_transfer,
+    MAX_DISPLAY_TRANSFER_BYTES, display_transfer_buffer_sizes, display_transfer_signals_ppf,
+    execute_display_transfer,
 };
 pub use vertex::{
     AttributeBitWidth, AttributeDataType, MAX_COMPONENTS_PER_ARRAY, MAX_COMPONENTS_PER_ATTRIBUTE,
