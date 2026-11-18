@@ -545,11 +545,18 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         let row_bytes = usize::from(request.output_width) * destination_format.bytes_per_pixel();
         if request.output_width < MIN_OUTPUT_WIDTH
             || request.output_height < MIN_TILED_TO_TILED_HEIGHT
-            || row_bytes % required_alignment != 0
         {
             return Err(DisplayTransferError::OutputDimensionsTooSmall {
                 width: request.output_width,
                 height: request.output_height,
+            });
+        }
+        if row_bytes % required_alignment != 0 {
+            return Err(DisplayTransferError::MisalignedOutputRow {
+                width: request.output_width,
+                format: destination_format,
+                row_bytes,
+                required_alignment,
             });
         }
     } else if !linear_to_tiled
@@ -789,11 +796,13 @@ mod tests {
 
         for (source_index, source) in formats.into_iter().enumerate() {
             for (destination_index, destination) in formats.into_iter().enumerate() {
-                assert_eq!(
-                    display_transfer_signals_ppf(0, source, destination),
-                    expected[source_index][destination_index],
-                    "unexpected PPF result for {source:?} -> {destination:?}"
-                );
+                for mode in [0, DISPLAY_TRANSFER_TILED_TO_TILED] {
+                    assert_eq!(
+                        display_transfer_signals_ppf(mode, source, destination),
+                        expected[source_index][destination_index],
+                        "unexpected PPF result for {source:?} -> {destination:?} in mode {mode:#x}"
+                    );
+                }
             }
         }
     }
@@ -908,14 +917,32 @@ mod tests {
             Err(DisplayTransferError::UnsupportedScaling(0))
         );
 
-        bad.flags |= 2 << 24;
+        bad.flags |= DISPLAY_TRANSFER_CROP | (2 << 24);
         bad.output_width = 64;
         bad.output_height = 64;
-        assert!(matches!(
+        assert_eq!(
             display_transfer_buffer_sizes(bad),
             Err(DisplayTransferError::UnsupportedScaling(2))
-                | Err(DisplayTransferError::OutputDimensionsTooSmall { .. })
-        ));
+        );
+
+        let mut misaligned = request(
+            SOURCE,
+            DESTINATION,
+            DISPLAY_TRANSFER_TILED_TO_TILED | DISPLAY_TRANSFER_CROP | (2 << 24) | (1 << 8),
+        );
+        misaligned.input_width = 130;
+        misaligned.input_height = 64;
+        misaligned.output_width = 65;
+        misaligned.output_height = 32;
+        assert_eq!(
+            display_transfer_buffer_sizes(misaligned),
+            Err(DisplayTransferError::MisalignedOutputRow {
+                width: 65,
+                format: DisplayTransferFormat::Rgb8,
+                row_bytes: 195,
+                required_alignment: 64,
+            })
+        );
     }
 
     #[test]
