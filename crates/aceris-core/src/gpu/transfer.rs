@@ -835,12 +835,8 @@ mod tests {
         // The four source texels differ, but every channel sum is
         // divisible by four. This verifies the actual box average without
         // assuming the hardware's tie-breaking rule for fractional results.
-        const SAMPLE_OFFSETS: [[u8; 3]; 4] = [
-            [0, 0, 0],
-            [2, 0, 4],
-            [2, 4, 0],
-            [0, 0, 0],
-        ];
+        const SAMPLE_OFFSETS: [[u8; 3]; 4] =
+            [[0, 0, 0], [2, 0, 4], [2, 4, 0], [0, 0, 0]];
         for y in 0..input_height {
             for x in 0..input_width {
                 let block_x = x / 2;
