@@ -73,6 +73,63 @@ pub const REG_GAS_LUT_INDEX: u16 = 0x123;
 pub const REG_GAS_LUT_DATA: u16 = 0x124;
 /// Number of entries in the PICA200 gas color lookup table.
 pub const GAS_LUT_ENTRY_COUNT: usize = 16;
+/// GPUREG_GAS_ATTENUATION: float1.5.10 raw density attenuation.
+pub const REG_GAS_ATTENUATION: u16 = 0x0E4;
+/// GPUREG_GAS_ACCMAX: float1.5.10 raw maximum accumulated density.
+pub const REG_GAS_ACCMAX: u16 = 0x0E5;
+/// GPUREG_GAS_LIGHT_XY: planar min/max intensity and density attenuation.
+pub const REG_GAS_LIGHT_XY: u16 = 0x120;
+/// GPUREG_GAS_LIGHT_Z: view min/max intensity and density attenuation.
+pub const REG_GAS_LIGHT_Z: u16 = 0x121;
+/// GPUREG_GAS_LIGHT_Z_COLOR: view intensity and color-LUT input selector.
+pub const REG_GAS_LIGHT_Z_COLOR: u16 = 0x122;
+/// GPUREG_GAS_ACCMAX_FEEDBACK: initial density (low) and max density (high).
+pub const REG_GAS_ACCMAX_FEEDBACK: u16 = 0x125;
+/// GPUREG_GAS_DELTAZ_DEPTH: depth attenuation and comparison-family selector.
+pub const REG_GAS_DELTAZ_DEPTH: u16 = 0x126;
+const REG_COLOR_OPERATION_FOR_GAS: usize = 0x100;
+
+/// Gas depth-comparison family selected by GPUREG_GAS_DELTAZ_DEPTH.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaGasDepthFunction {
+    Never,
+    Always,
+    GreaterThanOrGreaterEqual,
+    LessThanLessEqualEqualOrNotEqual,
+}
+
+/// One set of PICA gas light intensity parameters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaGasLightState {
+    pub minimum_intensity: u8,
+    pub maximum_intensity: u8,
+    pub density_attenuation: u8,
+}
+
+/// Input selected for the signed/unsigned gas color lookup-table halves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaGasColorLutInput {
+    Density,
+    LightFactor,
+}
+
+/// Raw gas-stage register snapshot.
+///
+/// Float1.5.10 and fixed0.16.8 fields remain raw to avoid applying an
+/// unverified conversion/rounding rule. Gas rasterization is not implemented.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaGasState {
+    pub attenuation_float1_5_10: u16,
+    pub accumulation_max_float1_5_10: u16,
+    pub initial_max_density_float1_5_10: u16,
+    pub maximum_density_feedback_float1_5_10: u16,
+    pub planar_light: PicaGasLightState,
+    pub view_light: PicaGasLightState,
+    pub view_shading_intensity: u8,
+    pub color_lut_input: PicaGasColorLutInput,
+    pub depth_attenuation_fixed0_16_8: u32,
+    pub depth_function: PicaGasDepthFunction,
+}
 
 /// Decoded viewport data written by the guest through PICA registers.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -300,6 +357,7 @@ pub struct Pica200 {
     fog_lut: [u32; FOG_LUT_ENTRY_COUNT],
     /// Raw 24-bit RGB gas LUT entries; gas rendering is not implemented yet.
     gas_lut: [u32; GAS_LUT_ENTRY_COUNT],
+    gas_accmax_feedback_max: u16,
     fixed_attributes: [[u32; 3]; FIXED_ATTRIBUTE_COUNT],
     immediate_mode_attribute: [u32; 3],
     vertex_shader_code: [u32; VSH_CODE_TRANSFER_WORDS],
@@ -323,6 +381,7 @@ impl Default for Pica200 {
             registers: [0; REGISTER_COUNT],
             fog_lut: [0; FOG_LUT_ENTRY_COUNT],
             gas_lut: [0; GAS_LUT_ENTRY_COUNT],
+            gas_accmax_feedback_max: 0,
             fixed_attributes: [[0; 3]; FIXED_ATTRIBUTE_COUNT],
             immediate_mode_attribute: [0; 3],
             vertex_shader_code: [0; VSH_CODE_TRANSFER_WORDS],
@@ -378,6 +437,61 @@ impl Pica200 {
         } else {
             channels.map(i16::from)
         })
+    }
+
+    /// Returns a typed snapshot of the gas-related fixed-function registers.
+    ///
+    /// Numeric fields retain their documented raw representations. The
+    /// snapshot does not imply that the gas fragment operation is implemented.
+    pub fn gas_state(&self) -> PicaGasState {
+        let light_xy = self.register(REG_GAS_LIGHT_XY).unwrap_or(0);
+        let light_z = self.register(REG_GAS_LIGHT_Z).unwrap_or(0);
+        let light_z_color = self.register(REG_GAS_LIGHT_Z_COLOR).unwrap_or(0);
+        let delta_z_depth = self.register(REG_GAS_DELTAZ_DEPTH).unwrap_or(0);
+        let feedback = self.register(REG_GAS_ACCMAX_FEEDBACK).unwrap_or(0);
+
+        let decode_light = |value: u32| PicaGasLightState {
+            minimum_intensity: value as u8,
+            maximum_intensity: (value >> 8) as u8,
+            density_attenuation: (value >> 16) as u8,
+        };
+
+        PicaGasState {
+            attenuation_float1_5_10: self.register(REG_GAS_ATTENUATION).unwrap_or(0) as u16,
+            accumulation_max_float1_5_10: self.register(REG_GAS_ACCMAX).unwrap_or(0) as u16,
+            initial_max_density_float1_5_10: feedback as u16,
+            maximum_density_feedback_float1_5_10: (feedback >> 16) as u16,
+            planar_light: decode_light(light_xy),
+            view_light: decode_light(light_z),
+            view_shading_intensity: light_z_color as u8,
+            color_lut_input: if light_z_color & (1 << 8) == 0 {
+                PicaGasColorLutInput::Density
+            } else {
+                PicaGasColorLutInput::LightFactor
+            },
+            depth_attenuation_fixed0_16_8: delta_z_depth & 0x00FF_FFFF,
+            depth_function: match (delta_z_depth >> 24) & 3 {
+                0 => PicaGasDepthFunction::Never,
+                1 => PicaGasDepthFunction::Always,
+                2 => PicaGasDepthFunction::GreaterThanOrGreaterEqual,
+                _ => PicaGasDepthFunction::LessThanLessEqualEqualOrNotEqual,
+            },
+        }
+    }
+
+    /// Updates the read-only maximum-density feedback using the documented
+    /// unsigned 16-bit comparison. Returns None unless gas fragment mode is
+    /// selected in GPUREG_COLOR_OPERATION.
+    pub fn update_gas_accmax_feedback(&mut self, density_raw: u16) -> Option<u16> {
+        if self.registers[REG_COLOR_OPERATION_FOR_GAS] & 3 != 1 {
+            return None;
+        }
+
+        self.gas_accmax_feedback_max = self.gas_accmax_feedback_max.max(density_raw);
+        let index = usize::from(REG_GAS_ACCMAX_FEEDBACK);
+        let initial = self.registers[index] & 0xFFFF;
+        self.registers[index] = initial | (u32::from(self.gas_accmax_feedback_max) << 16);
+        Some(self.gas_accmax_feedback_max)
     }
 
     /// Decodes the live guest viewport registers.
@@ -643,6 +757,16 @@ impl Pica200 {
     /// one RGB entry and advances its 16-entry pointer. Gas table storage is
     /// modeled independently of the still-unimplemented gas fragment stage.
     fn apply_lookup_register_write(&mut self, id: u16) {
+        if id == REG_GAS_ACCMAX_FEEDBACK {
+            let initial = self.registers[usize::from(REG_GAS_ACCMAX_FEEDBACK)] & 0xFFFF;
+            if self.registers[REG_COLOR_OPERATION_FOR_GAS] & 3 == 1 {
+                self.gas_accmax_feedback_max = initial as u16;
+            }
+            self.registers[usize::from(REG_GAS_ACCMAX_FEEDBACK)] =
+                initial | (u32::from(self.gas_accmax_feedback_max) << 16);
+            return;
+        }
+
         if id == REG_FOG_LUT_INDEX {
             self.registers[usize::from(REG_FOG_LUT_INDEX)] &= 0xFFFF;
             return;
@@ -983,6 +1107,7 @@ impl Pica200 {
         self.registers.fill(0);
         self.fog_lut.fill(0);
         self.gas_lut.fill(0);
+        self.gas_accmax_feedback_max = 0;
         self.fixed_attributes.fill([0; 3]);
         self.immediate_mode_attribute.fill(0);
         self.vertex_shader_code.fill(0);
@@ -1324,6 +1449,82 @@ mod tests {
         assert_eq!(gpu.gas_lut_rgb_entry(0), Some([-1, -128, 127]));
         assert_eq!(gpu.gas_lut_rgb_entry(8), Some([127, 128, 255]));
         assert_eq!(gpu.gas_lut_rgb_entry(16), None);
+    }
+
+    #[test]
+    fn gas_state_decodes_raw_fixed_fields_and_light_selectors() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_GAS_ATTENUATION, 0xA55A).unwrap();
+        gpu.write_register(REG_GAS_ACCMAX, 0x1234).unwrap();
+        gpu.write_register(REG_GAS_LIGHT_XY, 0x0033_2211).unwrap();
+        gpu.write_register(REG_GAS_LIGHT_Z, 0x0066_5544).unwrap();
+        gpu.write_register(REG_GAS_LIGHT_Z_COLOR, 0x100 | 0x77).unwrap();
+        gpu.write_register(REG_GAS_DELTAZ_DEPTH, (2 << 24) | 0x00AB_CDEF)
+            .unwrap();
+
+        assert_eq!(
+            gpu.gas_state(),
+            PicaGasState {
+                attenuation_float1_5_10: 0xA55A,
+                accumulation_max_float1_5_10: 0x1234,
+                initial_max_density_float1_5_10: 0,
+                maximum_density_feedback_float1_5_10: 0,
+                planar_light: PicaGasLightState {
+                    minimum_intensity: 0x11,
+                    maximum_intensity: 0x22,
+                    density_attenuation: 0x33,
+                },
+                view_light: PicaGasLightState {
+                    minimum_intensity: 0x44,
+                    maximum_intensity: 0x55,
+                    density_attenuation: 0x66,
+                },
+                view_shading_intensity: 0x77,
+                color_lut_input: PicaGasColorLutInput::LightFactor,
+                depth_attenuation_fixed0_16_8: 0x00AB_CDEF,
+                depth_function: PicaGasDepthFunction::GreaterThanOrGreaterEqual,
+            }
+        );
+
+        gpu.write_register(REG_GAS_LIGHT_Z_COLOR, 0x33).unwrap();
+        assert_eq!(gpu.gas_state().color_lut_input, PicaGasColorLutInput::Density);
+    }
+
+    #[test]
+    fn gas_accmax_feedback_resets_only_in_gas_mode_and_compares_unsigned() {
+        let mut gpu = Pica200::new();
+
+        gpu.write_register(REG_GAS_ACCMAX_FEEDBACK, 0xFFFF_1234)
+            .unwrap();
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x0000_1234));
+        assert_eq!(gpu.update_gas_accmax_feedback(0x7000), None);
+
+        gpu.write_register(REG_COLOR_OPERATION, 1).unwrap();
+        gpu.write_register(REG_GAS_ACCMAX_FEEDBACK, 0xAAAA_8000)
+            .unwrap();
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x8000_8000));
+        assert_eq!(gpu.update_gas_accmax_feedback(0x7FFF), Some(0x8000));
+        assert_eq!(gpu.update_gas_accmax_feedback(0xFFFF), Some(0xFFFF));
+        assert_eq!(gpu.update_gas_accmax_feedback(0x0001), Some(0xFFFF));
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0xFFFF_8000));
+
+        gpu.write_register(REG_COLOR_OPERATION, 0).unwrap();
+        gpu.write_register(REG_GAS_ACCMAX_FEEDBACK, 0xDEAD_4321)
+            .unwrap();
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0xFFFF_4321));
+    }
+
+    #[test]
+    fn gas_accmax_feedback_command_list_write_obeys_current_mode() {
+        let mut gpu = Pica200::new();
+        gpu.execute_command_list(&[
+            1,
+            command(REG_COLOR_OPERATION, 0xF, false, 0),
+            0xBEEF_2222,
+            command(REG_GAS_ACCMAX_FEEDBACK, 0xF, false, 0),
+        ])
+        .unwrap();
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x2222_2222));
     }
 
     #[test]

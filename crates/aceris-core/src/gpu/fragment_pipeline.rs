@@ -112,7 +112,8 @@ impl PicaFogLut {
         let value = ((entry >> 13) & 0x7FF) as f32;
         let raw_difference = (entry & 0x1FFF) as i32;
         let difference = (raw_difference << 19) >> 19;
-        let factor = ((value + difference as f32 * fraction) / 2047.0).clamp(0.0, 1.0);
+        // The table value is fixed0.0.11, so its unit denominator is 2^11.
+        let factor = ((value + difference as f32 * fraction) / 2048.0).clamp(0.0, 1.0);
 
         for (channel, fog_channel) in color[..3].iter_mut().zip(self.color) {
             *channel = fog_factor_blend(*channel, fog_channel, factor);
@@ -886,7 +887,7 @@ mod tests {
         let mut pica = Pica200::new();
         pica.write_register(REG_FOG_COLOR, 0x0000_00FF).unwrap();
         pica.write_register(REG_FOG_LUT_INDEX, 0).unwrap();
-        // Entry 0 has a value of 512/2047 and a +1024 interpolation delta.
+        // Entry 0 has a value of 512/2048 and a +1024 interpolation delta.
         pica.write_register(REG_FOG_LUT_DATA0, (512 << 13) | 1024)
             .unwrap();
         pica.write_register(REG_FOG_LUT_DATA0 + 1, 1535 << 13)
@@ -896,7 +897,7 @@ mod tests {
         let pipeline = pica.fragment_pipeline().unwrap();
         // Depth 1/256 selects half-way between LUT entries 0 and 1.
         let color = pipeline.apply_fog([0.0, 0.0, 1.0, 0.375], 1.0 / 256.0);
-        let expected_factor = 1024.0 / 2047.0;
+        let expected_factor = 1024.0 / 2048.0;
         assert!((color[0] - (1.0 - expected_factor)).abs() < 1.0e-3);
         assert!((color[2] - expected_factor).abs() < 1.0e-3);
         assert_eq!(color[3], 0.375);
