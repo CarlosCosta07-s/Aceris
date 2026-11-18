@@ -3001,9 +3001,11 @@ mod tests {
                 .gsp_busy_state
                 .is_busy(GSP_GX_COMMAND_DISPLAY_TRANSFER)
         );
-        assert!(!system
-            .gsp_busy_state
-            .is_busy(GSP_GX_COMMAND_FLUSH_CACHE_REGIONS));
+        assert!(
+            !system
+                .gsp_busy_state
+                .is_busy(GSP_GX_COMMAND_FLUSH_CACHE_REGIONS)
+        );
 
         // With fail-if-busy set, any outstanding relative flag blocks the
         // command, even when its command ID differs.
