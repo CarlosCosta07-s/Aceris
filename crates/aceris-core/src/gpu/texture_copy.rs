@@ -413,6 +413,76 @@ mod tests {
     }
 
     #[test]
+    fn gap_mode_copies_different_line_widths_with_partial_final_rows() {
+        let mut memory = GpuPhysicalMemory::new();
+        let address_space = mapped_linear_memory();
+        let source = 0x1400_2000;
+        let destination = 0x1400_4000;
+        let source_line = 16usize;
+        let source_gap = 16usize;
+        let destination_line = 32usize;
+        let destination_gap = 16usize;
+        let size_bytes = 200usize;
+        let stream: Vec<u8> = (0..size_bytes).map(|value| (255 - value) as u8).collect();
+
+        let source_rows = (size_bytes + source_line - 1) / source_line;
+        let mut source_storage = vec![0xEE; source_rows * (source_line + source_gap)];
+        for row in 0..source_rows {
+            let stream_offset = row * source_line;
+            let count = (size_bytes - stream_offset).min(source_line);
+            let source_offset = row * (source_line + source_gap);
+            source_storage[source_offset..source_offset + count]
+                .copy_from_slice(&stream[stream_offset..stream_offset + count]);
+        }
+        memory
+            .write(FCRAM_BASE + 0x2000, &source_storage)
+            .unwrap();
+
+        let destination_rows = (size_bytes + destination_line - 1) / destination_line;
+        let destination_storage_bytes = destination_rows * (destination_line + destination_gap);
+        memory
+            .write(
+                FCRAM_BASE + 0x4000,
+                &vec![0xCC; destination_storage_bytes],
+            )
+            .unwrap();
+
+        let report = execute_texture_copy(
+            &mut memory,
+            &address_space,
+            TextureCopyRequest {
+                source_address: source,
+                destination_address: destination,
+                size_bytes: size_bytes as u32,
+                source_line_width_and_gap: 0x0001_0001,
+                destination_line_width_and_gap: 0x0001_0002,
+                flags: TEXTURE_COPY_ENGINE_MODE | TEXTURE_COPY_GAP_MODE,
+            },
+        )
+        .unwrap();
+
+        let mut actual = vec![0; destination_storage_bytes];
+        memory.read(FCRAM_BASE + 0x4000, &mut actual).unwrap();
+        for row in 0..destination_rows {
+            let stream_offset = row * destination_line;
+            let count = (size_bytes - stream_offset).min(destination_line);
+            let output_offset = row * (destination_line + destination_gap);
+            assert_eq!(
+                &actual[output_offset..output_offset + count],
+                &stream[stream_offset..stream_offset + count],
+            );
+            assert_eq!(
+                &actual[output_offset + count..output_offset + destination_line + destination_gap],
+                vec![0xCC; destination_line + destination_gap - count].as_slice(),
+                "unused row tail and destination gap for row {row} must remain untouched"
+            );
+        }
+        assert_eq!(report.bytes_transferred, size_bytes as u32);
+        assert_eq!(report.source_rows_transferred, 13);
+        assert_eq!(report.destination_rows_transferred, 7);
+    }
+
+    #[test]
     fn validates_all_rows_before_modifying_destination() {
         let mut memory = GpuPhysicalMemory::new();
         let source = VRAM_BASE + VRAM_SIZE - 32;
