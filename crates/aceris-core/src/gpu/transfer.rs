@@ -522,15 +522,20 @@ mod tests {
     const SOURCE: u32 = FCRAM_BASE + 0x20_000;
     const DESTINATION: u32 = FCRAM_BASE + 0x40_000;
 
-    fn patterned_linear() -> Vec<u8> {
-        let mut bytes = vec![0; usize::from(WIDTH) * usize::from(HEIGHT) * 4];
-        for y in 0..usize::from(HEIGHT) {
-            for x in 0..usize::from(WIDTH) {
-                let offset = (y * usize::from(WIDTH) + x) * 4;
-                bytes[offset..offset + 4].copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
+    fn patterned_linear_dimensions(width: usize, height: usize) -> Vec<u8> {
+        let mut bytes = vec![0; width * height * 4];
+        for y in 0..height {
+            for x in 0..width {
+                let offset = (y * width + x) * 4;
+                bytes[offset..offset + 4]
+                    .copy_from_slice(&[x as u8, y as u8, (x ^ y) as u8, 255]);
             }
         }
         bytes
+    }
+
+    fn patterned_linear() -> Vec<u8> {
+        patterned_linear_dimensions(usize::from(WIDTH), usize::from(HEIGHT))
     }
 
     fn request(input: u32, output: u32, flags: u32) -> DisplayTransferRequest {
@@ -545,15 +550,24 @@ mod tests {
         }
     }
 
-    fn make_tiled(memory: &mut GpuPhysicalMemory) -> Vec<u8> {
-        let linear = patterned_linear();
+    fn make_tiled_with_dimensions(
+        memory: &mut GpuPhysicalMemory,
+        width: u16,
+        height: u16,
+    ) -> Vec<u8> {
+        let linear = patterned_linear_dimensions(usize::from(width), usize::from(height));
         memory.write(SOURCE, &linear).unwrap();
-        execute_display_transfer(
-            memory,
-            request(SOURCE, DESTINATION, DISPLAY_TRANSFER_LINEAR_TO_TILED),
-        )
-        .unwrap();
+        let mut transfer = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_LINEAR_TO_TILED);
+        transfer.input_width = width;
+        transfer.input_height = height;
+        transfer.output_width = width;
+        transfer.output_height = height;
+        execute_display_transfer(memory, transfer).unwrap();
         linear
+    }
+
+    fn make_tiled(memory: &mut GpuPhysicalMemory) -> Vec<u8> {
+        make_tiled_with_dimensions(memory, WIDTH, HEIGHT)
     }
 
     #[test]
@@ -664,36 +678,41 @@ mod tests {
     #[test]
     fn tiled_to_linear_crop_copies_the_requested_top_left_rectangle() {
         let mut memory = GpuPhysicalMemory::new();
-        let expected = make_tiled(&mut memory);
+        let input_width = 96usize;
+        let output_width = 64usize;
+        let output_height = 32usize;
+        let expected = make_tiled_with_dimensions(&mut memory, 96, 64);
         let mut cropped = request(DESTINATION, SOURCE, DISPLAY_TRANSFER_CROP);
-        cropped.output_width = 48;
-        cropped.output_height = 32;
+        cropped.input_width = input_width as u16;
+        cropped.output_width = output_width as u16;
+        cropped.output_height = output_height as u16;
 
         let report = execute_display_transfer(&mut memory, cropped).unwrap();
-        let mut actual = vec![0; 48 * 32 * 4];
+        let mut actual = vec![0; output_width * output_height * 4];
         memory.read(SOURCE, &mut actual).unwrap();
 
-        for y in 0..32usize {
-            let expected_start = y * usize::from(WIDTH) * 4;
-            let actual_start = y * 48 * 4;
+        for y in 0..output_height {
+            let expected_start = y * input_width * 4;
+            let actual_start = y * output_width * 4;
             assert_eq!(
-                &actual[actual_start..actual_start + 48 * 4],
-                &expected[expected_start..expected_start + 48 * 4],
+                &actual[actual_start..actual_start + output_width * 4],
+                &expected[expected_start..expected_start + output_width * 4],
             );
         }
-        assert_eq!(report.width, 48);
-        assert_eq!(report.height, 32);
-        assert_eq!(report.pixels_transferred, 48 * 32);
-        assert_eq!(report.bytes_read, 64 * 64 * 4);
-        assert_eq!(report.bytes_written, 48 * 32 * 4);
+        assert_eq!(report.width, output_width as u16);
+        assert_eq!(report.height, output_height as u16);
+        assert_eq!(report.pixels_transferred, (output_width * output_height) as u64);
+        assert_eq!(report.bytes_read, (input_width * 64 * 4) as u64);
+        assert_eq!(report.bytes_written, (output_width * output_height * 4) as u64);
     }
 
     #[test]
     fn horizontal_crop_requires_the_guest_crop_flag() {
         let mut memory = GpuPhysicalMemory::new();
-        let _ = make_tiled(&mut memory);
+        let _ = make_tiled_with_dimensions(&mut memory, 96, 64);
         let mut cropped = request(DESTINATION, SOURCE, 0);
-        cropped.output_width = 48;
+        cropped.input_width = 96;
+        cropped.output_width = 64;
         cropped.output_height = 32;
 
         let sentinel = [0xA5; 32];
@@ -725,7 +744,7 @@ mod tests {
 
     #[test]
     fn rejects_tiled_to_linear_output_below_documented_dimension_minimum() {
-        let mut bad = request(SOURCE, DESTINATION, 0);
+        let mut bad = request(SOURCE, DESTINATION, DISPLAY_TRANSFER_CROP);
         bad.output_width = 48;
         assert_eq!(
             display_transfer_buffer_sizes(bad),
