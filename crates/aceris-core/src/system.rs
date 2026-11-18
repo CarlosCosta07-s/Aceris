@@ -5045,7 +5045,7 @@ mod tests {
         let block32_linear_source = VRAM_BASE + 0x11_0000;
         let block32_tiled_source = VRAM_BASE + 0x12_0000;
         let block32_linear_output = VRAM_BASE + 0x13_0000;
-        let block32_expected = patterned_linear();
+        let block32_expected = expected.clone();
         system
             .physical_memory_mut()
             .write(block32_linear_source, &block32_expected)
