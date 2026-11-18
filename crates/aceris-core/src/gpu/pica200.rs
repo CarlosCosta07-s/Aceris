@@ -1524,10 +1524,7 @@ mod tests {
 
         gpu.write_register(REG_TEXENV_UPDATE_BUFFER_FOR_GAS as u16, 7)
             .unwrap();
-        assert_eq!(
-            gpu.gas_state().density_source,
-            PicaGasDensitySource::Plain
-        );
+        assert_eq!(gpu.gas_state().density_source, PicaGasDensitySource::Plain);
     }
 
     #[test]
