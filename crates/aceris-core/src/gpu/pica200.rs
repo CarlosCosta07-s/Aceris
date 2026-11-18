@@ -358,6 +358,8 @@ pub struct Pica200 {
     /// Raw 24-bit RGB gas LUT entries; gas rendering is not implemented yet.
     gas_lut: [u32; GAS_LUT_ENTRY_COUNT],
     gas_accmax_feedback_max: u16,
+    /// High-half value exposed to the guest; refreshed only after a gas fragment.
+    gas_accmax_feedback_readback: u16,
     fixed_attributes: [[u32; 3]; FIXED_ATTRIBUTE_COUNT],
     immediate_mode_attribute: [u32; 3],
     vertex_shader_code: [u32; VSH_CODE_TRANSFER_WORDS],
@@ -382,6 +384,7 @@ impl Default for Pica200 {
             fog_lut: [0; FOG_LUT_ENTRY_COUNT],
             gas_lut: [0; GAS_LUT_ENTRY_COUNT],
             gas_accmax_feedback_max: 0,
+            gas_accmax_feedback_readback: 0,
             fixed_attributes: [[0; 3]; FIXED_ATTRIBUTE_COUNT],
             immediate_mode_attribute: [0; 3],
             vertex_shader_code: [0; VSH_CODE_TRANSFER_WORDS],
@@ -488,9 +491,10 @@ impl Pica200 {
         }
 
         self.gas_accmax_feedback_max = self.gas_accmax_feedback_max.max(density_raw);
+        self.gas_accmax_feedback_readback = self.gas_accmax_feedback_max;
         let index = usize::from(REG_GAS_ACCMAX_FEEDBACK);
         let initial = self.registers[index] & 0xFFFF;
-        self.registers[index] = initial | (u32::from(self.gas_accmax_feedback_max) << 16);
+        self.registers[index] = initial | (u32::from(self.gas_accmax_feedback_readback) << 16);
         Some(self.gas_accmax_feedback_max)
     }
 
@@ -592,7 +596,7 @@ impl Pica200 {
         *register = value;
         self.apply_fixed_attribute_register_write(id);
         self.apply_vertex_shader_register_write(id);
-        self.apply_lookup_register_write(id);
+        self.apply_lookup_register_write(id, 0xF);
         self.apply_draw_trigger_register_write(id, 0xF);
         self.register_writes = self.register_writes.saturating_add(1);
         Ok(())
@@ -756,14 +760,18 @@ impl Pica200 {
     /// and advances the 128-entry pointer. The single gas data port commits
     /// one RGB entry and advances its 16-entry pointer. Gas table storage is
     /// modeled independently of the still-unimplemented gas fragment stage.
-    fn apply_lookup_register_write(&mut self, id: u16) {
+    fn apply_lookup_register_write(&mut self, id: u16, written_mask: u8) {
         if id == REG_GAS_ACCMAX_FEEDBACK {
-            let initial = self.registers[usize::from(REG_GAS_ACCMAX_FEEDBACK)] & 0xFFFF;
-            if self.registers[REG_COLOR_OPERATION_FOR_GAS] & 3 == 1 {
+            let index = usize::from(REG_GAS_ACCMAX_FEEDBACK);
+            let initial = self.registers[index] & 0xFFFF;
+            // Only writes touching the low 16 bits reset the internal maximum.
+            // The high half is read-only and remains unchanged until a later
+            // gas fragment updates the hardware feedback value.
+            if written_mask & 0x3 != 0 && self.registers[REG_COLOR_OPERATION_FOR_GAS] & 3 == 1 {
                 self.gas_accmax_feedback_max = initial as u16;
             }
-            self.registers[usize::from(REG_GAS_ACCMAX_FEEDBACK)] =
-                initial | (u32::from(self.gas_accmax_feedback_max) << 16);
+            self.registers[index] =
+                initial | (u32::from(self.gas_accmax_feedback_readback) << 16);
             return;
         }
 
@@ -993,7 +1001,7 @@ impl Pica200 {
                 apply_byte_mask(&mut self.registers[register as usize], value, byte_mask);
                 self.apply_fixed_attribute_register_write(register as u16);
                 self.apply_vertex_shader_register_write(register as u16);
-                self.apply_lookup_register_write(register as u16);
+                self.apply_lookup_register_write(register as u16, byte_mask);
                 match observer.as_deref_mut() {
                     Some(on_draw) => {
                         if let Some(request) = self.capture_draw_trigger(register as u16, byte_mask)
@@ -1108,6 +1116,7 @@ impl Pica200 {
         self.fog_lut.fill(0);
         self.gas_lut.fill(0);
         self.gas_accmax_feedback_max = 0;
+        self.gas_accmax_feedback_readback = 0;
         self.fixed_attributes.fill([0; 3]);
         self.immediate_mode_attribute.fill(0);
         self.vertex_shader_code.fill(0);
@@ -1496,7 +1505,7 @@ mod tests {
     }
 
     #[test]
-    fn gas_accmax_feedback_resets_only_in_gas_mode_and_compares_unsigned() {
+    fn gas_accmax_feedback_resets_in_gas_mode_and_publishes_after_next_fragment() {
         let mut gpu = Pica200::new();
 
         gpu.write_register(REG_GAS_ACCMAX_FEEDBACK, 0xFFFF_1234)
@@ -1507,8 +1516,11 @@ mod tests {
         gpu.write_register(REG_COLOR_OPERATION, 1).unwrap();
         gpu.write_register(REG_GAS_ACCMAX_FEEDBACK, 0xAAAA_8000)
             .unwrap();
-        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x8000_8000));
+        // The reset changes the internal maximum now, but readback remains
+        // unchanged until the next fragment runs through gas mode.
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x0000_8000));
         assert_eq!(gpu.update_gas_accmax_feedback(0x7FFF), Some(0x8000));
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x8000_8000));
         assert_eq!(gpu.update_gas_accmax_feedback(0xFFFF), Some(0xFFFF));
         assert_eq!(gpu.update_gas_accmax_feedback(0x0001), Some(0xFFFF));
         assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0xFFFF_8000));
@@ -1520,7 +1532,7 @@ mod tests {
     }
 
     #[test]
-    fn gas_accmax_feedback_command_list_write_obeys_current_mode() {
+    fn gas_accmax_feedback_command_list_write_obeys_current_mode_and_readback_delay() {
         let mut gpu = Pica200::new();
         gpu.execute_command_list(&[
             1,
@@ -1529,7 +1541,27 @@ mod tests {
             command(REG_GAS_ACCMAX_FEEDBACK, 0xF, false, 0),
         ])
         .unwrap();
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x0000_2222));
+        assert_eq!(gpu.update_gas_accmax_feedback(0x1111), Some(0x2222));
         assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0x2222_2222));
+    }
+
+    #[test]
+    fn gas_accmax_feedback_ignores_high_half_only_writes() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_COLOR_OPERATION, 1).unwrap();
+        gpu.write_register(REG_GAS_ACCMAX_FEEDBACK, 0x0000_9000)
+            .unwrap();
+        assert_eq!(gpu.update_gas_accmax_feedback(0xA000), Some(0xA000));
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0xA000_9000));
+
+        gpu.execute_command_list(&[
+            0x0000_0000,
+            command(REG_GAS_ACCMAX_FEEDBACK, 0b1100, false, 0),
+        ])
+        .unwrap();
+        assert_eq!(gpu.register(REG_GAS_ACCMAX_FEEDBACK), Some(0xA000_9000));
+        assert_eq!(gpu.update_gas_accmax_feedback(0x0100), Some(0xA000));
     }
 
     #[test]
