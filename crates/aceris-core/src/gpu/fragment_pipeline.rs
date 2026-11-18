@@ -10,7 +10,7 @@ use super::{
     GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
     PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw, PicaTevError,
     PicaTextureEnvironment, PicaTextureError, PicaTextureUnit, PicaVertexOutputMap,
-    REG_TEXUNIT_CONFIG,
+    FOG_LUT_ENTRY_COUNT, REG_TEXUNIT_CONFIG,
 };
 
 /// GPUREG_TEXENV_UPDATE_BUFFER: fog mode and depth-flip control.
@@ -25,10 +25,10 @@ pub const REG_FOG_LINEAR_OFFSET: u16 = 0x0E3;
 const FOG_MODE_MASK: u32 = 0x7;
 const FOG_MODE_DISABLED: u32 = 0;
 const FOG_MODE_LINEAR: u32 = 1;
+const FOG_MODE_LUT: u32 = 5;
 const FOG_Z_FLIP: u32 = 1 << 16;
 
-/// Captured linear-fog state. Other PICA fog modes are rejected instead of
-/// silently rendering with missing fog.
+/// Captured linear-fog state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PicaLinearFog {
     slope: f32,
@@ -37,31 +37,55 @@ struct PicaLinearFog {
     z_flip: bool,
 }
 
-impl PicaLinearFog {
+/// Captured fog lookup table and its fragment depth transform.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PicaFogLut {
+    entries: [u32; FOG_LUT_ENTRY_COUNT],
+    color: [f32; 3],
+    z_flip: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PicaFog {
+    Linear(PicaLinearFog),
+    Lut(PicaFogLut),
+}
+
+impl PicaFog {
     fn from_pica(pica: &Pica200) -> Result<Option<Self>, PicaFragmentPipelineError> {
         let update = pica.register(REG_TEXENV_UPDATE_BUFFER).unwrap_or(0);
+        let packed_color = pica.register(REG_FOG_COLOR).unwrap_or(0);
+        let color = [
+            (packed_color & 0xFF) as f32 / 255.0,
+            ((packed_color >> 8) & 0xFF) as f32 / 255.0,
+            ((packed_color >> 16) & 0xFF) as f32 / 255.0,
+        ];
+        let z_flip = update & FOG_Z_FLIP != 0;
+
         match update & FOG_MODE_MASK {
             FOG_MODE_DISABLED => Ok(None),
             FOG_MODE_LINEAR => {
-                let packed_color = pica.register(REG_FOG_COLOR).unwrap_or(0);
                 let decode_fixed = |value: u32| (value as u16 as i16) as f32 / 2048.0;
-                let slope = decode_fixed(pica.register(REG_FOG_LINEAR_SLOPE).unwrap_or(0));
-                let offset = decode_fixed(pica.register(REG_FOG_LINEAR_OFFSET).unwrap_or(0));
-                Ok(Some(Self {
-                    slope,
-                    offset,
-                    color: [
-                        (packed_color & 0xFF) as f32 / 255.0,
-                        ((packed_color >> 8) & 0xFF) as f32 / 255.0,
-                        ((packed_color >> 16) & 0xFF) as f32 / 255.0,
-                    ],
-                    z_flip: update & FOG_Z_FLIP != 0,
-                }))
+                Ok(Some(Self::Linear(PicaLinearFog {
+                    slope: decode_fixed(pica.register(REG_FOG_LINEAR_SLOPE).unwrap_or(0)),
+                    offset: decode_fixed(pica.register(REG_FOG_LINEAR_OFFSET).unwrap_or(0)),
+                    color,
+                    z_flip,
+                })))
             }
-            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode { mode: mode as u8 }),
+            FOG_MODE_LUT => Ok(Some(Self::Lut(PicaFogLut {
+                entries: std::array::from_fn(|index| pica.fog_lut_entry(index).unwrap_or(0)),
+                color,
+                z_flip,
+            }))),
+            mode => Err(PicaFragmentPipelineError::UnsupportedFogMode {
+                mode: mode as u8,
+            }),
         }
     }
+}
 
+impl PicaLinearFog {
     /// Applies the documented linear RGB blend. Alpha is passed through.
     ///
     /// PICA's fog factor has approximately eight bits of precision. This
@@ -71,10 +95,35 @@ impl PicaLinearFog {
         let depth = if self.z_flip { 1.0 - depth } else { depth };
         let factor = self.slope.mul_add(depth, self.offset).clamp(0.0, 1.0);
         for (channel, fog_channel) in color[..3].iter_mut().zip(self.color) {
-            *channel = factor.mul_add(*channel, (1.0 - factor) * fog_channel);
+            *channel = fog_factor_blend(*channel, fog_channel, factor);
         }
         color
     }
+}
+
+impl PicaFogLut {
+    fn apply(self, mut color: [f32; 4], depth: f32) -> [f32; 4] {
+        let depth = if self.z_flip { 1.0 - depth } else { depth };
+        let fog_index = depth * FOG_LUT_ENTRY_COUNT as f32;
+        let base = fog_index
+            .floor()
+            .clamp(0.0, (FOG_LUT_ENTRY_COUNT - 1) as f32);
+        let fraction = fog_index - base;
+        let entry = self.entries[base as usize] & 0x00FF_FFFF;
+        let value = ((entry >> 13) & 0x7FF) as f32;
+        let raw_difference = (entry & 0x1FFF) as i32;
+        let difference = (raw_difference << 19) >> 19;
+        let factor = ((value + difference as f32 * fraction) / 2047.0).clamp(0.0, 1.0);
+
+        for (channel, fog_channel) in color[..3].iter_mut().zip(self.color) {
+            *channel = fog_factor_blend(*channel, fog_channel, factor);
+        }
+        color
+    }
+}
+
+fn fog_factor_blend(source: f32, fog: f32, factor: f32) -> f32 {
+    factor.mul_add(source, (1.0 - factor) * fog)
 }
 
 /// Perspective-correct attributes at one fragment sample.
@@ -267,7 +316,7 @@ pub struct PicaFragmentPipeline {
     texture_environment: PicaTextureEnvironment,
     texture_units: [PicaTextureUnit; 3],
     output_state: PicaFragmentOutputState,
-    linear_fog: Option<PicaLinearFog>,
+    fog: Option<PicaFog>,
     /// Unit 2 can read either oTexCoord2 or oTexCoord1.
     texture2_coordinate_index: usize,
 }
@@ -280,7 +329,7 @@ impl PicaFragmentPipeline {
             return Err(PicaFragmentPipelineError::ProceduralTextureUnitUnsupported);
         }
 
-        let linear_fog = PicaLinearFog::from_pica(pica)?;
+        let fog = PicaFog::from_pica(pica)?;
 
         Ok(Self {
             texture_environment: pica
@@ -294,7 +343,7 @@ impl PicaFragmentPipeline {
             output_state: pica
                 .fragment_output_state()
                 .map_err(PicaFragmentPipelineError::Output)?,
-            linear_fog,
+            fog,
             texture2_coordinate_index: if config & (1 << 13) != 0 { 1 } else { 2 },
         })
     }
@@ -461,8 +510,9 @@ impl PicaFragmentPipeline {
 
     /// Applies the draw's captured fog state after TEV and before fragment output.
     pub(super) fn apply_fog(&self, color: [f32; 4], depth: f32) -> [f32; 4] {
-        match self.linear_fog {
-            Some(fog) => fog.apply(color, depth),
+        match self.fog {
+            Some(PicaFog::Linear(fog)) => fog.apply(color, depth),
+            Some(PicaFog::Lut(fog)) => fog.apply(color, depth),
             None => color,
         }
     }
@@ -569,7 +619,7 @@ impl std::fmt::Display for PicaFragmentPipelineError {
             }
             Self::UnsupportedFogMode { mode } => write!(
                 formatter,
-                "PICA fog mode {mode} is not implemented (only disabled and linear fog are supported)"
+                "PICA fog mode {mode} is not implemented (gas and reserved modes are unsupported)"
             ),
             Self::NonFiniteColor { attribute, channel } => write!(
                 formatter,
@@ -660,7 +710,8 @@ mod tests {
     use crate::gpu::physical_memory::VRAM_BASE;
     use crate::gpu::{
         PicaTevSource, REG_BLEND_FUNC, REG_COLOR_OPERATION, REG_FOG_COLOR, REG_FOG_LINEAR_OFFSET,
-        REG_FOG_LINEAR_SLOPE, REG_TEXENV_UPDATE_BUFFER, TEXENV_STAGE_SOURCE_REGISTERS,
+        REG_FOG_LINEAR_SLOPE, REG_FOG_LUT_DATA0, REG_FOG_LUT_INDEX, REG_TEXENV_UPDATE_BUFFER,
+        TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn configure_texture(pica: &mut Pica200, unit: usize, address: u32, width: u16, height: u16) {
@@ -828,8 +879,43 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unimplemented_lut_and_gas_fog_modes_explicitly() {
-        for mode in [5, 7] {
+    fn fog_lut_interpolates_the_signed_difference_and_preserves_alpha() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_FOG_COLOR, 0x0000_00FF).unwrap();
+        pica.write_register(REG_FOG_LUT_INDEX, 0).unwrap();
+        // Entry 0 has a value of 512/2047 and a +1024 interpolation delta.
+        pica.write_register(REG_FOG_LUT_DATA0, (512 << 13) | 1024)
+            .unwrap();
+        pica.write_register(REG_FOG_LUT_DATA0 + 1, 1535 << 13)
+            .unwrap();
+        pica.write_register(REG_TEXENV_UPDATE_BUFFER, 5).unwrap();
+
+        let pipeline = pica.fragment_pipeline().unwrap();
+        // Depth 1/256 selects half-way between LUT entries 0 and 1.
+        let color = pipeline.apply_fog([0.0, 0.0, 1.0, 0.375], 1.0 / 256.0);
+        let expected_factor = 1024.0 / 2047.0;
+        assert!((color[0] - (1.0 - expected_factor)).abs() < 1.0e-3);
+        assert!((color[2] - expected_factor).abs() < 1.0e-3);
+        assert_eq!(color[3], 0.375);
+    }
+
+    #[test]
+    fn fog_lut_clamps_factor_and_respects_z_flip() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_FOG_COLOR, 0).unwrap();
+        pica.write_register(REG_FOG_LUT_INDEX, 0).unwrap();
+        // A negative table delta clamps the resulting fog factor at zero.
+        pica.write_register(REG_FOG_LUT_DATA0, 0x1C00).unwrap();
+        pica.write_register(REG_TEXENV_UPDATE_BUFFER, 5 | (1 << 16))
+            .unwrap();
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let color = pipeline.apply_fog([1.0; 4], 0.0);
+        assert_eq!(color, [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn rejects_unimplemented_gas_and_reserved_fog_modes_explicitly() {
+        for mode in [2, 3, 4, 6, 7] {
             let mut pica = Pica200::new();
             pica.write_register(REG_TEXENV_UPDATE_BUFFER, mode).unwrap();
             assert_eq!(
