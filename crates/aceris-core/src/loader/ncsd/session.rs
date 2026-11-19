@@ -520,6 +520,20 @@ impl Arm11ProcessSession {
         self.kernel_objects.insert_gsp_gpu_session()
     }
 
+    /// Creates a client endpoint for a stateless HLE service in this process.
+    pub fn create_hle_session(
+        &mut self,
+        kind: ServiceSessionKind,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.insert_hle_session(kind)
+    }
+
+    /// Creates an unlocked mutex handle owned by an HLE service (for example the APT lock).
+    pub fn create_service_mutex(&mut self) -> std::result::Result<u32, KernelHandleError> {
+        let creator = self.scheduler.current_thread_id().unwrap_or(MAIN_THREAD_ID);
+        self.kernel_objects.insert_mutex(false, creator)
+    }
+
     /// Creates a `hid:USER` client endpoint in this process.
     pub fn create_hid_session(&mut self) -> std::result::Result<u32, KernelHandleError> {
         self.kernel_objects.insert_hid_session()

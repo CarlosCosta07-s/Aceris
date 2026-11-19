@@ -1989,3 +1989,11 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Decisão de modelo: o serviço HLE age como agente coerente (SCU) e invalida as linhas stale do guest; sem isso o guest lia valores antigos, pois as D-caches por processo exigem invalidação explícita.
 - Pendente: comandos hid restantes (volume, calibração), acelerômetro/giroscópio, `SetSoundVolume`, e demais serviços para rodar jogos (fs:USER, apt:U, cfg:*, am, ptm, dsp::DSP, ndm, etc.).
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace`, todos com saída 0. CI remoto não consultado.
+
+## cfg:u e apt:U (19/11/2026)
+
+- `services.rs` guarda os dados estáticos (blocos de config, região/modelo); `system.rs` tem `dispatch_cfg_request` e `dispatch_apt_request`, e o srv agora usa `ServiceSessionKind::{Hid,Cfg,Apt}` via `create_hle_session`.
+- apt: `AptService` (mutex de lock, eventos de notificação/retomada, flags initialized/enabled). Header de GetLockHandle `0x000100C2` e de Initialize `0x00020043` derivados da leitura de libctru; sem verificação em hardware.
+- Pendente: ReceiveParameter/GlanceParameter (necessários para jogos que leem parâmetros de lançamento), fs:USER, dsp::DSP, ptm, am, ndm, cecd, frd.
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace`. CI remoto não consultado.
+

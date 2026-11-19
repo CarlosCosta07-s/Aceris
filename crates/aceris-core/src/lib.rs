@@ -10,6 +10,7 @@ pub mod input;
 pub mod loader;
 pub mod memory;
 pub mod selftest;
+pub mod services;
 pub mod system;
 pub mod video;
 

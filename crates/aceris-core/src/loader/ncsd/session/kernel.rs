@@ -175,6 +175,10 @@ pub enum ServiceSessionKind {
     },
     /// HLE `hid:USER` client endpoint.
     Hid,
+    /// HLE `cfg:u` client endpoint.
+    Cfg,
+    /// HLE `apt:U` client endpoint.
+    Apt,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -347,6 +351,14 @@ impl Arm11KernelObjectTable {
             event_handle: None,
             flags: 0,
         }))
+    }
+
+    /// Creates a process-local session for a stateless HLE service kind.
+    pub fn insert_hle_session(
+        &mut self,
+        kind: ServiceSessionKind,
+    ) -> Result<u32, KernelHandleError> {
+        self.insert(KernelObject::ServiceSession(kind))
     }
 
     /// Creates a process-local `hid:USER` client session.

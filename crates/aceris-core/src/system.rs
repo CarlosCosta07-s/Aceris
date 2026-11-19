@@ -132,6 +132,7 @@ pub struct System {
     /// `hid:USER` once the guest has requested its IPC handles.
     input: InputState,
     hid: Option<HidService>,
+    apt: Option<AptService>,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -257,6 +258,16 @@ struct HidService {
     backing: crate::loader::ncsd::process::SharedMemoryBacking,
     memory_handle: u32,
     events: [u32; HID_EVENT_COUNT],
+}
+
+/// HLE `apt:U` state: lock mutex and the two applet events.
+#[derive(Debug)]
+struct AptService {
+    lock_handle: u32,
+    notification_event: u32,
+    resume_event: u32,
+    initialized: bool,
+    enabled: bool,
 }
 
 /// Result of one completed development frame.
@@ -1046,6 +1057,8 @@ impl System {
                 self.dispatch_service_manager_request(service_handle, message)?
             }
             ServiceSessionKind::Hid => self.dispatch_hid_request(message)?,
+            ServiceSessionKind::Cfg => self.dispatch_cfg_request(message)?,
+            ServiceSessionKind::Apt => self.dispatch_apt_request(message)?,
             ServiceSessionKind::GspGpu {
                 client_id,
                 shared_memory_handle,
@@ -1168,17 +1181,23 @@ impl System {
                 requested_name[0..4].copy_from_slice(&parameters[0].to_le_bytes());
                 requested_name[4..8].copy_from_slice(&parameters[1].to_le_bytes());
                 let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
-                if name_length == 8 && &requested_name == b"hid:USER" {
-                    let hid_handle = match self
+                let hle_kind = match requested_name.get(..name_length) {
+                    Some(b"hid:USER") => Some(ServiceSessionKind::Hid),
+                    Some(b"cfg:u") => Some(ServiceSessionKind::Cfg),
+                    Some(b"apt:U") => Some(ServiceSessionKind::Apt),
+                    _ => None,
+                };
+                if let Some(kind) = hle_kind {
+                    let hle_handle = match self
                         .ncsd_session
                         .as_mut()
                         .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
-                        .create_hid_session()
+                        .create_hle_session(kind)
                     {
                         Ok(handle) => handle,
                         Err(_) => return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]),
                     };
-                    return Ok(vec![0x0005_0042, 0, 0, hid_handle]);
+                    return Ok(vec![0x0005_0042, 0, 0, hle_handle]);
                 }
                 if name_length != 8 || &requested_name != b"gsp::Gpu" {
                     return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
@@ -1197,6 +1216,139 @@ impl System {
                 // the newly created client-side gsp::Gpu session.
                 Ok(vec![0x0005_0042, 0, 0, service_handle])
             }
+            _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
+        }
+    }
+
+    /// Handles `cfg:u` requests (public 3dbrew command IDs; not hardware-verified).
+    fn dispatch_cfg_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        const GET_CONFIG_INFO_BLK2: u32 = 0x0001_0082;
+        const SECURE_INFO_GET_REGION: u32 = 0x0002_0000;
+        const GET_REGION_CANADA_USA: u32 = 0x0004_0000;
+        const GET_SYSTEM_MODEL: u32 = 0x0005_0000;
+
+        let raw_header = message.header().raw();
+        match raw_header {
+            GET_CONFIG_INFO_BLK2 => {
+                let parameters = message.normal_parameters();
+                let (size, block_id) = (parameters[0], parameters[1]);
+                let Ok(translations) = message.translation_parameters() else {
+                    return Ok(vec![0x0001_0040, RESULT_INVALID_ENUM]);
+                };
+                let destination = translations.iter().find_map(|parameter| match parameter {
+                    crate::loader::ncsd::session::ipc::IpcTranslationParameter::MappedBuffer {
+                        size_bytes,
+                        source_address,
+                        ..
+                    } => Some((*size_bytes, *source_address)),
+                    _ => None,
+                });
+                let (Some((buffer_size, address)), Some(data)) =
+                    (destination, crate::services::cfg_block(block_id))
+                else {
+                    return Ok(vec![0x0001_0040, RESULT_INVALID_ENUM]);
+                };
+                if size as usize != data.len() || buffer_size as usize != data.len() {
+                    return Ok(vec![0x0001_0040, RESULT_INVALID_ENUM]);
+                }
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                if session.write_memory_bytes(address, data).is_err() {
+                    return Ok(vec![0x0001_0040, RESULT_INVALID_ADDRESS]);
+                }
+                Ok(vec![0x0001_0040, 0])
+            }
+            SECURE_INFO_GET_REGION => Ok(vec![
+                0x0002_0080,
+                0,
+                u32::from(crate::services::CFG_REGION_USA),
+            ]),
+            GET_REGION_CANADA_USA => Ok(vec![
+                0x0004_0080,
+                0,
+                u32::from(crate::services::CFG_REGION_USA == 1),
+            ]),
+            GET_SYSTEM_MODEL => Ok(vec![
+                0x0005_0080,
+                0,
+                u32::from(crate::services::CFG_MODEL_3DS),
+            ]),
+            _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
+        }
+    }
+
+    /// Handles `apt:U` requests: initialization, lock and notification basics only.
+    ///
+    /// ReceiveParameter/GlanceParameter, sleep queries and applet switching are
+    /// not implemented and answer with an error.
+    fn dispatch_apt_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        const GET_LOCK_HANDLE: u32 = 0x0001_0040;
+        const INITIALIZE: u32 = 0x0002_0080;
+        const ENABLE: u32 = 0x0003_0040;
+        const FINALIZE: u32 = 0x0004_0040;
+        const IS_REGISTERED: u32 = 0x0009_0040;
+        const INQUIRE_NOTIFICATION: u32 = 0x000B_0040;
+
+        let raw_header = message.header().raw();
+        if self.apt.is_none() && matches!(raw_header, GET_LOCK_HANDLE | INITIALIZE) {
+            let session = self
+                .ncsd_session
+                .as_mut()
+                .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+            let created = (
+                session.create_service_mutex(),
+                session.create_event_handle(
+                    crate::loader::ncsd::session::kernel::EventResetType::OneShot,
+                ),
+                session.create_event_handle(
+                    crate::loader::ncsd::session::kernel::EventResetType::OneShot,
+                ),
+            );
+            let (Ok(lock_handle), Ok(notification_event), Ok(resume_event)) = created else {
+                return Ok(vec![
+                    (raw_header & 0xFFFF_0000) | 0x40,
+                    RESULT_OUT_OF_MEMORY,
+                ]);
+            };
+            self.apt = Some(AptService {
+                lock_handle,
+                notification_event,
+                resume_event,
+                initialized: false,
+                enabled: false,
+            });
+        }
+        match raw_header {
+            GET_LOCK_HANDLE => {
+                let apt = self.apt.as_ref().expect("apt state exists");
+                // result, applet attributes, APT state, handle descriptor, lock.
+                Ok(vec![0x0001_00C2, 0, 0, 0, 0, apt.lock_handle])
+            }
+            INITIALIZE => {
+                let apt = self.apt.as_mut().expect("apt state exists");
+                apt.initialized = true;
+                Ok(vec![
+                    0x0002_0043,
+                    0,
+                    0x0400_0000,
+                    apt.notification_event,
+                    apt.resume_event,
+                ])
+            }
+            ENABLE | FINALIZE => {
+                let Some(apt) = self.apt.as_mut().filter(|apt| apt.initialized) else {
+                    return Ok(vec![
+                        (raw_header & 0xFFFF_0000) | 0x40,
+                        RESULT_INVALID_HANDLE,
+                    ]);
+                };
+                apt.enabled = raw_header == ENABLE;
+                Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, 0])
+            }
+            IS_REGISTERED => Ok(vec![0x0009_0080, 0, 1]),
+            INQUIRE_NOTIFICATION => Ok(vec![0x000B_0080, 0, 0]),
             _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
         }
     }
@@ -8669,6 +8821,141 @@ mod tests {
         let touch = session.read_memory_u32(HID_BASE + 0xC8 + 8).unwrap();
         assert_eq!(touch & 0xFFFF, 33);
         assert_eq!(touch >> 16, 44);
+    }
+
+    /// Opens an HLE service through srv:GetServiceHandle and returns its handle.
+    fn open_hle_service(system: &mut System, name: &[u8]) -> u32 {
+        let service_manager = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let handle = session.create_service_manager_session().unwrap();
+            session.register_service_manager_client(handle).unwrap();
+            handle
+        };
+        let mut padded = [0u8; 8];
+        padded[..name.len()].copy_from_slice(name);
+        let reply = write_tls_ipc_request(
+            system,
+            service_manager,
+            &[
+                0x0005_0100,
+                u32::from_le_bytes(padded[..4].try_into().unwrap()),
+                u32::from_le_bytes(padded[4..].try_into().unwrap()),
+                name.len() as u32,
+                0,
+            ],
+        );
+        run_one_ipc_svc(system);
+        let response = read_tls_ipc_response(system, reply, 4);
+        assert_eq!(&response[..3], &[0x0005_0042, 0, 0]);
+        response[3]
+    }
+
+    #[test]
+    fn cfg_u_reports_region_model_and_writes_language_block_to_guest_buffer() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(5)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let cfg = open_hle_service(&mut system, b"cfg:u");
+
+        let reply = write_tls_ipc_request(&mut system, cfg, &[0x0002_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0002_0080, 0, 1]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, cfg, &[0x0005_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0005_0080, 0, 0]
+        );
+
+        let destination = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_tls_address()
+            .unwrap()
+            + 0x200;
+        let reply = write_tls_ipc_request(
+            &mut system,
+            cfg,
+            &[0x0001_0082, 1, 0x000A_0002, (1 << 4) | 12, destination],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0001_0040, 0]
+        );
+        let session = system.ncsd_session.as_mut().unwrap();
+        assert_eq!(session.read_memory_u32(destination).unwrap() & 0xFF, 1);
+
+        // Unknown block and wrong size are rejected without writing.
+        let reply = write_tls_ipc_request(
+            &mut system,
+            cfg,
+            &[0x0001_0082, 4, 0xDEAD_BEEF, (4 << 4) | 12, destination],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0001_0040, RESULT_INVALID_ENUM]
+        );
+    }
+
+    #[test]
+    fn apt_u_initializes_with_lock_and_events_and_gates_enable_on_initialize() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(7)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let apt = open_hle_service(&mut system, b"apt:U");
+
+        // Enable before Initialize is refused.
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0003_0040]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0003_0040, RESULT_INVALID_HANDLE]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0001_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        let lock = read_tls_ipc_response(&mut system, reply, 6);
+        assert_eq!(&lock[..5], &[0x0001_00C2, 0, 0, 0, 0]);
+        assert_ne!(lock[5], 0);
+
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0002_0080, 0x300, 0]);
+        run_one_ipc_svc(&mut system);
+        let init = read_tls_ipc_response(&mut system, reply, 5);
+        assert_eq!(&init[..3], &[0x0002_0043, 0, 0x0400_0000]);
+        assert_ne!(init[3], 0);
+        assert_ne!(init[4], 0);
+        assert_ne!(init[3], init[4]);
+
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0003_0040]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0003_0040, 0]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x000B_0040]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000B_0080, 0, 0]
+        );
     }
 
     #[test]
