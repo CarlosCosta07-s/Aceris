@@ -1,8 +1,10 @@
 //! Desktop window support without external crates.
 //!
 //! The platform backends talk to the system's window library through raw FFI
-//! (loaded at run time, so the build needs no development packages). Only the
-//! X11 backend exists so far; other platforms report [`WindowError::Unsupported`].
+//! (loaded at run time on Linux, linked on Windows/macOS, so the build needs no
+//! development packages). Backends: X11 (Linux, runs in CI-less tests), Win32 and
+//! Cocoa (written but never run: see their module docs); other platforms report
+//! [`WindowError::Unsupported`].
 //!
 //! Layout: the top LCD (400x240) is always left of the bottom LCD (320x240).
 //! The two screens share a 736x240 gameplay canvas and are scaled together.
@@ -14,15 +16,45 @@ use aceris_core::video::{
 };
 use std::fmt;
 
+mod native_input;
+
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(target_os = "linux")]
 pub use x11::Window;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+mod win32;
+#[cfg(target_os = "windows")]
+pub use win32::Window;
+
+#[cfg(target_os = "macos")]
+mod cocoa;
+#[cfg(target_os = "macos")]
+pub use cocoa::Window;
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 mod unsupported;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 pub use unsupported::Window;
+
+// Type-checks the Windows and macOS backends on any host (`cargo check` with
+// `RUSTFLAGS="--cfg aceris_typecheck_native"`). They are never linked or run
+// there; see docs/AI_HANDOFF.md.
+#[cfg(all(
+    aceris_typecheck_native,
+    not(target_os = "windows"),
+    not(target_os = "macos")
+))]
+#[allow(dead_code)]
+mod cocoa;
+#[cfg(all(
+    aceris_typecheck_native,
+    not(target_os = "windows"),
+    not(target_os = "macos")
+))]
+#[allow(dead_code)]
+mod win32;
 
 /// Width of the home/library canvas in pixels.
 pub const CANVAS_WIDTH: usize = 400;
@@ -39,7 +71,10 @@ pub const GAME_CANVAS_HEIGHT: usize = 240;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowError {
     /// This platform has no window backend yet.
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "windows", target_os = "macos"),
+        allow(dead_code)
+    )]
     Unsupported,
     /// The window system could not be reached or used.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]

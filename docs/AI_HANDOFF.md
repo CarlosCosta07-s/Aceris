@@ -2020,3 +2020,12 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Próximo passo real de áudio: protocolo de pipes (pipe 0 estados, pipe 2 áudio), DSP RAM mapeada, conversão de endereços e mixagem de sons para uma saída de áudio no frontend. É um trabalho grande e precisa de um jogo/homebrew de referência para validar.
 - Verificado localmente: fmt, clippy e `cargo test --workspace` (ver commit). CI remoto não consultado.
 
+## Backends desktop Windows e macOS (19/11/2026)
+
+- `frontends/desktop/src/window/win32.rs` (user32/gdi32 via `extern "system"`, `SetDIBitsToDevice`, procedimento de janela com fila thread-local) e `cocoa.rs` (runtime Objective-C via `objc_msgSend` convertido por assinatura, `nextEventMatchingMask:`, `CGImage` como conteúdo da camada). Sem subclasses nem delegates.
+- `native_input.rs`: mapas VK/kVK e decodificação de lParam/roda, testados em todas as plataformas; um teste garante que os mapas Windows/macOS equivalem ao do X11.
+- Verificação feita: `RUSTFLAGS="--cfg aceris_typecheck_native" cargo check -p aceris-desktop` e `cargo clippy ... -D warnings` no Linux compilam os dois módulos (nunca linkados/executados). Execução real e aparência: NÃO verificadas. Primeiro sinal real será o CI Windows/macOS do repositório (não consultado por mim); se falhar, o erro é meu e deve ser corrigido nesses arquivos.
+- Riscos conhecidos a checar em máquina real: convenção de retorno de `BOOL` em `objc_msgSend`, orientação do `CALayer.contents`, posição do cursor em janelas com barra de título (macOS), DPI scaling no Windows.
+- Novo `[workspace.lints.rust] unexpected_cfgs` no `Cargo.toml` raiz declara o cfg `aceris_typecheck_native`.
+- Verificado localmente: fmt, clippy (com e sem a flag) e `cargo test --workspace`.
+

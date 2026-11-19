@@ -27,6 +27,7 @@ aceris-core = { path = "crates/aceris-core" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(aceris_typecheck_native)'] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
