@@ -2005,3 +2005,11 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Pendente: caminhos por arquivo, SD/save/extdata (jogos que gravam progresso), `dsp::DSP`, `ptm`, `am`, ReceiveParameter do apt.
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` (ver mensagem do commit). CI remoto não consultado.
 
+## apt parâmetros e ptm:u (19/11/2026)
+
+- `AptService` ganhou `pending_parameter` e `cpu_time_limit`; `AptParameter` modela remetente/comando/dados. O primeiro Enable enfileira Wakeup e sinaliza `resume_event`.
+- ReceiveParameter/GlanceParameter respondem com 9 palavras (0x000D0104/0x000E0104); o ponteiro de saída é lido em TLS+0x184 (descritor de buffer estático do guest). Teste manual injeta um parâmetro com dados.
+- `ptm:u` (`ServiceSessionKind::Ptm`): respostas `cmd|0x80, 0, valor`; valores são padrões de desenvolvimento.
+- Pendente: `dsp::DSP` (áudio) e `am`, `ndm`, `cecd`, `frd`, `gsp::Lcd`, `y2r`, `mic`; SharedFont; save data.
+- Verificado localmente: fmt, clippy e `cargo test --workspace` (ver commit). CI remoto não consultado.
+

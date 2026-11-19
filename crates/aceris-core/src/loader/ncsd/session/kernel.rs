@@ -181,6 +181,8 @@ pub enum ServiceSessionKind {
     Apt,
     /// HLE `fs:USER` client endpoint.
     Fs,
+    /// HLE `ptm:u` client endpoint.
+    Ptm,
     /// An opened application-RomFS file served by `fs:USER`.
     FsRomFsFile,
 }

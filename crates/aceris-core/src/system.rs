@@ -269,7 +269,23 @@ struct AptService {
     resume_event: u32,
     initialized: bool,
     enabled: bool,
+    /// Parameter delivered by the HOME-menu side (first: a Wakeup signal).
+    pending_parameter: Option<AptParameter>,
+    cpu_time_limit: u32,
 }
+
+/// One APT parameter transfer as seen by `ReceiveParameter`/`GlanceParameter`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AptParameter {
+    sender_app_id: u32,
+    command: u32,
+    data: Vec<u8>,
+}
+
+/// `APT` signal value asking the application to start running (libctru `APTCMD_WAKEUP`).
+const APT_COMMAND_WAKEUP: u32 = 1;
+/// App ID of the HOME menu, the sender of the first Wakeup.
+const APT_APP_ID_HOME_MENU: u32 = 0x101;
 
 /// Result of one completed development frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1092,6 +1108,7 @@ impl System {
             ServiceSessionKind::Cfg => self.dispatch_cfg_request(message)?,
             ServiceSessionKind::Apt => self.dispatch_apt_request(message)?,
             ServiceSessionKind::Fs => self.dispatch_fs_request(message)?,
+            ServiceSessionKind::Ptm => Self::dispatch_ptm_request(message),
             ServiceSessionKind::FsRomFsFile => self.dispatch_fs_file_request(message)?,
             ServiceSessionKind::GspGpu {
                 client_id,
@@ -1220,6 +1237,7 @@ impl System {
                     Some(b"cfg:u") => Some(ServiceSessionKind::Cfg),
                     Some(b"apt:U") => Some(ServiceSessionKind::Apt),
                     Some(b"fs:USER") => Some(ServiceSessionKind::Fs),
+                    Some(b"ptm:u") => Some(ServiceSessionKind::Ptm),
                     _ => None,
                 };
                 if let Some(kind) = hle_kind {
@@ -1454,7 +1472,26 @@ impl System {
         }
     }
 
-    /// Handles `apt:U` requests: initialization, lock and notification basics only.
+    /// Handles `ptm:u` status queries with fixed defaults (adapter plugged in,
+    /// shell open, full battery). Command IDs are from 3dbrew; the response
+    /// shape (result + one byte) and value meanings are not hardware-verified.
+    fn dispatch_ptm_request(message: IpcMessage<'_>) -> Vec<u32> {
+        let raw_header = message.header().raw();
+        let value = match raw_header {
+            0x0005_0000 => Some(1), // GetAdapterState: plugged in
+            0x0006_0000 => Some(1), // GetShellState: open
+            0x0007_0000 => Some(5), // GetBatteryLevel: full
+            0x0008_0000 => Some(0), // GetBatteryChargeState: not charging
+            0x0009_0000 => Some(0), // GetPedometerState: inactive
+            _ => None,
+        };
+        match value {
+            Some(value) => vec![raw_header | 0x80, 0, value],
+            None => vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM],
+        }
+    }
+
+    /// Handles `apt:U` requests: initialization, lock, notification, parameters.
     ///
     /// ReceiveParameter/GlanceParameter, sleep queries and applet switching are
     /// not implemented and answer with an error.
@@ -1465,6 +1502,11 @@ impl System {
         const FINALIZE: u32 = 0x0004_0040;
         const IS_REGISTERED: u32 = 0x0009_0040;
         const INQUIRE_NOTIFICATION: u32 = 0x000B_0040;
+        const RECEIVE_PARAMETER: u32 = 0x000D_0080;
+        const GLANCE_PARAMETER: u32 = 0x000E_0080;
+        const NOTIFY_TO_WAIT: u32 = 0x0043_0040;
+        const SET_APPLICATION_CPU_TIME_LIMIT: u32 = 0x004F_0080;
+        const GET_APPLICATION_CPU_TIME_LIMIT: u32 = 0x0050_0040;
 
         let raw_header = message.header().raw();
         if self.apt.is_none() && matches!(raw_header, GET_LOCK_HANDLE | INITIALIZE) {
@@ -1493,6 +1535,8 @@ impl System {
                 resume_event,
                 initialized: false,
                 enabled: false,
+                pending_parameter: None,
+                cpu_time_limit: 0,
             });
         }
         match raw_header {
@@ -1519,8 +1563,99 @@ impl System {
                         RESULT_INVALID_HANDLE,
                     ]);
                 };
+                let enabling = raw_header == ENABLE && !apt.enabled;
                 apt.enabled = raw_header == ENABLE;
+                if enabling {
+                    // The HOME menu side wakes the application with a first Wakeup signal.
+                    apt.pending_parameter = Some(AptParameter {
+                        sender_app_id: APT_APP_ID_HOME_MENU,
+                        command: APT_COMMAND_WAKEUP,
+                        data: Vec::new(),
+                    });
+                    let resume = apt.resume_event;
+                    self.ncsd_session
+                        .as_mut()
+                        .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                        .signal_event_handle(resume)
+                        .map_err(|error| {
+                            Error::Io(io::Error::other(format!(
+                                "APT resume signal failed: {error:?}"
+                            )))
+                        })?;
+                }
                 Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, 0])
+            }
+            RECEIVE_PARAMETER | GLANCE_PARAMETER => {
+                let Some(apt) = self.apt.as_mut().filter(|apt| apt.initialized) else {
+                    return Ok(vec![
+                        (raw_header & 0xFFFF_0000) | 0x40,
+                        RESULT_INVALID_HANDLE,
+                    ]);
+                };
+                let capacity = message
+                    .normal_parameters()
+                    .get(1)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(0x1000);
+                // No parameter pending answers with the "None" signal and no data.
+                let parameter = apt.pending_parameter.clone().unwrap_or(AptParameter {
+                    sender_app_id: 0,
+                    command: 0,
+                    data: Vec::new(),
+                });
+                if raw_header == RECEIVE_PARAMETER {
+                    apt.pending_parameter = None;
+                }
+                let size = parameter.data.len().min(capacity as usize);
+                if size > 0 {
+                    let session = self
+                        .ncsd_session
+                        .as_mut()
+                        .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                    // The guest's static-buffer descriptor sits 0x100 bytes into the
+                    // command buffer: its second word is the output pointer.
+                    let tls = session.current_tls_address().unwrap_or(0);
+                    let pointer = session
+                        .read_memory_u32(tls + ARM11_TLS_IPC_BUFFER_OFFSET + 0x104)
+                        .unwrap_or(0);
+                    if pointer == 0
+                        || session
+                            .write_memory_bytes(pointer, &parameter.data[..size])
+                            .is_err()
+                    {
+                        return Ok(vec![
+                            (raw_header & 0xFFFF_0000) | 0x40,
+                            RESULT_INVALID_ADDRESS,
+                        ]);
+                    }
+                }
+                let handle_descriptor = if raw_header == RECEIVE_PARAMETER {
+                    0x10
+                } else {
+                    0
+                };
+                Ok(vec![
+                    (raw_header & 0xFFFF_0000) | 0x104,
+                    0,
+                    parameter.sender_app_id,
+                    parameter.command,
+                    size as u32,
+                    handle_descriptor,
+                    0,
+                    ((size as u32) << 14) | 2,
+                    0,
+                ])
+            }
+            NOTIFY_TO_WAIT => Ok(vec![0x0043_0040, 0]),
+            SET_APPLICATION_CPU_TIME_LIMIT => {
+                let apt = self.apt.as_mut().expect("apt state exists");
+                apt.cpu_time_limit = message.normal_parameters().get(1).copied().unwrap_or(0);
+                Ok(vec![0x004F_0040, 0])
+            }
+            GET_APPLICATION_CPU_TIME_LIMIT => {
+                let apt = self.apt.as_ref().expect("apt state exists");
+                Ok(vec![0x0050_0080, 0, apt.cpu_time_limit])
             }
             IS_REGISTERED => Ok(vec![0x0009_0080, 0, 1]),
             INQUIRE_NOTIFICATION => Ok(vec![0x000B_0080, 0, 0]),
@@ -9289,6 +9424,95 @@ mod tests {
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 2),
             [0x0803_0040, 0xC880_4478]
+        );
+    }
+
+    #[test]
+    fn apt_u_delivers_a_wakeup_then_parameters_and_ptm_reports_defaults() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(10)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let apt = open_hle_service(&mut system, b"apt:U");
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0002_0080, 0x300, 0]);
+        run_one_ipc_svc(&mut system);
+        let init = read_tls_ipc_response(&mut system, reply, 5);
+        let resume = init[4];
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0003_0040]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0003_0040, 0]
+        );
+        assert_eq!(
+            system
+                .ncsd_session
+                .as_ref()
+                .unwrap()
+                .event_handle_is_signaled(resume),
+            Some(true)
+        );
+
+        // Glance keeps the Wakeup pending; Receive consumes it.
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x000E_0080, 0x300, 0x100]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 9),
+            [0x000E_0104, 0, 0x101, 1, 0, 0, 0, 2, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x000D_0080, 0x300, 0x100]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 9),
+            [0x000D_0104, 0, 0x101, 1, 0, 0x10, 0, 2, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x000D_0080, 0x300, 0x100]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 5)[3], 0);
+
+        // A parameter with data is written to the guest's static-buffer pointer.
+        system.apt.as_mut().unwrap().pending_parameter = Some(AptParameter {
+            sender_app_id: 0x101,
+            command: 2,
+            data: vec![1, 2, 3, 4],
+        });
+        let tls = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_tls_address()
+            .unwrap();
+        let destination = tls + 0x500;
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x000D_0080, 0x300, 0x100]);
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_u32(tls + 0x184, destination)
+            .unwrap();
+        run_one_ipc_svc(&mut system);
+        let response = read_tls_ipc_response(&mut system, reply, 9);
+        assert_eq!(&response[..5], &[0x000D_0104, 0, 0x101, 2, 4]);
+        assert_eq!(response[7], (4 << 14) | 2);
+        let mut bytes = [0u8; 4];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(destination, &mut bytes)
+            .unwrap();
+        assert_eq!(bytes, [1, 2, 3, 4]);
+
+        let ptm = open_hle_service(&mut system, b"ptm:u");
+        let reply = write_tls_ipc_request(&mut system, ptm, &[0x0007_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0007_0080, 0, 5]
         );
     }
 
