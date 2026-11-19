@@ -2029,3 +2029,10 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Novo `[workspace.lints.rust] unexpected_cfgs` no `Cargo.toml` raiz declara o cfg `aceris_typecheck_native`.
 - Verificado localmente: fmt, clippy (com e sem a flag) e `cargo test --workspace`.
 
+## Aplicativo Android nativo (19/11/2026)
+
+- `frontends/android/src/app.rs` apareceu no meu checkout como arquivo não versionado e não compilava (usava `frontend::pad` inexistente e um `touch` com tipo errado); adotei e corrigi (constantes `frontend::buttons`, conversão de tipos, tolerância de ±1 na conversão de toque). Se outra sessão está trabalhando nele, alinhar com ela.
+- `native_activity.rs`: callbacks de `ANativeActivity` só gravam estado sob mutex e acordam o `ALooper`; a thread do app (como no `android_native_app_glue`) anexa/desanexa a fila de entrada, processa eventos, aplica `App::step` e copia o RGBA para o buffer da janela. Referência de janela com `ANativeWindow_acquire/release`; o desenho segura o mutex para a janela não ser liberada durante o quadro.
+- Verificação feita: type-check/clippy no Linux com `--cfg aceris_typecheck_native`; o CI faz `cargo ndk` para arm64-v8a. Execução em dispositivo: NÃO verificada. Riscos a checar: layout de `ANativeActivityCallbacks`, uso de `ALooper_pollOnce` com ident, comportamento de `AInputQueue_preDispatchEvent`, formato de buffer RGBA.
+- Verificado localmente: fmt e clippy (com e sem a flag), testes do workspace. Ver o CI remoto do commit.
+

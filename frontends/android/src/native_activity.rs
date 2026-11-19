@@ -1,0 +1,531 @@
+//! Android `NativeActivity` host over raw FFI (no NDK glue library, no crates).
+//!
+//! STATUS: written without an Android device or NDK at hand. It is type-checked
+//! on Linux (`RUSTFLAGS="--cfg aceris_typecheck_native" cargo check`) and built
+//! for `aarch64-linux-android` by the repository CI, but has never been run on a
+//! device. Application logic (intro, library, gamepad overlay, touch) lives in
+//! `app.rs` and is unit-tested on every platform.
+//!
+//! Threading follows `android_native_app_glue`: the activity callbacks run on
+//! the UI thread and only record state under a mutex and wake the app thread's
+//! `ALooper`; the app thread owns the emulator, the input queue attachment and
+//! the window, and renders at ~60 Hz.
+
+use crate::app::{App, Pointer};
+use std::ffi::{CStr, c_char, c_int, c_void};
+use std::path::PathBuf;
+use std::ptr;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+#[repr(C)]
+pub struct NativeActivityCallbacks {
+    on_start: Option<unsafe extern "C" fn(*mut NativeActivity)>,
+    on_resume: Option<unsafe extern "C" fn(*mut NativeActivity)>,
+    on_save_instance_state:
+        Option<unsafe extern "C" fn(*mut NativeActivity, *mut usize) -> *mut c_void>,
+    on_pause: Option<unsafe extern "C" fn(*mut NativeActivity)>,
+    on_stop: Option<unsafe extern "C" fn(*mut NativeActivity)>,
+    on_destroy: Option<unsafe extern "C" fn(*mut NativeActivity)>,
+    on_window_focus_changed: Option<unsafe extern "C" fn(*mut NativeActivity, c_int)>,
+    on_native_window_created: Option<unsafe extern "C" fn(*mut NativeActivity, *mut c_void)>,
+    on_native_window_resized: Option<unsafe extern "C" fn(*mut NativeActivity, *mut c_void)>,
+    on_native_window_redraw_needed: Option<unsafe extern "C" fn(*mut NativeActivity, *mut c_void)>,
+    on_native_window_destroyed: Option<unsafe extern "C" fn(*mut NativeActivity, *mut c_void)>,
+    on_input_queue_created: Option<unsafe extern "C" fn(*mut NativeActivity, *mut c_void)>,
+    on_input_queue_destroyed: Option<unsafe extern "C" fn(*mut NativeActivity, *mut c_void)>,
+    on_content_rect_changed: Option<unsafe extern "C" fn(*mut NativeActivity, *const c_void)>,
+    on_configuration_changed: Option<unsafe extern "C" fn(*mut NativeActivity)>,
+    on_low_memory: Option<unsafe extern "C" fn(*mut NativeActivity)>,
+}
+
+#[repr(C)]
+pub struct NativeActivity {
+    callbacks: *mut NativeActivityCallbacks,
+    vm: *mut c_void,
+    env: *mut c_void,
+    clazz: *mut c_void,
+    internal_data_path: *const c_char,
+    external_data_path: *const c_char,
+    sdk_version: i32,
+    instance: *mut c_void,
+    asset_manager: *mut c_void,
+    obb_path: *const c_char,
+}
+
+#[repr(C)]
+struct NativeWindowBuffer {
+    width: i32,
+    height: i32,
+    stride: i32,
+    format: i32,
+    bits: *mut c_void,
+    reserved: [u32; 6],
+}
+
+#[cfg_attr(target_os = "android", link(name = "android"))]
+unsafe extern "C" {
+    fn ANativeWindow_getWidth(window: *mut c_void) -> i32;
+    fn ANativeWindow_getHeight(window: *mut c_void) -> i32;
+    fn ANativeWindow_setBuffersGeometry(
+        window: *mut c_void,
+        width: i32,
+        height: i32,
+        format: i32,
+    ) -> i32;
+    fn ANativeWindow_lock(
+        window: *mut c_void,
+        out_buffer: *mut NativeWindowBuffer,
+        in_out_dirty_bounds: *mut c_void,
+    ) -> i32;
+    fn ANativeWindow_unlockAndPost(window: *mut c_void) -> i32;
+    fn ANativeWindow_acquire(window: *mut c_void);
+    fn ANativeWindow_release(window: *mut c_void);
+
+    fn ALooper_prepare(options: c_int) -> *mut c_void;
+    fn ALooper_pollOnce(
+        timeout_millis: c_int,
+        out_fd: *mut c_int,
+        out_events: *mut c_int,
+        out_data: *mut *mut c_void,
+    ) -> c_int;
+    fn ALooper_wake(looper: *mut c_void);
+
+    fn AInputQueue_attachLooper(
+        queue: *mut c_void,
+        looper: *mut c_void,
+        ident: c_int,
+        callback: *const c_void,
+        data: *mut c_void,
+    );
+    fn AInputQueue_detachLooper(queue: *mut c_void);
+    fn AInputQueue_getEvent(queue: *mut c_void, out_event: *mut *mut c_void) -> i32;
+    fn AInputQueue_preDispatchEvent(queue: *mut c_void, event: *mut c_void) -> i32;
+    fn AInputQueue_finishEvent(queue: *mut c_void, event: *mut c_void, handled: c_int);
+
+    fn AInputEvent_getType(event: *const c_void) -> i32;
+    fn AKeyEvent_getAction(event: *const c_void) -> i32;
+    fn AKeyEvent_getKeyCode(event: *const c_void) -> i32;
+    fn AMotionEvent_getAction(event: *const c_void) -> i32;
+    fn AMotionEvent_getPointerCount(event: *const c_void) -> usize;
+    fn AMotionEvent_getPointerId(event: *const c_void, index: usize) -> i32;
+    fn AMotionEvent_getX(event: *const c_void, index: usize) -> f32;
+    fn AMotionEvent_getY(event: *const c_void, index: usize) -> f32;
+}
+
+const WINDOW_FORMAT_RGBA_8888: i32 = 1;
+const ALOOPER_PREPARE_ALLOW_NON_CALLBACKS: c_int = 1;
+const LOOPER_ID_INPUT: c_int = 1;
+const INPUT_EVENT_TYPE_KEY: i32 = 1;
+const INPUT_EVENT_TYPE_MOTION: i32 = 2;
+const KEY_ACTION_DOWN: i32 = 0;
+const KEY_ACTION_UP: i32 = 1;
+const MOTION_ACTION_MASK: i32 = 0xFF;
+const MOTION_ACTION_POINTER_INDEX_MASK: i32 = 0xFF00;
+const MOTION_ACTION_POINTER_INDEX_SHIFT: i32 = 8;
+const MOTION_ACTION_UP: i32 = 1;
+const MOTION_ACTION_CANCEL: i32 = 3;
+const MOTION_ACTION_POINTER_UP: i32 = 6;
+const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+
+/// A raw pointer owned by the Android framework, stored as an address so it
+/// can live in the shared state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Raw(usize);
+
+impl Raw {
+    fn new(pointer: *mut c_void) -> Self {
+        Self(pointer as usize)
+    }
+
+    fn get(self) -> *mut c_void {
+        self.0 as *mut c_void
+    }
+
+    fn is_null(self) -> bool {
+        self.0 == 0
+    }
+}
+
+/// State written by the UI-thread callbacks and consumed by the app thread.
+#[derive(Debug, Default)]
+struct Shared {
+    window: Raw,
+    queue: Raw,
+    resumed: bool,
+    destroyed: bool,
+    looper: Raw,
+}
+
+struct Host {
+    shared: Mutex<Shared>,
+    thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+static HOST: Mutex<Option<std::sync::Arc<Host>>> = Mutex::new(None);
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn host() -> Option<std::sync::Arc<Host>> {
+    lock(&HOST).clone()
+}
+
+fn update_shared(change: impl FnOnce(&mut Shared)) {
+    if let Some(host) = host() {
+        let looper = {
+            let mut shared = lock(&host.shared);
+            change(&mut shared);
+            shared.looper
+        };
+        if !looper.is_null() {
+            // SAFETY: the looper belongs to the live app thread; waking is thread-safe.
+            unsafe { ALooper_wake(looper.get()) };
+        }
+    }
+}
+
+/// Entry point the Android runtime calls when the activity is created.
+///
+/// # Safety
+/// Called by the framework with a valid `ANativeActivity` that outlives the
+/// activity's callbacks.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ANativeActivity_onCreate(
+    activity: *mut NativeActivity,
+    _saved_state: *mut c_void,
+    _saved_state_size: usize,
+) {
+    // SAFETY: `activity` and its callback table are valid for the activity's lifetime.
+    unsafe {
+        let callbacks = &mut *(*activity).callbacks;
+        callbacks.on_resume = Some(on_resume);
+        callbacks.on_pause = Some(on_pause);
+        callbacks.on_destroy = Some(on_destroy);
+        callbacks.on_native_window_created = Some(on_window_created);
+        callbacks.on_native_window_destroyed = Some(on_window_destroyed);
+        callbacks.on_input_queue_created = Some(on_queue_created);
+        callbacks.on_input_queue_destroyed = Some(on_queue_destroyed);
+
+        let games_dir = games_directory(&*activity);
+        let host = std::sync::Arc::new(Host {
+            shared: Mutex::new(Shared::default()),
+            thread: Mutex::new(None),
+        });
+        *lock(&HOST) = Some(host.clone());
+        let worker = host.clone();
+        let handle = std::thread::spawn(move || run_app_thread(&worker, games_dir));
+        *lock(&host.thread) = Some(handle);
+    }
+}
+
+/// `<external files>/games`, falling back to the internal data directory.
+///
+/// # Safety
+/// The activity's path pointers must be null or valid C strings.
+unsafe fn games_directory(activity: &NativeActivity) -> PathBuf {
+    let from = |pointer: *const c_char| {
+        if pointer.is_null() {
+            return None;
+        }
+        // SAFETY: non-null pointers from the framework are NUL-terminated.
+        let text = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        (!text.is_empty()).then(|| PathBuf::from(text))
+    };
+    let base = from(activity.external_data_path)
+        .or_else(|| from(activity.internal_data_path))
+        .unwrap_or_else(|| PathBuf::from("/data/local/tmp/aceris"));
+    let games = base.join("games");
+    // Best effort: the library simply shows an empty list if this fails.
+    let _ = std::fs::create_dir_all(&games);
+    games
+}
+
+unsafe extern "C" fn on_resume(_activity: *mut NativeActivity) {
+    update_shared(|shared| shared.resumed = true);
+}
+
+unsafe extern "C" fn on_pause(_activity: *mut NativeActivity) {
+    update_shared(|shared| shared.resumed = false);
+}
+
+unsafe extern "C" fn on_destroy(_activity: *mut NativeActivity) {
+    update_shared(|shared| shared.destroyed = true);
+    let host = lock(&HOST).take();
+    if let Some(host) = host {
+        let handle = lock(&host.thread).take();
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
+    }
+}
+
+unsafe extern "C" fn on_window_created(_activity: *mut NativeActivity, window: *mut c_void) {
+    // SAFETY: the window is valid until `on_window_destroyed`; the extra
+    // reference keeps it alive until the app thread has dropped it.
+    unsafe { ANativeWindow_acquire(window) };
+    update_shared(|shared| {
+        let stale = std::mem::replace(&mut shared.window, Raw::new(window));
+        if !stale.is_null() {
+            // SAFETY: balances the acquire taken for the replaced window.
+            unsafe { ANativeWindow_release(stale.get()) };
+        }
+    });
+}
+
+unsafe extern "C" fn on_window_destroyed(_activity: *mut NativeActivity, window: *mut c_void) {
+    update_shared(|shared| {
+        if shared.window == Raw::new(window) {
+            shared.window = Raw::default();
+        }
+    });
+    // SAFETY: balances the acquire in `on_window_created`. Rendering takes the
+    // shared lock, so no draw is in flight once `update_shared` returned.
+    unsafe { ANativeWindow_release(window) };
+}
+
+unsafe extern "C" fn on_queue_created(_activity: *mut NativeActivity, queue: *mut c_void) {
+    update_shared(|shared| shared.queue = Raw::new(queue));
+}
+
+unsafe extern "C" fn on_queue_destroyed(_activity: *mut NativeActivity, queue: *mut c_void) {
+    update_shared(|shared| {
+        if shared.queue == Raw::new(queue) {
+            shared.queue = Raw::default();
+        }
+    });
+}
+
+/// The app thread: owns the emulator, input-queue attachment and rendering.
+fn run_app_thread(host: &Host, games_dir: PathBuf) {
+    // SAFETY: preparing a looper for this thread; it lives as long as the thread.
+    let looper = unsafe { ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS) };
+    lock(&host.shared).looper = Raw::new(looper);
+
+    let mut app = App::new(&games_dir);
+    let mut attached_queue = Raw::default();
+    let mut size = (0u32, 0u32);
+    let mut next_frame = Instant::now();
+
+    loop {
+        let (window, queue, resumed, destroyed) = {
+            let shared = lock(&host.shared);
+            (
+                shared.window,
+                shared.queue,
+                shared.resumed,
+                shared.destroyed,
+            )
+        };
+        if destroyed {
+            break;
+        }
+
+        // Follow the input queue the UI thread published.
+        if queue != attached_queue {
+            // SAFETY: the queue pointers come from the framework; detaching
+            // happens on this thread before a new queue is attached.
+            unsafe {
+                if !attached_queue.is_null() {
+                    AInputQueue_detachLooper(attached_queue.get());
+                }
+                if !queue.is_null() {
+                    AInputQueue_attachLooper(
+                        queue.get(),
+                        looper,
+                        LOOPER_ID_INPUT,
+                        ptr::null(),
+                        ptr::null_mut(),
+                    );
+                }
+            }
+            attached_queue = queue;
+        }
+
+        // Frame pacing doubles as the looper wait, so input wakes us early.
+        let wait = if resumed && !window.is_null() {
+            next_frame.saturating_duration_since(Instant::now())
+        } else {
+            Duration::from_millis(250)
+        };
+        poll_looper(wait, &mut app, attached_queue);
+
+        if resumed && !window.is_null() && Instant::now() >= next_frame {
+            next_frame += FRAME_INTERVAL;
+            if next_frame < Instant::now() {
+                // Fell behind (paused or slow frame): do not run catch-up frames.
+                next_frame = Instant::now() + FRAME_INTERVAL;
+            }
+            render(host, &mut app, &mut size);
+        }
+    }
+
+    // SAFETY: final detach on the thread that attached.
+    unsafe {
+        if !attached_queue.is_null() {
+            AInputQueue_detachLooper(attached_queue.get());
+        }
+    }
+    lock(&host.shared).looper = Raw::default();
+}
+
+/// Waits up to `timeout` for looper events and drains pending input.
+fn poll_looper(timeout: Duration, app: &mut App, queue: Raw) {
+    let mut first = true;
+    loop {
+        let millis = if first {
+            c_int::try_from(timeout.as_millis()).unwrap_or(c_int::MAX)
+        } else {
+            0
+        };
+        first = false;
+        let mut fd = 0;
+        let mut events = 0;
+        let mut data = ptr::null_mut();
+        // SAFETY: out-pointers are valid locals; the looper was prepared on this thread.
+        let result = unsafe { ALooper_pollOnce(millis, &mut fd, &mut events, &mut data) };
+        if result < 0 {
+            // Timeout, wake or error: nothing more to drain.
+            break;
+        }
+        if result == LOOPER_ID_INPUT && !queue.is_null() {
+            drain_input(queue, app);
+        }
+    }
+}
+
+fn drain_input(queue: Raw, app: &mut App) {
+    loop {
+        let mut event = ptr::null_mut();
+        // SAFETY: the queue stays valid while attached on this thread.
+        let status = unsafe { AInputQueue_getEvent(queue.get(), &mut event) };
+        if status < 0 || event.is_null() {
+            break;
+        }
+        // SAFETY: `event` was just returned by the queue and is finished exactly once.
+        unsafe {
+            if AInputQueue_preDispatchEvent(queue.get(), event) != 0 {
+                continue;
+            }
+            let handled = match AInputEvent_getType(event) {
+                INPUT_EVENT_TYPE_KEY => handle_key(event, app),
+                INPUT_EVENT_TYPE_MOTION => {
+                    handle_motion(event, app);
+                    true
+                }
+                _ => false,
+            };
+            AInputQueue_finishEvent(queue.get(), event, c_int::from(handled));
+        }
+    }
+}
+
+/// # Safety
+/// `event` must be a live key event.
+unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
+    // SAFETY: caller guarantees a key event.
+    let (action, code) = unsafe { (AKeyEvent_getAction(event), AKeyEvent_getKeyCode(event)) };
+    match action {
+        KEY_ACTION_DOWN => app.key(code, true),
+        KEY_ACTION_UP => app.key(code, false),
+        _ => false,
+    }
+}
+
+/// # Safety
+/// `event` must be a live motion event.
+unsafe fn handle_motion(event: *mut c_void, app: &mut App) {
+    // SAFETY: caller guarantees a motion event; indices stay below the pointer count.
+    let (action, pointers) = unsafe {
+        let action = AMotionEvent_getAction(event);
+        let count = AMotionEvent_getPointerCount(event);
+        let pointers: Vec<Pointer> = (0..count)
+            .map(|index| Pointer {
+                id: AMotionEvent_getPointerId(event, index),
+                x: AMotionEvent_getX(event, index),
+                y: AMotionEvent_getY(event, index),
+            })
+            .collect();
+        (action, pointers)
+    };
+    let pointer_index =
+        ((action & MOTION_ACTION_POINTER_INDEX_MASK) >> MOTION_ACTION_POINTER_INDEX_SHIFT) as usize;
+    match action & MOTION_ACTION_MASK {
+        MOTION_ACTION_CANCEL => app.set_pointers(&[]),
+        MOTION_ACTION_UP | MOTION_ACTION_POINTER_UP => {
+            // The lifted pointer is still listed in the event; drop it.
+            let remaining: Vec<Pointer> = pointers
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != pointer_index)
+                .map(|(_, pointer)| *pointer)
+                .collect();
+            app.set_pointers(&remaining);
+        }
+        _ => app.set_pointers(&pointers),
+    }
+}
+
+/// Steps the app and copies its RGBA frame into the window.
+fn render(host: &Host, app: &mut App, size: &mut (u32, u32)) {
+    // Holding the lock keeps the window alive: `on_window_destroyed` takes it
+    // before releasing the reference.
+    let shared = lock(&host.shared);
+    let window = shared.window;
+    if window.is_null() {
+        return;
+    }
+    // SAFETY: `window` is valid while the shared lock is held.
+    unsafe {
+        let width = ANativeWindow_getWidth(window.get()).max(0) as u32;
+        let height = ANativeWindow_getHeight(window.get()).max(0) as u32;
+        if (width, height) != *size {
+            ANativeWindow_setBuffersGeometry(window.get(), 0, 0, WINDOW_FORMAT_RGBA_8888);
+            app.resize(width, height);
+            *size = (width, height);
+        }
+        let frame = app.step();
+        if frame.is_empty() {
+            return;
+        }
+        let mut buffer = NativeWindowBuffer {
+            width: 0,
+            height: 0,
+            stride: 0,
+            format: 0,
+            bits: ptr::null_mut(),
+            reserved: [0; 6],
+        };
+        if ANativeWindow_lock(window.get(), &mut buffer, ptr::null_mut()) != 0 {
+            return;
+        }
+        copy_frame(&frame, width, height, &buffer);
+        ANativeWindow_unlockAndPost(window.get());
+    }
+}
+
+/// Copies an RGBA frame into a locked window buffer row by row.
+///
+/// # Safety
+/// `buffer.bits` must point to `buffer.height` rows of `buffer.stride` RGBA
+/// pixels, as returned by `ANativeWindow_lock`.
+unsafe fn copy_frame(frame: &[u8], width: u32, height: u32, buffer: &NativeWindowBuffer) {
+    if buffer.bits.is_null() || buffer.stride <= 0 {
+        return;
+    }
+    let rows = height.min(buffer.height.max(0) as u32) as usize;
+    let columns = width.min(buffer.width.max(0) as u32) as usize;
+    let stride_bytes = buffer.stride as usize * 4;
+    for row in 0..rows {
+        let source = &frame[row * width as usize * 4..][..columns * 4];
+        // SAFETY: each destination row lies inside the locked buffer.
+        unsafe {
+            let destination = buffer.bits.cast::<u8>().add(row * stride_bytes);
+            ptr::copy_nonoverlapping(source.as_ptr(), destination, source.len());
+        }
+    }
+}

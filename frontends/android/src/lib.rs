@@ -3,6 +3,10 @@
 //! Rust-only C ABI for an Android host shell. Pixel buffers are borrowed from
 //! the owning system handle and remain valid until that handle is destroyed.
 
+#[cfg(any(target_os = "android", aceris_typecheck_native, test))]
+mod app;
+#[cfg(any(target_os = "android", aceris_typecheck_native))]
+mod native_activity;
 mod ui;
 
 use std::ffi::{CStr, c_char};
