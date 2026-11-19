@@ -133,6 +133,7 @@ pub struct System {
     input: InputState,
     hid: Option<HidService>,
     apt: Option<AptService>,
+    romfs: Option<crate::fs::RomFsRegion>,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -683,6 +684,9 @@ impl System {
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Ncsd);
         self.ncsd_session = Some(session);
+        self.romfs = None;
+        self.hid = None;
+        self.apt = None;
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
@@ -703,7 +707,35 @@ impl System {
             return Err(Error::UnsupportedFormat);
         }
 
-        self.load_ncsd_with_keys(File::open(path)?, menu_info_key, content_key)
+        let format = self.load_ncsd_with_keys(File::open(path)?, menu_info_key, content_key)?;
+        // The RomFS is optional and must be cleartext; a cartridge without one
+        // (or with encrypted content) still boots, and the guest sees no RomFS.
+        let _ = self.attach_ncsd_romfs(File::open(path)?);
+        Ok(format)
+    }
+
+    /// Serves the primary NCSD partition's RomFS region to the guest through `fs:USER`.
+    ///
+    /// Returns whether a RomFS region was found. Encrypted RomFS content is not
+    /// decrypted, so retail images need a decrypted dump.
+    pub fn attach_ncsd_romfs<R: Read + Seek + 'static>(&mut self, reader: R) -> Result<bool> {
+        let invalid =
+            |message: String| Error::Io(io::Error::new(io::ErrorKind::InvalidData, message));
+        let ncch = crate::loader::ncsd::NcsdImageReader::open(reader)
+            .and_then(|image| image.open_primary_ncch())
+            .map_err(|error| invalid(format!("could not open the primary NCCH: {error}")))?;
+        match ncch.into_romfs_region_reader()? {
+            Some((region, size)) => {
+                self.romfs = Some(crate::fs::RomFsRegion::new(Box::new(region), size));
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Serves an already-prepared RomFS region to the guest through `fs:USER`.
+    pub fn attach_romfs(&mut self, region: crate::fs::RomFsRegion) {
+        self.romfs = Some(region);
     }
 
     /// Loads a NoCrypto NCSD cartridge from one seekable reader.
@@ -1059,6 +1091,8 @@ impl System {
             ServiceSessionKind::Hid => self.dispatch_hid_request(message)?,
             ServiceSessionKind::Cfg => self.dispatch_cfg_request(message)?,
             ServiceSessionKind::Apt => self.dispatch_apt_request(message)?,
+            ServiceSessionKind::Fs => self.dispatch_fs_request(message)?,
+            ServiceSessionKind::FsRomFsFile => self.dispatch_fs_file_request(message)?,
             ServiceSessionKind::GspGpu {
                 client_id,
                 shared_memory_handle,
@@ -1185,6 +1219,7 @@ impl System {
                     Some(b"hid:USER") => Some(ServiceSessionKind::Hid),
                     Some(b"cfg:u") => Some(ServiceSessionKind::Cfg),
                     Some(b"apt:U") => Some(ServiceSessionKind::Apt),
+                    Some(b"fs:USER") => Some(ServiceSessionKind::Fs),
                     _ => None,
                 };
                 if let Some(kind) = hle_kind {
@@ -1217,6 +1252,146 @@ impl System {
                 Ok(vec![0x0005_0042, 0, 0, service_handle])
             }
             _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
+        }
+    }
+
+    /// Handles `fs:USER` requests; only the application RomFS archive (ID 3) exists.
+    ///
+    /// Command IDs, archive IDs and path types follow public 3dbrew/libctru
+    /// documentation and have not been verified on hardware.
+    fn dispatch_fs_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        const INITIALIZE: u32 = 0x0801_0002;
+        const INITIALIZE_WITH_SDK_VERSION: u32 = 0x0861_0042;
+        const OPEN_FILE: u32 = 0x0802_01C2;
+        const OPEN_FILE_DIRECTLY: u32 = 0x0803_0204;
+        const OPEN_ARCHIVE: u32 = 0x080C_00C2;
+        const CLOSE_ARCHIVE: u32 = 0x080E_0080;
+        const ARCHIVE_ROMFS: u32 = 3;
+        const PATH_EMPTY: u32 = 1;
+        const ROMFS_ARCHIVE_HANDLE: u64 = 0x0000_0001_0000_0003;
+        const RESULT_FS_NOT_FOUND: u32 = 0xC880_4478;
+        const OPEN_WRITE_BITS: u32 = 0x2 | 0x4;
+
+        let raw_header = message.header().raw();
+        let parameters = message.normal_parameters();
+        let reply_error = |code: u32| vec![(raw_header & 0xFFFF_0000) | 0x40, code];
+        match raw_header {
+            INITIALIZE | INITIALIZE_WITH_SDK_VERSION => {
+                Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, 0])
+            }
+            OPEN_ARCHIVE => {
+                if parameters.first() != Some(&ARCHIVE_ROMFS) {
+                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                }
+                Ok(vec![
+                    0x080C_00C0,
+                    0,
+                    ROMFS_ARCHIVE_HANDLE as u32,
+                    (ROMFS_ARCHIVE_HANDLE >> 32) as u32,
+                ])
+            }
+            CLOSE_ARCHIVE => {
+                let handle = u64::from(parameters.first().copied().unwrap_or(0))
+                    | (u64::from(parameters.get(1).copied().unwrap_or(0)) << 32);
+                if handle != ROMFS_ARCHIVE_HANDLE {
+                    return Ok(reply_error(RESULT_INVALID_HANDLE));
+                }
+                Ok(vec![0x080E_0040, 0])
+            }
+            OPEN_FILE | OPEN_FILE_DIRECTLY => {
+                let (valid_archive, path_type, flags) = if raw_header == OPEN_FILE_DIRECTLY {
+                    // transaction, archive ID, archive path type/size, file path type/size, flags
+                    (
+                        parameters.get(1) == Some(&ARCHIVE_ROMFS),
+                        parameters.get(4).copied().unwrap_or(0),
+                        parameters.get(6).copied().unwrap_or(0),
+                    )
+                } else {
+                    // transaction, archive handle lo/hi, file path type/size, flags
+                    let handle = u64::from(parameters.get(1).copied().unwrap_or(0))
+                        | (u64::from(parameters.get(2).copied().unwrap_or(0)) << 32);
+                    (
+                        handle == ROMFS_ARCHIVE_HANDLE,
+                        parameters.get(3).copied().unwrap_or(0),
+                        parameters.get(5).copied().unwrap_or(0),
+                    )
+                };
+                if !valid_archive || self.romfs.is_none() {
+                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                }
+                // The RomFS is read-only, and only the empty path (whole region) is served.
+                if flags & OPEN_WRITE_BITS != 0 || path_type != PATH_EMPTY {
+                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                }
+                let file = match self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                    .create_hle_session(ServiceSessionKind::FsRomFsFile)
+                {
+                    Ok(handle) => handle,
+                    Err(_) => return Ok(reply_error(RESULT_OUT_OF_MEMORY)),
+                };
+                let header = if raw_header == OPEN_FILE_DIRECTLY {
+                    0x0803_0042
+                } else {
+                    0x0802_0042
+                };
+                Ok(vec![header, 0, 0x0000_0010, file])
+            }
+            _ => Ok(reply_error(RESULT_INVALID_ENUM)),
+        }
+    }
+
+    /// Handles commands on an opened RomFS file session (Read, GetSize, Close).
+    fn dispatch_fs_file_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        const READ: u32 = 0x0802_00C2;
+        const CLOSE: u32 = 0x0808_0000;
+        const GET_SIZE: u32 = 0x0804_0000;
+
+        let raw_header = message.header().raw();
+        let reply_error = |code: u32| vec![(raw_header & 0xFFFF_0000) | 0x40, code];
+        let Some(romfs) = self.romfs.as_mut() else {
+            return Ok(reply_error(RESULT_INVALID_HANDLE));
+        };
+        match raw_header {
+            GET_SIZE => {
+                let size = romfs.size();
+                Ok(vec![0x0804_0102, 0, size as u32, (size >> 32) as u32])
+            }
+            CLOSE => Ok(vec![0x0808_0040, 0]),
+            READ => {
+                let parameters = message.normal_parameters();
+                let offset = u64::from(parameters.first().copied().unwrap_or(0))
+                    | (u64::from(parameters.get(1).copied().unwrap_or(0)) << 32);
+                let requested = parameters.get(2).copied().unwrap_or(0) as usize;
+                let Ok(translations) = message.translation_parameters() else {
+                    return Ok(reply_error(RESULT_INVALID_ENUM));
+                };
+                let destination = translations.iter().find_map(|parameter| match parameter {
+                    crate::loader::ncsd::session::ipc::IpcTranslationParameter::MappedBuffer {
+                        size_bytes,
+                        source_address,
+                        ..
+                    } => Some((*size_bytes as usize, *source_address)),
+                    _ => None,
+                });
+                let Some((capacity, address)) = destination else {
+                    return Ok(reply_error(RESULT_INVALID_ENUM));
+                };
+                let Ok(bytes) = romfs.read_at(offset, requested.min(capacity)) else {
+                    return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                };
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                if !bytes.is_empty() && session.write_memory_bytes(address, &bytes).is_err() {
+                    return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                }
+                Ok(vec![0x0802_0082, 0, bytes.len() as u32])
+            }
+            _ => Ok(reply_error(RESULT_INVALID_ENUM)),
         }
     }
 
@@ -8955,6 +9130,165 @@ mod tests {
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 3),
             [0x000B_0080, 0, 0]
+        );
+    }
+
+    #[test]
+    fn fs_user_serves_the_application_romfs_region_through_file_sessions() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(8)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let region: Vec<u8> = (0u8..200).collect();
+        system.attach_romfs(crate::fs::RomFsRegion::new(
+            Box::new(std::io::Cursor::new(region)),
+            200,
+        ));
+        let fs = open_hle_service(&mut system, b"fs:USER");
+        let tls = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_tls_address()
+            .unwrap();
+
+        let reply = write_tls_ipc_request(&mut system, fs, &[0x0801_0002, 0, 0x20]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0801_0040, 0]
+        );
+
+        // OpenFileDirectly(RomFS, empty archive path, empty file path, read).
+        let reply = write_tls_ipc_request(
+            &mut system,
+            fs,
+            &[
+                0x0803_0204,
+                0,
+                3,
+                1,
+                1,
+                1,
+                1,
+                1,
+                0,
+                (1 << 14) | 0x802,
+                tls + 0x300,
+                (1 << 14) | 2,
+                tls + 0x310,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        let opened = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&opened[..3], &[0x0803_0042, 0, 0x10]);
+        let file = opened[3];
+
+        let reply = write_tls_ipc_request(&mut system, file, &[0x0804_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 4),
+            [0x0804_0102, 0, 200, 0]
+        );
+
+        // Read 8 bytes at offset 10 into a guest buffer.
+        let destination = tls + 0x400;
+        let reply = write_tls_ipc_request(
+            &mut system,
+            file,
+            &[0x0802_00C2, 10, 0, 8, (8 << 4) | 12, destination],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0802_0082, 0, 8]
+        );
+        let session = system.ncsd_session.as_mut().unwrap();
+        let mut bytes = [0u8; 8];
+        session.read_memory_bytes(destination, &mut bytes).unwrap();
+        assert_eq!(bytes, [10, 11, 12, 13, 14, 15, 16, 17]);
+
+        // A read crossing the end is truncated.
+        let reply = write_tls_ipc_request(
+            &mut system,
+            file,
+            &[0x0802_00C2, 196, 0, 16, (16 << 4) | 12, destination],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0802_0082, 0, 4]
+        );
+    }
+
+    #[test]
+    fn attach_ncsd_romfs_reports_missing_region_without_serving_a_romfs() {
+        let mut system = System::new();
+        let image = ipc_svc_ncsd_cartridge_fixture(1);
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(image.clone()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        assert!(
+            !system
+                .attach_ncsd_romfs(std::io::Cursor::new(image))
+                .unwrap()
+        );
+        assert!(system.romfs.is_none());
+    }
+
+    #[test]
+    fn fs_user_rejects_other_archives_and_write_access() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(4)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        system.attach_romfs(crate::fs::RomFsRegion::new(
+            Box::new(std::io::Cursor::new(vec![0u8; 16])),
+            16,
+        ));
+        let fs = open_hle_service(&mut system, b"fs:USER");
+        let words = |archive: u32, flags: u32| {
+            [
+                0x0803_0204,
+                0,
+                archive,
+                1,
+                1,
+                1,
+                1,
+                flags,
+                0,
+                0x802,
+                0,
+                2,
+                0,
+            ]
+        };
+        // SDMC archive (9) is not implemented.
+        let reply = write_tls_ipc_request(&mut system, fs, &words(9, 1));
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0803_0040, 0xC880_4478]
+        );
+        // The RomFS is read-only.
+        let reply = write_tls_ipc_request(&mut system, fs, &words(3, 3));
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0803_0040, 0xC880_4478]
         );
     }
 

@@ -495,6 +495,25 @@ impl<R: Read + Seek> NcsdNcchReader<R> {
             .map_err(NcsdExecutableLoadError::ProcessLayout)
     }
 
+    /// Returns the raw RomFS region (IVFC header included) as a bounded reader.
+    ///
+    /// This is what the guest sees when it opens the application RomFS through
+    /// `fs:USER`. Content must already be cleartext (no NCCH decryption here).
+    /// `None` means the NCCH declares no RomFS region.
+    pub fn into_romfs_region_reader(
+        self,
+    ) -> io::Result<Option<(ncch::romfs::RomFsRangeReader<NcsdPartitionReader<R>>, u64)>> {
+        let Some(region) = self.header.romfs else {
+            return Ok(None);
+        };
+        let reader = ncch::romfs::RomFsRangeReader::new(
+            self.reader,
+            region.offset_bytes,
+            region.size_bytes,
+        )?;
+        Ok(Some((reader, region.size_bytes)))
+    }
+
     /// Opens RomFS Level 3 only after the NCCH superblock and IVFC hashes validate.
     ///
     /// An empty result means the NCCH header does not declare a RomFS region.

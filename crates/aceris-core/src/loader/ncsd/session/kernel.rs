@@ -179,6 +179,10 @@ pub enum ServiceSessionKind {
     Cfg,
     /// HLE `apt:U` client endpoint.
     Apt,
+    /// HLE `fs:USER` client endpoint.
+    Fs,
+    /// An opened application-RomFS file served by `fs:USER`.
+    FsRomFsFile,
 }
 
 #[derive(Debug, PartialEq, Eq)]

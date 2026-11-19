@@ -1997,3 +1997,11 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Pendente: ReceiveParameter/GlanceParameter (necessários para jogos que leem parâmetros de lançamento), fs:USER, dsp::DSP, ptm, am, ndm, cecd, frd.
 - Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace`. CI remoto não consultado.
 
+## fs:USER (RomFS) (19/11/2026)
+
+- Novo `fs.rs` (`RomFsRegion`, leitura sob demanda) e `NcsdNcchReader::into_romfs_region_reader` (loader/ncsd.rs, aditivo). `System` guarda `romfs: Option<RomFsRegion>`; recarregar um NCSD zera romfs/hid/apt.
+- Sessões de arquivo usam `ServiceSessionKind::FsRomFsFile`; o arquivo único é a região RomFS inteira (IVFC + níveis), que o libctru interpreta sozinho.
+- Limitação importante: RomFS criptografado (retail) não é decriptado; use dumps decriptados. Chaves NCCH/AES de retail estão fora do escopo do repositório.
+- Pendente: caminhos por arquivo, SD/save/extdata (jogos que gravam progresso), `dsp::DSP`, `ptm`, `am`, ReceiveParameter do apt.
+- Verificado localmente: fmt, clippy `-D warnings` e `cargo test --workspace` (ver mensagem do commit). CI remoto não consultado.
+
