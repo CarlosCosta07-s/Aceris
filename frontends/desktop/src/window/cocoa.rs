@@ -50,15 +50,22 @@ unsafe extern "C" {
     fn objc_autoreleasePoolPop(pool: *mut c_void);
 }
 
+// One `link` attribute per block: repeating the attribute is a lint error.
 #[cfg_attr(target_os = "macos", link(name = "AppKit", kind = "framework"))]
+unsafe extern "C" {}
+
 #[cfg_attr(target_os = "macos", link(name = "Foundation", kind = "framework"))]
 unsafe extern "C" {}
 
-#[cfg_attr(target_os = "macos", link(name = "CoreGraphics", kind = "framework"))]
 #[cfg_attr(target_os = "macos", link(name = "CoreFoundation", kind = "framework"))]
 unsafe extern "C" {
-    fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
     fn CFDataCreate(allocator: *const c_void, bytes: *const u8, length: isize) -> *mut c_void;
+    fn CFRelease(object: *const c_void);
+}
+
+#[cfg_attr(target_os = "macos", link(name = "CoreGraphics", kind = "framework"))]
+unsafe extern "C" {
+    fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
     fn CGDataProviderCreateWithCFData(data: *mut c_void) -> *mut c_void;
     fn CGImageCreate(
         width: usize,
@@ -73,7 +80,6 @@ unsafe extern "C" {
         should_interpolate: u8,
         intent: i32,
     ) -> *mut c_void;
-    fn CFRelease(object: *const c_void);
 }
 
 // NSEventType values.
