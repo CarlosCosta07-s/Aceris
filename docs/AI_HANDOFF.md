@@ -2013,3 +2013,10 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Pendente: `dsp::DSP` (áudio) e `am`, `ndm`, `cecd`, `frd`, `gsp::Lcd`, `y2r`, `mic`; SharedFont; save data.
 - Verificado localmente: fmt, clippy e `cargo test --workspace` (ver commit). CI remoto não consultado.
 
+## dsp::DSP handshake (19/11/2026)
+
+- `DspService` em `system.rs`: componente carregado, evento de semáforo, máscara, eventos de interrupção. Reiniciado ao carregar um NCSD.
+- Fonte dos comandos: `dsp.c` do libctru (palavras de requisição e resposta lidas). Suposições minhas: LoadComponent e SetSemaphore sinalizam o evento; RecvData(0) = 1 quando carregado; pipes vazios.
+- Próximo passo real de áudio: protocolo de pipes (pipe 0 estados, pipe 2 áudio), DSP RAM mapeada, conversão de endereços e mixagem de sons para uma saída de áudio no frontend. É um trabalho grande e precisa de um jogo/homebrew de referência para validar.
+- Verificado localmente: fmt, clippy e `cargo test --workspace` (ver commit). CI remoto não consultado.
+

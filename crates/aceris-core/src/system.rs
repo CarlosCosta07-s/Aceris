@@ -134,6 +134,7 @@ pub struct System {
     hid: Option<HidService>,
     apt: Option<AptService>,
     romfs: Option<crate::fs::RomFsRegion>,
+    dsp: DspService,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -280,6 +281,18 @@ struct AptParameter {
     sender_app_id: u32,
     command: u32,
     data: Vec<u8>,
+}
+
+/// HLE `dsp::DSP` state. There is no DSP firmware or audio mixing: the service
+/// only tracks the component/semaphore/interrupt-event handshake.
+#[derive(Debug, Default)]
+struct DspService {
+    component_loaded: bool,
+    semaphore_event: Option<u32>,
+    semaphore_mask: u32,
+    last_semaphore: u32,
+    /// Registered (interrupt, channel, event handle) triples.
+    interrupt_events: Vec<(u32, u32, u32)>,
 }
 
 /// `APT` signal value asking the application to start running (libctru `APTCMD_WAKEUP`).
@@ -703,6 +716,7 @@ impl System {
         self.romfs = None;
         self.hid = None;
         self.apt = None;
+        self.dsp = DspService::default();
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
@@ -1109,6 +1123,7 @@ impl System {
             ServiceSessionKind::Apt => self.dispatch_apt_request(message)?,
             ServiceSessionKind::Fs => self.dispatch_fs_request(message)?,
             ServiceSessionKind::Ptm => Self::dispatch_ptm_request(message),
+            ServiceSessionKind::Dsp => self.dispatch_dsp_request(message)?,
             ServiceSessionKind::FsRomFsFile => self.dispatch_fs_file_request(message)?,
             ServiceSessionKind::GspGpu {
                 client_id,
@@ -1238,6 +1253,7 @@ impl System {
                     Some(b"apt:U") => Some(ServiceSessionKind::Apt),
                     Some(b"fs:USER") => Some(ServiceSessionKind::Fs),
                     Some(b"ptm:u") => Some(ServiceSessionKind::Ptm),
+                    Some(b"dsp::DSP") => Some(ServiceSessionKind::Dsp),
                     _ => None,
                 };
                 if let Some(kind) = hle_kind {
@@ -1470,6 +1486,98 @@ impl System {
             ]),
             _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
         }
+    }
+
+    /// Handles `dsp::DSP` requests as a handshake-only stub.
+    ///
+    /// Command IDs and request/response words follow libctru's `dsp.c`. There is
+    /// no DSP firmware: LoadComponent reports success, registers and the
+    /// semaphore event behave as a "DSP booted and ready" model, pipes are
+    /// always empty and DSP RAM address conversion is unimplemented. Whether
+    /// real games' audio libraries accept this handshake is unverified.
+    fn dispatch_dsp_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        let raw_header = message.header().raw();
+        let command = raw_header & 0xFFFF_0000;
+        let ok = vec![command | 0x40, 0];
+        let parameters = message.normal_parameters();
+        let session = self
+            .ncsd_session
+            .as_mut()
+            .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+        let signal_semaphore = |dsp: &DspService,
+                                session: &mut crate::loader::ncsd::session::Arm11ProcessSession|
+         -> Result<()> {
+            if let Some(event) = dsp.semaphore_event {
+                session.signal_event_handle(event).map_err(|error| {
+                    Error::Io(io::Error::other(format!(
+                        "DSP semaphore signal failed: {error:?}"
+                    )))
+                })?;
+            }
+            Ok(())
+        };
+        Ok(match raw_header {
+            0x0001_0040 => vec![0x0001_0080, 0, u32::from(self.dsp.component_loaded)], // RecvData
+            0x0002_0040 => vec![0x0002_0080, 0, 1], // RecvDataIsReady
+            0x0003_0080 => ok,                      // SendData
+            0x0004_0040 => vec![0x0004_0080, 0, 1], // SendDataIsEmpty
+            0x0007_0040 => {
+                self.dsp.last_semaphore = parameters.first().copied().unwrap_or(0);
+                signal_semaphore(&self.dsp, session)?;
+                ok
+            }
+            0x000D_0082 => ok, // WriteProcessPipe (discarded)
+            0x000E_00C0 | 0x0010_00C0 => vec![command | 0x80, 0, 0], // Read(IfPossible): empty
+            0x000F_0080 => vec![0x000F_0080, 0, 0], // GetPipeReadableSize
+            0x0011_00C2 => {
+                self.dsp.component_loaded = true;
+                signal_semaphore(&self.dsp, session)?;
+                let mut response = vec![0x0011_0082, 0, 1];
+                // Echo the component buffer's translation words.
+                response.extend_from_slice(message.translation_words());
+                response
+            }
+            0x0012_0000 => {
+                self.dsp.component_loaded = false;
+                ok
+            }
+            0x0013_0082 | 0x0014_0082 => ok, // Flush/InvalidateDataCache (no DSP-side cache)
+            0x0015_0082 => {
+                let handle = message.translation_words().get(1).copied().unwrap_or(0);
+                let (interrupt, channel) = (
+                    parameters.first().copied().unwrap_or(0),
+                    parameters.get(1).copied().unwrap_or(0),
+                );
+                self.dsp
+                    .interrupt_events
+                    .retain(|(i, c, _)| (*i, *c) != (interrupt, channel));
+                if handle != 0 {
+                    self.dsp.interrupt_events.push((interrupt, channel, handle));
+                }
+                ok
+            }
+            0x0016_0000 => {
+                let event = match self.dsp.semaphore_event {
+                    Some(event) => event,
+                    None => {
+                        let Ok(event) = session.create_event_handle(
+                            crate::loader::ncsd::session::kernel::EventResetType::OneShot,
+                        ) else {
+                            return Ok(vec![command | 0x40, RESULT_OUT_OF_MEMORY]);
+                        };
+                        self.dsp.semaphore_event = Some(event);
+                        event
+                    }
+                };
+                vec![0x0016_0042, 0, 0, event]
+            }
+            0x0017_0040 => {
+                self.dsp.semaphore_mask = parameters.first().copied().unwrap_or(0);
+                ok
+            }
+            0x001F_0000 => vec![0x001F_0080, 0, 0], // GetHeadphoneStatus: not inserted
+            _ => vec![command | 0x40, RESULT_INVALID_ENUM],
+        })
     }
 
     /// Handles `ptm:u` status queries with fixed defaults (adapter plugged in,
@@ -9513,6 +9621,99 @@ mod tests {
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 3),
             [0x0007_0080, 0, 5]
+        );
+    }
+
+    #[test]
+    fn dsp_handshake_loads_component_signals_semaphore_and_tracks_events() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(10)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let dsp = open_hle_service(&mut system, b"dsp::DSP");
+
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x0016_0000]);
+        run_one_ipc_svc(&mut system);
+        let semaphore = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&semaphore[..3], &[0x0016_0042, 0, 0]);
+        let event = semaphore[3];
+        assert_ne!(event, 0);
+
+        // Before loading, the status register reads 0.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x0001_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0001_0080, 0, 0]
+        );
+
+        let reply = write_tls_ipc_request(
+            &mut system,
+            dsp,
+            &[
+                0x0011_00C2,
+                0x100,
+                0xFF,
+                0xFF,
+                (0x100 << 4) | 10,
+                0x0800_0000,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        let loaded = read_tls_ipc_response(&mut system, reply, 5);
+        assert_eq!(&loaded[..3], &[0x0011_0082, 0, 1]);
+        assert_eq!(
+            system
+                .ncsd_session
+                .as_ref()
+                .unwrap()
+                .event_handle_is_signaled(event),
+            Some(true)
+        );
+        assert!(system.dsp.component_loaded);
+
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x0001_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0001_0080, 0, 1]
+        );
+
+        // RegisterInterruptEvents(interrupt 2, channel 0, handle) is recorded.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x0015_0082, 2, 0, 0, event]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0015_0040, 0]
+        );
+        assert_eq!(system.dsp.interrupt_events, vec![(2, 0, event)]);
+
+        // Pipes are always empty.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x000F_0080, 2, 1]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000F_0080, 0, 0]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x0012_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0012_0040, 0]
+        );
+        assert!(!system.dsp.component_loaded);
+
+        // DSP RAM address conversion is not modelled and says so.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x000C_0040, 0x1000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x000C_0040, RESULT_INVALID_ENUM]
         );
     }
 
