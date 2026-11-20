@@ -10,7 +10,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Writable archive families (archive IDs from public 3dbrew tables).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -94,17 +94,14 @@ impl Storage {
 
     fn resolve(&self, kind: ArchiveKind, path: &str) -> Result<PathBuf, StorageError> {
         let mut resolved = self.root.join(kind.directory_name());
-        for component in Path::new(path.trim_start_matches('/')).components() {
-            match component {
-                Component::Normal(part) => {
-                    let part = part.to_str().ok_or(StorageError::InvalidPath)?;
-                    if part.contains('\\') || part.contains('\0') {
-                        return Err(StorageError::InvalidPath);
-                    }
-                    resolved.push(part);
-                }
-                Component::CurDir => {}
-                _ => return Err(StorageError::InvalidPath),
+        // Split on '/' only: the host's own separators ('\\' and drive or stream
+        // markers such as ':') are rejected rather than interpreted.
+        for part in path.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => return Err(StorageError::InvalidPath),
+                _ if part.contains(['\\', ':', '\0']) => return Err(StorageError::InvalidPath),
+                _ => resolved.push(part),
             }
         }
         Ok(resolved)
@@ -272,7 +269,7 @@ mod tests {
     #[test]
     fn path_traversal_is_rejected() {
         let storage = temp_storage("paths");
-        for path in ["/../escape", "a/../../b", "/a\\b"] {
+        for path in ["/../escape", "a/../../b", "/a\\b", "C:/x", "/a:stream"] {
             assert!(
                 matches!(
                     storage.open_file(ArchiveKind::SaveData, path, true, true, true),
