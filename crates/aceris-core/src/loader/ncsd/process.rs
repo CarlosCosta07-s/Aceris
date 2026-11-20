@@ -326,6 +326,13 @@ impl SharedMemoryBacking {
         self.write_range(offset, input)
     }
 
+    /// Reads bytes from the shared view. Returns false when out of range.
+    ///
+    /// HLE services use this to inspect memory the guest wrote through its mapping.
+    pub fn read_bytes(&self, offset: usize, output: &mut [u8]) -> bool {
+        self.read_range(offset, output)
+    }
+
     fn write_range(&self, offset: usize, input: &[u8]) -> bool {
         let Some(start) = self.root_offset(offset) else {
             return false;

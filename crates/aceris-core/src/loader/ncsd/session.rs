@@ -539,6 +539,24 @@ impl Arm11ProcessSession {
         self.kernel_objects.insert_hid_session()
     }
 
+    /// Maps an HLE-owned shared backing into the guest at a fixed address.
+    ///
+    /// Used for kernel-provided regions such as DSP RAM. Succeeds when the
+    /// exact backing is already mapped there.
+    pub fn map_hle_shared_backing(
+        &mut self,
+        address: u32,
+        backing: SharedMemoryBacking,
+        permissions: u32,
+    ) -> std::result::Result<(), KernelHandleError> {
+        if self.address_space.shared_mapping_matches(address, &backing) {
+            return Ok(());
+        }
+        self.address_space
+            .map_shared_memory_region(address, backing, permissions)
+            .map_err(|_| KernelHandleError::InvalidMemoryBlockMapping)
+    }
+
     /// Returns the shared backing of a memory-block handle for HLE services.
     pub fn memory_block_backing(
         &self,

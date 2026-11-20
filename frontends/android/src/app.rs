@@ -43,6 +43,8 @@ pub struct App {
     key_mask: u32,
     /// Library tap that was pressed and awaits release (taps act on release).
     library_tap: Option<(i32, i32)>,
+    /// Interleaved stereo samples (32728 Hz) mixed since the last [`App::take_audio`].
+    audio: Vec<i16>,
 }
 
 impl App {
@@ -58,7 +60,14 @@ impl App {
             pointers: BTreeMap::new(),
             key_mask: 0,
             library_tap: None,
+            audio: Vec::new(),
         }
+    }
+
+    /// Takes the audio the DSP mixed since the previous call (interleaved stereo
+    /// `i16` at `System::audio_sample_rate()`).
+    pub fn take_audio(&mut self) -> Vec<i16> {
+        std::mem::take(&mut self.audio)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -157,6 +166,7 @@ impl App {
             self.library.set_status(message);
             return self.letterbox(&self.library.render());
         }
+        system.take_audio_samples(&mut self.audio);
         let system = self.system.as_ref().expect("system exists while in game");
         let mut frame = compose_game(system.display(), self.width, self.height);
         overlay_virtual_pad(&mut frame, self.width, self.height, self.held_mask());
@@ -256,6 +266,7 @@ impl App {
 
     fn leave_game(&mut self) {
         self.system = None;
+        self.audio.clear();
         self.key_mask = 0;
         self.screen = Screen::Library;
     }
@@ -408,6 +419,16 @@ mod tests {
     use super::*;
     use aceris_core::video::ScreenTarget;
     use std::fs;
+
+    #[test]
+    fn audio_buffer_starts_empty_and_is_drained_by_take_audio() {
+        let (mut app, dir) = app_with_games(0);
+        assert!(app.take_audio().is_empty());
+        app.audio.extend([1, 2, 3, 4]);
+        assert_eq!(app.take_audio(), vec![1, 2, 3, 4]);
+        assert!(app.take_audio().is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
 
     fn app_with_games(count: usize) -> (App, std::path::PathBuf) {
         static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

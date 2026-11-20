@@ -11,6 +11,7 @@
 //! `ALooper`; the app thread owns the emulator, the input queue attachment and
 //! the window, and renders at ~60 Hz.
 
+use crate::aaudio::AAudioOutput;
 use crate::app::{App, Pointer};
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::path::PathBuf;
@@ -307,6 +308,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     lock(&host.shared).looper = Raw::new(looper);
 
     let mut app = App::new(&games_dir);
+    let mut audio = AAudioOutput::open();
     let mut attached_queue = Raw::default();
     let mut size = (0u32, 0u32);
     let mut next_frame = Instant::now();
@@ -361,6 +363,10 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 next_frame = Instant::now() + FRAME_INTERVAL;
             }
             render(host, &mut app, &mut size);
+            let samples = app.take_audio();
+            if let Some(audio) = audio.as_mut() {
+                audio.feed(&samples);
+            }
         }
     }
 

@@ -4,6 +4,7 @@
 //! The library uses a dedicated home canvas; gameplay always places the two
 //! LCDs side by side and resizes the window when entering or leaving a game.
 
+mod audio;
 mod background;
 mod window;
 
@@ -312,6 +313,7 @@ fn touch_at(system: &mut System, x: i32, y: i32, scale: usize) {
 fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut keyboard = window::KeyboardInput::default();
+    let mut audio = audio::AudioOutput::open();
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
@@ -329,6 +331,9 @@ fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Re
             }
         }
         run_frame_with_diagnostics(system)?;
+        if let Some(audio) = audio.as_mut() {
+            audio.feed(system);
+        }
         window
             .present(&window::compose_bgrx(system.display(), scale))
             .map_err(|err| format!("could not draw the frame: {err}"))?;

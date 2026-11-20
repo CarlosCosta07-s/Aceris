@@ -283,8 +283,8 @@ struct AptParameter {
     data: Vec<u8>,
 }
 
-/// HLE `dsp::DSP` state. There is no DSP firmware or audio mixing: the service
-/// only tracks the component/semaphore/interrupt-event handshake.
+/// HLE `dsp::DSP` state: component/semaphore/interrupt handshake plus the
+/// [`crate::dsp::Dsp`] engine (pipes, DSP RAM, voices) created on first use.
 #[derive(Debug, Default)]
 struct DspService {
     component_loaded: bool,
@@ -293,6 +293,7 @@ struct DspService {
     last_semaphore: u32,
     /// Registered (interrupt, channel, event handle) triples.
     interrupt_events: Vec<(u32, u32, u32)>,
+    engine: Option<crate::dsp::Dsp>,
 }
 
 /// `APT` signal value asking the application to start running (libctru `APTCMD_WAKEUP`).
@@ -1488,75 +1489,224 @@ impl System {
         }
     }
 
-    /// Handles `dsp::DSP` requests as a handshake-only stub.
+    /// Creates the DSP engine and maps its RAM at `0x1FF00000` on first use.
+    fn ensure_dsp_engine(&mut self) -> Result<()> {
+        if self.dsp.engine.is_none() {
+            let engine = crate::dsp::Dsp::new().map_err(|error| {
+                Error::Io(io::Error::other(format!(
+                    "DSP RAM allocation failed: {error}"
+                )))
+            })?;
+            let session = self
+                .ncsd_session
+                .as_mut()
+                .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+            session
+                .map_hle_shared_backing(crate::dsp::DSP_RAM_GUEST_BASE, engine.ram().clone(), 3)
+                .map_err(|error| {
+                    Error::Io(io::Error::other(format!(
+                        "DSP RAM mapping failed: {error:?}"
+                    )))
+                })?;
+            self.dsp.engine = Some(engine);
+        }
+        Ok(())
+    }
+
+    /// Signals the events the guest registered for the DSP audio-pipe interrupt.
+    fn signal_dsp_pipe_events(&mut self) -> Result<()> {
+        let handles: Vec<u32> = self
+            .dsp
+            .interrupt_events
+            .iter()
+            .filter(|(interrupt, channel, _)| {
+                (*interrupt, *channel) == (crate::dsp::INTERRUPT_PIPE, crate::dsp::AUDIO_PIPE)
+            })
+            .map(|(_, _, handle)| *handle)
+            .collect();
+        let Some(session) = self.ncsd_session.as_mut() else {
+            return Ok(());
+        };
+        for handle in handles {
+            session.signal_event_handle(handle).map_err(|error| {
+                Error::Io(io::Error::other(format!(
+                    "DSP pipe event signal failed: {error:?}"
+                )))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Mixes one DSP frame: syncs guest writes, mixes, publishes, signals the pipe event.
+    fn run_dsp_frame(&mut self) -> Result<()> {
+        let Some(engine) = self.dsp.engine.as_mut() else {
+            return Ok(());
+        };
+        if let Some(session) = self.ncsd_session.as_mut() {
+            // The guest writes the banks through its cache; commit them first.
+            for bank in [0x1FF5_0000u32, 0x1FF7_0000] {
+                session.flush_process_data_cache(bank, 0x8000)?;
+            }
+            session.drain_write_buffer()?;
+        }
+        engine.mix_frame(&self.physical_memory);
+        if let Some(session) = self.ncsd_session.as_mut() {
+            session.invalidate_shared_backing_cache(engine.ram())?;
+        }
+        self.signal_dsp_pipe_events()
+    }
+
+    /// Moves queued interleaved stereo `i16` samples (about 32728 Hz) into `out`.
     ///
-    /// Command IDs and request/response words follow libctru's `dsp.c`. There is
-    /// no DSP firmware: LoadComponent reports success, registers and the
-    /// semaphore event behave as a "DSP booted and ready" model, pipes are
-    /// always empty and DSP RAM address conversion is unimplemented. Whether
-    /// real games' audio libraries accept this handshake is unverified.
+    /// Frontends call this after each frame and feed their audio device.
+    pub fn take_audio_samples(&mut self, out: &mut Vec<i16>) {
+        if let Some(engine) = self.dsp.engine.as_mut() {
+            engine.take_samples(out);
+        }
+    }
+
+    /// Output sample rate of [`System::take_audio_samples`] in Hz.
+    pub const fn audio_sample_rate() -> u32 {
+        32_728
+    }
+
+    /// Handles `dsp::DSP` requests.
+    ///
+    /// Command IDs and request/response words follow libctru's `dsp.c`. LoadComponent
+    /// reports success without running firmware; the audio engine in
+    /// [`crate::dsp`] implements pipe 2, DSP RAM and mixing. Unverified on
+    /// hardware and against retail games.
     fn dispatch_dsp_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
         let raw_header = message.header().raw();
         let command = raw_header & 0xFFFF_0000;
         let ok = vec![command | 0x40, 0];
         let parameters = message.normal_parameters();
-        let session = self
-            .ncsd_session
-            .as_mut()
-            .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
-        let signal_semaphore = |dsp: &DspService,
-                                session: &mut crate::loader::ncsd::session::Arm11ProcessSession|
-         -> Result<()> {
-            if let Some(event) = dsp.semaphore_event {
-                session.signal_event_handle(event).map_err(|error| {
-                    Error::Io(io::Error::other(format!(
-                        "DSP semaphore signal failed: {error:?}"
-                    )))
-                })?;
-            }
-            Ok(())
+        let param = |index: usize| parameters.get(index).copied().unwrap_or(0);
+        let translation_buffer = |message: &IpcMessage<'_>| {
+            message.translation_parameters().ok().and_then(|items| {
+                items.iter().find_map(|item| match item {
+                    crate::loader::ncsd::session::ipc::IpcTranslationParameter::MappedBuffer {
+                        size_bytes,
+                        source_address,
+                        ..
+                    } => Some((*size_bytes as usize, *source_address)),
+                    _ => None,
+                })
+            })
         };
-        Ok(match raw_header {
-            0x0001_0040 => vec![0x0001_0080, 0, u32::from(self.dsp.component_loaded)], // RecvData
-            0x0002_0040 => vec![0x0002_0080, 0, 1], // RecvDataIsReady
-            0x0003_0080 => ok,                      // SendData
-            0x0004_0040 => vec![0x0004_0080, 0, 1], // SendDataIsEmpty
-            0x0007_0040 => {
-                self.dsp.last_semaphore = parameters.first().copied().unwrap_or(0);
-                signal_semaphore(&self.dsp, session)?;
-                ok
+        match command >> 16 {
+            0x01 => Ok(vec![0x0001_0080, 0, u32::from(self.dsp.component_loaded)]), // RecvData
+            0x02 => Ok(vec![0x0002_0080, 0, 1]), // RecvDataIsReady
+            0x03 => Ok(ok),                      // SendData
+            0x04 => Ok(vec![0x0004_0080, 0, 1]), // SendDataIsEmpty
+            0x07 => {
+                self.dsp.last_semaphore = param(0);
+                self.signal_dsp_semaphore()?;
+                Ok(ok)
             }
-            0x000D_0082 => ok, // WriteProcessPipe (discarded)
-            0x000E_00C0 | 0x0010_00C0 => vec![command | 0x80, 0, 0], // Read(IfPossible): empty
-            0x000F_0080 => vec![0x000F_0080, 0, 0], // GetPipeReadableSize
-            0x0011_00C2 => {
+            0x0C => {
+                self.ensure_dsp_engine()?;
+                Ok(vec![
+                    0x000C_0080,
+                    0,
+                    crate::dsp::convert_dsp_address(param(0)),
+                ])
+            }
+            0x0D => {
+                self.ensure_dsp_engine()?;
+                let (pipe, size) = (param(0), param(1) as usize);
+                let Some((capacity, address)) = translation_buffer(&message) else {
+                    return Ok(vec![command | 0x40, RESULT_INVALID_ENUM]);
+                };
+                let mut data = vec![0u8; size.min(capacity)];
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                if session.read_memory_bytes(address, &mut data).is_err() {
+                    return Ok(vec![command | 0x40, RESULT_INVALID_ADDRESS]);
+                }
+                let signal = self
+                    .dsp
+                    .engine
+                    .as_mut()
+                    .is_some_and(|engine| engine.write_pipe(pipe, &data));
+                if signal {
+                    self.signal_dsp_pipe_events()?;
+                }
+                Ok(ok)
+            }
+            0x0E | 0x10 => {
+                self.ensure_dsp_engine()?;
+                let (pipe, size) = (param(0), param(2) as usize);
+                let Some((capacity, address)) = translation_buffer(&message) else {
+                    return Ok(vec![command | 0x40, RESULT_INVALID_ENUM]);
+                };
+                let data = self
+                    .dsp
+                    .engine
+                    .as_mut()
+                    .map(|engine| engine.read_pipe(pipe, size.min(capacity)))
+                    .unwrap_or_default();
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                if !data.is_empty() && session.write_memory_bytes(address, &data).is_err() {
+                    return Ok(vec![command | 0x40, RESULT_INVALID_ADDRESS]);
+                }
+                let mut response = vec![command | 0x82, 0, data.len() as u32];
+                response.extend_from_slice(message.translation_words());
+                Ok(response)
+            }
+            0x0F => {
+                self.ensure_dsp_engine()?;
+                let readable = self
+                    .dsp
+                    .engine
+                    .as_ref()
+                    .map_or(0, |engine| engine.pipe_readable(param(0)));
+                Ok(vec![0x000F_0080, 0, readable as u32])
+            }
+            0x11 => {
+                self.ensure_dsp_engine()?;
                 self.dsp.component_loaded = true;
-                signal_semaphore(&self.dsp, session)?;
+                self.signal_dsp_semaphore()?;
                 let mut response = vec![0x0011_0082, 0, 1];
                 // Echo the component buffer's translation words.
                 response.extend_from_slice(message.translation_words());
-                response
+                Ok(response)
             }
-            0x0012_0000 => {
+            0x12 => {
                 self.dsp.component_loaded = false;
-                ok
+                Ok(ok)
             }
-            0x0013_0082 | 0x0014_0082 => ok, // Flush/InvalidateDataCache (no DSP-side cache)
-            0x0015_0082 => {
+            0x13 => {
+                // FlushDataCache(address, size, process handle): commit guest writes
+                // so the DSP reads current sample data from FCRAM.
+                if let Some(session) = self.ncsd_session.as_mut() {
+                    let _ = session.flush_process_data_cache(param(0), param(1));
+                    session.drain_write_buffer()?;
+                }
+                Ok(ok)
+            }
+            0x14 => Ok(ok), // InvalidateDataCache: the DSP never writes FCRAM here
+            0x15 => {
                 let handle = message.translation_words().get(1).copied().unwrap_or(0);
-                let (interrupt, channel) = (
-                    parameters.first().copied().unwrap_or(0),
-                    parameters.get(1).copied().unwrap_or(0),
-                );
+                let (interrupt, channel) = (param(0), param(1));
                 self.dsp
                     .interrupt_events
                     .retain(|(i, c, _)| (*i, *c) != (interrupt, channel));
                 if handle != 0 {
                     self.dsp.interrupt_events.push((interrupt, channel, handle));
                 }
-                ok
+                Ok(ok)
             }
-            0x0016_0000 => {
+            0x16 => {
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
                 let event = match self.dsp.semaphore_event {
                     Some(event) => event,
                     None => {
@@ -1569,15 +1719,27 @@ impl System {
                         event
                     }
                 };
-                vec![0x0016_0042, 0, 0, event]
+                Ok(vec![0x0016_0042, 0, 0, event])
             }
-            0x0017_0040 => {
-                self.dsp.semaphore_mask = parameters.first().copied().unwrap_or(0);
-                ok
+            0x17 => {
+                self.dsp.semaphore_mask = param(0);
+                Ok(ok)
             }
-            0x001F_0000 => vec![0x001F_0080, 0, 0], // GetHeadphoneStatus: not inserted
-            _ => vec![command | 0x40, RESULT_INVALID_ENUM],
-        })
+            0x1F => Ok(vec![0x001F_0080, 0, 0]), // GetHeadphoneStatus: not inserted
+            _ => Ok(vec![command | 0x40, RESULT_INVALID_ENUM]),
+        }
+    }
+
+    fn signal_dsp_semaphore(&mut self) -> Result<()> {
+        if let (Some(event), Some(session)) = (self.dsp.semaphore_event, self.ncsd_session.as_mut())
+        {
+            session.signal_event_handle(event).map_err(|error| {
+                Error::Io(io::Error::other(format!(
+                    "DSP semaphore signal failed: {error:?}"
+                )))
+            })?;
+        }
+        Ok(())
     }
 
     /// Handles `ptm:u` status queries with fixed defaults (adapter plugged in,
@@ -3591,14 +3753,48 @@ impl System {
         }
 
         self.update_hid(true)?;
-        let cpu_report = self.run_instructions(instruction_budget)?;
-        {
-            let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
-                "a prepared ARM11 process session is required for frame execution",
-            ))?;
-            session.advance_time(NOMINAL_FRAME_DURATION_NS);
-            self.cpu = session.core().clone();
+        // While the DSP runs, the frame is cut into slices at DSP-frame
+        // boundaries so the guest audio thread can answer each pipe interrupt.
+        let dsp_frames = self
+            .dsp
+            .engine
+            .as_mut()
+            .map_or(0, |engine| engine.frames_due(NOMINAL_FRAME_DURATION_NS));
+        let slices = u64::from(dsp_frames.max(1));
+        let mut instructions_executed = 0u64;
+        let mut stop_reason = Arm11RunStopReason::InstructionBudgetExhausted;
+        for slice in 0..slices {
+            let share = instruction_budget / slices as usize
+                + if slice + 1 == slices {
+                    instruction_budget % slices as usize
+                } else {
+                    0
+                };
+            let report = self.run_instructions(share)?;
+            instructions_executed =
+                instructions_executed.saturating_add(report.instructions_executed);
+            stop_reason = report.stop_reason;
+            {
+                let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+                    "a prepared ARM11 process session is required for frame execution",
+                ))?;
+                let ns = NOMINAL_FRAME_DURATION_NS / slices
+                    + if slice + 1 == slices {
+                        NOMINAL_FRAME_DURATION_NS % slices
+                    } else {
+                        0
+                    };
+                session.advance_time(ns);
+                self.cpu = session.core().clone();
+            }
+            if dsp_frames > 0 {
+                self.run_dsp_frame()?;
+            }
         }
+        let cpu_report = Arm11RunReport {
+            instructions_executed,
+            stop_reason,
+        };
 
         let gpu_command_lists_submitted = self.process_pending_pica_command_buffers()?;
         let lcd_screens_scanned_out = self.scanout_lcd()?;
@@ -9692,7 +9888,7 @@ mod tests {
         );
         assert_eq!(system.dsp.interrupt_events, vec![(2, 0, event)]);
 
-        // Pipes are always empty.
+        // Nothing was written to pipe 2 yet, so it is empty.
         let reply = write_tls_ipc_request(&mut system, dsp, &[0x000F_0080, 2, 1]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
@@ -9708,13 +9904,202 @@ mod tests {
         );
         assert!(!system.dsp.component_loaded);
 
-        // DSP RAM address conversion is not modelled and says so.
-        let reply = write_tls_ipc_request(&mut system, dsp, &[0x000C_0040, 0x1000]);
+        // DSP word addresses convert to guest addresses inside DSP RAM.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x000C_0040, 0xBFFF]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000C_0080, 0, 0x1FF5_7FFE]
+        );
+    }
+
+    #[test]
+    fn dsp_ndsp_style_startup_maps_ram_and_mixes_a_guest_voice() {
+        use crate::loader::ncsd::session::kernel::EventResetType;
+
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(14)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let dsp = open_hle_service(&mut system, b"dsp::DSP");
+        let scratch = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_tls_address()
+            .unwrap()
+            + 0x200;
+        let irq = system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .create_event_handle(EventResetType::OneShot)
+            .unwrap();
+
+        // RegisterInterruptEvents(PIPE, 2) and LoadComponent (maps DSP RAM).
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x0015_0082, 2, 2, 0, irq]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 2),
-            [0x000C_0040, RESULT_INVALID_ENUM]
+            [0x0015_0040, 0]
         );
+        let reply = write_tls_ipc_request(
+            &mut system,
+            dsp,
+            &[0x0011_00C2, 0x100, 0xFF, 0xFF, (0x100 << 4) | 10, scratch],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            &read_tls_ipc_response(&mut system, reply, 3)[..3],
+            &[0x0011_0082, 0, 1]
+        );
+
+        // Pipe 2 write of command 0 (start) signals the pipe interrupt event.
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(scratch, &[0, 0, 0, 0])
+            .unwrap();
+        let reply = write_tls_ipc_request(
+            &mut system,
+            dsp,
+            &[0x000D_0082, 2, 4, (4 << 4) | 10, scratch],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x000D_0040, 0]
+        );
+        assert_eq!(
+            system
+                .ncsd_session
+                .as_ref()
+                .unwrap()
+                .event_handle_is_signaled(irq),
+            Some(true)
+        );
+
+        // The reply is a u16 count followed by 15 u16 DSP addresses.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x000F_0080, 2, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000F_0080, 0, 32]
+        );
+        let count_buffer = scratch + 0x40;
+        let reply = write_tls_ipc_request(
+            &mut system,
+            dsp,
+            &[0x0010_00C2, 2, 0, 2, (2 << 4) | 12, count_buffer],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            &read_tls_ipc_response(&mut system, reply, 3)[..3],
+            &[0x0010_0082, 0, 2]
+        );
+        let address_buffer = scratch + 0x80;
+        let reply = write_tls_ipc_request(
+            &mut system,
+            dsp,
+            &[0x0010_00C2, 2, 0, 30, (30 << 4) | 12, address_buffer],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            &read_tls_ipc_response(&mut system, reply, 3)[..3],
+            &[0x0010_0082, 0, 30]
+        );
+        let session = system.ncsd_session.as_mut().unwrap();
+        let mut bytes = [0u8; 2];
+        session.read_memory_bytes(count_buffer, &mut bytes).unwrap();
+        assert_eq!(u16::from_le_bytes(bytes), 15);
+        session
+            .read_memory_bytes(address_buffer, &mut bytes)
+            .unwrap();
+        let counter_address = u32::from(u16::from_le_bytes(bytes));
+        assert_eq!(counter_address, 0xBFFF);
+
+        // ConvertProcessAddressFromDspDram for both banks, as libctru does.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x000C_0040, counter_address]);
+        run_one_ipc_svc(&mut system);
+        let bank0 = read_tls_ipc_response(&mut system, reply, 3)[2];
+        let reply =
+            write_tls_ipc_request(&mut system, dsp, &[0x000C_0040, counter_address | 0x10000]);
+        run_one_ipc_svc(&mut system);
+        let bank1 = read_tls_ipc_response(&mut system, reply, 3)[2];
+        assert_eq!((bank0, bank1), (0x1FF5_7FFE, 0x1FF7_7FFE));
+
+        // The guest authors bank 0 through its cache: counter 4 + one PCM16 voice.
+        let pcm: Vec<u8> = std::iter::repeat_n(1000i16, 480)
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        let buffer_address = system
+            .physical_memory_mut()
+            .allocate_linear_fcram(0x1000)
+            .unwrap();
+        system
+            .physical_memory_mut()
+            .write(buffer_address, &pcm)
+            .unwrap();
+        let config = 0x1FF5_0000 + 0x3D24;
+        let dirty: u32 = 1 | (1 << 1) | (1 << 16) | (1 << 25) | (1 << 30);
+        let session = system.ncsd_session.as_mut().unwrap();
+        session
+            .write_memory_bytes(0x1FF5_7FFE, &4u16.to_le_bytes())
+            .unwrap();
+        session
+            .write_memory_bytes(config, &dirty.to_le_bytes())
+            .unwrap();
+        session
+            .write_memory_bytes(config + 0x04, &1.0f32.to_bits().to_le_bytes())
+            .unwrap();
+        session
+            .write_memory_bytes(config + 0x08, &1.0f32.to_bits().to_le_bytes())
+            .unwrap();
+        session.write_memory_bytes(config + 0xA0, &[1]).unwrap();
+        session
+            .write_memory_bytes(
+                config + 0xAC,
+                &crate::dsp::encode_u32_dsp(buffer_address).to_le_bytes(),
+            )
+            .unwrap();
+        session
+            .write_memory_bytes(
+                config + 0xB0,
+                &crate::dsp::encode_u32_dsp(480).to_le_bytes(),
+            )
+            .unwrap();
+        session
+            .write_memory_bytes(config + 0xB4, &(1u16 | (1 << 2)).to_le_bytes())
+            .unwrap();
+
+        // One video frame without CPU budget still runs three DSP frames.
+        system.run_frame_with_budget(0).unwrap();
+        let engine = system.dsp.engine.as_ref().unwrap();
+        assert_eq!(engine.frames_mixed(), 3);
+        let mut samples = Vec::new();
+        system.take_audio_samples(&mut samples);
+        assert_eq!(samples.len(), 3 * 320);
+        assert!(
+            samples.iter().take(960).all(|s| *s == 1000),
+            "voice plays 480 samples"
+        );
+        // The guest reads the published mix back through its (invalidated) cache.
+        let session = system.ncsd_session.as_mut().unwrap();
+        let mut final_mix = [0u8; 4];
+        session
+            .read_memory_bytes(0x1FF5_0000 + 0xA80, &mut final_mix)
+            .unwrap();
+        assert_eq!(i16::from_le_bytes([final_mix[0], final_mix[1]]), 1000);
+        let mut status = [0u8; 1];
+        session
+            .read_memory_bytes(0x1FF5_0000 + 0xD00, &mut status)
+            .unwrap();
+        assert_eq!(status[0], 0, "voice finished after its 480 samples");
     }
 
     #[test]
