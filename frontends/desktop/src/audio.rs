@@ -2,19 +2,24 @@
 //!
 //! The core mixes at 32728 Hz (see `System::take_audio_samples`); this module
 //! resamples to 48 kHz with linear interpolation and hands the samples to a
-//! platform sink: ALSA through `dlopen` on Linux, `waveOut` on Windows. macOS
-//! currently has no sink and plays silence. Sinks never block: when the device
+//! platform sink: ALSA through `dlopen` on Linux, `waveOut` on Windows, AudioQueue
+//! on macOS. Sinks never block: when the device
 //! queue is full the newest samples are dropped, and a missing device only
 //! disables sound.
 //!
 //! Nothing here has been heard on real hardware by the authors: the Linux sink
-//! was exercised only on a machine without a sound device and the Windows sink
-//! is verified by compilation in CI only.
+//! was exercised only on a machine without a sound device and the Windows and macOS
+//! sinks are verified by compilation in CI only.
 
 use aceris_core::{System, dsp::Resampler};
 
 #[cfg(target_os = "linux")]
 mod alsa;
+#[cfg(target_os = "macos")]
+mod coreaudio;
+#[cfg(all(aceris_typecheck_native, not(target_os = "macos")))]
+#[allow(dead_code)]
+mod coreaudio;
 #[cfg(target_os = "windows")]
 mod winmm;
 // Type-checked on any host with `--cfg aceris_typecheck_native`; never linked there.
@@ -79,7 +84,12 @@ fn open_sink() -> Result<Box<dyn Sink>, String> {
     Ok(Box::new(winmm::WaveOutSink::open()?))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(target_os = "macos")]
+fn open_sink() -> Result<Box<dyn Sink>, String> {
+    Ok(Box::new(coreaudio::AudioQueueSink::open()?))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn open_sink() -> Result<Box<dyn Sink>, String> {
     Err("no audio backend for this platform yet".to_string())
 }

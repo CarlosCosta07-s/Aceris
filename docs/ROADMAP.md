@@ -219,7 +219,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] O orçamento de instruções é determinístico, mas não é temporização ciclo-a-ciclo; o renderizador ainda não executa a pipeline gráfica PICA200
 - [ ] Integrar relógios e interrupções dos dispositivos ao escalonador e à CPU
 - [~] Modelo de áudio e DSP: ver `dsp::DSP` HLE acima (mixagem básica de 24 vozes; sem efeitos nem verificação com jogos)
-- [~] Saída de áudio: Linux (ALSA via `dlopen`), Windows (`waveOut`) e Android (AAudio via `dlopen`), com reamostragem linear 32728 → 48000 Hz e escrita sem bloqueio (descarta o excedente). macOS ainda sem saída. Nenhuma foi ouvida em dispositivo real: só compilação/clippy e testes do reamostrador
+- [~] Saída de áudio: Linux (ALSA via `dlopen`), Windows (`waveOut`), macOS (AudioQueue) e Android (AAudio via `dlopen`), com reamostragem linear 32728 → 48000 Hz e escrita sem bloqueio (descarta o excedente). Nenhuma foi ouvida em dispositivo real: só compilação/clippy e testes do reamostrador
 - [ ] Entrada por teclado, gamepad, analógicos e touchscreen
 - [ ] Microfone e demais dispositivos conforme necessidade de compatibilidade
 - [ ] Sincronizar entrada, áudio, vídeo e temporização do sistema
