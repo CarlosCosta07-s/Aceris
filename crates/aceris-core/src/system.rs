@@ -134,6 +134,11 @@ pub struct System {
     hid: Option<HidService>,
     apt: Option<AptService>,
     romfs: Option<crate::fs::RomFsRegion>,
+    /// Host directory serving save data, extdata and the SD card (set by the frontend).
+    storage: Option<crate::storage::Storage>,
+    fs_state: FsState,
+    /// Services and commands the guest asked for that are not implemented.
+    unhandled: std::collections::BTreeSet<String>,
     dsp: DspService,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
@@ -168,6 +173,46 @@ pub const DEFAULT_FRAME_INSTRUCTION_BUDGET: usize = 100_000;
 pub const MAX_PICA_COMMAND_WORDS: usize = 0x1_0000;
 
 /// Result returned by GSP when another client currently owns rendering rights.
+/// FS result codes below come from public tables, not hardware: unverified.
+const RESULT_FS_NOT_FOUND: u32 = 0xC880_4478;
+const FS_RESULT_ALREADY_EXISTS: u32 = 0xC820_44BE;
+const FS_RESULT_INVALID_PATH: u32 = 0xC8E0_4702;
+const FS_RESULT_NOT_EMPTY: u32 = 0xC820_44B1;
+const FS_RESULT_WRITE_FAILED: u32 = 0xC860_478A;
+
+fn fs_storage_result(error: &crate::storage::StorageError) -> u32 {
+    use crate::storage::StorageError;
+    match error {
+        StorageError::NotFound => RESULT_FS_NOT_FOUND,
+        StorageError::AlreadyExists => FS_RESULT_ALREADY_EXISTS,
+        StorageError::InvalidPath => FS_RESULT_INVALID_PATH,
+        StorageError::NotEmpty => FS_RESULT_NOT_EMPTY,
+        StorageError::Io(_) => FS_RESULT_WRITE_FAILED,
+    }
+}
+
+/// srv result when a service name is not registered (public tables; unverified).
+const RESULT_SRV_SERVICE_NOT_REGISTERED: u32 = 0xD8E0_6406;
+/// Result for a command a stub service does not implement (public tables; unverified).
+const RESULT_INVALID_COMMAND: u32 = 0xD900_182F;
+/// Minimal HLE services: name and how their commands are answered.
+const STUB_SERVICES: [(&str, StubKind); 4] = [
+    ("gsp::Lcd", StubKind::AlwaysOk),
+    ("ndm:u", StubKind::AlwaysOk),
+    ("ac:u", StubKind::Ac),
+    ("frd:u", StubKind::Frd),
+];
+
+#[derive(Clone, Copy, Debug)]
+enum StubKind {
+    /// Every command succeeds with no payload.
+    AlwaysOk,
+    /// `ac:u`: client version and "not connected" Wi-Fi status.
+    Ac,
+    /// `frd:u`: not logged in, offline.
+    Frd,
+}
+
 const RESULT_GSP_RENDERING_RIGHT_BUSY: u32 = 0xC840_2BF0;
 /// Result returned by GX commands that require rendering rights.
 const RESULT_GSP_NO_RIGHT: u32 = 0xD820_2A06;
@@ -281,6 +326,15 @@ struct AptParameter {
     sender_app_id: u32,
     command: u32,
     data: Vec<u8>,
+}
+
+/// Open archives, files and directories of the HLE `fs:USER` service.
+#[derive(Debug, Default)]
+struct FsState {
+    archives: std::collections::HashMap<u64, crate::storage::ArchiveKind>,
+    next_archive: u64,
+    files: std::collections::HashMap<u32, (std::fs::File, crate::storage::ArchiveKind)>,
+    directories: std::collections::HashMap<u32, (Vec<crate::storage::DirEntry>, usize)>,
 }
 
 /// HLE `dsp::DSP` state: component/semaphore/interrupt handshake plus the
@@ -715,6 +769,8 @@ impl System {
         self.image = Some(ImageFormat::Ncsd);
         self.ncsd_session = Some(session);
         self.romfs = None;
+        self.fs_state = FsState::default();
+        self.unhandled.clear();
         self.hid = None;
         self.apt = None;
         self.dsp = DspService::default();
@@ -762,6 +818,13 @@ impl System {
             }
             None => Ok(false),
         }
+    }
+
+    /// Chooses the host directory that backs save data, extdata and the SD card.
+    ///
+    /// Without it those archives fail to open, as on a console without them.
+    pub fn set_storage_root(&mut self, root: impl Into<std::path::PathBuf>) {
+        self.storage = Some(crate::storage::Storage::new(root));
     }
 
     /// Serves an already-prepared RomFS region to the guest through `fs:USER`.
@@ -1126,6 +1189,13 @@ impl System {
             ServiceSessionKind::Ptm => Self::dispatch_ptm_request(message),
             ServiceSessionKind::Dsp => self.dispatch_dsp_request(message)?,
             ServiceSessionKind::FsRomFsFile => self.dispatch_fs_file_request(message)?,
+            ServiceSessionKind::FsHostFile => {
+                self.dispatch_fs_host_file_request(service_handle, message)?
+            }
+            ServiceSessionKind::Stub(index) => self.dispatch_stub_request(index, message),
+            ServiceSessionKind::FsDirectory => {
+                self.dispatch_fs_directory_request(service_handle, message)?
+            }
             ServiceSessionKind::GspGpu {
                 client_id,
                 shared_memory_handle,
@@ -1140,6 +1210,14 @@ impl System {
                 message,
             )?,
         };
+        if response_words.len() == 2 && response_words[1] == RESULT_INVALID_ENUM {
+            let label = format!("{service_kind:?}");
+            let label = label.split(['{', '(']).next().unwrap_or("").trim();
+            self.unhandled.insert(format!(
+                "{label} command 0x{:08X} answered with an error (unimplemented or bad arguments)",
+                request_words[0]
+            ));
+        }
         if self.pending_gsp_acquires.len() > pending_before {
             return Ok(true);
         }
@@ -1255,7 +1333,11 @@ impl System {
                     Some(b"fs:USER") => Some(ServiceSessionKind::Fs),
                     Some(b"ptm:u") => Some(ServiceSessionKind::Ptm),
                     Some(b"dsp::DSP") => Some(ServiceSessionKind::Dsp),
-                    _ => None,
+                    Some(name) => STUB_SERVICES
+                        .iter()
+                        .position(|(stub, _)| stub.as_bytes() == name)
+                        .map(|index| ServiceSessionKind::Stub(index as u8)),
+                    None => None,
                 };
                 if let Some(kind) = hle_kind {
                     let hle_handle = match self
@@ -1270,7 +1352,12 @@ impl System {
                     return Ok(vec![0x0005_0042, 0, 0, hle_handle]);
                 }
                 if name_length != 8 || &requested_name != b"gsp::Gpu" {
-                    return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
+                    let name = requested_name
+                        .get(..name_length)
+                        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                        .unwrap_or_else(|| "<invalid name length>".to_string());
+                    self.unhandled.insert(format!("service {name}"));
+                    return Ok(vec![0x0005_0040, RESULT_SRV_SERVICE_NOT_REGISTERED]);
                 }
 
                 let service_handle = match self
@@ -1293,89 +1380,517 @@ impl System {
     /// Handles `fs:USER` requests; only the application RomFS archive (ID 3) exists.
     ///
     /// Command IDs, archive IDs and path types follow public 3dbrew/libctru
-    /// documentation and have not been verified on hardware.
+    /// Handles `fs:USER` requests (public 3dbrew command IDs; not hardware-verified).
+    ///
+    /// The application RomFS (archive 3) is served read-only; save data, extdata,
+    /// system save data and the SD card are host directories (see
+    /// [`crate::storage`]) when the frontend called [`System::set_storage_root`].
     fn dispatch_fs_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        use crate::storage::{ArchiveKind, StorageError};
         const INITIALIZE: u32 = 0x0801_0002;
         const INITIALIZE_WITH_SDK_VERSION: u32 = 0x0861_0042;
         const OPEN_FILE: u32 = 0x0802_01C2;
         const OPEN_FILE_DIRECTLY: u32 = 0x0803_0204;
+        const DELETE_FILE: u32 = 0x0804_0142;
+        const RENAME_FILE: u32 = 0x0805_0244;
+        const DELETE_DIRECTORY: u32 = 0x0806_0142;
+        const DELETE_DIRECTORY_RECURSIVELY: u32 = 0x0807_0142;
+        const CREATE_FILE: u32 = 0x0808_0202;
+        const CREATE_DIRECTORY: u32 = 0x0809_0182;
+        const RENAME_DIRECTORY: u32 = 0x080A_0244;
+        const OPEN_DIRECTORY: u32 = 0x080B_0102;
         const OPEN_ARCHIVE: u32 = 0x080C_00C2;
         const CLOSE_ARCHIVE: u32 = 0x080E_0080;
+        const IS_SDMC_DETECTED: u32 = 0x0817_0000;
+        const IS_SDMC_WRITABLE: u32 = 0x0818_0000;
+        const FORMAT_SAVE_DATA: u32 = 0x084C_0242;
+        const CREATE_EXT_SAVE_DATA: u32 = 0x0851_0242;
         const ARCHIVE_ROMFS: u32 = 3;
         const PATH_EMPTY: u32 = 1;
         const ROMFS_ARCHIVE_HANDLE: u64 = 0x0000_0001_0000_0003;
-        const RESULT_FS_NOT_FOUND: u32 = 0xC880_4478;
-        const OPEN_WRITE_BITS: u32 = 0x2 | 0x4;
+        const OPEN_READ: u32 = 0x1;
+        const OPEN_WRITE: u32 = 0x2;
+        const OPEN_CREATE: u32 = 0x4;
 
         let raw_header = message.header().raw();
+        let command = raw_header & 0xFFFF_0000;
         let parameters = message.normal_parameters();
-        let reply_error = |code: u32| vec![(raw_header & 0xFFFF_0000) | 0x40, code];
+        let param = |index: usize| parameters.get(index).copied().unwrap_or(0);
+        let handle_at =
+            |index: usize| u64::from(param(index)) | (u64::from(param(index + 1)) << 32);
+        let reply_error = |code: u32| vec![command | 0x40, code];
+        let ok = vec![command | 0x40, 0];
+        let storage_error = |error: StorageError| reply_error(fs_storage_result(&error));
         match raw_header {
-            INITIALIZE | INITIALIZE_WITH_SDK_VERSION => {
-                Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, 0])
+            INITIALIZE | INITIALIZE_WITH_SDK_VERSION => Ok(ok),
+            IS_SDMC_DETECTED | IS_SDMC_WRITABLE => {
+                Ok(vec![command | 0x80, 0, u32::from(self.storage.is_some())])
+            }
+            FORMAT_SAVE_DATA | CREATE_EXT_SAVE_DATA => {
+                let kind = if raw_header == FORMAT_SAVE_DATA {
+                    ArchiveKind::SaveData
+                } else {
+                    ArchiveKind::ExtSaveData
+                };
+                match self
+                    .storage
+                    .as_ref()
+                    .map(|storage| storage.ensure_archive(kind))
+                {
+                    Some(Ok(())) => Ok(ok),
+                    Some(Err(error)) => Ok(storage_error(error)),
+                    None => Ok(reply_error(RESULT_FS_NOT_FOUND)),
+                }
             }
             OPEN_ARCHIVE => {
-                if parameters.first() != Some(&ARCHIVE_ROMFS) {
-                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                let archive_id = param(0);
+                if archive_id == ARCHIVE_ROMFS {
+                    return Ok(vec![
+                        0x080C_00C0,
+                        0,
+                        ROMFS_ARCHIVE_HANDLE as u32,
+                        (ROMFS_ARCHIVE_HANDLE >> 32) as u32,
+                    ]);
                 }
-                Ok(vec![
-                    0x080C_00C0,
-                    0,
-                    ROMFS_ARCHIVE_HANDLE as u32,
-                    (ROMFS_ARCHIVE_HANDLE >> 32) as u32,
-                ])
+                let (Some(kind), Some(storage)) =
+                    (ArchiveKind::from_id(archive_id), self.storage.as_ref())
+                else {
+                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                };
+                if let Err(error) = storage.ensure_archive(kind) {
+                    return Ok(storage_error(error));
+                }
+                self.fs_state.next_archive += 1;
+                let handle = 0x0000_0002_0000_0000 | self.fs_state.next_archive;
+                self.fs_state.archives.insert(handle, kind);
+                Ok(vec![0x080C_00C0, 0, handle as u32, (handle >> 32) as u32])
             }
             CLOSE_ARCHIVE => {
-                let handle = u64::from(parameters.first().copied().unwrap_or(0))
-                    | (u64::from(parameters.get(1).copied().unwrap_or(0)) << 32);
-                if handle != ROMFS_ARCHIVE_HANDLE {
-                    return Ok(reply_error(RESULT_INVALID_HANDLE));
+                let handle = handle_at(0);
+                if handle == ROMFS_ARCHIVE_HANDLE
+                    || self.fs_state.archives.remove(&handle).is_some()
+                {
+                    Ok(vec![0x080E_0040, 0])
+                } else {
+                    Ok(reply_error(RESULT_INVALID_HANDLE))
                 }
-                Ok(vec![0x080E_0040, 0])
             }
             OPEN_FILE | OPEN_FILE_DIRECTLY => {
-                let (valid_archive, path_type, flags) = if raw_header == OPEN_FILE_DIRECTLY {
+                let direct = raw_header == OPEN_FILE_DIRECTLY;
+                let (archive, path_type, flags) = if direct {
                     // transaction, archive ID, archive path type/size, file path type/size, flags
-                    (
-                        parameters.get(1) == Some(&ARCHIVE_ROMFS),
-                        parameters.get(4).copied().unwrap_or(0),
-                        parameters.get(6).copied().unwrap_or(0),
-                    )
+                    let archive = if param(1) == ARCHIVE_ROMFS {
+                        Some(None)
+                    } else {
+                        ArchiveKind::from_id(param(1)).map(Some)
+                    };
+                    (archive, param(4), param(6))
                 } else {
                     // transaction, archive handle lo/hi, file path type/size, flags
-                    let handle = u64::from(parameters.get(1).copied().unwrap_or(0))
-                        | (u64::from(parameters.get(2).copied().unwrap_or(0)) << 32);
-                    (
-                        handle == ROMFS_ARCHIVE_HANDLE,
-                        parameters.get(3).copied().unwrap_or(0),
-                        parameters.get(5).copied().unwrap_or(0),
-                    )
+                    let handle = handle_at(1);
+                    let archive = if handle == ROMFS_ARCHIVE_HANDLE {
+                        Some(None)
+                    } else {
+                        self.fs_state.archives.get(&handle).copied().map(Some)
+                    };
+                    (archive, param(3), param(5))
                 };
-                if !valid_archive || self.romfs.is_none() {
-                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                let response_header = if direct { 0x0803_0042 } else { 0x0802_0042 };
+                match archive {
+                    None => Ok(reply_error(RESULT_FS_NOT_FOUND)),
+                    Some(None) => {
+                        // The RomFS is read-only, and only the empty path (whole region) is served.
+                        if self.romfs.is_none()
+                            || flags & (OPEN_WRITE | OPEN_CREATE) != 0
+                            || path_type != PATH_EMPTY
+                        {
+                            return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                        }
+                        let session = self
+                            .ncsd_session
+                            .as_mut()
+                            .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                        match session.create_hle_session(ServiceSessionKind::FsRomFsFile) {
+                            Ok(file) => Ok(vec![response_header, 0, 0x0000_0010, file]),
+                            Err(_) => Ok(reply_error(RESULT_OUT_OF_MEMORY)),
+                        }
+                    }
+                    Some(Some(kind)) => {
+                        let Some(path) = self.fs_guest_path(&message, path_type, true) else {
+                            return Ok(reply_error(FS_RESULT_INVALID_PATH));
+                        };
+                        let Some(storage) = self.storage.as_ref() else {
+                            return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                        };
+                        let file = match storage.open_file(
+                            kind,
+                            &path,
+                            flags & OPEN_READ != 0,
+                            flags & OPEN_WRITE != 0,
+                            flags & OPEN_CREATE != 0,
+                        ) {
+                            Ok(file) => file,
+                            Err(error) => return Ok(storage_error(error)),
+                        };
+                        let session = self
+                            .ncsd_session
+                            .as_mut()
+                            .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                        match session.create_hle_session(ServiceSessionKind::FsHostFile) {
+                            Ok(handle) => {
+                                self.fs_state.files.insert(handle, (file, kind));
+                                Ok(vec![response_header, 0, 0x0000_0010, handle])
+                            }
+                            Err(_) => Ok(reply_error(RESULT_OUT_OF_MEMORY)),
+                        }
+                    }
                 }
-                // The RomFS is read-only, and only the empty path (whole region) is served.
-                if flags & OPEN_WRITE_BITS != 0 || path_type != PATH_EMPTY {
+            }
+            CREATE_FILE
+            | DELETE_FILE
+            | CREATE_DIRECTORY
+            | DELETE_DIRECTORY
+            | DELETE_DIRECTORY_RECURSIVELY => {
+                let Some(kind) = self.fs_state.archives.get(&handle_at(1)).copied() else {
+                    return Ok(reply_error(RESULT_INVALID_HANDLE));
+                };
+                let Some(path) = self.fs_guest_path(&message, param(3), true) else {
+                    return Ok(reply_error(FS_RESULT_INVALID_PATH));
+                };
+                let Some(storage) = self.storage.as_ref() else {
                     return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                };
+                let result = match raw_header {
+                    CREATE_FILE => {
+                        let size = u64::from(param(6)) | (u64::from(param(7)) << 32);
+                        storage.create_file(kind, &path, size)
+                    }
+                    DELETE_FILE => storage.delete_file(kind, &path),
+                    CREATE_DIRECTORY => storage.create_directory(kind, &path),
+                    DELETE_DIRECTORY => storage.delete_directory(kind, &path, false),
+                    _ => storage.delete_directory(kind, &path, true),
+                };
+                Ok(result.map_or_else(storage_error, |()| ok))
+            }
+            RENAME_FILE | RENAME_DIRECTORY => {
+                let (Some(source), Some(destination)) = (
+                    self.fs_state.archives.get(&handle_at(1)).copied(),
+                    self.fs_state.archives.get(&handle_at(5)).copied(),
+                ) else {
+                    return Ok(reply_error(RESULT_INVALID_HANDLE));
+                };
+                if source != destination {
+                    return Ok(reply_error(FS_RESULT_INVALID_PATH));
                 }
-                let file = match self
+                let (Some(from), Some(to)) = (
+                    self.fs_guest_path_at(&message, param(3), 0),
+                    self.fs_guest_path_at(&message, param(7), 1),
+                ) else {
+                    return Ok(reply_error(FS_RESULT_INVALID_PATH));
+                };
+                let Some(storage) = self.storage.as_ref() else {
+                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                };
+                Ok(storage
+                    .rename(source, &from, &to)
+                    .map_or_else(storage_error, |()| ok))
+            }
+            OPEN_DIRECTORY => {
+                let Some(kind) = self.fs_state.archives.get(&handle_at(0)).copied() else {
+                    return Ok(reply_error(RESULT_INVALID_HANDLE));
+                };
+                let Some(path) = self.fs_guest_path(&message, param(2), true) else {
+                    return Ok(reply_error(FS_RESULT_INVALID_PATH));
+                };
+                let Some(storage) = self.storage.as_ref() else {
+                    return Ok(reply_error(RESULT_FS_NOT_FOUND));
+                };
+                let entries = match storage.read_directory(kind, &path) {
+                    Ok(entries) => entries,
+                    Err(error) => return Ok(storage_error(error)),
+                };
+                let session = self
                     .ncsd_session
                     .as_mut()
-                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
-                    .create_hle_session(ServiceSessionKind::FsRomFsFile)
-                {
-                    Ok(handle) => handle,
-                    Err(_) => return Ok(reply_error(RESULT_OUT_OF_MEMORY)),
-                };
-                let header = if raw_header == OPEN_FILE_DIRECTLY {
-                    0x0803_0042
-                } else {
-                    0x0802_0042
-                };
-                Ok(vec![header, 0, 0x0000_0010, file])
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                match session.create_hle_session(ServiceSessionKind::FsDirectory) {
+                    Ok(handle) => {
+                        self.fs_state.directories.insert(handle, (entries, 0));
+                        Ok(vec![0x080B_0042, 0, 0x0000_0010, handle])
+                    }
+                    Err(_) => Ok(reply_error(RESULT_OUT_OF_MEMORY)),
+                }
             }
             _ => Ok(reply_error(RESULT_INVALID_ENUM)),
         }
+    }
+
+    /// Reads the (last) path static buffer of a request and decodes it.
+    fn fs_guest_path(
+        &mut self,
+        message: &IpcMessage<'_>,
+        path_type: u32,
+        last: bool,
+    ) -> Option<String> {
+        self.fs_guest_path_at(message, path_type, if last { usize::MAX } else { 0 })
+    }
+
+    /// Decodes the `index`-th path static buffer (`usize::MAX` = the last one).
+    fn fs_guest_path_at(
+        &mut self,
+        message: &IpcMessage<'_>,
+        path_type: u32,
+        index: usize,
+    ) -> Option<String> {
+        if path_type == 1 {
+            return Some(String::new());
+        }
+        let translations = message.translation_parameters().ok()?;
+        let buffers: Vec<(u32, u32)> = translations
+            .iter()
+            .filter_map(|item| match item {
+                crate::loader::ncsd::session::ipc::IpcTranslationParameter::StaticBuffer {
+                    size_bytes,
+                    source_address,
+                    ..
+                } => Some((*size_bytes, *source_address)),
+                _ => None,
+            })
+            .collect();
+        let (size, address) = if index == usize::MAX {
+            *buffers.last()?
+        } else {
+            *buffers.get(index)?
+        };
+        if size == 0 || size > 0x400 {
+            return None;
+        }
+        let mut bytes = vec![0u8; size as usize];
+        self.ncsd_session
+            .as_mut()?
+            .read_memory_bytes(address, &mut bytes)
+            .ok()?;
+        match path_type {
+            3 => {
+                let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+                String::from_utf8(bytes[..end].to_vec()).ok()
+            }
+            4 => {
+                let units: Vec<u16> = bytes
+                    .chunks_exact(2)
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .take_while(|unit| *unit != 0)
+                    .collect();
+                String::from_utf16(&units).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Handles commands on an opened host file (Read, Write, GetSize, SetSize, Close, ...).
+    fn dispatch_fs_host_file_request(
+        &mut self,
+        handle: u32,
+        message: IpcMessage<'_>,
+    ) -> Result<Vec<u32>> {
+        use std::io::{Read as _, Seek as _, Write as _};
+        let raw_header = message.header().raw();
+        let command = raw_header & 0xFFFF_0000;
+        let ok = vec![command | 0x40, 0];
+        let reply_error = |code: u32| vec![command | 0x40, code];
+        let parameters = message.normal_parameters();
+        let param = |index: usize| parameters.get(index).copied().unwrap_or(0);
+        let offset = u64::from(param(0)) | (u64::from(param(1)) << 32);
+        let mapped = |message: &IpcMessage<'_>| {
+            message.translation_parameters().ok().and_then(|items| {
+                items.iter().find_map(|item| match item {
+                    crate::loader::ncsd::session::ipc::IpcTranslationParameter::MappedBuffer {
+                        size_bytes,
+                        source_address,
+                        ..
+                    } => Some((*size_bytes as usize, *source_address)),
+                    _ => None,
+                })
+            })
+        };
+        let Some((file, _)) = self.fs_state.files.get_mut(&handle) else {
+            return Ok(reply_error(RESULT_INVALID_HANDLE));
+        };
+        match raw_header {
+            0x0802_00C2 => {
+                // Read(offset, size, buffer)
+                let Some((capacity, address)) = mapped(&message) else {
+                    return Ok(reply_error(RESULT_INVALID_ENUM));
+                };
+                let mut bytes = vec![0u8; (param(2) as usize).min(capacity)];
+                let count = file
+                    .seek(std::io::SeekFrom::Start(offset))
+                    .and_then(|_| {
+                        let mut total = 0;
+                        while total < bytes.len() {
+                            let n = file.read(&mut bytes[total..])?;
+                            if n == 0 {
+                                break;
+                            }
+                            total += n;
+                        }
+                        Ok(total)
+                    })
+                    .unwrap_or(0);
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                if count > 0
+                    && session
+                        .write_memory_bytes(address, &bytes[..count])
+                        .is_err()
+                {
+                    return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                }
+                let mut response = vec![0x0802_0082, 0, count as u32];
+                response.extend_from_slice(message.translation_words());
+                Ok(response)
+            }
+            0x0803_0102 => {
+                // Write(offset, size, flush option, buffer)
+                let Some((capacity, address)) = mapped(&message) else {
+                    return Ok(reply_error(RESULT_INVALID_ENUM));
+                };
+                let mut bytes = vec![0u8; (param(2) as usize).min(capacity)];
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                if session.read_memory_bytes(address, &mut bytes).is_err() {
+                    return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                }
+                let written = file
+                    .seek(std::io::SeekFrom::Start(offset))
+                    .and_then(|_| file.write_all(&bytes))
+                    .map(|()| bytes.len());
+                match written {
+                    Ok(count) => {
+                        let mut response = vec![0x0803_0082, 0, count as u32];
+                        response.extend_from_slice(message.translation_words());
+                        Ok(response)
+                    }
+                    Err(_) => Ok(reply_error(FS_RESULT_WRITE_FAILED)),
+                }
+            }
+            0x0804_0000 => {
+                let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+                Ok(vec![0x0804_0102, 0, size as u32, (size >> 32) as u32])
+            }
+            0x0805_0080 => Ok(file
+                .set_len(offset)
+                .map_or_else(|_| reply_error(FS_RESULT_WRITE_FAILED), |()| ok)),
+            0x0806_0000 => Ok(vec![0x0806_0080, 0, 0]),
+            0x0807_0040 | 0x080A_0040 => Ok(ok),
+            0x080B_0000 => Ok(vec![0x080B_0080, 0, 0]),
+            0x0809_0000 => Ok(file
+                .flush()
+                .map_or_else(|_| reply_error(FS_RESULT_WRITE_FAILED), |()| ok)),
+            0x0808_0000 => {
+                self.fs_state.files.remove(&handle);
+                Ok(ok)
+            }
+            _ => Ok(reply_error(RESULT_INVALID_ENUM)),
+        }
+    }
+
+    /// Handles commands on an opened directory (Read, Close).
+    fn dispatch_fs_directory_request(
+        &mut self,
+        handle: u32,
+        message: IpcMessage<'_>,
+    ) -> Result<Vec<u32>> {
+        const ENTRY_SIZE: usize = 0x228;
+        let raw_header = message.header().raw();
+        let command = raw_header & 0xFFFF_0000;
+        let reply_error = |code: u32| vec![command | 0x40, code];
+        let Some((entries, position)) = self.fs_state.directories.get_mut(&handle) else {
+            return Ok(reply_error(RESULT_INVALID_HANDLE));
+        };
+        match raw_header {
+            0x0801_0042 => {
+                let requested = message.normal_parameters().first().copied().unwrap_or(0) as usize;
+                let Some((capacity, address)) =
+                    message.translation_parameters().ok().and_then(|items| {
+                        items.iter().find_map(|item| match item {
+                            crate::loader::ncsd::session::ipc::IpcTranslationParameter::MappedBuffer {
+                                size_bytes,
+                                source_address,
+                                ..
+                            } => Some((*size_bytes as usize, *source_address)),
+                            _ => None,
+                        })
+                    })
+                else {
+                    return Ok(reply_error(RESULT_INVALID_ENUM));
+                };
+                let count = requested
+                    .min(capacity / ENTRY_SIZE)
+                    .min(entries.len() - *position);
+                let mut bytes = vec![0u8; count * ENTRY_SIZE];
+                for (slot, entry) in entries[*position..*position + count].iter().enumerate() {
+                    let base = slot * ENTRY_SIZE;
+                    for (i, unit) in entry.name.encode_utf16().take(0x105).enumerate() {
+                        bytes[base + i * 2..base + i * 2 + 2].copy_from_slice(&unit.to_le_bytes());
+                    }
+                    bytes[base + 0x21B] = u8::from(entry.is_directory);
+                    bytes[base + 0x220..base + 0x228].copy_from_slice(&entry.size.to_le_bytes());
+                }
+                *position += count;
+                let session = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                if !bytes.is_empty() && session.write_memory_bytes(address, &bytes).is_err() {
+                    return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                }
+                let mut response = vec![0x0801_0082, 0, count as u32];
+                response.extend_from_slice(message.translation_words());
+                Ok(response)
+            }
+            0x0802_0000 => {
+                self.fs_state.directories.remove(&handle);
+                Ok(vec![0x0802_0040, 0])
+            }
+            _ => Ok(reply_error(RESULT_INVALID_ENUM)),
+        }
+    }
+
+    /// Answers a stub service from [`STUB_SERVICES`]; unknown commands are recorded.
+    fn dispatch_stub_request(&mut self, index: u8, message: IpcMessage<'_>) -> Vec<u32> {
+        let (name, kind) = STUB_SERVICES[usize::from(index)];
+        let raw_header = message.header().raw();
+        let command = raw_header & 0xFFFF_0000;
+        let ok = vec![command | 0x40, 0];
+        let reply = match kind {
+            StubKind::AlwaysOk => Some(ok.clone()),
+            StubKind::Ac => match command >> 16 {
+                0x01 | 0x40 => Some(ok.clone()),
+                0x0D => Some(vec![command | 0x80, 0, 0]), // GetWifiStatus: not connected
+                _ => None,
+            },
+            StubKind::Frd => match command >> 16 {
+                0x01 | 0x02 => Some(vec![command | 0x80, 0, 0]), // HasLoggedIn / IsOnline
+                _ => None,
+            },
+        };
+        reply.unwrap_or_else(|| {
+            self.unhandled
+                .insert(format!("{name} command 0x{raw_header:08X}"));
+            vec![command | 0x40, RESULT_INVALID_COMMAND]
+        })
+    }
+
+    /// Services and commands the guest requested that this HLE does not implement.
+    ///
+    /// Run a game, then print this list to see what to implement next.
+    pub fn unhandled_requests(&self) -> Vec<String> {
+        self.unhandled.iter().cloned().collect()
     }
 
     /// Handles commands on an opened RomFS file session (Read, GetSize, Close).
@@ -9729,6 +10244,224 @@ mod tests {
             read_tls_ipc_response(&mut system, reply, 2),
             [0x0803_0040, 0xC880_4478]
         );
+    }
+
+    #[test]
+    fn fs_user_save_data_files_round_trip_through_host_storage() {
+        let root = std::env::temp_dir().join(format!("aceris-fs-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(16)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        system.set_storage_root(&root);
+        let fs = open_hle_service(&mut system, b"fs:USER");
+        let scratch = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_tls_address()
+            .unwrap()
+            + 0x200;
+        let path_descriptor = |size: u32| (size << 14) | 2;
+        let put = |system: &mut System, address: u32, bytes: &[u8]| {
+            system
+                .ncsd_session
+                .as_mut()
+                .unwrap()
+                .write_memory_bytes(address, bytes)
+                .unwrap();
+        };
+        put(&mut system, scratch, b"/save.bin\0");
+        put(&mut system, scratch + 0x100, b"ABCD");
+        put(&mut system, scratch + 0x180, b"/\0");
+
+        // OpenArchive(SaveData, empty path).
+        let reply = write_tls_ipc_request(
+            &mut system,
+            fs,
+            &[0x080C_00C2, 4, 1, 1, path_descriptor(1), scratch + 0x180],
+        );
+        run_one_ipc_svc(&mut system);
+        let response = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&response[..2], &[0x080C_00C0, 0]);
+        let (lo, hi) = (response[2], response[3]);
+
+        // CreateFile(16 bytes) then OpenFile(read|write).
+        let reply = write_tls_ipc_request(
+            &mut system,
+            fs,
+            &[
+                0x0808_0202,
+                0,
+                lo,
+                hi,
+                3,
+                10,
+                0,
+                16,
+                0,
+                path_descriptor(10),
+                scratch,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0808_0040, 0]
+        );
+        let reply = write_tls_ipc_request(
+            &mut system,
+            fs,
+            &[
+                0x0802_01C2,
+                0,
+                lo,
+                hi,
+                3,
+                10,
+                3,
+                0,
+                path_descriptor(10),
+                scratch,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        let response = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&response[..2], &[0x0802_0042, 0]);
+        let file = response[3];
+
+        // Write "ABCD" at offset 4, then read it back and check the size.
+        let reply = write_tls_ipc_request(
+            &mut system,
+            file,
+            &[0x0803_0102, 4, 0, 4, 0, (4 << 4) | 10, scratch + 0x100],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            &read_tls_ipc_response(&mut system, reply, 3)[..3],
+            &[0x0803_0082, 0, 4]
+        );
+        let reply = write_tls_ipc_request(
+            &mut system,
+            file,
+            &[0x0802_00C2, 4, 0, 4, (4 << 4) | 12, scratch + 0x140],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            &read_tls_ipc_response(&mut system, reply, 3)[..3],
+            &[0x0802_0082, 0, 4]
+        );
+        let mut back = [0u8; 4];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(scratch + 0x140, &mut back)
+            .unwrap();
+        assert_eq!(&back, b"ABCD");
+        let reply = write_tls_ipc_request(&mut system, file, &[0x0804_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 4),
+            [0x0804_0102, 0, 16, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, file, &[0x0808_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0808_0040, 0]
+        );
+        assert_eq!(
+            std::fs::read(root.join("savedata").join("save.bin")).unwrap()[4..8],
+            *b"ABCD",
+            "data reached the host file"
+        );
+
+        // OpenDirectory("/") lists the file with its size.
+        let reply = write_tls_ipc_request(
+            &mut system,
+            fs,
+            &[
+                0x080B_0102,
+                lo,
+                hi,
+                3,
+                2,
+                path_descriptor(2),
+                scratch + 0x180,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        let response = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&response[..2], &[0x080B_0042, 0]);
+        let directory = response[3];
+        let reply = write_tls_ipc_request(
+            &mut system,
+            directory,
+            &[0x0801_0042, 4, ((0x228 * 4) << 4) | 12, scratch + 0x200],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            &read_tls_ipc_response(&mut system, reply, 3)[..3],
+            &[0x0801_0082, 0, 1]
+        );
+        let mut entry = [0u8; 0x228];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(scratch + 0x200, &mut entry)
+            .unwrap();
+        let name: Vec<u16> = entry[..16]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        assert_eq!(String::from_utf16(&name).unwrap(), "save.bin");
+        assert_eq!(entry[0x21B], 0, "not a directory");
+        assert_eq!(
+            u64::from_le_bytes(entry[0x220..0x228].try_into().unwrap()),
+            16
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stub_services_answer_and_unknown_requests_are_recorded() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(12)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let ac = open_hle_service(&mut system, b"ac:u");
+        let reply = write_tls_ipc_request(&mut system, ac, &[0x000D_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000D_0080, 0, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, ac, &[0x0099_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0099_0040, RESULT_INVALID_COMMAND]
+        );
+        let lcd = open_hle_service(&mut system, b"gsp::Lcd");
+        let reply = write_tls_ipc_request(&mut system, lcd, &[0x000B_0040, 1]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x000B_0040, 0]
+        );
+        let unhandled = system.unhandled_requests();
+        assert_eq!(unhandled, vec!["ac:u command 0x00990000".to_string()]);
     }
 
     #[test]

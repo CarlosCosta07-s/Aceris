@@ -5,7 +5,7 @@
 //! RGBA frames it produces.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use aceris_core::System;
 use aceris_core::input::{pad, touch_from_surface_point};
@@ -33,6 +33,8 @@ pub struct Pointer {
 
 /// The whole application state machine.
 pub struct App {
+    /// Folder scanned for games; save data lives in `<games_dir>/saves/<game file name>`.
+    games_dir: PathBuf,
     screen: Screen,
     library: Library,
     system: Option<System>,
@@ -51,7 +53,9 @@ impl App {
     /// Creates the app showing the intro, with games listed from `games_dir`.
     pub fn new(games_dir: &Path) -> Self {
         let entries = library::scan_games(games_dir);
+        let games_dir_owned = games_dir.to_path_buf();
         Self {
+            games_dir: games_dir_owned,
             screen: Screen::Intro { frame: 0 },
             library: Library::new(entries, games_dir.display().to_string()),
             system: None,
@@ -250,6 +254,8 @@ impl App {
         };
         let path = entry.path.clone();
         let mut system = System::new();
+        let save_name = path.file_name().unwrap_or_default().to_os_string();
+        system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
             Ok(_) => {
                 self.system = Some(system);

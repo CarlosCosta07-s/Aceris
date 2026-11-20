@@ -187,6 +187,12 @@ pub enum ServiceSessionKind {
     Dsp,
     /// An opened application-RomFS file served by `fs:USER`.
     FsRomFsFile,
+    /// An opened host-storage file served by `fs:USER`.
+    FsHostFile,
+    /// An opened host-storage directory served by `fs:USER`.
+    FsDirectory,
+    /// A minimal HLE service from the `System` stub table (index into that table).
+    Stub(u8),
 }
 
 #[derive(Debug, PartialEq, Eq)]

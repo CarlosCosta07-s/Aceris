@@ -13,6 +13,7 @@ pub mod loader;
 pub mod memory;
 pub mod selftest;
 pub mod services;
+pub mod storage;
 pub mod system;
 pub mod video;
 

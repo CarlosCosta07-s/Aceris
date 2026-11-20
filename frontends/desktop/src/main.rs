@@ -82,8 +82,16 @@ fn dump_lcd(display: &DualScreenDisplay, dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Host directory holding a game's save data, extdata and SD card: `<game>.aceris-data`.
+fn storage_dir_for(game: &Path) -> std::path::PathBuf {
+    let mut name = game.file_name().unwrap_or_default().to_os_string();
+    name.push(".aceris-data");
+    game.with_file_name(name)
+}
+
 /// Loads the same NoCrypto NCSD execution path exposed by the Android frontend.
 fn load_game(system: &mut System, game: &Path) -> Result<(), String> {
+    system.set_storage_root(storage_dir_for(game));
     let format = system
         .load_executable_file(game)
         .map_err(|err| format!("could not prepare {}: {err}", game.display()))?;
@@ -228,7 +236,9 @@ fn run_windowed(
             library.set_status(message);
             continue;
         }
-        match emulate(system, &mut window, scale) {
+        let outcome = emulate(system, &mut window, scale);
+        report_unhandled(system);
+        match outcome {
             Ok(Flow::Quit) => return Ok(()),
             Ok(Flow::BackToLibrary) => {
                 window
@@ -306,6 +316,17 @@ fn touch_at(system: &mut System, x: i32, y: i32, scale: usize) {
     match window::touch_from_window_point(x, y, scale) {
         Some((tx, ty)) => system.input_mut().touch(i32::from(tx), i32::from(ty)),
         None => system.input_mut().touch_end(),
+    }
+}
+
+/// Prints the services and commands the game asked for that are not implemented yet.
+fn report_unhandled(system: &System) {
+    let unhandled = system.unhandled_requests();
+    if !unhandled.is_empty() {
+        eprintln!("Not implemented (requested by the game):");
+        for entry in unhandled {
+            eprintln!("  {entry}");
+        }
     }
 }
 

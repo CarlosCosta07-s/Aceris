@@ -2046,3 +2046,13 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Testes: 16 no `dsp` (layout, pipe, mixagem PCM8/PCM16/ADPCM, taxa, loop, volume/clipping, reset, bancos) e `dsp_ndsp_style_startup_maps_ram_and_mixes_a_guest_voice` (IPC completo guiado pelo guest, escrita pelo cache do guest, leitura do mix de volta pelo guest); 2 no `Resampler`.
 - NÃO verificado: nenhum som foi ouvido; nenhum jogo ou homebrew real inicializou o `ndsp` contra este motor; offsets e semântica podem divergir do hardware. Próximo passo útil: homebrew de referência que toque um tom via libctru, e ouvir cada sink em máquina real.
 
+## Save data/SDMC no fs:USER, serviços mínimos e diagnóstico (20/11/2026)
+
+- `crates/aceris-core/src/storage.rs` (novo): `Storage` mapeia cada família (`savedata`, `extdata`, `systemsavedata`, `sdmc`) para um subdiretório da raiz escolhida pelo frontend; caminhos do guest só aceitam componentes normais (sem `..`, `\` ou NUL). `system.rs`: `FsState` guarda handles de arquivo (`HashMap<sessão, (File, kind)>`), diretórios e arquivos; `ServiceSessionKind` ganhou `FsHostFile`, `FsDirectory` e `Stub(u8)`. Caminhos vêm do buffer estático da requisição (tipos 1 vazio, 3 ASCII, 4 UTF-16); caminho binário não é aceito.
+- Comandos e layouts (IDs do 3dbrew, de memória do que li; NÃO verificados): ReadDirectory preenche entradas de 0x228 bytes (nome UTF-16 em 0, is_directory em 0x21B, tamanho u64 em 0x220; nome 8.3 não preenchido). Códigos: 0xC8804478 não encontrado, 0xC82044BE já existe, 0xC8E04702 caminho inválido, 0xC82044B1 diretório não vazio, 0xC860478A falha de escrita — os três últimos são aproximações minhas.
+- Sem `set_storage_root`, OpenArchive de save/SDMC devolve não encontrado (como console sem esses arquivos). Jogos que formatam o save quando ele não existe chamam FormatSaveData, que só cria o diretório.
+- `System::unhandled_requests()`: registra nomes de serviço desconhecidos (`GetServiceHandle` agora devolve 0xD8E06406) e comandos que terminaram em erro "inválido". Serve para guiar a próxima implementação com um jogo real; o desktop imprime a lista ao sair do jogo.
+- Stubs: `gsp::Lcd` e `ndm:u` aceitam qualquer comando; `ac:u` (SetClientVersion, GetWifiStatus = desconectado) e `frd:u` (HasLoggedIn/IsOnline = 0) respondem só o mínimo; demais comandos devolvem 0xD900182F e são registrados.
+- Testes: 4 em `storage`, `fs_user_save_data_files_round_trip_through_host_storage` (IPC completo) e `stub_services_answer_and_unknown_requests_are_recorded`.
+- Não verificado: nenhum jogo real usou essas respostas.
+
