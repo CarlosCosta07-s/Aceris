@@ -7,11 +7,11 @@
 use std::fmt;
 
 use super::DepthFunction;
-use super::texture::REG_TEXUNIT_CONFIG;
 use super::draw::{
     MAX_PENDING_DRAW_REQUESTS, PicaCommandListRunError, PicaDrawKind, PicaDrawRequest,
     REG_DRAWARRAYS, REG_DRAWELEMENTS,
 };
+use super::texture::REG_TEXUNIT_CONFIG;
 
 type DrawObserver<'a, E> = dyn FnMut(&Pica200, &PicaDrawRequest) -> Result<(), E> + 'a;
 use super::fixed_attribute::{
