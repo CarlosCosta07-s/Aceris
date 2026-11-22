@@ -2007,7 +2007,7 @@ impl Arm11ProcessSession {
             );
         }
 
-        match number {
+        let disposition = match number {
             SVC_CONNECT_TO_PORT => self.svc_connect_to_port(caller),
             SVC_SEND_SYNC_REQUEST => self.svc_send_sync_request(caller),
             SVC_CREATE_MEMORY_BLOCK => self.svc_create_memory_block(caller),
@@ -2129,7 +2129,16 @@ impl Arm11ProcessSession {
                     }
                 }
             }
+        };
+        if svc_trace_enabled() {
+            if let Some(core) = self.scheduler.core(caller) {
+                eprintln!(
+                    "  -> svc {number:#04x} r0={:#x} r1={:#x}",
+                    core.regs[0], core.regs[1]
+                );
+            }
         }
+        disposition
     }
 
     /// Handles CreateMemoryBlock: r0 = output handle pointer, r1 = source address,

@@ -185,6 +185,8 @@ pub enum ServiceSessionKind {
     Ptm,
     /// HLE `dsp::DSP` client endpoint.
     Dsp,
+    /// HLE `csnd:SND` client endpoint.
+    Csnd,
     /// An opened application-RomFS file served by `fs:USER`.
     FsRomFsFile,
     /// An opened host-storage file served by `fs:USER`.

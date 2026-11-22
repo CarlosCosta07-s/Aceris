@@ -140,6 +140,7 @@ pub struct System {
     /// Services and commands the guest asked for that are not implemented.
     unhandled: std::collections::BTreeSet<String>,
     dsp: DspService,
+    csnd: CsndService,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -352,6 +353,17 @@ struct DspService {
     /// Registered (interrupt, channel, event handle) triples.
     interrupt_events: Vec<(u32, u32, u32)>,
     engine: Option<crate::dsp::Dsp>,
+}
+
+/// State of the `csnd:SND` HLE service. Sound commands are accepted and
+/// acknowledged but not mixed yet: no audio is produced through this service.
+#[derive(Debug, Default)]
+struct CsndService {
+    memory_handle: Option<u32>,
+    mutex_handle: Option<u32>,
+    backing: Option<crate::loader::ncsd::process::SharedMemoryBacking>,
+    channels_acquired: bool,
+    cap_units_acquired: u32,
 }
 
 /// `APT` signal value asking the application to start running (libctru `APTCMD_WAKEUP`).
@@ -1222,6 +1234,7 @@ impl System {
             ServiceSessionKind::Fs => self.dispatch_fs_request(message)?,
             ServiceSessionKind::Ptm => Self::dispatch_ptm_request(message),
             ServiceSessionKind::Dsp => self.dispatch_dsp_request(message)?,
+            ServiceSessionKind::Csnd => self.dispatch_csnd_request(message)?,
             ServiceSessionKind::FsRomFsFile => self.dispatch_fs_file_request(message)?,
             ServiceSessionKind::FsHostFile => {
                 self.dispatch_fs_host_file_request(service_handle, message)?
@@ -1370,6 +1383,7 @@ impl System {
                     Some(b"fs:USER") => Some(ServiceSessionKind::Fs),
                     Some(b"ptm:u") => Some(ServiceSessionKind::Ptm),
                     Some(b"dsp::DSP") => Some(ServiceSessionKind::Dsp),
+                    Some(b"csnd:SND") => Some(ServiceSessionKind::Csnd),
                     Some(name) => STUB_SERVICES
                         .iter()
                         .position(|(stub, _)| stub.as_bytes() == name)
@@ -2510,6 +2524,70 @@ impl System {
             IS_REGISTERED => Ok(vec![0x0009_0080, 0, 1]),
             INQUIRE_NOTIFICATION => Ok(vec![0x000B_0080, 0, 0]),
             _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
+        }
+    }
+
+    /// Handles `csnd:SND` requests (3dbrew "CSND Services" IDs, recalled from
+    /// memory; NOT hardware-verified). Commands are acknowledged only: the
+    /// shared command block is not interpreted and no sound is mixed.
+    fn dispatch_csnd_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        let raw_header = message.header().raw();
+        let command = raw_header & 0xFFFF_0000;
+        let ok = vec![command | 0x40, 0];
+        let parameters = message.normal_parameters();
+        let param = |index: usize| parameters.get(index).copied().unwrap_or(0);
+        match command {
+            0x0001_0000 => {
+                // Initialize(block size, four offsets).
+                if self.csnd.memory_handle.is_none() {
+                    let size = (param(0).max(0x1000) + 0xFFF) & !0xFFF;
+                    let session = self
+                        .ncsd_session
+                        .as_mut()
+                        .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?;
+                    let Ok(memory) = session.create_memory_block(size, 3, 3) else {
+                        return Ok(vec![0x0001_0040, RESULT_OUT_OF_MEMORY]);
+                    };
+                    let Ok(mutex) = session.create_service_mutex() else {
+                        return Ok(vec![0x0001_0040, RESULT_OUT_OF_MEMORY]);
+                    };
+                    self.csnd.backing = session.memory_block_backing(memory).ok();
+                    self.csnd.memory_handle = Some(memory);
+                    self.csnd.mutex_handle = Some(mutex);
+                }
+                let (mutex, memory) = (
+                    self.csnd.mutex_handle.unwrap_or(0),
+                    self.csnd.memory_handle.unwrap_or(0),
+                );
+                Ok(vec![0x0001_0042, 0, 0x0400_0000, mutex, memory])
+            }
+            0x0002_0000 => Ok(ok), // Shutdown
+            0x0003_0000 => {
+                // ExecuteCommands(offset): mark the command block as processed.
+                if let Some(backing) = &self.csnd.backing {
+                    backing.write_bytes(param(0) as usize + 4, &1u32.to_le_bytes());
+                }
+                Ok(ok)
+            }
+            0x0005_0000 => {
+                self.csnd.channels_acquired = true;
+                Ok(vec![0x0005_0080, 0, 0xFFFF_FF00])
+            }
+            0x0006_0000 => {
+                self.csnd.channels_acquired = false;
+                Ok(ok)
+            }
+            0x0007_0000 => {
+                let unit = self.csnd.cap_units_acquired.min(1);
+                self.csnd.cap_units_acquired += 1;
+                Ok(vec![0x0007_0080, 0, unit])
+            }
+            0x0008_0000 => {
+                self.csnd.cap_units_acquired = self.csnd.cap_units_acquired.saturating_sub(1);
+                Ok(ok)
+            }
+            0x0009_0000..=0x000C_0000 => Ok(ok), // cache maintenance, Reset
+            _ => Ok(vec![command | 0x40, RESULT_INVALID_COMMAND]),
         }
     }
 

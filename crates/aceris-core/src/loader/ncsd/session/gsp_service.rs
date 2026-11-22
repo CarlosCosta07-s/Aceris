@@ -219,8 +219,11 @@ pub fn decode_gsp_ipc_request(words: &[u32]) -> Result<GspIpcRequest, GspIpcRequ
     }
 }
 
-/// Guest virtual address used by the documented GSP shared-memory mapping.
-pub const GSP_SHARED_MEMORY_BASE: u32 = 0x1000_2000;
+/// Address of the HLE-side alias of the GSP shared block. It lies outside the
+/// guest-mappable window (0x10000000..0x14000000) so it never collides with the
+/// address the guest chooses for its own MapMemoryBlock call (libctru picks one
+/// from its mappable allocator, e.g. 0x10001000).
+pub const GSP_SHARED_MEMORY_BASE: u32 = 0x1FFD_0000;
 
 /// Complete GSP shared-memory size used by the current GX and relay layouts.
 pub const GSP_SHARED_MEMORY_SIZE: usize = 0x1000;
