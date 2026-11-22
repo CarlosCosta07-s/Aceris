@@ -117,6 +117,90 @@ impl PicaProceduralTextureLut {
         }
     }
 }
+
+/// Coordinate wrapping modes documented for the PICA200 procedural texture unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaProceduralTextureClamp {
+    ClampToZero,
+    ClampToEdge,
+    SymmetricalRepeat,
+    MirroredRepeat,
+    Pulse,
+    Reserved(u8),
+}
+
+/// Coordinate-to-scalar functions selected independently for RGB and alpha.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaProceduralTextureMappingFunction {
+    U,
+    USquared,
+    V,
+    VSquared,
+    Average,
+    SquaredAverage,
+    RadialDistance,
+    Minimum,
+    Maximum,
+    Rmax,
+    Reserved(u8),
+}
+
+/// Odd/even coordinate shifts applied by the procedural texture unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaProceduralTextureShift {
+    None,
+    Odd,
+    Even,
+    Reserved(u8),
+}
+
+/// Minification and mip filtering modes accepted by PROCTEX4.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaProceduralTextureFilter {
+    Nearest,
+    Linear,
+    NearestMipmapNearest,
+    LinearMipmapNearest,
+    NearestMipmapLinear,
+    LinearMipmapLinear,
+    Reserved(u8),
+}
+
+/// Register snapshot for PICA's procedural texture unit.
+///
+/// Noise fields and texture bias remain in their documented raw register
+/// representation. This type does not claim to implement noise generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaProceduralTextureConfig {
+    pub u_clamp: PicaProceduralTextureClamp,
+    pub v_clamp: PicaProceduralTextureClamp,
+    pub rgb_mapping_function: PicaProceduralTextureMappingFunction,
+    pub alpha_mapping_function: PicaProceduralTextureMappingFunction,
+    pub separate_alpha: bool,
+    pub noise_enabled: bool,
+    pub u_shift: PicaProceduralTextureShift,
+    pub v_shift: PicaProceduralTextureShift,
+    pub texture_bias_lower: u8,
+    pub u_noise_amplitude_fixed1_3_12: u16,
+    pub u_noise_phase_float1_5_10: u16,
+    pub v_noise_amplitude_fixed1_3_12: u16,
+    pub v_noise_phase_float1_5_10: u16,
+    pub u_noise_frequency_float1_5_10: u16,
+    pub v_noise_frequency_float1_5_10: u16,
+    pub minification_filter: PicaProceduralTextureFilter,
+    pub min_lod: u8,
+    pub max_lod: u8,
+    pub texture_width: u8,
+    pub texture_bias_upper: u8,
+    pub mip_offsets: [u8; 4],
+}
+
+/// One fixed-point entry from the procedural noise/RGB/alpha mapping tables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PicaProceduralTextureCurveEntry {
+    pub value_fixed0_0_12: u16,
+    pub difference_fixed0_0_12: i16,
+}
 /// GPUREG_GAS_ATTENUATION: float1.5.10 raw density attenuation.
 pub const REG_GAS_ATTENUATION: u16 = 0x0E4;
 /// GPUREG_GAS_ACCMAX: float1.5.10 raw maximum accumulated density.
@@ -511,6 +595,146 @@ impl Pica200 {
                 self.procedural_texture_color_difference_lut[index]
             }
         })
+    }
+
+    /// Decodes one noise or coordinate-mapping LUT entry.
+    ///
+    /// The value is unsigned fixed0.0.12. The difference is a signed 12-bit
+    /// two's-complement fixed0.0.12 value describing the delta to the next
+    /// element. This returns integer representations without rounding.
+    pub fn procedural_texture_curve_entry(
+        &self,
+        table: PicaProceduralTextureLut,
+        index: usize,
+    ) -> Option<PicaProceduralTextureCurveEntry> {
+        if !matches!(
+            table,
+            PicaProceduralTextureLut::Noise
+                | PicaProceduralTextureLut::RgbMapping
+                | PicaProceduralTextureLut::AlphaMapping
+        ) {
+            return None;
+        }
+
+        let raw = self.procedural_texture_lut_entry(table, index)?;
+        let difference = ((raw >> 12) & 0x0FFF) as i16;
+        let difference = if difference & 0x0800 != 0 {
+            difference - 0x1000
+        } else {
+            difference
+        };
+
+        Some(PicaProceduralTextureCurveEntry {
+            value_fixed0_0_12: (raw & 0x0FFF) as u16,
+            difference_fixed0_0_12: difference,
+        })
+    }
+
+    /// Decodes a procedural color-table entry as RGBA8.
+    pub fn procedural_texture_color_entry(&self, index: usize) -> Option<[u8; 4]> {
+        let raw = self.procedural_texture_lut_entry(PicaProceduralTextureLut::Color, index)?;
+        Some([
+            raw as u8,
+            (raw >> 8) as u8,
+            (raw >> 16) as u8,
+            (raw >> 24) as u8,
+        ])
+    }
+
+    /// Decodes the signed per-channel half-difference to the next color entry.
+    pub fn procedural_texture_color_difference_entry(
+        &self,
+        index: usize,
+    ) -> Option<[i8; 4]> {
+        let raw = self.procedural_texture_lut_entry(
+            PicaProceduralTextureLut::ColorDifference,
+            index,
+        )?;
+        Some([
+            raw as u8 as i8,
+            (raw >> 8) as u8 as i8,
+            (raw >> 16) as u8 as i8,
+            (raw >> 24) as u8 as i8,
+        ])
+    }
+
+    /// Returns a typed snapshot of the six procedural-texture configuration registers.
+    ///
+    /// Numeric noise/bias fields stay raw because their fixed/float conversion
+    /// and hardware rounding have not been independently verified.
+    pub fn procedural_texture_config(&self) -> PicaProceduralTextureConfig {
+        let proctex0 = self.register(REG_TEXUNIT3_PROCTEX0).unwrap_or(0);
+        let proctex1 = self.register(REG_TEXUNIT3_PROCTEX1).unwrap_or(0);
+        let proctex2 = self.register(REG_TEXUNIT3_PROCTEX2).unwrap_or(0);
+        let proctex3 = self.register(REG_TEXUNIT3_PROCTEX3).unwrap_or(0);
+        let proctex4 = self.register(REG_TEXUNIT3_PROCTEX4).unwrap_or(0);
+        let proctex5 = self.register(REG_TEXUNIT3_PROCTEX5).unwrap_or(0);
+
+        let decode_clamp = |value: u8| match value {
+            0 => PicaProceduralTextureClamp::ClampToZero,
+            1 => PicaProceduralTextureClamp::ClampToEdge,
+            2 => PicaProceduralTextureClamp::SymmetricalRepeat,
+            3 => PicaProceduralTextureClamp::MirroredRepeat,
+            4 => PicaProceduralTextureClamp::Pulse,
+            other => PicaProceduralTextureClamp::Reserved(other),
+        };
+        let decode_mapping = |value: u8| match value {
+            0 => PicaProceduralTextureMappingFunction::U,
+            1 => PicaProceduralTextureMappingFunction::USquared,
+            2 => PicaProceduralTextureMappingFunction::V,
+            3 => PicaProceduralTextureMappingFunction::VSquared,
+            4 => PicaProceduralTextureMappingFunction::Average,
+            5 => PicaProceduralTextureMappingFunction::SquaredAverage,
+            6 => PicaProceduralTextureMappingFunction::RadialDistance,
+            7 => PicaProceduralTextureMappingFunction::Minimum,
+            8 => PicaProceduralTextureMappingFunction::Maximum,
+            9 => PicaProceduralTextureMappingFunction::Rmax,
+            other => PicaProceduralTextureMappingFunction::Reserved(other),
+        };
+        let decode_shift = |value: u8| match value {
+            0 => PicaProceduralTextureShift::None,
+            1 => PicaProceduralTextureShift::Odd,
+            2 => PicaProceduralTextureShift::Even,
+            other => PicaProceduralTextureShift::Reserved(other),
+        };
+        let decode_filter = |value: u8| match value {
+            0 => PicaProceduralTextureFilter::Nearest,
+            1 => PicaProceduralTextureFilter::Linear,
+            2 => PicaProceduralTextureFilter::NearestMipmapNearest,
+            3 => PicaProceduralTextureFilter::LinearMipmapNearest,
+            4 => PicaProceduralTextureFilter::NearestMipmapLinear,
+            5 => PicaProceduralTextureFilter::LinearMipmapLinear,
+            other => PicaProceduralTextureFilter::Reserved(other),
+        };
+
+        PicaProceduralTextureConfig {
+            u_clamp: decode_clamp((proctex0 & 0x7) as u8),
+            v_clamp: decode_clamp(((proctex0 >> 3) & 0x7) as u8),
+            rgb_mapping_function: decode_mapping(((proctex0 >> 6) & 0xF) as u8),
+            alpha_mapping_function: decode_mapping(((proctex0 >> 10) & 0xF) as u8),
+            separate_alpha: proctex0 & (1 << 14) != 0,
+            noise_enabled: proctex0 & (1 << 15) != 0,
+            u_shift: decode_shift(((proctex0 >> 16) & 0x3) as u8),
+            v_shift: decode_shift(((proctex0 >> 18) & 0x3) as u8),
+            texture_bias_lower: ((proctex0 >> 20) & 0xFF) as u8,
+            u_noise_amplitude_fixed1_3_12: proctex1 as u16,
+            u_noise_phase_float1_5_10: (proctex1 >> 16) as u16,
+            v_noise_amplitude_fixed1_3_12: proctex2 as u16,
+            v_noise_phase_float1_5_10: (proctex2 >> 16) as u16,
+            u_noise_frequency_float1_5_10: proctex3 as u16,
+            v_noise_frequency_float1_5_10: (proctex3 >> 16) as u16,
+            minification_filter: decode_filter((proctex4 & 0x7) as u8),
+            min_lod: ((proctex4 >> 3) & 0xF) as u8,
+            max_lod: ((proctex4 >> 7) & 0xF) as u8,
+            texture_width: ((proctex4 >> 11) & 0xFF) as u8,
+            texture_bias_upper: ((proctex4 >> 19) & 0xFF) as u8,
+            mip_offsets: [
+                proctex5 as u8,
+                (proctex5 >> 8) as u8,
+                (proctex5 >> 16) as u8,
+                (proctex5 >> 24) as u8,
+            ],
+        }
     }
 
     /// Decodes one gas LUT entry into signed or unsigned RGB channel values.
@@ -1652,6 +1876,110 @@ mod tests {
             Some(0)
         );
     }
+    #[test]
+    fn procedural_texture_registers_decode_to_typed_snapshot() {
+        let mut gpu = Pica200::new();
+        let proctex0 = 1
+            | (3 << 3)
+            | (9 << 6)
+            | (4 << 10)
+            | (1 << 14)
+            | (1 << 15)
+            | (1 << 16)
+            | (2 << 18)
+            | (0xA5 << 20);
+        gpu.write_register(REG_TEXUNIT3_PROCTEX0, proctex0)
+            .unwrap();
+        gpu.write_register(REG_TEXUNIT3_PROCTEX1, 0xFEDC_BA98)
+            .unwrap();
+        gpu.write_register(REG_TEXUNIT3_PROCTEX2, 0x7654_3210)
+            .unwrap();
+        gpu.write_register(REG_TEXUNIT3_PROCTEX3, 0x9ABC_DEF0)
+            .unwrap();
+        gpu.write_register(
+            REG_TEXUNIT3_PROCTEX4,
+            5 | (3 << 3) | (9 << 7) | (200 << 11) | (0x5A << 19),
+        )
+        .unwrap();
+        gpu.write_register(REG_TEXUNIT3_PROCTEX5, 0xE0C0_8040)
+            .unwrap();
+
+        let config = gpu.procedural_texture_config();
+        assert_eq!(config.u_clamp, PicaProceduralTextureClamp::ClampToEdge);
+        assert_eq!(
+            config.v_clamp,
+            PicaProceduralTextureClamp::MirroredRepeat
+        );
+        assert_eq!(
+            config.rgb_mapping_function,
+            PicaProceduralTextureMappingFunction::Rmax
+        );
+        assert_eq!(
+            config.alpha_mapping_function,
+            PicaProceduralTextureMappingFunction::Average
+        );
+        assert!(config.separate_alpha);
+        assert!(config.noise_enabled);
+        assert_eq!(config.u_shift, PicaProceduralTextureShift::Odd);
+        assert_eq!(config.v_shift, PicaProceduralTextureShift::Even);
+        assert_eq!(config.texture_bias_lower, 0xA5);
+        assert_eq!(config.u_noise_amplitude_fixed1_3_12, 0xBA98);
+        assert_eq!(config.u_noise_phase_float1_5_10, 0xFEDC);
+        assert_eq!(config.v_noise_amplitude_fixed1_3_12, 0x3210);
+        assert_eq!(config.v_noise_phase_float1_5_10, 0x7654);
+        assert_eq!(config.u_noise_frequency_float1_5_10, 0xDEF0);
+        assert_eq!(config.v_noise_frequency_float1_5_10, 0x9ABC);
+        assert_eq!(
+            config.minification_filter,
+            PicaProceduralTextureFilter::LinearMipmapLinear
+        );
+        assert_eq!(config.min_lod, 3);
+        assert_eq!(config.max_lod, 9);
+        assert_eq!(config.texture_width, 200);
+        assert_eq!(config.texture_bias_upper, 0x5A);
+        assert_eq!(config.mip_offsets, [0x40, 0x80, 0xC0, 0xE0]);
+    }
+
+    #[test]
+    fn procedural_texture_lut_entries_decode_fixed_point_and_rgba_channels() {
+        let mut gpu = Pica200::new();
+
+        gpu.write_register(REG_PROCTEX_LUT, 0x0007).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0x00F8_0123)
+            .unwrap();
+        assert_eq!(
+            gpu.procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, 7),
+            Some(PicaProceduralTextureCurveEntry {
+                value_fixed0_0_12: 0x123,
+                difference_fixed0_0_12: -128,
+            })
+        );
+        assert_eq!(
+            gpu.procedural_texture_curve_entry(PicaProceduralTextureLut::Color, 7),
+            None
+        );
+
+        gpu.write_register(REG_PROCTEX_LUT, 0x040B).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0x8040_2010)
+            .unwrap();
+        assert_eq!(
+            gpu.procedural_texture_color_entry(11),
+            Some([0x10, 0x20, 0x40, 0x80])
+        );
+
+        gpu.write_register(REG_PROCTEX_LUT, 0x050D).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0x807F_01FE)
+            .unwrap();
+        assert_eq!(
+            gpu.procedural_texture_color_difference_entry(13),
+            Some([-2, 1, 127, -128])
+        );
+        assert_eq!(
+            gpu.procedural_texture_color_difference_entry(256),
+            None
+        );
+    }
+
     #[test]
     fn gas_lut_fifo_uploads_repeated_data_port_and_wraps_at_16_entries() {
         let mut gpu = Pica200::new();
