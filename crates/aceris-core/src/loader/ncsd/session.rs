@@ -1894,6 +1894,16 @@ impl Arm11ProcessSession {
                 });
             }
 
+            if let Some((low, high)) = pc_watch_range() {
+                let core = self.core();
+                let pc = core.pc();
+                if (low..=high).contains(&pc) {
+                    eprintln!(
+                        "watch pc={pc:#010X} lr={:#010X} r0={:#x} r1={:#x} r2={:#x} r3={:#x}",
+                        core.regs[14], core.regs[0], core.regs[1], core.regs[2], core.regs[3]
+                    );
+                }
+            }
             match self.step()? {
                 StepEvent::Executed => executed = executed.saturating_add(1),
                 StepEvent::WaitForInterrupt => {
@@ -3509,6 +3519,17 @@ fn thread_scheduler_result_code(error: ThreadSchedulerError) -> u32 {
         ThreadSchedulerError::ThreadIdExhausted => RESULT_OUT_OF_THREAD_RESOURCES,
         ThreadSchedulerError::UnknownThread(_) => RESULT_INVALID_HANDLE,
     }
+}
+
+/// `ACERIS_WATCH_PC=<low>-<high>` (hex): log every instruction fetched in that range.
+fn pc_watch_range() -> Option<(u32, u32)> {
+    static RANGE: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *RANGE.get_or_init(|| {
+        let value = std::env::var("ACERIS_WATCH_PC").ok()?;
+        let (low, high) = value.split_once('-')?;
+        let parse = |text: &str| u32::from_str_radix(text.trim_start_matches("0x"), 16).ok();
+        Some((parse(low)?, parse(high)?))
+    })
 }
 
 /// True when `ACERIS_TRACE_SVC` is set: every supervisor call is logged to stderr.

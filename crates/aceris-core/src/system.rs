@@ -2561,7 +2561,12 @@ impl System {
                 );
                 Ok(vec![0x0001_0042, 0, 0x0400_0000, mutex, memory])
             }
-            0x0002_0000 => Ok(ok), // Shutdown
+            0x0002_0000 => {
+                // Shutdown: the guest closes the handles it was given, so the
+                // next Initialize must create fresh ones.
+                self.csnd = CsndService::default();
+                Ok(ok)
+            }
             0x0003_0000 => {
                 // ExecuteCommands(offset): mark the command block as processed.
                 if let Some(backing) = &self.csnd.backing {

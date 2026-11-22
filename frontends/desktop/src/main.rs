@@ -117,10 +117,22 @@ fn frame_budget() -> usize {
     })
 }
 
+/// `ACERIS_STEP_AFTER=<frame>`: from that frame on, run one instruction per
+/// frame and print the PC (debugging aid for guests that fail silently).
+fn step_after() -> Option<u64> {
+    static AFTER: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *AFTER.get_or_init(|| {
+        env::var("ACERIS_STEP_AFTER")
+            .ok()
+            .and_then(|value| value.parse().ok())
+    })
+}
+
 /// Runs one bounded frame and prints the first frame's CPU/GPU/LCD diagnostics.
 fn run_frame_with_diagnostics(system: &mut System) -> Result<(), String> {
+    let stepping = step_after().is_some_and(|after| system.display().frame_number() >= after);
     let report = system
-        .run_frame_with_budget(frame_budget())
+        .run_frame_with_budget(if stepping { 1 } else { frame_budget() })
         .map_err(|err| {
             let cpu = system.cpu();
             format!(
@@ -130,6 +142,18 @@ fn run_frame_with_diagnostics(system: &mut System) -> Result<(), String> {
                 &cpu.regs[0..8]
             )
         })?;
+
+    if stepping {
+        let cpu = system.cpu();
+        println!(
+            "step pc={:#010X} lr={:#010X} r0={:#x} r1={:#x} r2={:#x}",
+            cpu.pc(),
+            cpu.regs[14],
+            cpu.regs[0],
+            cpu.regs[1],
+            cpu.regs[2]
+        );
+    }
 
     if report.frame_number == 1 {
         println!(

@@ -2091,3 +2091,10 @@ Esta entrada foi acrescentada por solicitação explícita do mantenedor para al
 ### Próxima investigação recomendada
 
 Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e8848) para identificar qual condição retorna erro antes de qualquer IPC DSP. Não adicionar novos stubs sem trace que demonstre a necessidade. Preservar o isolamento de arquivos de cada agente e trabalhar exclusivamente em main.
+
+### Correção do diagnóstico do Sound.init (22/11/2026, Claude)
+
+- CORREÇÃO do diagnóstico acima: o erro `cannot initialize Sound module` e a hipótese sobre `0x1E8848` estavam errados (a tela de erro era de uma execução anterior ao csnd). A causa real era o Shutdown do csnd não zerar o estado: o `main` do LPP faz `csndInit` + `csndExit` só para sondar, e o `Sound.init` do Lua (linha 155 do script) refaz `csndInit`; o segundo Initialize devolvia handles antigos já fechados (0xD8E007F7) e depois o jogo gravava em um bloco de comandos nulo (`0x1EB7A8`). Agora Shutdown reinicia `CsndService`.
+- Resultado: o Cookie Clicker roda 300+ quadros sem erro, enviando listas GPU e SetBufferSwap; as telas capturadas ainda estão pretas (o jogo provavelmente ainda carrega imagens/OGG). Não consegui rodar além de ~550 quadros em 10 minutos de CPU: **a velocidade do emulador é o gargalo agora** (~2 quadros/s com orçamento de 4M instruções).
+- Ferramentas de depuração novas (variáveis de ambiente do desktop/núcleo): `ACERIS_TRACE_SVC=1` (SVCs e resultados), `ACERIS_WATCH_PC=<lo>-<hi>` (hex; loga cada instrução buscada na faixa, com lr/r0-r3), `ACERIS_STEP_AFTER=<quadro>` (1 instrução por quadro depois dele), `ACERIS_FRAME_BUDGET=<n>`.
+- Próximo passo: perfilar o interpretador ARM11 e a rasterização (qual domina?) e só então voltar a validar o jogo; depois `am:u`/`cfg:i`/`cfg:s` e os comandos APT 0x004B00C2/0x01020000, FS 0x080D0144.
