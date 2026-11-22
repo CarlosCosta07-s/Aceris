@@ -172,6 +172,37 @@ impl PicaProceduralTextureMappingFunction {
     }
 }
 
+/// Selectable scalar transform described for the PICA200 procedural texture stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaProceduralTextureF {
+    /// Pass the base-shape value through unchanged.
+    Identity,
+    /// Fold the [0, 1] domain into one triangular lobe.
+    ///
+    /// This uses the conventional tent-wave interpretation:
+    /// F(g) = 1 - |2g - 1|. Public documentation identifies a triangle
+    /// function but does not publish its exact hardware equation, so this
+    /// helper remains isolated until compared with real PICA200 output.
+    Triangle,
+}
+
+impl PicaProceduralTextureF {
+    /// Applies the selected F(g) transform to a base-shape value in [0, 1].
+    ///
+    /// Values outside the documented input domain and non-finite values are
+    /// rejected rather than clamped, to avoid hiding upstream coordinate bugs.
+    pub fn evaluate(self, g: f32) -> Option<f32> {
+        if !g.is_finite() || !(0.0..=1.0).contains(&g) {
+            return None;
+        }
+
+        Some(match self {
+            Self::Identity => g,
+            Self::Triangle => 1.0 - (2.0 * g - 1.0).abs(),
+        })
+    }
+}
+
 /// Odd/even coordinate shifts applied by the procedural texture unit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaProceduralTextureShift {
@@ -2075,6 +2106,30 @@ mod tests {
         );
         assert_eq!(gpu.interpolate_procedural_texture_color(15, -0.1), None);
         assert_eq!(gpu.interpolate_procedural_texture_color(256, 0.5), None);
+    }
+    #[test]
+    fn procedural_texture_f_functions_evaluate_identity_and_triangle_domain() {
+        let samples = [
+            (0.0, 0.0),
+            (0.25, 0.5),
+            (0.5, 1.0),
+            (0.75, 0.5),
+            (1.0, 0.0),
+        ];
+
+        for (g, expected_triangle) in samples {
+            assert_eq!(PicaProceduralTextureF::Identity.evaluate(g), Some(g));
+            let actual = PicaProceduralTextureF::Triangle.evaluate(g).unwrap();
+            assert!(
+                (actual - expected_triangle).abs() < 0.000_001,
+                "triangle F({g}) expected {expected_triangle}, got {actual}"
+            );
+        }
+
+        for invalid in [-0.001, 1.001, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(PicaProceduralTextureF::Identity.evaluate(invalid), None);
+            assert_eq!(PicaProceduralTextureF::Triangle.evaluate(invalid), None);
+        }
     }
     #[test]
     fn procedural_texture_mapping_functions_evaluate_documented_g_equations() {

@@ -2125,3 +2125,9 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - `PicaProceduralTextureMappingFunction::evaluate_raw(u, v)` agora calcula os nove seletores com fórmula pública explícita: U, U², V, V², (U+V)/2, (U²+V²)/2, sqrt(U²+V²), min(U,V) e max(U,V). A função recebe coordenadas como foram fornecidas e não aplica ruído, wrapping, shifts, normalização, F(g) nem saturação.
 - `Rmax` e valores reservados retornam `None`, pois o nome aparece no mapa de registradores mas a equação não foi confirmada. Entradas não finitas também são recusadas.
 - Os testes verificam os nove resultados com U=0.25 e V=0.5, além de Rmax, seletores reservados, NaN e infinito. Isso é um helper matemático independente e não ativa Texture Unit 3 na pipeline de fragmentos.
+
+### Helper isolado para F(g) procedural (22/11/2026)
+
+- `PicaProceduralTextureF` expõe as duas opções publicamente descritas: `Identity` e `Triangle`.
+- `Triangle` usa a interpretação convencional de uma única onda triangular no domínio [0,1], `1 - abs(2*g - 1)`. A documentação de 3dbrew confirma a existência da opção triangular e a matéria CEDEC/4Gamer explica que ela faz a cor percorrer a LUT e voltar; nenhuma das fontes consultadas publica a expressão exata. Portanto, o helper está isolado e explicitamente marcado como hipótese matemática, ainda não conectado ao pipeline nem validado em console.
+- `evaluate` rejeita entradas não finitas ou fora de [0,1] em vez de aplicar clamp silencioso. Testes cobrem os pontos 0, 0.25, 0.5, 0.75 e 1, além de NaN/infinito e valores fora do domínio.

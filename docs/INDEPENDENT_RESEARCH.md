@@ -374,3 +374,9 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - Public register docs enumerate U, U², V, V², (U+V)/2, (U²+V²)/2, sqrt(U²+V²), min(U,V), max(U,V) and Rmax mapping selectors. The CEDEC 2012 DMP presentation summary says G produces basic shapes such as horizontal/vertical lines, circles and squares.
 - The code implements the nine explicit equations as a pure raw helper, with no coordinate-domain assumptions, noise/wrapping, F(g), or clamping. Rmax remains unsupported because a reliable equation is not published in the consulted sources.
 - Evidence: [PICA200 register map](https://docs.mikage.app/GPU/Internal_Registers/) and [4Gamer's CEDEC 2012 report, based on DMP's session](https://www.4gamer.net/games/017/G001762/20120822007/).
+
+### F(g) helper and confidence boundary (22/11/2026)
+
+- The procedural-texture overview documents two known F options: identity and triangle. The CEDEC 2012 report explains that a triangle-like F makes colors traverse the lookup table and repeat in reverse, but neither source publishes its exact equation.
+- The isolated `Triangle` helper uses the conventional tent wave `1 - abs(2*g - 1)` for g in [0,1]. This is an explicit mathematical interpretation, not a claim about verified PICA200 output. It is not connected to texture sampling until a hardware/reference comparison can confirm it.
+- Evidence: [3dbrew procedural texture pipeline](https://docs.mikage.app/GPU/Procedural_Texture_Generation/) and [4Gamer's CEDEC 2012 report](https://www.4gamer.net/games/017/G001762/20120822007/).
