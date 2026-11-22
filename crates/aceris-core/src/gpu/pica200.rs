@@ -201,6 +201,23 @@ pub struct PicaProceduralTextureCurveEntry {
     pub value_fixed0_0_12: u16,
     pub difference_fixed0_0_12: i16,
 }
+
+impl PicaProceduralTextureCurveEntry {
+    /// Linearly interpolates this entry toward the next LUT entry.
+    ///
+    /// `fraction` must be in [0, 1]. The value uses unsigned 0.12 scaling;
+    /// the signed 12-bit difference uses a 1/2048 scale as documented by
+    /// PICA's mapping of the upper half of the unsigned range to [-1, 0).
+    pub fn sample_linear(self, fraction: f32) -> Option<f32> {
+        if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+            return None;
+        }
+
+        let value = f32::from(self.value_fixed0_0_12) / 4096.0;
+        let difference = f32::from(self.difference_fixed0_0_12) / 2048.0;
+        Some(value + difference * fraction)
+    }
+}
 /// GPUREG_GAS_ATTENUATION: float1.5.10 raw density attenuation.
 pub const REG_GAS_ATTENUATION: u16 = 0x0E4;
 /// GPUREG_GAS_ACCMAX: float1.5.10 raw maximum accumulated density.
@@ -650,6 +667,33 @@ impl Pica200 {
             (raw >> 8) as u8 as i8,
             (raw >> 16) as u8 as i8,
             (raw >> 24) as u8 as i8,
+        ])
+    }
+
+    /// Interpolates an RGBA color entry toward the next procedural color entry.
+    ///
+    /// The color-difference table stores half of each signed channel delta, so
+    /// the interpolated byte-domain channel is `color + 2 * difference * fraction`.
+    /// The result remains floating point; hardware rounding/saturation is not
+    /// applied here.
+    pub fn interpolate_procedural_texture_color(
+        &self,
+        index: usize,
+        fraction: f32,
+    ) -> Option<[f32; 4]> {
+        if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+            return None;
+        }
+
+        let color = self.procedural_texture_color_entry(index)?;
+        let difference = self.procedural_texture_color_difference_entry(index)?;
+        let factor = 2.0 * fraction;
+
+        Some([
+            f32::from(color[0]) + f32::from(difference[0]) * factor,
+            f32::from(color[1]) + f32::from(difference[1]) * factor,
+            f32::from(color[2]) + f32::from(difference[2]) * factor,
+            f32::from(color[3]) + f32::from(difference[3]) * factor,
         ])
     }
 
@@ -1968,6 +2012,43 @@ mod tests {
         assert_eq!(gpu.procedural_texture_color_difference_entry(256), None);
     }
 
+    #[test]
+    fn procedural_texture_luts_interpolate_curve_and_rgba_entries() {
+        let mut gpu = Pica200::new();
+
+        gpu.write_register(REG_PROCTEX_LUT, 0x0007).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0x00F8_0123)
+            .unwrap();
+        let curve = gpu
+            .procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, 7)
+            .unwrap();
+        assert!((curve.sample_linear(0.0).unwrap() - (0x123 as f32 / 4096.0)).abs() < 0.000_001);
+        assert!((curve.sample_linear(0.5).unwrap() - (0x0A3 as f32 / 4096.0)).abs() < 0.000_001);
+        assert!((curve.sample_linear(1.0).unwrap() - (0x023 as f32 / 4096.0)).abs() < 0.000_001);
+        assert_eq!(curve.sample_linear(1.01), None);
+        assert_eq!(curve.sample_linear(f32::NAN), None);
+
+        gpu.write_register(REG_PROCTEX_LUT, 0x040F).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0xA08C_7864)
+            .unwrap();
+        gpu.write_register(REG_PROCTEX_LUT, 0x050F).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0xEC14_F60A)
+            .unwrap();
+        assert_eq!(
+            gpu.interpolate_procedural_texture_color(15, 0.0),
+            Some([100.0, 120.0, 140.0, 160.0])
+        );
+        assert_eq!(
+            gpu.interpolate_procedural_texture_color(15, 0.5),
+            Some([110.0, 110.0, 160.0, 140.0])
+        );
+        assert_eq!(
+            gpu.interpolate_procedural_texture_color(15, 1.0),
+            Some([120.0, 100.0, 180.0, 120.0])
+        );
+        assert_eq!(gpu.interpolate_procedural_texture_color(15, -0.1), None);
+        assert_eq!(gpu.interpolate_procedural_texture_color(256, 0.5), None);
+    }
     #[test]
     fn gas_lut_fifo_uploads_repeated_data_port_and_wraps_at_16_entries() {
         let mut gpu = Pica200::new();
