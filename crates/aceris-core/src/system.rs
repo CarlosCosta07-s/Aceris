@@ -146,6 +146,9 @@ pub struct System {
     /// Device-wide GX busy flags; completion interrupts release asynchronous kinds.
     gsp_busy_state: GspBusyState,
     pending_gsp_acquires: Vec<PendingGspAcquire>,
+    /// `gsp::Gpu` sessions that called AcquireRight before registering a client
+    /// (libctru does so); the right is granted when the client is registered.
+    gsp_early_acquires: Vec<u32>,
     /// Shared MPCore SCU state visible to the running ARM11 process.
     mpcore_scu: MpcoreScu,
     gpu: Pica200,
@@ -196,9 +199,10 @@ const RESULT_SRV_SERVICE_NOT_REGISTERED: u32 = 0xD8E0_6406;
 /// Result for a command a stub service does not implement (public tables; unverified).
 const RESULT_INVALID_COMMAND: u32 = 0xD900_182F;
 /// Minimal HLE services: name and how their commands are answered.
-const STUB_SERVICES: [(&str, StubKind); 4] = [
+const STUB_SERVICES: [(&str, StubKind); 5] = [
     ("gsp::Lcd", StubKind::AlwaysOk),
     ("ndm:u", StubKind::AlwaysOk),
+    ("ptm:sysm", StubKind::AlwaysOk),
     ("ac:u", StubKind::Ac),
     ("frd:u", StubKind::Frd),
 ];
@@ -396,6 +400,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.gsp_early_acquires.clear();
         self.cpu = Arm11Core::new();
         Ok(format)
     }
@@ -422,10 +427,12 @@ impl System {
         session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::ThreeDsx);
+        map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.gsp_early_acquires.clear();
         Ok(ImageFormat::ThreeDsx)
     }
 
@@ -495,6 +502,13 @@ impl System {
             ));
         }
 
+        // Absolute file offset and size of the (cleartext) RomFS region.
+        let romfs_bytes = ncch.header().romfs.map(|region| {
+            (
+                ncch.location().offset_bytes + region.offset_bytes,
+                region.size_bytes,
+            )
+        });
         let address_space = ncch
             .load_arm11_address_space([0; AES_BLOCK_SIZE], [0; AES_BLOCK_SIZE])
             .map_err(|error| {
@@ -510,10 +524,21 @@ impl System {
         session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Cia);
+        map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.gsp_early_acquires.clear();
+        // Serve the title's cleartext RomFS (if any) through fs:USER, replacing
+        // whatever the previous game had attached.
+        self.romfs = None;
+        if let Some((offset, size)) = romfs_bytes {
+            if let Ok(region) = ncch::romfs::RomFsRangeReader::new(File::open(path)?, offset, size)
+            {
+                self.romfs = Some(level3_romfs_region(region, size));
+            }
+        }
         Ok(ImageFormat::Cia)
     }
 
@@ -596,10 +621,12 @@ impl System {
         session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Cia);
+        map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.gsp_early_acquires.clear();
         Ok(ImageFormat::Cia)
     }
 
@@ -698,10 +725,12 @@ impl System {
         session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Cia);
+        map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.gsp_early_acquires.clear();
         Ok(ImageFormat::Cia)
     }
 
@@ -767,6 +796,7 @@ impl System {
         session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::Ncsd);
+        map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
         self.romfs = None;
         self.fs_state = FsState::default();
@@ -777,6 +807,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.gsp_early_acquires.clear();
         Ok(ImageFormat::Ncsd)
     }
 
@@ -813,7 +844,7 @@ impl System {
             .map_err(|error| invalid(format!("could not open the primary NCCH: {error}")))?;
         match ncch.into_romfs_region_reader()? {
             Some((region, size)) => {
-                self.romfs = Some(crate::fs::RomFsRegion::new(Box::new(region), size));
+                self.romfs = Some(level3_romfs_region(region, size));
                 Ok(true)
             }
             None => Ok(false),
@@ -1155,6 +1186,9 @@ impl System {
                     })?;
                 request_words.push(session.read_memory_u32(address)?);
             }
+            if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+                eprintln!("  ipc handle={:#x} words={request_words:x?}", registers[0]);
+            }
             let service_handle = registers[0];
             let service_kind = session
                 .service_session_kind(service_handle)
@@ -1329,7 +1363,10 @@ impl System {
                 let hle_kind = match requested_name.get(..name_length) {
                     Some(b"hid:USER") => Some(ServiceSessionKind::Hid),
                     Some(b"cfg:u") => Some(ServiceSessionKind::Cfg),
-                    Some(b"apt:U") => Some(ServiceSessionKind::Apt),
+                    // The retail names are upper case; "apt:U" is kept for older tests.
+                    Some(b"APT:U" | b"APT:S" | b"APT:A" | b"apt:U") => {
+                        Some(ServiceSessionKind::Apt)
+                    }
                     Some(b"fs:USER") => Some(ServiceSessionKind::Fs),
                     Some(b"ptm:u") => Some(ServiceSessionKind::Ptm),
                     Some(b"dsp::DSP") => Some(ServiceSessionKind::Dsp),
@@ -1407,12 +1444,20 @@ impl System {
         const CREATE_EXT_SAVE_DATA: u32 = 0x0851_0242;
         const ARCHIVE_ROMFS: u32 = 3;
         const PATH_EMPTY: u32 = 1;
+        // libctru opens the application RomFS with a 12-byte binary file path.
+        const PATH_BINARY: u32 = 2;
         const ROMFS_ARCHIVE_HANDLE: u64 = 0x0000_0001_0000_0003;
         const OPEN_READ: u32 = 0x1;
         const OPEN_WRITE: u32 = 0x2;
         const OPEN_CREATE: u32 = 0x4;
 
         let raw_header = message.header().raw();
+        if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+            eprintln!(
+                "  fs:USER {raw_header:#010x} params={:x?}",
+                message.normal_parameters()
+            );
+        }
         let command = raw_header & 0xFFFF_0000;
         let parameters = message.normal_parameters();
         let param = |index: usize| parameters.get(index).copied().unwrap_or(0);
@@ -1499,10 +1544,10 @@ impl System {
                 match archive {
                     None => Ok(reply_error(RESULT_FS_NOT_FOUND)),
                     Some(None) => {
-                        // The RomFS is read-only, and only the empty path (whole region) is served.
+                        // The RomFS is read-only; an empty or binary path selects the whole region.
                         if self.romfs.is_none()
                             || flags & (OPEN_WRITE | OPEN_CREATE) != 0
-                            || path_type != PATH_EMPTY
+                            || !matches!(path_type, PATH_EMPTY | PATH_BINARY)
                         {
                             return Ok(reply_error(RESULT_FS_NOT_FOUND));
                         }
@@ -1915,8 +1960,17 @@ impl System {
                 let offset = u64::from(parameters.first().copied().unwrap_or(0))
                     | (u64::from(parameters.get(1).copied().unwrap_or(0)) << 32);
                 let requested = parameters.get(2).copied().unwrap_or(0) as usize;
-                let Ok(translations) = message.translation_parameters() else {
-                    return Ok(reply_error(RESULT_INVALID_ENUM));
+                let translations = match message.translation_parameters() {
+                    Ok(translations) => translations,
+                    Err(error) => {
+                        if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+                            eprintln!(
+                                "  romfs read: bad translation {error:?} words={:x?}",
+                                message_words(message)
+                            );
+                        }
+                        return Ok(reply_error(RESULT_INVALID_ENUM));
+                    }
                 };
                 let destination = translations.iter().find_map(|parameter| match parameter {
                     crate::loader::ncsd::session::ipc::IpcTranslationParameter::MappedBuffer {
@@ -1926,11 +1980,22 @@ impl System {
                     } => Some((*size_bytes as usize, *source_address)),
                     _ => None,
                 });
+                if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+                    eprintln!(
+                        "  romfs read offset={offset:#x} requested={requested:#x} dest={destination:x?} tr={translations:x?}"
+                    );
+                }
                 let Some((capacity, address)) = destination else {
                     return Ok(reply_error(RESULT_INVALID_ENUM));
                 };
-                let Ok(bytes) = romfs.read_at(offset, requested.min(capacity)) else {
-                    return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                let bytes = match romfs.read_at(offset, requested.min(capacity)) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+                            eprintln!("  romfs read failed: {error}");
+                        }
+                        return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                    }
                 };
                 let session = self
                     .ncsd_session
@@ -2534,6 +2599,47 @@ impl System {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Applies a SetBufferSwap request: `[screen, active, left, right, stride,
+    /// format, select, unused]`. Returns the IPC result code.
+    fn gsp_set_buffer_swap(&mut self, words: &[u32]) -> u32 {
+        let [screen, active, left, right, stride, format, select, ..] = *words else {
+            eprintln!("SetBufferSwap short words={words:x?}");
+            return RESULT_INVALID_ENUM;
+        };
+        let panel = match screen {
+            0 => LcdPanel::Top,
+            1 => LcdPanel::Bottom,
+            _ => return RESULT_INVALID_ENUM,
+        };
+        if active > 1 || (format & 0x7) > 4 {
+            return RESULT_INVALID_ENUM;
+        }
+        let info = PendingGspFramebufferInfo {
+            panel,
+            flags_address: 0,
+            cleared_flags: 0,
+            active_buffer: active,
+            left_address: left,
+            right_address: right,
+            stride,
+            format,
+            status: select,
+        };
+        match self
+            .resolve_gsp_framebuffer_info(info)
+            .and_then(|resolved| self.apply_gsp_framebuffer_info(resolved))
+        {
+            Ok(()) => {
+                eprintln!("SetBufferSwap ok words={words:x?}");
+                0
+            }
+            Err(error) => {
+                eprintln!("SetBufferSwap rejected: {error:?} words={words:x?}");
+                RESULT_INVALID_ENUM
+            }
+        }
+    }
+
     fn dispatch_gsp_request(
         &mut self,
         service_handle: u32,
@@ -2543,6 +2649,41 @@ impl System {
         flags: u32,
         message: IpcMessage<'_>,
     ) -> Result<Vec<u32>> {
+        // SetLcdForceBlack (0x000B0040): accepted so start-up code proceeds. The
+        // flag is not applied to the LCD scanout yet (not verified on hardware).
+        if message.header().raw() == 0x000B_0040 {
+            return Ok(vec![0x000B_0040 & 0xFFFF_0000 | 0x40, 0]);
+        }
+        // SetBufferSwap (0x00050200): screen id plus a seven-word framebuffer
+        // info block, the IPC alternative to the shared-memory GX path.
+        if message.header().raw() == 0x0005_0200 {
+            return Ok(vec![
+                0x0005_0040,
+                self.gsp_set_buffer_swap(message.normal_parameters()),
+            ]);
+        }
+        // FlushDataCache (0x00080082) / InvalidateDataCache (0x00090082):
+        // normal words are address and size, followed by a process handle.
+        if matches!(message.header().raw(), 0x0008_0082 | 0x0009_0082) {
+            let header = message.header().raw();
+            let parameters = message.normal_parameters();
+            let result = match (parameters, self.ncsd_session.as_mut()) {
+                ([address, size, ..], Some(session)) => {
+                    let outcome = if header == 0x0008_0082 {
+                        session.flush_process_data_cache(*address, *size)
+                    } else {
+                        session.invalidate_process_data_cache(*address, *size)
+                    };
+                    if outcome.is_ok() {
+                        0
+                    } else {
+                        RESULT_INVALID_ENUM
+                    }
+                }
+                _ => RESULT_INVALID_ENUM,
+            };
+            return Ok(vec![(header & 0xFFFF_0000) | 0x40, result]);
+        }
         let request = match decode_gsp_ipc_request(&message_words(message)) {
             Ok(request) => request,
             Err(_) => {
@@ -2631,6 +2772,22 @@ impl System {
                     .to_vec());
                 }
 
+                if let Some(position) = self
+                    .gsp_early_acquires
+                    .iter()
+                    .position(|handle| *handle == service_handle)
+                {
+                    self.gsp_early_acquires.swap_remove(position);
+                    if let Ok(GspRenderingRightAcquireOutcome::Waiting { .. }) =
+                        self.gsp_service.acquire_rendering_right(assigned_client_id)
+                    {
+                        // Another client owns the right; do not block the guest.
+                        let _ = self
+                            .gsp_service
+                            .cancel_rendering_right_wait(assigned_client_id);
+                    }
+                }
+
                 Ok(GspRegisterInterruptRelayQueueResponse::new(
                     0,
                     assigned_client_id,
@@ -2641,10 +2798,20 @@ impl System {
             }
             GspIpcRequest::TriggerCmdReqQueue => {
                 let result = match client_id {
-                    Some(client_id) => self
-                        .trigger_gsp_cmd_req_queue(client_id)
-                        .map(|_| 0)
-                        .unwrap_or(RESULT_INVALID_ADDRESS),
+                    Some(client_id) => match self.trigger_gsp_cmd_req_queue(client_id) {
+                        Ok(report) => {
+                            if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+                                eprintln!("  gsp gx queue report: {report:?}");
+                            }
+                            0
+                        }
+                        Err(error) => {
+                            if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+                                eprintln!("  gsp gx queue error: {error}");
+                            }
+                            RESULT_INVALID_ADDRESS
+                        }
+                    },
                     None => RESULT_INVALID_HANDLE,
                 };
                 Ok(GspIpcResultResponse::for_request(request, result)
@@ -2769,7 +2936,12 @@ impl System {
                             Err(error) => gsp_service_result_code(error),
                         }
                     }
-                    None => RESULT_INVALID_HANDLE,
+                    None => {
+                        if !self.gsp_early_acquires.contains(&service_handle) {
+                            self.gsp_early_acquires.push(service_handle);
+                        }
+                        0
+                    }
                 };
                 Ok(GspIpcResultResponse::for_request(request, result)
                     .expect("AcquireRight has a simple reply")
@@ -3270,6 +3442,16 @@ impl System {
             ))?
             .read_memory_bytes(queue_address, &mut bytes)?;
 
+        if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+            eprintln!(
+                "  gx queue @ {queue_address:#010x}: header={:02x?}",
+                &bytes[..0x20]
+            );
+            for slot in 0..4 {
+                let at = 0x20 + slot * 0x20;
+                eprintln!("    slot {slot}: {:02x?}", &bytes[at..at + 0x20]);
+            }
+        }
         let mut queue = GspGxCommandQueue::parse(&bytes).map_err(|error| {
             Error::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -3409,6 +3591,12 @@ impl System {
             while let Some(command) = queue.consume_next() {
                 report.commands_consumed = report.commands_consumed.saturating_add(1);
                 report.busy_check_requested |= command.fail_if_busy;
+                if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+                    eprintln!(
+                        "  gx command id={:#x} args={:x?} rendering_right={client_has_rendering_right}",
+                        command.command_id, command.arguments
+                    );
+                }
 
                 if client_has_rendering_right
                     && self
@@ -3458,10 +3646,19 @@ impl System {
                         report.cache_flush_requested |= arguments.flush_buffer;
                         report.gas_blend_update_requested |= arguments.update_gas_blend;
                         if client_has_rendering_right {
-                            self.dispatch_gsp_process_command_list(arguments).map(|()| {
-                                report.command_lists_submitted =
-                                    report.command_lists_submitted.saturating_add(1);
-                            })
+                            self.dispatch_gsp_process_command_list(arguments)
+                                .and_then(|()| {
+                                    report.command_lists_submitted =
+                                        report.command_lists_submitted.saturating_add(1);
+                                    // The PICA finishes the list: raise P3D so a guest
+                                    // waiting on it (gspWaitForP3D) can continue. Lists
+                                    // run synchronously here, so it is raised at once.
+                                    self.dispatch_gsp_interrupt(GspInterruptId::P3d)
+                                        .map(|_| ())
+                                        .map_err(|error| {
+                                            GspGxCommandQueueError::ProcessMemory(error.to_string())
+                                        })
+                                })
                         } else {
                             Ok(())
                         }
@@ -3748,8 +3945,16 @@ impl System {
         let row_bytes = width
             .checked_mul(bytes_per_pixel)
             .ok_or_else(|| Self::framebuffer_info_error("framebuffer row size overflowed"))?;
+        // A stride that fits one 240-pixel column but not a full row selects the
+        // native column-major layout (see `video::lcd`).
+        let column_bytes = height * bytes_per_pixel;
+        let column_major = info.stride != 0
+            && (info.stride as usize) < row_bytes
+            && (info.stride as usize) >= column_bytes;
         if info.stride & 0x8000_0000 != 0
-            || (info.stride != 0 && (info.stride & 0x7 != 0 || (info.stride as usize) < row_bytes))
+            || (info.stride != 0
+                && (info.stride & 0x7 != 0
+                    || ((info.stride as usize) < row_bytes && !column_major)))
         {
             return Err(Self::framebuffer_info_error(format!(
                 "invalid {:?} stride {:#010x} for a {row_bytes}-byte row",
@@ -3758,6 +3963,11 @@ impl System {
         }
         let source_length = if info.stride == 0 {
             row_bytes
+        } else if column_major {
+            (width - 1)
+                .checked_mul(info.stride as usize)
+                .and_then(|offset| offset.checked_add(column_bytes))
+                .ok_or_else(|| Self::framebuffer_info_error("framebuffer range overflowed"))?
         } else {
             (height - 1)
                 .checked_mul(info.stride as usize)
@@ -3799,6 +4009,30 @@ impl System {
             self.lcd
                 .write_register(panel, right_register, resolved.right_physical_address)
                 .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+        }
+        // The inactive buffer may still hold address 0 (never published); the
+        // controller reads it until the next vblank toggles buffers, so mirror
+        // the new framebuffer there instead of letting scanout fault.
+        let (other_left, other_right) = match resolved.info.active_buffer {
+            0 => (PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_SECOND),
+            _ => (PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_B_FIRST),
+        };
+        for (register, address) in [
+            (other_left, resolved.left_physical_address),
+            (other_right, resolved.right_physical_address),
+        ] {
+            if panel == LcdPanel::Bottom && register == other_right {
+                continue;
+            }
+            let current = self
+                .lcd
+                .read_register(panel, register)
+                .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+            if current == 0 {
+                self.lcd
+                    .write_register(panel, register, address)
+                    .map_err(|error| Self::framebuffer_info_error(error.to_string()))?;
+            }
         }
         for (register, value) in [
             (PDC_FRAMEBUFFER_FORMAT, resolved.info.format),
@@ -3849,6 +4083,34 @@ impl System {
         let top = self.read_gsp_framebuffer_info(shared_memory_base, client_id, LcdPanel::Top)?;
         let bottom =
             self.read_gsp_framebuffer_info(shared_memory_base, client_id, LcdPanel::Bottom)?;
+        if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+            let mut raw = [0u8; 0x100];
+            if let Some(session) = self.ncsd_session.as_mut() {
+                let _ = session.read_memory_bytes(shared_memory_base + 0x200, &mut raw);
+            }
+            for row in raw.chunks(0x20) {
+                eprintln!("  gsp shm +0x200: {row:02x?}");
+            }
+        }
+        if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+            eprintln!(
+                "  gsp framebuffer info: top={:?} bottom={:?}",
+                top.map(|i| (
+                    i.active_buffer,
+                    i.left_address,
+                    i.right_address,
+                    i.stride,
+                    i.format
+                )),
+                bottom.map(|i| (
+                    i.active_buffer,
+                    i.left_address,
+                    i.right_address,
+                    i.stride,
+                    i.format
+                ))
+            );
+        }
         let resolved_top = top
             .map(|info| self.resolve_gsp_framebuffer_info(info))
             .transpose()?;
@@ -4247,6 +4509,20 @@ impl System {
             }
         }
 
+        if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
+            let mut raw = vec![0u8; size_bytes as usize];
+            if self
+                .physical_memory
+                .read(physical_address, &mut raw)
+                .is_ok()
+            {
+                let words: Vec<String> = raw
+                    .chunks_exact(4)
+                    .map(|w| format!("{:08x}", u32::from_le_bytes([w[0], w[1], w[2], w[3]])))
+                    .collect();
+                eprintln!("  pica list @ {address:#x}: {}", words.join(" "));
+            }
+        }
         self.submit_pica_command_list_from_physical_memory(physical_address, word_count)
             .map_err(|error| GspGxCommandQueueError::CommandListSubmission {
                 reason: error.to_string(),
@@ -4356,13 +4632,83 @@ impl System {
     }
 }
 
+/// Guest address of the kernel configuration page (read-only for user mode).
+const CONFIG_MEMORY_BASE: u32 = 0x1FF8_0000;
+/// Guest address of the kernel shared page (time and system state).
+const SHARED_PAGE_BASE: u32 = 0x1FF8_1000;
+
+/// Maps the read-only configuration memory and shared page every 3DS process sees.
+///
+/// libctru reads these during start-up (`osGetMemRegionSize`, kernel version),
+/// so a process that touches them must not fault. Layout from 3dbrew
+/// "Configuration Memory"; the values describe a retail Old 3DS with the
+/// 64 MiB application memory type and are not verified against hardware.
+/// The shared page is mapped zeroed: clock fields are not emulated yet.
+fn map_kernel_shared_pages(session: &mut Arm11ProcessSession) -> Result<()> {
+    use crate::loader::ncsd::process::SharedMemoryBacking;
+    let io_error = |what: &str, error: String| {
+        Error::Io(io::Error::other(format!(
+            "{what} allocation failed: {error}"
+        )))
+    };
+    let config = SharedMemoryBacking::zeroed(0x1000).map_err(|e| io_error("config memory", e))?;
+    let put = |offset: usize, bytes: &[u8]| {
+        config.write_bytes(offset, bytes);
+    };
+    put(0x01, &[0x32, 0x02]); // kernel minor 50, major 2
+    put(0x14, &1u32.to_le_bytes()); // ENVINFO: retail
+    put(0x30, &2u32.to_le_bytes()); // APP_MEMTYPE: 64 MiB application
+    put(0x40, &0x0400_0000u32.to_le_bytes()); // application region size
+    put(0x44, &0x02C0_0000u32.to_le_bytes()); // system region size
+    put(0x48, &0x0140_0000u32.to_le_bytes()); // base region size
+    let shared = SharedMemoryBacking::zeroed(0x1000).map_err(|e| io_error("shared page", e))?;
+    for (address, backing) in [(CONFIG_MEMORY_BASE, config), (SHARED_PAGE_BASE, shared)] {
+        session
+            .map_hle_shared_backing(address, backing, 1)
+            .map_err(|error| {
+                Error::Io(io::Error::other(format!(
+                    "kernel page mapping at {address:#010X} failed: {error:?}"
+                )))
+            })?;
+    }
+    Ok(())
+}
+
+/// Builds the file `fs:USER` serves for the application RomFS.
+///
+/// The guest (libctru and Lua Player Plus alike) expects the IVFC wrapper to be
+/// gone: byte 0 is the Level 3 header (`0x28`, then the table offsets). When
+/// `region` starts with a valid IVFC header the Level 3 range is exposed;
+/// anything else is served unchanged so hand-built regions keep working.
+fn level3_romfs_region<R>(mut region: R, size: u64) -> crate::fs::RomFsRegion
+where
+    R: Read + Seek + 'static,
+{
+    use ncch::romfs::{IvfcHeader, RomFsRangeReader};
+    let level3 = region
+        .seek(SeekFrom::Start(0))
+        .ok()
+        .and_then(|_| IvfcHeader::parse_reader(&mut region, size).ok())
+        .and_then(|header| header.level3_region(size).ok())
+        .filter(|level3| {
+            level3.size_bytes != 0 && level3.end_offset_bytes().is_some_and(|end| end <= size)
+        });
+    if let Some(level3) = level3 {
+        return match RomFsRangeReader::new(region, level3.offset_bytes, level3.size_bytes) {
+            Ok(range) => crate::fs::RomFsRegion::new(Box::new(range), level3.size_bytes),
+            Err(_) => crate::fs::RomFsRegion::new(Box::new(io::Cursor::new(Vec::new())), 0),
+        };
+    }
+    crate::fs::RomFsRegion::new(Box::new(region), size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gpu::{
-        FCRAM_BASE, GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_INTERRUPT_QUEUE_CLIENT_STRIDE,
-        GSP_INTERRUPT_QUEUE_IGNORE_PDC, REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0,
-        REG_COMMAND_BUFFER_SIZE_0,
+        FCRAM_BASE, GSP_GX_COMMAND_FIRST_ENTRY_OFFSET, GSP_GX_COMMAND_QUEUE_HEADER_SIZE,
+        GSP_INTERRUPT_QUEUE_CLIENT_STRIDE, GSP_INTERRUPT_QUEUE_IGNORE_PDC,
+        REG_COMMAND_BUFFER_ADDRESS_0, REG_COMMAND_BUFFER_JUMP_0, REG_COMMAND_BUFFER_SIZE_0,
     };
     use crate::loader::ncsd::session::Arm11RunStopReason;
     use crate::video::{
@@ -4530,7 +4876,7 @@ mod tests {
     ) -> GspGxCommandQueue {
         let mut bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
         bytes[1] = 1;
-        let entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         bytes[entry] = command_id;
         bytes[entry + 2] = 1;
         bytes[entry + 3] = u8::from(fail_if_busy);
@@ -4672,7 +5018,7 @@ mod tests {
         let fill_end = fill_start + 0x10;
         let mut gx_queue = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
         gx_queue[1] = 1;
-        let gx_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let gx_entry = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         gx_queue[gx_entry] = GSP_GX_COMMAND_MEMORY_FILL;
         for (index, value) in [fill_start, 0xAABB_CCDD, fill_end, 0, 0, 0, 0x0000_0201]
             .into_iter()
@@ -4976,14 +5322,14 @@ mod tests {
                     0xEF00_0032, // GSP TryAcquireRight
                     // The guest writes the two-entry GX ring header and entries.
                     0xE584_5000, // STR r5, [r4] (queue command count = 2)
-                    0xE584_6008, // STR r6, [r4, #8] (entry 0: ProcessCommandList + halt)
-                    0xE584_700C, // STR r7, [r4, #12] (entry 0: command-list address)
-                    0xE584_8010, // STR r8, [r4, #16] (entry 0: command-list size)
-                    0xE584_9028, // STR r9, [r4, #40] (entry 1: ProcessCommandList)
-                    0xE584_A02C, // STR r10, [r4, #44] (entry 1: command-list address)
-                    0xE584_B030, // STR r11, [r4, #48] (entry 1: command-list size)
-                    0xE584_C024, // STR r12, [r4, #36] (entry 0: flush command-list cache)
-                    0xE584_C044, // STR r12, [r4, #68] (entry 1: flush command-list cache)
+                    0xE584_6020, // STR r6, [r4, #32] (entry 0: ProcessCommandList + halt)
+                    0xE584_7024, // STR r7, [r4, #36] (entry 0: command-list address)
+                    0xE584_8028, // STR r8, [r4, #40] (entry 0: command-list size)
+                    0xE584_9040, // STR r9, [r4, #64] (entry 1: ProcessCommandList)
+                    0xE584_A044, // STR r10, [r4, #68] (entry 1: command-list address)
+                    0xE584_B048, // STR r11, [r4, #72] (entry 1: command-list size)
+                    0xE584_C03C, // STR r12, [r4, #60] (entry 0: flush command-list cache)
+                    0xE584_C05C, // STR r12, [r4, #92] (entry 1: flush command-list cache)
                     0xE584_5000, // STR r5, [r4] (first FCRAM command word)
                     0xE584_6004, // STR r6, [r4, #4] (first command header)
                     0xE584_7010, // STR r7, [r4, #16] (second VRAM command word)
@@ -5286,14 +5632,14 @@ mod tests {
 
             for (offset, expected) in [
                 (0, 0x0000_0200),
-                (8, 0x0001_0001),
-                (12, first_command_address),
-                (16, 8),
-                (40, 1),
-                (44, second_command_address),
-                (48, 8),
-                (36, 1),
-                (68, 1),
+                (0x20, 0x0001_0001),
+                (0x24, first_command_address),
+                (0x28, 8),
+                (0x40, 1),
+                (0x44, second_command_address),
+                (0x48, 8),
+                (0x3C, 1),
+                (0x5C, 1),
             ] {
                 assert_eq!(
                     session.read_memory_u32(queue_address + offset).unwrap(),
@@ -5348,7 +5694,7 @@ mod tests {
         let mut fill_queue = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
         fill_queue[0] = 2;
         fill_queue[1] = 1;
-        let fill_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 2 * 0x20;
+        let fill_entry = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET + 2 * 0x20;
         fill_queue[fill_entry] = GSP_GX_COMMAND_MEMORY_FILL;
         for (index, value) in [
             fill_start_0,
@@ -5411,7 +5757,12 @@ mod tests {
         let relay_queue = GspInterruptRelayQueue::parse(&relay_queue_bytes).unwrap();
         assert_eq!(
             relay_queue.pending_interrupts().unwrap(),
-            vec![GspInterruptId::Psc0]
+            // Each ProcessCommandList raises P3D; the MemoryFill raises PSC0.
+            vec![
+                GspInterruptId::P3d,
+                GspInterruptId::P3d,
+                GspInterruptId::Psc0
+            ]
         );
         assert_eq!(
             system
@@ -5442,7 +5793,7 @@ mod tests {
         let mut fill_queue_1_only = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
         fill_queue_1_only[0] = 3;
         fill_queue_1_only[1] = 1;
-        let fill_entry_1_only = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + 3 * 0x20;
+        let fill_entry_1_only = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET + 3 * 0x20;
         fill_queue_1_only[fill_entry_1_only] = GSP_GX_COMMAND_MEMORY_FILL;
         for (index, value) in [
             0u32,
@@ -5758,7 +6109,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
@@ -5920,7 +6271,7 @@ mod tests {
         // the physical framebuffer that will be scanned out by the LCD.
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
@@ -6020,7 +6371,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_address.to_le_bytes());
@@ -6127,7 +6478,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_address.to_le_bytes());
@@ -6212,7 +6563,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_REQUEST_DMA;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&0x1400_0000u32.to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&destination.to_le_bytes());
@@ -6356,7 +6707,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&tiled_source.to_le_bytes());
@@ -6554,7 +6905,7 @@ mod tests {
 
         let mut scaled_queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         scaled_queue_bytes[1] = 1;
-        let scaled_entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let scaled_entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         scaled_queue_bytes[scaled_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
         scaled_queue_bytes[scaled_entry + 2] = 1;
         scaled_queue_bytes[scaled_entry + 4..scaled_entry + 8]
@@ -6629,7 +6980,7 @@ mod tests {
 
         let mut block32_queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         block32_queue_bytes[1] = 1;
-        let block32_entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let block32_entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         block32_queue_bytes[block32_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
         block32_queue_bytes[block32_entry + 2] = 1;
         block32_queue_bytes[block32_entry + 4..block32_entry + 8]
@@ -6721,7 +7072,7 @@ mod tests {
 
         let mut second_queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         second_queue_bytes[1] = 1;
-        let second_entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let second_entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         second_queue_bytes[second_entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
         second_queue_bytes[second_entry + 2] = 1;
         second_queue_bytes[second_entry + 4..second_entry + 8]
@@ -6851,7 +7202,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&tiled_source.to_le_bytes());
@@ -6909,7 +7260,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_DISPLAY_TRANSFER;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&(VRAM_BASE + 0x20_000).to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&(VRAM_BASE + 0x40_000).to_le_bytes());
@@ -6964,7 +7315,7 @@ mod tests {
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[0] = 0;
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[entry + 2] = 1; // halt after this entry
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&command_list_address.to_le_bytes());
@@ -7154,7 +7505,7 @@ mod tests {
         session.write_memory_u32(list + 4, 0x000F_022E).unwrap();
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&list.to_le_bytes());
@@ -7187,8 +7538,8 @@ mod tests {
     fn gsp_render_transfer_and_lcd_scanout_form_one_complete_frame() {
         use crate::gpu::{
             ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_ENTRY_SIZE,
-            GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST,
-            GSP_GX_COMMAND_QUEUE_HEADER_SIZE, GSP_GX_COMMAND_QUEUE_SIZE, PicaDepthBufferConfig,
+            GSP_GX_COMMAND_FIRST_ENTRY_OFFSET, GSP_GX_COMMAND_MEMORY_FILL,
+            GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE, PicaDepthBufferConfig,
             PicaRenderSettings, REG_ATTRIBBUFFER0_OFFSET, REG_ATTRIBBUFFERS_FORMAT_HIGH,
             REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC, REG_COLORBUFFER_FORMAT,
             REG_COLORBUFFER_LOC, REG_DEPTHBUFFER_FORMAT, REG_DEPTHBUFFER_LOC, REG_DEPTHBUFFER_READ,
@@ -7291,7 +7642,7 @@ mod tests {
         let mut queue_bytes = [0u8; GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 4;
 
-        let command_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let command_entry = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[command_entry] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[command_entry + 4..command_entry + 8]
             .copy_from_slice(&COMMAND_LIST.to_le_bytes());
@@ -7410,18 +7761,18 @@ mod tests {
             0xEE07_0FBA, // DMB
             0xEE07_0F9A, // DSB
             0xE587_8000, // STR r8, [r7] (GX queue header: three commands)
-            0xE587_9008, // STR r9, [r7, #8] (FlushCacheRegions)
-            0xE587_400C, // STR r4, [r7, #12] (vertex address)
-            0xE587_E010, // STR r14, [r7, #16] (vertex size)
-            0xE587_A028, // STR r10, [r7, #0x28] (ProcessCommandList)
-            0xE587_002C, // STR r0, [r7, #0x2C] (command-list address)
-            0xE587_E030, // STR r14, [r7, #0x30] (command-list size)
-            0xE587_1044, // STR r1, [r7, #0x44] (flush command-list cache)
-            0xE587_3048, // STR r3, [r7, #0x48] (DisplayTransfer)
-            0xE587_B04C, // STR r11, [r7, #0x4C] (PICA target address)
-            0xE587_C050, // STR r12, [r7, #0x50] (linear framebuffer address)
-            0xE587_D054, // STR r13, [r7, #0x54] (input dimensions)
-            0xE587_D058, // STR r13, [r7, #0x58] (output dimensions)
+            0xE587_9020, // STR r9, [r7, #0x20] (FlushCacheRegions)
+            0xE587_4024, // STR r4, [r7, #0x24] (vertex address)
+            0xE587_E028, // STR r14, [r7, #0x28] (vertex size)
+            0xE587_A040, // STR r10, [r7, #0x40] (ProcessCommandList)
+            0xE587_0044, // STR r0, [r7, #0x44] (command-list address)
+            0xE587_E048, // STR r14, [r7, #0x48] (command-list size)
+            0xE587_105C, // STR r1, [r7, #0x5c] (flush command-list cache)
+            0xE587_3060, // STR r3, [r7, #0x60] (DisplayTransfer)
+            0xE587_B064, // STR r11, [r7, #0x64] (PICA target address)
+            0xE587_C068, // STR r12, [r7, #0x68] (linear framebuffer address)
+            0xE587_D06C, // STR r13, [r7, #0x6c] (input dimensions)
+            0xE587_D070, // STR r13, [r7, #0x70] (output dimensions)
             0xEE07_0FBA, // DMB
             0xEE07_0F9A, // DSB
             0xE584_5000, // STR r5, [r4] (guest TLS TriggerCmdReqQueue header)
@@ -7571,12 +7922,12 @@ mod tests {
         // PICA submission, DisplayTransfer and the PPF completion notification.
         for (offset, expected) in [
             (0, 0x0000_0300),
-            (8, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32),
-            (12, vertex_address),
-            (16, 8),
-            (40, GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32),
-            (44, command_list_address),
-            (72, GSP_GX_COMMAND_DISPLAY_TRANSFER as u32),
+            (0x20, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32),
+            (0x24, vertex_address),
+            (0x28, 8),
+            (0x40, GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32),
+            (0x44, command_list_address),
+            (0x60, GSP_GX_COMMAND_DISPLAY_TRANSFER as u32),
         ] {
             assert_eq!(
                 system
@@ -7632,7 +7983,7 @@ mod tests {
         let relay_queue = GspInterruptRelayQueue::parse(&relay_bytes).unwrap();
         assert_eq!(
             relay_queue.pending_interrupts().unwrap(),
-            [GspInterruptId::Ppf]
+            [GspInterruptId::P3d, GspInterruptId::Ppf]
         );
 
         let mut published_vertices = [0u8; 8];
@@ -7989,20 +8340,20 @@ mod tests {
         let queue_address =
             GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
         let dimensions = ((HEIGHT as u32) << 16) | WIDTH as u32;
-        let mut ring = [0u32; 24];
+        let mut ring = [0u32; 30];
         ring[0] = 0x0000_0300;
-        ring[2] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32;
-        ring[3] = vertex_address;
-        ring[4] = 8;
-        ring[10] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32;
-        ring[11] = command_list_address;
-        ring[12] = command_list_bytes;
-        ring[17] = 1;
-        ring[18] = GSP_GX_COMMAND_DISPLAY_TRANSFER as u32;
-        ring[19] = tiled_target_address;
-        ring[20] = linear_framebuffer_address;
-        ring[21] = dimensions;
-        ring[22] = dimensions;
+        ring[8] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS as u32;
+        ring[9] = vertex_address;
+        ring[10] = 8;
+        ring[16] = GSP_GX_COMMAND_PROCESS_COMMAND_LIST as u32;
+        ring[17] = command_list_address;
+        ring[18] = command_list_bytes;
+        ring[23] = 1;
+        ring[24] = GSP_GX_COMMAND_DISPLAY_TRANSFER as u32;
+        ring[25] = tiled_target_address;
+        ring[26] = linear_framebuffer_address;
+        ring[27] = dimensions;
+        ring[28] = dimensions;
         record(&mut table, queue_address, &ring);
 
         // Top-screen framebuffer metadata: new-data header, then the first
@@ -8493,7 +8844,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&command_list_address.to_le_bytes());
@@ -8523,7 +8874,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = crate::gpu::GSP_GX_COMMAND_PROCESS_COMMAND_LIST;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&0x1400_4000u32.to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&8u32.to_le_bytes());
@@ -9314,7 +9665,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_TEXTURE_COPY;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_virtual.to_le_bytes());
@@ -9444,7 +9795,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_TEXTURE_COPY;
         queue_bytes[entry + 2] = 1;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&source_address.to_le_bytes());
@@ -9611,7 +9962,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 2;
-        let flush_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let flush_entry = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[flush_entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
         for (index, value) in [source_address, expected.len() as u32, 0, 0, 0, 0, 0]
             .into_iter()
@@ -9621,7 +9972,7 @@ mod tests {
             queue_bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         }
 
-        let copy_entry = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + crate::gpu::GSP_GX_COMMAND_ENTRY_SIZE;
+        let copy_entry = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET + crate::gpu::GSP_GX_COMMAND_ENTRY_SIZE;
         queue_bytes[copy_entry] = GSP_GX_COMMAND_TEXTURE_COPY;
         queue_bytes[copy_entry + 2] = 1;
         queue_bytes[copy_entry + 4..copy_entry + 8].copy_from_slice(&source_address.to_le_bytes());
@@ -9718,7 +10069,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
         queue_bytes[entry + 2] = 1;
         let arguments = [
@@ -9789,7 +10140,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
         let arguments = [
             linear_virtual_base + 0x100,
@@ -9828,7 +10179,7 @@ mod tests {
 
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
         let arguments = [
             linear_virtual_base + 0x100,
@@ -9864,7 +10215,7 @@ mod tests {
         let mut system = System::new();
         let mut queue_bytes = [0u8; crate::gpu::GSP_GX_COMMAND_QUEUE_SIZE];
         queue_bytes[1] = 1;
-        let entry = crate::gpu::GSP_GX_COMMAND_QUEUE_HEADER_SIZE;
+        let entry = crate::gpu::GSP_GX_COMMAND_FIRST_ENTRY_OFFSET;
         queue_bytes[entry] = GSP_GX_COMMAND_FLUSH_CACHE_REGIONS;
         queue_bytes[entry + 4..entry + 8].copy_from_slice(&0x1500_0000u32.to_le_bytes());
         queue_bytes[entry + 8..entry + 12].copy_from_slice(&0x20u32.to_le_bytes());

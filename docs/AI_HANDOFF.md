@@ -2056,3 +2056,11 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Testes: 4 em `storage`, `fs_user_save_data_files_round_trip_through_host_storage` (IPC completo) e `stub_services_answer_and_unknown_requests_are_recorded`.
 - Não verificado: nenhum jogo real usou essas respostas.
 
+
+## Primeiro homebrew real: Cookie Clicker (Lua Player Plus, CIA) (21/11/2026)
+
+- Arquivo fornecido pelo usuário: `Cookie_Clicker_port_for_3DS ... v0.0.0_W.standard.cia` (3 MB, TID 0004000000F23F00). Conteúdo único NCCH **sem criptografia** (flags de no-crypto), então `load_cia_no_crypto_file` serve; nenhuma chave é necessária. `.code` comprimido (BLZ).
+- Correções feitas por causa dele: (1) `code_file_layout` comparava `data + .bss` com a região física do segmento de dados; o .bss não faz parte da região em arquivo, então agora só os bytes de dados são limitados (antes: "invalid ARM11 code layout"). (2) Página de configuração (0x1FF80000) e página compartilhada (0x1FF81000) mapeadas somente-leitura em todo processo (`map_kernel_shared_pages` em `system.rs`): versão do kernel, ENVINFO retail, APP_MEMTYPE 2 (64 MiB), tamanhos de região 0x04000000/0x02C00000/0x01400000 (offsets 0x40/0x44/0x48 do 3dbrew, valores escolhidos por mim, NÃO verificados em hardware; a página compartilhada está zerada, relógio não emulado). (3) Desktop: `--frames <N>` (modo sem janela roda N quadros extras e imprime pendências) e `ACERIS_FRAME_BUDGET` (instruções por quadro; o padrão de 100 000 é lento demais para esse jogo, ~4 000 000 aproxima o ARM11 real).
+- Resultado observado (headless, 300 quadros, orçamento 4 000 000, ~100 s de CPU host): o runtime Lua Player Plus inicia, lê o RomFS, publica framebuffers e **desenha sua própria tela de erro**: `[string "?"]:155: cannot initialize Sound module`. O jogo em si não rodou ainda.
+- Pendências que o relatório mostrou: serviço `csnd:SND` (causa do erro acima), `am:u`, `cfg:i`, `cfg:s`, `http:C`, `ir:rst`, `ssl:C`; comandos APT 0x004B00C2 e 0x01020000; FS 0x080D0144. Próximo passo: implementar `csnd:SND` (Initialize/ExecuteCommands/Acquire-ReleaseSoundChannels etc.) e repetir.
+- Velocidade: ~3 s de CPU host por 100 quadros com orçamento de 4M; precisa de otimização antes de ser jogável em tempo real.

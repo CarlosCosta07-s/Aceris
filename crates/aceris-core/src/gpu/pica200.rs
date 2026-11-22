@@ -975,7 +975,7 @@ impl Pica200 {
             let header = words[cursor + 1];
             let register_id = header & 0xFFFF;
             let byte_mask = ((header >> 16) & 0xF) as u8;
-            let extra_parameters = ((header >> 20) & 0xFF) as usize;
+            let extra_parameters = ((header >> 20) & 0x7FF) as usize;
             let consecutive = header & (1 << 31) != 0;
 
             let parameter_count = extra_parameters + 1;
@@ -1031,7 +1031,8 @@ impl Pica200 {
             }
 
             report.commands = report.commands.saturating_add(1);
-            cursor += command_words;
+            // Commands are padded to a multiple of two words (8-byte alignment).
+            cursor += (command_words + 1) & !1;
         }
 
         self.command_lists_submitted = self.command_lists_submitted.saturating_add(1);
@@ -1163,7 +1164,7 @@ fn validate_command_list(words: &[u32]) -> Result<(), PicaCommandError> {
 
         let header = words[cursor + 1];
         let register_id = header & 0xFFFF;
-        let extra_parameters = ((header >> 20) & 0xFF) as usize;
+        let extra_parameters = ((header >> 20) & 0x7FF) as usize;
         let consecutive = header & (1 << 31) != 0;
         let command_words = 2usize.saturating_add(extra_parameters);
         let remaining_words = words.len() - cursor;
@@ -1186,7 +1187,8 @@ fn validate_command_list(words: &[u32]) -> Result<(), PicaCommandError> {
                 parameter_index: extra_parameters,
             });
         }
-        cursor += command_words;
+        // Commands are padded to a multiple of two words (8-byte alignment).
+        cursor += (command_words + 1) & !1;
     }
     Ok(())
 }

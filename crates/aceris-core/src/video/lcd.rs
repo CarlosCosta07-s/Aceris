@@ -351,6 +351,22 @@ fn decode_framebuffer(
         .checked_mul(format.bytes_per_pixel())
         .ok_or(LcdControllerError::AllocationFailed)?;
     let stride_bytes = stride as usize;
+    let column_bytes = height
+        .checked_mul(format.bytes_per_pixel())
+        .ok_or(LcdControllerError::AllocationFailed)?;
+    // Real 3DS framebuffers are stored column by column: `stride` is the byte
+    // distance between screen columns and each column holds `height` pixels
+    // from the bottom of the screen up. A stride shorter than a screen row
+    // that still fits one column selects this layout; longer strides keep the
+    // row-major layout used by the host-side tests and tools.
+    if stride != 0
+        && stride & 0x7 == 0
+        && stride & 0x8000_0000 == 0
+        && stride_bytes < row_bytes
+        && stride_bytes >= column_bytes
+    {
+        return decode_column_major(memory, base_address, width, height, stride_bytes, format);
+    }
     if stride != 0 && (stride & 0x7 != 0 || stride_bytes < row_bytes || stride & 0x8000_0000 != 0) {
         return Err(LcdControllerError::InvalidStride {
             panel,
@@ -399,6 +415,52 @@ fn decode_framebuffer(
         decode_row(format, &source_row, &mut output, y * width * 4)?;
     }
 
+    Ok(output)
+}
+
+/// Decodes the native column-major framebuffer layout into a row-major RGBA image.
+fn decode_column_major(
+    memory: &GpuPhysicalMemory,
+    base_address: u32,
+    width: usize,
+    height: usize,
+    stride_bytes: usize,
+    format: LcdPixelFormat,
+) -> Result<Vec<u8>, LcdControllerError> {
+    let column_bytes = height * format.bytes_per_pixel();
+    let source_length = (width - 1)
+        .checked_mul(stride_bytes)
+        .and_then(|offset| offset.checked_add(column_bytes))
+        .ok_or(LcdControllerError::AllocationFailed)?;
+    memory.validate_range(base_address, source_length)?;
+
+    let output_len = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(RGBA8_BYTES_PER_PIXEL))
+        .ok_or(LcdControllerError::AllocationFailed)?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(output_len)
+        .map_err(|_| LcdControllerError::AllocationFailed)?;
+    output.resize(output_len, 0);
+
+    let mut source_column = vec![0u8; column_bytes];
+    let mut decoded = vec![0u8; height * RGBA8_BYTES_PER_PIXEL];
+    for x in 0..width {
+        let column_offset = x * stride_bytes;
+        let column_address = u32::try_from(u64::from(base_address) + column_offset as u64)
+            .map_err(|_| LcdControllerError::AddressOverflow {
+                address: base_address,
+                offset: column_offset as u64,
+            })?;
+        memory.read(column_address, &mut source_column)?;
+        decode_row(format, &source_column, &mut decoded, 0)?;
+        for (index, pixel) in decoded.chunks_exact(RGBA8_BYTES_PER_PIXEL).enumerate() {
+            let y = height - 1 - index;
+            let destination = (y * width + x) * RGBA8_BYTES_PER_PIXEL;
+            output[destination..destination + RGBA8_BYTES_PER_PIXEL].copy_from_slice(pixel);
+        }
+    }
     Ok(output)
 }
 

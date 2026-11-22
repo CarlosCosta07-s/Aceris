@@ -182,7 +182,10 @@ impl NcchExtendedHeader {
         if u64::try_from(text_size_bytes).ok()? > self.text_code_set.physical_size_bytes()?
             || u64::try_from(read_only_size_bytes).ok()?
                 > self.read_only_code_set.physical_size_bytes()?
-            || u64::try_from(data_memory_size_bytes).ok()?
+            // The .bss is zero-filled memory and is not part of the physical
+            // region stored in the file, so only the file-backed data size is
+            // bounded here (homebrew such as Lua Player Plus declares it so).
+            || u64::try_from(data_size_bytes).ok()?
                 > self.data_code_set.physical_size_bytes()?
             || self.text_code_set.end_address().is_none()
             || self.read_only_code_set.end_address().is_none()

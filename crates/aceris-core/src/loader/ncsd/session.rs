@@ -234,6 +234,8 @@ pub struct Arm11ProcessSession {
     kernel_objects: Arm11KernelObjectTable,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
     wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
+    /// Threads blocked in ArbitrateAddress, in arrival order: (address, thread).
+    arbiter_waiters: Vec<(u32, ThreadId)>,
     /// Handle lists of threads blocked in WaitSynchronizationN wait-any mode.
     multi_waits: BTreeMap<ThreadId, Vec<u32>>,
     /// Handle sets of threads blocked in WaitSynchronizationN wait-all mode.
@@ -253,6 +255,7 @@ impl Arm11ProcessSession {
             .allocate_thread_local_storage()
             .expect("a fresh address space has room for the main thread's TLS");
         main_core.cp15_mut().set_tpidruro(main_tls);
+        main_core.cp15_mut().enable_unaligned_access();
         let scheduler = Arm11ThreadScheduler::new(main_core, DEFAULT_MAIN_THREAD_PRIORITY)
             .expect("the built-in main-thread priority is valid");
 
@@ -262,6 +265,7 @@ impl Arm11ProcessSession {
             svc_dispatcher: Arm11SvcDispatcher::default(),
             kernel_objects: Arm11KernelObjectTable::default(),
             wait_deadlines: BTreeMap::new(),
+            arbiter_waiters: Vec::new(),
             multi_waits: BTreeMap::new(),
             wait_all_waits: BTreeMap::new(),
             gpu_memory: None,
@@ -1992,6 +1996,17 @@ impl Arm11ProcessSession {
             return SvcRunDisposition::NoRunnableThread;
         };
 
+        if svc_trace_enabled() {
+            let regs = self
+                .scheduler
+                .core(caller)
+                .map_or([0; 16], |core| core.regs);
+            eprintln!(
+                "svc {number:#04x} thread={caller:?} pc={:#010X} r0={:#x} r1={:#x} r2={:#x} r3={:#x}",
+                regs[15], regs[0], regs[1], regs[2], regs[3]
+            );
+        }
+
         match number {
             SVC_CONNECT_TO_PORT => self.svc_connect_to_port(caller),
             SVC_SEND_SYNC_REQUEST => self.svc_send_sync_request(caller),
@@ -2021,8 +2036,11 @@ impl Arm11ProcessSession {
             SVC_DUPLICATE_HANDLE => self.svc_duplicate_handle(caller),
             SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
             SVC_GET_PROCESS_INFO => self.svc_get_process_info(caller),
+            0x2A => self.svc_get_system_info(caller),
             SVC_GET_SYSTEM_TICK => self.svc_get_system_tick(caller),
             SVC_GET_THREAD_INFO => self.svc_get_thread_info(caller),
+            0x21 => self.svc_create_address_arbiter(caller),
+            0x22 => self.svc_arbitrate_address(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,
@@ -2169,6 +2187,7 @@ impl Arm11ProcessSession {
             let _ = self.kernel_objects.close_handle(handle);
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
+        self.set_svc_handle_output(caller, handle);
         self.write_svc_result(caller, 0)
     }
 
@@ -2193,6 +2212,12 @@ impl Arm11ProcessSession {
         {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
+        if svc_trace_enabled() {
+            eprintln!(
+                "  ConnectToPort name={:?}",
+                String::from_utf8_lossy(&port_name)
+            );
+        }
         if &port_name != b"srv:" {
             return self.write_svc_result(caller, RESULT_INVALID_ENUM);
         }
@@ -2205,6 +2230,7 @@ impl Arm11ProcessSession {
             let _ = self.kernel_objects.close_handle(handle);
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
+        self.set_svc_handle_output(caller, handle);
         self.write_svc_result(caller, 0)
     }
 
@@ -2507,6 +2533,11 @@ impl Arm11ProcessSession {
                                 .expect("new thread context exists")
                                 .cp15_mut()
                                 .set_tpidruro(tls);
+                            self.scheduler
+                                .core_mut(id)
+                                .expect("new thread context exists")
+                                .cp15_mut()
+                                .enable_unaligned_access();
                             Ok(id)
                         }
                         Err(code) => {
@@ -2627,6 +2658,7 @@ impl Arm11ProcessSession {
             let _ = self.kernel_objects.close_handle(handle);
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
+        self.set_svc_handle_output(caller, handle);
         self.write_svc_result(caller, 0)
     }
 
@@ -2675,6 +2707,7 @@ impl Arm11ProcessSession {
             let _ = self.kernel_objects.close_handle(handle);
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
+        self.set_svc_handle_output(caller, handle);
         self.write_svc_result(caller, 0)
     }
 
@@ -2995,6 +3028,7 @@ impl Arm11ProcessSession {
             let _ = self.kernel_objects.close_handle(handle);
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
+        self.set_svc_handle_output(caller, handle);
         self.write_svc_result(caller, 0)
     }
 
@@ -3080,6 +3114,7 @@ impl Arm11ProcessSession {
             let _ = self.kernel_objects.close_handle(handle);
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
+        self.set_svc_handle_output(caller, handle);
 
         self.write_svc_result(caller, 0)
     }
@@ -3168,6 +3203,107 @@ impl Arm11ProcessSession {
     ///
     /// The emulated counter is derived from deterministic scheduler virtual time,
     /// not host wall-clock time. The base ARM11 tick rate is 268,111,856 Hz.
+    /// CreateAddressArbiter (0x21): the handle is returned in r1.
+    fn svc_create_address_arbiter(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        match self.kernel_objects.insert_address_arbiter() {
+            Ok(handle) => {
+                self.set_svc_handle_output(caller, handle);
+                self.write_svc_result(caller, 0)
+            }
+            Err(error) => self.write_svc_result(caller, kernel_handle_result_code(error)),
+        }
+    }
+
+    /// ArbitrateAddress (0x22): r0 = arbiter, r1 = address, r2 = type,
+    /// r3 = value (3dbrew "SVC", libctru `svcArbitrateAddress`).
+    ///
+    /// Types: 0 signal (wake `value` waiters, negative = all), 1 wait if less
+    /// than, 2 decrement and wait if less than, 3/4 the same with a timeout.
+    /// The timeout variants currently wait without a deadline (not modelled).
+    fn svc_arbitrate_address(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let regs = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        let (handle, address, kind, value) = (regs[0], regs[1], regs[2], regs[3] as i32);
+        if !self.kernel_objects.is_address_arbiter(handle) {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
+        if kind > 4 {
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+        }
+        if address % 4 != 0 {
+            return self.write_svc_result(caller, RESULT_MISALIGNED_ADDRESS);
+        }
+        if kind == 0 {
+            let mut woken = 0;
+            let mut index = 0;
+            while index < self.arbiter_waiters.len() && (value < 0 || woken < value) {
+                if self.arbiter_waiters[index].0 != address {
+                    index += 1;
+                    continue;
+                }
+                let (_, thread) = self.arbiter_waiters.remove(index);
+                if let Some(core) = self.scheduler.core_mut(thread) {
+                    core.regs[0] = 0;
+                }
+                let _ = self.scheduler.wake_thread(thread);
+                woken += 1;
+            }
+            return self.write_svc_result(caller, 0);
+        }
+        let Ok(current) = self.address_space.read32(address) else {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        };
+        let current = current as i32;
+        if current >= value {
+            return self.write_svc_result(caller, 0);
+        }
+        if matches!(kind, 2 | 4)
+            && self
+                .address_space
+                .write32(address, current.wrapping_sub(1) as u32)
+                .is_err()
+        {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.arbiter_waiters.push((address, caller));
+        match self.scheduler.wait_current() {
+            Ok(Some(_)) => SvcRunDisposition::Resume,
+            Ok(None) => SvcRunDisposition::NoRunnableThread,
+            Err(_) => {
+                self.arbiter_waiters.retain(|(_, thread)| *thread != caller);
+                SvcRunDisposition::KernelServiceError {
+                    number: 0x22,
+                    result: RESULT_INVALID_ENUM,
+                }
+            }
+        }
+    }
+
+    /// GetSystemInfo (0x2A): r1 = type, r2 = parameter, result in r1:r2.
+    ///
+    /// Only type 0 (memory usage, 3dbrew "GetSystemInfo") is answered, which is
+    /// what libctru uses to size its heap. Usage is reported as zero: the
+    /// emulator does not track per-region usage yet, so a game sees the whole
+    /// configured region as free. Other types return InvalidEnum.
+    fn svc_get_system_info(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let core = self
+            .scheduler
+            .core_mut(caller)
+            .expect("current thread context exists");
+        let (kind, param) = (core.regs[1], core.regs[2]);
+        if kind == 0 && param <= 3 {
+            core.regs[0] = 0;
+            core.regs[1] = 0;
+            core.regs[2] = 0;
+        } else {
+            core.regs[0] = RESULT_INVALID_ENUM;
+        }
+        SvcRunDisposition::Resume
+    }
+
     fn svc_get_system_tick(&mut self, caller: ThreadId) -> SvcRunDisposition {
         const TICKS_PER_SECOND: u128 = 268_111_856;
         let elapsed_ns = u128::from(self.scheduler.virtual_time_ns());
@@ -3288,6 +3424,17 @@ impl Arm11ProcessSession {
         self.write_svc_result(caller, result)
     }
 
+    /// Mirrors a created handle into r1, where the real kernel returns it.
+    ///
+    /// libctru's SVC stubs save the output pointer, run the SVC and then store
+    /// r1 through it, so r1 must carry the handle or the guest overwrites the
+    /// value this emulator already wrote through the pointer in r0.
+    fn set_svc_handle_output(&mut self, caller: ThreadId, handle: u32) {
+        if let Some(core) = self.scheduler.core_mut(caller) {
+            core.regs[1] = handle;
+        }
+    }
+
     fn write_svc_result(&mut self, caller: ThreadId, result: u32) -> SvcRunDisposition {
         self.scheduler
             .core_mut(caller)
@@ -3353,6 +3500,12 @@ fn thread_scheduler_result_code(error: ThreadSchedulerError) -> u32 {
         ThreadSchedulerError::ThreadIdExhausted => RESULT_OUT_OF_THREAD_RESOURCES,
         ThreadSchedulerError::UnknownThread(_) => RESULT_INVALID_HANDLE,
     }
+}
+
+/// True when `ACERIS_TRACE_SVC` is set: every supervisor call is logged to stderr.
+fn svc_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("ACERIS_TRACE_SVC").is_some())
 }
 
 #[cfg(test)]

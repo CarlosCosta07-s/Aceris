@@ -281,6 +281,12 @@ impl Cp15 {
         self.tpidruro
     }
 
+    /// Sets SCTLR.U (bit 22): ARMv6 unaligned access support, as the 3DS kernel
+    /// enables it for user processes. Word LDRD/STRD then need only 4-byte alignment.
+    pub fn enable_unaligned_access(&mut self) {
+        self.sctlr |= 1 << 22;
+    }
+
     /// Sets the user read-only thread ID, as the kernel does on context switch.
     pub fn set_tpidruro(&mut self, value: u32) {
         self.tpidruro = value;

@@ -189,7 +189,9 @@ pub fn decode_translation_section(
                 }
             }
             5..=7 => {
-                if descriptor & 1 != 0 || descriptor >> 4 == 0 {
+                // A zero-length mapped buffer is legal (a zero-byte file read, for
+                // example); only the reserved bit 0 is rejected.
+                if descriptor & 1 != 0 {
                     return Err(IpcTranslationSectionError::InvalidDescriptor { descriptor });
                 }
                 IpcTranslationParameter::MappedBuffer {
@@ -485,12 +487,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_length_mapped_buffers() {
+    fn accepts_zero_length_mapped_buffers() {
         for descriptor in [0x0A, 0x0C, 0x0E] {
-            assert_eq!(
-                super::decode_translation_section(&[descriptor, 0x0040_0000]),
-                Err(super::IpcTranslationSectionError::InvalidDescriptor { descriptor })
-            );
+            let words = [descriptor, 0x0040_0000];
+            let parameters = super::decode_translation_section(&words).unwrap();
+            assert!(matches!(
+                parameters[0],
+                super::IpcTranslationParameter::MappedBuffer { size_bytes: 0, .. }
+            ));
         }
     }
 

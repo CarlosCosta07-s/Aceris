@@ -204,6 +204,8 @@ enum KernelObject {
     Timer(KernelTimer),
     MemoryBlock(KernelMemoryBlock),
     ServiceSession(ServiceSessionKind),
+    /// Address arbiter; waiters are tracked by the session (see `ArbitrateAddress`).
+    AddressArbiter,
 }
 
 /// Process-local table mapping guest-visible handles to typed kernel objects.
@@ -723,6 +725,16 @@ impl Arm11KernelObjectTable {
         }))
     }
 
+    /// Creates an address-arbiter handle.
+    pub fn insert_address_arbiter(&mut self) -> Result<u32, KernelHandleError> {
+        self.insert(KernelObject::AddressArbiter)
+    }
+
+    /// True when `handle` names an address arbiter.
+    pub fn is_address_arbiter(&self, handle: u32) -> bool {
+        matches!(self.object(handle), Some(KernelObject::AddressArbiter))
+    }
+
     /// Creates a semaphore after validating its initial and maximum counts.
     pub fn insert_semaphore(
         &mut self,
@@ -856,9 +868,9 @@ impl Arm11KernelObjectTable {
                 Ok(true)
             }
             Some(KernelObject::Thread(thread)) => Ok(thread.terminated),
-            Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
-                Err(KernelHandleError::WrongType)
-            }
+            Some(KernelObject::MemoryBlock(_))
+            | Some(KernelObject::ServiceSession(_))
+            | Some(KernelObject::AddressArbiter) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
         }
     }
@@ -894,7 +906,9 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Semaphore(semaphore)) => semaphore.count > 0,
                 Some(KernelObject::Timer(timer)) => timer.signaled,
                 Some(KernelObject::Thread(thread)) => thread.terminated,
-                Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
+                Some(KernelObject::MemoryBlock(_))
+                | Some(KernelObject::ServiceSession(_))
+                | Some(KernelObject::AddressArbiter) => {
                     return Err(KernelHandleError::WrongType);
                 }
                 None => return Err(KernelHandleError::InvalidHandle),
@@ -936,7 +950,9 @@ impl Arm11KernelObjectTable {
                 }
                 // Thread objects are sticky: termination is never consumed.
                 KernelObject::Thread(_) => {}
-                KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_) => {
+                KernelObject::MemoryBlock(_)
+                | KernelObject::ServiceSession(_)
+                | KernelObject::AddressArbiter => {
                     unreachable!("wait-all preflight rejected non-waitable objects")
                 }
             }
@@ -961,7 +977,9 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Semaphore(semaphore)) => &mut semaphore.waiters,
                 Some(KernelObject::Timer(timer)) => &mut timer.waiters,
                 Some(KernelObject::Thread(thread)) => &mut thread.waiters,
-                Some(KernelObject::MemoryBlock(_)) | Some(KernelObject::ServiceSession(_)) => {
+                Some(KernelObject::MemoryBlock(_))
+                | Some(KernelObject::ServiceSession(_))
+                | Some(KernelObject::AddressArbiter) => {
                     return Err(KernelHandleError::WrongType);
                 }
                 None => return Err(KernelHandleError::InvalidHandle),
@@ -1002,7 +1020,9 @@ impl Arm11KernelObjectTable {
                 KernelObject::Semaphore(semaphore) => &mut semaphore.waiters,
                 KernelObject::Timer(timer) => &mut timer.waiters,
                 KernelObject::Thread(thread) => &mut thread.waiters,
-                KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_) => continue,
+                KernelObject::MemoryBlock(_)
+                | KernelObject::ServiceSession(_)
+                | KernelObject::AddressArbiter => continue,
             };
             let previous_len = waiters.len();
             waiters.retain(|waiter| *waiter != thread);
@@ -1354,7 +1374,9 @@ fn object_has_internal_references(object: &KernelObject) -> bool {
         KernelObject::Mutex(mutex) => mutex.owner.is_some() || !mutex.waiters.is_empty(),
         KernelObject::Semaphore(semaphore) => !semaphore.waiters.is_empty(),
         KernelObject::Timer(timer) => !timer.waiters.is_empty(),
-        KernelObject::MemoryBlock(_) | KernelObject::ServiceSession(_) => false,
+        KernelObject::MemoryBlock(_)
+        | KernelObject::ServiceSession(_)
+        | KernelObject::AddressArbiter => false,
     }
 }
 

@@ -20,6 +20,11 @@ pub const GSP_GX_COMMAND_QUEUE_CLIENT_COUNT: u8 = 4;
 pub const GSP_GX_COMMAND_QUEUE_SIZE: usize = 0x200;
 /// Size of the queue header.
 pub const GSP_GX_COMMAND_QUEUE_HEADER_SIZE: usize = 8;
+/// Offset of the first command slot. The 0x20-byte queue header is only partly
+/// used (index, count, flags, last result); commands start at 0x20, so 15 entries
+/// of 0x20 bytes fill the 0x200-byte per-client queue exactly (3dbrew GSP shared
+/// memory; confirmed by the command buffer a libctru guest actually writes).
+pub const GSP_GX_COMMAND_FIRST_ENTRY_OFFSET: usize = 0x20;
 /// Size of one GX command entry.
 pub const GSP_GX_COMMAND_ENTRY_SIZE: usize = 0x20;
 /// Maximum number of commands in the ring.
@@ -411,7 +416,7 @@ impl GspGxCommandQueue {
         for queue_offset in 0..command_count {
             let slot = (usize::from(command_index) + usize::from(queue_offset))
                 % usize::from(GSP_GX_COMMAND_QUEUE_CAPACITY);
-            let start = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + slot * GSP_GX_COMMAND_ENTRY_SIZE;
+            let start = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET + slot * GSP_GX_COMMAND_ENTRY_SIZE;
             let end = start + GSP_GX_COMMAND_ENTRY_SIZE;
             pending.push(GspGxCommand::parse(&bytes[start..end]));
         }
@@ -520,7 +525,7 @@ mod tests {
         fail_if_busy: bool,
         arguments: [u32; 7],
     ) {
-        let start = GSP_GX_COMMAND_QUEUE_HEADER_SIZE + slot * GSP_GX_COMMAND_ENTRY_SIZE;
+        let start = GSP_GX_COMMAND_FIRST_ENTRY_OFFSET + slot * GSP_GX_COMMAND_ENTRY_SIZE;
         bytes[start] = command_id;
         bytes[start + 2] = u8::from(stop_after);
         bytes[start + 3] = u8::from(fail_if_busy);

@@ -116,7 +116,7 @@ Este documento registra o estado observado no código. Não marque um item como 
 - [~] A execução demonstrada atualmente inclui uma fixture 3DSX sintética carregada pela API comum e executada por instruções ARM11; isso valida a integração do loader com o core, não a compatibilidade geral do formato nem o boot de uma aplicação homebrew externa
 - [ ] Definir um alvo homebrew mínimo, legalmente fornecido pelo usuário, e documentar exatamente o subconjunto de sistema necessário
 - [~] Carregamento 3DSX, relocations, layout e sessão ARM11 conectados; ainda faltam argumentos, dependências, permissões por alvo e serviços necessários ao homebrew escolhido
-- [ ] Executar um homebrew externo real até produzir resultado observável, com logs e diagnóstico de falhas
+- [~] Executar um homebrew externo real até produzir resultado observável, com logs e diagnóstico de falhas: o CIA Cookie Clicker (Lua Player Plus, sem criptografia) carrega, roda e desenha a tela de erro do runtime (`cannot initialize Sound module`, falta `csnd:SND`); o jogo em si ainda não roda (ver AI_HANDOFF)
 
 ## 3. Kernel ARM11 e serviços HLE
 

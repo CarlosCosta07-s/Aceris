@@ -41,6 +41,7 @@ fn print_usage() {
     println!("        --dump-lcd <DIR>");
     println!("                     After the frame, write top_left.png, top_right.png and");
     println!("                     bottom.png into DIR (created if missing)");
+    println!("        --frames <N> Headless: run N extra frames and report unimplemented requests");
     println!("        --window     Show both LCDs in a window and run frames until it is");
     println!("                     closed (Linux/X11 only for now)");
     println!("        --scale <N>  Integer window scale factor, 1-4 (default 2)");
@@ -104,11 +105,31 @@ fn load_game(system: &mut System, game: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Instruction budget per frame; `ACERIS_FRAME_BUDGET` overrides the default.
+fn frame_budget() -> usize {
+    static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        env::var("ACERIS_FRAME_BUDGET")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|budget| *budget > 0)
+            .unwrap_or(DEFAULT_FRAME_INSTRUCTION_BUDGET)
+    })
+}
+
 /// Runs one bounded frame and prints the first frame's CPU/GPU/LCD diagnostics.
 fn run_frame_with_diagnostics(system: &mut System) -> Result<(), String> {
     let report = system
-        .run_frame_with_budget(DEFAULT_FRAME_INSTRUCTION_BUDGET)
-        .map_err(|err| format!("emulation stopped: {err}"))?;
+        .run_frame_with_budget(frame_budget())
+        .map_err(|err| {
+            let cpu = system.cpu();
+            format!(
+                "emulation stopped: {err} (pc={:#010X} lr={:#010X} r0-r7={:x?})",
+                cpu.pc(),
+                cpu.regs[14],
+                &cpu.regs[0..8]
+            )
+        })?;
 
     if report.frame_number == 1 {
         println!(
@@ -385,10 +406,20 @@ fn run(options: RunOptions) -> ExitCode {
             eprintln!("error: {message}");
             return ExitCode::FAILURE;
         }
-        if let Err(message) = run_frame_with_diagnostics(&mut system) {
-            eprintln!("error: {message}");
-            return ExitCode::FAILURE;
+        for _ in 0..=options.frames {
+            if let Err(message) = run_frame_with_diagnostics(&mut system) {
+                eprintln!("error: {message}");
+                report_unhandled(&system);
+                return ExitCode::FAILURE;
+            }
         }
+        println!(
+            "After {} frame(s): PC={:#010X}, CPSR={:#010X}",
+            options.frames + 1,
+            system.cpu().pc(),
+            system.cpu().cpsr.0
+        );
+        report_unhandled(&system);
     }
 
     if let Some(dir) = options.dump_lcd {
@@ -417,6 +448,8 @@ struct RunOptions {
     games_dir: Option<PathBuf>,
     background_dir: Option<PathBuf>,
     background_fps: u32,
+    /// Extra frames to run in headless mode (0 = just the first frame).
+    frames: u32,
 }
 
 /// Parses `<GAME> [--dump-lcd <DIR>] [--window] [--scale <N>]` in any order.
@@ -430,6 +463,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let mut background_dir = None;
     let mut background_fps = 24;
     let mut background_fps_configured = false;
+    let mut frames = 0u32;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -438,6 +472,14 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
                     .next()
                     .ok_or_else(|| "--dump-lcd requires a directory".to_string())?;
                 dump_lcd = Some(PathBuf::from(dir));
+            }
+            "--frames" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--frames requires a number".to_string())?;
+                frames = value
+                    .parse::<u32>()
+                    .map_err(|_| format!("--frames must be a number, got {value}"))?;
             }
             "--window" => window = true,
             "--skip-intro" => skip_intro = true,
@@ -493,6 +535,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
         games_dir,
         background_dir,
         background_fps,
+        frames,
     })
 }
 
@@ -541,6 +584,7 @@ fn main() -> ExitCode {
             games_dir: None,
             background_dir: None,
             background_fps: 24,
+            frames: 0,
         }),
     }
 }
@@ -563,6 +607,7 @@ mod tests {
             games_dir: None,
             background_dir: None,
             background_fps: 24,
+            frames: 0,
         }
     }
 
