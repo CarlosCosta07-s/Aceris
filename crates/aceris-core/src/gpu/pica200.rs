@@ -642,14 +642,9 @@ impl Pica200 {
     }
 
     /// Decodes the signed per-channel half-difference to the next color entry.
-    pub fn procedural_texture_color_difference_entry(
-        &self,
-        index: usize,
-    ) -> Option<[i8; 4]> {
-        let raw = self.procedural_texture_lut_entry(
-            PicaProceduralTextureLut::ColorDifference,
-            index,
-        )?;
+    pub fn procedural_texture_color_difference_entry(&self, index: usize) -> Option<[i8; 4]> {
+        let raw =
+            self.procedural_texture_lut_entry(PicaProceduralTextureLut::ColorDifference, index)?;
         Some([
             raw as u8 as i8,
             (raw >> 8) as u8 as i8,
@@ -1888,8 +1883,7 @@ mod tests {
             | (1 << 16)
             | (2 << 18)
             | (0xA5 << 20);
-        gpu.write_register(REG_TEXUNIT3_PROCTEX0, proctex0)
-            .unwrap();
+        gpu.write_register(REG_TEXUNIT3_PROCTEX0, proctex0).unwrap();
         gpu.write_register(REG_TEXUNIT3_PROCTEX1, 0xFEDC_BA98)
             .unwrap();
         gpu.write_register(REG_TEXUNIT3_PROCTEX2, 0x7654_3210)
@@ -1906,10 +1900,7 @@ mod tests {
 
         let config = gpu.procedural_texture_config();
         assert_eq!(config.u_clamp, PicaProceduralTextureClamp::ClampToEdge);
-        assert_eq!(
-            config.v_clamp,
-            PicaProceduralTextureClamp::MirroredRepeat
-        );
+        assert_eq!(config.v_clamp, PicaProceduralTextureClamp::MirroredRepeat);
         assert_eq!(
             config.rgb_mapping_function,
             PicaProceduralTextureMappingFunction::Rmax
@@ -1974,10 +1965,7 @@ mod tests {
             gpu.procedural_texture_color_difference_entry(13),
             Some([-2, 1, 127, -128])
         );
-        assert_eq!(
-            gpu.procedural_texture_color_difference_entry(256),
-            None
-        );
+        assert_eq!(gpu.procedural_texture_color_difference_entry(256), None);
     }
 
     #[test]
