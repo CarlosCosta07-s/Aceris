@@ -2103,7 +2103,7 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 
 - `Pica200` agora modela os registradores `GPUREG_TEXUNIT3_PROCTEX0..5` (constantes públicas) e o seletor `GPUREG_PROCTEX_LUT` (`0x0AF`) com seus oito aliases FIFO `0x0B0..0x0B7`.
 - As cinco tabelas documentadas são armazenadas separadamente: ruído (128 entradas), mapeamento RGB (128), mapeamento alpha (128), cor (256) e diferença de cor (256). As escritas preservam a palavra de 32 bits, avançam o índice e fazem wrap no comprimento da tabela; seletores reservados não alteram a memória LUT. `Pica200::reset` limpa as tabelas.
-- A API `procedural_texture_lut_entry` expõe as palavras brutas para a futura unidade de amostragem; não interpreta ainda fixed-point nem as diferenças.
+- `procedural_texture_lut_entry` mantém acesso às palavras brutas; `procedural_texture_curve_entry`, `procedural_texture_color_entry` e `procedural_texture_color_difference_entry` decodificam os formatos documentados para uso futuro pelo sampler.
 - **Limite funcional mantido de propósito:** `PicaFragmentPipeline::from_pica` continua recusando a unidade 3 ativa. Isso evita transformar uma captura correta de registradores em texels inventados. A geração completa ainda requer ruído determinístico, repetição, G(u,v), F(g), leitura/interpolação das LUTs de mapeamento e cor, mipmap e filtragem. A documentação pública descreve a arquitetura em quatro etapas, mas declara que detalhes do ruído e do funcionamento interno são pouco conhecidos.
 - Testes adicionados cobrem upload por command list, roteamento das cinco tabelas, wrap em 128/256, seletores reservados, limites de leitura e reset. São testes sintéticos do modelo de registradores, não comparação com console físico. O ambiente desta sessão não dispõe de `cargo`/`rustc`; a CI do commit precisa ser consultada antes de declarar build, Clippy ou testes aprovados.
 
@@ -2113,3 +2113,9 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - Campos com representação float/fixed não verificada continuam em inteiros brutos; enums preservam valores reservados, sem remapear silenciosamente para um modo válido.
 - `procedural_texture_curve_entry` interpreta value fixed0.0.12 e difference signed-12 two's-complement para ruído e LUTs de mapeamento. `procedural_texture_color_entry` e `procedural_texture_color_difference_entry` decodificam RGBA8 e quatro diferenças signed-8.
 - Testes sintéticos cobrem o snapshot dos seis registradores e os formatos de LUT. O pipeline continua recusando a unidade 3 ativa até que a ordem matemática e a amostragem sejam verificadas; ruído, no particular, ainda não tem especificação pública suficiente.
+
+### Interpolação documentada das LUTs procedurais (22/11/2026)
+
+- `PicaProceduralTextureCurveEntry::sample_linear` calcula `value / 4096 + (signed_difference / 2048) * fraction`, usando o mapeamento two's-complement documentado para os campos de diferença de 12 bits. Frações fora de [0, 1] e NaN são rejeitadas.
+- `Pica200::interpolate_procedural_texture_color` aplica o dobro do delta signed-8 (a tabela armazena metade da diferença entre a cor atual e a próxima) e devolve canais em ponto flutuante no domínio de bytes, sem adivinhar arredondamento ou saturação final.
+- Testes cobrem fração 0, 0.5 e 1, diferenças negativas e parâmetros inválidos. Isso implementa apenas a interpolação de uma entrada já selecionada; ainda falta confirmar como coordenadas e funções escolhem os segmentos e como a saída alimenta a cor final.

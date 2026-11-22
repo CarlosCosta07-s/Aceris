@@ -362,3 +362,9 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - Decoded register fields mirror the published PROCTEX0..5 table: clamp modes, RGB/alpha mapping selectors, separate-alpha/noise flags, coordinate shifts, raw noise amplitude/phase/frequency, minification/mipmap filter, min/max LOD, width and mip offsets. Float/fixed encodings are retained raw.
 - LUT helpers decode the documented fixed0.0.12 value plus signed 12-bit difference, RGBA8 color entries and signed 8-bit per-channel color differences. These helpers are data decoding only, not proof of the full sampler algorithm.
 - Evidence: [PICA internal register documentation](https://docs.mikage.app/GPU/Internal_Registers/), register descriptions and LUT formats. The function sequence and remaining uncertainty are separately described in [procedural texture generation overview](https://docs.mikage.app/GPU/Procedural_Texture_Generation/) and the DMP CEDEC 2012 report.
+
+### Procedural LUT interpolation evidence (22/11/2026)
+
+- The public register map describes noise/RGB/alpha LUT entries as an unsigned fixed0.0.12 value plus a two's-complement 12-bit difference, where the unsigned upper half maps to [-1, 0). It describes color-difference channels as signed half-differences between adjacent RGBA entries.
+- The implementation interpolates a selected curve entry as `value/4096 + signed_delta/2048 * fraction`, and a color channel as `current + 2*signed_half_delta*fraction`. It returns floating-point channels without applying unverified rounding/saturation.
+- These formulas cover interpolation after an entry/index has already been selected. They do not assert the coordinate-to-segment mapping, full F(g) behavior, or noise generator.
