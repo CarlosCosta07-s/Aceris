@@ -390,8 +390,12 @@ impl DynamicMemoryBacking {
     }
 
     fn backing_handle(&self) -> SharedMemoryBacking {
+        self.backing_ref().clone()
+    }
+
+    fn backing_ref(&self) -> &SharedMemoryBacking {
         match self {
-            Self::Private(backing) | Self::Shared(backing) => backing.clone(),
+            Self::Private(backing) | Self::Shared(backing) => backing,
         }
     }
 
@@ -2025,6 +2029,11 @@ impl Arm11CodeAddressSpace {
         bytes: &[u8],
         policy: CachePolicy,
     ) -> BusResult<()> {
+        if policy == CachePolicy::WriteBack && self.try_write_cached_hit(address, bytes) {
+            self.invalidate_exclusive_range(address, bytes.len());
+            return Ok(());
+        }
+
         let mut locations = Vec::with_capacity(bytes.len());
 
         // Validate the complete range before mutating cache state or backing.
@@ -2161,11 +2170,115 @@ impl Arm11CodeAddressSpace {
     fn touch_data_cache_line(&mut self, key: DataCacheKey) {
         let set_index = Self::cache_set_index(key);
         if let Some(set) = self.data_cache_lru.get_mut(set_index) {
+            // Already the most recently used entry: the reorder below would be a no-op.
+            if set.back() == Some(&key) {
+                return;
+            }
             if let Some(position) = set.iter().position(|entry| *entry == key) {
                 set.remove(position);
             }
             set.push_back(key);
         }
+    }
+
+    /// Cache key and in-line offset for a location, without cloning the backing.
+    fn cache_key_for(&self, location: MemoryLocation) -> Option<(DataCacheKey, usize)> {
+        let line_mask = ARM11_DATA_CACHE_LINE_SIZE - 1;
+        match location {
+            MemoryLocation::Static { kind, offset } => Some((
+                DataCacheKey {
+                    backing_id: self.static_backing_ids[Self::static_backing_slot(kind)],
+                    line_offset: (offset & !line_mask) as u64,
+                },
+                offset & line_mask,
+            )),
+            MemoryLocation::Dynamic { index, offset } => {
+                let backing = self.dynamic_regions.get(index)?.backing.backing_ref();
+                Self::cache_key_for_backing(backing, offset)
+            }
+            MemoryLocation::Shared { index, offset } => {
+                let backing = &self.shared_regions.get(index)?.backing;
+                Self::cache_key_for_backing(backing, offset)
+            }
+            MemoryLocation::Physical {
+                address: physical_address,
+                ..
+            } => {
+                let backing_id = self.gpu_memory.as_ref()?.backing_id();
+                let line_address = physical_address & !(line_mask as u32);
+                Some((
+                    DataCacheKey {
+                        backing_id,
+                        line_offset: u64::from(line_address),
+                    },
+                    (physical_address - line_address) as usize,
+                ))
+            }
+        }
+    }
+
+    fn cache_key_for_backing(
+        backing: &SharedMemoryBacking,
+        offset: usize,
+    ) -> Option<(DataCacheKey, usize)> {
+        let root_offset = backing.root_offset(offset)?;
+        let root_line = root_offset & !(ARM11_DATA_CACHE_LINE_SIZE - 1);
+        Some((
+            DataCacheKey {
+                backing_id: backing.backing_id(),
+                line_offset: root_line as u64,
+            },
+            root_offset - root_line,
+        ))
+    }
+
+    /// Write-back store that hits a resident line entirely inside one line.
+    ///
+    /// Mirrors the per-byte `write_cached_byte` path for the common case and
+    /// returns `false` (state untouched) when the full path is required.
+    fn try_write_cached_hit(&mut self, address: u32, bytes: &[u8]) -> bool {
+        if bytes.is_empty() {
+            return false;
+        }
+        let Some(location) = self.locate(address) else {
+            return false;
+        };
+        if !self.location_is_writable(location) {
+            return false;
+        }
+        let Some((key, offset)) = self.cache_key_for(location) else {
+            return false;
+        };
+        if offset + bytes.len() > ARM11_DATA_CACHE_LINE_SIZE {
+            return false;
+        }
+        let Some(line) = self.data_cache.get_mut(&key) else {
+            return false;
+        };
+        line.bytes[offset..offset + bytes.len()].copy_from_slice(bytes);
+        line.dirty = true;
+        self.touch_data_cache_line(key);
+        true
+    }
+
+    /// Cacheable read that hits a resident line entirely inside one line.
+    ///
+    /// Returns `None` (leaving all state untouched) for anything that needs the
+    /// full path: a miss, a line-crossing access, or an unreadable location.
+    fn try_read_cached_hit(&mut self, address: u32, len: usize) -> Option<u32> {
+        let location = self.locate(address)?;
+        if !self.location_is_readable(location) {
+            return None;
+        }
+        let (key, offset) = self.cache_key_for(location)?;
+        if offset + len > ARM11_DATA_CACHE_LINE_SIZE {
+            return None;
+        }
+        let line = self.data_cache.get(&key)?;
+        let mut bytes = [0u8; 4];
+        bytes[..len].copy_from_slice(line.bytes.get(offset..offset + len)?);
+        self.touch_data_cache_line(key);
+        Some(u32::from_le_bytes(bytes))
     }
 
     fn read_cache_target_line(
@@ -2719,6 +2832,14 @@ impl Bus for Arm11CodeAddressSpace {
             let register = self.read_mpcore_scu_register(address)?;
             return Ok((register >> ((address & 3) * 8)) as u8);
         }
+        if matches!(
+            policy,
+            CachePolicy::WriteThrough | CachePolicy::WriteBack | CachePolicy::WriteBackNoAllocate
+        ) {
+            if let Some(value) = self.try_read_cached_hit(address, 1) {
+                return Ok(value as u8);
+            }
+        }
         let location = self
             .locate(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -2735,6 +2856,26 @@ impl Bus for Arm11CodeAddressSpace {
             | CachePolicy::WriteBack
             | CachePolicy::WriteBackNoAllocate => self.read_cached_byte(&target, key, offset),
         }
+    }
+
+    fn read16(&mut self, address: u32) -> BusResult<u16> {
+        if let Some(value) = self.try_read_cached_hit(address, 2) {
+            return Ok(value as u16);
+        }
+        let lo = self.read8(address)?;
+        let hi = self.read8(address.wrapping_add(1))?;
+        Ok(u16::from_le_bytes([lo, hi]))
+    }
+
+    fn read32(&mut self, address: u32) -> BusResult<u32> {
+        if let Some(value) = self.try_read_cached_hit(address, 4) {
+            return Ok(value);
+        }
+        let mut bytes = [0u8; 4];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = self.read8(address.wrapping_add(index as u32))?;
+        }
+        Ok(u32::from_le_bytes(bytes))
     }
 
     fn write8(&mut self, address: u32, value: u8) -> BusResult<()> {
@@ -2763,6 +2904,14 @@ impl Bus for Arm11CodeAddressSpace {
     fn read32_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u32> {
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.read_mpcore_scu_register(address);
+        }
+        if matches!(
+            policy,
+            CachePolicy::WriteThrough | CachePolicy::WriteBack | CachePolicy::WriteBackNoAllocate
+        ) {
+            if let Some(value) = self.try_read_cached_hit(address, 4) {
+                return Ok(value);
+            }
         }
         let mut bytes = [0u8; 4];
         for (index, byte) in bytes.iter_mut().enumerate() {
@@ -4011,6 +4160,63 @@ mod tests {
         memory.read(physical_base, &mut resident_value).unwrap();
         assert_eq!(resident_value, [0]);
         assert_eq!(address_space.read8(virtual_base).unwrap(), 0xA0);
+    }
+
+    #[test]
+    fn arm11_cached_hit_fast_paths_match_the_byte_path_and_keep_lru_order() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x6000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x6000)
+            .unwrap();
+
+        // Miss, then hit: a word store followed by byte, half-word and word loads.
+        address_space
+            .write32(virtual_base + 4, 0x4433_2211)
+            .unwrap();
+        assert_eq!(address_space.read8(virtual_base + 5).unwrap(), 0x22);
+        assert_eq!(address_space.read16(virtual_base + 6).unwrap(), 0x4433);
+        assert_eq!(address_space.read32(virtual_base + 4).unwrap(), 0x4433_2211);
+        // Still dirty in the cache; the device-visible backing is unchanged.
+        let mut backing = [0xFFu8; 4];
+        memory.read(physical_base + 4, &mut backing).unwrap();
+        assert_eq!(backing, [0; 4]);
+
+        // A word that crosses a 32-byte line boundary takes the byte path.
+        address_space
+            .write32(virtual_base + 30, 0xDDCC_BBAA)
+            .unwrap();
+        assert_eq!(
+            address_space.read32(virtual_base + 30).unwrap(),
+            0xDDCC_BBAA
+        );
+        assert_eq!(address_space.read8(virtual_base + 32).unwrap(), 0xCC);
+
+        // Hits keep the LRU order: re-reading way 0 makes way 1 the victim.
+        let way = (ARM11_DATA_CACHE_SET_COUNT * ARM11_DATA_CACHE_LINE_SIZE) as u32;
+        for index in 0..ARM11_DATA_CACHE_WAYS as u32 {
+            address_space
+                .write32(virtual_base + 0x1000 + index * way, 0xA0 + index)
+                .unwrap();
+        }
+        assert_eq!(address_space.read32(virtual_base + 0x1000).unwrap(), 0xA0);
+        address_space
+            .write32(
+                virtual_base + 0x1000 + ARM11_DATA_CACHE_WAYS as u32 * way,
+                0xA4,
+            )
+            .unwrap();
+        address_space.drain_arm11_write_buffer().unwrap();
+        let mut evicted = [0u8; 4];
+        memory
+            .read(physical_base + 0x1000 + way, &mut evicted)
+            .unwrap();
+        assert_eq!(u32::from_le_bytes(evicted), 0xA1);
+        memory.read(physical_base + 0x1000, &mut evicted).unwrap();
+        assert_eq!(u32::from_le_bytes(evicted), 0, "way 0 stayed resident");
     }
 
     #[test]

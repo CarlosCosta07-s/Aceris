@@ -2166,3 +2166,13 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - FS `0x080D0144` (ControlArchive): ação 0 (commit) só confirma, pois arquivos do host são gravados na hora; ação 1 (timestamp) preenche o buffer de saída com zeros (timestamp real não modelado); ação 2 e demais confirmam. O handle do arquivo não é validado.
 - Testes: `cfg_variants_and_am_open_and_unmodelled_am_commands_are_recorded` e `apt_answers_check_new_3ds_and_applet_utility_and_fs_control_archive_writes_timestamp`.
 - O relatório do Cookie Clicker agora só lista `http:C`, `ir:rst` e `ssl:C` (aparentemente só sondados por `httpcInit`/`irrstInit`/`sslcInit`; sem comandos pedidos até 20 quadros).
+
+## Desempenho: caminhos rápidos do cache de dados ARM11 (22/11/2026, Claude)
+
+- Perfil por amostragem (gdb) do Cookie Clicker mostrou ~80% do tempo no modelo de D-cache, lendo byte a byte (`read_cached_byte`, `touch_data_cache_line`, clones de `DataCacheTarget`). Mudanças em `loader/ncsd/process.rs`, sem alterar a semântica do modelo:
+  - `touch_data_cache_line` não reordena quando a linha já é a mais recente;
+  - `cache_key_for` calcula a chave sem clonar o alvo; `try_read_cached_hit` (leitura de 1/2/4 bytes dentro de uma linha residente) e `try_write_cached_hit` (política WriteBack) evitam o caminho completo; faltas, acessos que cruzam linha e outras políticas continuam no caminho antigo;
+  - `Bus::read16`/`read32` do espaço de endereços agora usam o caminho rápido em vez de 2/4 chamadas `read8`.
+- Medição (60 quadros, `ACERIS_FRAME_BUDGET=4000000`, mesmo PC final 0x00175008 antes e depois): 69 s → 19,6 s (≈3,5x). Isto continua longe de tempo real (~3 quadros/s).
+- Teste novo: `arm11_cached_hit_fast_paths_match_the_byte_path_and_keep_lru_order`. A suíte de coerência de cache existente continua passando.
+- Próximos candidatos: `locate()` (varre segmentos/regiões a cada acesso), `BTreeMap` do cache, busca de instrução, e só depois a rasterização.
