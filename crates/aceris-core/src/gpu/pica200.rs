@@ -142,7 +142,8 @@ pub enum PicaProceduralTextureCoordinateSource {
     Reserved(u8),
 }
 
-/// Coordinate-to-scalar functions selected independently for RGB and alpha.#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Coordinate-to-scalar functions selected independently for RGB and alpha.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaProceduralTextureMappingFunction {
     U,
     USquared,
@@ -792,7 +793,8 @@ impl Pica200 {
             2 => PicaProceduralTextureCoordinateSource::Texture2,
             other => PicaProceduralTextureCoordinateSource::Reserved(other),
         };
-        let decode_clamp = |value: u8| match value {            0 => PicaProceduralTextureClamp::ClampToZero,
+        let decode_clamp = |value: u8| match value {
+            0 => PicaProceduralTextureClamp::ClampToZero,
             1 => PicaProceduralTextureClamp::ClampToEdge,
             2 => PicaProceduralTextureClamp::SymmetricalRepeat,
             3 => PicaProceduralTextureClamp::MirroredRepeat,
