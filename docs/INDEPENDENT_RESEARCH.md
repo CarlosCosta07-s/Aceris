@@ -393,3 +393,9 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - The public GPUREG_TEXUNIT_CONFIG register table defines bits 8–9 as the coordinate source for texture unit 3: selector 0 routes Texture 0 coordinates, selector 1 routes Texture 1 coordinates, and selector 2 routes Texture 2 coordinates. Selector 3 is not listed as valid.
 - Aceris now decodes this selector into PicaProceduralTextureCoordinateSource and preserves selector 3 as Reserved(3). Tests cover all four encodings. No coordinate transformation or fragment sampling is implied by the snapshot.
 - Evidence: [3dbrew PICA200 internal register map](https://3dbrew.org/wiki/GPU/Internal_Registers) and [Mikage PICA200 internal register map](https://docs.mikage.app/GPU/Internal_Registers/).
+
+### Procedural coordinate-pair routing helper (22/11/2026)
+
+- `PicaProceduralTextureConfig::select_coordinates` resolves the decoded Texture0/1/2 source into one raw `[u, v]` pair from the three interpolated texture-coordinate pairs.
+- The helper returns that pair unchanged. Out-of-range finite values are not clamped or normalized, and a reserved selector returns `None`. Synthetic tests use distinct pairs and non-unit values to protect this raw routing contract.
+- This does not implement coordinate shifts, noise, wrapping, G/F evaluation, procedural LUT sampling, mip selection/filtering, or fragment-pipeline integration.

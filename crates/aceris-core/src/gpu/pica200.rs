@@ -272,6 +272,25 @@ pub struct PicaProceduralTextureConfig {
     pub mip_offsets: [u8; 4],
 }
 
+impl PicaProceduralTextureConfig {
+    /// Selects the U/V pair routed to procedural texture unit 3.
+    ///
+    /// The pair is returned unchanged: this only resolves the coordinate-set
+    /// selector and does not apply shifts, noise, wrapping, normalization, or
+    /// clamping. Reserved selector values return `None`.
+    pub fn select_coordinates(
+        &self,
+        texture_coordinates: &[[f32; 2]; 3],
+    ) -> Option<[f32; 2]> {
+        match self.coordinate_source {
+            PicaProceduralTextureCoordinateSource::Texture0 => Some(texture_coordinates[0]),
+            PicaProceduralTextureCoordinateSource::Texture1 => Some(texture_coordinates[1]),
+            PicaProceduralTextureCoordinateSource::Texture2 => Some(texture_coordinates[2]),
+            PicaProceduralTextureCoordinateSource::Reserved(_) => None,
+        }
+    }
+}
+
 /// One fixed-point entry from the procedural noise/RGB/alpha mapping tables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PicaProceduralTextureCurveEntry {
@@ -2075,6 +2094,34 @@ mod tests {
                 .unwrap();
             assert_eq!(gpu.procedural_texture_config().coordinate_source, expected);
         }
+    }
+
+    #[test]
+    fn procedural_texture_config_selects_coordinate_pair_without_transforming_it() {
+        let texture_coordinates = [[-0.25, 1.5], [3.0, -2.0], [0.125, 0.875]];
+        let mut gpu = Pica200::new();
+        let selectors = [
+            (0, [-0.25, 1.5]),
+            (1, [3.0, -2.0]),
+            (2, [0.125, 0.875]),
+        ];
+
+        for (selector, expected) in selectors {
+            gpu.write_register(REG_TEXUNIT_CONFIG, selector << 8)
+                .unwrap();
+            assert_eq!(
+                gpu.procedural_texture_config()
+                    .select_coordinates(&texture_coordinates),
+                Some(expected)
+            );
+        }
+
+        gpu.write_register(REG_TEXUNIT_CONFIG, 3 << 8).unwrap();
+        assert_eq!(
+            gpu.procedural_texture_config()
+                .select_coordinates(&texture_coordinates),
+            None
+        );
     }
 
     #[test]

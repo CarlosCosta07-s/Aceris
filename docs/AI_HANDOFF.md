@@ -2144,3 +2144,9 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - PicaProceduralTextureConfig agora inclui coordinate_source, decodificado de GPUREG_TEXUNIT_CONFIG bits 8–9: 0 = Texture0, 1 = Texture1, 2 = Texture2. O valor 3 é preservado como Reserved(3), sem fallback.
 - PicaProceduralTextureCoordinateSource é exportado pelo módulo GPU. Testes cobrem os três seletores válidos e o seletor reservado.
 - Esse campo apenas registra qual par de coordenadas guest deve alimentar a unidade 3. O renderizador ainda rejeita a unidade procedural ativa; não há ruído, repeat, seleção das LUTs, mipmapping ou amostragem conectados.
+
+### Resolução do par de coordenadas da unidade procedural (22/11/2026)
+
+- `PicaProceduralTextureConfig::select_coordinates` resolve `coordinate_source` para o par U/V correspondente entre as três saídas de coordenadas interpoladas. Os pares são devolvidos sem alteração e seletores reservados retornam `None`.
+- Testes usam três pares deliberadamente diferentes, incluindo valores fora de [0,1], para comprovar que esse estágio apenas seleciona a origem e não aplica clamp, wrapping, shift ou normalização.
+- Isso prepara a entrada da unidade procedural, mas ainda não executa transformação de coordenadas, ruído, G/F, LUT, mipmap, filtragem ou amostragem, nem muda o comportamento da pipeline de fragmentos.
