@@ -157,7 +157,7 @@ impl PicaProceduralTextureMappingFunction {
             return None;
         }
 
-        Some(match self {
+        let value = match self {
             Self::U => u,
             Self::USquared => u * u,
             Self::V => v,
@@ -168,7 +168,11 @@ impl PicaProceduralTextureMappingFunction {
             Self::Minimum => u.min(v),
             Self::Maximum => u.max(v),
             Self::Rmax | Self::Reserved(_) => return None,
-        })
+        };
+
+        // Finite inputs can still overflow during squaring, addition or sqrt.
+        // Do not leak an infinite/NaN intermediate into later texture stages.
+        value.is_finite().then_some(value)
     }
 }
 
@@ -2170,6 +2174,26 @@ mod tests {
         assert_eq!(
             PicaProceduralTextureMappingFunction::V.evaluate_raw(u, f32::INFINITY),
             None
+        );
+
+        // Reject non-finite results even when both supplied coordinates are finite.
+        for function in [
+            PicaProceduralTextureMappingFunction::USquared,
+            PicaProceduralTextureMappingFunction::Average,
+            PicaProceduralTextureMappingFunction::SquaredAverage,
+            PicaProceduralTextureMappingFunction::RadialDistance,
+        ] {
+            assert_eq!(
+                function.evaluate_raw(f32::MAX, f32::MAX),
+                None,
+                "{function:?} must reject arithmetic overflow"
+            );
+        }
+
+        // Raw G evaluation does not clamp a finite result to the unit interval.
+        assert_eq!(
+            PicaProceduralTextureMappingFunction::U.evaluate_raw(f32::MAX, 0.0),
+            Some(f32::MAX)
         );
     }
     #[test]
