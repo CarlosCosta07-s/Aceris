@@ -8,9 +8,9 @@ Antes de qualquer contribuição, leia [REGRAS_PARA_IA.md](docs/REGRAS_PARA_IA.m
 
 - Não consultar código-fonte interno de outros emuladores, incluindo Azahar, Citra, Lime3DS ou semelhantes. A referência permitida limita-se à superfície observável do produto e à documentação pública independente de hardware, formatos e protocolos.
 - Não copiar, adaptar, traduzir, portar ou reproduzir código, interfaces, estruturas, testes, fixtures, shaders, patches, assets ou organização interna de terceiros.
-- Não faça tradução linha a linha nem reproduza a estrutura expressiva do código consultado. Toda implementação do Aceris deve ser concebida independentemente e escrita em Rust, com arquitetura, interfaces, nomes e testes próprios.
-- Registre projeto, URL, arquivo/área consultada, commit/revisão, licença, data e pergunta técnica investigada. Converta o aprendizado em especificação independente e valide-o com documentação e testes próprios.
-- Se houver dúvida sobre compatibilidade de licença ou risco de obra derivada, interrompa o uso daquela referência na implementação e peça orientação a Carlos Costa.
+- Não faça tradução linha a linha nem reproduza estrutura expressiva de qualquer material de terceiros. Toda implementação do Aceris deve ser concebida independentemente e escrita em Rust, com arquitetura, interfaces, nomes e testes próprios.
+- Registre somente documentação pública independente e observações externas permitidas: título, URL, autoria, data, pergunta técnica, nível de confiança e testes próprios que sustentam a conclusão.
+- Se houver dúvida sobre a independência/procedência de uma fonte ou risco de obra derivada, interrompa a pesquisa e peça orientação a Carlos Costa.
 - Assets e recursos visuais/sonoros de terceiros continuam proibidos. Não adicione dependências que forneçam implementação ou recursos do produto sem autorização explícita do mantenedor.
 - Todo o produto, inclusive núcleo, interface e frontends, deve ser implementado em Rust.
 - Não inclua jogos, firmware, BIOS, chaves ou material protegido no repositório.
