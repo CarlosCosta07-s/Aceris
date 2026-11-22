@@ -1559,8 +1559,11 @@ mod tests {
     fn procedural_texture_lut_fifo_routes_all_tables_and_wraps_indices() {
         let mut gpu = Pica200::new();
 
-        gpu.write_register(REG_PROCTEX_LUT, (u32::from(PicaProceduralTextureLut::Noise as u8) << 8) | 127)
-            .unwrap();
+        gpu.write_register(
+            REG_PROCTEX_LUT,
+            (u32::from(PicaProceduralTextureLut::Noise as u8) << 8) | 127,
+        )
+        .unwrap();
         gpu.execute_command_list(&[
             0x1020_3040,
             command(REG_PROCTEX_LUT_DATA0, 0xF, true, 2),
@@ -1583,8 +1586,18 @@ mod tests {
         assert_eq!(gpu.register(REG_PROCTEX_LUT), Some(2));
 
         for (table, start, value, next) in [
-            (PicaProceduralTextureLut::RgbMapping, 127, 0x1111_1111, 0x0200),
-            (PicaProceduralTextureLut::AlphaMapping, 127, 0x2222_2222, 0x0300),
+            (
+                PicaProceduralTextureLut::RgbMapping,
+                127,
+                0x1111_1111,
+                0x0200,
+            ),
+            (
+                PicaProceduralTextureLut::AlphaMapping,
+                127,
+                0x2222_2222,
+                0x0300,
+            ),
             (PicaProceduralTextureLut::Color, 255, 0x3333_3333, 0x0400),
             (
                 PicaProceduralTextureLut::ColorDifference,
