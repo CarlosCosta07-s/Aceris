@@ -399,3 +399,10 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - `PicaProceduralTextureConfig::select_coordinates` resolves the decoded Texture0/1/2 source into one raw `[u, v]` pair from the three interpolated texture-coordinate pairs.
 - The helper returns that pair unchanged. Out-of-range finite values are not clamped or normalized, and a reserved selector returns `None`. Synthetic tests use distinct pairs and non-unit values to protect this raw routing contract.
 - This does not implement coordinate shifts, noise, wrapping, G/F evaluation, procedural LUT sampling, mip selection/filtering, or fragment-pipeline integration.
+
+### PROCTEX0 mapping-selector coverage and source discrepancy (22/11/2026)
+
+- A regression test now covers selector values 0–15 independently in the RGB and alpha nibbles, including the reserved encodings, and toggles the separate-alpha bit independently.
+- The register map explicitly lists selectors 0–9: nine equations plus Rmax. The procedural-pipeline overview separately describes G as having “one of six functions”. These descriptions are not reconciled by the public material consulted here; the implementation follows the explicit register table and leaves Rmax unsupported.
+- The test validates register decoding only. It does not establish how separate-alpha affects later consumption, choose LUT indices, generate noise, or validate texels on hardware.
+- Evidence: [PICA200 internal register map](https://docs.mikage.app/GPU/Internal_Registers/) and [procedural texture generation overview](https://docs.mikage.app/GPU/Procedural_Texture_Generation/).

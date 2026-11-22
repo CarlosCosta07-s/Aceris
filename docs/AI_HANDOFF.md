@@ -2150,3 +2150,10 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - `PicaProceduralTextureConfig::select_coordinates` resolve `coordinate_source` para o par U/V correspondente entre as três saídas de coordenadas interpoladas. Os pares são devolvidos sem alteração e seletores reservados retornam `None`.
 - Testes usam três pares deliberadamente diferentes, incluindo valores fora de [0,1], para comprovar que esse estágio apenas seleciona a origem e não aplica clamp, wrapping, shift ou normalização.
 - Isso prepara a entrada da unidade procedural, mas ainda não executa transformação de coordenadas, ruído, G/F, LUT, mipmap, filtragem ou amostragem, nem muda o comportamento da pipeline de fragmentos.
+
+### Cobertura dos seletores G em PROCTEX0 (22/11/2026)
+
+- Um teste de regressão percorre todos os 16 valores possíveis dos nibbles de função RGB e Alpha, cobrindo as nove fórmulas nomeadas, Rmax e seletores reservados.
+- Os seletores RGB e Alpha são exercitados com valores diferentes na mesma escrita, e o bit 14 (separar alpha) alterna independentemente. Isso valida somente a decodificação dos campos; não determina como o hardware consome o flag nem executa as LUTs.
+- A visão geral pública da geração procedural fala em seis funções G, enquanto a tabela de registradores lista seletores de 0 a 9 (nove expressões e Rmax). Mantemos os seletores explicitamente enumerados pelo mapa e Rmax sem fórmula, sem tentar reconciliar essa diferença com suposições.
+- Nenhuma mudança foi feita na pipeline: Texture Unit 3 continua recusada quando ativa.

@@ -2077,6 +2077,49 @@ mod tests {
     }
 
     #[test]
+    fn procedural_texture_config_decodes_all_rgb_and_alpha_mapping_selectors() {
+        let mut gpu = Pica200::new();
+        let decode_mapping = |selector: u8| match selector {
+            0 => PicaProceduralTextureMappingFunction::U,
+            1 => PicaProceduralTextureMappingFunction::USquared,
+            2 => PicaProceduralTextureMappingFunction::V,
+            3 => PicaProceduralTextureMappingFunction::VSquared,
+            4 => PicaProceduralTextureMappingFunction::Average,
+            5 => PicaProceduralTextureMappingFunction::SquaredAverage,
+            6 => PicaProceduralTextureMappingFunction::RadialDistance,
+            7 => PicaProceduralTextureMappingFunction::Minimum,
+            8 => PicaProceduralTextureMappingFunction::Maximum,
+            9 => PicaProceduralTextureMappingFunction::Rmax,
+            other => PicaProceduralTextureMappingFunction::Reserved(other),
+        };
+
+        for rgb_selector in 0_u8..=15 {
+            let alpha_selector = 15 - rgb_selector;
+            let separate_alpha = rgb_selector & 1 != 0;
+            let separate_alpha_bit = if separate_alpha { 1 << 14 } else { 0 };
+            let proctex0 = (u32::from(rgb_selector) << 6)
+                | (u32::from(alpha_selector) << 10)
+                | separate_alpha_bit;
+
+            gpu.write_register(REG_TEXUNIT3_PROCTEX0, proctex0)
+                .unwrap();
+
+            let config = gpu.procedural_texture_config();
+            assert_eq!(
+                config.rgb_mapping_function,
+                decode_mapping(rgb_selector),
+                "RGB selector {rgb_selector}"
+            );
+            assert_eq!(
+                config.alpha_mapping_function,
+                decode_mapping(alpha_selector),
+                "alpha selector {alpha_selector}"
+            );
+            assert_eq!(config.separate_alpha, separate_alpha);
+        }
+    }
+
+    #[test]
     fn procedural_texture_config_decodes_coordinate_source_selector() {
         let mut gpu = Pica200::new();
         let selectors = [
