@@ -350,3 +350,9 @@ A interpretação é sustentada pelas descrições públicas de parâmetros sepa
 > **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
 
 A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Windows, macOS e Android ARM64 concluídos com sucesso. A validação real ainda é limitada ao homebrew Cookie Clicker, que chega à própria tela de erro por falha na inicialização do módulo Sound. Nenhuma conclusão transforma serviços HLE ou GPU em compatibilidade comprovada de jogos.
+
+## PICA200 procedural texture unit — register evidence (22/11/2026)
+
+- The public register map documents `GPUREG_TEXUNIT_CONFIG` bit 10 as the procedural unit enable and bits 8–9 as its coordinate-set selector. `PROCTEX0..5` configure wrapping, RGB/alpha mapping, noise parameters, LOD/width and mip offsets; `PROCTEX_LUT` selects one of five LUT types and a starting index, and `PROCTEX_LUT_DATA0..7` are FIFO aliases.
+- The tables documented by the register map are 128-entry noise/RGB-map/alpha-map tables and 256-entry color/color-difference tables. The implementation in this step models only their guest-side FIFO storage and index advancement; it does not claim correct texel generation or sampling.
+- Public references: [PICA200 internal register map](https://docs.mikage.app/GPU/Internal_Registers/) and [procedural texture pipeline overview](https://docs.mikage.app/GPU/Procedural_Texture_Generation/). The latter explicitly notes that little is known about the noise module; the observed four-stage model is Noise → Repeat → Base Shape G(u,v) → F(g)/color lookup. No other emulator source code was used.

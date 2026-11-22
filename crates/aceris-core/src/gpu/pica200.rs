@@ -73,6 +73,50 @@ pub const REG_GAS_LUT_INDEX: u16 = 0x123;
 pub const REG_GAS_LUT_DATA: u16 = 0x124;
 /// Number of entries in the PICA200 gas color lookup table.
 pub const GAS_LUT_ENTRY_COUNT: usize = 16;
+/// GPUREG_TEXUNIT3_PROCTEX0..5: procedural texture configuration registers.
+pub const REG_TEXUNIT3_PROCTEX0: u16 = 0x0A8;
+pub const REG_TEXUNIT3_PROCTEX1: u16 = 0x0A9;
+pub const REG_TEXUNIT3_PROCTEX2: u16 = 0x0AA;
+pub const REG_TEXUNIT3_PROCTEX3: u16 = 0x0AB;
+pub const REG_TEXUNIT3_PROCTEX4: u16 = 0x0AC;
+pub const REG_TEXUNIT3_PROCTEX5: u16 = 0x0AD;
+/// GPUREG_PROCTEX_LUT selects a procedural texture table and starting index.
+pub const REG_PROCTEX_LUT: u16 = 0x0AF;
+/// First of eight FIFO aliases used to upload procedural texture LUT entries.
+pub const REG_PROCTEX_LUT_DATA0: u16 = 0x0B0;
+/// Number of procedural texture LUT FIFO aliases.
+pub const PROCTEX_LUT_DATA_REGISTER_COUNT: u16 = 8;
+
+/// A PICA200 procedural-texture lookup table selected by GPUREG_PROCTEX_LUT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PicaProceduralTextureLut {
+    Noise = 0,
+    RgbMapping = 2,
+    AlphaMapping = 3,
+    Color = 4,
+    ColorDifference = 5,
+}
+
+impl PicaProceduralTextureLut {
+    const fn entry_count(self) -> usize {
+        match self {
+            Self::Noise | Self::RgbMapping | Self::AlphaMapping => 128,
+            Self::Color | Self::ColorDifference => 256,
+        }
+    }
+
+    const fn from_selector(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Noise),
+            2 => Some(Self::RgbMapping),
+            3 => Some(Self::AlphaMapping),
+            4 => Some(Self::Color),
+            5 => Some(Self::ColorDifference),
+            _ => None,
+        }
+    }
+}
 /// GPUREG_GAS_ATTENUATION: float1.5.10 raw density attenuation.
 pub const REG_GAS_ATTENUATION: u16 = 0x0E4;
 /// GPUREG_GAS_ACCMAX: float1.5.10 raw maximum accumulated density.
@@ -366,6 +410,11 @@ pub struct Pica200 {
     fog_lut: [u32; FOG_LUT_ENTRY_COUNT],
     /// Raw 24-bit RGB gas LUT entries; gas rendering is not implemented yet.
     gas_lut: [u32; GAS_LUT_ENTRY_COUNT],
+    /// Uploaded procedural noise, RGB-map and alpha-map tables (128 entries each).
+    procedural_texture_map_luts: [[u32; 128]; 3],
+    /// Uploaded procedural color and color-difference tables (256 entries each).
+    procedural_texture_color_lut: [u32; 256],
+    procedural_texture_color_difference_lut: [u32; 256],
     gas_accmax_feedback_max: u16,
     /// High-half value exposed to the guest; refreshed only after a gas fragment.
     gas_accmax_feedback_readback: u16,
@@ -392,6 +441,9 @@ impl Default for Pica200 {
             registers: [0; REGISTER_COUNT],
             fog_lut: [0; FOG_LUT_ENTRY_COUNT],
             gas_lut: [0; GAS_LUT_ENTRY_COUNT],
+            procedural_texture_map_luts: [[0; 128]; 3],
+            procedural_texture_color_lut: [0; 256],
+            procedural_texture_color_difference_lut: [0; 256],
             gas_accmax_feedback_max: 0,
             gas_accmax_feedback_readback: 0,
             fixed_attributes: [[0; 3]; FIXED_ATTRIBUTE_COUNT],
@@ -434,6 +486,31 @@ impl Pica200 {
     /// This exposes table storage only; fragment gas shading is not modeled yet.
     pub fn gas_lut_entry(&self, index: usize) -> Option<u32> {
         self.gas_lut.get(index).copied()
+    }
+
+    /// Reads one uploaded procedural-texture LUT word.
+    ///
+    /// The entry is returned in its raw guest register representation. The
+    /// procedural sampling/evaluation stage is separate and is not implied by
+    /// exposing this storage.
+    pub fn procedural_texture_lut_entry(
+        &self,
+        table: PicaProceduralTextureLut,
+        index: usize,
+    ) -> Option<u32> {
+        if index >= table.entry_count() {
+            return None;
+        }
+
+        Some(match table {
+            PicaProceduralTextureLut::Noise => self.procedural_texture_map_luts[0][index],
+            PicaProceduralTextureLut::RgbMapping => self.procedural_texture_map_luts[1][index],
+            PicaProceduralTextureLut::AlphaMapping => self.procedural_texture_map_luts[2][index],
+            PicaProceduralTextureLut::Color => self.procedural_texture_color_lut[index],
+            PicaProceduralTextureLut::ColorDifference => {
+                self.procedural_texture_color_difference_lut[index]
+            }
+        })
     }
 
     /// Decodes one gas LUT entry into signed or unsigned RGB channel values.
@@ -815,6 +892,45 @@ impl Pica200 {
             let index = (self.registers[index_register] as usize) % GAS_LUT_ENTRY_COUNT;
             self.gas_lut[index] = self.registers[usize::from(REG_GAS_LUT_DATA)] & 0x00FF_FFFF;
             self.registers[index_register] = ((index + 1) % GAS_LUT_ENTRY_COUNT) as u32;
+            return;
+        }
+
+        if id == REG_PROCTEX_LUT {
+            self.registers[usize::from(REG_PROCTEX_LUT)] &= 0x0FFF;
+            return;
+        }
+
+        let proctex_data_end = REG_PROCTEX_LUT_DATA0 + PROCTEX_LUT_DATA_REGISTER_COUNT - 1;
+        if (REG_PROCTEX_LUT_DATA0..=proctex_data_end).contains(&id) {
+            let selector_index = usize::from(REG_PROCTEX_LUT);
+            let selector = self.registers[selector_index] & 0x0FFF;
+            let table_selector = (selector >> 8) & 0xF;
+            let Some(table) = PicaProceduralTextureLut::from_selector(table_selector) else {
+                return;
+            };
+
+            let index = (selector as usize & 0xFF) % table.entry_count();
+            let value = self.registers[usize::from(id)];
+            match table {
+                PicaProceduralTextureLut::Noise => {
+                    self.procedural_texture_map_luts[0][index] = value;
+                }
+                PicaProceduralTextureLut::RgbMapping => {
+                    self.procedural_texture_map_luts[1][index] = value;
+                }
+                PicaProceduralTextureLut::AlphaMapping => {
+                    self.procedural_texture_map_luts[2][index] = value;
+                }
+                PicaProceduralTextureLut::Color => {
+                    self.procedural_texture_color_lut[index] = value;
+                }
+                PicaProceduralTextureLut::ColorDifference => {
+                    self.procedural_texture_color_difference_lut[index] = value;
+                }
+            }
+
+            let next_index = (index + 1) % table.entry_count();
+            self.registers[selector_index] = (table_selector << 8) | next_index as u32;
         }
     }
 
@@ -1132,6 +1248,9 @@ impl Pica200 {
         self.registers.fill(0);
         self.fog_lut.fill(0);
         self.gas_lut.fill(0);
+        self.procedural_texture_map_luts.fill([0; 128]);
+        self.procedural_texture_color_lut.fill(0);
+        self.procedural_texture_color_difference_lut.fill(0);
         self.gas_accmax_feedback_max = 0;
         self.gas_accmax_feedback_readback = 0;
         self.fixed_attributes.fill([0; 3]);
@@ -1436,6 +1555,90 @@ mod tests {
         assert_eq!(gpu.register(REG_FOG_LUT_INDEX), Some(2));
     }
 
+    #[test]
+    fn procedural_texture_lut_fifo_routes_all_tables_and_wraps_indices() {
+        let mut gpu = Pica200::new();
+
+        gpu.write_register(REG_PROCTEX_LUT, (u32::from(PicaProceduralTextureLut::Noise as u8) << 8) | 127)
+            .unwrap();
+        gpu.execute_command_list(&[
+            0x1020_3040,
+            command(REG_PROCTEX_LUT_DATA0, 0xF, true, 2),
+            0x5060_7080,
+            0x90A0_B0C0,
+        ])
+        .unwrap();
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Noise, 127),
+            Some(0x1020_3040)
+        );
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Noise, 0),
+            Some(0x5060_7080)
+        );
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Noise, 1),
+            Some(0x90A0_B0C0)
+        );
+        assert_eq!(gpu.register(REG_PROCTEX_LUT), Some(2));
+
+        for (table, start, value, next) in [
+            (PicaProceduralTextureLut::RgbMapping, 127, 0x1111_1111, 0x0200),
+            (PicaProceduralTextureLut::AlphaMapping, 127, 0x2222_2222, 0x0300),
+            (PicaProceduralTextureLut::Color, 255, 0x3333_3333, 0x0400),
+            (
+                PicaProceduralTextureLut::ColorDifference,
+                255,
+                0x4444_4444,
+                0x0500,
+            ),
+        ] {
+            gpu.write_register(REG_PROCTEX_LUT, ((table as u32) << 8) | start)
+                .unwrap();
+            gpu.write_register(REG_PROCTEX_LUT_DATA0, value).unwrap();
+            assert_eq!(
+                gpu.procedural_texture_lut_entry(table, start as usize),
+                Some(value)
+            );
+            assert_eq!(gpu.register(REG_PROCTEX_LUT), Some(next));
+        }
+
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Noise, 128),
+            None
+        );
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Color, 256),
+            None
+        );
+    }
+
+    #[test]
+    fn procedural_texture_lut_ignores_reserved_table_ids_and_reset_clears_tables() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_PROCTEX_LUT, 0x0105).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0xDEAD_BEEF)
+            .unwrap();
+        assert_eq!(gpu.register(REG_PROCTEX_LUT), Some(0x0105));
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Noise, 5),
+            Some(0)
+        );
+
+        gpu.write_register(REG_PROCTEX_LUT, 0x04FF).unwrap();
+        gpu.write_register(REG_PROCTEX_LUT_DATA0, 0xAABB_CCDD)
+            .unwrap();
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Color, 255),
+            Some(0xAABB_CCDD)
+        );
+        gpu.reset();
+        assert_eq!(gpu.register(REG_PROCTEX_LUT), Some(0));
+        assert_eq!(
+            gpu.procedural_texture_lut_entry(PicaProceduralTextureLut::Color, 255),
+            Some(0)
+        );
+    }
     #[test]
     fn gas_lut_fifo_uploads_repeated_data_port_and_wraps_at_16_entries() {
         let mut gpu = Pica200::new();
