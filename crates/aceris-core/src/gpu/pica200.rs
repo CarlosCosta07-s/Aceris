@@ -145,6 +145,33 @@ pub enum PicaProceduralTextureMappingFunction {
     Reserved(u8),
 }
 
+impl PicaProceduralTextureMappingFunction {
+    /// Evaluates the documented G(u, v) base-shape equation before F(g) and
+    /// the color lookup table.
+    ///
+    /// Coordinates are passed through unchanged: this helper does not apply
+    /// noise, wrapping, shifts, normalization, or output clamping. Rmax is
+    /// deliberately unsupported until its equation is independently verified.
+    pub fn evaluate_raw(self, u: f32, v: f32) -> Option<f32> {
+        if !u.is_finite() || !v.is_finite() {
+            return None;
+        }
+
+        Some(match self {
+            Self::U => u,
+            Self::USquared => u * u,
+            Self::V => v,
+            Self::VSquared => v * v,
+            Self::Average => (u + v) * 0.5,
+            Self::SquaredAverage => (u * u + v * v) * 0.5,
+            Self::RadialDistance => (u * u + v * v).sqrt(),
+            Self::Minimum => u.min(v),
+            Self::Maximum => u.max(v),
+            Self::Rmax | Self::Reserved(_) => return None,
+        })
+    }
+}
+
 /// Odd/even coordinate shifts applied by the procedural texture unit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaProceduralTextureShift {
@@ -2048,6 +2075,50 @@ mod tests {
         );
         assert_eq!(gpu.interpolate_procedural_texture_color(15, -0.1), None);
         assert_eq!(gpu.interpolate_procedural_texture_color(256, 0.5), None);
+    }
+    #[test]
+    fn procedural_texture_mapping_functions_evaluate_documented_g_equations() {
+        let u = 0.25_f32;
+        let v = 0.5_f32;
+        let cases = [
+            (PicaProceduralTextureMappingFunction::U, 0.25),
+            (PicaProceduralTextureMappingFunction::USquared, 0.0625),
+            (PicaProceduralTextureMappingFunction::V, 0.5),
+            (PicaProceduralTextureMappingFunction::VSquared, 0.25),
+            (PicaProceduralTextureMappingFunction::Average, 0.375),
+            (PicaProceduralTextureMappingFunction::SquaredAverage, 0.15625),
+            (
+                PicaProceduralTextureMappingFunction::RadialDistance,
+                0.3125_f32.sqrt(),
+            ),
+            (PicaProceduralTextureMappingFunction::Minimum, 0.25),
+            (PicaProceduralTextureMappingFunction::Maximum, 0.5),
+        ];
+
+        for (function, expected) in cases {
+            let actual = function.evaluate_raw(u, v).unwrap();
+            assert!(
+                (actual - expected).abs() < 0.000_001,
+                "{function:?}: expected {expected}, got {actual}"
+            );
+        }
+
+        assert_eq!(
+            PicaProceduralTextureMappingFunction::Rmax.evaluate_raw(u, v),
+            None
+        );
+        assert_eq!(
+            PicaProceduralTextureMappingFunction::Reserved(10).evaluate_raw(u, v),
+            None
+        );
+        assert_eq!(
+            PicaProceduralTextureMappingFunction::U.evaluate_raw(f32::NAN, v),
+            None
+        );
+        assert_eq!(
+            PicaProceduralTextureMappingFunction::V.evaluate_raw(u, f32::INFINITY),
+            None
+        );
     }
     #[test]
     fn gas_lut_fifo_uploads_repeated_data_port_and_wraps_at_16_entries() {

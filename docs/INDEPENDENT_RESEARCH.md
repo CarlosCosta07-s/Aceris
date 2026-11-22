@@ -368,3 +368,9 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - The public register map describes noise/RGB/alpha LUT entries as an unsigned fixed0.0.12 value plus a two's-complement 12-bit difference, where the unsigned upper half maps to [-1, 0). It describes color-difference channels as signed half-differences between adjacent RGBA entries.
 - The implementation interpolates a selected curve entry as `value/4096 + signed_delta/2048 * fraction`, and a color channel as `current + 2*signed_half_delta*fraction`. It returns floating-point channels without applying unverified rounding/saturation.
 - These formulas cover interpolation after an entry/index has already been selected. They do not assert the coordinate-to-segment mapping, full F(g) behavior, or noise generator.
+
+### G(u,v) equation helper (22/11/2026)
+
+- Public register docs enumerate U, U², V, V², (U+V)/2, (U²+V²)/2, sqrt(U²+V²), min(U,V), max(U,V) and Rmax mapping selectors. The CEDEC 2012 DMP presentation summary says G produces basic shapes such as horizontal/vertical lines, circles and squares.
+- The code implements the nine explicit equations as a pure raw helper, with no coordinate-domain assumptions, noise/wrapping, F(g), or clamping. Rmax remains unsupported because a reliable equation is not published in the consulted sources.
+- Evidence: [PICA200 register map](https://docs.mikage.app/GPU/Internal_Registers/) and [4Gamer's CEDEC 2012 report, based on DMP's session](https://www.4gamer.net/games/017/G001762/20120822007/).

@@ -2119,3 +2119,9 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - `PicaProceduralTextureCurveEntry::sample_linear` calcula `value / 4096 + (signed_difference / 2048) * fraction`, usando o mapeamento two's-complement documentado para os campos de diferença de 12 bits. Frações fora de [0, 1] e NaN são rejeitadas.
 - `Pica200::interpolate_procedural_texture_color` aplica o dobro do delta signed-8 (a tabela armazena metade da diferença entre a cor atual e a próxima) e devolve canais em ponto flutuante no domínio de bytes, sem adivinhar arredondamento ou saturação final.
 - Testes cobrem fração 0, 0.5 e 1, diferenças negativas e parâmetros inválidos. Isso implementa apenas a interpolação de uma entrada já selecionada; ainda falta confirmar como coordenadas e funções escolhem os segmentos e como a saída alimenta a cor final.
+
+### Avaliação isolada das funções G(u,v) documentadas (22/11/2026)
+
+- `PicaProceduralTextureMappingFunction::evaluate_raw(u, v)` agora calcula os nove seletores com fórmula pública explícita: U, U², V, V², (U+V)/2, (U²+V²)/2, sqrt(U²+V²), min(U,V) e max(U,V). A função recebe coordenadas como foram fornecidas e não aplica ruído, wrapping, shifts, normalização, F(g) nem saturação.
+- `Rmax` e valores reservados retornam `None`, pois o nome aparece no mapa de registradores mas a equação não foi confirmada. Entradas não finitas também são recusadas.
+- Os testes verificam os nove resultados com U=0.25 e V=0.5, além de Rmax, seletores reservados, NaN e infinito. Isso é um helper matemático independente e não ativa Texture Unit 3 na pipeline de fragmentos.
