@@ -2101,8 +2101,7 @@ mod tests {
                 | (u32::from(alpha_selector) << 10)
                 | separate_alpha_bit;
 
-            gpu.write_register(REG_TEXUNIT3_PROCTEX0, proctex0)
-                .unwrap();
+            gpu.write_register(REG_TEXUNIT3_PROCTEX0, proctex0).unwrap();
 
             let config = gpu.procedural_texture_config();
             assert_eq!(
