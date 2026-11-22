@@ -2086,7 +2086,10 @@ mod tests {
             (PicaProceduralTextureMappingFunction::V, 0.5),
             (PicaProceduralTextureMappingFunction::VSquared, 0.25),
             (PicaProceduralTextureMappingFunction::Average, 0.375),
-            (PicaProceduralTextureMappingFunction::SquaredAverage, 0.15625),
+            (
+                PicaProceduralTextureMappingFunction::SquaredAverage,
+                0.15625,
+            ),
             (
                 PicaProceduralTextureMappingFunction::RadialDistance,
                 0.3125_f32.sqrt(),
