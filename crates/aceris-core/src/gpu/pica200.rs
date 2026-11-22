@@ -7,6 +7,7 @@
 use std::fmt;
 
 use super::DepthFunction;
+use super::texture::REG_TEXUNIT_CONFIG;
 use super::draw::{
     MAX_PENDING_DRAW_REQUESTS, PicaCommandListRunError, PicaDrawKind, PicaDrawRequest,
     REG_DRAWARRAYS, REG_DRAWELEMENTS,
@@ -129,8 +130,19 @@ pub enum PicaProceduralTextureClamp {
     Reserved(u8),
 }
 
-/// Coordinate-to-scalar functions selected independently for RGB and alpha.
+/// Texture-coordinate set routed to procedural texture unit 3.
+///
+/// GPUREG_TEXUNIT_CONFIG values 0, 1 and 2 select texture coordinates 0, 1 and 2.
+/// Reserved selector values are retained instead of being redirected silently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaProceduralTextureCoordinateSource {
+    Texture0,
+    Texture1,
+    Texture2,
+    Reserved(u8),
+}
+
+/// Coordinate-to-scalar functions selected independently for RGB and alpha.#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaProceduralTextureMappingFunction {
     U,
     USquared,
@@ -234,6 +246,8 @@ pub enum PicaProceduralTextureFilter {
 /// representation. This type does not claim to implement noise generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PicaProceduralTextureConfig {
+    /// Which ordinary texture-coordinate pair supplies U/V to unit 3.
+    pub coordinate_source: PicaProceduralTextureCoordinateSource,
     pub u_clamp: PicaProceduralTextureClamp,
     pub v_clamp: PicaProceduralTextureClamp,
     pub rgb_mapping_function: PicaProceduralTextureMappingFunction,
@@ -764,6 +778,7 @@ impl Pica200 {
     /// Numeric noise/bias fields stay raw because their fixed/float conversion
     /// and hardware rounding have not been independently verified.
     pub fn procedural_texture_config(&self) -> PicaProceduralTextureConfig {
+        let texture_config = self.register(REG_TEXUNIT_CONFIG).unwrap_or(0);
         let proctex0 = self.register(REG_TEXUNIT3_PROCTEX0).unwrap_or(0);
         let proctex1 = self.register(REG_TEXUNIT3_PROCTEX1).unwrap_or(0);
         let proctex2 = self.register(REG_TEXUNIT3_PROCTEX2).unwrap_or(0);
@@ -771,8 +786,13 @@ impl Pica200 {
         let proctex4 = self.register(REG_TEXUNIT3_PROCTEX4).unwrap_or(0);
         let proctex5 = self.register(REG_TEXUNIT3_PROCTEX5).unwrap_or(0);
 
-        let decode_clamp = |value: u8| match value {
-            0 => PicaProceduralTextureClamp::ClampToZero,
+        let decode_coordinate_source = |value: u8| match value {
+            0 => PicaProceduralTextureCoordinateSource::Texture0,
+            1 => PicaProceduralTextureCoordinateSource::Texture1,
+            2 => PicaProceduralTextureCoordinateSource::Texture2,
+            other => PicaProceduralTextureCoordinateSource::Reserved(other),
+        };
+        let decode_clamp = |value: u8| match value {            0 => PicaProceduralTextureClamp::ClampToZero,
             1 => PicaProceduralTextureClamp::ClampToEdge,
             2 => PicaProceduralTextureClamp::SymmetricalRepeat,
             3 => PicaProceduralTextureClamp::MirroredRepeat,
@@ -809,6 +829,7 @@ impl Pica200 {
         };
 
         PicaProceduralTextureConfig {
+            coordinate_source: decode_coordinate_source(((texture_config >> 8) & 0x3) as u8),
             u_clamp: decode_clamp((proctex0 & 0x7) as u8),
             v_clamp: decode_clamp(((proctex0 >> 3) & 0x7) as u8),
             rgb_mapping_function: decode_mapping(((proctex0 >> 6) & 0xF) as u8),
@@ -2035,6 +2056,23 @@ mod tests {
         assert_eq!(config.texture_width, 200);
         assert_eq!(config.texture_bias_upper, 0x5A);
         assert_eq!(config.mip_offsets, [0x40, 0x80, 0xC0, 0xE0]);
+    }
+
+    #[test]
+    fn procedural_texture_config_decodes_coordinate_source_selector() {
+        let mut gpu = Pica200::new();
+        let selectors = [
+            PicaProceduralTextureCoordinateSource::Texture0,
+            PicaProceduralTextureCoordinateSource::Texture1,
+            PicaProceduralTextureCoordinateSource::Texture2,
+            PicaProceduralTextureCoordinateSource::Reserved(3),
+        ];
+
+        for (selector, expected) in selectors.into_iter().enumerate() {
+            gpu.write_register(REG_TEXUNIT_CONFIG, (selector as u32) << 8)
+                .unwrap();
+            assert_eq!(gpu.procedural_texture_config().coordinate_source, expected);
+        }
     }
 
     #[test]

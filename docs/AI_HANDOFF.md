@@ -2138,3 +2138,9 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - PicaProceduralTextureMappingFunction::evaluate_raw agora verifica também o resultado da equação. Coordenadas finitas podem gerar infinito por overflow em U², média, média dos quadrados ou distância radial; esses resultados passam a retornar None em vez de contaminar etapas posteriores.
 - Testes cobrem overflow em quatro funções e confirmam que um resultado finito fora de [0,1] continua sendo devolvido sem clamp, preservando o contrato raw.
 - Nenhuma fórmula de wrapping, Pulse, Rmax, ruído ou seleção de índice foi inferida nesta alteração. A unidade procedural permanece recusada na pipeline até haver especificação suficiente para produzir texels confiáveis.
+
+### Roteamento de coordenadas da unidade procedural (22/11/2026)
+
+- PicaProceduralTextureConfig agora inclui coordinate_source, decodificado de GPUREG_TEXUNIT_CONFIG bits 8–9: 0 = Texture0, 1 = Texture1, 2 = Texture2. O valor 3 é preservado como Reserved(3), sem fallback.
+- PicaProceduralTextureCoordinateSource é exportado pelo módulo GPU. Testes cobrem os três seletores válidos e o seletor reservado.
+- Esse campo apenas registra qual par de coordenadas guest deve alimentar a unidade 3. O renderizador ainda rejeita a unidade procedural ativa; não há ruído, repeat, seleção das LUTs, mipmapping ou amostragem conectados.

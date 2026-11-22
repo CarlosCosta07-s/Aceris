@@ -387,3 +387,9 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - O contrato de evaluate_raw aceita coordenadas finitas e devolve a avaliação matemática não normalizada. Mesmo sem entradas NaN/inf, operações como U², (U+V)/2, (U²+V²)/2 e sqrt(U²+V²) podem transbordar para valores não finitos em f32.
 - O helper foi endurecido para retornar None quando o resultado calculado não é finito. Testes de regressão cobrem os quatro caminhos de overflow e preservam um resultado finito fora de [0,1] para confirmar que não foi introduzido clamp implícito.
 - As fontes consultadas continuam limitadas às equações G publicadas. A documentação de registradores lista Rmax e cinco modos de clamp, mas não define as equações para Rmax/Pulse nem as regras completas de wrapping; esses modos não foram implementados por aproximação.
+
+### Procedural texture coordinate routing (22/11/2026)
+
+- The public GPUREG_TEXUNIT_CONFIG register table defines bits 8–9 as the coordinate source for texture unit 3: selector 0 routes Texture 0 coordinates, selector 1 routes Texture 1 coordinates, and selector 2 routes Texture 2 coordinates. Selector 3 is not listed as valid.
+- Aceris now decodes this selector into PicaProceduralTextureCoordinateSource and preserves selector 3 as Reserved(3). Tests cover all four encodings. No coordinate transformation or fragment sampling is implied by the snapshot.
+- Evidence: [3dbrew PICA200 internal register map](https://3dbrew.org/wiki/GPU/Internal_Registers) and [Mikage PICA200 internal register map](https://docs.mikage.app/GPU/Internal_Registers/).
