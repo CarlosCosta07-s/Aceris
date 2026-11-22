@@ -2157,3 +2157,12 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - Os seletores RGB e Alpha são exercitados com valores diferentes na mesma escrita, e o bit 14 (separar alpha) alterna independentemente. Isso valida somente a decodificação dos campos; não determina como o hardware consome o flag nem executa as LUTs.
 - A visão geral pública da geração procedural fala em seis funções G, enquanto a tabela de registradores lista seletores de 0 a 9 (nove expressões e Rmax). Mantemos os seletores explicitamente enumerados pelo mapa e Rmax sem fórmula, sem tentar reconciliar essa diferença com suposições.
 - Nenhuma mudança foi feita na pipeline: Texture Unit 3 continua recusada quando ativa.
+## Serviços pedidos pelo Cookie Clicker: am:u, cfg:i/s, APT e FS (22/11/2026, Claude)
+
+- Fontes: somente 3dbrew/enum público do libctru recordados de memória + o que o próprio jogo envia (trace); nenhum código de outro emulador foi consultado. NADA disto foi verificado em hardware.
+- `cfg:i` e `cfg:s` agora abrem sessão e usam o mesmo conjunto de comandos do `cfg:u` (as variantes reais têm mais comandos; os extras continuam não modelados).
+- `am:u` abre sessão (`StubKind::Am`); nenhum comando de gerenciamento de títulos é modelado e qualquer um é registrado em `unhandled_requests()` (`am:u command 0x…`).
+- APT `0x01020000` (CheckNew3DS) responde "não é New 3DS" (coerente com a página de configuração Old 3DS). APT `0x004B00C2` (AppletUtility) responde sucesso sem tocar no buffer de saída: os utility ids (o jogo usa 7 e 4) não estão documentados o bastante para modelar; se algum jogo depender da saída, isto precisará mudar.
+- FS `0x080D0144` (ControlArchive): ação 0 (commit) só confirma, pois arquivos do host são gravados na hora; ação 1 (timestamp) preenche o buffer de saída com zeros (timestamp real não modelado); ação 2 e demais confirmam. O handle do arquivo não é validado.
+- Testes: `cfg_variants_and_am_open_and_unmodelled_am_commands_are_recorded` e `apt_answers_check_new_3ds_and_applet_utility_and_fs_control_archive_writes_timestamp`.
+- O relatório do Cookie Clicker agora só lista `http:C`, `ir:rst` e `ssl:C` (aparentemente só sondados por `httpcInit`/`irrstInit`/`sslcInit`; sem comandos pedidos até 20 quadros).

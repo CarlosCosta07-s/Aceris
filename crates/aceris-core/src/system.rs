@@ -200,12 +200,13 @@ const RESULT_SRV_SERVICE_NOT_REGISTERED: u32 = 0xD8E0_6406;
 /// Result for a command a stub service does not implement (public tables; unverified).
 const RESULT_INVALID_COMMAND: u32 = 0xD900_182F;
 /// Minimal HLE services: name and how their commands are answered.
-const STUB_SERVICES: [(&str, StubKind); 5] = [
+const STUB_SERVICES: [(&str, StubKind); 6] = [
     ("gsp::Lcd", StubKind::AlwaysOk),
     ("ndm:u", StubKind::AlwaysOk),
     ("ptm:sysm", StubKind::AlwaysOk),
     ("ac:u", StubKind::Ac),
     ("frd:u", StubKind::Frd),
+    ("am:u", StubKind::Am),
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -216,6 +217,9 @@ enum StubKind {
     Ac,
     /// `frd:u`: not logged in, offline.
     Frd,
+    /// `am:u`: the session opens (libctru `amInit`), but no title-management
+    /// command is modelled; real requests are recorded as unimplemented.
+    Am,
 }
 
 const RESULT_GSP_RENDERING_RIGHT_BUSY: u32 = 0xC840_2BF0;
@@ -1375,7 +1379,7 @@ impl System {
                 let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
                 let hle_kind = match requested_name.get(..name_length) {
                     Some(b"hid:USER") => Some(ServiceSessionKind::Hid),
-                    Some(b"cfg:u") => Some(ServiceSessionKind::Cfg),
+                    Some(b"cfg:u" | b"cfg:i" | b"cfg:s") => Some(ServiceSessionKind::Cfg),
                     // The retail names are upper case; "apt:U" is kept for older tests.
                     Some(b"APT:U" | b"APT:S" | b"APT:A" | b"apt:U") => {
                         Some(ServiceSessionKind::Apt)
@@ -1451,6 +1455,7 @@ impl System {
         const RENAME_DIRECTORY: u32 = 0x080A_0244;
         const OPEN_DIRECTORY: u32 = 0x080B_0102;
         const OPEN_ARCHIVE: u32 = 0x080C_00C2;
+        const CONTROL_ARCHIVE: u32 = 0x080D_0144;
         const CLOSE_ARCHIVE: u32 = 0x080E_0080;
         const IS_SDMC_DETECTED: u32 = 0x0817_0000;
         const IS_SDMC_WRITABLE: u32 = 0x0818_0000;
@@ -1482,6 +1487,37 @@ impl System {
         let storage_error = |error: StorageError| reply_error(fs_storage_result(&error));
         match raw_header {
             INITIALIZE | INITIALIZE_WITH_SDK_VERSION => Ok(ok),
+            // ControlArchive(handle: u64, action, input size, output size, input
+            // buffer, output buffer). Actions follow libctru's public enum:
+            // 0 commit save data, 1 get timestamp, 2 unknown. Host files are
+            // written immediately, so commit has nothing to flush; the
+            // timestamp is reported as zero (not modelled).
+            CONTROL_ARCHIVE => {
+                let action = param(2);
+                if action == 1 {
+                    let output = message.translation_parameters().ok().and_then(|translations| {
+                        translations.iter().rev().find_map(|parameter| match parameter {
+                            crate::loader::ncsd::session::ipc::IpcTranslationParameter::MappedBuffer {
+                                size_bytes,
+                                source_address,
+                                ..
+                            } => Some((*size_bytes as usize, *source_address)),
+                            _ => None,
+                        })
+                    });
+                    if let Some((size, address)) = output {
+                        let zeros = vec![0u8; size.min(8)];
+                        if let Some(session) = self.ncsd_session.as_mut() {
+                            if !zeros.is_empty()
+                                && session.write_memory_bytes(address, &zeros).is_err()
+                            {
+                                return Ok(reply_error(RESULT_INVALID_ADDRESS));
+                            }
+                        }
+                    }
+                }
+                Ok(vec![command | 0x40, 0])
+            }
             IS_SDMC_DETECTED | IS_SDMC_WRITABLE => {
                 Ok(vec![command | 0x80, 0, u32::from(self.storage.is_some())])
             }
@@ -1933,6 +1969,7 @@ impl System {
                 0x0D => Some(vec![command | 0x80, 0, 0]), // GetWifiStatus: not connected
                 _ => None,
             },
+            StubKind::Am => None,
             StubKind::Frd => match command >> 16 {
                 0x01 | 0x02 => Some(vec![command | 0x80, 0, 0]), // HasLoggedIn / IsOnline
                 _ => None,
@@ -2369,6 +2406,8 @@ impl System {
         const RECEIVE_PARAMETER: u32 = 0x000D_0080;
         const GLANCE_PARAMETER: u32 = 0x000E_0080;
         const NOTIFY_TO_WAIT: u32 = 0x0043_0040;
+        const APPLET_UTILITY: u32 = 0x004B_00C2;
+        const CHECK_NEW_3DS: u32 = 0x0102_0000;
         const SET_APPLICATION_CPU_TIME_LIMIT: u32 = 0x004F_0080;
         const GET_APPLICATION_CPU_TIME_LIMIT: u32 = 0x0050_0040;
 
@@ -2512,6 +2551,12 @@ impl System {
                 ])
             }
             NOTIFY_TO_WAIT => Ok(vec![0x0043_0040, 0]),
+            // AppletUtility(utility id, input size, output size, input buffer):
+            // the utility ids are not documented well enough to model, so the
+            // call succeeds and the output buffer is left untouched.
+            APPLET_UTILITY => Ok(vec![0x004B_0040, 0]),
+            // CheckNew3DS: this HLE presents an Old 3DS (see config memory).
+            CHECK_NEW_3DS => Ok(vec![0x0102_0080, 0, 0]),
             SET_APPLICATION_CPU_TIME_LIMIT => {
                 let apt = self.apt.as_mut().expect("apt state exists");
                 apt.cpu_time_limit = message.normal_parameters().get(1).copied().unwrap_or(0);
@@ -10470,6 +10515,114 @@ mod tests {
             read_tls_ipc_response(&mut system, reply, 2),
             [0x0001_0040, RESULT_INVALID_ENUM]
         );
+    }
+
+    #[test]
+    fn cfg_variants_and_am_open_and_unmodelled_am_commands_are_recorded() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(12)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        // cfg:i and cfg:s share the cfg:u command set (GetRegion = 0x00020000).
+        for name in [&b"cfg:i"[..], &b"cfg:s"[..]] {
+            let cfg = open_hle_service(&mut system, name);
+            let reply = write_tls_ipc_request(&mut system, cfg, &[0x0002_0000]);
+            run_one_ipc_svc(&mut system);
+            let response = read_tls_ipc_response(&mut system, reply, 3);
+            assert_eq!(response[1], 0, "{name:?} reports success");
+        }
+        let am = open_hle_service(&mut system, b"am:u");
+        let reply = write_tls_ipc_request(&mut system, am, &[0x0001_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0001_0040, RESULT_INVALID_COMMAND]
+        );
+        assert_eq!(
+            system.unhandled_requests(),
+            vec!["am:u command 0x00010000".to_string()]
+        );
+    }
+
+    #[test]
+    fn apt_answers_check_new_3ds_and_applet_utility_and_fs_control_archive_writes_timestamp() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(13)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let apt = open_hle_service(&mut system, b"APT:U");
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0001_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 2)[1], 0);
+        let reply = write_tls_ipc_request(&mut system, apt, &[0x0102_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0102_0080, 0, 0]
+        );
+        let reply = write_tls_ipc_request(
+            &mut system,
+            apt,
+            &[0x004B_00C2, 7, 4, 1, (4 << 14) | 0x402, 0x0800_9410],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x004B_0040, 0]
+        );
+
+        // ControlArchive action 1 (timestamp) zero-fills the 8-byte output.
+        let fs = open_hle_service(&mut system, b"fs:USER");
+        let scratch = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_tls_address()
+            .unwrap()
+            + 0x200;
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .write_memory_bytes(scratch, &[0xAA; 8])
+            .unwrap();
+        let reply = write_tls_ipc_request(
+            &mut system,
+            fs,
+            &[
+                0x080D_0144,
+                3,
+                1,
+                1,
+                0xC,
+                8,
+                (0xC << 4) | 10,
+                scratch + 0x80,
+                (8 << 4) | 12,
+                scratch,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x080D_0040, 0]
+        );
+        let mut out = [0xFFu8; 8];
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .read_memory_bytes(scratch, &mut out)
+            .unwrap();
+        assert_eq!(out, [0; 8]);
     }
 
     #[test]
