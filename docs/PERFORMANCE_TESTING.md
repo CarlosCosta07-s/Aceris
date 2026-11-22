@@ -175,3 +175,12 @@ Alguns firmwares podem impedir a execução direta de binários em `/data/local/
 Para uma comparação minimamente útil, mantenha o mesmo arquivo, o mesmo número de frames de aquecimento/medição, o mesmo orçamento de instruções e builds `--release`. Execute três rodadas em cada plataforma, sem outros processos pesados, e compare p50/p95, instruções por segundo e motivos de parada. Anote modelo do aparelho, versão do Android, arquitetura, temperatura aproximada e modo de energia.
 
 **Limite de compatibilidade:** o benchmark mede o caminho de execução que o carregador consegue preparar. Se o jogo parar em SVC/serviço não implementado, se não executar instruções em frames sucessivos ou se a renderização estiver incompleta, o relatório deve ser tratado como diagnóstico de progresso, não como FPS jogável. O executável Android não transforma sozinho o Aceris em um aplicativo gráfico completo.
+
+
+## Resultado real mais recente — 22/11/2026
+
+O teste manual do Lua Player Plus Cookie Clicker (CIA NoCrypto fornecido pelo mantenedor) executou 300 quadros headless com orçamento de 4.000.000 instruções por quadro e levou aproximadamente 100 segundos de CPU do host. O runtime carregou RomFS, publicou framebuffers e desenhou a tela de erro do próprio aplicativo. Isso é diagnóstico de progresso, não medição de FPS jogável; o desempenho está muito abaixo de tempo real.
+
+O commit 0dc68f9a adicionou tracing opcional de resultados SVC e HLE mínimo csnd:SND; csndInit passa, mas Sound.init ainda falha antes de uma inicialização DSP observável. Não afirmar que o áudio funciona. A CI ARM64 é compilação, não medição de gameplay em Android físico.
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.

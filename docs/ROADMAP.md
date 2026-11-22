@@ -1,5 +1,11 @@
 # Roadmap do Aceris
 
+## Snapshot executivo — 22/11/2026
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+**Marco atingido:** primeiro homebrew CIA real carregado e executado até desenhar a própria tela de erro; csndInit foi parcialmente atendido por HLE, mas Sound.init segue falhando. **Ainda não atingido:** homebrew funcional, jogo jogável, cena 3D de jogo validada, áudio funcional e teste de APK em dispositivo Android. Os registros históricos abaixo devem ser lidos junto com este snapshot.
+
 > Estado revisado em 18/11/2026. O vertex shader PICA200 implementa a ISA de vertex conhecida, incluindo fluxo de controle e endereçamento relativo. O caminho de fragmento integra texturas/TEV, fog linear e por LUT (modo 5), alpha/depth/stencil, blending e máscaras. O sampler também decodifica HILO8 (formato 0x6) no caminho 8x8/Morton, mapeando HI para R, LO para G, B=0 e A=1; há testes de formato e amostragem, mas a ordem dos canais ainda não foi comparada em hardware. HILO8 passou na matriz multiplataforma [44217639884](https://github.com/CarlosCosta07-s/Aceris/actions/runs/44217639884). A revisão que corrigiu o feedback de gas passou em Linux, Windows, macOS e Android ARM64 no workflow [44218459281](https://github.com/CarlosCosta07-s/Aceris/actions/runs/44218459281): desktops com fmt, build, Clippy, testes e benchmark release; Android com builds release. O fog LUT contém 128 entradas de 24 bits; o valor usa fixed0.0.11 (divisor 2048), a diferença usa signed fixed1.1.11 e o fator interpolado mistura RGB após TEV, preservando alpha. O caminho de fog tem testes sintéticos, mas ainda não foi comparado com hardware. O estado gas decodifica registradores de atenuação, acumulação, luz, cor e função de profundidade; a FIFO de 16 entradas RGB tem decodificação signed/unsigned. O feedback de máximo plain density modela a reinicialização do máximo interno em modo gas e a comparação unsigned de 16 bits; o readback alto permanece inalterado até a atualização do próximo fragmento gas, e writes somente na metade alta são ignorados. Isso ainda não executa o estágio volumétrico: density plain/depth, atenuação por raio, acumulação, seleção e aplicação da cor LUT e escrita dos canais de feedback no framebuffer continuam pendentes. A CI não comprova precisão bit-a-bit nem compatibilidade com jogos comerciais. O caminho sintético de serviço começa com o guest criando o event handle via SVC CreateEvent, escrevendo srv: e executando ConnectToPort, srv:RegisterClient e srv:GetServiceHandle; em seguida, monta as mensagens GSP no TLS, recebe o handle Shared Memory e chama SVC MapMemoryBlock, escreve command lists e a fila GX em FCRAM e aciona TriggerCmdReqQueue por SendSyncRequest. A conclusão GSP acorda threads em WaitSynchronization1; o teste LCD percorre guest→GSP IPC→FlushCacheRegions/ProcessCommandList/DisplayTransfer→PPF→scanout. Matriz 4×4/shader e partes da configuração GeometryPipeline ainda são preparadas pelo host; isso não equivale a iniciar um jogo comercial.
 >
 > **Legenda:** `[x]` implementado no escopo indicado; `[~]` implementação parcial ou infraestrutura inicial; `[ ]` pendente. Uma caixa marcada não comprova compatibilidade completa com o hardware nem execução de jogos comerciais.
@@ -326,3 +332,16 @@ Este documento registra o estado observado no código. Não marque um item como 
 - Nenhum jogo, firmware, chave ou dump protegido está incluído no repositório.
 - Stubs, no-ops, parsers isolados e fixtures sintéticas não são apresentados como compatibilidade completa.
 - [~] Serviços mínimos `gsp::Lcd`, `ndm:u`, `ac:u`, `frd:u` e relatório `System::unhandled_requests()` (serviços/comandos pedidos e não implementados; o desktop imprime ao sair do jogo). Nomes de serviço desconhecidos agora devolvem 0xD8E06406 (antes um código genérico).
+
+
+## Revisão de prioridades — 22/11/2026
+
+1. **Diagnosticar a falha de áudio do Cookie Clicker:** instrumentar PCs/retornos em torno de Sound.init e da rotina guest 0x1e8848; identificar a condição que falha antes de DSP/IPC. Não ampliar stubs sem evidência.
+2. **Tornar o primeiro boot reproduzível:** CIA permanece local; registrar hash/identidade sem distribuir o arquivo, comando, orçamento, PC/CPSR, SVCs e tela final. Separar teste de execução de teste de compatibilidade.
+3. **Fechar a cadeia gráfica guest-driven:** reduzir fixtures/estado host-side e validar shaders, buffers, DRAWARRAYS/DRAWELEMENTS, texturas, framebuffer e scanout com cena própria e homebrew real.
+4. **Completar serviços conforme traces reais:** priorizar serviços/comandos que bloqueiam o alvo; não presumir ABI/layouts não confirmados em hardware.
+5. **Validar áudio e entrada em hardware:** tom independente para DSP/sinks; HID e controles multitoque/gamepad.
+6. **Executar Android real:** empacotar APK, instalar em aparelho ARM64, validar ciclo de vida, toque, áudio, orientação e logs.
+7. **Medir e otimizar:** repetir benchmarks release com parâmetros idênticos; ~100 s de CPU host para 300 quadros com orçamento 4M é diagnóstico, não FPS jogável.
+
+Não marcar marcos como concluídos apenas por testes unitários, fixtures sintéticas ou compilação multiplataforma.

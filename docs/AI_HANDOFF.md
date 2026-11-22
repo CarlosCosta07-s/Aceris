@@ -2071,3 +2071,23 @@ Carlos autorizou a intervenção nas áreas centrais do núcleo. Esta contribui�
 - Bug real encontrado: o HLE do GSP mapeava seu alias do bloco compartilhado em 0x10002000, dentro da janela mapeável do guest; o `MapMemoryBlock` do csnd escolhido pelo libctru (0x10002000) falhava com 0xE0E01BF5. `GSP_SHARED_MEMORY_BASE` agora é 0x1FFD0000 (fora da janela 0x10000000–0x14000000 e acima das 64 páginas de TLS).
 - `ACERIS_TRACE_SVC=1` agora também imprime `-> svc N r0=.. r1=..` (resultado) após cada SVC.
 - Estado no Cookie Clicker: `csndInit` do main funciona (Initialize/Acquire OK). O erro `cannot initialize Sound module` continua: vem de `Sound.init` (0x10f7b0 no guest), que cai no caminho da função 0x1e8848 (init de áudio própria do LPP: cfgu, dsp via 0x1ebd88 com `dsp::DSP`, etc.). Nenhum pedido a `dsp::DSP` aparece no trace, então a falha ocorre antes dele, sem IPC visível. Próximo passo: rastrear PCs/retornos de 0x1e8848 (um trace de PC opcional no emulador ajudaria) para ver qual verificação retorna erro. Para desmontar: o `.code` foi descomprimido (BLZ) e aberto com `llvm-objdump --triple=armv6` sobre um ELF criado com `llvm-objcopy -I binary`; endereços de arquivo = VMA − 0x100000.
+
+
+## Atualização documental consolidada — 22/11/2026 (ChatGPT)
+
+Esta entrada foi acrescentada por solicitação explícita do mantenedor para alinhar a documentação pública ao HEAD observado. O conteúdo histórico e as entradas de outros agentes foram preservados; nenhum código-fonte foi alterado nesta atualização.
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+### Fatos novos a refletir em futuras transferências
+
+- Commit bf71c973: CIA homebrew real Lua Player Plus Cookie Clicker carrega, executa e chega à tela de erro produzida pelo jogo; correção de validação de .bss, mapeamento das páginas de configuração/compartilhada e opções --frames/ACERIS_FRAME_BUDGET.
+- Commit 0dc68f9a: HLE inicial csnd:SND; csndInit passa, mas Sound.init ainda falha dentro do LPP. IDs/protocolo CSND continuam não verificados em hardware. O alias HLE de memória GSP foi movido para fora da janela mapeável do guest; trace opcional registra retorno de SVC.
+- O último workflow observado é CI #2244 / run 44968347424, com jobs Linux, Windows, macOS e Android ARM64 concluídos com sucesso.
+- O teste Cookie Clicker não é gameplay, não prova áudio e não é jogável em tempo real; 300 quadros com orçamento 4M levaram aproximadamente 100 s de CPU host.
+- A regra vigente proíbe consultar código-fonte interno de outros emuladores. A pesquisa permitida é a superfície observável e documentação pública independente; esta regra substitui instruções históricas divergentes.
+- NativeActivity Android e backends desktop Windows/macOS existem; compilação CI não prova execução em aparelho nem funcionamento de áudio/entrada.
+
+### Próxima investigação recomendada
+
+Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e8848) para identificar qual condição retorna erro antes de qualquer IPC DSP. Não adicionar novos stubs sem trace que demonstre a necessidade. Preservar o isolamento de arquivos de cada agente e trabalhar exclusivamente em main.

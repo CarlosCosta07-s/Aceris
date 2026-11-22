@@ -38,12 +38,11 @@ Estas regras são obrigatórias para qualquer IA, agente automatizado ou colabor
 
 ## 5. Referências técnicas de outros emuladores
 
-- Outros emuladores podem ser estudados como referências técnicas, inclusive por consulta ao código-fonte publicamente disponível, para compreender abordagens, arquitetura, tratamento de casos-limite e hipóteses de comportamento.
-- Essa permissão é exclusivamente de pesquisa. Não autoriza copiar, colar, traduzir, portar, adaptar ou reproduzir trechos, funções, estruturas, testes, fixtures, shaders, patches, assets ou organização interna.
-- Não faça tradução linha a linha nem uma reimplementação que reproduza a estrutura expressiva do código consultado. O código do Aceris deve ser concebido e escrito independentemente em Rust, com arquitetura, interfaces, nomes e testes próprios.
-- A permissão inclui, entre outros, Azahar, Citra, Lime3DS e outros projetos, independentemente da licença. A licença de cada referência deve ser registrada; se houver dúvida sobre compatibilidade de licença ou risco de obra derivada, interrompa o uso daquela referência na implementação e peça orientação ao mantenedor.
-- Para cada consulta de código, registre projeto, URL, arquivo ou área consultada, commit/revisão, licença, data e a pergunta técnica investigada. Registre conclusões conceituais em uma especificação independente, sem colar trechos de código.
-- Confirme conclusões relevantes com documentação de hardware/protocolos, testes originais do Aceris e, quando possível, observações em hardware legítimo. Código de outro emulador não é, sozinho, prova de comportamento fiel ao console.
+- É proibido consultar código-fonte interno de outros emuladores, inclusive Azahar, Citra, Lime3DS e semelhantes. Não abrir, pesquisar, baixar, copiar ou usar arquivos-fonte, testes, fixtures, shaders, patches ou organização interna.
+- A análise permitida limita-se à superfície observável do produto e à documentação pública independente de hardware, formatos, APIs e protocolos.
+- Não copiar, traduzir, portar, adaptar ou reproduzir código, assets, interfaces ou organização interna de terceiros. Toda implementação do Aceris deve ser original e em Rust.
+- Se uma fonte misturar documentação independente com código interno de emulador, não consultar a parte de código. Em caso de dúvida, interromper e pedir orientação ao mantenedor.
+- Registrar fontes documentais independentes, URLs, datas, perguntas técnicas, nível de confiança e testes próprios. Comportamento observado em outro emulador não prova o comportamento físico do console.
 - Assets e recursos visuais/sonoros de terceiros continuam proibidos. Não incorporar dependências que forneçam implementação do emulador sem autorização explícita.
 - Todas as demais regras deste documento permanecem inalteradas: Rust em todo o produto, autoria própria, somente `main`, isolamento entre agentes e proteção de conteúdo.
 
@@ -57,3 +56,10 @@ Estas regras são obrigatórias para qualquer IA, agente automatizado ou colabor
 ## 7. Autoridade
 
 Carlos Costa é o mantenedor e a autoridade final sobre escopo, prioridades e exceções. Somente uma autorização explícita dele pode abrir uma exceção a estas regras. Nenhuma IA pode conceder essa autorização por conta própria.
+
+
+## 8. Estado verificado — 22/11/2026
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+Esta atualização foi autorizada pelo mantenedor e limita-se aos arquivos Markdown. Nenhum arquivo de implementação foi alterado.

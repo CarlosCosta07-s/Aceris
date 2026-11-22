@@ -55,3 +55,10 @@ também é renderizada pelo núcleo em RGBA8 e recebe animação sutil da própr
 - Ícone na janela X11 (`_NET_WM_ICON`) e backends Win32/Cocoa.
 - Tela inicial/splash e tema da interface Android (a UI ainda não existe).
 - Versão monocromática do ícone (Android 13 themed icon).
+
+
+## Estado de integração visual — 22/11/2026
+
+A identidade e os assets Aceris permanecem próprios. O frontend desktop possui backends X11, Win32 e Cocoa; o Android inclui NativeActivity nativa em Rust e ícone adaptativo. A existência desses backends não significa validação visual em hardware/dispositivo. CI confirmou compilação Android ARM64 e verificações em Linux, Windows e macOS.
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.

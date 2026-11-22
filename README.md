@@ -8,7 +8,9 @@
   Um emulador de um certo console de 2 telas, escrito em Rust, para PC e Android.
 </p>
 
-> **Status: fase inicial (v0.0.1).** O projeto ainda não executa jogos. O núcleo Rust já reúne uma base inicial de CPU ARM11, MMU, loader, kernel e GPU PICA200. No PC Linux há uma janela experimental X11 com abertura e biblioteca animada, incluindo fundos personalizados. O crate Android compila como biblioteca nativa e já expõe contratos de renderização, orientação vertical/horizontal e controles virtuais, mas ainda não existe um aplicativo Android instalável completo. Veja o [roadmap](docs/ROADMAP.md), a [arquitetura](docs/ARCHITECTURE.md), os [frontends](docs/FRONTENDS.md), o [método de pesquisa técnica independente](docs/INDEPENDENT_RESEARCH.md) e o [guia de benchmark](docs/PERFORMANCE_TESTING.md).
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+O Aceris possui núcleo ARM11/Thumb, MMU/TLB, VFPv2, memória/cache, loaders CIA/NCSD/NCCH/3DSX, kernel/SVC/IPC parcial, serviços HLE, GPU PICA200 em evolução, DSP HLE e frontends nativos em desenvolvimento. O primeiro homebrew real chegou à própria tela de erro, ainda sem inicializar áudio. Não há compatibilidade jogável comprovada. Consulte o [roadmap](docs/ROADMAP.md), [arquitetura](docs/ARCHITECTURE.md), [frontends](docs/FRONTENDS.md), [regras de pesquisa](docs/INDEPENDENT_RESEARCH.md) e [benchmark](docs/PERFORMANCE_TESTING.md).
 
 O nome vem da **acerola**, a pequena fruta vermelha cheia de energia.
 
@@ -31,8 +33,8 @@ aceris/
 │   ├── aceris-common/    erros e utilitários compartilhados
 │   └── aceris-core/      núcleo de emulação (CPU, memória, loader, sistema)
 ├── frontends/
-│   ├── desktop/          binário `aceris` (janela experimental X11 no Linux)
-│   └── android/          biblioteca Rust nativa (cdylib) + recursos de identidade
+│   ├── desktop/          binário `aceris` com backends X11, Win32 e Cocoa
+│   └── android/          NativeActivity e biblioteca Rust nativa (cdylib)
 ├── assets/icon/          ícone (SVG, PNGs, .ico)
 ├── tools/                scripts de desenvolvimento
 └── docs/                 arquitetura, roadmap, pesquisa e benchmark
@@ -61,7 +63,7 @@ cargo install cargo-ndk
 cargo ndk -t arm64-v8a build -p aceris-android --release
 ```
 
-É necessário ter o Android NDK instalado (`ANDROID_NDK_HOME`). O crate atual gera apenas a biblioteca nativa; o host/Activity Android instalável ainda precisa ser implementado em Rust. A biblioteca já expõe os contratos de UI descritos em [docs/FRONTENDS.md](docs/FRONTENDS.md).
+É necessário ter o Android NDK instalado (`ANDROID_NDK_HOME`). O projeto inclui NativeActivity em Rust, manifest e lógica nativa. A CI valida compilação ARM64; empacotamento APK e execução em aparelho físico ainda precisam de validação. Consulte [docs/ANDROID_BUILD.md](docs/ANDROID_BUILD.md).
 
 ## Ícone
 

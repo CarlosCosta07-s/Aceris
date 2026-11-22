@@ -78,3 +78,13 @@ A camada gráfica e o hit-test estão disponíveis. A ligação final desses bit
 - Áudio e integração dos botões virtuais com o HID do núcleo continuam pendentes.
 
 Essas limitações são explícitas: os contratos nativos não são apresentados como um aplicativo Android completo nem como compatibilidade de entrada/áudio já funcional.
+
+
+## Atualização dos frontends — 22/11/2026
+
+- Desktop possui backends X11, Win32 e Cocoa/macOS; sinks ALSA/Linux, WinMM/Windows e AudioQueue/CoreAudio/macOS. CI não substitui teste de execução em cada sistema.
+- Android tem NativeActivity em Rust, manifesto, lógica de aplicação e sink AAudio; compila arm64-v8a, mas não há validação documentada de APK instalado em aparelho físico.
+- Amostragem HID e controles virtuais estão em evolução; toque, gamepad físico/eixos e uso em jogo real precisam de validação.
+- Sinks de áudio existem, mas nenhum áudio audível foi confirmado; o homebrew real continua falhando na inicialização de Sound.
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.

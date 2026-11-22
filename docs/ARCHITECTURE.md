@@ -120,3 +120,15 @@ cargo build --locked --workspace
 ```
 
 O último comando deve ser executado e registrado separadamente; não está implícito nos três anteriores.
+
+
+## Estado consolidado — 22/11/2026
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+- **CPU/memória:** ARM11 A32/Thumb, CP15, MMU/TLB, VFPv2, cache/write buffer e subconjunto SCU/SVCs implementados; segundo core, coerência multicore, I-cache/IMB e temporização ciclo-a-ciclo pendentes.
+- **Loader:** CIA/NCSD/NCCH têm parsers e preparação; o primeiro CIA real chegou à tela de erro do próprio app. 3DSX é validado/relocado/preparado, mas ainda não integrado à sessão ARM11.
+- **Kernel/IPC:** scheduler cooperativo, TLS, sincronização, subconjunto SVC e serviços HLE; IPC multi-processo, ciclo completo de processos/handles e serviços continuam incompletos.
+- **GPU:** fila GX, DMA/MemoryFill, ProcessCommandList, DisplayTransfer, TextureCopy, FlushCacheRegions e pipeline PICA200 em evolução. Testes sintéticos não provam cena completa de jogo sem estado host-side.
+- **Áudio:** DSP HLE e sinks ALSA, WinMM, CoreAudio e AAudio existem; nenhum áudio de jogo real foi ouvido/confirmado. csnd:SND inicial não resolve Sound.init.
+- **Frontends:** X11, Win32, Cocoa e NativeActivity Android existem; CI não comprova execução visual/entrada/áudio em dispositivos.

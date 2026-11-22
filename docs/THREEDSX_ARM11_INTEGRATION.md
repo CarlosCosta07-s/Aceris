@@ -167,3 +167,10 @@ O método chama `validate()` antes de devolver o manifesto. Seus campos e os dos
 `ThreeDsxImage::load_and_prepare_process(reader, request)` centraliza a sequência de leitura de segmentos, aplicação das tabelas de relocation e materialização do processo. `ThreeDsxProcessPreparationRequest` exige que o chamador informe as três bases virtuais, a reserva de stack, o limite total de memória e o limite de words de relocation.
 
 Antes de ler os segmentos, a rotina valida o plano virtual completo — alinhamento, sobreposição com stack, tamanhos arredondados por página e orçamento total. Se o plano for inválido, o reader não é avançado nem os buffers de segmento são alocados. `prepare_process()` reutiliza a mesma validação antes de materializar os buffers. A API reduz o risco de um frontend esquecer a etapa de relocations ou usar limites implícitos. Ela sempre executa a etapa de relocation, inclusive quando as tabelas não têm entradas, e só devolve `ThreeDsxPreparedProcess` se toda a sequência terminar com sucesso. O método não reserva páginas MMU nem cria `Arm11ProcessSession`.
+
+
+## Revalidação do status — 22/11/2026
+
+O HEAD 0dc68f9a não altera o contrato 3DSX descrito acima. O avanço recente de boot real refere-se a uma CIA NCCH NoCrypto (Lua Player Plus Cookie Clicker), não a um arquivo 3DSX. Portanto, permanece correto: **3DSX é parseado, relocacionado e preparado em memória; ainda não está integrado como sessão ARM11 executável**. Não inferir suporte 3DSX a partir do teste CIA.
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.

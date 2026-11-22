@@ -6,8 +6,8 @@ Antes de qualquer contribuição, leia [REGRAS_PARA_IA.md](docs/REGRAS_PARA_IA.m
 
 ### Política de implementação original e referências técnicas
 
-- É permitido consultar código-fonte publicamente disponível de outros emuladores como referência técnica para compreender arquitetura, abordagens e casos-limite.
-- Essa consulta não autoriza copiar, colar, traduzir, portar, adaptar ou reproduzir trechos, funções, estruturas, testes, fixtures, shaders, patches, assets ou organização interna.
+- Não consultar código-fonte interno de outros emuladores, incluindo Azahar, Citra, Lime3DS ou semelhantes. A referência permitida limita-se à superfície observável do produto e à documentação pública independente de hardware, formatos e protocolos.
+- Não copiar, adaptar, traduzir, portar ou reproduzir código, interfaces, estruturas, testes, fixtures, shaders, patches, assets ou organização interna de terceiros.
 - Não faça tradução linha a linha nem reproduza a estrutura expressiva do código consultado. Toda implementação do Aceris deve ser concebida independentemente e escrita em Rust, com arquitetura, interfaces, nomes e testes próprios.
 - Registre projeto, URL, arquivo/área consultada, commit/revisão, licença, data e pergunta técnica investigada. Converta o aprendizado em especificação independente e valide-o com documentação e testes próprios.
 - Se houver dúvida sobre compatibilidade de licença ou risco de obra derivada, interrompa o uso daquela referência na implementação e peça orientação a Carlos Costa.
@@ -36,3 +36,10 @@ Cada IA deve respeitar os arquivos e tarefas atribuídos às demais. É proibido
 - Código e comentários em inglês; documentação do repositório em português.
 - Prefira testes pequenos e determinísticos.
 - Evite `unsafe`; quando necessário, documente o invariante com `// SAFETY:`.
+
+
+## Estado de referência — 22/11/2026
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+Esta revisão altera somente documentação; não autoriza editar arquivos atribuídos a outro agente. Somente main, sem branches ou PRs, permanece obrigatório.

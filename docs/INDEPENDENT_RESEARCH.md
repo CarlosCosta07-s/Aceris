@@ -1,17 +1,17 @@
 # Pesquisa técnica independente
 
-> Revisão: 17/11/2026. Este documento define como estudar documentação, testes e código-fonte público de outros emuladores como referência técnica, mantendo toda implementação do Aceris original e escrita em Rust.
+> Revisão histórica: 17/11/2026. **Regra vigente do mantenedor, 22/11/2026:** não consultar código-fonte interno de outros emuladores. Menções históricas a leitura de código estão supersedidas e não autorizam abrir, pesquisar ou usar esses fontes. A pesquisa atual limita-se à superfície observável e à documentação pública independente de hardware, formatos e protocolos.
 
 ## 1. Objetivo
 
 Acelerar o Aceris usando especificações públicas, documentação de hardware, descrições independentes de formatos e protocolos, testes próprios e comportamento observável. O resultado de cada pesquisa deve ser uma especificação verificável que oriente uma implementação original em Rust.
 
-A pesquisa não é um atalho para incorporar implementações existentes. Código de outros emuladores pode ser consultado para compreender abordagens e casos-limite, mas o resultado precisa ser convertido em especificação independente, validado por evidências e implementado do zero no Aceris.
+A pesquisa não é um atalho para incorporar implementações existentes. Não consultar código-fonte de emuladores; utilizar documentação pública independente e observações externas permitidas, convertendo evidências em especificações e testes próprios.
 
 ## 2. Limites obrigatórios
 
-- É permitido consultar código-fonte publicamente disponível de Azahar, Citra, Lime3DS e outros emuladores como referência técnica.
-- A consulta é somente para estudo: não copiar, colar, traduzir, portar, adaptar ou reproduzir trechos, funções, estruturas, testes, fixtures, shaders, patches, assets ou organização interna.
+- É proibido consultar código-fonte de Azahar, Citra, Lime3DS ou qualquer outro emulador.
+- A pesquisa limita-se à documentação pública independente de hardware, formatos, APIs e protocolos e à superfície observável de produtos em execução.
 - Não faça tradução linha a linha nem reproduza a estrutura expressiva do código consultado. A implementação do Aceris deve ter arquitetura, interfaces, nomes, testes e código próprios, escritos em Rust.
 - Não incorpore commits, patches, dependências, assets ou outros recursos de implementação desses projetos. Não trate nomes de funções privadas ou a organização de arquivos como especificação do hardware.
 - Registre projeto, URL, arquivo ou área consultada, commit/revisão, licença, data e pergunta técnica. Registre a conclusão conceitual em uma especificação independente, sem colar trechos de código.
@@ -27,7 +27,7 @@ Estas regras complementam `docs/REGRAS_PARA_IA.md` e `CONTRIBUTING.md`; não cri
 Cada tarefa técnica deve seguir esta sequência:
 
 1. **Definir a pergunta:** formular um comportamento observável e delimitado, evitando objetivos vagos como “melhorar a GPU”.
-2. **Localizar fontes:** priorizar manuais oficiais, documentação de arquitetura e especificações públicas; código-fonte público de emuladores também pode ser consultado como referência técnica, com licença e revisão registradas. Wikis de engenharia reversa e implementações de terceiros devem ser identificadas como fontes não oficiais.
+2. **Localizar fontes:** priorizar manuais oficiais, documentação de arquitetura e especificações públicas independentes. Wikis de engenharia reversa devem ser identificadas como fontes não oficiais; não abrir código-fonte de emuladores.
 3. **Registrar evidências:** anotar a afirmação, a URL, o tipo de fonte, a data de consulta, o nível de confiança e eventuais divergências.
 4. **Escrever o contrato:** descrever entradas, saídas, estados, erros, efeitos colaterais, ordenação e limites de memória em termos independentes, sem reproduzir trechos nem a estrutura expressiva da implementação consultada.
 5. **Derivar testes próprios:** construir casos pequenos e determinísticos diretamente do contrato. Para cada caso, registrar os bytes/valores de entrada e o resultado esperado.
@@ -35,18 +35,9 @@ Cada tarefa técnica deve seguir esta sequência:
 7. **Validar em camadas:** testes unitários, integração no caminho real do guest, CI multiplataforma e, quando possível, comparação com comportamento em hardware legítimo.
 8. **Atualizar o estado:** marcar cada afirmação como documentada, inferida, testada sinteticamente ou confirmada externamente. Uma etapa não se torna compatível apenas por compilar.
 
-## 3.1 Registro de referências a código-fonte
+## 3.1 Registro de fontes independentes
 
-Quando uma pesquisa consultar o código de outro emulador, acrescente à ficha:
-
-- Nome do projeto e URL do repositório.
-- Arquivo(s) ou área(s) consultada(s), sem copiar trechos para a documentação do Aceris.
-- Commit, tag ou revisão exata.
-- Licença identificada e eventual obrigação relevante.
-- Pergunta técnica investigada e resumo conceitual escrito em linguagem própria.
-- Documentação independente ou testes Aceris usados para confirmar ou contestar a conclusão.
-
-O registro de consulta não é uma autorização para incorporar código, assets, testes ou dependências. Se não for possível separar o aprendizado técnico de uma reprodução protegível da implementação, não use aquela referência para orientar a funcionalidade sem decisão explícita do mantenedor e revisão de licença.
+Registre título, autoria, URL, data, tipo de fonte, pergunta técnica, conclusão, nível de confiança e testes Aceris que confirmam ou contestam a interpretação. Não registre nem consulte arquivos-fonte de emuladores. Se uma página misturar documentação e código interno de terceiros, não abra nem utilize a parte de código.
 
 ## 4. Níveis de evidência
 
@@ -353,3 +344,9 @@ Como o GX TextureCopy interpreta largura de linha, gap e tamanho total quando a 
 ### Limites e confiança
 
 A interpretação é sustentada pelas descrições públicas de parâmetros separados e de cópia até o total de bytes, mas ainda não foi comparada a um console físico. A execução do Aceris continua síncrona; a temporização do Transfer Engine, `fail-if-busy`, arbitragem GSP e comportamento em parâmetros que travam o hardware permanecem fora deste modelo. O limite defensivo de 64 MiB é política do emulador, não afirmação sobre o hardware.
+
+## 17. Estado do projeto — 22/11/2026
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Windows, macOS e Android ARM64 concluídos com sucesso. A validação real ainda é limitada ao homebrew Cookie Clicker, que chega à própria tela de erro por falha na inicialização do módulo Sound. Nenhuma conclusão transforma serviços HLE ou GPU em compatibilidade comprovada de jogos.

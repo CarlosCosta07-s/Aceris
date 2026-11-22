@@ -81,3 +81,20 @@ runners.
   não prova compatibilidade completa, áudio, controles, rendering PICA200
   correto ou gameplay contínuo.
 - O arquivo original permanece fora do repositório, CI, issues e releases.
+
+
+## Atualização: Lua Player Plus Cookie Clicker (CIA) — 22/11/2026
+
+Um homebrew real fornecido localmente pelo mantenedor foi usado para avançar além da preparação NCSD. O CIA tem conteúdo NCCH NoCrypto e Title ID `0004000000F23F00`; o arquivo não foi adicionado ao repositório nem à CI.
+
+### Resultado observado
+
+- O Aceris carregou o CIA, preparou o código ARM11 e executou o runtime Lua Player Plus.
+- O aplicativo leu seu RomFS, publicou framebuffers e desenhou sua própria tela de erro.
+- A falha observada foi `cannot initialize Sound module`.
+- Após HLE mínimo de `csnd:SND`, `csndInit` passou, mas `Sound.init` continuou falhando em rotina interna do LPP. Nenhuma requisição DSP apareceu no trace observado; a causa precisa ser rastreada.
+- Ensaio headless de 300 quadros, orçamento de 4.000.000 instruções por quadro, levou aproximadamente 100 segundos de CPU host. Não é jogável em tempo real.
+
+Esse avanço chega a uma tela produzida pelo próprio aplicativo, mas não é boot funcional nem gameplay. O teste anterior de Super Mario 64 – 3DS Port não deve ser descrito como execução real concluída sem evidência adicional.
+
+> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
