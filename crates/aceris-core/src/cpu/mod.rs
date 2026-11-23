@@ -249,6 +249,11 @@ impl Arm11Core {
         self.irq_line_asserted = asserted;
     }
 
+    /// Returns the current external IRQ input level for diagnostics and tests.
+    pub const fn irq_line_asserted(&self) -> bool {
+        self.irq_line_asserted
+    }
+
     /// Drives the external FIQ input. FIQ has priority over IRQ when both
     /// lines are asserted and CPSR.F permits its acceptance.
     pub fn set_fiq_line(&mut self, asserted: bool) {
