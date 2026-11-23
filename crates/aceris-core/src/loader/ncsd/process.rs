@@ -13,7 +13,10 @@ use super::PreparedArm11Image;
 use super::ncch::extended_header::{Arm11MemoryType, CodeFileLayout, CodeSetInfo};
 use super::ncch::service_access::ServiceAccessControl;
 use crate::cpu::{
-    Arm11Core, MpcorePrivateTimer, MpcoreScu, MPCORE_PRIVATE_TIMER_OFFSET,
+    Arm11Core, MpcoreInterruptController, MpcorePrivateTimer, MpcoreScu,
+    MPCORE_CPU_INTERFACE_CURRENT_OFFSET, MPCORE_CPU_INTERFACE_CPU0_OFFSET,
+    MPCORE_GIC_CPU_INTERFACE_SIZE, MPCORE_GIC_DISTRIBUTOR_OFFSET,
+    MPCORE_GIC_DISTRIBUTOR_SIZE, MPCORE_PRIVATE_TIMER_OFFSET,
     MPCORE_PRIVATE_TIMER_REGISTER_SIZE, MPCORE_TIMER_DEFAULT_CLOCK_HZ, SP,
 };
 use crate::gpu::{
@@ -797,6 +800,8 @@ pub struct Arm11CodeAddressSpace {
     mpcore_scu: Option<MpcoreScu>,
     /// Core-0 MPCore private timer, driven by the session's virtual clock.
     mpcore_private_timer: MpcorePrivateTimer,
+    /// ARM11 MPCore distributor and CPU-interface state for the application core.
+    mpcore_interrupt_controller: MpcoreInterruptController,
     /// Stable identities for the process' private static segments.
     static_backing_ids: [u64; 5],
     /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
@@ -857,6 +862,7 @@ impl Arm11CodeAddressSpace {
             gpu_memory: None,
             mpcore_scu: None,
             mpcore_private_timer: MpcorePrivateTimer::default(),
+            mpcore_interrupt_controller: MpcoreInterruptController::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
@@ -953,6 +959,7 @@ impl Arm11CodeAddressSpace {
             gpu_memory: None,
             mpcore_scu: None,
             mpcore_private_timer: MpcorePrivateTimer::default(),
+            mpcore_interrupt_controller: MpcoreInterruptController::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
@@ -1012,23 +1019,145 @@ impl Arm11CodeAddressSpace {
 
     /// Advances the application core's MPCore private timer using virtual time.
     ///
-    /// The default 3DS application-core clock is used until the system models
-    /// Old/New 3DS clock profiles explicitly.
+    /// The default Old 3DS private-timer input clock is half the CPU clock.
+    /// Timer expiration is sampled by the private interrupt distributor as PPI 29.
     pub fn advance_mpcore_private_timer(&mut self, elapsed_ns: u64) {
         self.mpcore_private_timer
             .advance_time(elapsed_ns, MPCORE_TIMER_DEFAULT_CLOCK_HZ);
+        self.sync_mpcore_timer_interrupt();
     }
 
-    /// Returns whether the private timer currently asserts its PPI 29 output.
-    pub const fn mpcore_private_timer_irq_asserted(&self) -> bool {
-        self.mpcore_private_timer.irq_asserted()
+    /// Returns the IRQ level delivered by the MPCore distributor to CPU0.
+    pub fn mpcore_irq_asserted(&self) -> bool {
+        self.mpcore_interrupt_controller.irq_asserted()
+    }
+
+    fn sync_mpcore_timer_interrupt(&mut self) {
+        self.mpcore_interrupt_controller
+            .set_private_timer_irq_level(self.mpcore_private_timer.irq_asserted());
+    }
+
+    fn mpcore_private_offset(&self, address: u32) -> Option<u32> {
+        address.checked_sub(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE)
     }
 
     fn mpcore_private_timer_register_offset(&self, address: u32) -> Option<u32> {
-        let private_offset =
-            address.checked_sub(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE)?;
-        let timer_offset = private_offset.checked_sub(MPCORE_PRIVATE_TIMER_OFFSET)?;
-        (timer_offset < MPCORE_PRIVATE_TIMER_REGISTER_SIZE).then_some(timer_offset)
+        let private_offset = self.mpcore_private_offset(address)?;
+        let timer_offset = if (MPCORE_PRIVATE_TIMER_OFFSET
+            ..MPCORE_PRIVATE_TIMER_OFFSET + MPCORE_PRIVATE_TIMER_REGISTER_SIZE)
+            .contains(&private_offset)
+        {
+            private_offset - MPCORE_PRIVATE_TIMER_OFFSET
+        } else if (MPCORE_CPU_INTERFACE_CPU0_OFFSET + 0x0500
+            ..MPCORE_CPU_INTERFACE_CPU0_OFFSET + 0x0500 + MPCORE_PRIVATE_TIMER_REGISTER_SIZE)
+            .contains(&private_offset)
+        {
+            // CPU0's fixed private-timer alias at 0x17E00700.
+            private_offset - (MPCORE_CPU_INTERFACE_CPU0_OFFSET + 0x0500)
+        } else {
+            return None;
+        };
+        Some(timer_offset)
+    }
+
+    fn mpcore_cpu_interface_register_offset(&self, address: u32) -> Option<u32> {
+        let private_offset = self.mpcore_private_offset(address)?;
+        if (MPCORE_CPU_INTERFACE_CURRENT_OFFSET
+            ..MPCORE_CPU_INTERFACE_CURRENT_OFFSET + MPCORE_GIC_CPU_INTERFACE_SIZE)
+            .contains(&private_offset)
+        {
+            Some(private_offset - MPCORE_CPU_INTERFACE_CURRENT_OFFSET)
+        } else if (MPCORE_CPU_INTERFACE_CPU0_OFFSET
+            ..MPCORE_CPU_INTERFACE_CPU0_OFFSET + MPCORE_GIC_CPU_INTERFACE_SIZE)
+            .contains(&private_offset)
+        {
+            Some(private_offset - MPCORE_CPU_INTERFACE_CPU0_OFFSET)
+        } else {
+            None
+        }
+    }
+
+    fn mpcore_gic_distributor_register_offset(&self, address: u32) -> Option<u32> {
+        let private_offset = self.mpcore_private_offset(address)?;
+        (MPCORE_GIC_DISTRIBUTOR_OFFSET
+            ..MPCORE_GIC_DISTRIBUTOR_OFFSET + MPCORE_GIC_DISTRIBUTOR_SIZE)
+            .contains(&private_offset)
+            .then_some(private_offset - MPCORE_GIC_DISTRIBUTOR_OFFSET)
+    }
+
+    fn read_mpcore_cpu_interface_register(&mut self, address: u32) -> BusResult<u32> {
+        let offset = self
+            .mpcore_cpu_interface_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        if offset & 3 != 0 {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+        self.mpcore_interrupt_controller
+            .read_cpu_interface_register(offset)
+            .ok_or(Error::InvalidAccess { addr: address })
+    }
+
+    fn write_mpcore_cpu_interface_register(
+        &mut self,
+        address: u32,
+        value: u32,
+    ) -> BusResult<()> {
+        let offset = self
+            .mpcore_cpu_interface_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        if !self
+            .mpcore_interrupt_controller
+            .write_cpu_interface_register(offset, value)
+        {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+        Ok(())
+    }
+
+    fn read_mpcore_gic_distributor_byte(&self, address: u32) -> BusResult<u8> {
+        let offset = self
+            .mpcore_gic_distributor_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        Ok(self
+            .mpcore_interrupt_controller
+            .read_distributor_byte(offset))
+    }
+
+    fn write_mpcore_gic_distributor_byte(
+        &mut self,
+        address: u32,
+        value: u8,
+    ) -> BusResult<()> {
+        let offset = self
+            .mpcore_gic_distributor_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        self.mpcore_interrupt_controller
+            .write_distributor_byte(offset, value);
+        Ok(())
+    }
+
+    fn read_mpcore_gic_distributor_word(&self, address: u32) -> BusResult<u32> {
+        let mut bytes = [0u8; 4];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = self.read_mpcore_gic_distributor_byte(
+                address.wrapping_add(index as u32),
+            )?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn write_mpcore_gic_distributor_word(
+        &mut self,
+        address: u32,
+        value: u32,
+    ) -> BusResult<()> {
+        for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
+            self.write_mpcore_gic_distributor_byte(
+                address.wrapping_add(index as u32),
+                byte,
+            )?;
+        }
+        Ok(())
     }
 
     fn read_mpcore_private_timer_register(&self, address: u32) -> BusResult<u32> {
@@ -1054,6 +1183,7 @@ impl Arm11CodeAddressSpace {
         if offset & 3 != 0 || !self.mpcore_private_timer.write_register(offset, value) {
             return Err(Error::InvalidAccess { addr: address });
         }
+        self.sync_mpcore_timer_interrupt();
         Ok(())
     }
 
@@ -2906,8 +3036,13 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn read8_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u8> {
-        if self.mpcore_private_timer_register_offset(address).is_some() {
+        if self.mpcore_private_timer_register_offset(address).is_some()
+            || self.mpcore_cpu_interface_register_offset(address).is_some()
+        {
             return Err(Error::InvalidAccess { addr: address });
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            return self.read_mpcore_gic_distributor_byte(address);
         }
         if self.mpcore_scu_register_offset(address).is_some() {
             let register = self.read_mpcore_scu_register(address)?;
@@ -2940,8 +3075,15 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn read16(&mut self, address: u32) -> BusResult<u16> {
-        if self.mpcore_private_timer_register_offset(address).is_some() {
+        if self.mpcore_private_timer_register_offset(address).is_some()
+            || self.mpcore_cpu_interface_register_offset(address).is_some()
+        {
             return Err(Error::InvalidAccess { addr: address });
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            let low = self.read_mpcore_gic_distributor_byte(address)?;
+            let high = self.read_mpcore_gic_distributor_byte(address.wrapping_add(1))?;
+            return Ok(u16::from_le_bytes([low, high]));
         }
         if let Some(value) = self.try_read_cached_hit(address, 2) {
             return Ok(value as u16);
@@ -2955,6 +3097,12 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_private_timer_register_offset(address).is_some() {
             return self.read_mpcore_private_timer_register(address);
         }
+        if self.mpcore_cpu_interface_register_offset(address).is_some() {
+            return self.read_mpcore_cpu_interface_register(address);
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            return self.read_mpcore_gic_distributor_word(address);
+        }
         if let Some(value) = self.try_read_cached_hit(address, 4) {
             return Ok(value);
         }
@@ -2966,8 +3114,13 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn write8(&mut self, address: u32, value: u8) -> BusResult<()> {
-        if self.mpcore_private_timer_register_offset(address).is_some() {
+        if self.mpcore_private_timer_register_offset(address).is_some()
+            || self.mpcore_cpu_interface_register_offset(address).is_some()
+        {
             return Err(Error::InvalidAccess { addr: address });
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            return self.write_mpcore_gic_distributor_byte(address, value);
         }
         if self.mpcore_scu_register_offset(address).is_some() {
             return self.write8_with_cache_policy(address, value, CachePolicy::NonCacheable);
@@ -2981,8 +3134,13 @@ impl Bus for Arm11CodeAddressSpace {
         value: u8,
         policy: CachePolicy,
     ) -> BusResult<()> {
-        if self.mpcore_private_timer_register_offset(address).is_some() {
+        if self.mpcore_private_timer_register_offset(address).is_some()
+            || self.mpcore_cpu_interface_register_offset(address).is_some()
+        {
             return Err(Error::InvalidAccess { addr: address });
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            return self.write_mpcore_gic_distributor_byte(address, value);
         }
         if self.mpcore_scu_register_offset(address).is_some() {
             let register = self.read_mpcore_scu_register(address)?;
@@ -2997,6 +3155,12 @@ impl Bus for Arm11CodeAddressSpace {
     fn read32_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u32> {
         if self.mpcore_private_timer_register_offset(address).is_some() {
             return self.read_mpcore_private_timer_register(address);
+        }
+        if self.mpcore_cpu_interface_register_offset(address).is_some() {
+            return self.read_mpcore_cpu_interface_register(address);
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            return self.read_mpcore_gic_distributor_word(address);
         }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.read_mpcore_scu_register(address);
@@ -3025,6 +3189,12 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_private_timer_register_offset(address).is_some() {
             return self.write_mpcore_private_timer_register(address, value);
         }
+        if self.mpcore_cpu_interface_register_offset(address).is_some() {
+            return self.write_mpcore_cpu_interface_register(address, value);
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            return self.write_mpcore_gic_distributor_word(address, value);
+        }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.write_mpcore_scu_register(address, value);
         }
@@ -3035,8 +3205,15 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn write16(&mut self, address: u32, value: u16) -> BusResult<()> {
-        if self.mpcore_private_timer_register_offset(address).is_some() {
+        if self.mpcore_private_timer_register_offset(address).is_some()
+            || self.mpcore_cpu_interface_register_offset(address).is_some()
+        {
             return Err(Error::InvalidAccess { addr: address });
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            let bytes = value.to_le_bytes();
+            self.write_mpcore_gic_distributor_byte(address, bytes[0])?;
+            return self.write_mpcore_gic_distributor_byte(address.wrapping_add(1), bytes[1]);
         }
         if self.mpcore_scu_register_offset(address).is_some() {
             return Bus::write16_with_cache_policy(self, address, value, CachePolicy::NonCacheable);
@@ -3047,6 +3224,12 @@ impl Bus for Arm11CodeAddressSpace {
     fn write32(&mut self, address: u32, value: u32) -> BusResult<()> {
         if self.mpcore_private_timer_register_offset(address).is_some() {
             return self.write_mpcore_private_timer_register(address, value);
+        }
+        if self.mpcore_cpu_interface_register_offset(address).is_some() {
+            return self.write_mpcore_cpu_interface_register(address, value);
+        }
+        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+            return self.write_mpcore_gic_distributor_word(address, value);
         }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.write_mpcore_scu_register(address, value);
