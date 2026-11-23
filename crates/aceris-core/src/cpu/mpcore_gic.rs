@@ -398,6 +398,16 @@ impl MpcoreInterruptController {
         result
     }
 
+    fn pack_trigger_config(&self, offset: u32) -> u32 {
+        let first = ((offset - GICD_ICFGR_BASE) / 4) as usize * 16;
+        let mut result = 0u32;
+        for index in 0..16 {
+            let trigger = u32::from(self.edge_triggered[first + index]) << 1;
+            result |= trigger << (index * 2);
+        }
+        result
+    }
+
     fn highest_pending_interrupt(&self) -> Option<u32> {
         if !self.distributor_enabled || !self.cpu_interface_enabled {
             return None;
@@ -671,9 +681,9 @@ mod tests {
         // ICFGR has eight 32-bit registers for 128 interrupts. The final
         // byte programs IDs 124..127; the following byte is reserved.
         controller.write_distributor_byte(GICD_ICFGR_BASE + 31, 0xAA);
-        assert_ne!(
+        assert_eq!(
             controller.read_distributor_byte(GICD_ICFGR_BASE + 31),
-            0
+            0xAA
         );
         assert_eq!(controller.read_distributor_byte(GICD_ICFGR_BASE + 32), 0);
     }
