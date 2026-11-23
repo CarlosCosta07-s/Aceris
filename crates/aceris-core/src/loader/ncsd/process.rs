@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{Arm11MemoryType, CodeFileLayout, CodeSetInfo};
+use super::ncch::service_access::ServiceAccessControl;
 use crate::cpu::{Arm11Core, MpcoreScu, SP};
 use crate::gpu::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
@@ -777,6 +778,8 @@ impl PreparedArm11Image {
 pub struct Arm11CodeAddressSpace {
     layout: Arm11ProcessLayout,
     memory_type: Arm11MemoryType,
+    /// Service ACL from the NCCH exheader; 3DSX homebrew has no exheader ACL.
+    service_access_control: Option<ServiceAccessControl>,
     text: Vec<u8>,
     read_only: Vec<u8>,
     data: Vec<u8>,
@@ -811,6 +814,9 @@ impl Arm11CodeAddressSpace {
         prepared: PreparedArm11Image,
     ) -> std::result::Result<Self, Arm11ProcessLayoutError> {
         let memory_type = prepared.extended_header.arm11_memory_type();
+        let service_access_control = Some(ServiceAccessControl::parse(
+            &prepared.extended_header.access_control_info,
+        ));
         let layout = prepared.process_layout()?;
         let bss_size = usize::try_from(layout.bss.mapped_size_bytes)
             .map_err(|_| Arm11ProcessLayoutError::InvalidCodeFileLayout)?;
@@ -834,6 +840,7 @@ impl Arm11CodeAddressSpace {
         Ok(Self {
             layout,
             memory_type,
+            service_access_control,
             text: prepared.text,
             read_only: prepared.read_only,
             data: prepared.data,
@@ -928,6 +935,7 @@ impl Arm11CodeAddressSpace {
         Ok(Self {
             layout,
             memory_type: Arm11MemoryType::Application,
+            service_access_control: None,
             text,
             read_only,
             data,
@@ -958,6 +966,22 @@ impl Arm11CodeAddressSpace {
     /// Returns the ARM11 FCRAM region assigned to this process.
     pub const fn memory_type(&self) -> Arm11MemoryType {
         self.memory_type
+    }
+
+    /// Checks whether the NCCH exheader permits access to a service.
+    ///
+    /// A 3DSX homebrew process has no NCCH exheader and therefore no ACL to
+    /// enforce in this bootstrap. NCCH processes are restricted to the
+    /// exact service names present in their parsed Access Control Info.
+    pub fn allows_service_access(&self, service_name: &[u8]) -> bool {
+        self.service_access_control
+            .as_ref()
+            .is_none_or(|access| access.allows_bytes(service_name))
+    }
+
+    /// Returns the parsed NCCH service ACL, or None for 3DSX homebrew.
+    pub fn service_access_control(&self) -> Option<&ServiceAccessControl> {
+        self.service_access_control.as_ref()
     }
 
     /// Initializes the ARM11 core's entry PC and main-thread stack pointer.
