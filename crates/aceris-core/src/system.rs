@@ -1224,6 +1224,14 @@ impl System {
                     })?;
                 request_words.push(session.read_memory_u32(address)?);
             }
+            session
+                .translate_ipc_request_handles(&mut request_words)
+                .map_err(|error| {
+                    Error::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid ARM11 IPC handle translation: {error:?}"),
+                    ))
+                })?;
             if std::env::var_os("ACERIS_TRACE_SVC").is_some() {
                 eprintln!("  ipc handle={:#x} words={request_words:x?}", registers[0]);
             }
