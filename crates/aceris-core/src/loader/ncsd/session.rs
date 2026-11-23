@@ -2785,8 +2785,7 @@ impl Arm11ProcessSession {
         // Remove it from all queues and bookkeeping before it can be reaped.
         self.kernel_objects.remove_waiter(target);
         self.kernel_objects.take_handoff(target);
-        self.arbiter_waiters
-            .retain(|(_, waiter)| *waiter != target);
+        self.arbiter_waiters.retain(|(_, waiter)| *waiter != target);
         self.wait_deadlines.remove(&target);
         self.multi_waits.remove(&target);
         self.wait_all_waits.remove(&target);
@@ -3434,8 +3433,11 @@ impl Arm11ProcessSession {
                             return None;
                         }
                         let info = self.scheduler.thread_info(*thread)?;
-                        (info.state == ThreadState::Waiting)
-                            .then_some((info.priority, queue_order, *thread))
+                        (info.state == ThreadState::Waiting).then_some((
+                            info.priority,
+                            queue_order,
+                            *thread,
+                        ))
                     })
                     .min_by_key(|(priority, queue_order, _)| (*priority, *queue_order));
 
@@ -7451,35 +7453,21 @@ mod tests {
         assert_eq!(session.scheduler.current_thread_id(), Some(first));
         for waiter in [first, second, third] {
             set_arbitration_registers(&mut session, waiter, arbiter, wait_address, 1, 1);
-            assert_eq!(
-                session.dispatch_svc(0x22),
-                SvcRunDisposition::Resume
-            );
+            assert_eq!(session.dispatch_svc(0x22), SvcRunDisposition::Resume);
         }
-        assert_eq!(
-            session.scheduler.current_thread_id(),
-            Some(MAIN_THREAD_ID)
+        assert_eq!(session.scheduler.current_thread_id(), Some(MAIN_THREAD_ID));
+        assert!(
+            session
+                .arbiter_waiters
+                .iter()
+                .all(|(address, _)| *address == wait_address)
         );
-        assert!(session
-            .arbiter_waiters
-            .iter()
-            .all(|(address, _)| *address == wait_address));
 
         // A later waiter becomes more urgent. SIGNAL must pick it first,
         // then retain FIFO order for the two waiters with equal priorities.
         session.scheduler.set_priority(third, 0x10).unwrap();
-        set_arbitration_registers(
-            &mut session,
-            MAIN_THREAD_ID,
-            arbiter,
-            wait_address,
-            0,
-            1,
-        );
-        assert_eq!(
-            session.dispatch_svc(0x22),
-            SvcRunDisposition::Resume
-        );
+        set_arbitration_registers(&mut session, MAIN_THREAD_ID, arbiter, wait_address, 0, 1);
+        assert_eq!(session.dispatch_svc(0x22), SvcRunDisposition::Resume);
         assert_eq!(session.scheduler.current_thread_id(), Some(third));
         assert_eq!(
             session.scheduler.thread_info(first).unwrap().state,
@@ -7491,10 +7479,7 @@ mod tests {
         );
 
         set_arbitration_registers(&mut session, third, arbiter, wait_address, 0, 1);
-        assert_eq!(
-            session.dispatch_svc(0x22),
-            SvcRunDisposition::Resume
-        );
+        assert_eq!(session.dispatch_svc(0x22), SvcRunDisposition::Resume);
         assert_eq!(
             session.scheduler.thread_info(first).unwrap().state,
             ThreadState::Ready
@@ -7505,18 +7490,12 @@ mod tests {
         );
 
         set_arbitration_registers(&mut session, third, arbiter, wait_address, 0, 1);
-        assert_eq!(
-            session.dispatch_svc(0x22),
-            SvcRunDisposition::Resume
-        );
+        assert_eq!(session.dispatch_svc(0x22), SvcRunDisposition::Resume);
         assert_eq!(
             session.scheduler.thread_info(second).unwrap().state,
             ThreadState::Ready
         );
-        assert_eq!(
-            session.scheduler.current_thread_id(),
-            Some(third)
-        );
+        assert_eq!(session.scheduler.current_thread_id(), Some(third));
     }
 
     #[test]
