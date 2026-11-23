@@ -48,11 +48,10 @@ use svc::{
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
     SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD, SVC_GET_PROCESS_INFO, SVC_GET_SYSTEM_TICK,
-    SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY,
-    SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
-    SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
-    SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
-    SVC_WAIT_SYNCHRONIZATION1,
+    SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY,
+    SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY,
+    SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT,
+    SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
 };
 
 /// Main-thread priority used by the current process bootstrap.
@@ -3528,9 +3527,7 @@ impl Arm11ProcessSession {
         if registers[1] != CURRENT_PROCESS_HANDLE {
             return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
         }
-        if !self.address_space.is_writable_range(registers[0], 4)
-            || self.address_space.write32(registers[0], self.process_id).is_err()
-        {
+        if self.address_space.write32(registers[0], self.process_id).is_err() {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
         self.write_svc_result(caller, 0)
