@@ -512,3 +512,110 @@ fn guest_tlbimvaa_matches_an_address_inside_a_large_page_and_preserves_neighbor_
     assert_eq!(cpu.regs[7], 0xCCCC_3003);
     assert_eq!(cpu.regs[8], 0xBBBB_2002);
 }
+
+#[test]
+fn guest_tlbimvaa_invalidates_the_same_mva_across_all_asids() {
+    const DATA_VA: u32 = 0x1230_0100;
+    const SECOND_L1_BASE: u32 = 0x8000;
+    const ASID_ONE_OLD_PHYSICAL: u32 = 0x0010_0000;
+    const ASID_TWO_OLD_PHYSICAL: u32 = 0x0020_0000;
+    const ASID_ONE_NEW_PHYSICAL: u32 = 0x0030_0000;
+    const ASID_TWO_NEW_PHYSICAL: u32 = 0x0000_0000;
+
+    let (mut cpu, mut memory) = mmu_machine();
+
+    // Both processes execute from the same high virtual section. Their data
+    // page tables map the same data VA to different physical sections.
+    memory
+        .write32(L1_BASE + 0x300 * 4, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(SECOND_L1_BASE, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(SECOND_L1_BASE + 0x300 * 4, section_descriptor(0, false))
+        .unwrap();
+    memory
+        .write32(
+            L1_BASE + 0x123 * 4,
+            section_descriptor(ASID_ONE_OLD_PHYSICAL, true),
+        )
+        .unwrap();
+    memory
+        .write32(
+            SECOND_L1_BASE + 0x123 * 4,
+            section_descriptor(ASID_TWO_OLD_PHYSICAL, true),
+        )
+        .unwrap();
+
+    memory
+        .write32(ASID_ONE_OLD_PHYSICAL + 0x100, 0x1111_0001)
+        .unwrap();
+    memory
+        .write32(ASID_TWO_OLD_PHYSICAL + 0x100, 0x2222_0002)
+        .unwrap();
+    memory
+        .write32(ASID_ONE_NEW_PHYSICAL + 0x100, 0x3333_0003)
+        .unwrap();
+    memory
+        .write32(ASID_TWO_NEW_PHYSICAL + 0x100, 0x4444_0004)
+        .unwrap();
+
+    // Populate the same MVA under ASID 1 and ASID 2, then return to ASID 1
+    // and execute TLBIMVAA (c8,c7,3) for that MVA.
+    memory.write32(0x100, 0xE3A0_4001).unwrap(); // MOV r4, #1
+    memory.write32(0x104, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 1
+    memory.write32(0x108, 0xE590_5000).unwrap(); // LDR r5, [r0]
+    memory.write32(0x10C, mcr(3, 2, 0, 0)).unwrap(); // TTBR0 = B
+    memory.write32(0x110, 0xE3A0_4002).unwrap(); // MOV r4, #2
+    memory.write32(0x114, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 2
+    memory.write32(0x118, 0xE590_6000).unwrap(); // LDR r6, [r0]
+    memory.write32(0x11C, mcr(2, 2, 0, 0)).unwrap(); // TTBR0 = A
+    memory.write32(0x120, 0xE3A0_4001).unwrap(); // MOV r4, #1
+    memory.write32(0x124, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 1
+    memory.write32(0x128, 0xE590_7000).unwrap(); // LDR r7, [r0]
+    memory.write32(0x12C, mcr(1, 8, 7, 3)).unwrap(); // TLBIMVAA r1.
+    memory.write32(0x130, 0xE590_8000).unwrap(); // LDR r8, [r0]
+    memory.write32(0x134, mcr(3, 2, 0, 0)).unwrap(); // TTBR0 = B
+    memory.write32(0x138, 0xE3A0_4002).unwrap(); // MOV r4, #2
+    memory.write32(0x13C, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 2
+    memory.write32(0x140, 0xE590_9000).unwrap(); // LDR r9, [r0]
+
+    cpu.regs[0] = DATA_VA;
+    cpu.regs[1] = DATA_VA & 0xFFFF_F000; // TLBIMVAA takes an MVA, not an ASID.
+    cpu.regs[2] = L1_BASE;
+    cpu.regs[3] = SECOND_L1_BASE;
+    cpu.set_pc(0x3000_0100);
+
+    for _ in 0..11 {
+        cpu.step(&mut memory).unwrap();
+    }
+    assert_eq!(cpu.regs[5], 0x1111_0001);
+    assert_eq!(cpu.regs[6], 0x2222_0002);
+    assert_eq!(cpu.regs[7], 0x1111_0001);
+
+    // Change both page-table mappings after both ASID-specific entries exist.
+    memory
+        .write32(
+            L1_BASE + 0x123 * 4,
+            section_descriptor(ASID_ONE_NEW_PHYSICAL, true),
+        )
+        .unwrap();
+    memory
+        .write32(
+            SECOND_L1_BASE + 0x123 * 4,
+            section_descriptor(ASID_TWO_NEW_PHYSICAL, true),
+        )
+        .unwrap();
+
+    cpu.step(&mut memory).unwrap(); // Queues MVA-only invalidation.
+    cpu.step(&mut memory).unwrap(); // ASID 1 must walk its updated mapping.
+    assert_eq!(cpu.regs[8], 0x3333_0003);
+
+    cpu.step(&mut memory).unwrap(); // Switch TTBR0 back to B.
+    cpu.step(&mut memory).unwrap(); // MOV r4, #2.
+    cpu.step(&mut memory).unwrap(); // Switch CONTEXTIDR to ASID 2.
+    cpu.step(&mut memory).unwrap(); // ASID 2 must also walk its updated mapping.
+    assert_eq!(cpu.regs[9], 0x4444_0004);
+}
+
