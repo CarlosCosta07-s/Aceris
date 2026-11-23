@@ -141,6 +141,34 @@ impl MpcoreInterruptController {
     /// Set/clear registers use write-one semantics. Read-only and reserved
     /// fields ignore writes.
     pub fn write_distributor_byte(&mut self, offset: u32, value: u8) {
+        if in_byte_register_range(offset, GICD_IPRIORITYR_BASE, 128) {
+            let interrupt_id = (offset - GICD_IPRIORITYR_BASE) as usize;
+            self.priorities[interrupt_id] = value >> 4;
+            return;
+        }
+        if in_byte_register_range(offset, GICD_ITARGETSR_BASE, 128) {
+            let interrupt_id = (offset - GICD_ITARGETSR_BASE) as usize;
+            // The target mask is hardwired for SGIs and PPIs. PPI target
+            // fields resolve to the current CPU (CPU0 in this implementation).
+            if interrupt_id >= 32 {
+                self.targets[interrupt_id] = value & 0x0F;
+            }
+            return;
+        }
+        if in_byte_register_range(offset, GICD_ICFGR_BASE, 64) {
+            let byte_index = (offset - GICD_ICFGR_BASE) as usize;
+            let first_interrupt = (byte_index / 4) * 16 + (byte_index % 4) * 4;
+            for field in 0..4 {
+                let interrupt_id = first_interrupt + field;
+                if interrupt_id < 16 {
+                    continue;
+                }
+                self.edge_triggered[interrupt_id] = value & (1 << (field * 2 + 1)) != 0;
+                self.refresh_level_pending(interrupt_id);
+            }
+            return;
+        }
+
         let register = offset & !3;
         let shift = (offset & 3) * 8;
         // GICD_CTLR only implements bit 0 in byte lane 0. Writes to the
@@ -264,15 +292,6 @@ impl MpcoreInterruptController {
             _ if is_bit_register(offset, GICD_ICPENDR_BASE) => {
                 self.apply_pending_bits(offset, GICD_ICPENDR_BASE, value, false);
             }
-            _ if in_register_range(offset, GICD_IPRIORITYR_BASE, 128) => {
-                self.apply_priority_bytes(offset, value);
-            }
-            _ if in_register_range(offset, GICD_ITARGETSR_BASE, 128) => {
-                self.apply_target_bytes(offset, value);
-            }
-            _ if in_register_range(offset, GICD_ICFGR_BASE, 16) => {
-                self.apply_trigger_config(offset, value);
-            }
             _ => {}
         }
     }
@@ -348,47 +367,6 @@ impl MpcoreInterruptController {
             result |= u32::from(values[first + byte]) << (byte * 8);
         }
         result
-    }
-
-    fn apply_priority_bytes(&mut self, offset: u32, value: u32) {
-        let first = (offset - GICD_IPRIORITYR_BASE) as usize;
-        for byte in 0..4 {
-            self.priorities[first + byte] = ((value >> (byte * 8)) as u8) >> 4;
-        }
-    }
-
-    fn apply_target_bytes(&mut self, offset: u32, value: u32) {
-        let first = (offset - GICD_ITARGETSR_BASE) as usize;
-        for byte in 0..4 {
-            let interrupt_id = first + byte;
-            let target = (value >> (byte * 8)) as u8;
-            // The target mask is hardwired for SGIs and PPIs. PPI targets
-            // resolve to the current CPU (CPU0 in this implementation).
-            if interrupt_id >= 32 {
-                self.targets[interrupt_id] = target & 0x0F;
-            }
-        }
-    }
-
-    fn pack_trigger_config(&self, offset: u32) -> u32 {
-        let first = ((offset - GICD_ICFGR_BASE) / 4) as usize * 16;
-        let mut result = 0u32;
-        for index in 0..16 {
-            let trigger = u32::from(self.edge_triggered[first + index]) << 1;
-            result |= trigger << (index * 2);
-        }
-        result
-    }
-
-    fn apply_trigger_config(&mut self, offset: u32, value: u32) {
-        let first = ((offset - GICD_ICFGR_BASE) / 4) as usize * 16;
-        for index in 0..16 {
-            if first + index < 16 {
-                continue;
-            }
-            self.edge_triggered[first + index] = value & (1 << (index * 2 + 1)) != 0;
-            self.refresh_level_pending(first + index);
-        }
     }
 
     fn highest_pending_interrupt(&self) -> Option<u32> {
@@ -488,6 +466,10 @@ const fn is_bit_register(offset: u32, base: u32) -> bool {
 
 const fn in_register_range(offset: u32, base: u32, count: u32) -> bool {
     offset >= base && offset < base + count * 4 && offset & 3 == 0
+}
+
+const fn in_byte_register_range(offset: u32, base: u32, count: u32) -> bool {
+    offset >= base && offset < base + count
 }
 
 #[cfg(test)]
@@ -608,6 +590,28 @@ mod tests {
         );
         controller.set_private_timer_irq_level(false);
         controller.write_cpu_interface_register(GICC_EOIR, 29);
+        assert!(!controller.interrupt_pending(29).unwrap());
+    }
+
+    #[test]
+    fn byte_writes_to_priority_target_and_configuration_preserve_neighbor_lanes() {
+        let mut controller = MpcoreInterruptController::default();
+        controller.write_distributor_byte(GICD_IPRIORITYR_BASE + 29, 0xA0);
+        assert_eq!(controller.interrupt_priority(29), Some(0xA0));
+        assert_eq!(controller.interrupt_priority(28), Some(0));
+        assert_eq!(controller.read_distributor_byte(GICD_IPRIORITYR_BASE + 29), 0xA0);
+
+        controller.write_distributor_byte(0x800 + 32, 1);
+        assert_eq!(controller.read_distributor_byte(0x800 + 32), 1);
+        assert_eq!(controller.read_distributor_byte(0x800 + 33), 0);
+
+        // Change only the PPI 29 trigger bit. The neighboring PPI 30
+        // configuration must remain edge-sensitive.
+        let config_byte = GICD_ICFGR_BASE + 7;
+        controller.write_distributor_byte(config_byte, 0x20);
+        let config = controller.read_distributor_byte(config_byte);
+        assert_eq!(config & 0x08, 0);
+        assert_ne!(config & 0x20, 0);
         assert!(!controller.interrupt_pending(29).unwrap());
     }
 
