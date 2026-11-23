@@ -610,7 +610,7 @@ impl Arm11ProcessSession {
     pub fn translate_ipc_request_handles(
         &mut self,
         words: &mut [u32],
-    ) -> Result<(), IpcHandleTranslationError> {
+    ) -> std::result::Result<(), IpcHandleTranslationError> {
         super::session::ipc_handles::translate_message_handles(&mut self.kernel_objects, words)
     }
 
