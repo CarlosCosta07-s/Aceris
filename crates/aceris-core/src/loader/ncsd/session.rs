@@ -7395,15 +7395,16 @@ mod tests {
         const TIMER_INTERRUPT_STATUS: u32 = TIMER_BASE + 12;
         const TIMER_ENABLE_AND_IRQ: u32 = (1 << 0) | (1 << 2);
         const DISTRIBUTOR: u32 = PRIVATE_BASE + crate::cpu::MPCORE_GIC_DISTRIBUTOR_OFFSET;
-        const CPU_INTERFACE: u32 =
-            PRIVATE_BASE + crate::cpu::MPCORE_CPU_INTERFACE_CURRENT_OFFSET;
+        const CPU_INTERFACE: u32 = PRIVATE_BASE + crate::cpu::MPCORE_CPU_INTERFACE_CURRENT_OFFSET;
 
         let mut session = test_session_with_program(&[]);
 
         // Hardware requires both the distributor and CPU interface to be
         // enabled, and the private timer PPI 29 to be enabled for CPU0.
         session.write_memory_u32(DISTRIBUTOR, 1).unwrap();
-        session.write_memory_u32(DISTRIBUTOR + 0x100, 1 << 29).unwrap();
+        session
+            .write_memory_u32(DISTRIBUTOR + 0x100, 1 << 29)
+            .unwrap();
         session.write_memory_u32(CPU_INTERFACE, 1).unwrap();
 
         session.write_memory_u32(TIMER_BASE, 0).unwrap();
@@ -7414,10 +7415,7 @@ mod tests {
         // The private timer input clock is half the 268.111856 MHz CPU clock.
         // Eight virtual nanoseconds cross one timer tick with LOAD=0.
         session.advance_time(8);
-        assert_eq!(
-            session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(),
-            1
-        );
+        assert_eq!(session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(), 1);
         assert_eq!(
             session.read_memory_u32(DISTRIBUTOR + 0x200).unwrap(),
             1 << 29
@@ -7455,18 +7453,10 @@ mod tests {
         // The host's independent device IRQ remains asserted even when the
         // private timer status is cleared and its PPI source goes low.
         session.set_irq_line(true);
-        session
-            .write_memory_u32(TIMER_INTERRUPT_STATUS, 1)
-            .unwrap();
+        session.write_memory_u32(TIMER_INTERRUPT_STATUS, 1).unwrap();
         session.advance_time(0);
-        assert_eq!(
-            session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(),
-            0
-        );
-        assert_eq!(
-            session.read_memory_u32(DISTRIBUTOR + 0x200).unwrap(),
-            0
-        );
+        assert_eq!(session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(), 0);
+        assert_eq!(session.read_memory_u32(DISTRIBUTOR + 0x200).unwrap(), 0);
         assert!(
             session
                 .scheduler
@@ -7494,25 +7484,10 @@ mod tests {
         let mut session = test_session_with_program(&[]);
 
         assert!(session.read_memory_u32(TIMER_BASE + 1).is_err());
-        assert!(
-            session
-                .address_space
-                .write16(TIMER_BASE, 0x1234)
-                .is_err()
-        );
-        assert!(
-            session
-                .address_space
-                .write8(TIMER_BASE, 0x12)
-                .is_err()
-        );
+        assert!(session.address_space.write16(TIMER_BASE, 0x1234).is_err());
+        assert!(session.address_space.write8(TIMER_BASE, 0x12).is_err());
         assert!(session.read_memory_u32(CPU_INTERFACE + 1).is_err());
-        assert!(
-            session
-                .address_space
-                .write16(CPU_INTERFACE, 0)
-                .is_err()
-        );
+        assert!(session.address_space.write16(CPU_INTERFACE, 0).is_err());
 
         // CPU0's fixed private-timer alias exposes the same load register.
         let timer_alias = PRIVATE_BASE + 0x0700;
@@ -7538,7 +7513,10 @@ mod tests {
         let mut session = test_session_with_program(&[]);
         let output = session.address_space.layout().initial_stack_pointer - 0x100;
         let process_id = session.process_id();
-        assert!(process_id > 5, "application PID must not overlap built-in system modules");
+        assert!(
+            process_id > 5,
+            "application PID must not overlap built-in system modules"
+        );
 
         {
             let core = session.scheduler.current_core_mut().unwrap();
