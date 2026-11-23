@@ -11,6 +11,7 @@ mod cp15;
 mod faults;
 mod mmu;
 mod mpcore_scu;
+mod mpcore_timer;
 mod psr;
 mod shifter;
 mod thumb;
@@ -20,6 +21,10 @@ pub use condition::Condition;
 pub use cp15::Cp15;
 pub use mpcore_scu::{
     MPCORE_PRIVATE_MEMORY_BASE, MPCORE_PRIVATE_MEMORY_SIZE, MpcoreScu, SCU_REGISTER_WINDOW_SIZE,
+};
+pub use mpcore_timer::{
+    MPCORE_PRIVATE_TIMER_OFFSET, MPCORE_PRIVATE_TIMER_REGISTER_SIZE,
+    MPCORE_TIMER_DEFAULT_CLOCK_HZ, MpcorePrivateTimer,
 };
 pub use psr::Psr;
 pub use vfp::Vfp;
