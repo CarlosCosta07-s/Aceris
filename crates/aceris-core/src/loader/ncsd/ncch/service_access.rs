@@ -131,12 +131,30 @@ impl ServiceAccessControl {
         self.regular.iter().chain(self.extended.iter())
     }
 
+    /// Checks an exact, case-sensitive service name encoded as guest bytes.
+    ///
+    /// The input must contain one to eight printable ASCII bytes and must not
+    /// include an explicit terminator; the fixed-width exheader slot supplies
+    /// the remaining NUL padding.
+    pub fn allows_bytes(&self, service_name: &[u8]) -> bool {
+        if service_name.is_empty()
+            || service_name.len() > SERVICE_NAME_SIZE
+            || service_name
+                .iter()
+                .any(|byte| !(0x21..=0x7E).contains(byte))
+        {
+            return false;
+        }
+
+        let mut requested = [0; SERVICE_NAME_SIZE];
+        requested[..service_name.len()].copy_from_slice(service_name);
+        self.services()
+            .any(|entry| entry.as_bytes() == &requested)
+    }
+
     /// Checks an exact, case-sensitive service-name match against either list.
     pub fn allows(&self, service_name: &str) -> bool {
-        let Some(requested) = ServiceName::from_ascii(service_name) else {
-            return false;
-        };
-        self.services().any(|entry| *entry == requested)
+        self.allows_bytes(service_name.as_bytes())
     }
 
     /// Number of nonempty service entries across both lists.
@@ -222,6 +240,9 @@ mod tests {
 
         assert!(parsed.allows("hid:USER"));
         assert!(parsed.allows("am:net"));
+        assert!(parsed.allows_bytes(b"hid:USER"));
+        assert!(!parsed.allows_bytes(b"hid:user"));
+        assert!(!parsed.allows_bytes(b"hid:USER\\0"));
         assert!(!parsed.allows("hid:user"));
         assert!(!parsed.allows("hid:"));
         assert!(!parsed.allows("service-name-too-long"));
