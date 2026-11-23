@@ -1390,9 +1390,7 @@ impl System {
                     .as_ref()
                     .map(Arm11ProcessSession::process_id)
                     .unwrap_or(0);
-                if translation.len() != 2
-                    || translation[0] != 0x20
-                    || translation[1] != process_id
+                if translation.len() != 2 || translation[0] != 0x20 || translation[1] != process_id
                 {
                     return Ok(vec![0x0001_0040, RESULT_INVALID_ENUM]);
                 }
@@ -5059,9 +5057,8 @@ mod tests {
         const SERVICE_NAME_SIZE: usize = 8;
 
         let mut image = ipc_program_ncsd_cartridge_fixture(&vec![0xEF00_0032; svc_count]);
-        let access_control = NCSD_PARTITION_OFFSET
-            + NCCH_EXTENDED_HEADER_OFFSET
-            + ACI_OFFSET_IN_EXTENDED_HEADER;
+        let access_control =
+            NCSD_PARTITION_OFFSET + NCCH_EXTENDED_HEADER_OFFSET + ACI_OFFSET_IN_EXTENDED_HEADER;
         let allowed_services: &[&[u8]] = &[
             b"gsp::Gpu",
             b"hid:USER",
@@ -5095,7 +5092,8 @@ mod tests {
         // the NCCH header. Refresh it after populating this fixture's service ACL.
         let extended_header_start = NCSD_PARTITION_OFFSET + NCCH_EXTENDED_HEADER_OFFSET;
         let extended_header_end = extended_header_start + NCCH_EXTENDED_HEADER_SIZE;
-        let extended_header_hash = sha256_digest(&image[extended_header_start..extended_header_end]);
+        let extended_header_hash =
+            sha256_digest(&image[extended_header_start..extended_header_end]);
         let ncch = NCSD_PARTITION_OFFSET;
         image[ncch + 0x160..ncch + 0x180].copy_from_slice(&extended_header_hash);
         image
