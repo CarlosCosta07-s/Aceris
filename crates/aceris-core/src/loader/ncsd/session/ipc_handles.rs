@@ -3,8 +3,8 @@
 //! The current HLE services execute inside the application process context.
 //! This module still applies the kernel's COPY_HANDLE/MOVE_HANDLE rules at the
 //! message boundary, so service code never receives unchecked guest handle IDs.
-//! A separate process-wide handle namespace is required for fully independent
-//! ARM11 processes and is deliberately not simulated here.
+//! Process-ID descriptors and null/pseudo handles remain in their guest form
+//! for HLE endpoints; independent process handle namespaces are future work.
 
 use std::collections::BTreeSet;
 
@@ -136,6 +136,7 @@ mod tests {
     use super::translate_message_handles;
     use crate::loader::ncsd::session::kernel::{
         Arm11KernelObjectTable, EventResetType, IpcHandleTranslationError, KernelHandleError,
+        CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE,
     };
 
     fn one_handle_message(descriptor: u32, handle: u32) -> Vec<u32> {
