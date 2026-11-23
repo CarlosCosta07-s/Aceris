@@ -256,7 +256,8 @@ pub struct Arm11ProcessSession {
     process_id: u32,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
     wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
-    /// Threads blocked in ArbitrateAddress, in arrival order: (address, thread).
+    /// Threads blocked in ArbitrateAddress, in arrival order (FIFO tie-break):
+    /// (guest address, thread ID).
     arbiter_waiters: Vec<(u32, ThreadId)>,
     /// Handle lists of threads blocked in WaitSynchronizationN wait-any mode.
     multi_waits: BTreeMap<ThreadId, Vec<u32>>,
@@ -2784,6 +2785,8 @@ impl Arm11ProcessSession {
         // Remove it from all queues and bookkeeping before it can be reaped.
         self.kernel_objects.remove_waiter(target);
         self.kernel_objects.take_handoff(target);
+        self.arbiter_waiters
+            .retain(|(_, waiter)| *waiter != target);
         self.wait_deadlines.remove(&target);
         self.multi_waits.remove(&target);
         self.wait_all_waits.remove(&target);
@@ -3412,19 +3415,40 @@ impl Arm11ProcessSession {
             return self.write_svc_result(caller, RESULT_MISALIGNED_ADDRESS);
         }
         if kind == 0 {
-            let mut woken = 0;
-            let mut index = 0;
-            while index < self.arbiter_waiters.len() && (value < 0 || woken < value) {
-                if self.arbiter_waiters[index].0 != address {
-                    index += 1;
-                    continue;
-                }
-                let (_, thread) = self.arbiter_waiters.remove(index);
+            let wake_limit = if value < 0 {
+                usize::MAX
+            } else {
+                value as usize
+            };
+            let mut woken = 0usize;
+            while woken < wake_limit {
+                // The appcore scheduler is priority FIFO: select the waiter
+                // with the numerically lowest priority first. The queue index
+                // preserves arrival order for equal-priority waiters.
+                let next_waiter = self
+                    .arbiter_waiters
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(queue_order, (wait_address, thread))| {
+                        if *wait_address != address {
+                            return None;
+                        }
+                        let info = self.scheduler.thread_info(*thread)?;
+                        (info.state == ThreadState::Waiting)
+                            .then_some((info.priority, queue_order, *thread))
+                    })
+                    .min_by_key(|(priority, queue_order, _)| (*priority, *queue_order));
+
+                let Some((_, queue_order, thread)) = next_waiter else {
+                    break;
+                };
+                self.arbiter_waiters.remove(queue_order);
                 if let Some(core) = self.scheduler.core_mut(thread) {
                     core.regs[0] = 0;
                 }
-                let _ = self.scheduler.wake_thread(thread);
-                woken += 1;
+                if self.scheduler.wake_thread(thread).is_ok() {
+                    woken += 1;
+                }
             }
             return self.write_svc_result(caller, 0);
         }
@@ -7385,6 +7409,113 @@ mod tests {
                 event_handle: None,
                 flags: 0,
             })
+        );
+    }
+
+    #[test]
+    fn arbitrate_address_signal_wakes_highest_priority_then_fifo_waiters() {
+        fn set_arbitration_registers(
+            session: &mut Arm11ProcessSession,
+            thread: ThreadId,
+            handle: u32,
+            address: u32,
+            kind: u32,
+            value: i32,
+        ) {
+            let core = session.scheduler.core_mut(thread).unwrap();
+            core.regs[0] = handle;
+            core.regs[1] = address;
+            core.regs[2] = kind;
+            core.regs[3] = value as u32;
+        }
+
+        let mut session = test_session_with_program(&[]);
+        let arbiter = session.kernel_objects.insert_address_arbiter().unwrap();
+        let wait_address = session.address_space.layout().initial_stack_pointer - 0x100;
+        session.write_memory_u32(wait_address, 0).unwrap();
+
+        // Equal-priority threads enter the wait queue in this order.
+        let first = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x1000_1000, 0x20, 0)
+            .unwrap();
+        let second = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x1000_2000, 0x20, 0)
+            .unwrap();
+        let third = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x1000_3000, 0x20, 0)
+            .unwrap();
+
+        assert_eq!(session.scheduler.current_thread_id(), Some(first));
+        for waiter in [first, second, third] {
+            set_arbitration_registers(&mut session, waiter, arbiter, wait_address, 1, 1);
+            assert_eq!(
+                session.dispatch_svc(0x22),
+                SvcRunDisposition::Resume
+            );
+        }
+        assert_eq!(
+            session.scheduler.current_thread_id(),
+            Some(MAIN_THREAD_ID)
+        );
+        assert!(session
+            .arbiter_waiters
+            .iter()
+            .all(|(address, _)| *address == wait_address));
+
+        // A later waiter becomes more urgent. SIGNAL must pick it first,
+        // then retain FIFO order for the two waiters with equal priorities.
+        session.scheduler.set_priority(third, 0x10).unwrap();
+        set_arbitration_registers(
+            &mut session,
+            MAIN_THREAD_ID,
+            arbiter,
+            wait_address,
+            0,
+            1,
+        );
+        assert_eq!(
+            session.dispatch_svc(0x22),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(session.scheduler.current_thread_id(), Some(third));
+        assert_eq!(
+            session.scheduler.thread_info(first).unwrap().state,
+            ThreadState::Waiting
+        );
+        assert_eq!(
+            session.scheduler.thread_info(second).unwrap().state,
+            ThreadState::Waiting
+        );
+
+        set_arbitration_registers(&mut session, third, arbiter, wait_address, 0, 1);
+        assert_eq!(
+            session.dispatch_svc(0x22),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(
+            session.scheduler.thread_info(first).unwrap().state,
+            ThreadState::Ready
+        );
+        assert_eq!(
+            session.scheduler.thread_info(second).unwrap().state,
+            ThreadState::Waiting
+        );
+
+        set_arbitration_registers(&mut session, third, arbiter, wait_address, 0, 1);
+        assert_eq!(
+            session.dispatch_svc(0x22),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(
+            session.scheduler.thread_info(second).unwrap().state,
+            ThreadState::Ready
+        );
+        assert_eq!(
+            session.scheduler.current_thread_id(),
+            Some(third)
         );
     }
 
