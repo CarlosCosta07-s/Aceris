@@ -13,8 +13,8 @@ pub mod svc;
 /// ARM11 per-thread contexts and cooperative scheduling primitives.
 pub mod thread;
 pub use interrupt::{
-    Arm11InterruptController, InterruptBinding, InterruptBindingError,
-    InterruptDispatchOutcome, InterruptTargetKind,
+    Arm11InterruptController, InterruptBinding, InterruptBindingError, InterruptDispatchOutcome,
+    InterruptTargetKind,
 };
 pub use thread::{
     Arm11ThreadScheduler, MAIN_THREAD_ID, ThreadId, ThreadInfo, ThreadSchedulerError, ThreadState,
@@ -37,24 +37,19 @@ use crate::loader::ncsd::process::{
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
-use interrupt::{
-    Arm11InterruptController, InterruptBindingError, InterruptDispatchOutcome,
-    InterruptTargetKind,
-};
 use kernel::{
     Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE, EventResetType,
     KernelHandleError, ServiceSessionKind,
 };
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
-    SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_BIND_INTERRUPT, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT,
+    SVC_CLEAR_TIMER, SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
     SVC_GET_PROCESS_INFO, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY,
     SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
-    SVC_BIND_INTERRUPT, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER,
-    SVC_SIGNAL_EVENT, SVC_UNBIND_INTERRUPT,
-    SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
+    SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
+    SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
     SVC_WAIT_SYNCHRONIZATION1,
 };
 
@@ -1816,9 +1811,7 @@ impl Arm11ProcessSession {
             target,
         ) {
             Ok(()) => self.write_svc_result(caller, 0),
-            Err(error) => {
-                self.write_svc_result(caller, interrupt_binding_result_code(error))
-            }
+            Err(error) => self.write_svc_result(caller, interrupt_binding_result_code(error)),
         }
     }
 
@@ -1844,13 +1837,16 @@ impl Arm11ProcessSession {
         let Some(binding) = self.interrupts.binding(interrupt_id) else {
             return InterruptDispatchOutcome::NotBound;
         };
-        if binding.priority == crate::loader::ncsd::session::interrupt::DISABLED_INTERRUPT_PRIORITY {
+        if binding.priority == crate::loader::ncsd::session::interrupt::DISABLED_INTERRUPT_PRIORITY
+        {
             return InterruptDispatchOutcome::Disabled;
         }
 
         let result = match binding.target {
             InterruptTargetKind::Event => self.kernel_objects.signal_event(binding.handle),
-            InterruptTargetKind::Semaphore => self.kernel_objects.release_semaphore(binding.handle, 1),
+            InterruptTargetKind::Semaphore => {
+                self.kernel_objects.release_semaphore(binding.handle, 1)
+            }
         };
         match result {
             Ok(waiters) => {
@@ -3607,15 +3603,15 @@ fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
     }
 }
 
-
 fn interrupt_binding_result_code(error: InterruptBindingError) -> u32 {
     match error {
         InterruptBindingError::InvalidInterrupt(_)
         | InterruptBindingError::InvalidPriority(_) => RESULT_INVALID_ENUM,
         InterruptBindingError::InvalidCombination => RESULT_INTERRUPT_INVALID_COMBINATION,
         InterruptBindingError::AlreadyBound(_) => RESULT_INTERRUPT_ALREADY_BOUND,
-        InterruptBindingError::NotBound(_)
-        | InterruptBindingError::HandleMismatch { .. } => RESULT_INVALID_HANDLE,
+        InterruptBindingError::NotBound(_) | InterruptBindingError::HandleMismatch { .. } => {
+            RESULT_INVALID_HANDLE
+        }
     }
 }
 
@@ -7353,8 +7349,14 @@ mod tests {
             session.dispatch_svc(SVC_BIND_INTERRUPT),
             SvcRunDisposition::Resume
         );
-        assert_eq!(session.raise_interrupt(0x4A), InterruptDispatchOutcome::Disabled);
-        assert_eq!(session.kernel_objects.semaphore_counts(semaphore), Some((0, 1)));
+        assert_eq!(
+            session.raise_interrupt(0x4A),
+            InterruptDispatchOutcome::Disabled
+        );
+        assert_eq!(
+            session.kernel_objects.semaphore_counts(semaphore),
+            Some((0, 1))
+        );
     }
 
     #[test]
@@ -7413,5 +7415,4 @@ mod tests {
         assert_eq!(session.core().regs[0], 0);
         assert_eq!(session.interrupts.binding(0x2B), None);
     }
-
 }
