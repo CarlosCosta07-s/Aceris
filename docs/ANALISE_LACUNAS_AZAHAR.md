@@ -64,17 +64,16 @@ Critério de conclusão: dois processos sintéticos independentes comunicam-se p
 
 ### P1 — Controlador MPCore, IRQ/FIQ e scheduler
 
-O `Arm11InterruptController` atual representa registros guest de `BindInterrupt` para eventos/semafóros. Ele **não** é o controlador de interrupções de hardware MPCore.
+O `Arm11InterruptController` de sessão continua representando a API guest de `BindInterrupt` para eventos/semafóros. Agora há também um `MpcoreInterruptController` separado, que modela o distribuidor e a interface da CPU para um único CPU de aplicação, e um timer privado no barramento MPCore. A integração coberta hoje é somente o timer PPI 29; isso **não** é suporte SMP nem um GIC completo para todas as fontes de hardware.
 
-O mapeamento atual da região privada MPCore expõe o subconjunto SCU nos primeiros 0x100 bytes. O temporizador privado, watchdog, interfaces de CPU e distribuidor de interrupções ainda não compõem um caminho de hardware integrado.
+Implementação necessária / estado:
+1. **Parcial — IDs e registradores:** o modelo cobre IDs 0x00–0x7F, SGI/PPI privados e SPI compartilhados, prioridade, target, trigger, enable, pending, active set/clear e registradores da CPU interface. Só CPU0 é executado; entrega multi-core/afinidade e SGI não estão conectadas ao scheduler.
+2. **Parcial — timer privado:** Load, Counter, Control, Interrupt Status, prescaler, one-shot/auto-reload e W1C são modelados em `0x17E00600`, com alias CPU0 em `0x17E00700`. O status aciona PPI 29 e passa pelo distribuidor antes de chegar ao IRQ input da CPU. O modelo usa 134.055.928 Hz como frequência inicial Old 3DS, derivada da metade do clock nominal ARM11 268.111.856 Hz; a frequência efetiva do timer ainda requer confirmação em hardware/medição independente.
+3. **Pendente — watchdog:** PPI 30 não foi implementada, nem o caminho de reset do console.
+4. **Parcial — fontes compartilhadas:** GSP já envia PSC0/PSC1/PDC0/PDC1/PPF/P3D aos relay queues e eventos HLE, e `BindInterrupt` pode acordar objetos associados. Essas fontes ainda não alimentam o GIC porque estão configuradas como level-sensitive e o estado do dispositivo não é limpo no caminho de acknowledge/EOI.
+5. **Pendente — FIQ/SGI e ciclo de CPU:** FIQ continua sendo linha externa separada; falta contexto pendente físico para múltiplos CPUs, preempção/quantum e clock sincronizado a ciclos de instrução.
 
-Implementação necessária:
-1. modelar os IDs privados por CPU (0x00–0x1F) e fontes compartilhadas (0x20–0x7F), respeitando prioridade e afinidade documentadas;
-2. implementar registradores e estados do controlador distribuído e das interfaces de CPU de acordo com o ARM11 MPCore, sem transplantar um modelo de outra geração ARM;
-3. modelar temporizador privado e watchdog, com contagem baseada no relógio virtual e os IRQs correspondentes;
-4. ligar fontes reais do Aceris (GSP/PDC, DSP, HID e DMA quando a conclusão estiver modelada) às linhas corretas;
-5. manter IRQ/FIQ pendentes no contexto do processador físico, não somente no objeto de thread que estiver ativo;
-6. integrar preempção/quantum e wake-up do scheduler com eventos e temporizadores, mantendo a execução determinística nos testes.
+O timer/distribuidor usa exclusivamente Rust original e documentação pública ARM/3DS. Nenhum código de outro emulador foi usado.
 
 Referências independentes: 3dbrew descreve IDs privados 0x00–0x1F, IRQs compartilhadas 0x20–0x7F e o uso dos IDs 0x1D/0x1E para timer/watchdog. O TRM ARM11 MPCore descreve o distribuidor, prioridades, alvos e interfaces por CPU.
 
