@@ -57,8 +57,11 @@ use svc::{
 /// Main-thread priority used by the current process bootstrap.
 pub const DEFAULT_MAIN_THREAD_PRIORITY: i32 = 0x30;
 
-/// Deterministic nonzero PID for the single application process currently hosted by System.
-pub const DEFAULT_APPLICATION_PROCESS_ID: u32 = 1;
+/// First non-system virtual PID used by the single application process hosted by System.
+///
+/// The first five PIDs are reserved for built-in NATIVE_FIRM system modules,
+/// which have a privileged service-access policy on retail systems.
+pub const DEFAULT_APPLICATION_PROCESS_ID: u32 = 6;
 
 /// Nintendo 3DS result: invalid enum or argument value.
 pub const RESULT_INVALID_ENUM: u32 = 0xD8E0_07ED;
@@ -7384,6 +7387,7 @@ mod tests {
         let mut session = test_session_with_program(&[]);
         let output = session.address_space.layout().initial_stack_pointer - 0x100;
         let process_id = session.process_id();
+        assert!(process_id > 5, "application PID must not overlap built-in system modules");
 
         {
             let core = session.scheduler.current_core_mut().unwrap();
