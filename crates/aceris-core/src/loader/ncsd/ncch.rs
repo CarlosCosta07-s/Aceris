@@ -16,10 +16,10 @@ pub mod crypto;
 pub mod exefs;
 /// Parser for the 0x400-byte NCCH extended header.
 pub mod extended_header;
-/// Service-name permissions from the NCCH Access Control Info.
-pub mod service_access;
 /// Structural RomFS IVFC and Level 3 header parser.
 pub mod romfs;
+/// Service-name permissions from the NCCH Access Control Info.
+pub mod service_access;
 
 pub const HEADER_SIZE: usize = 0x200;
 
