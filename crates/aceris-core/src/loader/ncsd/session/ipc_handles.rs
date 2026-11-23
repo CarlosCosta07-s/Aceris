@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use super::ipc::{IpcMessage, IpcTranslationParameter};
 use super::kernel::{
     Arm11KernelObjectTable, IpcHandleTranslationDescriptor, IpcHandleTranslationError,
+    CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE,
 };
 
 /// Validates and translates every type-0 handle descriptor in one IPC message.
@@ -45,9 +46,6 @@ pub fn translate_message_handles(
         };
 
         let decoded = IpcHandleTranslationDescriptor::decode(descriptor)?;
-        if decoded.requests_process_id() {
-            return Err(IpcHandleTranslationError::ProcessIdTranslationUnsupported);
-        }
         if usize::from(decoded.handle_count()) != handles.len() {
             return Err(IpcHandleTranslationError::HandleCountMismatch {
                 expected: decoded.handle_count(),
@@ -56,7 +54,23 @@ pub fn translate_message_handles(
         }
 
         let mut source_handles = Vec::with_capacity(handles.len());
-        for handle in handles.iter().copied() {
+        for (offset, handle) in handles.iter().copied().enumerate() {
+            if decoded.requests_process_id() {
+                // The process ID is synthesized by the kernel, not copied as
+                // a user handle. Preserve its descriptor and payload for HLE.
+                continue;
+            }
+            if handle == 0
+                || handle == CURRENT_PROCESS_HANDLE
+                || handle == CURRENT_THREAD_HANDLE
+            {
+                if decoded.moves_handle() && handle != 0 {
+                    return Err(IpcHandleTranslationError::Kernel(
+                        super::kernel::KernelHandleError::InvalidHandle,
+                    ));
+                }
+                continue;
+            }
             if !objects.is_open_handle(handle) {
                 return Err(IpcHandleTranslationError::Kernel(
                     super::kernel::KernelHandleError::InvalidHandle,
@@ -65,7 +79,7 @@ pub fn translate_message_handles(
             if decoded.moves_handle() && !moved_handles.insert(handle) {
                 return Err(IpcHandleTranslationError::DuplicateMoveHandle { handle });
             }
-            source_handles.push(handle);
+            source_handles.push((offset, handle));
         }
 
         transfers.push((
@@ -77,7 +91,7 @@ pub fn translate_message_handles(
 
     let mut replacements = Vec::new();
     for (payload_start, move_handles, source_handles) in &transfers {
-        for (offset, source_handle) in source_handles.iter().copied().enumerate() {
+        for (offset, source_handle) in source_handles.iter().copied() {
             match objects.duplicate_handle(source_handle) {
                 Ok(receiver_handle) => {
                     replacements.push((
@@ -188,7 +202,7 @@ mod tests {
     fn duplicate_move_handle_is_rejected_before_any_alias_is_created() {
         let mut objects = Arm11KernelObjectTable::default();
         let source = objects.insert_event(EventResetType::Sticky).unwrap();
-        let mut message = vec![(0x1234 << 16) | 3, 1 << 4, source, source];
+        let mut message = vec![(0x1234 << 16) | 3, (1 << 26) | (1 << 4), source, source];
         let initial_count = objects.handle_count();
 
         assert_eq!(
@@ -200,15 +214,27 @@ mod tests {
     }
 
     #[test]
-    fn process_id_descriptor_is_rejected_without_mutating_the_message() {
+    fn process_id_and_null_handle_descriptors_are_preserved_for_hle_services() {
         let mut objects = Arm11KernelObjectTable::default();
-        let mut message = one_handle_message(1 << 5, 0);
-        let original = message.clone();
+        let mut process_id_message = one_handle_message(1 << 5, 0);
+        let process_id_original = process_id_message.clone();
+        translate_message_handles(&mut objects, &mut process_id_message).unwrap();
+        assert_eq!(process_id_message, process_id_original);
 
-        assert_eq!(
-            translate_message_handles(&mut objects, &mut message),
-            Err(IpcHandleTranslationError::ProcessIdTranslationUnsupported)
-        );
-        assert_eq!(message, original);
+        let mut null_handle_message = one_handle_message(0, 0);
+        let null_handle_original = null_handle_message.clone();
+        translate_message_handles(&mut objects, &mut null_handle_message).unwrap();
+        assert_eq!(null_handle_message, null_handle_original);
+    }
+
+    #[test]
+    fn current_process_and_thread_pseudo_handles_are_preserved() {
+        let mut objects = Arm11KernelObjectTable::default();
+        for handle in [CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE] {
+            let mut message = one_handle_message(0, handle);
+            let original = message.clone();
+            translate_message_handles(&mut objects, &mut message).unwrap();
+            assert_eq!(message, original);
+        }
     }
 }
