@@ -61,9 +61,7 @@ impl MpcorePrivateTimer {
             TIMER_LOAD_REGISTER_OFFSET => Some(self.load),
             TIMER_COUNTER_REGISTER_OFFSET => Some(self.counter),
             TIMER_CONTROL_REGISTER_OFFSET => Some(self.control),
-            TIMER_INTERRUPT_STATUS_REGISTER_OFFSET => {
-                Some(u32::from(self.interrupt_status))
-            }
+            TIMER_INTERRUPT_STATUS_REGISTER_OFFSET => Some(u32::from(self.interrupt_status)),
             _ => None,
         }
     }
@@ -330,10 +328,7 @@ mod tests {
     #[test]
     fn control_reserved_bits_are_ignored_and_status_is_write_one_to_clear() {
         let mut timer = MpcorePrivateTimer::default();
-        timer.write_register(
-            TIMER_CONTROL_REGISTER_OFFSET,
-            u32::MAX,
-        );
+        timer.write_register(TIMER_CONTROL_REGISTER_OFFSET, u32::MAX);
         assert_eq!(timer.control(), 0x0000_FF07);
         assert!(!timer.write_register(0x10, 0));
         assert!(!timer.write_register(3, 0));
