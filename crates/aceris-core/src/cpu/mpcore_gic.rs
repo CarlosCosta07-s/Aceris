@@ -155,7 +155,7 @@ impl MpcoreInterruptController {
             }
             return;
         }
-        if in_byte_register_range(offset, GICD_ICFGR_BASE, 64) {
+        if in_byte_register_range(offset, GICD_ICFGR_BASE, 32) {
             let byte_index = (offset - GICD_ICFGR_BASE) as usize;
             let first_interrupt = (byte_index / 4) * 16 + (byte_index % 4) * 4;
             for field in 0..4 {
@@ -270,7 +270,7 @@ impl MpcoreInterruptController {
             _ if in_register_range(offset, GICD_ITARGETSR_BASE, 128) => {
                 self.pack_bytes(offset, GICD_ITARGETSR_BASE, &self.targets)
             }
-            _ if in_register_range(offset, GICD_ICFGR_BASE, 16) => {
+            _ if in_register_range(offset, GICD_ICFGR_BASE, 8) => {
                 self.pack_trigger_config(offset)
             }
             _ => 0,
@@ -461,7 +461,7 @@ impl MpcoreInterruptController {
 }
 
 const fn is_bit_register(offset: u32, base: u32) -> bool {
-    offset >= base && offset < base + 0x20 && offset & 3 == 0
+    offset >= base && offset < base + 0x10 && offset & 3 == 0
 }
 
 const fn in_register_range(offset: u32, base: u32, count: u32) -> bool {
@@ -613,6 +613,28 @@ mod tests {
         assert_eq!(config & 0x08, 0);
         assert_ne!(config & 0x20, 0);
         assert!(!controller.interrupt_pending(29).unwrap());
+    }
+
+    #[test]
+    fn register_windows_stop_at_the_128_interrupt_limit() {
+        let mut controller = MpcoreInterruptController::default();
+
+        // The fourth 32-ID bank contains IDs 96..127. The next bank is
+        // outside the advertised GICD_TYPER range and must remain reserved.
+        controller.write_distributor_byte(GICD_ISENABLER_BASE + 0x0F, 0x80);
+        assert_eq!(controller.interrupt_enabled(127), Some(true));
+        assert_eq!(controller.read_distributor_byte(GICD_ISENABLER_BASE + 0x10), 0);
+        controller.write_distributor_byte(GICD_ISENABLER_BASE + 0x10, 0xFF);
+        assert_eq!(controller.interrupt_enabled(127), Some(true));
+
+        // ICFGR has eight 32-bit registers for 128 interrupts. The final
+        // byte programs IDs 124..127; the following byte is reserved.
+        controller.write_distributor_byte(GICD_ICFGR_BASE + 31, 0xAA);
+        assert_ne!(
+            controller.read_distributor_byte(GICD_ICFGR_BASE + 31),
+            0
+        );
+        assert_eq!(controller.read_distributor_byte(GICD_ICFGR_BASE + 32), 0);
     }
 
     #[test]
