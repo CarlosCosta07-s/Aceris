@@ -188,12 +188,7 @@ mod tests {
     fn duplicate_move_handle_is_rejected_before_any_alias_is_created() {
         let mut objects = Arm11KernelObjectTable::default();
         let source = objects.insert_event(EventResetType::Sticky).unwrap();
-        let mut message = vec![
-            (0x1234 << 16) | 3,
-            1 << 4,
-            source,
-            source,
-        ];
+        let mut message = vec![(0x1234 << 16) | 3, 1 << 4, source, source];
         let initial_count = objects.handle_count();
 
         assert_eq!(
