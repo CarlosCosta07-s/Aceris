@@ -30,6 +30,7 @@ const GICD_ICENABLER_BASE: u32 = 0x180;
 const GICD_ISPENDR_BASE: u32 = 0x200;
 const GICD_ICPENDR_BASE: u32 = 0x280;
 const GICD_ISACTIVER_BASE: u32 = 0x300;
+const GICD_ICACTIVER_BASE: u32 = 0x380;
 const GICD_IPRIORITYR_BASE: u32 = 0x400;
 const GICD_ITARGETSR_BASE: u32 = 0x800;
 const GICD_ICFGR_BASE: u32 = 0xC00;
@@ -264,6 +265,9 @@ impl MpcoreInterruptController {
             _ if is_bit_register(offset, GICD_ISACTIVER_BASE) => {
                 self.pack_bits(offset, GICD_ISACTIVER_BASE, &self.active)
             }
+            _ if is_bit_register(offset, GICD_ICACTIVER_BASE) => {
+                self.pack_bits(offset, GICD_ICACTIVER_BASE, &self.active)
+            }
             _ if in_register_range(offset, GICD_IPRIORITYR_BASE, 128) => {
                 self.pack_nibbles(offset, GICD_IPRIORITYR_BASE, &self.priorities)
             }
@@ -291,6 +295,12 @@ impl MpcoreInterruptController {
             }
             _ if is_bit_register(offset, GICD_ICPENDR_BASE) => {
                 self.apply_pending_bits(offset, GICD_ICPENDR_BASE, value, false);
+            }
+            _ if is_bit_register(offset, GICD_ISACTIVER_BASE) => {
+                self.apply_active_bits(offset, GICD_ISACTIVER_BASE, value, true);
+            }
+            _ if is_bit_register(offset, GICD_ICACTIVER_BASE) => {
+                self.apply_active_bits(offset, GICD_ICACTIVER_BASE, value, false);
             }
             _ => {}
         }
@@ -337,6 +347,25 @@ impl MpcoreInterruptController {
             self.pending[interrupt_id] = pending;
             if !pending {
                 self.refresh_level_pending(interrupt_id);
+            }
+        }
+    }
+
+    fn apply_active_bits(&mut self, offset: u32, base: u32, value: u32, active: bool) {
+        let first = ((offset - base) / 4) as usize * 32;
+        for bit in 0..32 {
+            if value & (1 << bit) == 0 {
+                continue;
+            }
+            let interrupt_id = first + bit;
+            if active {
+                if !self.active[interrupt_id] {
+                    self.active[interrupt_id] = true;
+                    self.active_stack.push(interrupt_id as u32);
+                    self.refresh_level_pending(interrupt_id);
+                }
+            } else {
+                self.end_interrupt(interrupt_id as u32);
             }
         }
     }
@@ -613,6 +642,18 @@ mod tests {
         assert_eq!(config & 0x08, 0);
         assert_ne!(config & 0x20, 0);
         assert!(!controller.interrupt_pending(29).unwrap());
+    }
+
+    #[test]
+    fn active_set_and_clear_registers_preserve_interrupt_lifecycle() {
+        let mut controller = MpcoreInterruptController::default();
+        controller.write_distributor_byte(GICD_ISACTIVER_BASE + 3, 0x20);
+        assert_eq!(controller.interrupt_active(29), Some(true));
+        assert_eq!(controller.read_distributor_byte(GICD_ISACTIVER_BASE + 3) & 0x20, 0x20);
+
+        controller.write_distributor_byte(GICD_ICACTIVER_BASE + 3, 0x20);
+        assert_eq!(controller.interrupt_active(29), Some(false));
+        assert_eq!(controller.read_distributor_byte(GICD_ISACTIVER_BASE + 3) & 0x20, 0);
     }
 
     #[test]
