@@ -56,7 +56,7 @@ pub struct MpcoreInterruptController {
     priorities: [u8; MPCORE_GIC_INTERRUPT_COUNT],
     targets: [u8; MPCORE_GIC_INTERRUPT_COUNT],
     edge_triggered: [bool; MPCORE_GIC_INTERRUPT_COUNT],
-    private_timer_input: bool,
+    interrupt_input_levels: [bool; MPCORE_GIC_INTERRUPT_COUNT],
     active_stack: Vec<u32>,
 }
 
@@ -89,7 +89,7 @@ impl Default for MpcoreInterruptController {
             priorities: [0; MPCORE_GIC_INTERRUPT_COUNT],
             targets,
             edge_triggered,
-            private_timer_input: false,
+            interrupt_input_levels: [false; MPCORE_GIC_INTERRUPT_COUNT],
             active_stack: Vec::new(),
         }
     }
@@ -111,21 +111,36 @@ impl MpcoreInterruptController {
             && self.highest_pending_interrupt().is_some()
     }
 
-    /// Samples the private timer's interrupt output on PPI 29.
+    /// Updates one physical interrupt input connected to the distributor.
     ///
-    /// The default timer trigger type is edge-sensitive. Changing the trigger
-    /// configuration to level-sensitive causes the pending state to follow
-    /// the asserted timer output until the guest clears it.
-    pub fn set_private_timer_irq_level(&mut self, asserted: bool) {
-        let interrupt_id = MPCORE_PRIVATE_TIMER_INTERRUPT_ID as usize;
-        if self.edge_triggered[interrupt_id] {
-            if asserted && !self.private_timer_input {
-                self.pending[interrupt_id] = true;
+    /// Edge-configured sources latch a low-to-high transition, including a
+    /// second edge while the previous interrupt is active. Level-configured
+    /// sources remain pending while asserted, become inactive when the device
+    /// clears its line, and are presented again after EOI if still asserted.
+    /// Returns false for an interrupt ID outside the implemented 128 inputs.
+    pub fn set_interrupt_input_level(&mut self, interrupt_id: u32, asserted: bool) -> bool {
+        let Ok(index) = usize::try_from(interrupt_id) else {
+            return false;
+        };
+        if index >= MPCORE_GIC_INTERRUPT_COUNT {
+            return false;
+        }
+
+        let was_asserted = self.interrupt_input_levels[index];
+        self.interrupt_input_levels[index] = asserted;
+        if self.edge_triggered[index] {
+            if asserted && !was_asserted {
+                self.pending[index] = true;
             }
         } else {
-            self.pending[interrupt_id] = asserted && !self.active[interrupt_id];
+            self.pending[index] = asserted && !self.active[index];
         }
-        self.private_timer_input = asserted;
+        true
+    }
+
+    /// Samples the private timer's output on PPI 29.
+    pub fn set_private_timer_irq_level(&mut self, asserted: bool) {
+        let _ = self.set_interrupt_input_level(MPCORE_PRIVATE_TIMER_INTERRUPT_ID, asserted);
     }
 
     /// Reads one byte from the memory-mapped distributor register window.
@@ -500,10 +515,9 @@ impl MpcoreInterruptController {
     }
 
     fn refresh_level_pending(&mut self, interrupt_id: usize) {
-        if interrupt_id == MPCORE_PRIVATE_TIMER_INTERRUPT_ID as usize
-            && !self.edge_triggered[interrupt_id]
-        {
-            self.pending[interrupt_id] = self.private_timer_input && !self.active[interrupt_id];
+        if !self.edge_triggered[interrupt_id] {
+            self.pending[interrupt_id] =
+                self.interrupt_input_levels[interrupt_id] && !self.active[interrupt_id];
         }
     }
 }
@@ -535,6 +549,13 @@ mod tests {
     fn enable_timer_irq(controller: &mut MpcoreInterruptController) {
         controller.write_distributor_byte(GICD_CTLR, 1);
         controller.write_distributor_byte(GICD_ISENABLER_BASE + 3, (TIMER_BIT >> 24) as u8);
+        controller.write_cpu_interface_register(GICC_CTLR, 1);
+    }
+
+    fn enable_interrupt(controller: &mut MpcoreInterruptController, interrupt_id: u32) {
+        controller.write_distributor_byte(GICD_CTLR, 1);
+        let enable_byte = GICD_ISENABLER_BASE + interrupt_id / 8;
+        controller.write_distributor_byte(enable_byte, 1 << (interrupt_id % 8));
         controller.write_cpu_interface_register(GICC_CTLR, 1);
     }
 
@@ -797,4 +818,70 @@ mod tests {
         controller.write_distributor_byte(0x004, 0xFF);
         assert_eq!(controller.read_distributor_byte(0x004), old_type);
     }
+ 
+    #[test]
+    fn level_sensitive_gsp_spi_reasserts_after_eoi_until_device_clears_line() {
+        const PSC0: u32 = 0x28;
+        let mut controller = MpcoreInterruptController::default();
+        enable_interrupt(&mut controller, PSC0);
+
+        assert!(controller.set_interrupt_input_level(PSC0, true));
+        assert_eq!(controller.interrupt_pending(PSC0), Some(true));
+        assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PSC0));
+        assert_eq!(controller.interrupt_active(PSC0), Some(true));
+        assert_eq!(controller.interrupt_pending(PSC0), Some(false));
+
+        // A level source that is not cleared by the guest remains asserted
+        // and is presented again once the active interrupt is completed.
+        assert!(controller.write_cpu_interface_register(GICC_EOIR, PSC0));
+        assert_eq!(controller.interrupt_active(PSC0), Some(false));
+        assert_eq!(controller.interrupt_pending(PSC0), Some(true));
+        assert!(controller.irq_asserted());
+
+        assert!(controller.set_interrupt_input_level(PSC0, false));
+        assert_eq!(controller.interrupt_pending(PSC0), Some(false));
+        assert!(!controller.irq_asserted());
+    }
+
+    #[test]
+    fn level_sensitive_gsp_spi_does_not_survive_device_clear_before_acknowledge() {
+        const P3D: u32 = 0x2D;
+        let mut controller = MpcoreInterruptController::default();
+        enable_interrupt(&mut controller, P3D);
+
+        assert!(controller.set_interrupt_input_level(P3D, true));
+        assert!(controller.set_interrupt_input_level(P3D, false));
+        assert_eq!(controller.interrupt_pending(P3D), Some(false));
+        assert_eq!(
+            controller.read_cpu_interface_register(GICC_IAR),
+            Some(MPCORE_GIC_SPURIOUS_INTERRUPT_ID)
+        );
+    }
+
+    #[test]
+    fn edge_configured_shared_spi_latches_a_pulse_after_input_returns_low() {
+        const PSC1: u32 = 0x29;
+        let mut controller = MpcoreInterruptController::default();
+        enable_interrupt(&mut controller, PSC1);
+
+        let config_byte = GICD_ICFGR_BASE + PSC1 / 4;
+        let trigger_bit = 1 << ((PSC1 % 4) * 2 + 1);
+        controller.write_distributor_byte(config_byte, trigger_bit);
+        assert!(controller.set_interrupt_input_level(PSC1, true));
+        assert!(controller.set_interrupt_input_level(PSC1, false));
+
+        assert_eq!(controller.interrupt_pending(PSC1), Some(true));
+        assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PSC1));
+        assert_eq!(controller.interrupt_active(PSC1), Some(true));
+        assert!(controller.write_cpu_interface_register(GICC_EOIR, PSC1));
+        assert_eq!(controller.interrupt_pending(PSC1), Some(false));
+    }
+
+    #[test]
+    fn shared_interrupt_input_rejects_ids_outside_the_implemented_range() {
+        let mut controller = MpcoreInterruptController::default();
+        assert!(!controller.set_interrupt_input_level(128, true));
+        assert_eq!(controller.interrupt_pending(127), Some(false));
+    }
+
 }
