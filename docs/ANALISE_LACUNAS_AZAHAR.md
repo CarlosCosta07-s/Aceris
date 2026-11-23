@@ -92,7 +92,7 @@ Implementação necessária:
 5. priorizar `fs:USER`, `apt:U`, `cfg:*`, `am:*`, `dsp::DSP`, `hid:USER`, `gsp::Lcd`, `ndm:u`, `frd:u` e demais serviços conforme evidência do guest;
 6. substituir respostas neutras/fixas por estado coerente quando o título depender desses valores.
 
-O parser de service access control foi exposto no último commit consultado, mas sua integração ao registro/runtime de `srv:` e sua validação no CI ainda precisam ser confirmadas.
+O parser de service access control agora lê os 32 slots regulares e os dois slots estendidos do ACI. O espaço de endereçamento NCCH preserva essa ACL, o `srv:GetServiceHandle` verifica o nome exato antes de criar um endpoint HLE e o `srv:RegisterClient` confere o PID virtual traduzido pelo kernel (o bootstrap usa PID 6, fora da faixa privilegiada 1–5). Foi adicionado um teste sintético para permitir `gsp::Gpu` e negar `ssl:C`. **Essa implementação ainda não foi compilada nem executada nesta sessão**: o ambiente não tem `cargo`/`rustc` e o status de checks do commit está vazio. A validação do AccessDesc contra o ACI, o registro/wait de serviços e o ciclo de vida de servidores continuam pendentes.
 
 Critério de conclusão: um título de teste recebe somente serviços permitidos por seu exheader, inicializa cada sessão com estado próprio e consegue fechar/reabrir serviços sem handles obsoletos.
 
