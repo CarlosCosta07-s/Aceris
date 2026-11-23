@@ -716,4 +716,4 @@ fn guest_tlbimvaa_invalidates_a_global_mapping_across_asid_switches() {
     cpu.step(&mut memory).unwrap(); // Global mapping resolves to updated memory.
     assert_eq!(cpu.regs[9], 0x2222_0002);
 }
-\n
+
