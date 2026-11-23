@@ -212,6 +212,8 @@ fn fs_storage_result(error: &crate::storage::StorageError) -> u32 {
 
 /// srv result when a service name is not registered (public tables; unverified).
 const RESULT_SRV_SERVICE_NOT_REGISTERED: u32 = 0xD8E0_6406;
+/// srv result when the process ACL does not grant the requested service.
+const RESULT_SRV_SERVICE_ACCESS_DENIED: u32 = 0xD8E0_6406;
 /// Result for a command a stub service does not implement (public tables; unverified).
 const RESULT_INVALID_COMMAND: u32 = 0xD900_182F;
 /// Minimal HLE services: name and how their commands are answered.
@@ -1407,7 +1409,17 @@ impl System {
                 requested_name[0..4].copy_from_slice(&parameters[0].to_le_bytes());
                 requested_name[4..8].copy_from_slice(&parameters[1].to_le_bytes());
                 let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
-                let hle_kind = match requested_name.get(..name_length) {
+                let Some(service_name) = requested_name.get(..name_length) else {
+                    return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
+                };
+                let access_allowed = self
+                    .ncsd_session
+                    .as_ref()
+                    .is_some_and(|session| session.allows_service_access(service_name));
+                if !access_allowed {
+                    return Ok(vec![0x0005_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]);
+                }
+                let hle_kind = match Some(service_name) {
                     Some(b"hid:USER") => Some(ServiceSessionKind::Hid),
                     Some(b"cfg:u" | b"cfg:i" | b"cfg:s") => Some(ServiceSessionKind::Cfg),
                     // The retail names are upper case; "apt:U" is kept for older tests.
@@ -5015,7 +5027,54 @@ mod tests {
     }
 
     fn ipc_svc_ncsd_cartridge_fixture(svc_count: usize) -> Vec<u8> {
-        ipc_program_ncsd_cartridge_fixture(&vec![0xEF00_0032; svc_count])
+        const NCSD_PARTITION_OFFSET: usize = 0x4000;
+        const NCCH_EXTENDED_HEADER_OFFSET: usize = 0x200;
+        const NCCH_EXTENDED_HEADER_SIZE: usize = 0x400;
+        const ACI_OFFSET_IN_EXTENDED_HEADER: usize = 0x200;
+        const SERVICE_ACCESS_OFFSET_IN_ACI: usize = 0x50;
+        const SERVICE_NAME_SIZE: usize = 8;
+
+        let mut image = ipc_program_ncsd_cartridge_fixture(&vec![0xEF00_0032; svc_count]);
+        let access_control = NCSD_PARTITION_OFFSET
+            + NCCH_EXTENDED_HEADER_OFFSET
+            + ACI_OFFSET_IN_EXTENDED_HEADER;
+        let allowed_services: &[&[u8]] = &[
+            b"gsp::Gpu",
+            b"hid:USER",
+            b"cfg:u",
+            b"cfg:i",
+            b"cfg:s",
+            b"APT:U",
+            b"APT:S",
+            b"APT:A",
+            b"apt:U",
+            b"fs:USER",
+            b"ptm:u",
+            b"dsp::DSP",
+            b"csnd:SND",
+            b"am:u",
+            b"gsp::Lcd",
+            b"ndm:u",
+            b"ptm:sysm",
+            b"ac:u",
+            b"frd:u",
+            b"http:C",
+            b"ir:rst",
+        ];
+        for (index, name) in allowed_services.iter().enumerate() {
+            assert!(name.len() <= SERVICE_NAME_SIZE);
+            let start = access_control + SERVICE_ACCESS_OFFSET_IN_ACI + index * SERVICE_NAME_SIZE;
+            image[start..start + name.len()].copy_from_slice(name);
+        }
+
+        // The ACI is part of the 0x400-byte exheader whose digest is stored in
+        // the NCCH header. Refresh it after populating this fixture's service ACL.
+        let extended_header_start = NCSD_PARTITION_OFFSET + NCCH_EXTENDED_HEADER_OFFSET;
+        let extended_header_end = extended_header_start + NCCH_EXTENDED_HEADER_SIZE;
+        let extended_header_hash = sha256_digest(&image[extended_header_start..extended_header_end]);
+        let ncch = NCSD_PARTITION_OFFSET;
+        image[ncch + 0x160..ncch + 0x180].copy_from_slice(&extended_header_hash);
+        image
     }
 
     fn run_one_ipc_svc(system: &mut System) {
@@ -5393,6 +5452,63 @@ mod tests {
 
         system.release_gsp_rendering_right(1).unwrap();
     }
+    #[test]
+    fn service_manager_enforces_the_ncch_service_access_list() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(2)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let service_manager = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let handle = session.create_service_manager_session().unwrap();
+            session.register_service_manager_client(handle).unwrap();
+            handle
+        };
+
+        // gsp::Gpu is listed by the synthetic exheader and can be requested.
+        let mut allowed_name = [0u8; 8];
+        allowed_name[..8].copy_from_slice(b"gsp::Gpu");
+        let reply = write_tls_ipc_request(
+            &mut system,
+            service_manager,
+            &[
+                0x0005_0100,
+                u32::from_le_bytes(allowed_name[..4].try_into().unwrap()),
+                u32::from_le_bytes(allowed_name[4..].try_into().unwrap()),
+                8,
+                0,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        let allowed_response = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&allowed_response[..3], &[0x0005_0042, 0, 0]);
+        assert_ne!(allowed_response[3], 0);
+
+        // ssl:C is deliberately absent from the same exheader ACL.
+        let mut denied_name = [0u8; 8];
+        denied_name[..5].copy_from_slice(b"ssl:C");
+        let reply = write_tls_ipc_request(
+            &mut system,
+            service_manager,
+            &[
+                0x0005_0100,
+                u32::from_le_bytes(denied_name[..4].try_into().unwrap()),
+                u32::from_le_bytes(denied_name[4..].try_into().unwrap()),
+                5,
+                0,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0005_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]
+        );
+    }
+
     #[test]
     fn service_manager_rejects_lookup_before_client_registration() {
         let mut system = System::new();
