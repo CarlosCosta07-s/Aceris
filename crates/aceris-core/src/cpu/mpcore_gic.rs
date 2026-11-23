@@ -883,5 +883,4 @@ mod tests {
         assert!(!controller.set_interrupt_input_level(128, true));
         assert_eq!(controller.interrupt_pending(127), Some(false));
     }
-
 }
