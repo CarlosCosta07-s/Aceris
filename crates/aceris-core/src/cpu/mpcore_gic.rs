@@ -878,6 +878,42 @@ mod tests {
     }
 
     #[test]
+    fn edge_input_retrigger_while_active_remains_pending_until_eoi() {
+        const PPF: u32 = 0x2C;
+        let mut controller = MpcoreInterruptController::default();
+        enable_interrupt(&mut controller, PPF);
+
+        let config_byte = GICD_ICFGR_BASE + PPF / 4;
+        let trigger_bit = 1 << ((PPF % 4) * 2 + 1);
+        controller.write_distributor_byte(config_byte, trigger_bit);
+
+        assert!(controller.set_interrupt_input_level(PPF, true));
+        assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PPF));
+        assert_eq!(controller.interrupt_active(PPF), Some(true));
+        assert_eq!(controller.interrupt_pending(PPF), Some(false));
+
+        // A new rising edge is latched even while this interrupt is active.
+        assert!(controller.set_interrupt_input_level(PPF, false));
+        assert!(controller.set_interrupt_input_level(PPF, true));
+        assert!(controller.set_interrupt_input_level(PPF, false));
+        assert_eq!(controller.interrupt_pending(PPF), Some(true));
+        assert_eq!(
+            controller.read_cpu_interface_register(GICC_HPPIR),
+            Some(MPCORE_GIC_SPURIOUS_INTERRUPT_ID)
+        );
+
+        assert!(controller.write_cpu_interface_register(GICC_EOIR, PPF));
+        assert_eq!(controller.interrupt_active(PPF), Some(false));
+        assert_eq!(controller.interrupt_pending(PPF), Some(true));
+        assert!(controller.irq_asserted());
+        assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PPF));
+
+        assert!(controller.write_cpu_interface_register(GICC_EOIR, PPF));
+        assert_eq!(controller.interrupt_pending(PPF), Some(false));
+        assert!(!controller.irq_asserted());
+    }
+
+    #[test]
     fn shared_interrupt_input_rejects_ids_outside_the_implemented_range() {
         let mut controller = MpcoreInterruptController::default();
         assert!(!controller.set_interrupt_input_level(128, true));
