@@ -616,9 +616,11 @@ mod tests {
     fn priority_mask_and_priority_register_gate_delivery() {
         let mut controller = MpcoreInterruptController::default();
         enable_timer_irq(&mut controller);
+        controller.write_cpu_interface_register(GICC_PMR, 0xA0);
         controller.write_distributor_byte(GICD_IPRIORITYR_BASE + 29, 0xA0);
         controller.set_private_timer_irq_level(true);
 
+        // Equal priority and PMR are masked; a larger mask admits it.
         assert!(!controller.irq_asserted());
         controller.write_cpu_interface_register(GICC_PMR, 0xB0);
         assert!(controller.irq_asserted());
@@ -762,10 +764,15 @@ mod tests {
     #[test]
     fn clear_registers_cannot_disable_sgis_or_write_read_only_state() {
         let mut controller = MpcoreInterruptController::default();
+        // All SGIs (0..=15) are always enabled. Exercise ICENABLER
+        // against a previously enabled PPI instead of treating ID 8 as SPI.
+        controller.write_distributor_byte(GICD_ISENABLER_BASE + 2, 1);
         controller.write_distributor_byte(GICD_ICENABLER_BASE, 0xFF);
+        controller.write_distributor_byte(GICD_ICENABLER_BASE + 2, 1);
         assert_eq!(controller.interrupt_enabled(0), Some(true));
         assert_eq!(controller.interrupt_enabled(7), Some(true));
-        assert_eq!(controller.interrupt_enabled(8), Some(false));
+        assert_eq!(controller.interrupt_enabled(8), Some(true));
+        assert_eq!(controller.interrupt_enabled(16), Some(false));
 
         let old_type = controller.read_distributor_byte(0x004);
         controller.write_distributor_byte(0x004, 0xFF);
