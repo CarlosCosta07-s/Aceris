@@ -525,6 +525,15 @@ impl Arm11ProcessSession {
             .service_manager_client_registered(handle)
     }
 
+    /// Checks the NCCH exheader ACL for a requested service name.
+    ///
+    /// NCCH applications are restricted to their parsed service-access list.
+    /// 3DSX homebrew has no NCCH exheader and retains the bootstrap's
+    /// unrestricted service behavior.
+    pub fn allows_service_access(&self, service_name: &[u8]) -> bool {
+        self.address_space.allows_service_access(service_name)
+    }
+
     /// Reports the current signal state of a process-local event handle.
     pub fn event_handle_is_signaled(&self, handle: u32) -> Option<bool> {
         self.kernel_objects.event_is_signaled(handle)
