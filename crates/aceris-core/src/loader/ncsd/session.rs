@@ -6,11 +6,16 @@
 //! resource accounting and peripheral mappings remain outside this bootstrap.
 
 pub mod gsp_service;
+pub mod interrupt;
 pub mod ipc;
 pub mod kernel;
 pub mod svc;
 /// ARM11 per-thread contexts and cooperative scheduling primitives.
 pub mod thread;
+pub use interrupt::{
+    Arm11InterruptController, InterruptBinding, InterruptBindingError,
+    InterruptDispatchOutcome, InterruptTargetKind,
+};
 pub use thread::{
     Arm11ThreadScheduler, MAIN_THREAD_ID, ThreadId, ThreadInfo, ThreadSchedulerError, ThreadState,
 };
@@ -32,6 +37,10 @@ use crate::loader::ncsd::process::{
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
+use interrupt::{
+    Arm11InterruptController, InterruptBindingError, InterruptDispatchOutcome,
+    InterruptTargetKind,
+};
 use kernel::{
     Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE, EventResetType,
     KernelHandleError, ServiceSessionKind,
@@ -43,7 +52,8 @@ use svc::{
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
     SVC_GET_PROCESS_INFO, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY,
     SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
-    SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
+    SVC_BIND_INTERRUPT, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER,
+    SVC_SIGNAL_EVENT, SVC_UNBIND_INTERRUPT,
     SVC_SLEEP_THREAD, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
     SVC_WAIT_SYNCHRONIZATION1,
 };
@@ -59,6 +69,11 @@ pub const RESULT_MISALIGNED_ADDRESS: u32 = 0xD8E0_07F1;
 
 /// Nintendo 3DS result: invalid or unknown handle.
 pub const RESULT_INVALID_HANDLE: u32 = 0xD8E0_07F7;
+
+/// Kernel result for an interrupt ID that already has a binding.
+const RESULT_INTERRUPT_ALREADY_BOUND: u32 = 0xD8E0_07F0;
+/// Kernel result for an unsupported event/interrupt configuration.
+const RESULT_INTERRUPT_INVALID_COMBINATION: u32 = 0xD8E0_07EE;
 
 /// Nintendo 3DS result: invalid user virtual address.
 pub const RESULT_INVALID_ADDRESS: u32 = 0xE0E0_1BF5;
@@ -232,6 +247,7 @@ pub struct Arm11ProcessSession {
     address_space: Arm11CodeAddressSpace,
     svc_dispatcher: Arm11SvcDispatcher,
     kernel_objects: Arm11KernelObjectTable,
+    interrupts: Arm11InterruptController,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
     wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
     /// Threads blocked in ArbitrateAddress, in arrival order: (address, thread).
@@ -264,6 +280,7 @@ impl Arm11ProcessSession {
             address_space,
             svc_dispatcher: Arm11SvcDispatcher::default(),
             kernel_objects: Arm11KernelObjectTable::default(),
+            interrupts: Arm11InterruptController::default(),
             wait_deadlines: BTreeMap::new(),
             arbiter_waiters: Vec::new(),
             multi_waits: BTreeMap::new(),
@@ -1770,6 +1787,88 @@ impl Arm11ProcessSession {
         self.svc_dispatcher.process_exited()
     }
 
+    /// Handles BindInterrupt: r0=IRQ ID, r1=event/semaphore handle,
+    /// r2=interrupt priority and r3=level-high-active flag.
+    fn svc_bind_interrupt(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        if registers[3] > 1 {
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+        }
+
+        let handle = registers[1];
+        let target = if self.kernel_objects.event_reset_type(handle).is_some() {
+            InterruptTargetKind::Event
+        } else if self.kernel_objects.semaphore_counts(handle).is_some() {
+            InterruptTargetKind::Semaphore
+        } else {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        };
+
+        match self.interrupts.bind(
+            registers[0],
+            handle,
+            registers[2] as i32,
+            registers[3] != 0,
+            target,
+        ) {
+            Ok(()) => self.write_svc_result(caller, 0),
+            Err(error) => {
+                self.write_svc_result(caller, interrupt_binding_result_code(error))
+            }
+        }
+    }
+
+    /// Handles UnbindInterrupt: r0=IRQ ID and r1=the originally bound handle.
+    fn svc_unbind_interrupt(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        match self.interrupts.unbind(registers[0], registers[1]) {
+            Ok(()) => self.write_svc_result(caller, 0),
+            Err(error) => {
+                self.write_svc_result(caller, interrupt_binding_result_code(error))
+            }
+        }
+    }
+
+    /// Delivers one device interrupt to the process-local event or semaphore
+    /// registered through SVC BindInterrupt. Woken threads are returned to the
+    /// priority scheduler before the next guest instruction is executed.
+    pub fn raise_interrupt(&mut self, interrupt_id: u32) -> InterruptDispatchOutcome {
+        let Some(binding) = self.interrupts.binding(interrupt_id) else {
+            return InterruptDispatchOutcome::NotBound;
+        };
+        if binding.priority == crate::loader::ncsd::session::interrupt::DISABLED_INTERRUPT_PRIORITY {
+            return InterruptDispatchOutcome::Disabled;
+        }
+
+        let result = match binding.target {
+            InterruptTargetKind::Event => self.kernel_objects.signal_event(binding.handle),
+            InterruptTargetKind::Semaphore => self.kernel_objects.release_semaphore(binding.handle, 1),
+        };
+        match result {
+            Ok(waiters) => {
+                let awakened_threads = waiters.len();
+                self.wake_synchronization_waiters(waiters);
+                self.service_wait_all_waiters();
+                InterruptDispatchOutcome::Delivered { awakened_threads }
+            }
+            Err(_) => {
+                // A registration cannot outlive an object handle that has been
+                // closed. Drop the stale association rather than repeatedly
+                // retrying an invalid kernel object on future device signals.
+                let _ = self.interrupts.unbind(interrupt_id, binding.handle);
+                InterruptDispatchOutcome::StaleBinding
+            }
+        }
+    }
+
     /// Drives the current thread's external IRQ input.
     ///
     /// An asserted IRQ wakes a core in CP15 WFI even when CPSR.I masks IRQ
@@ -2018,6 +2117,8 @@ impl Arm11ProcessSession {
         }
 
         let disposition = match number {
+            SVC_BIND_INTERRUPT => self.svc_bind_interrupt(caller),
+            SVC_UNBIND_INTERRUPT => self.svc_unbind_interrupt(caller),
             SVC_CONNECT_TO_PORT => self.svc_connect_to_port(caller),
             SVC_SEND_SYNC_REQUEST => self.svc_send_sync_request(caller),
             SVC_CREATE_MEMORY_BLOCK => self.svc_create_memory_block(caller),
@@ -3503,6 +3604,18 @@ fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
         | Arm11DynamicMemoryError::AddressRangeOverflow { .. }
         | Arm11DynamicMemoryError::WritebackFailure(_) => RESULT_INVALID_ADDRESS,
         Arm11DynamicMemoryError::InvalidPermissions(_) => RESULT_INVALID_ENUM,
+    }
+}
+
+
+fn interrupt_binding_result_code(error: InterruptBindingError) -> u32 {
+    match error {
+        InterruptBindingError::InvalidInterrupt(_)
+        | InterruptBindingError::InvalidPriority(_) => RESULT_INVALID_ENUM,
+        InterruptBindingError::InvalidCombination => RESULT_INTERRUPT_INVALID_COMBINATION,
+        InterruptBindingError::AlreadyBound(_) => RESULT_INTERRUPT_ALREADY_BOUND,
+        InterruptBindingError::NotBound(_)
+        | InterruptBindingError::HandleMismatch { .. } => RESULT_INVALID_HANDLE,
     }
 }
 
@@ -7173,4 +7286,132 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn bind_interrupt_svc_delivers_event_and_wakes_a_blocked_thread() {
+        let mut session = test_session_with_program(&[]);
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x0020_2000, 0x20, 0)
+            .unwrap();
+        assert_eq!(session.current_thread_id(), Some(child));
+
+        {
+            let core = session.scheduler.core_mut(child).unwrap();
+            core.regs[0] = event;
+            core.regs[2] = u32::MAX;
+            core.regs[3] = u32::MAX;
+        }
+        assert_eq!(
+            session.svc_wait_synchronization1(child),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(session.current_thread_id(), Some(MAIN_THREAD_ID));
+
+        {
+            let core = session.scheduler.core_mut(MAIN_THREAD_ID).unwrap();
+            core.regs[0] = 0x2A;
+            core.regs[1] = event;
+            core.regs[2] = 4;
+            core.regs[3] = 0;
+        }
+        assert_eq!(
+            session.dispatch_svc(SVC_BIND_INTERRUPT),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(
+            session.interrupts.binding(0x2A).unwrap().target,
+            InterruptTargetKind::Event
+        );
+
+        assert_eq!(
+            session.raise_interrupt(0x2A),
+            InterruptDispatchOutcome::Delivered {
+                awakened_threads: 1
+            }
+        );
+        assert_eq!(session.current_thread_id(), Some(child));
+        assert_eq!(session.scheduler.core(child).unwrap().regs[0], 0);
+    }
+
+    #[test]
+    fn bind_interrupt_svc_supports_semaphores_and_disabled_priorities() {
+        let mut session = test_session_with_program(&[]);
+        let semaphore = session.kernel_objects.insert_semaphore(0, 1).unwrap();
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x4A;
+            core.regs[1] = semaphore;
+            core.regs[2] = 0x0F;
+            core.regs[3] = 0;
+        }
+        assert_eq!(
+            session.dispatch_svc(SVC_BIND_INTERRUPT),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(session.raise_interrupt(0x4A), InterruptDispatchOutcome::Disabled);
+        assert_eq!(session.kernel_objects.semaphore_counts(semaphore), Some((0, 1)));
+    }
+
+    #[test]
+    fn bind_interrupt_svc_rejects_reserved_ids_wrong_handles_and_duplicate_ids() {
+        let mut session = test_session_with_program(&[]);
+        let event = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x10;
+            core.regs[1] = event;
+            core.regs[2] = 1;
+            core.regs[3] = 0;
+        }
+        session.dispatch_svc(SVC_BIND_INTERRUPT);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ENUM);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x2B;
+            core.regs[1] = 0xDEAD;
+            core.regs[2] = 1;
+            core.regs[3] = 0;
+        }
+        session.dispatch_svc(SVC_BIND_INTERRUPT);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_HANDLE);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x2B;
+            core.regs[1] = event;
+            core.regs[2] = 1;
+            core.regs[3] = 0;
+        }
+        session.dispatch_svc(SVC_BIND_INTERRUPT);
+        assert_eq!(session.core().regs[0], 0);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x2B;
+            core.regs[1] = event;
+            core.regs[2] = 1;
+            core.regs[3] = 0;
+        }
+        session.dispatch_svc(SVC_BIND_INTERRUPT);
+        assert_eq!(session.core().regs[0], RESULT_INTERRUPT_ALREADY_BOUND);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = 0x2B;
+            core.regs[1] = event;
+        }
+        session.dispatch_svc(SVC_UNBIND_INTERRUPT);
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.interrupts.binding(0x2B), None);
+    }
+
 }
