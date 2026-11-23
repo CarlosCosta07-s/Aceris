@@ -3061,7 +3061,10 @@ impl Bus for Arm11CodeAddressSpace {
         {
             return Err(Error::InvalidAccess { addr: address });
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             let low = self.read_mpcore_gic_distributor_byte(address)?;
             let high = self.read_mpcore_gic_distributor_byte(address.wrapping_add(1))?;
             return Ok(u16::from_le_bytes([low, high]));
@@ -3081,7 +3084,10 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_cpu_interface_register_offset(address).is_some() {
             return self.read_mpcore_cpu_interface_register(address);
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             return self.read_mpcore_gic_distributor_word(address);
         }
         if let Some(value) = self.try_read_cached_hit(address, 4) {
@@ -3100,7 +3106,10 @@ impl Bus for Arm11CodeAddressSpace {
         {
             return Err(Error::InvalidAccess { addr: address });
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             return self.write_mpcore_gic_distributor_byte(address, value);
         }
         if self.mpcore_scu_register_offset(address).is_some() {
@@ -3120,7 +3129,10 @@ impl Bus for Arm11CodeAddressSpace {
         {
             return Err(Error::InvalidAccess { addr: address });
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             return self.write_mpcore_gic_distributor_byte(address, value);
         }
         if self.mpcore_scu_register_offset(address).is_some() {
@@ -3140,7 +3152,10 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_cpu_interface_register_offset(address).is_some() {
             return self.read_mpcore_cpu_interface_register(address);
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             return self.read_mpcore_gic_distributor_word(address);
         }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
@@ -3173,7 +3188,10 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_cpu_interface_register_offset(address).is_some() {
             return self.write_mpcore_cpu_interface_register(address, value);
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             return self.write_mpcore_gic_distributor_word(address, value);
         }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
@@ -3191,7 +3209,10 @@ impl Bus for Arm11CodeAddressSpace {
         {
             return Err(Error::InvalidAccess { addr: address });
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             let bytes = value.to_le_bytes();
             self.write_mpcore_gic_distributor_byte(address, bytes[0])?;
             return self.write_mpcore_gic_distributor_byte(address.wrapping_add(1), bytes[1]);
@@ -3209,7 +3230,10 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_cpu_interface_register_offset(address).is_some() {
             return self.write_mpcore_cpu_interface_register(address, value);
         }
-        if self.mpcore_gic_distributor_register_offset(address).is_some() {
+        if self
+            .mpcore_gic_distributor_register_offset(address)
+            .is_some()
+        {
             return self.write_mpcore_gic_distributor_word(address, value);
         }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
