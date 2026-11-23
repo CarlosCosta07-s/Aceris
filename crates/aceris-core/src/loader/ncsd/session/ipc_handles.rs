@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 
 use super::ipc::{IpcMessage, IpcTranslationParameter};
 use super::kernel::{
-    Arm11KernelObjectTable, IpcHandleTranslationDescriptor, IpcHandleTranslationError,
-    CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE,
+    Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE,
+    IpcHandleTranslationDescriptor, IpcHandleTranslationError,
 };
 
 /// Validates and translates every type-0 handle descriptor in one IPC message.
@@ -60,10 +60,7 @@ pub fn translate_message_handles(
                 // a user handle. Preserve its descriptor and payload for HLE.
                 continue;
             }
-            if handle == 0
-                || handle == CURRENT_PROCESS_HANDLE
-                || handle == CURRENT_THREAD_HANDLE
-            {
+            if handle == 0 || handle == CURRENT_PROCESS_HANDLE || handle == CURRENT_THREAD_HANDLE {
                 if decoded.moves_handle() && handle != 0 {
                     return Err(IpcHandleTranslationError::Kernel(
                         super::kernel::KernelHandleError::InvalidHandle,
