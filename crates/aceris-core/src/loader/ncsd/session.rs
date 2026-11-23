@@ -1915,14 +1915,14 @@ impl Arm11ProcessSession {
         self.refresh_irq_line();
     }
 
-    /// Combines host-dispatched device IRQs with the core-0 private timer PPI.
+    /// Combines host-dispatched IRQ sources with the CPU0 GIC interface output.
     ///
-    /// The software scheduler currently runs one application CPU core. Keep
-    /// the source levels separate so acknowledging the private timer cannot
-    /// accidentally clear a GSP or other external device interrupt.
+    /// Private timer PPI 29 first enters the MPCore distributor, where guest
+    /// enable, priority and acknowledge state are applied. Other device IRQ
+    /// sources already delivered by the host remain an independent input.
     fn refresh_irq_line(&mut self) {
-        let timer_irq = self.address_space.mpcore_private_timer_irq_asserted();
-        let asserted = self.external_irq_asserted || timer_irq;
+        let distributor_irq = self.address_space.mpcore_irq_asserted();
+        let asserted = self.external_irq_asserted || distributor_irq;
         if let Some(core) = self.scheduler.current_core_mut() {
             core.set_irq_line(asserted);
         }
@@ -7389,28 +7389,40 @@ mod tests {
     }
 
     #[test]
-    fn mpcore_private_timer_mmio_drives_and_clears_the_application_irq_line() {
-        const TIMER_BASE: u32 =
-            crate::cpu::MPCORE_PRIVATE_MEMORY_BASE + crate::cpu::MPCORE_PRIVATE_TIMER_OFFSET;
-        const TIMER_LOAD: u32 = TIMER_BASE;
-        const TIMER_CONTROL: u32 = TIMER_BASE + 8;
+    fn mpcore_private_timer_routes_through_distributor_and_cpu_interface() {
+        const PRIVATE_BASE: u32 = crate::cpu::MPCORE_PRIVATE_MEMORY_BASE;
+        const TIMER_BASE: u32 = PRIVATE_BASE + crate::cpu::MPCORE_PRIVATE_TIMER_OFFSET;
         const TIMER_INTERRUPT_STATUS: u32 = TIMER_BASE + 12;
         const TIMER_ENABLE_AND_IRQ: u32 = (1 << 0) | (1 << 2);
+        const DISTRIBUTOR: u32 = PRIVATE_BASE + crate::cpu::MPCORE_GIC_DISTRIBUTOR_OFFSET;
+        const CPU_INTERFACE: u32 =
+            PRIVATE_BASE + crate::cpu::MPCORE_CPU_INTERFACE_CURRENT_OFFSET;
 
         let mut session = test_session_with_program(&[]);
-        session.write_memory_u32(TIMER_LOAD, 0).unwrap();
+
+        // Hardware requires both the distributor and CPU interface to be
+        // enabled, and the private timer PPI 29 to be enabled for CPU0.
+        session.write_memory_u32(DISTRIBUTOR, 1).unwrap();
+        session.write_memory_u32(DISTRIBUTOR + 0x100, 1 << 29).unwrap();
+        session.write_memory_u32(CPU_INTERFACE, 1).unwrap();
+
+        session.write_memory_u32(TIMER_BASE, 0).unwrap();
         session
-            .write_memory_u32(TIMER_CONTROL, TIMER_ENABLE_AND_IRQ)
+            .write_memory_u32(TIMER_BASE + 8, TIMER_ENABLE_AND_IRQ)
             .unwrap();
 
-        // A single 4 ns virtual-time slice produces one 268 MHz peripheral
-        // clock edge and expires a timer programmed with LOAD=0.
-        session.advance_time(4);
+        // The private timer input clock is half the 268.111856 MHz CPU clock.
+        // Eight virtual nanoseconds cross one timer tick with LOAD=0.
+        session.advance_time(8);
         assert_eq!(
             session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(),
             1
         );
-        assert!(session.address_space.mpcore_private_timer_irq_asserted());
+        assert_eq!(
+            session.read_memory_u32(DISTRIBUTOR + 0x200).unwrap(),
+            1 << 29
+        );
+        assert_eq!(session.read_memory_u32(CPU_INTERFACE + 0x18).unwrap(), 29);
         assert!(
             session
                 .scheduler
@@ -7419,8 +7431,29 @@ mod tests {
                 .irq_line_asserted()
         );
 
-        // The timer is one IRQ source among several. Clearing its sticky
-        // status must not drop a separately asserted device IRQ.
+        // Reading IAR acknowledges the interrupt: it moves from pending to
+        // active. The distributor's CPU output then drops until another IRQ
+        // is eligible, and EOI releases the active state.
+        assert_eq!(session.read_memory_u32(CPU_INTERFACE + 0x0C).unwrap(), 29);
+        session.refresh_irq_line();
+        assert_eq!(session.read_memory_u32(DISTRIBUTOR + 0x200).unwrap(), 0);
+        assert_eq!(
+            session.read_memory_u32(DISTRIBUTOR + 0x300).unwrap(),
+            1 << 29
+        );
+        assert!(
+            !session
+                .scheduler
+                .current_core()
+                .unwrap()
+                .irq_line_asserted()
+        );
+
+        session.write_memory_u32(CPU_INTERFACE + 0x10, 29).unwrap();
+        assert_eq!(session.read_memory_u32(DISTRIBUTOR + 0x300).unwrap(), 0);
+
+        // The host's independent device IRQ remains asserted even when the
+        // private timer status is cleared and its PPI source goes low.
         session.set_irq_line(true);
         session
             .write_memory_u32(TIMER_INTERRUPT_STATUS, 1)
@@ -7430,7 +7463,13 @@ mod tests {
             session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(),
             0
         );
-        assert!(!session.address_space.mpcore_private_timer_irq_asserted());
+        assert!(
+            !session
+                .address_space
+                .mpcore_interrupt_controller
+                .interrupt_pending(29)
+                .unwrap()
+        );
         assert!(
             session
                 .scheduler
@@ -7450,9 +7489,11 @@ mod tests {
     }
 
     #[test]
-    fn mpcore_private_timer_rejects_subword_and_unaligned_guest_accesses() {
-        const TIMER_BASE: u32 =
-            crate::cpu::MPCORE_PRIVATE_MEMORY_BASE + crate::cpu::MPCORE_PRIVATE_TIMER_OFFSET;
+    fn mpcore_private_timer_and_cpu_interface_reject_subword_accesses() {
+        const PRIVATE_BASE: u32 = crate::cpu::MPCORE_PRIVATE_MEMORY_BASE;
+        const TIMER_BASE: u32 = PRIVATE_BASE + crate::cpu::MPCORE_PRIVATE_TIMER_OFFSET;
+        const CPU_INTERFACE: u32 =
+            PRIVATE_BASE + crate::cpu::MPCORE_CPU_INTERFACE_CURRENT_OFFSET;
         let mut session = test_session_with_program(&[]);
 
         assert!(session.read_memory_u32(TIMER_BASE + 1).is_err());
@@ -7468,6 +7509,18 @@ mod tests {
                 .write8(TIMER_BASE, 0x12)
                 .is_err()
         );
+        assert!(session.read_memory_u32(CPU_INTERFACE + 1).is_err());
+        assert!(
+            session
+                .address_space
+                .write16(CPU_INTERFACE, 0)
+                .is_err()
+        );
+
+        // CPU0's fixed private-timer alias exposes the same load register.
+        let timer_alias = PRIVATE_BASE + 0x0700;
+        session.write_memory_u32(timer_alias, 0x1234).unwrap();
+        assert_eq!(session.read_memory_u32(TIMER_BASE).unwrap(), 0x1234);
     }
 
     #[test]
