@@ -57,6 +57,9 @@ use svc::{
 /// Main-thread priority used by the current process bootstrap.
 pub const DEFAULT_MAIN_THREAD_PRIORITY: i32 = 0x30;
 
+/// Deterministic nonzero PID for the single application process currently hosted by System.
+pub const DEFAULT_APPLICATION_PROCESS_ID: u32 = 1;
+
 /// Nintendo 3DS result: invalid enum or argument value.
 pub const RESULT_INVALID_ENUM: u32 = 0xD8E0_07ED;
 
@@ -244,6 +247,8 @@ pub struct Arm11ProcessSession {
     svc_dispatcher: Arm11SvcDispatcher,
     kernel_objects: Arm11KernelObjectTable,
     interrupts: Arm11InterruptController,
+    /// Stable virtual PID assigned to this active ARM11 process.
+    process_id: u32,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
     wait_deadlines: BTreeMap<ThreadId, (u32, u64)>,
     /// Threads blocked in ArbitrateAddress, in arrival order: (address, thread).
@@ -277,6 +282,7 @@ impl Arm11ProcessSession {
             svc_dispatcher: Arm11SvcDispatcher::default(),
             kernel_objects: Arm11KernelObjectTable::default(),
             interrupts: Arm11InterruptController::default(),
+            process_id: DEFAULT_APPLICATION_PROCESS_ID,
             wait_deadlines: BTreeMap::new(),
             arbiter_waiters: Vec::new(),
             multi_waits: BTreeMap::new(),
@@ -611,7 +617,16 @@ impl Arm11ProcessSession {
         &mut self,
         words: &mut [u32],
     ) -> std::result::Result<(), IpcHandleTranslationError> {
-        super::session::ipc_handles::translate_message_handles(&mut self.kernel_objects, words)
+        super::session::ipc_handles::translate_message_handles(
+            &mut self.kernel_objects,
+            self.process_id,
+            words,
+        )
+    }
+
+    /// Returns the PID currently assigned to this guest process.
+    pub const fn process_id(&self) -> u32 {
+        self.process_id
     }
 
     /// Stores the GSP registration associated with one service session.
