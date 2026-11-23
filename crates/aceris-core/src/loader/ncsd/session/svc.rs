@@ -222,6 +222,8 @@ mod tests {
             SVC_UNBIND_INTERRUPT,
             SVC_GET_SYSTEM_TICK,
             SVC_GET_HANDLE_INFO,
+            SVC_GET_PROCESS_ID,
+            SVC_GET_PROCESS_ID_OF_THREAD,
             SVC_GET_PROCESS_INFO,
             SVC_GET_THREAD_INFO,
         ] {
