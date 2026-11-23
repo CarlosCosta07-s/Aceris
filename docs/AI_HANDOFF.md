@@ -2188,3 +2188,37 @@ Rastrear PCs/retornos guest em Sound.init (rotina citada no handoff como 0x1e884
 - Referências independentes usadas: ARM11 MPCore TRM DDI0360 r2p0 (`https://support.arm.com/documentation/ddi0360/f/mpcore-distributed-interrupt-controller/interrupt-distributor`); 3dbrew ARM11 Interrupts (`https://3dbrew.org/wiki/ARM11_Interrupts` — IDs privados 0x00–0x1F, timer PPI29, watchdog PPI30, SPIs GSP 0x28–0x2D e respectivas configurações); 3dbrew Memory Layout (`https://3dbrew.org/wiki/Memory_layout` — região MPCore 0x17E00000/0x2000); Azahar usado somente como referência pública de compatibilidade observável, sem consultar código interno.
 - **CI e correções:** a primeira CI após ligar o distribuidor encontrou um helper de readback ICFGR removido acidentalmente; `pack_trigger_config` foi restaurado em `aa2d2551`. Na execução 45274267849 (HEAD parcial `f2dc0f3f`), Android ARM64 passou; Windows e Linux falharam apenas no `cargo fmt --check`, cujos ajustes foram aplicados em `21d042b3`, `6dd82d58` e `70582af7`. O próximo workflow para o HEAD posterior ainda precisa concluir antes de declarar build, Clippy e testes aprovados.
 - Não foi possível executar `cargo`, `rustc` ou `rustfmt` localmente nesta sessão; nenhum resultado local de build/teste foi declarado.
+
+
+## GIC ARM11 — entradas físicas partilhadas e estado active+pending (23/11/2026, ChatGPT)
+
+Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alterou `system.rs`, `loader/ncsd/process.rs`, `loader/ncsd/session.rs`, GPU, Thumb ou os módulos de renderização de Claude.
+
+### Alterações em `main`
+
+- `40238ce` — generaliza a antiga entrada exclusiva do timer PPI29 para `set_interrupt_input_level(interrupt_id, asserted)`, mantendo um nível por cada um dos 128 IDs e recusando índices fora do intervalo.
+- `3c5bea7` — corrige a fixture de teste SPI: habilitar um SPI não o encaminha automaticamente para CPU0; o byte ITARGETSR correspondente também tem de incluir CPU0.
+- `3d2123e` — corrige a máquina de estados level-sensitive: depois do IAR, a linha que continua alta mantém o interrupt pending ao mesmo tempo que active. A desassertion da fonte limpa pending mesmo enquanto active; EOI encerra active e deixa pending somente se a fonte ainda estiver alta.
+- `bc0bd02` — acrescenta leitura guest-visible de GICD_ISPENDR durante e depois do estado active+pending.
+
+### Contrato implementado e coberto
+
+- Edge-triggered: uma transição low→high faz latch de pending; uma nova borda enquanto o ID já está active mantém outra ocorrência pending até EOI.
+- Level-sensitive: a linha alta mantém pending, inclusive durante active (active+pending). Quando o periférico baixa a linha, pending é removido; se EOI ocorrer antes da desassertion, o mesmo ID regressa a pending após EOI.
+- O CPU interface não encaminha novamente ao processador um ID ainda active/active+pending. HPPIR/IAR podem portanto devolver o ID espúrio enquanto o ID ativo aguarda conclusão.
+- SPIs só chegam a CPU0 quando ITARGETSR seleciona CPU0; não se deve alterar o reset/default target para fazer os testes passarem.
+
+### Referências públicas independentes
+
+- ARM GIC fundamentals: `https://support.arm.com/documentation/198123/latest/Arm-GIC-fundamentals` — transições Pending→Active+Pending e Active+Pending→Active para fontes level-sensitive, e Active→Inactive por EOI.
+- ARM GIC architecture specification, handling: `https://support.arm.com/documentation/ihi0048/b/Interrupt-Handling/General-handling-of-interrupts?lang=en`.
+- 3dbrew ARM11 Interrupts: `https://3dbrew.org/wiki/ARM11_Interrupts` — os IDs GSP 0x28–0x2D são level-sensitive, 1-N.
+- 3dbrew GSP Shared Memory: `https://3dbrew.org/wiki/GSP_Shared_Memory` — ring 0x40/client, até 0x34 entradas, PDC com threshold 0x20, PDC entregue a todos os processos e outras interrupções entregues ao detentor de rendering rights.
+
+### CI e limites observados
+
+- Run `45284591425`, HEAD `3d2123e`: Android ARM64 release do aplicativo e benchmark aprovados; Linux passou fmt, build e Clippy. A suíte Linux teve 1 falha fora de `mpcore_gic`: `system::tests::arm11_guest_runs_the_srv_gsp_pica_lcd_chain_in_one_continuous_run`, que termina em `InvalidAccess { addr: 0x1FFD0800 }`; 1.446 testes passaram e 1 foi ignorado. A execução macOS/Windows ainda não tinha terminado no momento do registro.
+- Run `45284693083`, HEAD `bc0bd02`: matriz de validação em andamento; aguardar resultado antes de declarar aprovação final.
+- O teste guest chain e o caminho de sessão associado contêm trabalho anterior de outro agente; não foram modificados nesta etapa.
+- A API de nível GIC está preparada, mas as fontes físicas GSP ainda **não estão conectadas** ao distribuidor. Não inferir o ponto de desassertion a partir da mera existência do relay event/queue. Cada dispositivo/comando precisa expor a sua causa pending e o ato concreto que a limpa antes de fechar essa integração.
+- Não foram usados atrasos fixos importados de Azahar. Qualquer temporização de conclusão GPU permanece dependente de relógio virtual e evidência independente de hardware.
