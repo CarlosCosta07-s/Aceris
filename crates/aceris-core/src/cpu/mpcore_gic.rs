@@ -73,9 +73,10 @@ impl Default for MpcoreInterruptController {
         targets[16..32].fill(1);
 
         let mut edge_triggered = [false; MPCORE_GIC_INTERRUPT_COUNT];
-        edge_triggered[..16].fill(true);
-        edge_triggered[29] = true;
-        edge_triggered[30] = true;
+        // The 3DS ARM11 kernel configures all private interrupt IDs 0..=31
+        // as edge-triggered. Shared hardware interrupts (IDs 32..=127) have
+        // per-source trigger modes; the GSP range is level-sensitive.
+        edge_triggered[..32].fill(true);
 
         Self {
             distributor_enabled: false,
@@ -543,6 +544,24 @@ mod tests {
         // ITLinesNumber=3 means 128 implemented interrupt IDs.
         // CPUNumber=1 means two CPU interfaces are implemented.
         assert_eq!(controller.read_distributor_byte(0x004), 0x23);
+    }
+
+    #[test]
+    fn three_ds_private_interrupts_are_edge_triggered_and_gsp_spis_are_level_triggered() {
+        let controller = MpcoreInterruptController::default();
+
+        for interrupt_id in 0..32 {
+            assert!(
+                controller.edge_triggered[interrupt_id],
+                "private interrupt {interrupt_id:#x} must be edge-triggered"
+            );
+        }
+        for interrupt_id in 0x28..=0x2D {
+            assert!(
+                !controller.edge_triggered[interrupt_id],
+                "GSP shared interrupt {interrupt_id:#x} must be level-sensitive"
+            );
+        }
     }
 
     #[test]
