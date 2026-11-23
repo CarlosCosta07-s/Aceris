@@ -10727,8 +10727,16 @@ mod tests {
             .current_tls_address()
             .unwrap();
 
-        // FS:USER Initialize has no transfer-section parameters.
-        let reply = write_tls_ipc_request(&mut system, fs, &[0x0801_0000]);
+        // FS:USER Initialize passes the current process pseudo-handle.
+        let reply = write_tls_ipc_request(
+            &mut system,
+            fs,
+            &[
+                0x0801_0002,
+                0,
+                crate::loader::ncsd::session::kernel::CURRENT_PROCESS_HANDLE,
+            ],
+        );
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 2),
