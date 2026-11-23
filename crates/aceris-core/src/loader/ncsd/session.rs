@@ -3527,7 +3527,11 @@ impl Arm11ProcessSession {
         if registers[1] != CURRENT_PROCESS_HANDLE {
             return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
         }
-        if self.address_space.write32(registers[0], self.process_id).is_err() {
+        if self
+            .address_space
+            .write32(registers[0], self.process_id)
+            .is_err()
+        {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
         self.write_svc_result(caller, 0)
@@ -3544,8 +3548,10 @@ impl Arm11ProcessSession {
         if self.thread_id_for_handle(registers[1]).is_none() {
             return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
         }
-        if !self.address_space.is_writable_range(registers[0], 4)
-            || self.address_space.write32(registers[0], self.process_id).is_err()
+        if self
+            .address_space
+            .write32(registers[0], self.process_id)
+            .is_err()
         {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
