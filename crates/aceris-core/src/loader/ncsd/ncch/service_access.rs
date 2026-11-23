@@ -42,9 +42,7 @@ impl ServiceName {
         let source = name.as_bytes();
         if source.is_empty()
             || source.len() > SERVICE_NAME_SIZE
-            || source
-                .iter()
-                .any(|byte| !(0x21..=0x7E).contains(byte))
+            || source.iter().any(|byte| !(0x21..=0x7E).contains(byte))
         {
             return None;
         }
@@ -100,9 +98,7 @@ impl ServiceAccessControl {
     /// Unused all-zero slots are omitted. Nonzero slots remain byte-exact,
     /// including any unusual encoding; this parser does not silently repair
     /// malformed names or apply service permissions.
-    pub fn parse(
-        access_control_info: &[u8; ACCESS_CONTROL_INFO_SIZE],
-    ) -> Self {
+    pub fn parse(access_control_info: &[u8; ACCESS_CONTROL_INFO_SIZE]) -> Self {
         let regular = parse_name_slots(
             access_control_info,
             SERVICE_ACCESS_LIST_OFFSET,
@@ -148,8 +144,7 @@ impl ServiceAccessControl {
 
         let mut requested = [0; SERVICE_NAME_SIZE];
         requested[..service_name.len()].copy_from_slice(service_name);
-        self.services()
-            .any(|entry| entry.as_bytes() == &requested)
+        self.services().any(|entry| entry.as_bytes() == &requested)
     }
 
     /// Checks an exact, case-sensitive service-name match against either list.
@@ -187,9 +182,8 @@ fn parse_name_slots(
 #[cfg(test)]
 mod tests {
     use super::{
-        ServiceAccessControl, ServiceName, ACCESS_CONTROL_INFO_SIZE,
-        EXTENDED_SERVICE_ACCESS_LIST_OFFSET, SERVICE_ACCESS_LIST_OFFSET,
-        SERVICE_NAME_SIZE,
+        ACCESS_CONTROL_INFO_SIZE, EXTENDED_SERVICE_ACCESS_LIST_OFFSET, SERVICE_ACCESS_LIST_OFFSET,
+        SERVICE_NAME_SIZE, ServiceAccessControl, ServiceName,
     };
 
     #[test]
