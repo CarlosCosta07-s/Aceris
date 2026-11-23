@@ -133,7 +133,9 @@ impl MpcoreInterruptController {
                 self.pending[index] = true;
             }
         } else {
-            self.pending[index] = asserted && !self.active[index];
+            // A level-sensitive source remains pending while asserted, even
+            // after IAR has moved the same interrupt into the active state.
+            self.pending[index] = asserted;
         }
         true
     }
@@ -516,8 +518,9 @@ impl MpcoreInterruptController {
 
     fn refresh_level_pending(&mut self, interrupt_id: usize) {
         if !self.edge_triggered[interrupt_id] {
-            self.pending[interrupt_id] =
-                self.interrupt_input_levels[interrupt_id] && !self.active[interrupt_id];
+            // The GIC tracks a level source as active+pending while its input
+            // remains asserted. The active bit prevents redelivery until EOI.
+            self.pending[interrupt_id] = self.interrupt_input_levels[interrupt_id];
         }
     }
 }
@@ -837,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn level_sensitive_gsp_spi_reasserts_after_eoi_until_device_clears_line() {
+    fn level_sensitive_gsp_spi_stays_active_and_pending_until_device_clears_line() {
         const PSC0: u32 = 0x28;
         let mut controller = MpcoreInterruptController::default();
         enable_interrupt(&mut controller, PSC0);
@@ -846,17 +849,50 @@ mod tests {
         assert_eq!(controller.interrupt_pending(PSC0), Some(true));
         assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PSC0));
         assert_eq!(controller.interrupt_active(PSC0), Some(true));
-        assert_eq!(controller.interrupt_pending(PSC0), Some(false));
-
-        // A level source that is not cleared by the guest remains asserted
-        // and is presented again once the active interrupt is completed.
-        assert!(controller.write_cpu_interface_register(GICC_EOIR, PSC0));
-        assert_eq!(controller.interrupt_active(PSC0), Some(false));
         assert_eq!(controller.interrupt_pending(PSC0), Some(true));
-        assert!(controller.irq_asserted());
 
+        // Active+pending is visible in the distributor, but the CPU interface
+        // must not signal the same active ID a second time before EOI.
+        assert_eq!(
+            controller.read_cpu_interface_register(GICC_HPPIR),
+            Some(MPCORE_GIC_SPURIOUS_INTERRUPT_ID)
+        );
+        assert!(!controller.irq_asserted());
+
+        // Peripheral acknowledgement deasserts its line while the ISR runs.
         assert!(controller.set_interrupt_input_level(PSC0, false));
         assert_eq!(controller.interrupt_pending(PSC0), Some(false));
+        assert!(controller.write_cpu_interface_register(GICC_EOIR, PSC0));
+        assert_eq!(controller.interrupt_active(PSC0), Some(false));
+        assert_eq!(controller.interrupt_pending(PSC0), Some(false));
+        assert!(!controller.irq_asserted());
+    }
+
+    #[test]
+    fn level_sensitive_gsp_spi_is_redelivered_after_eoi_if_device_stays_asserted() {
+        const PPF: u32 = 0x2C;
+        let mut controller = MpcoreInterruptController::default();
+        enable_interrupt(&mut controller, PPF);
+
+        assert!(controller.set_interrupt_input_level(PPF, true));
+        assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PPF));
+        assert_eq!(controller.interrupt_active(PPF), Some(true));
+        assert_eq!(controller.interrupt_pending(PPF), Some(true));
+
+        // If the peripheral has not cleared its status before EOI, the
+        // interrupt returns to pending and can be acknowledged again.
+        assert!(controller.write_cpu_interface_register(GICC_EOIR, PPF));
+        assert_eq!(controller.interrupt_active(PPF), Some(false));
+        assert_eq!(controller.interrupt_pending(PPF), Some(true));
+        assert!(controller.irq_asserted());
+        assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PPF));
+
+        assert!(controller.set_interrupt_input_level(PPF, false));
+        assert_eq!(controller.interrupt_active(PPF), Some(true));
+        assert_eq!(controller.interrupt_pending(PPF), Some(false));
+        assert!(controller.write_cpu_interface_register(GICC_EOIR, PPF));
+        assert_eq!(controller.interrupt_active(PPF), Some(false));
+        assert_eq!(controller.interrupt_pending(PPF), Some(false));
         assert!(!controller.irq_asserted());
     }
 
