@@ -42,8 +42,9 @@ impl ServiceName {
         let source = name.as_bytes();
         if source.is_empty()
             || source.len() > SERVICE_NAME_SIZE
-            || !source.is_ascii()
-            || source.contains(&0)
+            || source
+                .iter()
+                .any(|byte| !(0x21..=0x7E).contains(byte))
         {
             return None;
         }
@@ -64,23 +65,25 @@ impl ServiceName {
     /// nonzero data or non-ASCII data is preserved by the parser but is not
     /// exposed as a normalized string.
     pub fn as_ascii(&self) -> Option<&str> {
-        if !self.bytes.is_ascii() {
-            return None;
-        }
         let end = self
             .bytes
             .iter()
             .position(|byte| *byte == 0)
             .unwrap_or(SERVICE_NAME_SIZE);
-        if self.bytes[end..].iter().any(|byte| *byte != 0) {
+        if end == 0
+            || self.bytes[..end]
+                .iter()
+                .any(|byte| !(0x21..=0x7E).contains(byte))
+            || self.bytes[end..].iter().any(|byte| *byte != 0)
+        {
             return None;
         }
         std::str::from_utf8(&self.bytes[..end]).ok()
     }
 
     /// Whether this slot is the all-zero unused entry.
-    pub const fn is_empty(&self) -> bool {
-        self.bytes == [0; SERVICE_NAME_SIZE]
+    pub fn is_empty(&self) -> bool {
+        self.bytes.iter().all(|byte| *byte == 0)
     }
 }
 
