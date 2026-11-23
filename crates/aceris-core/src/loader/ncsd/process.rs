@@ -976,7 +976,7 @@ impl Arm11CodeAddressSpace {
     pub fn allows_service_access(&self, service_name: &[u8]) -> bool {
         self.service_access_control
             .as_ref()
-            .is_none_or(|access| access.allows_bytes(service_name))
+            .map_or(true, |access| access.allows_bytes(service_name))
     }
 
     /// Returns the parsed NCCH service ACL, or None for 3DSX homebrew.
