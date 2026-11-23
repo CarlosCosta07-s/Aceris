@@ -5048,7 +5048,10 @@ mod tests {
         image
     }
 
-    fn ipc_svc_ncsd_cartridge_fixture(svc_count: usize) -> Vec<u8> {
+    fn ipc_program_ncsd_cartridge_fixture_with_services(
+        instructions: &[u32],
+        allowed_services: &[&[u8]],
+    ) -> Vec<u8> {
         const NCSD_PARTITION_OFFSET: usize = 0x4000;
         const NCCH_EXTENDED_HEADER_OFFSET: usize = 0x200;
         const NCCH_EXTENDED_HEADER_SIZE: usize = 0x400;
@@ -5056,10 +5059,28 @@ mod tests {
         const SERVICE_ACCESS_OFFSET_IN_ACI: usize = 0x50;
         const SERVICE_NAME_SIZE: usize = 8;
 
-        let mut image = ipc_program_ncsd_cartridge_fixture(&vec![0xEF00_0032; svc_count]);
+        let mut image = ipc_program_ncsd_cartridge_fixture(instructions);
         let access_control =
             NCSD_PARTITION_OFFSET + NCCH_EXTENDED_HEADER_OFFSET + ACI_OFFSET_IN_EXTENDED_HEADER;
-        let allowed_services: &[&[u8]] = &[
+        for (index, name) in allowed_services.iter().enumerate() {
+            assert!(name.len() <= SERVICE_NAME_SIZE);
+            let start = access_control + SERVICE_ACCESS_OFFSET_IN_ACI + index * SERVICE_NAME_SIZE;
+            image[start..start + name.len()].copy_from_slice(name);
+        }
+
+        // The ACI is part of the 0x400-byte exheader whose digest is stored in
+        // the NCCH header. Refresh it after populating this fixture's service ACL.
+        let extended_header_start = NCSD_PARTITION_OFFSET + NCCH_EXTENDED_HEADER_OFFSET;
+        let extended_header_end = extended_header_start + NCCH_EXTENDED_HEADER_SIZE;
+        let extended_header_hash =
+            sha256_digest(&image[extended_header_start..extended_header_end]);
+        let ncch = NCSD_PARTITION_OFFSET;
+        image[ncch + 0x160..ncch + 0x180].copy_from_slice(&extended_header_hash);
+        image
+    }
+
+    fn ipc_svc_ncsd_cartridge_fixture(svc_count: usize) -> Vec<u8> {
+        const ALLOWED_SERVICES: &[&[u8]] = &[
             b"gsp::Gpu",
             b"hid:USER",
             b"cfg:u",
@@ -5082,21 +5103,10 @@ mod tests {
             b"http:C",
             b"ir:rst",
         ];
-        for (index, name) in allowed_services.iter().enumerate() {
-            assert!(name.len() <= SERVICE_NAME_SIZE);
-            let start = access_control + SERVICE_ACCESS_OFFSET_IN_ACI + index * SERVICE_NAME_SIZE;
-            image[start..start + name.len()].copy_from_slice(name);
-        }
-
-        // The ACI is part of the 0x400-byte exheader whose digest is stored in
-        // the NCCH header. Refresh it after populating this fixture's service ACL.
-        let extended_header_start = NCSD_PARTITION_OFFSET + NCCH_EXTENDED_HEADER_OFFSET;
-        let extended_header_end = extended_header_start + NCCH_EXTENDED_HEADER_SIZE;
-        let extended_header_hash =
-            sha256_digest(&image[extended_header_start..extended_header_end]);
-        let ncch = NCSD_PARTITION_OFFSET;
-        image[ncch + 0x160..ncch + 0x180].copy_from_slice(&extended_header_hash);
-        image
+        ipc_program_ncsd_cartridge_fixture_with_services(
+            &vec![0xEF00_0032; svc_count],
+            ALLOWED_SERVICES,
+        )
     }
 
     fn run_one_ipc_svc(system: &mut System) {
@@ -5573,7 +5583,8 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture_with_services(
+                    &[
                     0xE1A0_0007, // MOV r0, r7 (CreateEvent output pointer)
                     0xE3A0_1000, // MOV r1, #0 (one-shot reset type)
                     0xEF00_0017, // SVC CreateEvent
@@ -5650,7 +5661,9 @@ mod tests {
                     0xE584_5000, // STR r5, [r4] (guest Unregister header)
                     0xE1A0_000C, // MOV r0, r12
                     0xEF00_0032, // GSP UnregisterInterruptRelayQueue
-                ])),
+                    ],
+                    &[b"gsp::Gpu"],
+                )),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
