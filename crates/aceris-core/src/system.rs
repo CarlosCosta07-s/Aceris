@@ -1385,11 +1385,19 @@ impl System {
         match raw_header {
             SRV_REGISTER_CLIENT_HEADER => {
                 let translation = message.translation_words();
-                if translation.len() != 2 || translation[0] != 0x20 {
+                let process_id = self
+                    .ncsd_session
+                    .as_ref()
+                    .map(Arm11ProcessSession::process_id)
+                    .unwrap_or(0);
+                if translation.len() != 2
+                    || translation[0] != 0x20
+                    || translation[1] != process_id
+                {
                     return Ok(vec![0x0001_0040, RESULT_INVALID_ENUM]);
                 }
-                // The kernel-supplied process ID is not yet modelled; retain
-                // the registration state on this process-local srv: session.
+                // The IPC kernel translator supplies this process' PID before
+                // the service manager records the client session.
                 let result = self
                     .ncsd_session
                     .as_mut()
