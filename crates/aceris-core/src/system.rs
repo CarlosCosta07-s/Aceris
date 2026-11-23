@@ -11236,7 +11236,20 @@ mod tests {
             read_tls_ipc_response(&mut system, reply, 2),
             [0x0015_0040, 0]
         );
-        assert_eq!(system.dsp.interrupt_events, vec![(2, 0, event)]);
+        let transferred_event = system.dsp.interrupt_events[0].2;
+        assert_ne!(transferred_event, event);
+        assert_eq!(
+            system.dsp.interrupt_events,
+            vec![(2, 0, transferred_event)]
+        );
+        assert_eq!(
+            system
+                .ncsd_session
+                .as_ref()
+                .unwrap()
+                .event_handle_is_signaled(transferred_event),
+            Some(true)
+        );
 
         // Nothing was written to pipe 2 yet, so it is empty.
         let reply = write_tls_ipc_request(&mut system, dsp, &[0x000F_0080, 2, 1]);
