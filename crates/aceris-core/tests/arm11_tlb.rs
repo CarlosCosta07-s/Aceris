@@ -515,7 +515,7 @@ fn guest_tlbimvaa_matches_an_address_inside_a_large_page_and_preserves_neighbor_
 
 #[test]
 fn guest_tlbimvaa_invalidates_the_same_mva_across_all_asids() {
-    const DATA_VA: u32 = 0x1230_0100;
+    const DATA_VA: u32 = 0x1230_8100;
     const SECOND_L1_BASE: u32 = 0x8000;
     const ASID_ONE_OLD_PHYSICAL: u32 = 0x0010_0000;
     const ASID_TWO_OLD_PHYSICAL: u32 = 0x0020_0000;
@@ -549,16 +549,16 @@ fn guest_tlbimvaa_invalidates_the_same_mva_across_all_asids() {
         .unwrap();
 
     memory
-        .write32(ASID_ONE_OLD_PHYSICAL + 0x100, 0x1111_0001)
+        .write32(ASID_ONE_OLD_PHYSICAL + 0x8100, 0x1111_0001)
         .unwrap();
     memory
-        .write32(ASID_TWO_OLD_PHYSICAL + 0x100, 0x2222_0002)
+        .write32(ASID_TWO_OLD_PHYSICAL + 0x8100, 0x2222_0002)
         .unwrap();
     memory
-        .write32(ASID_ONE_NEW_PHYSICAL + 0x100, 0x3333_0003)
+        .write32(ASID_ONE_NEW_PHYSICAL + 0x8100, 0x3333_0003)
         .unwrap();
     memory
-        .write32(ASID_TWO_NEW_PHYSICAL + 0x100, 0x4444_0004)
+        .write32(ASID_TWO_NEW_PHYSICAL + 0x8100, 0x4444_0004)
         .unwrap();
 
     // Populate the same MVA under ASID 1 and ASID 2, then return to ASID 1
