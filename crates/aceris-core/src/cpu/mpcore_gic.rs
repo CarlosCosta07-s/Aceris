@@ -571,15 +571,28 @@ mod tests {
     fn three_ds_private_interrupts_are_edge_triggered_and_gsp_spis_are_level_triggered() {
         let controller = MpcoreInterruptController::default();
 
-        for interrupt_id in 0..32 {
+        for (interrupt_id, edge_triggered) in controller
+            .edge_triggered
+            .iter()
+            .copied()
+            .enumerate()
+            .take(32)
+        {
             assert!(
-                controller.edge_triggered[interrupt_id],
+                edge_triggered,
                 "private interrupt {interrupt_id:#x} must be edge-triggered"
             );
         }
-        for interrupt_id in 0x28..=0x2D {
+        for (interrupt_id, edge_triggered) in controller
+            .edge_triggered
+            .iter()
+            .copied()
+            .enumerate()
+            .take(0x2D + 1)
+            .skip(0x28)
+        {
             assert!(
-                !controller.edge_triggered[interrupt_id],
+                !edge_triggered,
                 "GSP shared interrupt {interrupt_id:#x} must be level-sensitive"
             );
         }
