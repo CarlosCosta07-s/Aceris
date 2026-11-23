@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex};
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{Arm11MemoryType, CodeFileLayout, CodeSetInfo};
 use super::ncch::service_access::ServiceAccessControl;
-use crate::cpu::{Arm11Core, MpcoreScu, SP};
+use crate::cpu::{
+    Arm11Core, MpcorePrivateTimer, MpcoreScu, MPCORE_PRIVATE_TIMER_OFFSET,
+    MPCORE_PRIVATE_TIMER_REGISTER_SIZE, MPCORE_TIMER_DEFAULT_CLOCK_HZ, SP,
+};
 use crate::gpu::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END, OLD_LINEAR_BASE,
     OLD_LINEAR_END,
@@ -792,6 +795,8 @@ pub struct Arm11CodeAddressSpace {
     gpu_memory: Option<GpuPhysicalMemory>,
     /// Shared ARM11 MPCore Snoop Control Unit registers for this system.
     mpcore_scu: Option<MpcoreScu>,
+    /// Core-0 MPCore private timer, driven by the session's virtual clock.
+    mpcore_private_timer: MpcorePrivateTimer,
     /// Stable identities for the process' private static segments.
     static_backing_ids: [u64; 5],
     /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
@@ -851,6 +856,7 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             mpcore_scu: None,
+            mpcore_private_timer: MpcorePrivateTimer::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
@@ -946,6 +952,7 @@ impl Arm11CodeAddressSpace {
             linear_regions: Vec::new(),
             gpu_memory: None,
             mpcore_scu: None,
+            mpcore_private_timer: MpcorePrivateTimer::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
@@ -1001,6 +1008,53 @@ impl Arm11CodeAddressSpace {
     /// Attaches the system-wide MPCore SCU peripheral visible to this process.
     pub fn attach_mpcore_scu(&mut self, scu: MpcoreScu) {
         self.mpcore_scu = Some(scu);
+    }
+
+    /// Advances the application core's MPCore private timer using virtual time.
+    ///
+    /// The default 3DS application-core clock is used until the system models
+    /// Old/New 3DS clock profiles explicitly.
+    pub fn advance_mpcore_private_timer(&mut self, elapsed_ns: u64) {
+        self.mpcore_private_timer
+            .advance_time(elapsed_ns, MPCORE_TIMER_DEFAULT_CLOCK_HZ);
+    }
+
+    /// Returns whether the private timer currently asserts its PPI 29 output.
+    pub const fn mpcore_private_timer_irq_asserted(&self) -> bool {
+        self.mpcore_private_timer.irq_asserted()
+    }
+
+    fn mpcore_private_timer_register_offset(&self, address: u32) -> Option<u32> {
+        let private_offset =
+            address.checked_sub(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE)?;
+        let timer_offset = private_offset.checked_sub(MPCORE_PRIVATE_TIMER_OFFSET)?;
+        (timer_offset < MPCORE_PRIVATE_TIMER_REGISTER_SIZE).then_some(timer_offset)
+    }
+
+    fn read_mpcore_private_timer_register(&self, address: u32) -> BusResult<u32> {
+        let offset = self
+            .mpcore_private_timer_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        if offset & 3 != 0 {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+        self.mpcore_private_timer
+            .read_register(offset)
+            .ok_or(Error::InvalidAccess { addr: address })
+    }
+
+    fn write_mpcore_private_timer_register(
+        &mut self,
+        address: u32,
+        value: u32,
+    ) -> BusResult<()> {
+        let offset = self
+            .mpcore_private_timer_register_offset(address)
+            .ok_or(Error::InvalidAccess { addr: address })?;
+        if offset & 3 != 0 || !self.mpcore_private_timer.write_register(offset, value) {
+            return Err(Error::InvalidAccess { addr: address });
+        }
+        Ok(())
     }
 
     fn mpcore_scu_register_offset(&self, address: u32) -> Option<u32> {
@@ -2852,6 +2906,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn read8_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u8> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return Err(Error::InvalidAccess { addr: address });
+        }
         if self.mpcore_scu_register_offset(address).is_some() {
             let register = self.read_mpcore_scu_register(address)?;
             return Ok((register >> ((address & 3) * 8)) as u8);
@@ -2883,6 +2940,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn read16(&mut self, address: u32) -> BusResult<u16> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return Err(Error::InvalidAccess { addr: address });
+        }
         if let Some(value) = self.try_read_cached_hit(address, 2) {
             return Ok(value as u16);
         }
@@ -2892,6 +2952,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn read32(&mut self, address: u32) -> BusResult<u32> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return self.read_mpcore_private_timer_register(address);
+        }
         if let Some(value) = self.try_read_cached_hit(address, 4) {
             return Ok(value);
         }
@@ -2903,6 +2966,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn write8(&mut self, address: u32, value: u8) -> BusResult<()> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return Err(Error::InvalidAccess { addr: address });
+        }
         if self.mpcore_scu_register_offset(address).is_some() {
             return self.write8_with_cache_policy(address, value, CachePolicy::NonCacheable);
         }
@@ -2915,6 +2981,9 @@ impl Bus for Arm11CodeAddressSpace {
         value: u8,
         policy: CachePolicy,
     ) -> BusResult<()> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return Err(Error::InvalidAccess { addr: address });
+        }
         if self.mpcore_scu_register_offset(address).is_some() {
             let register = self.read_mpcore_scu_register(address)?;
             let shift = (address & 3) * 8;
@@ -2926,6 +2995,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn read32_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u32> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return self.read_mpcore_private_timer_register(address);
+        }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.read_mpcore_scu_register(address);
         }
@@ -2950,6 +3022,9 @@ impl Bus for Arm11CodeAddressSpace {
         value: u32,
         policy: CachePolicy,
     ) -> BusResult<()> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return self.write_mpcore_private_timer_register(address, value);
+        }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.write_mpcore_scu_register(address, value);
         }
@@ -2960,6 +3035,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn write16(&mut self, address: u32, value: u16) -> BusResult<()> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return Err(Error::InvalidAccess { addr: address });
+        }
         if self.mpcore_scu_register_offset(address).is_some() {
             return Bus::write16_with_cache_policy(self, address, value, CachePolicy::NonCacheable);
         }
@@ -2967,6 +3045,9 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn write32(&mut self, address: u32, value: u32) -> BusResult<()> {
+        if self.mpcore_private_timer_register_offset(address).is_some() {
+            return self.write_mpcore_private_timer_register(address, value);
+        }
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.write_mpcore_scu_register(address, value);
         }
