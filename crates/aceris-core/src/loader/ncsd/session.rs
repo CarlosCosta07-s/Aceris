@@ -1824,9 +1824,7 @@ impl Arm11ProcessSession {
             .regs;
         match self.interrupts.unbind(registers[0], registers[1]) {
             Ok(()) => self.write_svc_result(caller, 0),
-            Err(error) => {
-                self.write_svc_result(caller, interrupt_binding_result_code(error))
-            }
+            Err(error) => self.write_svc_result(caller, interrupt_binding_result_code(error)),
         }
     }
 
@@ -3605,8 +3603,9 @@ fn dynamic_memory_result_code(error: Arm11DynamicMemoryError) -> u32 {
 
 fn interrupt_binding_result_code(error: InterruptBindingError) -> u32 {
     match error {
-        InterruptBindingError::InvalidInterrupt(_)
-        | InterruptBindingError::InvalidPriority(_) => RESULT_INVALID_ENUM,
+        InterruptBindingError::InvalidInterrupt(_) | InterruptBindingError::InvalidPriority(_) => {
+            RESULT_INVALID_ENUM
+        }
         InterruptBindingError::InvalidCombination => RESULT_INTERRUPT_INVALID_COMBINATION,
         InterruptBindingError::AlreadyBound(_) => RESULT_INTERRUPT_ALREADY_BOUND,
         InterruptBindingError::NotBound(_) | InterruptBindingError::HandleMismatch { .. } => {
