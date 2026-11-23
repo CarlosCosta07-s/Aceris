@@ -10727,7 +10727,8 @@ mod tests {
             .current_tls_address()
             .unwrap();
 
-        let reply = write_tls_ipc_request(&mut system, fs, &[0x0801_0002, 0, 0x20]);
+        // FS:USER Initialize has no transfer-section parameters.
+        let reply = write_tls_ipc_request(&mut system, fs, &[0x0801_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 2),
