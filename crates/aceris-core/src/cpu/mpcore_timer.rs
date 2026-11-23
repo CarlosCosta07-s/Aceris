@@ -3,10 +3,12 @@
 //! This is the core-0 timer bank at 0x17E00600 used by the 3DS application
 //! core. The model is driven by the emulated peripheral clock, not wall time.
 //! The timer's interrupt output is exposed separately so the owning process
-//! session can feed it into the CPU IRQ input.
+//! session can feed it into the MPCore distributor as private IRQ 29.
 
 /// Offset of the application-core private timer bank in the MPCore region.
 pub const MPCORE_PRIVATE_TIMER_OFFSET: u32 = 0x0600;
+/// Fixed CPU0 alias of the private timer bank in the MPCore region.
+pub const MPCORE_PRIVATE_TIMER_CPU0_ALIAS_OFFSET: u32 = 0x0700;
 /// Size of the four word-accessible private-timer registers.
 pub const MPCORE_PRIVATE_TIMER_REGISTER_SIZE: u32 = 0x0010;
 /// Default Old 3DS private-timer input clock in hertz.
