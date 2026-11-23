@@ -6,6 +6,12 @@
 /// Connects to a kernel-visible service-manager port.
 pub const SVC_CONNECT_TO_PORT: u32 = 0x2D;
 
+/// Binds an event or semaphore handle to an ARM11 interrupt.
+pub const SVC_BIND_INTERRUPT: u32 = 0x50;
+
+/// Removes an event or semaphore binding from an ARM11 interrupt.
+pub const SVC_UNBIND_INTERRUPT: u32 = 0x51;
+
 /// Sends the IPC command buffer through a client session handle.
 pub const SVC_SEND_SYNC_REQUEST: u32 = 0x32;
 
@@ -206,6 +212,8 @@ mod tests {
             SVC_CLEAR_EVENT,
             SVC_CLOSE_HANDLE,
             SVC_DUPLICATE_HANDLE,
+            SVC_BIND_INTERRUPT,
+            SVC_UNBIND_INTERRUPT,
             SVC_GET_SYSTEM_TICK,
             SVC_GET_HANDLE_INFO,
             SVC_GET_PROCESS_INFO,
