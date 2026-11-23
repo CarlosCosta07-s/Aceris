@@ -9,8 +9,11 @@
 pub const MPCORE_PRIVATE_TIMER_OFFSET: u32 = 0x0600;
 /// Size of the four word-accessible private-timer registers.
 pub const MPCORE_PRIVATE_TIMER_REGISTER_SIZE: u32 = 0x0010;
-/// Default Old 3DS application-core peripheral clock in hertz.
-pub const MPCORE_TIMER_DEFAULT_CLOCK_HZ: u32 = 268_111_856;
+/// Default Old 3DS private-timer input clock in hertz.
+///
+/// The ARM11 MPCore TRM specifies the private timer interval as
+/// ((prescaler + 1) * (load + 1) * 2) / CPU_CLK_frequency.
+pub const MPCORE_TIMER_DEFAULT_CLOCK_HZ: u32 = 134_055_928;
 
 /// Offset of the Timer Load Register.
 pub const TIMER_LOAD_REGISTER_OFFSET: u32 = 0x00;
