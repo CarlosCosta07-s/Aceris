@@ -56,6 +56,21 @@ const GSP_BUSY_DISPLAY_TRANSFER: u8 = 1 << 1;
 const GSP_BUSY_TEXTURE_COPY: u8 = 1 << 2;
 const GSP_BUSY_FLUSH_CACHE_REGIONS: u8 = 1 << 3;
 
+/// Maps the public GSP relay event identifiers to their ARM11 hardware IRQs.
+/// The DMA relay entry is intentionally not mapped until its hardware source is
+/// unambiguous in the documented Aceris execution path.
+const fn gsp_hardware_interrupt_id(interrupt: GspInterruptId) -> Option<u32> {
+    match interrupt {
+        GspInterruptId::Psc0 => Some(0x28),
+        GspInterruptId::Psc1 => Some(0x29),
+        GspInterruptId::Pdc0 => Some(0x2A),
+        GspInterruptId::Pdc1 => Some(0x2B),
+        GspInterruptId::Ppf => Some(0x2C),
+        GspInterruptId::P3d => Some(0x2D),
+        GspInterruptId::Dma => None,
+    }
+}
+
 /// Relative GX busy flags retained until their matching completion path runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct GspBusyState {
@@ -1105,8 +1120,15 @@ impl System {
             .ncsd_session
             .as_mut()
             .ok_or(GspServiceError::ProcessSessionUnavailable)?;
-        self.gsp_service
-            .deliver_interrupt_to_session(session, interrupt)
+        let relay_result = self
+            .gsp_service
+            .deliver_interrupt_to_session(session, interrupt);
+
+        if let Some(hardware_irq) = gsp_hardware_interrupt_id(interrupt) {
+            let _delivery = session.raise_interrupt(hardware_irq);
+        }
+
+        relay_result
     }
 
     /// Executes up to `instruction_budget` instructions in the loaded ARM11 session.
@@ -11455,5 +11477,22 @@ mod tests {
         assert_eq!(first.held, crate::input::pad::A);
         assert_eq!(first.touch, Some((10, 20)));
         assert_eq!(system.input().snapshot_held(), crate::input::pad::A);
+    }
+}
+
+#[cfg(test)]
+mod gsp_hardware_interrupt_tests {
+    use super::gsp_hardware_interrupt_id;
+    use crate::gpu::GspInterruptId;
+
+    #[test]
+    fn maps_gsp_display_and_render_interrupts_to_arm11_irq_ids() {
+        assert_eq!(gsp_hardware_interrupt_id(GspInterruptId::Psc0), Some(0x28));
+        assert_eq!(gsp_hardware_interrupt_id(GspInterruptId::Psc1), Some(0x29));
+        assert_eq!(gsp_hardware_interrupt_id(GspInterruptId::Pdc0), Some(0x2A));
+        assert_eq!(gsp_hardware_interrupt_id(GspInterruptId::Pdc1), Some(0x2B));
+        assert_eq!(gsp_hardware_interrupt_id(GspInterruptId::Ppf), Some(0x2C));
+        assert_eq!(gsp_hardware_interrupt_id(GspInterruptId::P3d), Some(0x2D));
+        assert_eq!(gsp_hardware_interrupt_id(GspInterruptId::Dma), None);
     }
 }
