@@ -7479,8 +7479,7 @@ mod tests {
     fn mpcore_private_timer_and_cpu_interface_reject_subword_accesses() {
         const PRIVATE_BASE: u32 = crate::cpu::MPCORE_PRIVATE_MEMORY_BASE;
         const TIMER_BASE: u32 = PRIVATE_BASE + crate::cpu::MPCORE_PRIVATE_TIMER_OFFSET;
-        const CPU_INTERFACE: u32 =
-            PRIVATE_BASE + crate::cpu::MPCORE_CPU_INTERFACE_CURRENT_OFFSET;
+        const CPU_INTERFACE: u32 = PRIVATE_BASE + crate::cpu::MPCORE_CPU_INTERFACE_CURRENT_OFFSET;
         let mut session = test_session_with_program(&[]);
 
         assert!(session.read_memory_u32(TIMER_BASE + 1).is_err());
