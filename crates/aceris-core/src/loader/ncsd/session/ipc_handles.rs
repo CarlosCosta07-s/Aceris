@@ -132,8 +132,8 @@ pub fn translate_message_handles(
 mod tests {
     use super::translate_message_handles;
     use crate::loader::ncsd::session::kernel::{
-        Arm11KernelObjectTable, EventResetType, IpcHandleTranslationError, KernelHandleError,
-        CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE,
+        Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE, EventResetType,
+        IpcHandleTranslationError, KernelHandleError,
     };
 
     fn one_handle_message(descriptor: u32, handle: u32) -> Vec<u32> {
