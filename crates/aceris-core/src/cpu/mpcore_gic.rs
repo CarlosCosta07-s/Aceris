@@ -438,7 +438,11 @@ impl MpcoreInterruptController {
     }
 
     fn priority_group(&self, priority: u8) -> u8 {
-        (priority >> self.binary_point.saturating_add(1).min(4)) & 0x0F
+        // Aceris models the four implemented priority bits in [7:4] of
+        // the architectural 8-bit priority field. BPR values 0..=3 keep
+        // all four bits in the group field; values 4..=7 progressively
+        // move the low implemented bits into subpriority.
+        priority >> self.binary_point.saturating_sub(3)
     }
 
     fn targets_cpu0(&self, interrupt_id: usize) -> bool {
@@ -629,6 +633,52 @@ mod tests {
         controller.set_private_timer_irq_level(false);
         controller.write_cpu_interface_register(GICC_EOIR, 29);
         assert!(!controller.interrupt_pending(29).unwrap());
+    }
+
+    #[test]
+    fn binary_point_splits_only_the_implemented_priority_bits() {
+        let mut controller = MpcoreInterruptController::default();
+        assert_eq!(controller.priority_group(0b1010), 0b1010);
+
+        controller.write_cpu_interface_register(GICC_BPR, 4);
+        assert_eq!(controller.priority_group(0b1010), 0b0101);
+
+        controller.write_cpu_interface_register(GICC_BPR, 6);
+        assert_eq!(controller.priority_group(0b1010), 0b0001);
+
+        controller.write_cpu_interface_register(GICC_BPR, 7);
+        assert_eq!(controller.priority_group(0b1010), 0);
+    }
+
+    #[test]
+    fn pending_interrupt_preempts_only_with_a_higher_priority_group() {
+        let mut controller = MpcoreInterruptController::default();
+        controller.write_distributor_byte(GICD_CTLR, 1);
+        controller.write_distributor_byte(GICD_ISENABLER_BASE + 3, 0x60);
+        controller.write_cpu_interface_register(GICC_CTLR, 1);
+        controller.write_distributor_byte(GICD_IPRIORITYR_BASE + 29, 0xA0);
+        controller.write_distributor_byte(GICD_IPRIORITYR_BASE + 30, 0xB0);
+        controller.set_private_timer_irq_level(true);
+
+        assert_eq!(
+            controller.read_cpu_interface_register(GICC_IAR),
+            Some(MPCORE_PRIVATE_TIMER_INTERRUPT_ID)
+        );
+        controller.write_distributor_byte(GICD_ISPENDR_BASE + 3, 0x40);
+
+        // With the reset BPR value (3), the implemented priority nibble is
+        // the whole group field. Priority B is lower than active priority A
+        // and cannot preempt it.
+        assert!(!controller.irq_asserted());
+
+        // BPR=4 groups priorities A and B together, so subpriority cannot
+        // preempt the active priority group either.
+        controller.write_cpu_interface_register(GICC_BPR, 4);
+        assert!(!controller.irq_asserted());
+
+        // Move interrupt 30 to group 4, which is higher than active group 5.
+        controller.write_distributor_byte(GICD_IPRIORITYR_BASE + 30, 0x90);
+        assert!(controller.irq_asserted());
     }
 
     #[test]
