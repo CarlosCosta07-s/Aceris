@@ -11238,10 +11238,7 @@ mod tests {
         );
         let transferred_event = system.dsp.interrupt_events[0].2;
         assert_ne!(transferred_event, event);
-        assert_eq!(
-            system.dsp.interrupt_events,
-            vec![(2, 0, transferred_event)]
-        );
+        assert_eq!(system.dsp.interrupt_events, vec![(2, 0, transferred_event)]);
         assert_eq!(
             system
                 .ncsd_session
