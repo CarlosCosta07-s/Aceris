@@ -618,4 +618,3 @@ fn guest_tlbimvaa_invalidates_the_same_mva_across_all_asids() {
     cpu.step(&mut memory).unwrap(); // ASID 2 must also walk its updated mapping.
     assert_eq!(cpu.regs[9], 0x4444_0004);
 }
-
