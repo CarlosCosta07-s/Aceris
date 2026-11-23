@@ -850,6 +850,10 @@ mod tests {
         assert_eq!(controller.read_cpu_interface_register(GICC_IAR), Some(PSC0));
         assert_eq!(controller.interrupt_active(PSC0), Some(true));
         assert_eq!(controller.interrupt_pending(PSC0), Some(true));
+        assert_eq!(
+            controller.read_distributor_byte(GICD_ISPENDR_BASE + PSC0 / 8) & 1,
+            1
+        );
 
         // Active+pending is visible in the distributor, but the CPU interface
         // must not signal the same active ID a second time before EOI.
@@ -862,6 +866,10 @@ mod tests {
         // Peripheral acknowledgement deasserts its line while the ISR runs.
         assert!(controller.set_interrupt_input_level(PSC0, false));
         assert_eq!(controller.interrupt_pending(PSC0), Some(false));
+        assert_eq!(
+            controller.read_distributor_byte(GICD_ISPENDR_BASE + PSC0 / 8) & 1,
+            0
+        );
         assert!(controller.write_cpu_interface_register(GICC_EOIR, PSC0));
         assert_eq!(controller.interrupt_active(PSC0), Some(false));
         assert_eq!(controller.interrupt_pending(PSC0), Some(false));
