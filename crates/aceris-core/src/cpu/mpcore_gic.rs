@@ -247,7 +247,11 @@ impl MpcoreInterruptController {
     fn read_distributor_word(&self, offset: u32) -> u32 {
         match offset {
             GICD_CTLR => u32::from(self.distributor_enabled),
-            GICD_TYPER => 3, // Four 32-ID banks (128 IDs), one CPU interface.
+            // ITLinesNumber=3 advertises 128 IDs; CPUNumber=1 advertises
+            // two MPCore CPU interfaces, as configured on the original 3DS.
+            // Aceris currently schedules CPU0 only, but the hardware profile
+            // reported to the guest must still describe the two-core cluster.
+            GICD_TYPER => 3 | (1 << 5),
             GICD_PIDR2 => 0x04,
             0xFE0 => 0x90,
             0xFE4 => 0x13,
@@ -531,6 +535,14 @@ mod tests {
         controller.write_distributor_byte(GICD_CTLR, 1);
         controller.write_distributor_byte(GICD_ISENABLER_BASE + 3, (TIMER_BIT >> 24) as u8);
         controller.write_cpu_interface_register(GICC_CTLR, 1);
+    }
+
+    #[test]
+    fn distributor_type_reports_two_cpus_and_128_interrupt_ids() {
+        let controller = MpcoreInterruptController::default();
+        // ITLinesNumber=3 means 128 implemented interrupt IDs.
+        // CPUNumber=1 means two CPU interfaces are implemented.
+        assert_eq!(controller.read_distributor_byte(0x004), 0x23);
     }
 
     #[test]
