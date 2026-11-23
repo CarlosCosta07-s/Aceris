@@ -1079,9 +1079,14 @@ impl Arm11CodeAddressSpace {
 
     fn mpcore_gic_distributor_register_offset(&self, address: u32) -> Option<u32> {
         let private_offset = self.mpcore_private_offset(address)?;
-        (MPCORE_GIC_DISTRIBUTOR_OFFSET..MPCORE_GIC_DISTRIBUTOR_OFFSET + MPCORE_GIC_DISTRIBUTOR_SIZE)
+        if (MPCORE_GIC_DISTRIBUTOR_OFFSET
+            ..MPCORE_GIC_DISTRIBUTOR_OFFSET + MPCORE_GIC_DISTRIBUTOR_SIZE)
             .contains(&private_offset)
-            .then_some(private_offset - MPCORE_GIC_DISTRIBUTOR_OFFSET)
+        {
+            Some(private_offset - MPCORE_GIC_DISTRIBUTOR_OFFSET)
+        } else {
+            None
+        }
     }
 
     fn read_mpcore_cpu_interface_register(&mut self, address: u32) -> BusResult<u32> {
