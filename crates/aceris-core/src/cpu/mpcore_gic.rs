@@ -539,7 +539,7 @@ mod tests {
     use super::{
         GICC_BPR, GICC_CTLR, GICC_EOIR, GICC_HPPIR, GICC_IAR, GICC_PMR, GICC_RPR, GICD_CTLR,
         GICD_ICACTIVER_BASE, GICD_ICENABLER_BASE, GICD_ICFGR_BASE, GICD_IPRIORITYR_BASE,
-        GICD_ISACTIVER_BASE, GICD_ISENABLER_BASE, GICD_ISPENDR_BASE,
+        GICD_ISACTIVER_BASE, GICD_ISENABLER_BASE, GICD_ISPENDR_BASE, GICD_ITARGETSR_BASE,
         MPCORE_GIC_SPURIOUS_INTERRUPT_ID, MPCORE_PRIVATE_TIMER_INTERRUPT_ID,
         MpcoreInterruptController,
     };
@@ -556,6 +556,10 @@ mod tests {
         controller.write_distributor_byte(GICD_CTLR, 1);
         let enable_byte = GICD_ISENABLER_BASE + interrupt_id / 8;
         controller.write_distributor_byte(enable_byte, 1 << (interrupt_id % 8));
+        if interrupt_id >= 32 {
+            // SPIs are not routed to CPU0 until ITARGETSR selects it.
+            controller.write_distributor_byte(GICD_ITARGETSR_BASE + interrupt_id, 1);
+        }
         controller.write_cpu_interface_register(GICC_CTLR, 1);
     }
 
