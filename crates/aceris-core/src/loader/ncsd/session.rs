@@ -250,6 +250,8 @@ pub struct Arm11ProcessSession {
     svc_dispatcher: Arm11SvcDispatcher,
     kernel_objects: Arm11KernelObjectTable,
     interrupts: Arm11InterruptController,
+    /// External device IRQ level supplied by the System dispatcher.
+    external_irq_asserted: bool,
     /// Stable virtual PID assigned to this active ARM11 process.
     process_id: u32,
     /// Finite WaitSynchronization1 deadlines mapped to their object handles.
@@ -285,6 +287,7 @@ impl Arm11ProcessSession {
             svc_dispatcher: Arm11SvcDispatcher::default(),
             kernel_objects: Arm11KernelObjectTable::default(),
             interrupts: Arm11InterruptController::default(),
+            external_irq_asserted: false,
             process_id: DEFAULT_APPLICATION_PROCESS_ID,
             wait_deadlines: BTreeMap::new(),
             arbiter_waiters: Vec::new(),
@@ -1908,6 +1911,18 @@ impl Arm11ProcessSession {
     /// An asserted IRQ wakes a core in CP15 WFI even when CPSR.I masks IRQ
     /// exception entry. In that case the guest resumes without taking IRQ.
     pub fn set_irq_line(&mut self, asserted: bool) {
+        self.external_irq_asserted = asserted;
+        self.refresh_irq_line();
+    }
+
+    /// Combines host-dispatched device IRQs with the core-0 private timer PPI.
+    ///
+    /// The software scheduler currently runs one application CPU core. Keep
+    /// the source levels separate so acknowledging the private timer cannot
+    /// accidentally clear a GSP or other external device interrupt.
+    fn refresh_irq_line(&mut self) {
+        let timer_irq = self.address_space.mpcore_private_timer_irq_asserted();
+        let asserted = self.external_irq_asserted || timer_irq;
         if let Some(core) = self.scheduler.current_core_mut() {
             core.set_irq_line(asserted);
         }
@@ -1945,6 +1960,7 @@ impl Arm11ProcessSession {
     /// This low-level method reports SVC instructions to the caller without
     /// dispatching them. Use run_instructions for kernel-service processing.
     pub fn step(&mut self) -> Result<StepEvent> {
+        self.refresh_irq_line();
         let core = self
             .scheduler
             .current_core_mut()
@@ -1967,6 +1983,7 @@ impl Arm11ProcessSession {
     /// This is an explicit virtual-time hook, not a claim that hardware timers
     /// or real-time scheduling are already emulated.
     pub fn advance_time(&mut self, nanoseconds: u64) -> Option<ThreadId> {
+        self.address_space.advance_mpcore_private_timer(nanoseconds);
         self.scheduler.advance_time(nanoseconds);
         let now = self.scheduler.virtual_time_ns();
         let timer_awakened = self.kernel_objects.advance_time(now);
@@ -1993,7 +2010,9 @@ impl Arm11ProcessSession {
             }
         }
 
-        self.scheduler.current_thread_id()
+        let current = self.scheduler.current_thread_id();
+        self.refresh_irq_line();
+        current
     }
 
     /// Runs no more than instruction_budget instructions and dispatches supported SVCs.
@@ -7366,6 +7385,88 @@ mod tests {
                 event_handle: None,
                 flags: 0,
             })
+        );
+    }
+
+    #[test]
+    fn mpcore_private_timer_mmio_drives_and_clears_the_application_irq_line() {
+        const TIMER_BASE: u32 =
+            crate::cpu::MPCORE_PRIVATE_MEMORY_BASE + crate::cpu::MPCORE_PRIVATE_TIMER_OFFSET;
+        const TIMER_LOAD: u32 = TIMER_BASE;
+        const TIMER_CONTROL: u32 = TIMER_BASE + 8;
+        const TIMER_INTERRUPT_STATUS: u32 = TIMER_BASE + 12;
+        const TIMER_ENABLE_AND_IRQ: u32 = (1 << 0) | (1 << 2);
+
+        let mut session = test_session_with_program(&[]);
+        session.write_memory_u32(TIMER_LOAD, 0).unwrap();
+        session
+            .write_memory_u32(TIMER_CONTROL, TIMER_ENABLE_AND_IRQ)
+            .unwrap();
+
+        // A single 4 ns virtual-time slice produces one 268 MHz peripheral
+        // clock edge and expires a timer programmed with LOAD=0.
+        session.advance_time(4);
+        assert_eq!(
+            session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(),
+            1
+        );
+        assert!(session.address_space.mpcore_private_timer_irq_asserted());
+        assert!(
+            session
+                .scheduler
+                .current_core()
+                .unwrap()
+                .irq_line_asserted()
+        );
+
+        // The timer is one IRQ source among several. Clearing its sticky
+        // status must not drop a separately asserted device IRQ.
+        session.set_irq_line(true);
+        session
+            .write_memory_u32(TIMER_INTERRUPT_STATUS, 1)
+            .unwrap();
+        session.advance_time(0);
+        assert_eq!(
+            session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(),
+            0
+        );
+        assert!(!session.address_space.mpcore_private_timer_irq_asserted());
+        assert!(
+            session
+                .scheduler
+                .current_core()
+                .unwrap()
+                .irq_line_asserted()
+        );
+
+        session.set_irq_line(false);
+        assert!(
+            !session
+                .scheduler
+                .current_core()
+                .unwrap()
+                .irq_line_asserted()
+        );
+    }
+
+    #[test]
+    fn mpcore_private_timer_rejects_subword_and_unaligned_guest_accesses() {
+        const TIMER_BASE: u32 =
+            crate::cpu::MPCORE_PRIVATE_MEMORY_BASE + crate::cpu::MPCORE_PRIVATE_TIMER_OFFSET;
+        let mut session = test_session_with_program(&[]);
+
+        assert!(session.read_memory_u32(TIMER_BASE + 1).is_err());
+        assert!(
+            session
+                .address_space
+                .write16(TIMER_BASE, 0x1234)
+                .is_err()
+        );
+        assert!(
+            session
+                .address_space
+                .write8(TIMER_BASE, 0x12)
+                .is_err()
         );
     }
 
