@@ -218,17 +218,23 @@ impl MpcoreInterruptController {
 
     /// Returns whether one interrupt ID is enabled.
     pub fn interrupt_enabled(&self, interrupt_id: u32) -> Option<bool> {
-        self.enabled.get(usize::try_from(interrupt_id).ok()?).copied()
+        self.enabled
+            .get(usize::try_from(interrupt_id).ok()?)
+            .copied()
     }
 
     /// Returns whether one interrupt ID is pending.
     pub fn interrupt_pending(&self, interrupt_id: u32) -> Option<bool> {
-        self.pending.get(usize::try_from(interrupt_id).ok()?).copied()
+        self.pending
+            .get(usize::try_from(interrupt_id).ok()?)
+            .copied()
     }
 
     /// Returns whether one interrupt ID is active.
     pub fn interrupt_active(&self, interrupt_id: u32) -> Option<bool> {
-        self.active.get(usize::try_from(interrupt_id).ok()?).copied()
+        self.active
+            .get(usize::try_from(interrupt_id).ok()?)
+            .copied()
     }
 
     /// Returns the programmed priority nibble for one interrupt ID.
@@ -274,9 +280,7 @@ impl MpcoreInterruptController {
             _ if in_register_range(offset, GICD_ITARGETSR_BASE, 128) => {
                 self.pack_bytes(offset, GICD_ITARGETSR_BASE, &self.targets)
             }
-            _ if in_register_range(offset, GICD_ICFGR_BASE, 8) => {
-                self.pack_trigger_config(offset)
-            }
+            _ if in_register_range(offset, GICD_ICFGR_BASE, 8) => self.pack_trigger_config(offset),
             _ => 0,
         }
     }
@@ -384,12 +388,7 @@ impl MpcoreInterruptController {
         result
     }
 
-    fn pack_bytes(
-        &self,
-        offset: u32,
-        base: u32,
-        values: &[u8; MPCORE_GIC_INTERRUPT_COUNT],
-    ) -> u32 {
+    fn pack_bytes(&self, offset: u32, base: u32, values: &[u8; MPCORE_GIC_INTERRUPT_COUNT]) -> u32 {
         let first = (offset - base) as usize;
         let mut result = 0u32;
         for byte in 0..4 {
@@ -472,7 +471,11 @@ impl MpcoreInterruptController {
             return;
         }
         self.active[index] = false;
-        if let Some(stack_index) = self.active_stack.iter().rposition(|active| *active == interrupt_id) {
+        if let Some(stack_index) = self
+            .active_stack
+            .iter()
+            .rposition(|active| *active == interrupt_id)
+        {
             self.active_stack.remove(stack_index);
         }
         self.refresh_level_pending(index);
@@ -481,9 +484,7 @@ impl MpcoreInterruptController {
     fn running_priority(&self) -> u32 {
         self.active_stack
             .iter()
-            .filter_map(|interrupt_id| {
-                self.priorities.get(*interrupt_id as usize).copied()
-            })
+            .filter_map(|interrupt_id| self.priorities.get(*interrupt_id as usize).copied())
             .min()
             .map(|priority| u32::from(priority << 4))
             .unwrap_or(0xF0)
@@ -493,8 +494,7 @@ impl MpcoreInterruptController {
         if interrupt_id == MPCORE_PRIVATE_TIMER_INTERRUPT_ID as usize
             && !self.edge_triggered[interrupt_id]
         {
-            self.pending[interrupt_id] =
-                self.private_timer_input && !self.active[interrupt_id];
+            self.pending[interrupt_id] = self.private_timer_input && !self.active[interrupt_id];
         }
     }
 }
@@ -515,8 +515,7 @@ const fn in_byte_register_range(offset: u32, base: u32, count: u32) -> bool {
 mod tests {
     use super::{
         GICC_CTLR, GICC_EOIR, GICC_HPPIR, GICC_IAR, GICC_PMR, GICC_RPR, GICD_CTLR,
-        GICD_ICENABLER_BASE, GICD_ICFGR_BASE,
-        GICD_IPRIORITYR_BASE, GICD_ISENABLER_BASE,
+        GICD_ICENABLER_BASE, GICD_ICFGR_BASE, GICD_IPRIORITYR_BASE, GICD_ISENABLER_BASE,
         MPCORE_GIC_SPURIOUS_INTERRUPT_ID, MPCORE_PRIVATE_TIMER_INTERRUPT_ID,
         MpcoreInterruptController,
     };
@@ -638,7 +637,10 @@ mod tests {
         controller.write_distributor_byte(GICD_IPRIORITYR_BASE + 29, 0xA0);
         assert_eq!(controller.interrupt_priority(29), Some(0xA0));
         assert_eq!(controller.interrupt_priority(28), Some(0));
-        assert_eq!(controller.read_distributor_byte(GICD_IPRIORITYR_BASE + 29), 0xA0);
+        assert_eq!(
+            controller.read_distributor_byte(GICD_IPRIORITYR_BASE + 29),
+            0xA0
+        );
 
         controller.write_distributor_byte(0x800 + 32, 1);
         assert_eq!(controller.read_distributor_byte(0x800 + 32), 1);
@@ -659,11 +661,17 @@ mod tests {
         let mut controller = MpcoreInterruptController::default();
         controller.write_distributor_byte(GICD_ISACTIVER_BASE + 3, 0x20);
         assert_eq!(controller.interrupt_active(29), Some(true));
-        assert_eq!(controller.read_distributor_byte(GICD_ISACTIVER_BASE + 3) & 0x20, 0x20);
+        assert_eq!(
+            controller.read_distributor_byte(GICD_ISACTIVER_BASE + 3) & 0x20,
+            0x20
+        );
 
         controller.write_distributor_byte(GICD_ICACTIVER_BASE + 3, 0x20);
         assert_eq!(controller.interrupt_active(29), Some(false));
-        assert_eq!(controller.read_distributor_byte(GICD_ISACTIVER_BASE + 3) & 0x20, 0);
+        assert_eq!(
+            controller.read_distributor_byte(GICD_ISACTIVER_BASE + 3) & 0x20,
+            0
+        );
     }
 
     #[test]
@@ -674,7 +682,10 @@ mod tests {
         // outside the advertised GICD_TYPER range and must remain reserved.
         controller.write_distributor_byte(GICD_ISENABLER_BASE + 0x0F, 0x80);
         assert_eq!(controller.interrupt_enabled(127), Some(true));
-        assert_eq!(controller.read_distributor_byte(GICD_ISENABLER_BASE + 0x10), 0);
+        assert_eq!(
+            controller.read_distributor_byte(GICD_ISENABLER_BASE + 0x10),
+            0
+        );
         controller.write_distributor_byte(GICD_ISENABLER_BASE + 0x10, 0xFF);
         assert_eq!(controller.interrupt_enabled(127), Some(true));
 
