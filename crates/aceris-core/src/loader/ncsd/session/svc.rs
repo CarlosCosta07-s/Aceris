@@ -99,6 +99,12 @@ pub const SVC_GET_HANDLE_INFO: u32 = 0x29;
 /// Query resource information about a process.
 pub const SVC_GET_PROCESS_INFO: u32 = 0x2B;
 
+/// Resolve the PID for a process handle.
+pub const SVC_GET_PROCESS_ID: u32 = 0x35;
+
+/// Resolve the PID for a thread handle.
+pub const SVC_GET_PROCESS_ID_OF_THREAD: u32 = 0x36;
+
 /// Query information about a thread.
 pub const SVC_GET_THREAD_INFO: u32 = 0x2C;
 
