@@ -640,10 +640,7 @@ fn guest_tlbimvaa_invalidates_a_global_mapping_across_asid_switches() {
         .write32(SECOND_L1_BASE + 0x300 * 4, section_descriptor(0, false))
         .unwrap();
     memory
-        .write32(
-            L1_BASE + 0x124 * 4,
-            section_descriptor(OLD_PHYSICAL, false),
-        )
+        .write32(L1_BASE + 0x124 * 4, section_descriptor(OLD_PHYSICAL, false))
         .unwrap();
     memory
         .write32(
@@ -652,12 +649,8 @@ fn guest_tlbimvaa_invalidates_a_global_mapping_across_asid_switches() {
         )
         .unwrap();
 
-    memory
-        .write32(OLD_PHYSICAL + 0x18100, 0x1111_0001)
-        .unwrap();
-    memory
-        .write32(NEW_PHYSICAL + 0x18100, 0x2222_0002)
-        .unwrap();
+    memory.write32(OLD_PHYSICAL + 0x18100, 0x1111_0001).unwrap();
+    memory.write32(NEW_PHYSICAL + 0x18100, 0x2222_0002).unwrap();
 
     memory.write32(0x100, 0xE3A0_4001).unwrap(); // MOV r4, #1
     memory.write32(0x104, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 1
@@ -694,10 +687,7 @@ fn guest_tlbimvaa_invalidates_a_global_mapping_across_asid_switches() {
     // Updating either page table alone must not change the cached global TLB
     // entry. TLBIMVAA must invalidate it regardless of the current ASID.
     memory
-        .write32(
-            L1_BASE + 0x124 * 4,
-            section_descriptor(NEW_PHYSICAL, false),
-        )
+        .write32(L1_BASE + 0x124 * 4, section_descriptor(NEW_PHYSICAL, false))
         .unwrap();
     memory
         .write32(
@@ -716,4 +706,3 @@ fn guest_tlbimvaa_invalidates_a_global_mapping_across_asid_switches() {
     cpu.step(&mut memory).unwrap(); // Global mapping resolves to updated memory.
     assert_eq!(cpu.regs[9], 0x2222_0002);
 }
-
