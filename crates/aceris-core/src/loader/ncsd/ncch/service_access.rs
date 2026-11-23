@@ -242,7 +242,7 @@ mod tests {
         assert!(parsed.allows("am:net"));
         assert!(parsed.allows_bytes(b"hid:USER"));
         assert!(!parsed.allows_bytes(b"hid:user"));
-        assert!(!parsed.allows_bytes(b"hid:USER\\0"));
+        assert!(!parsed.allows_bytes(b"hid:USER\0"));
         assert!(!parsed.allows("hid:user"));
         assert!(!parsed.allows("hid:"));
         assert!(!parsed.allows("service-name-too-long"));
