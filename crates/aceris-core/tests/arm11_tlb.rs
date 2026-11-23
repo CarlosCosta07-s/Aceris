@@ -706,3 +706,135 @@ fn guest_tlbimvaa_invalidates_a_global_mapping_across_asid_switches() {
     cpu.step(&mut memory).unwrap(); // Global mapping resolves to updated memory.
     assert_eq!(cpu.regs[9], 0x2222_0002);
 }
+
+#[test]
+fn guest_tlbi_asid_preserves_other_asids_and_global_translations() {
+    const DATA_VA: u32 = 0x1230_3100;
+    const GLOBAL_VA: u32 = 0x1240_3200;
+    const SECOND_L1_BASE: u32 = 0x8000;
+    const ASID7_OLD_PHYSICAL: u32 = 0x0010_0000;
+    const ASID8_OLD_PHYSICAL: u32 = 0x0020_0000;
+    const ASID7_NEW_PHYSICAL: u32 = 0x0030_0000;
+    const ASID8_NEW_PHYSICAL: u32 = 0x0000_0000;
+    const GLOBAL_OLD_PHYSICAL: u32 = 0x0010_0000;
+    const GLOBAL_NEW_PHYSICAL: u32 = 0x0020_0000;
+
+    let (mut cpu, mut memory) = mmu_machine();
+
+    // Both address spaces execute from the same identity-mapped code section.
+    // Their data VA resolves differently by ASID, while the global VA must
+    // share one cached entry across both TTBR0 tables.
+    for table in [L1_BASE, SECOND_L1_BASE] {
+        memory
+            .write32(table + 0x300 * 4, section_descriptor(0, false))
+            .unwrap();
+        memory
+            .write32(
+                table + 0x124 * 4,
+                section_descriptor(GLOBAL_OLD_PHYSICAL, false),
+            )
+            .unwrap();
+    }
+    memory
+        .write32(
+            L1_BASE + 0x123 * 4,
+            section_descriptor(ASID7_OLD_PHYSICAL, true),
+        )
+        .unwrap();
+    memory
+        .write32(
+            SECOND_L1_BASE + 0x123 * 4,
+            section_descriptor(ASID8_OLD_PHYSICAL, true),
+        )
+        .unwrap();
+
+    memory
+        .write32(ASID7_OLD_PHYSICAL + 0x3100, 0x1111_0007)
+        .unwrap();
+    memory
+        .write32(ASID8_OLD_PHYSICAL + 0x3100, 0x2222_0008)
+        .unwrap();
+    memory
+        .write32(ASID7_NEW_PHYSICAL + 0x3100, 0x3333_0007)
+        .unwrap();
+    memory
+        .write32(ASID8_NEW_PHYSICAL + 0x3100, 0x4444_0008)
+        .unwrap();
+    memory
+        .write32(GLOBAL_OLD_PHYSICAL + 0x3200, 0xAAAA_0001)
+        .unwrap();
+    memory
+        .write32(GLOBAL_NEW_PHYSICAL + 0x3200, 0xBBBB_0002)
+        .unwrap();
+
+    memory.write32(0x100, 0xE3A0_4007).unwrap(); // MOV r4, #7.
+    memory.write32(0x104, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 7.
+    memory.write32(0x108, 0xE590_5000).unwrap(); // LDR r5, [r0] (ASID 7).
+    memory.write32(0x10C, 0xE592_6000).unwrap(); // LDR r6, [r2] (global).
+    memory.write32(0x110, mcr(12, 2, 0, 0)).unwrap(); // TTBR0 = table B.
+    memory.write32(0x114, 0xE3A0_4008).unwrap(); // MOV r4, #8.
+    memory.write32(0x118, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 8.
+    memory.write32(0x11C, 0xE590_7000).unwrap(); // LDR r7, [r0] (ASID 8).
+    memory.write32(0x120, 0xE592_8000).unwrap(); // LDR r8, [r2] (global).
+    memory.write32(0x124, mcr(11, 2, 0, 0)).unwrap(); // TTBR0 = table A.
+    memory.write32(0x128, 0xE3A0_4007).unwrap(); // MOV r4, #7.
+    memory.write32(0x12C, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 7.
+    memory.write32(0x130, 0xE590_9000).unwrap(); // LDR r9, [r0].
+    memory.write32(0x134, mcr(1, 8, 7, 2)).unwrap(); // TLBIASID r1 (ASID 7).
+    memory.write32(0x138, 0xE590_A000).unwrap(); // LDR r10, [r0].
+    memory.write32(0x13C, 0xE592_D000).unwrap(); // LDR r13, [r2] (global).
+    memory.write32(0x140, mcr(12, 2, 0, 0)).unwrap(); // TTBR0 = table B.
+    memory.write32(0x144, 0xE3A0_4008).unwrap(); // MOV r4, #8.
+    memory.write32(0x148, mcr(4, 13, 0, 1)).unwrap(); // CONTEXTIDR = 8.
+    memory.write32(0x14C, 0xE590_E000).unwrap(); // LDR r14, [r0].
+
+    cpu.regs[0] = DATA_VA;
+    cpu.regs[1] = 7;
+    cpu.regs[2] = GLOBAL_VA;
+    cpu.regs[11] = L1_BASE;
+    cpu.regs[12] = SECOND_L1_BASE;
+    cpu.set_pc(0x3000_0100);
+
+    for _ in 0..13 {
+        cpu.step(&mut memory).unwrap();
+    }
+    assert_eq!(cpu.regs[5], 0x1111_0007);
+    assert_eq!(cpu.regs[6], 0xAAAA_0001);
+    assert_eq!(cpu.regs[7], 0x2222_0008);
+    assert_eq!(cpu.regs[8], 0xAAAA_0001);
+    assert_eq!(cpu.regs[9], 0x1111_0007);
+
+    // Re-map both private entries and the global entry in both page tables.
+    memory
+        .write32(
+            L1_BASE + 0x123 * 4,
+            section_descriptor(ASID7_NEW_PHYSICAL, true),
+        )
+        .unwrap();
+    memory
+        .write32(
+            SECOND_L1_BASE + 0x123 * 4,
+            section_descriptor(ASID8_NEW_PHYSICAL, true),
+        )
+        .unwrap();
+    for table in [L1_BASE, SECOND_L1_BASE] {
+        memory
+            .write32(
+                table + 0x124 * 4,
+                section_descriptor(GLOBAL_NEW_PHYSICAL, false),
+            )
+            .unwrap();
+    }
+
+    cpu.step(&mut memory).unwrap(); // Queue TLBIASID for ASID 7.
+    cpu.step(&mut memory).unwrap(); // ASID 7 is invalidated and re-walked.
+    cpu.step(&mut memory).unwrap(); // Global mapping remains cached.
+    assert_eq!(cpu.regs[10], 0x3333_0007);
+    assert_eq!(cpu.regs[13], 0xAAAA_0001);
+
+    cpu.step(&mut memory).unwrap(); // Switch TTBR0 back to table B.
+    cpu.step(&mut memory).unwrap(); // MOV r4, #8.
+    cpu.step(&mut memory).unwrap(); // CONTEXTIDR = 8.
+    cpu.step(&mut memory).unwrap(); // ASID 8 retains its cached translation.
+    assert_eq!(cpu.regs[14], 0x2222_0008);
+}
