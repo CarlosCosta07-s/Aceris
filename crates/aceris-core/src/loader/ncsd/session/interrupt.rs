@@ -114,11 +114,7 @@ impl Arm11InterruptController {
     }
 
     /// Removes a registration only when the supplied handle matches it.
-    pub fn unbind(
-        &mut self,
-        interrupt_id: u32,
-        handle: u32,
-    ) -> Result<(), InterruptBindingError> {
+    pub fn unbind(&mut self, interrupt_id: u32, handle: u32) -> Result<(), InterruptBindingError> {
         if !Self::is_bindable_interrupt(interrupt_id) {
             return Err(InterruptBindingError::InvalidInterrupt(interrupt_id));
         }
