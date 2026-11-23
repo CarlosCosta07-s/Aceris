@@ -210,10 +210,17 @@ fn fs_storage_result(error: &crate::storage::StorageError) -> u32 {
     }
 }
 
-/// srv result when a service name is not registered (public tables; unverified).
-const RESULT_SRV_SERVICE_NOT_REGISTERED: u32 = 0xD8E0_6406;
+/// srv result when a service name has an invalid length (public error table).
+const RESULT_SRV_INVALID_STRING_LENGTH: u32 = 0xD8E0_6405;
+/// srv result when a service name's byte length does not match its contents.
+const RESULT_SRV_STRING_SIZE_MISMATCH: u32 = 0xD8E0_6407;
 /// srv result when the process ACL does not grant the requested service.
 const RESULT_SRV_SERVICE_ACCESS_DENIED: u32 = 0xD8E0_6406;
+/// Temporary fallback used for allowed names without an implemented endpoint.
+///
+/// Retail SRV waits for a registered service; pending registration and wake-up
+/// are not implemented by this single-process bootstrap yet.
+const RESULT_SRV_SERVICE_NOT_REGISTERED: u32 = RESULT_SRV_SERVICE_ACCESS_DENIED;
 /// Result for a command a stub service does not implement (public tables; unverified).
 const RESULT_INVALID_COMMAND: u32 = 0xD900_182F;
 /// Minimal HLE services: name and how their commands are answered.
@@ -1409,9 +1416,18 @@ impl System {
                 requested_name[0..4].copy_from_slice(&parameters[0].to_le_bytes());
                 requested_name[4..8].copy_from_slice(&parameters[1].to_le_bytes());
                 let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
+                if !(1..=requested_name.len()).contains(&name_length) {
+                    return Ok(vec![0x0005_0040, RESULT_SRV_INVALID_STRING_LENGTH]);
+                }
                 let Some(service_name) = requested_name.get(..name_length) else {
                     return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
                 };
+                if service_name
+                    .iter()
+                    .any(|byte| !(0x21..=0x7E).contains(byte))
+                {
+                    return Ok(vec![0x0005_0040, RESULT_SRV_STRING_SIZE_MISMATCH]);
+                }
                 let access_allowed = self
                     .ncsd_session
                     .as_ref()
