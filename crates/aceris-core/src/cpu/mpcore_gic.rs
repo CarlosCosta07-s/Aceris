@@ -143,6 +143,11 @@ impl MpcoreInterruptController {
     pub fn write_distributor_byte(&mut self, offset: u32, value: u8) {
         let register = offset & !3;
         let shift = (offset & 3) * 8;
+        // GICD_CTLR only implements bit 0 in byte lane 0. Writes to the
+        // remaining byte lanes must not clear the enable bit.
+        if register == GICD_CTLR && shift != 0 {
+            return;
+        }
         self.write_distributor_word(register, u32::from(value) << shift);
     }
 
@@ -326,7 +331,7 @@ impl MpcoreInterruptController {
         let first = (offset - base) as usize;
         let mut result = 0u32;
         for byte in 0..4 {
-            result |= u32::from(values[first + byte] & 0x0F) << (byte * 8);
+            result |= u32::from(values[first + byte] << 4) << (byte * 8);
         }
         result
     }
@@ -390,14 +395,23 @@ impl MpcoreInterruptController {
         if !self.distributor_enabled || !self.cpu_interface_enabled {
             return None;
         }
+        let running_group = self
+            .active_stack
+            .iter()
+            .filter_map(|interrupt_id| self.priorities.get(*interrupt_id as usize).copied())
+            .map(|priority| self.priority_group(priority))
+            .min();
 
         (0..MPCORE_GIC_INTERRUPT_COUNT)
             .filter(|interrupt_id| {
+                let priority = self.priorities[*interrupt_id];
+                let group = self.priority_group(priority);
                 self.pending[*interrupt_id]
                     && self.enabled[*interrupt_id]
                     && !self.active[*interrupt_id]
-                    && self.priority_is_unmasked(self.priorities[*interrupt_id])
+                    && self.priority_is_unmasked(priority)
                     && self.targets_cpu0(*interrupt_id)
+                    && running_group.map_or(true, |active_group| group < active_group)
             })
             .min_by_key(|interrupt_id| (self.priorities[*interrupt_id], *interrupt_id))
             .map(|interrupt_id| interrupt_id as u32)
@@ -405,6 +419,10 @@ impl MpcoreInterruptController {
 
     fn priority_is_unmasked(&self, priority: u8) -> bool {
         (priority << 4) < self.priority_mask
+    }
+
+    fn priority_group(&self, priority: u8) -> u8 {
+        (priority >> self.binary_point.saturating_add(1).min(4)) & 0x0F
     }
 
     fn targets_cpu0(&self, interrupt_id: usize) -> bool {
@@ -476,8 +494,8 @@ const fn in_register_range(offset: u32, base: u32, count: u32) -> bool {
 mod tests {
     use super::{
         GICC_CTLR, GICC_EOIR, GICC_HPPIR, GICC_IAR, GICC_PMR, GICC_RPR, GICD_CTLR,
-        GICD_ICENABLER_BASE, GICD_ICFGR_BASE, GICD_ICFGR_BASE as GICD_ICFGR0,
-        GICD_IPRIORITYR_BASE, GICD_ISENABLER_BASE, GICD_ISPENDR_BASE,
+        GICD_ICENABLER_BASE, GICD_ICFGR_BASE,
+        GICD_IPRIORITYR_BASE, GICD_ISENABLER_BASE,
         MPCORE_GIC_SPURIOUS_INTERRUPT_ID, MPCORE_PRIVATE_TIMER_INTERRUPT_ID,
         MpcoreInterruptController,
     };
@@ -576,13 +594,21 @@ mod tests {
         controller.set_private_timer_irq_level(true);
 
         // PPI 29 occupies bits 26-27 in GICD_ICFGR1. Clear bit 27
-        // while preserving the other fields in the register.
+        // while preserving the other fields in the register. Because the
+        // private-timer input is still high, level mode remains pending.
         let cfg1 = controller.read_distributor_byte(GICD_ICFGR_BASE + 4 + 3);
         controller.write_distributor_byte(GICD_ICFGR_BASE + 4 + 3, cfg1 & !0x08);
-        assert!(!controller.interrupt_pending(29).unwrap());
-        controller.set_private_timer_irq_level(false);
-        controller.set_private_timer_irq_level(true);
         assert!(controller.interrupt_pending(29).unwrap());
+
+        // Acknowledge, then clear the timer line; the active interrupt is not
+        // pending again once the level-sensitive input is low.
+        assert_eq!(
+            controller.read_cpu_interface_register(GICC_IAR),
+            Some(MPCORE_PRIVATE_TIMER_INTERRUPT_ID)
+        );
+        controller.set_private_timer_irq_level(false);
+        controller.write_cpu_interface_register(GICC_EOIR, 29);
+        assert!(!controller.interrupt_pending(29).unwrap());
     }
 
     #[test]
