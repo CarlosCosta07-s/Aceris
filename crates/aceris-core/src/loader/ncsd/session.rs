@@ -7463,12 +7463,9 @@ mod tests {
             session.read_memory_u32(TIMER_INTERRUPT_STATUS).unwrap(),
             0
         );
-        assert!(
-            !session
-                .address_space
-                .mpcore_interrupt_controller
-                .interrupt_pending(29)
-                .unwrap()
+        assert_eq!(
+            session.read_memory_u32(DISTRIBUTOR + 0x200).unwrap(),
+            0
         );
         assert!(
             session
