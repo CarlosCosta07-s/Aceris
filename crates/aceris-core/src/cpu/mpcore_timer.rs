@@ -318,9 +318,10 @@ mod tests {
         let mut timer = MpcorePrivateTimer::default();
         timer.write_register(TIMER_LOAD_REGISTER_OFFSET, 0);
         timer.write_register(TIMER_CONTROL_REGISTER_OFFSET, ENABLE | IRQ_ENABLE);
-        timer.advance_time(1, MPCORE_TIMER_DEFAULT_CLOCK_HZ);
-        timer.advance_time(1, MPCORE_TIMER_DEFAULT_CLOCK_HZ);
-        timer.advance_time(1, MPCORE_TIMER_DEFAULT_CLOCK_HZ);
+        for _ in 0..7 {
+            timer.advance_time(1, MPCORE_TIMER_DEFAULT_CLOCK_HZ);
+        }
+        assert!(!timer.interrupt_pending());
         timer.advance_time(1, MPCORE_TIMER_DEFAULT_CLOCK_HZ);
         assert!(timer.interrupt_pending());
         assert!(timer.irq_asserted());
