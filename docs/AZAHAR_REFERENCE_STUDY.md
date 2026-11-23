@@ -63,3 +63,30 @@ Foram adicionados quatro testes sintéticos para: reassert após EOI enquanto PS
 ## Registro de autoria e independência
 
 A consulta ao Azahar serviu para formular perguntas de compatibilidade e identificar comportamentos observáveis. Nenhum trecho de código foi reutilizado ou traduzido. O código Aceris tem API, estado, implementação e testes próprios em Rust. A evidência observada em outro emulador não é tratada como prova de comportamento físico; as referências independentes de ARM e 3dbrew e os testes futuros continuam necessários.
+
+
+## Complemento — máquina de estados correta do GIC e encaminhamento SPI
+
+A documentação ARM consultada durante a implementação confirma dois detalhes que agora são refletidos nos testes Aceris:
+
+1. Para uma fonte level-sensitive, se o processador reconhece o interrupt lendo IAR enquanto a linha do periférico continua alta, o estado passa de Pending para **Active + Pending**. Quando o periférico desasserta a linha, o estado passa para Active. O EOI então encerra Active. Se a fonte ainda estiver alta quando EOI ocorrer, o interrupt regressa a Pending.
+2. Um ID Active + Pending não é encaminhado novamente ao mesmo CPU interface enquanto permanece Active. A presença do bit pending pode ser observada no distribuidor, embora HPPIR/IAR apresentem outro ID elegível ou o ID espúrio nesse intervalo.
+
+Fontes:
+- ARM GIC fundamentals: https://support.arm.com/documentation/198123/latest/Arm-GIC-fundamentals
+- ARM GIC Architecture Specification — general handling: https://support.arm.com/documentation/ihi0048/b/Interrupt-Handling/General-handling-of-interrupts?lang=en
+- 3dbrew ARM11 Interrupts: https://3dbrew.org/wiki/ARM11_Interrupts
+- 3dbrew GSP Shared Memory: https://3dbrew.org/wiki/GSP_Shared_Memory
+
+A tabela de interrupções ARM11 do 3DS lista PSC0/PSC1/PDC0/PDC1/PPF/P3D em 0x28–0x2D como level-sensitive e 1-N. O mapa GSP shared memory descreve a fila de interrupções por cliente (0x40 bytes), o limite de 0x34 entradas e o threshold PDC de 0x20. PDC é entregue a todos os processos; os outros eventos seguem para o cliente com rendering rights.
+
+**Limite preservado:** isso não prova, por si só, que a fila relay é a própria linha física de IRQ nem determina o instante em que cada fonte deve baixar. A ligação de cada operação GSP ao nível GIC continua pendente até seu contrato de assert/clear estar estabelecido independentemente.
+
+### Implementação Aceris correspondente
+
+- Commit `40238ce`: estado de nível físico genérico para os 128 IDs.
+- Commit `3c5bea7`: fixtures SPI configuram ITARGETSR para CPU0; habilitar o SPI não substitui o roteamento de alvo.
+- Commit `3d2123e`: fonte level-sensitive continua pending durante active, formando Active + Pending, e desassertion remove pending antes do EOI.
+- Commit `bc0bd02`: regressão guest-visible lê GICD_ISPENDR durante Active + Pending e confirma a limpeza após desassertion.
+
+A implementação está em Rust original no arquivo `crates/aceris-core/src/cpu/mpcore_gic.rs`; não foi incorporado código do Azahar.
