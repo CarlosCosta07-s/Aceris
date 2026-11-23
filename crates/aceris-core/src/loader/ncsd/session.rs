@@ -8,6 +8,7 @@
 pub mod gsp_service;
 pub mod interrupt;
 pub mod ipc;
+pub mod ipc_handles;
 pub mod kernel;
 pub mod svc;
 /// ARM11 per-thread contexts and cooperative scheduling primitives.
@@ -39,7 +40,7 @@ use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
 use kernel::{
     Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE, EventResetType,
-    KernelHandleError, ServiceSessionKind,
+    IpcHandleTranslationError, KernelHandleError, ServiceSessionKind,
 };
 use svc::{
     Arm11SvcDispatcher, Arm11SvcDisposition, SVC_BIND_INTERRUPT, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT,
@@ -599,6 +600,18 @@ impl Arm11ProcessSession {
     /// Returns service-session metadata for a guest-visible handle.
     pub fn service_session_kind(&self, handle: u32) -> Option<ServiceSessionKind> {
         self.kernel_objects.service_session(handle)
+    }
+
+    /// Applies the kernel COPY_HANDLE/MOVE_HANDLE rules to an incoming IPC message.
+    ///
+    /// HLE endpoints currently share the application process's object table;
+    /// this enforces handle lifetime and validation at that boundary. It does
+    /// not claim to provide independent process handle namespaces.
+    pub fn translate_ipc_request_handles(
+        &mut self,
+        words: &mut [u32],
+    ) -> Result<(), IpcHandleTranslationError> {
+        super::session::ipc_handles::translate_message_handles(&mut self.kernel_objects, words)
     }
 
     /// Stores the GSP registration associated with one service session.
