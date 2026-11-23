@@ -692,10 +692,7 @@ mod tests {
         // ICFGR has eight 32-bit registers for 128 interrupts. The final
         // byte programs IDs 124..127; the following byte is reserved.
         controller.write_distributor_byte(GICD_ICFGR_BASE + 31, 0xAA);
-        assert_eq!(
-            controller.read_distributor_byte(GICD_ICFGR_BASE + 31),
-            0xAA
-        );
+        assert_eq!(controller.read_distributor_byte(GICD_ICFGR_BASE + 31), 0xAA);
         assert_eq!(controller.read_distributor_byte(GICD_ICFGR_BASE + 32), 0);
     }
 
