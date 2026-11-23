@@ -818,7 +818,7 @@ mod tests {
         controller.write_distributor_byte(0x004, 0xFF);
         assert_eq!(controller.read_distributor_byte(0x004), old_type);
     }
- 
+
     #[test]
     fn level_sensitive_gsp_spi_reasserts_after_eoi_until_device_clears_line() {
         const PSC0: u32 = 0x28;
