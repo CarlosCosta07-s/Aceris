@@ -5585,82 +5585,82 @@ mod tests {
             .load_ncsd_with_keys(
                 std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture_with_services(
                     &[
-                            0xE1A0_0007, // MOV r0, r7 (CreateEvent output pointer)
-                            0xE3A0_1000, // MOV r1, #0 (one-shot reset type)
-                            0xEF00_0017, // SVC CreateEvent
-                            0xE584_5000, // STR r5, [r4] (guest writes "srv:")
-                            0xE1A0_0006, // MOV r0, r6 (ConnectToPort output pointer)
-                            0xE1A0_1004, // MOV r1, r4 (ConnectToPort service-name pointer)
-                            0xEF00_002D, // SVC ConnectToPort
-                            // Guest-authored srv:RegisterClient request.
-                            0xE584_5000, // STR r5, [r4] (IPC header)
-                            0xE584_6004, // STR r6, [r4, #4] (PID translation descriptor)
-                            0xE584_7008, // STR r7, [r4, #8] (PID value)
-                            0xE1A0_000C, // MOV r0, r12 (srv: session handle)
-                            0xEF00_0032, // srv:RegisterClient
-                            // Guest-authored srv:GetServiceHandle("gsp::Gpu", 8, 0).
-                            0xE584_5000, // STR r5, [r4] (IPC header)
-                            0xE584_6004, // STR r6, [r4, #4] (service name word 0)
-                            0xE584_7008, // STR r7, [r4, #8] (service name word 1)
-                            0xE584_800C, // STR r8, [r4, #12] (service name length)
-                            0xE584_9010, // STR r9, [r4, #16] (flags)
-                            0xE1A0_000C, // MOV r0, r12 (srv: session handle)
-                            0xEF00_0032, // srv:GetServiceHandle
-                            0xE514_8004, // LDR r8, [r4, #-4] (guest-created event handle)
-                            // Guest-authored RegisterInterruptRelayQueue message.
-                            0xE584_5000, // STR r5, [r4] (IPC header)
-                            0xE584_6004, // STR r6, [r4, #4] (flags)
-                            0xE584_7008, // STR r7, [r4, #8] (COPY_HANDLE descriptor)
-                            0xE584_800C, // STR r8, [r4, #12] (event handle)
-                            0xE1A0_000C, // MOV r0, r12 (GSP service handle)
-                            0xEF00_0032, // GSP RegisterInterruptRelayQueue
-                            // Guest maps the returned Shared Memory handle via SVC 0x1F.
-                            0xE594_5010, // LDR r5, [r4, #16] (shared memory handle from reply)
-                            0xE1A0_0005, // MOV r0, r5 (memory-block handle)
-                            0xE1A0_1006, // MOV r1, r6 (shared-memory base)
-                            0xE1A0_2007, // MOV r2, r7 (read/write permissions)
-                            0xE1A0_3008, // MOV r3, r8 (peer permissions: DONTCARE)
-                            0xEF00_001F, // SVC MapMemoryBlock
-                            // Guest-authored TryAcquireRight IPC header and two parameters.
-                            0xE584_5000, // STR r5, [r4] (IPC header)
-                            0xE584_6004, // STR r6, [r4, #4] (normal parameter 0)
-                            0xE584_7008, // STR r7, [r4, #8] (normal parameter 1)
-                            0xE1A0_000C, // MOV r0, r12 (GSP service handle)
-                            0xEF00_0032, // GSP TryAcquireRight
-                            // The guest writes the two-entry GX ring header and entries.
-                            0xE584_5000, // STR r5, [r4] (queue command count = 2)
-                            0xE584_6020, // STR r6, [r4, #32] (entry 0: ProcessCommandList + halt)
-                            0xE584_7024, // STR r7, [r4, #36] (entry 0: command-list address)
-                            0xE584_8028, // STR r8, [r4, #40] (entry 0: command-list size)
-                            0xE584_9040, // STR r9, [r4, #64] (entry 1: ProcessCommandList)
-                            0xE584_A044, // STR r10, [r4, #68] (entry 1: command-list address)
-                            0xE584_B048, // STR r11, [r4, #72] (entry 1: command-list size)
-                            0xE584_C03C, // STR r12, [r4, #60] (entry 0: flush command-list cache)
-                            0xE584_C05C, // STR r12, [r4, #92] (entry 1: flush command-list cache)
-                            0xE584_5000, // STR r5, [r4] (first FCRAM command word)
-                            0xE584_6004, // STR r6, [r4, #4] (first command header)
-                            0xE584_7010, // STR r7, [r4, #16] (second VRAM command word)
-                            0xE584_8014, // STR r8, [r4, #20] (second command header)
-                            0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
-                            0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
-                            0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
-                            0xE1A0_000C, // MOV r0, r12 (guest service handle)
-                            0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
-                            0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
-                            0xE1A0_000C, // MOV r0, r12
-                            0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
-                            0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
-                            0xE1A0_000C, // MOV r0, r12
-                            0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill, both buffers)
-                            0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
-                            0xE1A0_000C, // MOV r0, r12
-                            0xEF00_0032, // GSP TriggerCmdReqQueue (buffer 1 only / PSC1)
-                            0xE584_5000, // STR r5, [r4] (guest ReleaseRight header)
-                            0xE1A0_000C, // MOV r0, r12
-                            0xEF00_0032, // GSP ReleaseRight
-                            0xE584_5000, // STR r5, [r4] (guest Unregister header)
-                            0xE1A0_000C, // MOV r0, r12
-                            0xEF00_0032, // GSP UnregisterInterruptRelayQueue
+                        0xE1A0_0007, // MOV r0, r7 (CreateEvent output pointer)
+                        0xE3A0_1000, // MOV r1, #0 (one-shot reset type)
+                        0xEF00_0017, // SVC CreateEvent
+                        0xE584_5000, // STR r5, [r4] (guest writes "srv:")
+                        0xE1A0_0006, // MOV r0, r6 (ConnectToPort output pointer)
+                        0xE1A0_1004, // MOV r1, r4 (ConnectToPort service-name pointer)
+                        0xEF00_002D, // SVC ConnectToPort
+                        // Guest-authored srv:RegisterClient request.
+                        0xE584_5000, // STR r5, [r4] (IPC header)
+                        0xE584_6004, // STR r6, [r4, #4] (PID translation descriptor)
+                        0xE584_7008, // STR r7, [r4, #8] (PID value)
+                        0xE1A0_000C, // MOV r0, r12 (srv: session handle)
+                        0xEF00_0032, // srv:RegisterClient
+                        // Guest-authored srv:GetServiceHandle("gsp::Gpu", 8, 0).
+                        0xE584_5000, // STR r5, [r4] (IPC header)
+                        0xE584_6004, // STR r6, [r4, #4] (service name word 0)
+                        0xE584_7008, // STR r7, [r4, #8] (service name word 1)
+                        0xE584_800C, // STR r8, [r4, #12] (service name length)
+                        0xE584_9010, // STR r9, [r4, #16] (flags)
+                        0xE1A0_000C, // MOV r0, r12 (srv: session handle)
+                        0xEF00_0032, // srv:GetServiceHandle
+                        0xE514_8004, // LDR r8, [r4, #-4] (guest-created event handle)
+                        // Guest-authored RegisterInterruptRelayQueue message.
+                        0xE584_5000, // STR r5, [r4] (IPC header)
+                        0xE584_6004, // STR r6, [r4, #4] (flags)
+                        0xE584_7008, // STR r7, [r4, #8] (COPY_HANDLE descriptor)
+                        0xE584_800C, // STR r8, [r4, #12] (event handle)
+                        0xE1A0_000C, // MOV r0, r12 (GSP service handle)
+                        0xEF00_0032, // GSP RegisterInterruptRelayQueue
+                        // Guest maps the returned Shared Memory handle via SVC 0x1F.
+                        0xE594_5010, // LDR r5, [r4, #16] (shared memory handle from reply)
+                        0xE1A0_0005, // MOV r0, r5 (memory-block handle)
+                        0xE1A0_1006, // MOV r1, r6 (shared-memory base)
+                        0xE1A0_2007, // MOV r2, r7 (read/write permissions)
+                        0xE1A0_3008, // MOV r3, r8 (peer permissions: DONTCARE)
+                        0xEF00_001F, // SVC MapMemoryBlock
+                        // Guest-authored TryAcquireRight IPC header and two parameters.
+                        0xE584_5000, // STR r5, [r4] (IPC header)
+                        0xE584_6004, // STR r6, [r4, #4] (normal parameter 0)
+                        0xE584_7008, // STR r7, [r4, #8] (normal parameter 1)
+                        0xE1A0_000C, // MOV r0, r12 (GSP service handle)
+                        0xEF00_0032, // GSP TryAcquireRight
+                        // The guest writes the two-entry GX ring header and entries.
+                        0xE584_5000, // STR r5, [r4] (queue command count = 2)
+                        0xE584_6020, // STR r6, [r4, #32] (entry 0: ProcessCommandList + halt)
+                        0xE584_7024, // STR r7, [r4, #36] (entry 0: command-list address)
+                        0xE584_8028, // STR r8, [r4, #40] (entry 0: command-list size)
+                        0xE584_9040, // STR r9, [r4, #64] (entry 1: ProcessCommandList)
+                        0xE584_A044, // STR r10, [r4, #68] (entry 1: command-list address)
+                        0xE584_B048, // STR r11, [r4, #72] (entry 1: command-list size)
+                        0xE584_C03C, // STR r12, [r4, #60] (entry 0: flush command-list cache)
+                        0xE584_C05C, // STR r12, [r4, #92] (entry 1: flush command-list cache)
+                        0xE584_5000, // STR r5, [r4] (first FCRAM command word)
+                        0xE584_6004, // STR r6, [r4, #4] (first command header)
+                        0xE584_7010, // STR r7, [r4, #16] (second VRAM command word)
+                        0xE584_8014, // STR r8, [r4, #20] (second command header)
+                        0xEE07_0FBA, // MCR p15, 0, r0, c7, c10, 5 (DMB)
+                        0xEE07_0F9A, // MCR p15, 0, r0, c7, c10, 4 (DSB)
+                        0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                        0xE1A0_000C, // MOV r0, r12 (guest service handle)
+                        0xEF00_0032, // GSP TriggerCmdReqQueue (first batch)
+                        0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                        0xE1A0_000C, // MOV r0, r12
+                        0xEF00_0032, // GSP TriggerCmdReqQueue (resume halted queue)
+                        0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                        0xE1A0_000C, // MOV r0, r12
+                        0xEF00_0032, // GSP TriggerCmdReqQueue (MemoryFill, both buffers)
+                        0xE584_5000, // STR r5, [r4] (guest TriggerCmdReqQueue header)
+                        0xE1A0_000C, // MOV r0, r12
+                        0xEF00_0032, // GSP TriggerCmdReqQueue (buffer 1 only / PSC1)
+                        0xE584_5000, // STR r5, [r4] (guest ReleaseRight header)
+                        0xE1A0_000C, // MOV r0, r12
+                        0xEF00_0032, // GSP ReleaseRight
+                        0xE584_5000, // STR r5, [r4] (guest Unregister header)
+                        0xE1A0_000C, // MOV r0, r12
+                        0xEF00_0032, // GSP UnregisterInterruptRelayQueue
                     ],
                     &[b"gsp::Gpu"],
                 )),
