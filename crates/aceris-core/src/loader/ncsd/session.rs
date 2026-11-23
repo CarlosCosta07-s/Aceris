@@ -47,7 +47,8 @@ use svc::{
     SVC_CLEAR_TIMER, SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
-    SVC_GET_PROCESS_INFO, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY,
+    SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD, SVC_GET_PROCESS_INFO, SVC_GET_SYSTEM_TICK,
+    SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY,
     SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE,
     SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT,
     SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT, SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N,
@@ -2168,6 +2169,8 @@ impl Arm11ProcessSession {
             SVC_CLOSE_HANDLE => self.svc_close_handle(caller),
             SVC_DUPLICATE_HANDLE => self.svc_duplicate_handle(caller),
             SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
+            SVC_GET_PROCESS_ID => self.svc_get_process_id(caller),
+            SVC_GET_PROCESS_ID_OF_THREAD => self.svc_get_process_id_of_thread(caller),
             SVC_GET_PROCESS_INFO => self.svc_get_process_info(caller),
             0x2A => self.svc_get_system_info(caller),
             SVC_GET_SYSTEM_TICK => self.svc_get_system_tick(caller),
@@ -3509,6 +3512,47 @@ impl Arm11ProcessSession {
             core.regs[2] = (value >> 32) as u32;
         }
         self.write_svc_result(caller, result)
+    }
+
+    /// Handles GetProcessId: r0 = writable PID output pointer, r1 = process handle.
+    ///
+    /// The current bootstrap models one application process. Its virtual PID is
+    /// stable for the lifetime of this session; foreign process handles are not
+    /// accepted until a process manager owns multiple live sessions.
+    fn svc_get_process_id(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        if registers[1] != CURRENT_PROCESS_HANDLE {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
+        if !self.address_space.is_writable_range(registers[0], 4)
+            || self.address_space.write32(registers[0], self.process_id).is_err()
+        {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.write_svc_result(caller, 0)
+    }
+
+    /// Handles GetProcessIdOfThread: r0 = writable PID output pointer,
+    /// r1 = a thread handle or the current-thread pseudo-handle.
+    fn svc_get_process_id_of_thread(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        if self.thread_id_for_handle(registers[1]).is_none() {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
+        if !self.address_space.is_writable_range(registers[0], 4)
+            || self.address_space.write32(registers[0], self.process_id).is_err()
+        {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.write_svc_result(caller, 0)
     }
 
     /// Handles DuplicateHandle using the input handle in r1.
@@ -7308,6 +7352,72 @@ mod tests {
                 flags: 0,
             })
         );
+    }
+
+    #[test]
+    fn ipc_process_id_descriptor_is_replaced_with_the_session_pid() {
+        let mut session = test_session_with_program(&[]);
+        let process_id = session.process_id();
+        let mut message = vec![(0x1234 << 16) | 2, 1 << 5, 0xDEAD_BEEF];
+
+        session.translate_ipc_request_handles(&mut message).unwrap();
+
+        assert_eq!(message[1], 1 << 5);
+        assert_eq!(message[2], process_id);
+        assert_ne!(process_id, 0);
+    }
+
+    #[test]
+    fn get_process_id_svc_returns_the_session_pid_for_process_and_thread_handles() {
+        let mut session = test_session_with_program(&[]);
+        let output = session.address_space.layout().initial_stack_pointer - 0x100;
+        let process_id = session.process_id();
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = output;
+            core.regs[1] = CURRENT_PROCESS_HANDLE;
+        }
+        assert_eq!(
+            session.dispatch_svc(super::svc::SVC_GET_PROCESS_ID),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.read_memory_u32(output).unwrap(), process_id);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = output + 4;
+            core.regs[1] = CURRENT_THREAD_HANDLE;
+        }
+        assert_eq!(
+            session.dispatch_svc(super::svc::SVC_GET_PROCESS_ID_OF_THREAD),
+            SvcRunDisposition::Resume
+        );
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.read_memory_u32(output + 4).unwrap(), process_id);
+    }
+
+    #[test]
+    fn get_process_id_svc_rejects_foreign_handles_and_unwritable_outputs() {
+        let mut session = test_session_with_program(&[]);
+        let output = session.address_space.layout().initial_stack_pointer - 0x100;
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = output;
+            core.regs[1] = 0xDEAD_BEEF;
+        }
+        session.dispatch_svc(super::svc::SVC_GET_PROCESS_ID);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_HANDLE);
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = u32::MAX - 1;
+            core.regs[1] = CURRENT_PROCESS_HANDLE;
+        }
+        session.dispatch_svc(super::svc::SVC_GET_PROCESS_ID);
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
     }
 
     #[test]
