@@ -176,7 +176,7 @@ mod tests {
         let source = objects.insert_event(EventResetType::OneShot).unwrap();
         let mut message = one_handle_message(1 << 4, source);
 
-        translate_message_handles(&mut objects, &mut message).unwrap();
+        translate_message_handles(&mut objects, 1, &mut message).unwrap();
 
         let receiver = message[2];
         assert_ne!(receiver, source);
@@ -213,7 +213,7 @@ mod tests {
         let initial_count = objects.handle_count();
 
         assert_eq!(
-            translate_message_handles(&mut objects, &mut message),
+            translate_message_handles(&mut objects, 1, &mut message),
             Err(IpcHandleTranslationError::DuplicateMoveHandle { handle: source })
         );
         assert_eq!(objects.handle_count(), initial_count);
@@ -261,7 +261,7 @@ mod tests {
         for handle in [CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE] {
             let mut message = one_handle_message(0, handle);
             let original = message.clone();
-            translate_message_handles(&mut objects, &mut message).unwrap();
+            translate_message_handles(&mut objects, 1, &mut message).unwrap();
             assert_eq!(message, original);
         }
     }
