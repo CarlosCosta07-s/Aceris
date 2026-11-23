@@ -192,7 +192,7 @@ impl MpcoreInterruptController {
             GICC_BPR => Some(u32::from(self.binary_point)),
             GICC_IAR => Some(self.acknowledge_interrupt()),
             GICC_EOIR => Some(0),
-            GICC_RPR => Some(u32::from(self.running_priority())),
+            GICC_RPR => Some(self.running_priority()),
             GICC_HPPIR => Some(
                 self.highest_pending_interrupt()
                     .unwrap_or(MPCORE_GIC_SPURIOUS_INTERRUPT_ID),
@@ -431,7 +431,7 @@ impl MpcoreInterruptController {
                     && !self.active[*interrupt_id]
                     && self.priority_is_unmasked(priority)
                     && self.targets_cpu0(*interrupt_id)
-                    && running_group.map_or(true, |active_group| group < active_group)
+                    && running_group.is_none_or(|active_group| group < active_group)
             })
             .min_by_key(|interrupt_id| (self.priorities[*interrupt_id], *interrupt_id))
             .map(|interrupt_id| interrupt_id as u32)
