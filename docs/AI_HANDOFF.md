@@ -2222,3 +2222,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O teste guest chain e o caminho de sessão associado contêm trabalho anterior de outro agente; não foram modificados nesta etapa.
 - A API de nível GIC está preparada, mas as fontes físicas GSP ainda **não estão conectadas** ao distribuidor. Não inferir o ponto de desassertion a partir da mera existência do relay event/queue. Cada dispositivo/comando precisa expor a sua causa pending e o ato concreto que a limpa antes de fechar essa integração.
 - Não foram usados atrasos fixos importados de Azahar. Qualquer temporização de conclusão GPU permanece dependente de relógio virtual e evidência independente de hardware.
+
+
+### Resultado confirmado da CI — GIC e cadeia guest (23/11/2026, revisão após 0bd293b)
+
+- Run `45284693083`, HEAD `bc0bd02`: Android ARM64 passou (app e benchmark release); Linux e macOS passaram fmt, build e Clippy e falharam somente em `cargo test --workspace`; Windows estava na etapa de testes.
+- Run `45284851808`, HEAD `0bd293b` (documentação atualizada, mesmo código Rust de GIC): Android ARM64 passou (app e benchmark release); Linux e macOS passaram fmt, build e Clippy e falharam somente em `cargo test --workspace`; Windows ainda estava executando os testes no momento da consulta.
+- Em ambas as execuções, a falha Linux observada foi `system::tests::arm11_guest_runs_the_srv_gsp_pica_lcd_chain_in_one_continuous_run`, em `crates/aceris-core/src/system.rs:8731`, com `InvalidAccess { addr: 0x1FFD0800 }`. Na execução 45284851808 o módulo core reportou 1.446 testes aprovados, 1 falha e 1 ignorado.
+- Os testes de `cpu::mpcore_gic::tests` passaram na execução 45284851808, incluindo `level_sensitive_gsp_spi_stays_active_and_pending_until_device_clears_line`, `level_sensitive_gsp_spi_is_redelivered_after_eoi_if_device_stays_asserted`, `edge_input_retrigger_while_active_remains_pending_until_eoi` e a leitura guest-visible de GICD_ISPENDR.
+- A falha em `system.rs` é independente do arquivo alterado para o GIC e coincide com uma cadeia guest de integração que contém trabalho anterior de outro agente. Não foi alterada nem contornada nesta etapa. Diagnosticar o endereço exige rastrear PC/instrução e a origem do ponteiro no contexto da sessão; não se deve supor que ele seja TLS apenas por sua faixa de endereço.
+- `docs/AI_HANDOFF.md` e `docs/AZAHAR_REFERENCE_STUDY.md` foram atualizados após a leitura desses resultados. A CI completa do HEAD ainda não está verde.
