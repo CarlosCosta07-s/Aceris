@@ -18,17 +18,20 @@ O núcleo já contém um caminho PICA200 em Rust:
 
 Esse caminho é a implementação de referência que deve continuar funcionando mesmo quando um backend acelerado estiver disponível. Ele também é o oráculo de comparação para testes de equivalência visual.
 
-### Apresentação host atual
+### Apresentação host atual — primeira etapa implementada em 25/11/2026
 
-A saída de vídeo ainda é CPU/RGBA:
+O núcleo continua produzindo as três superfícies LCD em memória CPU/RGBA. A camada de apresentação host agora também tem um caminho GPU próprio:
 
-- o núcleo mantém as três superfícies LCD como buffers RGBA;
-- o desktop compõe as superfícies e entrega pixels ao sistema de janela por caminhos de imagem de software (no X11, `XPutImage`);
-- o frontend Android entrega buffers de pixels ao `ANativeWindow`/interface nativa.
+- crate Rust `aceris-graphics`, separado do núcleo e do estado guest;
+- `wgpu 30.0.2` com backends Vulkan e GL (OpenGL/OpenGL ES), e Metal para a seleção automática no macOS;
+- criação de surface/swapchain a partir de handles nativos: Xlib, Win32, AppKit e Android Native Window;
+- upload de frames RGBA/BGRX para textura host, pipeline WGSL de apresentação e submissão do frame;
+- seleção por `ACERIS_GRAPHICS_BACKEND=auto|opengl|vulkan|software`; aliases `gl`, `gles`, `vk` e `cpu` também são aceitos;
+- o desktop e o Android mantêm o caminho CPU nativo como fallback quando a inicialização, aquisição de frame ou apresentação GPU falha.
 
-Não há, no workspace atual, contexto OpenGL/GL ES, superfície Vulkan, instância/dispositivo Vulkan, swapchain, pipeline gráfico host, conversor de shader PICA para GLSL/SPIR-V, nem cache de recursos gráficos do host.
+A camada usa uma abstração comum para acionar os backends nativos de `wgpu`; ela não é uma implementação manual de GLX/WGL/EGL/Vulkan. No modo `auto`, macOS usa Metal e as demais plataformas habilitam Vulkan/GL para seleção do adapter compatível.
 
-**Conclusão:** OpenGL e Vulkan ainda não são backends implementados no Aceris. A existência de um renderizador PICA em CPU e de uma janela que mostra pixels não significa que esses backends estejam presentes.
+**Limite decisivo:** este presenter recebe pixels LCD já compostos pelo caminho CPU. Ele não recebe DRAWARRAYS/DRAWELEMENTS, não executa vertex/fragment shaders PICA, não gerencia texturas PICA nem grava render targets guest. Portanto a apresentação OpenGL/Vulkan está integrada, mas o rasterizador PICA acelerado ainda não está implementado.
 
 ## Referência técnica Azahar — somente arquitetura
 
@@ -110,9 +113,11 @@ Os dois caminhos podem coexistir: software de referência para compatibilidade/d
 
 ## Dependências e bloqueios
 
-O workspace atual só declara dependências locais. As regras do projeto exigem aprovação do mantenedor antes de introduzir bibliotecas de terceiros. Por isso, esta etapa **não adiciona** crates de bindings/contexto gráfico. Antes da implementação dos backends é necessário escolher e aprovar a estratégia de bindings e criação de superfície por plataforma.
+O mantenedor autorizou explicitamente a inclusão de dependências para implementar a apresentação host OpenGL/OpenGL ES/Vulkan. O crate `aceris-graphics` usa `wgpu`, `raw-window-handle` e `pollster`; a autorização cobre essa camada de API e os bindings de superfície, sem autorizar código de outros emuladores.
 
-Não se deve tentar resolver isso com uma grande camada de FFI manual escrita às pressas: GLX/WGL/EGL/Android Native Window e Vulkan Surface/Swapchain têm contratos e ciclos de vida distintos. Também não se deve introduzir uma abstração como se ela já executasse PICA quando apenas recebe e apresenta pixels.
+A abstração reduz a quantidade de FFI por plataforma, mas não elimina as diferenças de ciclo de vida dos handles nativos. O frontend continua responsável por manter display/window vivos enquanto a surface existir, e o Android retém uma referência extra a `ANativeWindow` até destruir a surface.
+
+A inclusão de `wgpu` não transforma o presenter em rasterizador PICA. O próximo marco exige um pacote de draw PICA independente de API, a tradução de shaders/estados e o contrato de sincronização/readback guest.
 
 ## Alteração PICA desta etapa
 
