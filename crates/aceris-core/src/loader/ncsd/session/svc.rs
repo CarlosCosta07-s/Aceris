@@ -111,6 +111,9 @@ pub const SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES: u32 = 0x39;
 /// Query current values from a resource-limit handle.
 pub const SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES: u32 = 0x3A;
 
+/// Resolve a guest-visible thread ID from a thread handle.
+pub const SVC_GET_THREAD_ID: u32 = 0x37;
+
 /// Raise a guest break/debug stop.
 pub const SVC_BREAK: u32 = 0x3C;
 
@@ -236,6 +239,7 @@ mod tests {
             SVC_GET_HANDLE_INFO,
             SVC_GET_PROCESS_ID,
             SVC_GET_PROCESS_ID_OF_THREAD,
+            SVC_GET_THREAD_ID,
             SVC_GET_PROCESS_INFO,
             SVC_GET_THREAD_INFO,
             SVC_GET_RESOURCE_LIMIT,
