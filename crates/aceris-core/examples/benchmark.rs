@@ -7,20 +7,15 @@
 //! environment variables documented in docs/PERFORMANCE_TESTING.md. No key is
 //! embedded, discovered, persisted, or printed by this example.
 
-use std::{
-    collections::BTreeMap,
-    env,
-    hint::black_box,
-    path::PathBuf,
-    process::ExitCode,
-    time::Instant,
-};
+use std::{collections::BTreeMap, env, hint::black_box, path::PathBuf, process::ExitCode, time::Instant};
 
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     cpu::{Arm11Core, StepEvent},
     gpu::{DepthFunction, FCRAM_BASE, GpuPhysicalMemory, RasterVertex, SoftwareRasterizer},
-    loader::{ImageFormat, cia::TicketCommonKeyStore, identify_file, ncsd::session::ipc::IpcMessage},
+    loader::{
+        ImageFormat, cia::TicketCommonKeyStore, identify_file, ncsd::session::ipc::IpcMessage,
+    },
     memory::{Bus, FlatMemory},
     system::SystemFrameReport,
 };
@@ -101,7 +96,9 @@ fn parse_args() -> Result<Option<Options>, String> {
             continue;
         }
         if options.image.is_none() {
-            return Err(format!("{argument} requires a game image; standalone component profiling accepts no other options"));
+            return Err(format!(
+                "{argument} requires a game image; standalone component profiling accepts no other options"
+            ));
         }
         let value = args
             .next()
@@ -371,8 +368,7 @@ fn print_memory_rate(label: &str, operations: u64, elapsed: std::time::Duration)
     let seconds = elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
     let operations_per_second = operations as f64 / seconds;
     let nanoseconds_per_operation = elapsed.as_nanos() as f64 / operations.max(1) as f64;
-    let mebibytes_per_second =
-        operations as f64 * 4.0 / seconds / (1024.0 * 1024.0);
+    let mebibytes_per_second = operations as f64 * 4.0 / seconds / (1024.0 * 1024.0);
     println!(
         "{label:<34} {operations_per_second:>12.0} ops/s  {nanoseconds_per_operation:>10.1} ns/op  {mebibytes_per_second:>9.1} MiB/s"
     );
@@ -506,9 +502,7 @@ fn profile_gpu(iterations: usize) -> Result<(), String> {
     let pixels_per_second = pixels_written as f64 / seconds;
     println!(
         "{:<34} {:>12.1} triangles/s  {:>12.0} pixels/s",
-        "Software rasterizer (reference)",
-        triangles_per_second,
-        pixels_per_second
+        "Software rasterizer (reference)", triangles_per_second, pixels_per_second
     );
     black_box(rasterizer.color_buffer());
     Ok(())
@@ -538,7 +532,11 @@ fn profile_ipc(iterations: usize) -> Result<(), String> {
     }
     let elapsed = started.elapsed();
     black_box(decoded_parameters);
-    print_operation_rate("IPC message + translation decode", iterations as u64, elapsed);
+    print_operation_rate(
+        "IPC message + translation decode",
+        iterations as u64,
+        elapsed,
+    );
     Ok(())
 }
 
@@ -560,11 +558,21 @@ fn run_component_profile() -> Result<(), String> {
     profile_ipc(ITERATIONS)?;
     println!();
     println!("Scope and interpretation:");
-    println!("- CPU measures the bare A32 interpreter with a small deterministic instruction mix; it excludes the process scheduler and guest MMU.");
-    println!("- Memory compares FlatMemory with the sparse GPU physical backing; it does not measure the full ARM11 D-cache/session path.");
-    println!("- GPU measures the software reference rasterizer only; it is not the complete PICA200 shader/texture/TEV pipeline.");
-    println!("- IPC measures message and translation-descriptor decoding; it excludes SRV lookup, handle transfer, scheduling and service execution.");
-    println!("- These are host microbenchmarks. Use the game benchmark separately for end-to-end guest throughput.");
+    println!(
+        "- CPU measures the bare A32 interpreter with a small deterministic instruction mix; it excludes the process scheduler and guest MMU."
+    );
+    println!(
+        "- Memory compares FlatMemory with the sparse GPU physical backing; it does not measure the full ARM11 D-cache/session path."
+    );
+    println!(
+        "- GPU measures the software reference rasterizer only; it is not the complete PICA200 shader/texture/TEV pipeline."
+    );
+    println!(
+        "- IPC measures message and translation-descriptor decoding; it excludes SRV lookup, handle transfer, scheduling and service execution."
+    );
+    println!(
+        "- These are host microbenchmarks. Use the game benchmark separately for end-to-end guest throughput."
+    );
     println!();
     Ok(())
 }
