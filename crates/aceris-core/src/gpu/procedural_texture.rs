@@ -206,13 +206,11 @@ impl PicaProceduralTextureSampler {
         u = clamp_coordinate(u, self.config.u_clamp)?;
         v = clamp_coordinate(v, self.config.v_clamp)?;
 
-        let rgb_shape = self
-            .config
-            .rgb_mapping_function
-            .evaluate_raw(u, v)
-            .ok_or(PicaProceduralTextureError::MappingFunctionUnsupported(
+        let rgb_shape = self.config.rgb_mapping_function.evaluate_raw(u, v).ok_or(
+            PicaProceduralTextureError::MappingFunctionUnsupported(
                 self.config.rgb_mapping_function,
-            ))?;
+            ),
+        )?;
         let rgb_lookup = lookup_curve(&self.rgb_mapping, rgb_shape)?;
         let color_position = f32::from(self.config.mip_offsets[0])
             + rgb_lookup * f32::from(self.config.texture_width.saturating_sub(1));
