@@ -4118,6 +4118,69 @@ mod tests {
     }
 
     #[test]
+    fn resource_limit_budget_drives_control_memory_application_heap_allocation() {
+        let mut session = test_session();
+        const HANDLE_OUTPUT: u32 = 0x0020_0000;
+        const TYPES: u32 = 0x0020_0020;
+        const LIMIT: u32 = 0x0020_0040;
+        const CURRENT: u32 = 0x0020_0050;
+        const PROBE_HEAP_BASE: u32 = 0x0800_0000;
+
+        session.write_memory_u32(TYPES, 1).unwrap(); // RESLIMIT_COMMIT
+        session.set_current_register(0, HANDLE_OUTPUT);
+        session.set_current_register(1, CURRENT_PROCESS_HANDLE);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let resource_limit = session.read_memory_u32(HANDLE_OUTPUT).unwrap();
+
+        session.set_current_register(0, LIMIT);
+        session.set_current_register(1, resource_limit);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, 1);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut limit_bytes = [0; 8];
+        session.read_memory_bytes(LIMIT, &mut limit_bytes).unwrap();
+        let limit = u64::from_le_bytes(limit_bytes);
+
+        session.set_current_register(0, CURRENT);
+        session.set_current_register(1, resource_limit);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, 1);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut current_bytes = [0; 8];
+        session.read_memory_bytes(CURRENT, &mut current_bytes).unwrap();
+        let current = u64::from_le_bytes(current_bytes);
+
+        // Exercise the same page-aligned remaining-budget calculation used by
+        // the guest allocator, but allocate only one page in this fixture.
+        let remaining = limit.saturating_sub(current) & !0xFFF;
+        assert!(remaining >= 0x1000);
+        let heap_size = 0x1000u32.min(remaining as u32);
+
+        session.set_current_register(0, MEMOP_ALLOC);
+        session.set_current_register(1, PROBE_HEAP_BASE);
+        session.set_current_register(2, 0);
+        session.set_current_register(3, heap_size);
+        session.set_current_register(4, MEMPERM_READ_WRITE);
+        session.dispatch_svc(SVC_CONTROL_MEMORY);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(session.current_registers().unwrap()[1], PROBE_HEAP_BASE);
+        assert!(session.address_space.is_writable_range(PROBE_HEAP_BASE, heap_size));
+
+        session.set_current_register(0, CURRENT);
+        session.set_current_register(1, resource_limit);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, 1);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut after_bytes = [0; 8];
+        session.read_memory_bytes(CURRENT, &mut after_bytes).unwrap();
+        assert_eq!(u64::from_le_bytes(after_bytes), current + u64::from(heap_size));
+    }
+
+    #[test]
     fn resource_limit_svc_rejects_foreign_process_and_invalid_resource_handles() {
         let mut session = test_session();
         session.set_current_register(0, 0x0020_0000);
