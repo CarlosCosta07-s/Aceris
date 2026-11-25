@@ -39,7 +39,8 @@ aceris/
 ```
 
 Mais detalhes em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-[docs/ROADMAP.md](docs/ROADMAP.md), [docs/INDEPENDENT_RESEARCH.md](docs/INDEPENDENT_RESEARCH.md)
+[docs/ROADMAP.md](docs/ROADMAP.md), [docs/INDEPENDENT_RESEARCH.md](docs/INDEPENDENT_RESEARCH.md),
+no [estudo de referências de desempenho](docs/PERFORMANCE_REFERENCE_STUDY.md)
 e no guia de [personalização e frontends](docs/FRONTENDS.md).
 
 ## Compilando
