@@ -407,4 +407,3 @@ mod orientation_tests {
         assert_eq!(pica_viewport_top(240.0, -12, 100.0, true), -12.0);
     }
 }
-
