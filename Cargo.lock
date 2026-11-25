@@ -8,6 +8,8 @@ version = "0.0.1"
 dependencies = [
  "aceris-common",
  "aceris-core",
+ "aceris-graphics",
+ "raw-window-handle",
 ]
 
 [[package]]
@@ -27,6 +29,8 @@ version = "0.0.1"
 dependencies = [
  "aceris-common",
  "aceris-core",
+ "aceris-graphics",
+ "raw-window-handle",
 ]
 
 [[package]]
