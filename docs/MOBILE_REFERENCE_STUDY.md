@@ -21,6 +21,7 @@
 | Azahar | GPL-3.0; emulador 3DS aberto | Comportamento 3DS, contratos PICA/GSP/IPC, compatibilidade, requisitos gráficos e escolhas Android |
 | PPSSPP | GPL-2.0-or-later; emulador PSP aberto | Estratégia multi-backend, fallback OpenGL/Vulkan, profiling ARM64, pacing, responsividade e hints de desempenho Android |
 | DraStic | Código fechado | Apenas observação externa de UX, duas telas, controles, biblioteca e comportamento em Android |
+| My Boy! | Emulador GBA proprietário | Editor de layout de tela, perfis de controles, multitoque, mapeamento de gamepad, atalhos de save/load, fast-forward e preferências de vídeo/áudio; somente UX e comportamento observável |
 | Eden | GPL-3.0-or-later; emulador Switch aberto | Gestão de backend host e GPU em Android, diagnóstico por dispositivo e separação do núcleo |
 | PCSX2 | GPL-3.0-or-later; emulador PS2 aberto, focado em desktop | Separação entre estado virtual, memória, renderizador de referência, renderer GPU, caches e sincronização/readback |
 | BLACK-Android / BLACK NX PORT | BLACK-Android MIT; componentes do port Switch têm licenças próprias | Fluxo de arquivos do usuário, ciclo de vida, controles, logs, perfis gráficos e separação da camada de plataforma |
@@ -34,6 +35,7 @@ As revisões abaixo servem para tornar a pesquisa reproduzível; não indicam qu
 - **Azahar:** [repositório](https://github.com/azahar-emu/azahar), revisão `f1cbaa02f84d316dd1c2b0e72894c8025b5c3949`, licença GPL-3.0. Fonte adicional: [README e requisitos Android](https://github.com/azahar-emu/azahar/blob/master/README.md). O README informa Android 10+, GPU OpenGL ES 3.2 ou Vulkan 1.1 e 2 GB mínimos / 4 GB recomendados para o próprio Azahar. Esses números não são requisitos automaticamente transferíveis ao Aceris.
 - **PPSSPP:** [repositório](https://github.com/hrydgard/ppsspp), revisão `8cfbdb3e8239f78eb784e8cc804932f70cf20e2f`, GPL-2.0-or-later. Fontes: [introdução de desenvolvimento](https://www.ppsspp.org/docs/development/getting-started/) e [opções gráficas](https://www.ppsspp.org/docs/settings/graphics/). A documentação recomenda Vulkan na maioria dos dispositivos compatíveis e mantém OpenGL como alternativa de compatibilidade no Android.
 - **DraStic:** [FAQ oficial](https://drasticemulator.com/frequently-asked-questions-drastic-ds-emulator/). A própria FAQ declara o projeto fechado; nenhuma fonte interna foi consultada.
+- **My Boy!:** [listagem do Google Play](https://play.google.com/store/apps/details?id=com.fastemulator.gba). A descrição pública destaca editor de layout de tela, perfis de controles e mapeamento de teclas, gamepad externo, atalhos para save/load, fast-forward e sincronização de saves. Esses itens orientam possíveis funcionalidades de frontend; não justificam importar código, recursos de GBA ou lógica específica desse emulador.
 - **Eden:** [repositório oficial](https://git.eden-emu.dev/eden-emu/eden/), licença GPL-3.0-or-later. O README público descreve um emulador Switch multiplataforma, incluindo Android. A consulta aqui limita-se à documentação e às características publicadas, sem reutilizar código.
 - **PCSX2:** [repositório](https://github.com/PCSX2/pcsx2), revisão `4e56d430595164106eab9606cb46c94c902802cd`, GPL-3.0-or-later. Fonte: [FAQ de arquitetura e licença](https://github.com/PCSX2/pcsx2/blob/master/pcsx2/Docs/PCSX2_FAQ.md). O projeto documenta intérpretes/recompiladores MIPS e uma VM que administra estado e memória PS2; serve como referência conceitual para fronteiras de subsistemas, não como implementação Android.
 - **BLACK-Android:** [repositório](https://github.com/RanggaCasper/Black-Android), revisão `8e9c6fc7d570503ea68d039cff16c09339ee6d30`, licença MIT no repositório. **BLACK NX PORT:** [README](https://github.com/gerisson1996/BLACK-NX-PORT), revisão `d7611d14f89179cbbf8113edee0f52b2b5f52bf5`; o README descreve a divisão entre camada de plataforma, renderização Vulkan, áudio, entrada e acesso aos arquivos. Componentes internos mantêm suas licenças próprias.
@@ -77,6 +79,11 @@ Não misturar estado guest com handles Vulkan/OpenGL, nem tratar a apresentaçã
 - Código, assets, shaders, testes, ROMs, imagens de jogos ou dados extraídos de qualquer um desses projetos.
 
 A pesquisa deve produzir hipóteses, especificações, testes independentes e medições próprias do Aceris. Toda mudança continua sujeita à verificação de autoria e licença por arquivo.
+
+
+### 5. Experiência do launcher e controles
+
+O estudo público do My Boy! reforça que uma interface móvel competitiva precisa ir além de uma lista: editor de posição/tamanho dos controles, perfis de layout e mapeamento, suporte a controles externos e atalhos rápidos são funcionalidades de UX valiosas. PPSSPP e Azahar também orientam a separar opções globais de opções por jogo e tornar backend/diagnósticos compreensíveis. Para o Aceris, essas funcionalidades devem ser reimplementadas em Rust e só adicionadas quando o núcleo e os contratos do frontend as suportarem; não apresentar uma opção como funcional antes de existir um caminho real de aplicação.
 
 ## Baseline Android já disponível
 
