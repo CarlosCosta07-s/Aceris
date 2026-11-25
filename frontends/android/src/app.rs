@@ -596,14 +596,7 @@ mod tests {
                         source_height,
                         rect,
                     );
-                    blit_scaled(
-                        &mut actual,
-                        9,
-                        &source,
-                        source_width,
-                        source_height,
-                        rect,
-                    );
+                    blit_scaled(&mut actual, 9, &source, source_width, source_height, rect);
                     assert_eq!(
                         actual, expected,
                         "source={source_width}x{source_height}, rect={rect_width}x{rect_height}"
