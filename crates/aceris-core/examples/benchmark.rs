@@ -959,3 +959,43 @@ pub fn run_cli() -> ExitCode {
 fn main() -> ExitCode {
     run_cli()
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scripted_tap_parses_coordinates_frame_and_default_hold() {
+        assert_eq!(
+            parse_tap("160,120@700").unwrap(),
+            Tap {
+                x: 160,
+                y: 120,
+                frame: 700,
+                hold_frames: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn scripted_tap_parses_explicit_hold() {
+        assert_eq!(
+            parse_tap("12,34@50+7").unwrap(),
+            Tap {
+                x: 12,
+                y: 34,
+                frame: 50,
+                hold_frames: 7,
+            }
+        );
+        assert_eq!(parse_tap("12,34@50+0").unwrap().hold_frames, 1);
+    }
+
+    #[test]
+    fn scripted_tap_rejects_malformed_values() {
+        for value in ["160,120", "a,2@3", "1,2@x", "1,2@3+x"] {
+            assert!(parse_tap(value).is_err(), "accepted {value:?}");
+        }
+    }
+}
