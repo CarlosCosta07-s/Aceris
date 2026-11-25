@@ -2489,3 +2489,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Implementado SVC 0x37 GetThreadId: recebe ponteiro de saída em r0 e handle/pseudo-handle de thread em r1; grava o identificador interno guest-visible em memória, valida handle e endereço.
 - O caminho reutiliza a resolução tipada do kernel, incluindo CURRENT_THREAD_HANDLE e handles regulares, sem confundir GetThreadId com GetProcessIdOfThread (0x36).
 - Teste cobre thread atual, thread secundária e handle inválido. CI ainda precisa validar os commits.
+ 
+## IPC: srv:IsServiceRegistered — 25/11/2026
+
+- Implementado o comando IPC 0x000E00C0, com validação de RegisterClient, parâmetros, ausência de descriptors de tradução, comprimento/bytes do nome e ACL NCCH.
+- A resposta reflete o registry HLE desta build: HID, CFG, APT, FS, PTM, DSP, CSND, serviços stub explícitos e gsp::Gpu são marcados registrados; serviços apenas autorizados pelo exheader, mas sem endpoint HLE (como http:C/ir:rst), retornam false.
+- O comando não cria sessões nem simula conectividade. A ACL continua sendo aplicada também à consulta, e serviços sem endpoint não são anunciados como disponíveis.
+- Teste adicionado para gsp::Gpu=true, http:C=false e ssl:C negado por ACL. CI pendente.
