@@ -37,10 +37,10 @@ O frontend atual ainda não oferece um seletor SAF de arquivos dentro do app. Se
 
 ```sh
 adb shell mkdir -p /sdcard/Android/data/org.aceris.emulator/files/games
-adb push "SEU_ARQUIVO.cia" /sdcard/Android/data/org.aceris.emulator/files/games/
+adb push "SEU_ARQUIVO.cci" /sdcard/Android/data/org.aceris.emulator/files/games/
 ```
 
-Substitua `SEU_ARQUIVO.cia` pelo caminho do arquivo no computador. Não envie o arquivo de jogo ao GitHub ou ao workflow.
+Substitua `SEU_ARQUIVO.cci` pelo caminho de um CCI/3DS compatível no computador (ou use `.3dsx`). Não use `.cia` neste primeiro teste: o loader central aceita CIA NoCrypto, mas o scanner da biblioteca ainda não lista essa extensão. Não renomeie a extensão para contornar a lista. Não envie o arquivo de jogo ao GitHub ou ao workflow.
 
 ## Coleta de diagnóstico
 
