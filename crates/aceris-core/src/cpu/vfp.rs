@@ -1177,7 +1177,8 @@ impl Arm11Core {
         for iteration in 0..length {
             let lane = &mut lanes.entries[iteration];
             lane.destination = bank_offset(destination, iteration);
-            for (source_index, (source, scalar_if_bank_zero)) in sources.iter().copied().enumerate() {
+            let source_registers = sources.iter().copied().enumerate();
+            for (source_index, (source, scalar_if_bank_zero)) in source_registers {
                 lane.sources[source_index] = if scalar_if_bank_zero && source < bank_size {
                     source
                 } else {
