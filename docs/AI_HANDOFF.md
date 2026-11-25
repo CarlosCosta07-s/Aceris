@@ -2273,3 +2273,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - `3092788` contém somente ajustes de formatação dos testes apontados pela primeira CI.
 - **Validação:** a execução 45533029468, no commit `5510f84`, aprovou o job Android ARM64, mas os três jobs desktop pararam em `cargo fmt --all --check` antes de build, Clippy ou testes. A formatação foi corrigida em `3092788`; ainda não há resultado de CI para essa revisão final. Não foi possível executar Rust localmente nesta sessão.
 - **Desempenho ainda não quantificado:** a mudança reduz as buscas nessas listas de O(n) para O(log n), mas nenhum ganho de FPS ou tempo total foi medido. Repetir o benchmark com a mesma imagem local, aquecimento, orçamento de instruções e quantidade de quadros antes de afirmar aceleração mensurável.
+
+## Diagnóstico de memória — backing esparso de heap e blocos compartilhados (24/11/2026, ChatGPT)
+
+- `SharedMemoryBacking` agora mantém páginas host de 4 KiB em um mapa esparso. `zeroed(size)` reserva somente o tamanho lógico; leituras em páginas ausentes retornam zero e escritas materializam apenas as páginas tocadas.
+- O heap de `ControlMemory` deixou de criar um `Vec` e zerar a extensão inteira na alocação. Views de memória compartilhada continuam referenciando o mesmo armazenamento raiz, preservando aliases de heap, mapeamentos entre processos e os caminhos de cache/writeback.
+- A escrita que cruza limites de página prepara os payloads em memória temporária antes de registrá-los, evitando alterar bytes do backing se a reserva de uma das páginas falhar.
+- Adicionados contadores de páginas/bytes materializados e de gerações de exclusive monitor no backing, além de `Arm11MemoryUsageReport` para separar reserva virtual, páginas esparsas, D-cache, write buffer, TLS/IPC e páginas físicas da GPU. O relatório deduplica roots por identidade para não contar duas vezes um heap exposto também como shared memory.
+- O exemplo `benchmark` imprime o diagnóstico depois das amostras, identificando explicitamente que os dados não representam o RSS integral do processo.
+- Testes novos: `shared_backing_materializes_only_pages_touched_by_writes` e `memory_usage_report_deduplicates_heap_shared_alias_backing`. Os testes anteriores de alias entre processos, heap, cache e writeback permanecem como regressões.
+- **Validação:** ainda pendente de CI para este commit. Nenhum build, Clippy ou teste local foi declarado nesta etapa.

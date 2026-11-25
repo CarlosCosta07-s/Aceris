@@ -415,6 +415,60 @@ fn run(options: Options) -> Result<(), String> {
             final_cpsr: system.cpu().cpsr.0,
         },
     );
+    if let Some(session) = system.ncsd_session() {
+        let memory = session.address_space().memory_usage_report();
+        println!();
+        println!("Internal memory diagnostics (not host-process RSS):");
+        println!(
+            "Static segment vector capacity: {} KiB",
+            memory.static_segment_allocated_bytes / 1024
+        );
+        println!(
+            "Application heap reservation:  {} KiB",
+            memory.application_heap_virtual_bytes / 1024
+        );
+        println!(
+            "Dynamic regions total:         {} KiB",
+            memory.dynamic_region_virtual_bytes / 1024
+        );
+        println!(
+            "Shared mapping virtual size:   {} KiB",
+            memory.shared_mapping_virtual_bytes / 1024
+        );
+        println!(
+            "Sparse backing:                {} pages / {} KiB across {} root(s)",
+            memory.sparse_backing_pages,
+            memory.sparse_backing_allocated_bytes / 1024,
+            memory.unique_sparse_backing_count
+        );
+        println!(
+            "ARM11 D-cache:                 {} lines / {} KiB",
+            memory.data_cache_lines,
+            memory.data_cache_bytes / 1024
+        );
+        println!(
+            "D-cache write buffer:          {}/{} entries ({} bytes reserved)",
+            memory.write_buffer_entries,
+            memory.write_buffer_capacity,
+            memory.write_buffer_reserved_bytes
+        );
+        println!(
+            "Exclusive monitor entries:    {} virtual / {} shared",
+            memory.virtual_exclusive_monitor_entries,
+            memory.sparse_exclusive_monitor_entries
+        );
+        println!(
+            "TLS slots:                     {}/{} in use; IPC aliases: {}",
+            memory.tls_slots_in_use,
+            memory.tls_slots_total,
+            memory.ipc_temporary_mapping_count
+        );
+        println!(
+            "GPU physical backing:          {} pages / {} KiB",
+            memory.gpu_physical_pages,
+            memory.gpu_physical_allocated_bytes / 1024
+        );
+    }
     if let Some(directory) = options.dump_lcd.as_ref() {
         dump_lcd(&system, directory)?;
         println!("LCD captures written to {}", directory.display());

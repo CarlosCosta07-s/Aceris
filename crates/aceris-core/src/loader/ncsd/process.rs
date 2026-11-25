@@ -28,6 +28,7 @@ use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
+const SHARED_BACKING_PAGE_SIZE: usize = PAGE_SIZE as usize;
 const ARM11_DATA_CACHE_LINE_SIZE: usize = 32;
 const ARM11_DATA_CACHE_CAPACITY_BYTES: usize = 16 * 1024;
 const ARM11_DATA_CACHE_WAYS: usize = 4;
@@ -204,12 +205,21 @@ impl fmt::Display for Arm11DynamicMemoryError {
 
 impl std::error::Error for Arm11DynamicMemoryError {}
 
+/// Sparse host backing shared by one or more ARM11 virtual mappings.
+///
+/// The map stores only materialized 4 KiB pages. Unallocated bytes are
+/// architecturally zero; the first write to a page creates its host backing.
+#[derive(Debug, Default)]
+struct SparseSharedMemoryStore {
+    pages: BTreeMap<usize, Vec<u8>>,
+}
+
 /// Shared page backing that can be mapped into several ARM11 address spaces
-/// without copying. Anonymous blocks start zeroed; heap-backed views retain
-/// the bytes that were already present in the source allocation.
+/// without copying. Zeroed blocks reserve only an address range; host pages
+/// are materialized when a CPU or HLE agent first writes to them.
 #[derive(Clone, Debug)]
 pub struct SharedMemoryBacking {
-    bytes: Arc<Mutex<Vec<u8>>>,
+    bytes: Arc<Mutex<SparseSharedMemoryStore>>,
     offset: usize,
     length: usize,
     backing_id: u64,
@@ -217,25 +227,43 @@ pub struct SharedMemoryBacking {
 }
 
 impl SharedMemoryBacking {
-    /// Allocates a zero-filled shared backing of exactly `size` bytes.
+    /// Creates a zero-filled backing without allocating its byte range.
     pub fn zeroed(size: usize) -> std::result::Result<Self, String> {
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(size)
-            .map_err(|error| error.to_string())?;
-        bytes.resize(size, 0);
-        Ok(Self::from_vec(bytes))
-    }
-
-    fn from_vec(bytes: Vec<u8>) -> Self {
-        let length = bytes.len();
-        Self {
-            bytes: Arc::new(Mutex::new(bytes)),
+        Ok(Self {
+            bytes: Arc::new(Mutex::new(SparseSharedMemoryStore::default())),
             offset: 0,
-            length,
+            length: size,
             backing_id: crate::memory::next_memory_backing_id(),
             exclusive_versions: Arc::new(Mutex::new(BTreeMap::new())),
-        }
+        })
+    }
+
+    /// Number of 4 KiB pages that have actually been written.
+    pub fn allocated_page_count(&self) -> usize {
+        self.allocated_page_stats().0
+    }
+
+    /// Logical byte payload held by materialized 4 KiB pages, excluding allocator overhead.
+    pub fn allocated_bytes(&self) -> usize {
+        self.allocated_page_stats().1
+    }
+
+    fn allocated_page_stats(&self) -> (usize, usize) {
+        self.bytes
+            .lock()
+            .map(|store| {
+                let pages = store.pages.len();
+                (pages, pages.saturating_mul(SHARED_BACKING_PAGE_SIZE))
+            })
+            .unwrap_or_default()
+    }
+
+    /// Number of exclusive-monitor granules with a recorded write generation.
+    pub fn exclusive_monitor_entry_count(&self) -> usize {
+        self.exclusive_versions
+            .lock()
+            .map(|versions| versions.len())
+            .unwrap_or_default()
     }
 
     /// Creates a bounded view into the same allocation without copying.
@@ -244,9 +272,11 @@ impl SharedMemoryBacking {
         if end > self.length {
             return None;
         }
+        let root_offset = self.offset.checked_add(offset)?;
+        root_offset.checked_add(length)?;
         Some(Self {
             bytes: self.bytes.clone(),
-            offset: self.offset.checked_add(offset)?,
+            offset: root_offset,
             length,
             backing_id: self.backing_id,
             exclusive_versions: self.exclusive_versions.clone(),
@@ -258,7 +288,7 @@ impl SharedMemoryBacking {
         self.bytes.lock().ok().map(|_| self.length)
     }
 
-    /// Returns whether the backing view is empty, or None if its lock was poisoned.
+    /// Returns whether the backing view is empty, or None if its backing lock was poisoned.
     pub fn is_empty(&self) -> Option<bool> {
         self.len().map(|length| length == 0)
     }
@@ -308,25 +338,39 @@ impl SharedMemoryBacking {
         let Some(start) = self.root_offset(offset) else {
             return false;
         };
-        if offset
-            .checked_add(output.len())
-            .is_none_or(|end| end > self.length)
-        {
+        let Some(relative_end) = offset.checked_add(output.len()) else {
+            return false;
+        };
+        if relative_end > self.length || start.checked_add(output.len()).is_none() {
             return false;
         }
-        let Ok(bytes) = self.bytes.lock() else {
+
+        let Ok(store) = self.bytes.lock() else {
             return false;
         };
-        let Some(source) = bytes.get(start..start + output.len()) else {
-            return false;
-        };
-        output.copy_from_slice(source);
+        let mut copied = 0usize;
+        while copied < output.len() {
+            let absolute = start + copied;
+            let page_number = absolute / SHARED_BACKING_PAGE_SIZE;
+            let page_offset = absolute % SHARED_BACKING_PAGE_SIZE;
+            let count =
+                (SHARED_BACKING_PAGE_SIZE - page_offset).min(output.len() - copied);
+
+            if let Some(page) = store.pages.get(&page_number) {
+                output[copied..copied + count]
+                    .copy_from_slice(&page[page_offset..page_offset + count]);
+            } else {
+                output[copied..copied + count].fill(0);
+            }
+            copied += count;
+        }
         true
     }
 
     /// Writes bytes into the shared view, bumping exclusive-monitor versions.
     ///
-    /// Returns false when the range lies outside the view or the lock is poisoned.
+    /// Returns false when the range lies outside the view, a backing lock is
+    /// poisoned, or a new page cannot be reserved.
     /// HLE services use this to publish data (for example HID state) that the
     /// guest reads through its own mapping of the same block.
     pub fn write_bytes(&self, offset: usize, input: &[u8]) -> bool {
@@ -344,23 +388,64 @@ impl SharedMemoryBacking {
         let Some(start) = self.root_offset(offset) else {
             return false;
         };
-        if offset
-            .checked_add(input.len())
-            .is_none_or(|end| end > self.length)
-        {
+        let Some(relative_end) = offset.checked_add(input.len()) else {
+            return false;
+        };
+        let Some(absolute_end) = start.checked_add(input.len()) else {
+            return false;
+        };
+        if relative_end > self.length {
             return false;
         }
-        let Ok(mut bytes) = self.bytes.lock() else {
+
+        let Ok(mut store) = self.bytes.lock() else {
             return false;
         };
-        let Some(destination) = bytes.get_mut(start..start + input.len()) else {
-            return false;
-        };
-        destination.copy_from_slice(input);
-        drop(bytes);
+        if !input.is_empty() {
+            let first_page = start / SHARED_BACKING_PAGE_SIZE;
+            let last_page = (absolute_end - 1) / SHARED_BACKING_PAGE_SIZE;
+            let missing_pages = (first_page..=last_page)
+                .filter(|page| !store.pages.contains_key(page))
+                .count();
+            let mut pending_pages = Vec::new();
+            if pending_pages.try_reserve_exact(missing_pages).is_err() {
+                return false;
+            }
+
+            // Allocate every missing page before changing the backing map or
+            // copying bytes, so allocation failure cannot partially write.
+            for page_number in first_page..=last_page {
+                if store.pages.contains_key(&page_number) {
+                    continue;
+                }
+                let mut page = Vec::new();
+                if page.try_reserve_exact(SHARED_BACKING_PAGE_SIZE).is_err() {
+                    return false;
+                }
+                page.resize(SHARED_BACKING_PAGE_SIZE, 0);
+                pending_pages.push((page_number, page));
+            }
+            for (page_number, page) in pending_pages {
+                store.pages.insert(page_number, page);
+            }
+        }
+
+        let mut copied = 0usize;
+        while copied < input.len() {
+            let absolute = start + copied;
+            let page_number = absolute / SHARED_BACKING_PAGE_SIZE;
+            let page_offset = absolute % SHARED_BACKING_PAGE_SIZE;
+            let count = (SHARED_BACKING_PAGE_SIZE - page_offset).min(input.len() - copied);
+            let Some(page) = store.pages.get_mut(&page_number) else {
+                return false;
+            };
+            page[page_offset..page_offset + count]
+                .copy_from_slice(&input[copied..copied + count]);
+            copied += count;
+        }
+        drop(store);
 
         if !input.is_empty() {
-            let absolute_end = start + input.len();
             if let Ok(mut versions) = self.exclusive_versions.lock() {
                 let granule_size = crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize;
                 let mut granule = start & !(granule_size - 1);
@@ -816,6 +901,49 @@ pub struct Arm11CodeAddressSpace {
     tls_slots_in_use: Vec<bool>,
     /// Temporary IPC aliases and their surrounding unmapped guard pages.
     ipc_temporary_regions: Vec<IpcTemporaryMappingRegion>,
+}
+
+
+/// Snapshot of guest memory reservations and host-side allocations.
+///
+/// Virtual sizes describe the guest address-space layout. Sparse backing
+/// bytes and cache payloads describe host allocations owned by this process;
+/// allocator/map bookkeeping and unrelated host subsystems are not included.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Arm11MemoryUsageReport {
+    /// Capacity reserved by the host vectors for static code/data/BSS/stack.
+    pub static_segment_allocated_bytes: usize,
+    /// Guest-visible application-heap address space reserved by ControlMemory.
+    pub application_heap_virtual_bytes: usize,
+    /// All dynamic regions, including TLS pages.
+    pub dynamic_region_virtual_bytes: usize,
+    /// Guest virtual size of mapped shared-memory views; aliases are not deduplicated.
+    pub shared_mapping_virtual_bytes: usize,
+    /// Number of distinct sparse backing roots referenced by this address space.
+    pub unique_sparse_backing_count: usize,
+    /// Materialized 4 KiB payload pages across distinct backing roots.
+    pub sparse_backing_pages: usize,
+    /// Bytes held by materialized sparse page payloads.
+    pub sparse_backing_allocated_bytes: usize,
+    /// Exclusive-monitor generation entries in shared backing roots.
+    pub sparse_exclusive_monitor_entries: usize,
+    /// Resident ARM11 data-cache lines.
+    pub data_cache_lines: usize,
+    /// Payload bytes held by resident ARM11 data-cache lines.
+    pub data_cache_bytes: usize,
+    /// Occupancy and reserved capacity of the bounded D-cache write buffer.
+    pub write_buffer_entries: usize,
+    pub write_buffer_capacity: usize,
+    pub write_buffer_reserved_bytes: usize,
+    /// Virtual exclusive-monitor generations local to this address space.
+    pub virtual_exclusive_monitor_entries: usize,
+    /// TLS slot occupancy.
+    pub tls_slots_total: usize,
+    pub tls_slots_in_use: usize,
+    /// Number of IPC temporary mappings and physical FCRAM/VRAM pages.
+    pub ipc_temporary_mapping_count: usize,
+    pub gpu_physical_pages: usize,
+    pub gpu_physical_allocated_bytes: usize,
 }
 
 impl Arm11CodeAddressSpace {
@@ -1636,17 +1764,14 @@ impl Arm11CodeAddressSpace {
 
         let backing_size =
             usize::try_from(size).map_err(|_| Arm11DynamicMemoryError::InvalidSize(size))?;
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(backing_size)
-            .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
-        bytes.resize(backing_size, 0);
+        let backing = SharedMemoryBacking::zeroed(backing_size)
+            .map_err(Arm11DynamicMemoryError::AllocationFailure)?;
         self.dynamic_regions
             .try_reserve(1)
             .map_err(|error| Arm11DynamicMemoryError::AllocationFailure(error.to_string()))?;
         self.dynamic_regions.push(DynamicMemoryRegion {
             address,
-            backing: DynamicMemoryBacking::Private(SharedMemoryBacking::from_vec(bytes)),
+            backing: DynamicMemoryBacking::Private(backing),
         });
         self.dynamic_regions.sort_by_key(|region| region.address);
 
@@ -3009,6 +3134,98 @@ impl Arm11CodeAddressSpace {
             evicted += self.invalidate_data_cache_range(address, size)?;
         }
         Ok(evicted)
+    }
+
+    /// Returns a snapshot of guest virtual reservations and host backing usage.
+    ///
+    /// A heap-backed shared view is counted once by backing identity, even when
+    /// the same host pages are visible through both heap and shared mappings.
+    /// Virtual sizes remain separate so aliasing is visible in reports.
+    pub fn memory_usage_report(&self) -> Arm11MemoryUsageReport {
+        let static_segment_allocated_bytes = self
+            .text
+            .capacity()
+            .saturating_add(self.read_only.capacity())
+            .saturating_add(self.data.capacity())
+            .saturating_add(self.bss.capacity())
+            .saturating_add(self.stack.capacity());
+
+        let application_heap_virtual_bytes = self
+            .dynamic_regions
+            .iter()
+            .filter(|region| {
+                region.address >= APPLICATION_HEAP_BASE
+                    && u64::from(region.address) < APPLICATION_HEAP_END
+            })
+            .fold(0usize, |total, region| total.saturating_add(region.len()));
+        let dynamic_region_virtual_bytes = self
+            .dynamic_regions
+            .iter()
+            .fold(0usize, |total, region| total.saturating_add(region.len()));
+        let shared_mapping_virtual_bytes = self
+            .shared_regions
+            .iter()
+            .fold(0usize, |total, region| total.saturating_add(region.backing.length));
+
+        let mut unique_backings = BTreeMap::<u64, &SharedMemoryBacking>::new();
+        for region in &self.dynamic_regions {
+            let backing = region.backing.backing_ref();
+            unique_backings.entry(backing.backing_id()).or_insert(backing);
+        }
+        for region in &self.shared_regions {
+            let backing = &region.backing;
+            unique_backings.entry(backing.backing_id()).or_insert(backing);
+        }
+
+        let (
+            sparse_backing_pages,
+            sparse_backing_allocated_bytes,
+            sparse_exclusive_monitor_entries,
+        ) = unique_backings
+            .values()
+            .fold((0usize, 0usize, 0usize), |totals, backing| {
+                let (pages, bytes) = backing.allocated_page_stats();
+                (
+                    totals.0.saturating_add(pages),
+                    totals.1.saturating_add(bytes),
+                    totals
+                        .2
+                        .saturating_add(backing.exclusive_monitor_entry_count()),
+                )
+            });
+        let gpu_physical_pages = self
+            .gpu_memory
+            .as_ref()
+            .map_or(0, GpuPhysicalMemory::allocated_page_count);
+
+        Arm11MemoryUsageReport {
+            static_segment_allocated_bytes,
+            application_heap_virtual_bytes,
+            dynamic_region_virtual_bytes,
+            shared_mapping_virtual_bytes,
+            unique_sparse_backing_count: unique_backings.len(),
+            sparse_backing_pages,
+            sparse_backing_allocated_bytes,
+            sparse_exclusive_monitor_entries,
+            data_cache_lines: self.data_cache.len(),
+            data_cache_bytes: self
+                .data_cache
+                .len()
+                .saturating_mul(ARM11_DATA_CACHE_LINE_SIZE),
+            write_buffer_entries: self.write_buffer.len(),
+            write_buffer_capacity: self.write_buffer.capacity(),
+            write_buffer_reserved_bytes: self
+                .write_buffer
+                .capacity()
+                .saturating_mul(std::mem::size_of::<Arm11WriteBufferEntry>()),
+            virtual_exclusive_monitor_entries: self.exclusive_versions.len(),
+            tls_slots_total: self.tls_slots_in_use.len(),
+            tls_slots_in_use: self.tls_slots_in_use.iter().filter(|used| **used).count(),
+            ipc_temporary_mapping_count: self.ipc_temporary_regions.len(),
+            gpu_physical_pages,
+            gpu_physical_allocated_bytes: gpu_physical_pages
+                .saturating_mul(SHARED_BACKING_PAGE_SIZE),
+        }
     }
 
     /// Number of resident ARM11 data-cache lines (useful for diagnostics/tests).
@@ -4992,6 +5209,54 @@ mod tests {
             Err(Arm11DynamicMemoryError::MappingNotFound { .. })
         ));
         assert_eq!(address_space.read32(first).unwrap(), 0);
+    }
+
+    #[test]
+    fn shared_backing_materializes_only_pages_touched_by_writes() {
+        let backing = SharedMemoryBacking::zeroed(0x3000).unwrap();
+        assert_eq!(backing.allocated_page_count(), 0);
+        assert_eq!(backing.allocated_bytes(), 0);
+
+        let mut untouched = vec![0xFF; 0x3000];
+        assert!(backing.read_bytes(0, &mut untouched));
+        assert_eq!(untouched, vec![0; 0x3000]);
+        assert_eq!(backing.allocated_page_count(), 0);
+
+        // This write crosses a 4 KiB boundary and materializes only two pages.
+        assert!(backing.write_bytes(0x0FFE, &[1, 2, 3, 4]));
+        assert_eq!(backing.allocated_page_count(), 2);
+        assert_eq!(backing.allocated_bytes(), 0x2000);
+
+        let mut written = [0; 4];
+        assert!(backing.read_bytes(0x0FFE, &mut written));
+        assert_eq!(written, [1, 2, 3, 4]);
+        assert_eq!(backing.exclusive_monitor_entry_count(), 2);
+        assert!(!backing.write_bytes(0x2FFF, &[0xAA, 0xBB]));
+        assert_eq!(backing.allocated_page_count(), 2);
+    }
+
+    #[test]
+    fn memory_usage_report_deduplicates_heap_shared_alias_backing() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let heap = address_space
+            .allocate_application_heap_region(0x0800_0000, 0x3000)
+            .unwrap();
+        let shared_view = address_space
+            .shared_memory_backing_for_heap_range(heap + 0x1000, 0x1000)
+            .unwrap();
+        address_space
+            .map_shared_memory_region(0x0900_0000, shared_view.clone(), 3)
+            .unwrap();
+
+        assert!(shared_view.write_bytes(0x20, &0xCAFE_BABEu32.to_le_bytes()));
+        assert_eq!(address_space.read32(0x0900_0020).unwrap(), 0xCAFE_BABE);
+
+        let report = address_space.memory_usage_report();
+        assert_eq!(report.application_heap_virtual_bytes, 0x3000);
+        assert_eq!(report.shared_mapping_virtual_bytes, 0x1000);
+        assert_eq!(report.unique_sparse_backing_count, 1);
+        assert_eq!(report.sparse_backing_pages, 1);
+        assert_eq!(report.sparse_backing_allocated_bytes, 0x1000);
     }
 
     #[test]
