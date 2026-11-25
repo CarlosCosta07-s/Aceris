@@ -131,8 +131,12 @@ impl App {
                 self.apply_game_input();
             }
             Screen::Library if pressed => match bit {
-                pad::UP => self.library.move_selection_responsive(-1, self.width, self.height),
-                pad::DOWN => self.library.move_selection_responsive(1, self.width, self.height),
+                pad::UP => self
+                    .library
+                    .move_selection_responsive(-1, self.width, self.height),
+                pad::DOWN => self
+                    .library
+                    .move_selection_responsive(1, self.width, self.height),
                 pad::A | pad::START => self.launch_selected(),
                 _ => {}
             },
@@ -174,7 +178,9 @@ impl App {
                 output.extend_from_slice(&canvas);
             }
             Screen::Library => {
-                let _ = self.library.render_responsive_into(self.width, self.height, output);
+                let _ = self
+                    .library
+                    .render_responsive_into(self.width, self.height, output);
             }
             Screen::Game => self.step_game_into(output),
         }
@@ -183,7 +189,9 @@ impl App {
     fn step_game_into(&mut self, output: &mut Vec<u8>) {
         let Some(system) = self.system.as_mut() else {
             self.screen = Screen::Library;
-            let _ = self.library.render_responsive_into(self.width, self.height, output);
+            let _ = self
+                .library
+                .render_responsive_into(self.width, self.height, output);
             return;
         };
         if let Err(error) = system.run_frame() {
@@ -194,7 +202,9 @@ impl App {
                 .map(|detail| format!("{message} — HLE: {detail}"))
                 .unwrap_or(message);
             self.library.set_status(message);
-            let _ = self.library.render_responsive_into(self.width, self.height, output);
+            let _ = self
+                .library
+                .render_responsive_into(self.width, self.height, output);
             return;
         }
         system.take_audio_samples(&mut self.audio);
@@ -274,9 +284,13 @@ impl App {
                     if rows == 0 {
                         rows = -dragged.signum();
                     }
-                    self.library.move_selection_responsive(rows, self.width, self.height);
+                    self.library
+                        .move_selection_responsive(rows, self.width, self.height);
                 } else {
-                    match self.library.click_responsive(up_x, up_y, self.width, self.height) {
+                    match self
+                        .library
+                        .click_responsive(up_x, up_y, self.width, self.height)
+                    {
                         ClickResult::Activated => self.launch_selected(),
                         ClickResult::Selected | ClickResult::Ignored => {}
                     }
@@ -334,8 +348,6 @@ impl App {
                 .set_status(format!("Diagnóstico HLE: {diagnostic}"));
         }
     }
-
-
 }
 
 pub const AKEYCODE_BACK: i32 = 4;
