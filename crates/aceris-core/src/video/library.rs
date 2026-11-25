@@ -350,7 +350,7 @@ impl Library {
         logical_height: f32,
     ) {
         let font_scale = (scale * 1.7).round().max(1.0) as usize;
-        let small_scale = (font_scale as f32 * 0.67).round().max(1.0) as usize;
+        let small_scale = (font_scale as f32 * 0.67).round().max(2.0) as usize;
         responsive_fill(
             frame,
             width as usize,
@@ -610,7 +610,7 @@ impl Library {
                     45.0,
                     414.0,
                     small_scale,
-                    "SUA COLECAO COMeca AQUI",
+                    "SUA COLECAO COMECA AQUI",
                     brand::TEXT,
                 );
                 responsive_text(
