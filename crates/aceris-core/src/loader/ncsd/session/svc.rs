@@ -102,6 +102,18 @@ pub const SVC_GET_PROCESS_INFO: u32 = 0x2B;
 /// Resolve the PID for a process handle.
 pub const SVC_GET_PROCESS_ID: u32 = 0x35;
 
+/// Obtain the current process resource-limit handle.
+pub const SVC_GET_RESOURCE_LIMIT: u32 = 0x38;
+
+/// Query maximum values from a resource-limit handle.
+pub const SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES: u32 = 0x39;
+
+/// Query current values from a resource-limit handle.
+pub const SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES: u32 = 0x3A;
+
+/// Raise a guest break/debug stop.
+pub const SVC_BREAK: u32 = 0x3C;
+
 /// Resolve the PID for a thread handle.
 pub const SVC_GET_PROCESS_ID_OF_THREAD: u32 = 0x36;
 
@@ -226,6 +238,10 @@ mod tests {
             SVC_GET_PROCESS_ID_OF_THREAD,
             SVC_GET_PROCESS_INFO,
             SVC_GET_THREAD_INFO,
+            SVC_GET_RESOURCE_LIMIT,
+            SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES,
+            SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES,
+            SVC_BREAK,
         ] {
             assert_eq!(
                 dispatcher.dispatch(number, &mut registers),
