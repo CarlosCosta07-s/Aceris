@@ -771,6 +771,7 @@ fn run(options: Options) -> Result<(), String> {
     );
 
     for frame in 0..options.warmup_frames {
+        apply_taps(&mut system, &options.taps, frame);
         let report = system
             .run_frame_with_budget(options.instruction_budget)
             .map_err(|error| format!("warm-up frame {} failed: {error}", frame + 1))?;
@@ -790,13 +791,35 @@ fn run(options: Options) -> Result<(), String> {
     let mut zero_instruction_frames = 0usize;
     let mut stop_reasons = BTreeMap::<String, u64>::new();
     let mut first_report = None;
+    let mut frame_trace = options
+        .frame_trace
+        .as_ref()
+        .map(|_| Vec::with_capacity(options.frames));
 
     for frame in 0..options.frames {
+        let input_frame = options.warmup_frames.saturating_add(frame);
+        apply_taps(&mut system, &options.taps, input_frame);
         let started = Instant::now();
         let report = system
             .run_frame_with_budget(options.instruction_budget)
             .map_err(|error| format!("measured frame {} failed: {error}", frame + 1))?;
-        samples_ns.push(started.elapsed().as_nanos());
+        let elapsed_ns = started.elapsed().as_nanos();
+        samples_ns.push(elapsed_ns);
+
+        if let Some(trace) = frame_trace.as_mut() {
+            trace.push(FrameTraceSample {
+                input_frame,
+                report_frame: report.frame_number,
+                elapsed_ns,
+                instructions_executed: report.instructions_executed,
+                gpu_command_lists_submitted: report.gpu_command_lists_submitted,
+                lcd_screens_scanned_out: report.lcd_screens_scanned_out,
+                gsp_interrupt_deliveries: report.gsp_interrupt_deliveries,
+                cpu_stop_reason: format!("{:?}", report.cpu_stop_reason),
+                pc: system.cpu().pc(),
+                cpsr: system.cpu().cpsr.0,
+            });
+        }
 
         instructions = instructions.saturating_add(u128::from(report.instructions_executed));
         gpu_lists = gpu_lists.saturating_add(u128::from(report.gpu_command_lists_submitted));
