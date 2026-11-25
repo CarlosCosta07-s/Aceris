@@ -146,13 +146,11 @@ pub fn render_frame(frame: u32, width: usize, height: usize) -> Vec<u8> {
 
 /// Renders one frame into a reusable RGBA8 buffer without allocating after its
 /// capacity has reached the requested surface size.
-pub fn render_frame_into(
-    frame: u32,
-    width: usize,
-    height: usize,
-    output: &mut Vec<u8>,
-) -> bool {
-    let Some(byte_len) = width.checked_mul(height).and_then(|pixels| pixels.checked_mul(4)) else {
+pub fn render_frame_into(frame: u32, width: usize, height: usize, output: &mut Vec<u8>) -> bool {
+    let Some(byte_len) = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
         output.clear();
         return false;
     };
@@ -187,8 +185,7 @@ pub fn render_frame_into(
     let text = rgb(brand::TEXT);
 
     let fade_in = (f / 12.0).clamp(0.0, 1.0);
-    let fade_out =
-        1.0 - ((f - FADE_START) / (SOURCE_LAST_FRAME - FADE_START)).clamp(0.0, 1.0);
+    let fade_out = 1.0 - ((f - FADE_START) / (SOURCE_LAST_FRAME - FADE_START)).clamp(0.0, 1.0);
     let brightness = fade_in * fade_out;
 
     // Word-mark layout: 6 glyphs of 5 cells with one cell between them.
