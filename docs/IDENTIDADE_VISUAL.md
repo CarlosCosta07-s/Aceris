@@ -34,42 +34,26 @@ continuam presentes no SVG do ícone e no fundo do ícone adaptativo.
 - Android: `frontends/android/res/mipmap-*` (ícone adaptativo, fundo `#2A1240`).
 - Regenerar tudo: `cargo run --release -p aceris-icongen`.
 
-## Abertura e launcher responsivo
+## Launcher horizontal, abertura e áudio externo
 
-aceris_core::video::intro gera a abertura original em Rust como função do número
-do quadro. Os frontends Android e desktop ampliam um buffer interno reduzido para
-ocupar a superfície completa, evitando multiplicar o trabalho da animação pela
-resolução física do aparelho.
+O launcher Android inicia em paisagem (`sensorLandscape`). A home partilha o renderer Rust com o desktop e apresenta Início, Jogos, Favoritos, Recentes, Homebrew e Configurações.
 
-A biblioteca usa o renderer responsivo de aceris_core::video::library, partilhado
-entre Android e desktop. Texto, painéis, ícones e áreas de toque usam a mesma
-transformação lógica/física. A tipografia bitmap própria oferece letras minúsculas
-e acentos portugueses, com rótulos em caixa normal para melhorar a leitura.
+- A barra lateral permanece fixa; a home destaca Continuar jogando, contagens de Favoritos/Homebrew e o indicador de mídia externa.
+- Jogos, Favoritos, Recentes e Homebrew usam cartões em grade de três colunas, com ordenação A–Z/Z–A e ações por toque/clique. Favoritos e Recentes persistem na pasta interna `.aceris` da pasta de jogos.
+- Android: toque único, D-pad, arraste/scroll. Desktop: teclado, mouse e navegação horizontal/vertical.
+- A abertura original foi reamostrada de 150 quadros (2,5 s) para 84 quadros (1,4 s). Android limita a resolução interna a cerca de 600×360; RGBA e BGRX são reutilizados entre quadros.
+- A biblioteca mostra o estado de mídia externa, mas não informa faixa/artista: no Android API 28+ a camada Rust consulta sessões ativas anônimas e somente a categoria de uso de áudio. Com mídia `USAGE_MEDIA`, o AAudio marcado como `USAGE_GAME` é silenciado até a sessão externa terminar. Abaixo da API 28, essa detecção fica desativada.
+- Nenhuma permissão de notificações é solicitada. Título, artista, capa e nome de Spotify/YouTube Music exigem autorização de Notification Listener/MediaSession e uma integração Android adicional; não fazem parte desta versão Rust-only.
 
-- **Android:** renderiza diretamente na superfície da NativeActivity, em retrato
-  ou paisagem. As seções são **Jogos**, **Homebrew** e **Configurações**. Um toque
-  num item tenta iniciá-lo; setas/botões físicos também podem navegar. A interface
-  continua em Rust, sem camada Kotlin ou Java.
-- **Desktop:** abre a biblioteca num canvas widescreen de 960×600; teclado,
-  rolagem do mouse e cliques navegam. Um clique seleciona e um segundo clique
-  ou Enter inicia. Esc durante o jogo volta à biblioteca.
-- **Formatos atualmente listados:** .3ds e .cci na seção Jogos; .3dsx
-  na seção Homebrew. A pasta padrão pode ser escolhida por --games,
-  $ACERIS_GAMES ou ~/Aceris/Games.
-- **Fundos personalizados no desktop:** --background-dir aceita sequências
-  RGBA8 400×480 e --background-fps define a frequência de origem. O renderer
-  responsivo faz cover-crop e mistura o fundo abaixo dos controles, mantendo
-  contraste. A ausência de um fundo personalizado usa o tema Aceris.
-- **Princípio de honestidade da interface:** não expor opções de backend,
-  histórico, capas, perfis ou controles configuráveis antes de haver uma ação
-  real que as persista e aplique.
+### Recursos ainda não concluídos
 
-A composição atual é um primeiro launcher funcional e responsivo, não a interface
-final. Capa e metadados reais dependem de extrair e validar informações dos títulos
-fornecidos pelo usuário. Busca, favoritos, histórico de recentes, ordenação,
-seletor de diretórios, configurações por jogo, editor de controles virtuais e temas
-alternativos continuam planejados, não concluídos.
+- Capas e metadados reais por título, pesquisa textual e filtros avançados.
+- Perfis e overrides por jogo.
+- Save states, quick save/load, backups e rewind; aguardam serialização estável do estado completo do sistema.
+- Editor de controles virtuais, transparência/auto-hide, gestos e calibração analógica.
+- Indicador musical com metadados exatos. O indicador disponível mostra somente se há mídia externa ativa.
 
+Layout, integração JNI e desempenho de abertura ainda precisam ser avaliados em aparelho físico. CI verde comprova build/testes automatizados, não o comportamento em todos os fabricantes, versões de Android, serviços de música ou drivers.
 
 ## Estado de integração visual — 22/11/2026
 
