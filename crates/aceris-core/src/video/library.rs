@@ -418,9 +418,7 @@ impl Library {
             return;
         };
         if portrait {
-            let visible = ((logical_height - 350.0).max(58.0) / 58.0)
-                .floor()
-                .max(1.0) as usize;
+            let visible = ((logical_height - 350.0).max(58.0) / 58.0).floor().max(1.0) as usize;
             self.move_selection_with_visible(delta, visible);
         } else {
             let visible_rows = ((logical_height - 166.0) / 94.0).floor().max(1.0) as usize;
@@ -2443,8 +2441,14 @@ mod tests {
     #[test]
     fn library_sort_order_and_external_media_indicator_are_stateful() {
         let entries = vec![
-            Entry { title: "Alpha".into(), path: PathBuf::from("alpha.3ds") },
-            Entry { title: "Beta".into(), path: PathBuf::from("beta.3ds") },
+            Entry {
+                title: "Alpha".into(),
+                path: PathBuf::from("alpha.3ds"),
+            },
+            Entry {
+                title: "Beta".into(),
+                path: PathBuf::from("beta.3ds"),
+            },
         ];
         let mut library = Library::new(entries, "/games".into());
         assert_eq!(library.selected_entry().unwrap().title, "Alpha");
