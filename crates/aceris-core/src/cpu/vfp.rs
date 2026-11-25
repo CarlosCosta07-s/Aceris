@@ -1177,9 +1177,7 @@ impl Arm11Core {
         for iteration in 0..length {
             let lane = &mut lanes.entries[iteration];
             lane.destination = bank_offset(destination, iteration);
-            for (source_index, (source, scalar_if_bank_zero)) in
-                sources.iter().copied().enumerate()
-            {
+            for (source_index, (source, scalar_if_bank_zero)) in sources.iter().copied().enumerate() {
                 lane.sources[source_index] = if scalar_if_bank_zero && source < bank_size {
                     source
                 } else {
@@ -1336,11 +1334,7 @@ impl Arm11Core {
                 for iteration in 0..lane_count {
                     let lane = lanes.entries[iteration];
                     let source = lane.sources[0];
-                    inputs[iteration] = (
-                        lane.destination,
-                        source,
-                        self.vfp.read(prec, source),
-                    );
+                    inputs[iteration] = (lane.destination, source, self.vfp.read(prec, source));
                 }
 
                 let mut results = [(0usize, 0u64); VFP_MAX_VECTOR_LANES];
