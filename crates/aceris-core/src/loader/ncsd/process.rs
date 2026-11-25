@@ -582,6 +582,51 @@ enum MemoryLocation {
     },
 }
 
+/// Avoids a heap allocation for the small memory stores emitted by ARM11
+/// scalar instructions while retaining an unbounded fallback for block writes.
+const INLINE_WRITE_LOCATION_CAPACITY: usize = 8;
+
+enum ValidatedWriteLocations {
+    Inline {
+        entries: [Option<MemoryLocation>; INLINE_WRITE_LOCATION_CAPACITY],
+        len: usize,
+    },
+    Heap(Vec<MemoryLocation>),
+}
+
+impl ValidatedWriteLocations {
+    fn with_capacity(capacity: usize) -> Self {
+        if capacity <= INLINE_WRITE_LOCATION_CAPACITY {
+            Self::Inline {
+                entries: [None; INLINE_WRITE_LOCATION_CAPACITY],
+                len: 0,
+            }
+        } else {
+            Self::Heap(Vec::with_capacity(capacity))
+        }
+    }
+
+    fn push(&mut self, location: MemoryLocation) {
+        match self {
+            Self::Inline { entries, len } => {
+                debug_assert!(*len < entries.len());
+                entries[*len] = Some(location);
+                *len += 1;
+            }
+            Self::Heap(entries) => entries.push(location),
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = MemoryLocation> + '_ {
+        match self {
+            Self::Inline { entries, len } => entries[..*len]
+                .iter()
+                .map(|entry| entry.expect("validated inline write location is populated")),
+            Self::Heap(entries) => entries.iter().copied(),
+        }
+    }
+}
+
 impl fmt::Display for Arm11SegmentKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -2405,9 +2450,10 @@ impl Arm11CodeAddressSpace {
             return Ok(());
         }
 
-        let mut locations = Vec::with_capacity(bytes.len());
+        let mut locations = ValidatedWriteLocations::with_capacity(bytes.len());
 
         // Validate the complete range before mutating cache state or backing.
+        // Scalar ARM11 stores (1, 2, 4 and 8 bytes) stay entirely on the stack.
         for index in 0..bytes.len() {
             let offset =
                 u32::try_from(index).map_err(|_| Error::InvalidAccess { addr: address })?;
@@ -2425,7 +2471,7 @@ impl Arm11CodeAddressSpace {
             locations.push(location);
         }
 
-        for (byte, location) in bytes.iter().zip(locations) {
+        for (byte, location) in bytes.iter().zip(locations.iter()) {
             let (key, target, byte_offset) = self
                 .cache_location(location)
                 .ok_or(Error::InvalidAccess { addr: address })?;
@@ -4326,6 +4372,15 @@ mod tests {
         let original = address_space.read8(data_start).unwrap();
 
         assert!(address_space.write32(data_start - 2, 0xAABB_CCDD).is_err());
+        assert_eq!(address_space.read8(data_start).unwrap(), original);
+
+        // Larger block writes take the heap-backed fallback and must retain
+        // the same validate-before-mutate behavior.
+        assert!(
+            address_space
+                .write_bytes(data_start - 1, &[0xA5; INLINE_WRITE_LOCATION_CAPACITY + 1])
+                .is_err()
+        );
         assert_eq!(address_space.read8(data_start).unwrap(), original);
     }
 
