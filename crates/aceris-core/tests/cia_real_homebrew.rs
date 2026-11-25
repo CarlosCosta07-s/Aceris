@@ -122,6 +122,12 @@ fn validates_and_runs_real_cookie_clicker_cia_without_console_keys() {
         assert!(ncch.header().declares_no_crypto());
 
         let address_space = ncch.load_arm11_address_space([0; 16], [0; 16]).unwrap();
+        assert!(
+            address_space
+                .service_access_control()
+                .is_some_and(|access| access.allows("dsp::DSP")),
+            "Cookie Clicker NCCH ACI must grant dsp::DSP"
+        );
         eprintln!(
             "Prepared Cookie Clicker ARM11 image: entry={:#010x}, stack_top={:#010x}, stack_size={:#x}",
             address_space.layout().entry_point,

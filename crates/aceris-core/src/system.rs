@@ -1412,10 +1412,18 @@ impl System {
                     .and_then(|session| session.service_manager_client_registered(service_handle))
                     .unwrap_or(false);
                 if !registered {
+                    self.unhandled.insert(format!(
+                        "srv:GetServiceHandle rejected before RegisterClient on session {service_handle:#010x}"
+                    ));
                     return Ok(vec![0x0005_0040, RESULT_INVALID_HANDLE]);
                 }
                 let parameters = message.normal_parameters();
                 if parameters.len() != 4 || !message.translation_words().is_empty() {
+                    self.unhandled.insert(format!(
+                        "srv:GetServiceHandle malformed request: {} normal parameters, {} translation words",
+                        parameters.len(),
+                        message.translation_words().len()
+                    ));
                     return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
                 }
                 let mut requested_name = [0u8; 8];
@@ -1423,6 +1431,9 @@ impl System {
                 requested_name[4..8].copy_from_slice(&parameters[1].to_le_bytes());
                 let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
                 if !(1..=requested_name.len()).contains(&name_length) {
+                    self.unhandled.insert(format!(
+                        "srv:GetServiceHandle rejected service-name length {name_length}"
+                    ));
                     return Ok(vec![0x0005_0040, RESULT_SRV_INVALID_STRING_LENGTH]);
                 }
                 let Some(service_name) = requested_name.get(..name_length) else {
@@ -1432,6 +1443,10 @@ impl System {
                     .iter()
                     .any(|byte| !(0x21..=0x7E).contains(byte))
                 {
+                    self.unhandled.insert(format!(
+                        "srv:GetServiceHandle rejected non-printable service name bytes: {:02X?}",
+                        service_name
+                    ));
                     return Ok(vec![0x0005_0040, RESULT_SRV_STRING_SIZE_MISMATCH]);
                 }
                 let access_allowed = self
@@ -1439,6 +1454,10 @@ impl System {
                     .as_ref()
                     .is_some_and(|session| session.allows_service_access(service_name));
                 if !access_allowed {
+                    self.unhandled.insert(format!(
+                        "srv:GetServiceHandle({}) denied by NCCH service ACL",
+                        String::from_utf8_lossy(service_name)
+                    ));
                     return Ok(vec![0x0005_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]);
                 }
                 let hle_kind = match Some(service_name) {
@@ -1466,7 +1485,13 @@ impl System {
                         .create_hle_session(kind)
                     {
                         Ok(handle) => handle,
-                        Err(_) => return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]),
+                        Err(_) => {
+                            self.unhandled.insert(format!(
+                                "srv:GetServiceHandle({}) failed: could not allocate HLE session handle",
+                                String::from_utf8_lossy(service_name)
+                            ));
+                            return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]);
+                        }
                     };
                     return Ok(vec![0x0005_0042, 0, 0, hle_handle]);
                 }
@@ -1475,7 +1500,9 @@ impl System {
                         .get(..name_length)
                         .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
                         .unwrap_or_else(|| "<invalid name length>".to_string());
-                    self.unhandled.insert(format!("service {name}"));
+                    self.unhandled.insert(format!(
+                        "srv:GetServiceHandle({name}) failed: service is not registered"
+                    ));
                     return Ok(vec![0x0005_0040, RESULT_SRV_SERVICE_NOT_REGISTERED]);
                 }
 
@@ -1486,7 +1513,13 @@ impl System {
                     .create_gsp_gpu_session()
                 {
                     Ok(handle) => handle,
-                    Err(_) => return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]),
+                    Err(_) => {
+                        self.unhandled.insert(
+                            "srv:GetServiceHandle(gsp::Gpu) failed: could not allocate GPU session"
+                                .to_string(),
+                        );
+                        return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]);
+                    }
                 };
                 // GetServiceHandle returns a COPY_HANDLE translation containing
                 // the newly created client-side gsp::Gpu session.
@@ -2046,9 +2079,10 @@ impl System {
         })
     }
 
-    /// Services and commands the guest requested that this HLE does not implement.
+    /// Service lookups and commands the guest could not complete or that this HLE does not implement.
     ///
-    /// Run a game, then print this list to see what to implement next.
+    /// Run a game, then print this list to identify missing services, denied access,
+    /// invalid requests, allocation failures, and unsupported commands.
     pub fn unhandled_requests(&self) -> Vec<String> {
         self.unhandled.iter().cloned().collect()
     }

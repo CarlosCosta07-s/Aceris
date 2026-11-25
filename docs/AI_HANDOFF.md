@@ -2326,3 +2326,12 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O commit `d5cdc15b13e454a8c580bb8dbb50b522c05d7693` passou integralmente no workflow [45600245040](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45600245040): Linux, Windows, macOS e Android ARM64.
 - Linux, Windows e macOS passaram formatação, build, Clippy, `cargo test --workspace` e build release do benchmark; Android passou os builds release do app e do benchmark.
 - O novo teste `validates_and_runs_real_cookie_clicker_cia_without_console_keys` foi compilado como parte da suíte, mas não executado porque está marcado `#[ignore]` e depende do CIA local. A validação real desse arquivo permanece pendente de execução no ambiente que o contém.
+
+
+### Cookie Clicker DSP service lookup diagnosis — 25/11/2026
+
+- Structural CIA inspection confirmed the TMD content digest, ticket/TMD Title ID `0x0004000000F23F00`, boot index 0, NoCrypto and the NCCH ACI permission `dsp::DSP`.
+- Static guest-code analysis found the `Sound.init` entry at VMA `0x0010F7B0`, LPP audio initialization at `0x001E8848`, and DSP setup at `0x001EBD88`. The DSP setup obtains the `dsp::DSP` service handle through the guest service-manager wrapper before sending the DSP IPC request.
+- Because the ACI explicitly permits `dsp::DSP`, do not weaken the ACL. The likely diagnostic boundary is the preceding `srv:GetServiceHandle`/RegisterClient flow; runtime evidence is still required to identify the exact failure.
+- `System::unhandled_requests()` now records failed service-manager lookups (RegisterClient missing, malformed request, invalid name, ACL denial, unknown service and handle-allocation failure). The manual Cookie Clicker CIA test also asserts that its parsed ACI allows `dsp::DSP`.
+- No runtime DSP success is claimed. The uploaded CIA and decompressed guest code remain outside Git.

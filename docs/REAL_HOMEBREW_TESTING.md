@@ -129,3 +129,12 @@ Remove-Item Env:ACERIS_COOKIE_CLICKER_CIA
 ```
 
 O arquivo anexado nesta sessão foi mantido fora do repositório. Seu SHA-256 local é `d047701f8e9b4127436046f5a650dede06e03bc1b5f1b271981d4ea27db58093`. **Esse fingerprint identifica o arquivo, mas não significa que o teste acima tenha sido executado nesta sessão.**
+
+
+### DSP service-access investigation — 25/11/2026
+
+- A structural inspection of the supplied CIA confirmed Title ID `0004000000F23F00`, matching ticket/TMD IDs, boot content index 0, a valid TMD content SHA-256, NCCH NoCrypto, and an ACI service list containing `dsp::DSP`.
+- Static inspection of the decompressed guest `.code` places `Sound.init` at VMA `0x0010F7B0`; its path calls the LPP initialization routine at `0x001E8848`, which reaches the DSP setup routine at `0x001EBD88`. The DSP setup first obtains `dsp::DSP` through the service-manager wrapper and only then sends its DSP IPC command.
+- The ACI therefore does not justify bypassing service permissions. The missing DSP command may be downstream of a failed `srv:GetServiceHandle` or an uninitialized `srv:` client handle. Static disassembly alone cannot distinguish those runtime outcomes.
+- The ignored CIA test now asserts that the parsed NCCH ACI grants `dsp::DSP`. The HLE service manager also records failed `GetServiceHandle` attempts in `System::unhandled_requests()`, including missing RegisterClient, malformed request, ACL denial, unknown service and HLE-handle allocation failure. This makes the next real run diagnostic instead of silently returning an IPC error.
+- The file and decompressed `.code` remain local analysis artifacts; neither was added to the repository, CI or releases.
