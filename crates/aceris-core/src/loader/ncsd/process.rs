@@ -2704,20 +2704,61 @@ impl Arm11CodeAddressSpace {
         bytes.try_into().ok()
     }
 
-    fn try_read_cached_hit(&mut self, address: u32, len: usize) -> Option<u32> {
-        let location = self.locate(address)?;
+    /// Reads a cacheable scalar access with one address resolution and one
+    /// D-cache lookup, filling the line directly on a miss when the access
+    /// does not cross a cache-line boundary.
+    fn read_cached_value(&mut self, address: u32, len: usize) -> BusResult<Option<u32>> {
+        if !(1..=4).contains(&len) {
+            return Ok(None);
+        }
+        let Some(location) = self.locate(address) else {
+            return Ok(None);
+        };
         if !self.location_is_readable(location) {
-            return None;
+            return Ok(None);
         }
-        let (key, offset) = self.cache_key_for(location)?;
-        if offset + len > ARM11_DATA_CACHE_LINE_SIZE {
-            return None;
+        let Some((key, offset)) = self.cache_key_for(location) else {
+            return Ok(None);
+        };
+        let Some(end) = offset.checked_add(len) else {
+            return Ok(None);
+        };
+        if end > ARM11_DATA_CACHE_LINE_SIZE {
+            return Ok(None);
         }
-        let line = self.data_cache.get(&key)?;
-        let mut bytes = [0u8; 4];
-        bytes[..len].copy_from_slice(line.bytes.get(offset..offset + len)?);
-        self.touch_data_cache_line(key);
-        Some(u32::from_le_bytes(bytes))
+
+        let mut value_bytes = [0u8; 4];
+        if let Some(line) = self.data_cache.get(&key) {
+            let Some(source) = line.bytes.get(offset..end) else {
+                return Ok(None);
+            };
+            value_bytes[..len].copy_from_slice(source);
+            self.touch_data_cache_line(key);
+            return Ok(Some(u32::from_le_bytes(value_bytes)));
+        }
+
+        let Some((target_key, target, target_offset)) = self.cache_location(location) else {
+            return Ok(None);
+        };
+        debug_assert_eq!(target_key, key);
+        debug_assert_eq!(target_offset, offset);
+
+        let mut line_bytes = self.read_cache_target_line(&target)?;
+        self.overlay_write_buffer(key, &mut line_bytes);
+        let Some(source) = line_bytes.get(offset..end) else {
+            return Ok(None);
+        };
+        value_bytes[..len].copy_from_slice(source);
+        self.insert_data_cache_line(
+            key,
+            Arm11DataCacheLine {
+                bytes: line_bytes,
+                dirty: false,
+                target,
+            },
+        )?;
+
+        Ok(Some(u32::from_le_bytes(value_bytes)))
     }
 
     fn read_cache_target_line(
@@ -3408,7 +3449,7 @@ impl Bus for Arm11CodeAddressSpace {
             policy,
             CachePolicy::WriteThrough | CachePolicy::WriteBack | CachePolicy::WriteBackNoAllocate
         ) {
-            if let Some(value) = self.try_read_cached_hit(address, 1) {
+            if let Some(value) = self.read_cached_value(address, 1)? {
                 return Ok(value as u8);
             }
         }
@@ -3444,7 +3485,7 @@ impl Bus for Arm11CodeAddressSpace {
             let high = self.read_mpcore_gic_distributor_byte(address.wrapping_add(1))?;
             return Ok(u16::from_le_bytes([low, high]));
         }
-        if let Some(value) = self.try_read_cached_hit(address, 2) {
+        if let Some(value) = self.read_cached_value(address, 2)? {
             return Ok(value as u16);
         }
         let lo = self.read8(address)?;
@@ -3479,7 +3520,7 @@ impl Bus for Arm11CodeAddressSpace {
         {
             return self.read_mpcore_gic_distributor_word(address);
         }
-        if let Some(value) = self.try_read_cached_hit(address, 4) {
+        if let Some(value) = self.read_cached_value(address, 4)? {
             return Ok(value);
         }
         let mut bytes = [0u8; 4];
@@ -3554,7 +3595,7 @@ impl Bus for Arm11CodeAddressSpace {
             policy,
             CachePolicy::WriteThrough | CachePolicy::WriteBack | CachePolicy::WriteBackNoAllocate
         ) {
-            if let Some(value) = self.try_read_cached_hit(address, 4) {
+            if let Some(value) = self.read_cached_value(address, 4)? {
                 return Ok(value);
             }
         }
