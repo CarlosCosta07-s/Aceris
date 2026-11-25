@@ -210,11 +210,9 @@ impl PicaProceduralTextureSampler {
             .config
             .rgb_mapping_function
             .evaluate_raw(u, v)
-            .ok_or_else(|| {
-                PicaProceduralTextureError::MappingFunctionUnsupported(
-                    self.config.rgb_mapping_function,
-                )
-            })?;
+            .ok_or(PicaProceduralTextureError::MappingFunctionUnsupported(
+                self.config.rgb_mapping_function,
+            ))?;
         let rgb_lookup = lookup_curve(&self.rgb_mapping, rgb_shape)?;
         let color_position = f32::from(self.config.mip_offsets[0])
             + rgb_lookup * f32::from(self.config.texture_width.saturating_sub(1));
@@ -225,11 +223,9 @@ impl PicaProceduralTextureSampler {
                 .config
                 .alpha_mapping_function
                 .evaluate_raw(u, v)
-                .ok_or_else(|| {
-                    PicaProceduralTextureError::MappingFunctionUnsupported(
-                        self.config.alpha_mapping_function,
-                    )
-                })?;
+                .ok_or(PicaProceduralTextureError::MappingFunctionUnsupported(
+                    self.config.alpha_mapping_function,
+                ))?;
             color[3] = lookup_curve(&self.alpha_mapping, alpha_shape)?;
         }
 
@@ -437,7 +433,7 @@ mod tests {
             (PicaProceduralTextureLut::Color as u32) << 8,
         );
         for [r, g, b, a] in [
-            [0, 0, 0, 255],
+            [0_u8, 0, 0, 255],
             [10, 20, 30, 255],
             [100, 110, 120, 200],
             [150, 160, 170, 128],
