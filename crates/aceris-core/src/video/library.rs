@@ -412,6 +412,22 @@ impl Library {
         }
     }
 
+    /// Moves one card horizontally in the landscape collection grid.
+    pub fn move_selection_horizontal_responsive(&mut self, delta: i32, width: u32, height: u32) {
+        let Some((portrait, _, _, logical_height)) = responsive_metrics(width, height) else {
+            return;
+        };
+        if portrait {
+            let visible = ((logical_height - 350.0).max(58.0) / 58.0)
+                .floor()
+                .max(1.0) as usize;
+            self.move_selection_with_visible(delta, visible);
+        } else {
+            let visible_rows = ((logical_height - 166.0) / 94.0).floor().max(1.0) as usize;
+            self.move_grid_selection(delta, visible_rows * 3);
+        }
+    }
+
     /// Handles navigation, refresh and game selection in the responsive launcher.
     /// Coordinates are supplied in physical surface pixels.
     pub fn click_responsive(&mut self, x: i32, y: i32, width: u32, height: u32) -> ClickResult {
