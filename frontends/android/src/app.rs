@@ -734,6 +734,7 @@ mod tests {
         assert!(app.key(96, true)); // A launches the selected entry
         assert!(matches!(app.screen(), Screen::Library));
         assert!(app.system.is_none());
+        assert_eq!(app.library.recent_count(), 0);
         let frame = app.step();
         assert_eq!(frame.len(), 800 * 960 * 4);
         fs::remove_dir_all(dir).ok();
