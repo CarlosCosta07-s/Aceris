@@ -733,23 +733,32 @@ fn interpolate_triangle_varyings(
         ));
     }
 
+    // Perspective-correct weights, fetched once per vertex. The products are
+    // evaluated in the same order as a per-lane sum so results are identical.
+    let coefficients: [f32; 3] = std::array::from_fn(|index| weights[index] * reciprocal_w[index]);
     let interpolate4 = |select: fn(&PicaFragmentVertex) -> [f32; 4]| {
+        let values = [
+            select(&vertices[0]),
+            select(&vertices[1]),
+            select(&vertices[2]),
+        ];
         std::array::from_fn(|lane| {
-            (0..3)
-                .map(|index| weights[index] * reciprocal_w[index] * select(&vertices[index])[lane])
-                .sum::<f32>()
+            (coefficients[0] * values[0][lane]
+                + coefficients[1] * values[1][lane]
+                + coefficients[2] * values[2][lane])
                 / denominator
         })
     };
     let interpolate2 = |coordinate: usize| {
+        let values = [
+            vertices[0].texture_coordinates[coordinate],
+            vertices[1].texture_coordinates[coordinate],
+            vertices[2].texture_coordinates[coordinate],
+        ];
         std::array::from_fn(|lane| {
-            (0..3)
-                .map(|index| {
-                    weights[index]
-                        * reciprocal_w[index]
-                        * vertices[index].texture_coordinates[coordinate][lane]
-                })
-                .sum::<f32>()
+            (coefficients[0] * values[0][lane]
+                + coefficients[1] * values[1][lane]
+                + coefficients[2] * values[2][lane])
                 / denominator
         })
     };
