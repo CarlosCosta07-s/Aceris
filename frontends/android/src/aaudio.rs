@@ -20,6 +20,7 @@ const RTLD_NOW: c_int = 2;
 const AAUDIO_DIRECTION_OUTPUT: i32 = 0;
 const AAUDIO_FORMAT_PCM_I16: i32 = 1;
 const AAUDIO_PERFORMANCE_MODE_LOW_LATENCY: i32 = 12;
+const AAUDIO_USAGE_GAME: i32 = 14;
 /// Rate requested from the device; the core's 32728 Hz is resampled to it.
 const OUTPUT_RATE: u32 = 48_000;
 
@@ -38,6 +39,7 @@ pub struct AAudioOutput {
     close: StreamFn,
     resampler: Resampler,
     resampled: Vec<i16>,
+    muted: bool,
 }
 
 fn load<F: Copy>(library: *mut c_void, name: &str) -> Option<F> {
@@ -77,6 +79,9 @@ impl AAudioOutput {
         let set_channels: SetI32Fn = load(library, "AAudioStreamBuilder_setChannelCount")?;
         let set_format: SetI32Fn = load(library, "AAudioStreamBuilder_setFormat")?;
         let set_mode: SetI32Fn = load(library, "AAudioStreamBuilder_setPerformanceMode")?;
+        // API 28+: identify Aceris output as game audio rather than media.
+        // Older Android releases simply keep the system default.
+        let set_usage: Option<SetI32Fn> = load(library, "AAudioStreamBuilder_setUsage");
         let open_stream: OpenStreamFn = load(library, "AAudioStreamBuilder_openStream")?;
         let delete_builder: BuilderDeleteFn = load(library, "AAudioStreamBuilder_delete")?;
         let start: StreamFn = load(library, "AAudioStream_requestStart")?;
@@ -96,6 +101,9 @@ impl AAudioOutput {
             set_channels(builder, 2);
             set_format(builder, AAUDIO_FORMAT_PCM_I16);
             set_mode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+            if let Some(set_usage) = set_usage {
+                set_usage(builder, AAUDIO_USAGE_GAME);
+            }
             let status = open_stream(builder, &mut stream);
             delete_builder(builder);
             status
@@ -116,7 +124,13 @@ impl AAudioOutput {
             close,
             resampler: Resampler::new(System::audio_sample_rate(), OUTPUT_RATE),
             resampled: Vec::new(),
+            muted: false,
         })
+    }
+
+    /// Mutes only the emulator's output while keeping the stream clock alive.
+    pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
     }
 
     /// Queues interleaved stereo samples (core rate) without blocking.
@@ -126,12 +140,35 @@ impl AAudioOutput {
         }
         self.resampled.clear();
         self.resampler.process(samples, &mut self.resampled);
+        if self.muted {
+            self.resampled.fill(0);
+        }
         let frames = i32::try_from(self.resampled.len() / 2).unwrap_or(i32::MAX);
         // SAFETY: `resampled` holds `frames` interleaved stereo frames; a zero
         // timeout makes the write non-blocking and extra frames are dropped.
         unsafe {
             (self.write)(self.stream, self.resampled.as_ptr().cast(), frames, 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    fn silence(samples: &mut [i16], muted: bool) {
+        if muted {
+            samples.fill(0);
+        }
+    }
+
+    #[test]
+    fn muting_keeps_a_silent_buffer_with_the_same_length() {
+        let mut samples = [1200, -800, 300, -100];
+        let len = samples.len();
+        silence(&mut samples, true);
+        assert_eq!(samples, [0; 4]);
+        assert_eq!(samples.len(), len);
+        silence(&mut samples, false);
+        assert_eq!(samples, [0; 4]);
     }
 }
 
