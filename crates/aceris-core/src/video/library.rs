@@ -1869,9 +1869,9 @@ impl Library {
                 width,
                 height,
                 128.0,
-                (logical_height - 18.0).max(0.0),
+                (logical_height - 44.0).max(0.0),
                 text_scale,
-                &truncate(status, 100),
+                &truncate(status, 96),
                 brand::ACCENT_RED_LIGHT,
             );
         }
@@ -2438,6 +2438,26 @@ mod tests {
         );
         assert!(library.status.is_some());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn library_sort_order_and_external_media_indicator_are_stateful() {
+        let entries = vec![
+            Entry { title: "Alpha".into(), path: PathBuf::from("alpha.3ds") },
+            Entry { title: "Beta".into(), path: PathBuf::from("beta.3ds") },
+        ];
+        let mut library = Library::new(entries, "/games".into());
+        assert_eq!(library.selected_entry().unwrap().title, "Alpha");
+        library.toggle_sort_order();
+        assert_eq!(library.selected_entry().unwrap().title, "Beta");
+        library.toggle_sort_order();
+        assert_eq!(library.selected_entry().unwrap().title, "Alpha");
+
+        assert!(!library.external_media_playing());
+        library.set_external_media_playing(true);
+        assert!(library.external_media_playing());
+        library.set_external_media_playing(false);
+        assert!(!library.external_media_playing());
     }
 
     #[test]
