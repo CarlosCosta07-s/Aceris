@@ -33,7 +33,10 @@ pub struct Entry {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LibraryPage {
     #[default]
+    Home,
     Games,
+    Favorites,
+    Recent,
     Homebrew,
     Settings,
 }
@@ -58,6 +61,25 @@ pub struct Library {
     directory_label: String,
     status: Option<String>,
     page: LibraryPage,
+    favorites: std::collections::HashSet<String>,
+    recent: Vec<String>,
+}
+
+/// Reads a persistent list of simple file names from the Aceris settings folder.
+/// Invalid path components are ignored so the collection can never escape its game folder.
+fn load_library_ids(path: &Path) -> Vec<String> {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|name| {
+            !name.is_empty()
+                && Path::new(name).file_name().and_then(|value| value.to_str()) == Some(*name)
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 /// Lists supported executable images (`.3ds`, `.cci`, `.3dsx`) directly
@@ -95,13 +117,20 @@ pub fn scan_games(directory: &Path) -> Vec<Entry> {
 
 impl Library {
     pub fn new(entries: Vec<Entry>, directory_label: String) -> Self {
+        let directory = PathBuf::from(&directory_label);
+        let favorites = load_library_ids(&directory.join(".aceris").join("favorites.txt"))
+            .into_iter()
+            .collect();
+        let recent = load_library_ids(&directory.join(".aceris").join("recent.txt"));
         Self {
             entries,
             selected: 0,
             first_visible: 0,
             directory_label,
             status: None,
-            page: LibraryPage::Games,
+            page: LibraryPage::Home,
+            favorites,
+            recent,
         }
     }
 
@@ -114,12 +143,83 @@ impl Library {
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
-        self.filtered_entries().nth(self.selected)
+        let entries = self.filtered_entries();
+        if self.page == LibraryPage::Home {
+            return entries.first().copied();
+        }
+        entries.get(self.selected).copied()
     }
 
-    /// Number of entries shown by the current library filter.
+    /// Number of entries shown by the current library section.
     pub fn visible_entry_count(&self) -> usize {
-        self.filtered_entries().count()
+        self.filtered_entries().len()
+    }
+
+    /// True when an entry is in the user's persistent favorites collection.
+    pub fn is_favorite(&self, entry: &Entry) -> bool {
+        entry
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| self.favorites.contains(name))
+    }
+
+    /// Adds or removes the currently selected item from Favorites.
+    pub fn toggle_selected_favorite(&mut self) -> bool {
+        let Some(entry) = self.selected_entry() else {
+            return false;
+        };
+        let Some(name) = entry.path.file_name().and_then(|value| value.to_str()) else {
+            return false;
+        };
+        let name = name.to_string();
+        if !self.favorites.remove(&name) {
+            self.favorites.insert(name);
+        }
+        self.persist_library_ids("favorites.txt", self.favorites.iter().cloned());
+        self.status = Some("Favoritos atualizados".to_string());
+        true
+    }
+
+    /// Records a successfully launched game at the front of the persistent Recent list.
+    pub fn mark_launched(&mut self, path: &Path) {
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            return;
+        };
+        let name = name.to_string();
+        self.recent.retain(|item| item != &name);
+        self.recent.insert(0, name);
+        self.recent.truncate(24);
+        self.persist_library_ids("recent.txt", self.recent.iter().cloned());
+        self.status = None;
+    }
+
+    /// Number of games currently saved in Favorites.
+    pub fn favorite_count(&self) -> usize {
+        self.favorites.len()
+    }
+
+    /// Number of valid game entries kept in Recent.
+    pub fn recent_count(&self) -> usize {
+        self.recent
+            .iter()
+            .filter(|name| self.entries.iter().any(|entry| {
+                entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
+            }))
+            .count()
+    }
+
+    fn persist_library_ids(
+        &self,
+        file_name: &str,
+        values: impl IntoIterator<Item = String>,
+    ) {
+        let directory = Path::new(&self.directory_label).join(".aceris");
+        if fs::create_dir_all(&directory).is_err() {
+            return;
+        }
+        let content = values.into_iter().collect::<Vec<_>>().join("\\n");
+        let _ = fs::write(directory.join(file_name), content);
     }
 
     /// Changes the library section and resets its independent selection.
@@ -139,16 +239,34 @@ impl Library {
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("3dsx"));
         match self.page {
+            LibraryPage::Home => false,
             LibraryPage::Games => !is_homebrew,
+            LibraryPage::Favorites => self.is_favorite(entry),
+            LibraryPage::Recent => self.recent.iter().any(|name| {
+                entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
+            }),
             LibraryPage::Homebrew => is_homebrew,
             LibraryPage::Settings => false,
         }
     }
 
-    fn filtered_entries(&self) -> impl Iterator<Item = &Entry> {
+    fn filtered_entries(&self) -> Vec<&Entry> {
+        if self.page == LibraryPage::Recent {
+            return self
+                .recent
+                .iter()
+                .filter_map(|name| {
+                    self.entries.iter().find(|entry| {
+                        entry.path.file_name().and_then(|value| value.to_str())
+                            == Some(name.as_str())
+                    })
+                })
+                .collect();
+        }
         self.entries
             .iter()
             .filter(|entry| self.entry_matches_page(entry))
+            .collect()
     }
 
     /// Shows a message (for example a load error) above the footer.
