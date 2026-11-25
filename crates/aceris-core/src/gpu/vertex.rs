@@ -88,15 +88,6 @@ pub enum AttributeBitWidth {
 }
 
 impl AttributeBitWidth {
-    fn decode(bits: u32) -> Self {
-        match bits & 0x3 {
-            0 => Self::Bits8,
-            1 => Self::Bits16,
-            2 => Self::Bits24,
-            _ => Self::Bits32,
-        }
-    }
-
     pub const fn bits(self) -> u8 {
         match self {
             Self::Bits8 => 8,
@@ -124,9 +115,21 @@ pub struct VertexAttributeFormat {
 
 impl VertexAttributeFormat {
     fn decode(field: u32) -> Self {
+        // Bits 0-1 select the scalar type and bits 2-3 hold the number of
+        // components minus one (libctru `GPU_ATTRIBFMT`); the scalar width
+        // follows from the type alone. The component count that is actually
+        // fetched comes from the array component selectors.
+        let data_type = AttributeDataType::decode(field);
+        let bit_width = match data_type {
+            AttributeDataType::SignedByte | AttributeDataType::UnsignedByte => {
+                AttributeBitWidth::Bits8
+            }
+            AttributeDataType::SignedShort => AttributeBitWidth::Bits16,
+            AttributeDataType::Float => AttributeBitWidth::Bits32,
+        };
         Self {
-            data_type: AttributeDataType::decode(field),
-            bit_width: AttributeBitWidth::decode(field >> 2),
+            data_type,
+            bit_width,
         }
     }
 }
@@ -504,7 +507,10 @@ impl PicaVertexInputLayout {
                 }
             }
 
-            if cursor != stride_bytes {
+            // The stride is the distance between records and may exceed the
+            // decoded components (padding or unread data); only a stride
+            // smaller than the decoded record would make records overlap.
+            if cursor > stride_bytes {
                 return Err(VertexInputError::InvalidStride {
                     array: array_index,
                     calculated: cursor,
@@ -769,7 +775,7 @@ mod tests {
         let physical_base = VRAM_BASE + 0x1000;
         let format_low = 0xB;
         let config1 = 0;
-        let config2 = (9 << 16) | (3 << 28);
+        let config2 = (12 << 16) | (3 << 28);
         let layout =
             PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0, config1, config2)])
                 .unwrap();
@@ -777,7 +783,9 @@ mod tests {
         memory
             .write(
                 physical_base,
-                &[0x00, 0x00, 0x3F, 0x00, 0x00, 0x40, 0x00, 0x80, 0x40],
+                &[
+                    0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x40,
+                ],
             )
             .unwrap();
 
@@ -786,7 +794,7 @@ mod tests {
         assert_eq!(position.component_count, 3);
         assert_eq!(
             position.components[..3],
-            [0x003F_0000, 0x0040_0000, 0x0040_8000]
+            [0x3F80_0000, 0x4000_0000, 0x4040_0000]
         );
     }
 
@@ -818,17 +826,24 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stride_that_does_not_match_decoded_record_size() {
-        let layout =
-            PicaVertexInputLayout::from_registers(1, 1 << 28, &[(0, 0, (4 << 16) | (1 << 28))]);
+    fn rejects_stride_smaller_than_decoded_record_and_keeps_larger_stride_as_padding() {
+        // Two byte components (calculated 2) with a stride of 1 would overlap.
+        let overlapping =
+            PicaVertexInputLayout::from_registers(1, 1 << 28, &[(0, 0, (1 << 16) | (2 << 28))]);
         assert!(matches!(
-            layout,
+            overlapping,
             Err(VertexInputError::InvalidStride {
                 array: 0,
-                calculated: 1,
-                configured: 4
+                calculated: 2,
+                configured: 1
             })
         ));
+
+        let padded =
+            PicaVertexInputLayout::from_registers(1, 1 << 28, &[(0, 0, (4 << 16) | (1 << 28))])
+                .unwrap();
+        assert_eq!(padded.arrays()[0].stride_bytes(), 4);
+        assert_eq!(padded.arrays()[0].minimum_record_size(), 1);
     }
 
     #[test]

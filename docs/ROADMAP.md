@@ -350,3 +350,5 @@ Este documento registra o estado observado no código. Não marque um item como 
 7. **Medir e otimizar:** repetir benchmarks release com parâmetros idênticos; ~100 s de CPU host para 300 quadros com orçamento 4M é diagnóstico, não FPS jogável.
 
 Não marcar marcos como concluídos apenas por testes unitários, fixtures sintéticas ou compilação multiplataforma.
+
+- [~] Cookie Clicker (CIA): o jogo agora envia command lists contínuas com renderização guest ligada (formato de vértice corrigido); faltam pixels (`pixels_written: 0`) e velocidade. Ver `docs/AI_HANDOFF.md` (2026-11-24).

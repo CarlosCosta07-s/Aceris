@@ -254,6 +254,7 @@ impl App {
         };
         let path = entry.path.clone();
         let mut system = System::new();
+        system.enable_guest_gpu_rendering();
         let save_name = path.file_name().unwrap_or_default().to_os_string();
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
@@ -533,7 +534,11 @@ mod tests {
     fn game_touches_feed_buttons_and_the_bottom_screen() {
         let (mut app, dir) = app_with_games(0);
         app.screen = Screen::Game;
-        app.system = Some(System::new());
+        app.system = Some({
+            let mut system = System::new();
+            system.enable_guest_gpu_rendering();
+            system
+        });
         let layout = app.game_layout();
         // Bottom-screen centre → touch (160, 120) when no virtual button is there.
         let cx = layout.bottom.x as f32 + layout.bottom.width as f32 / 2.0;
@@ -561,7 +566,11 @@ mod tests {
     fn hardware_keys_set_pad_bits_and_back_leaves_the_game() {
         let (mut app, dir) = app_with_games(0);
         app.screen = Screen::Game;
-        app.system = Some(System::new());
+        app.system = Some({
+            let mut system = System::new();
+            system.enable_guest_gpu_rendering();
+            system
+        });
         assert!(app.key(96, true));
         assert_eq!(
             app.system.as_mut().unwrap().input_mut().snapshot().held,

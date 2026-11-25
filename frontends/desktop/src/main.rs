@@ -411,6 +411,9 @@ fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Re
 
 fn run(options: RunOptions) -> ExitCode {
     let mut system = System::new();
+    if env::var_os("ACERIS_NO_GPU").is_none() {
+        system.enable_guest_gpu_rendering();
+    }
 
     if options.window {
         if let Err(message) = run_windowed(

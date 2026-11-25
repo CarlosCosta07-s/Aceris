@@ -92,8 +92,10 @@ pub extern "C" fn aceris_selftest() -> i32 {
 /// Creates a new emulator instance. Returns null if allocation fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn aceris_system_create() -> *mut AcerisSystemHandle {
+    let mut system = System::new();
+    system.enable_guest_gpu_rendering();
     Box::into_raw(Box::new(AcerisSystemHandle {
-        system: System::new(),
+        system,
         last_error: None,
     }))
 }

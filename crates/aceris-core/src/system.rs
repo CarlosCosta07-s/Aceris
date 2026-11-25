@@ -3433,6 +3433,9 @@ impl System {
                     format!("PICA200 fragment render-target flush failed: {error}"),
                 ))
             })?;
+            if std::env::var_os("ACERIS_TRACE_GPU").is_some() {
+                eprintln!("gpu list: {report:?} render: {render:?}");
+            }
             self.last_pica_render_report = Some(render);
             return Ok(report);
         }
@@ -3510,6 +3513,19 @@ impl System {
         self.pica_render_settings = None;
         self.pica_render_session = None;
         self.last_pica_render_report = None;
+    }
+
+    /// Turns on guest-driven GPU rendering with the defaults a frontend needs.
+    ///
+    /// Without this, GSP ProcessCommandList only parses command lists and draws
+    /// never reach the framebuffer. Uses the fragment pipeline; the clip-depth
+    /// convention is the library default and has not been validated against
+    /// hardware.
+    pub fn enable_guest_gpu_rendering(&mut self) {
+        self.set_pica_fragment_rendering(Some(PicaRenderSettings {
+            clip_depth_range: crate::gpu::ClipDepthRange::default(),
+            default_color: [255, 255, 255, 255],
+        }));
     }
 
     /// Whether the PICA fixed-function fragment backend is enabled.
@@ -8360,6 +8376,9 @@ mod tests {
 
     #[test]
     fn arm11_guest_runs_the_srv_gsp_pica_lcd_chain_in_one_continuous_run() {
+        // libctru maps the GSP shared block at 0x10002000 in the guest; the HLE keeps
+        // its own alias outside the guest-mappable window.
+        const GUEST_SHARED_MEMORY_BASE: u32 = 0x1000_2000;
         use crate::gpu::{
             ClipDepthRange, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
             GSP_GX_COMMAND_PROCESS_COMMAND_LIST, PicaDepthBufferConfig, PicaRenderSettings,
@@ -8539,7 +8558,7 @@ mod tests {
         record(
             &mut table,
             tls_base + 0x48,
-            &[GSP_SHARED_MEMORY_BASE, 3, 0x1000_0000],
+            &[GUEST_SHARED_MEMORY_BASE, 3, 0x1000_0000],
         );
         record(
             &mut table,
@@ -8647,7 +8666,7 @@ mod tests {
         record(&mut table, vertex_address, &[0x0008_0000, 0x0000_0800]);
 
         let queue_address =
-            GSP_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
+            GUEST_SHARED_MEMORY_BASE + GspGxCommandQueue::client_queue_offset(0).unwrap();
         let dimensions = ((HEIGHT as u32) << 16) | WIDTH as u32;
         let mut ring = [0u32; 30];
         ring[0] = 0x0000_0300;
@@ -8669,7 +8688,7 @@ mod tests {
         // entry {active, left, right, stride, format, status, 0}.
         record(
             &mut table,
-            GSP_SHARED_MEMORY_BASE + GSP_TOP_FRAMEBUFFER_INFO_OFFSET,
+            GUEST_SHARED_MEMORY_BASE + GSP_TOP_FRAMEBUFFER_INFO_OFFSET,
             &[
                 0x0000_0100,
                 0,
@@ -8690,7 +8709,10 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&image_words)),
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture_with_services(
+                    &image_words,
+                    &[b"gsp::Gpu"],
+                )),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
