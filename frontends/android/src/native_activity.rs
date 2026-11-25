@@ -452,52 +452,49 @@ fn create_activity_global_ref(env: *mut c_void, activity: *mut c_void) -> Raw {
 /// by AAudio when a stream declares AAUDIO_USAGE_GAME.
 fn set_activity_volume_stream(env: JniEnv, activity: JniObject) {
     const STREAM_MUSIC: i32 = 3;
-    let Some(class): Option<JniObject> = {
-        let get: Option<GetObjectClassFn> = jni_function(env, 31);
-        get.map(|get| unsafe { get(env, activity) })
-    } else {
+    let get_class: Option<GetObjectClassFn> = jni_function(env, 31);
+    let Some(get_class) = get_class else {
         return;
     };
-    let method = {
-        let get: Option<GetMethodIdFn> = jni_function(env, 33);
-        get.and_then(|get| unsafe {
-            get(
+    // SAFETY: called with NativeActivity's live Activity instance.
+    let class = unsafe { get_class(env, activity) };
+    if class.is_null() {
+        return;
+    }
+
+    let get_method: Option<GetMethodIdFn> = jni_function(env, 33);
+    let method = get_method.and_then(|get_method| {
+        // SAFETY: descriptor and name match Activity.setVolumeControlStream(int).
+        let method = unsafe {
+            get_method(
                 env,
                 class,
                 b"setVolumeControlStream\\0".as_ptr().cast(),
                 b"(I)V\\0".as_ptr().cast(),
             )
-            .is_null()
-            .then_some(ptr::null_mut())
-            .or_else(|| {
-                Some(
-                    get(
-                        env,
-                        class,
-                        b"setVolumeControlStream\\0".as_ptr().cast(),
-                        b"(I)V\\0".as_ptr().cast(),
-                    ),
-                )
-            })
-        })
-    };
-    if let Some(method) = method.filter(|method| !method.is_null()) {
-        if let Some(call): Option<CallVoidMethodAFn> = jni_function(env, 63) {
+        };
+        (!method.is_null()).then_some(method)
+    });
+    if let Some(method) = method {
+        let call: Option<CallVoidMethodAFn> = jni_function(env, 63);
+        if let Some(call) = call {
             let args = [JniValue {
                 int_value: STREAM_MUSIC,
             }];
-            // SAFETY: method and one-int argument match Activity.setVolumeControlStream(int).
+            // SAFETY: Activity method ID and one-int argument match the JNI descriptor.
             unsafe { call(env, activity, method, args.as_ptr()) };
-            if let Some(clear): Option<ExceptionClearFn> = jni_function(env, 17) {
-                let pending: Option<ExceptionCheckFn> = jni_function(env, 228);
-                if pending.is_some_and(|check| unsafe { check(env) != 0 }) {
-                    // SAFETY: clears only the exception raised by this best-effort configuration.
-                    unsafe { clear(env) };
-                }
+        }
+        let pending: Option<ExceptionCheckFn> = jni_function(env, 228);
+        if pending.is_some_and(|check| unsafe { check(env) != 0 }) {
+            let clear: Option<ExceptionClearFn> = jni_function(env, 17);
+            if let Some(clear) = clear {
+                // SAFETY: this best-effort helper clears only its own pending JNI exception.
+                unsafe { clear(env) };
             }
         }
     }
-    if let Some(delete): Option<DeleteLocalRefFn> = jni_function(env, 23) {
+    let delete: Option<DeleteLocalRefFn> = jni_function(env, 23);
+    if let Some(delete) = delete {
         // SAFETY: class is the local reference returned by GetObjectClass.
         unsafe { delete(env, class) };
     }
