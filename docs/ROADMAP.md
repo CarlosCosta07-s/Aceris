@@ -226,16 +226,22 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 ### Backends host OpenGL e Vulkan
 
-- [ ] **OpenGL:** ainda não há contexto GL/ES, surface, rasterizer PICA, conversor GLSL, cache de textura/render target ou apresentação GPU. O desktop entrega pixels por caminho de imagem de software e o Android usa buffers CPU. Requisitos de referência do Azahar: OpenGL 4.3 no desktop e OpenGL ES 3.2 no Android.
-- [ ] **Vulkan:** ainda não há instance/device/queue/surface/swapchain, descriptor/pipeline cache, conversor SPIR-V ou rasterizer PICA. Requisito de referência do Azahar: Vulkan 1.1.
-- [ ] **Contrato comum:** snapshots de draw imutáveis e independentes da API, memória guest/DMA resolvida no core, backend selecionável e fallback software obrigatório. O presenter que apenas envia LCD RGBA ao swapchain é uma etapa separada e não conta como rasterizador PICA acelerado.
-- [ ] **Aceite:** equivalência de imagens determinísticas contra o rasterizador CPU, testes de coerência/readback, smoke tests por API, validação de surface/lifecycle em desktop e Android e perfil de quadros somente após paridade funcional. Dependências de bindings/contexto precisam de aprovação do mantenedor antes da inclusão no workspace.
+Atualização verificada em 25/11/2026:
+
+- [~] **Presenter OpenGL/OpenGL ES/Vulkan:** `aceris-graphics` usa `wgpu 30.0.2` e cria surface/swapchain a partir de handles Xlib, Win32, AppKit e Android Native Window. O backend GL atende OpenGL desktop e OpenGL ES; Vulkan é selecionável em plataformas habilitadas. `auto` escolhe Metal no macOS e habilita Vulkan/GL nas demais plataformas. O desktop e o Android apresentam frames por textura host e mantêm fallback CPU.
+- [x] **Seleção e diagnóstico host:** `ACERIS_GRAPHICS_BACKEND=auto|opengl|vulkan|software`; desktop/Android registram o adapter selecionado e o fallback quando a criação ou apresentação falha.
+- [ ] **OpenGL/ES como rasterizador PICA:** ainda faltam snapshots de draw guest, conversão de vertex/fragment shaders PICA, texturas/LUTs, estados fixos, cache de recursos e gravação coerente nos render targets guest.
+- [ ] **Vulkan como rasterizador PICA:** ainda faltam pipelines PICA, descriptors, allocator/cache de recursos, submissão e sincronização guest/readback. O presenter Vulkan atual não executa DRAWARRAYS/DRAWELEMENTS.
+- [ ] **Contrato comum:** snapshots de draw imutáveis e independentes da API, com memória guest/DMA resolvida no core, estados capturados no instante do draw, fallback explícito para a referência CPU e nenhuma perda silenciosa de draws não suportados.
+- [ ] **Aceite do rasterizador acelerado:** equivalência determinística de imagens contra o rasterizador CPU, testes de coerência/readback, smoke tests por backend e validação de surface/lifecycle em hardware desktop e Android. Não considerar o presenter de LCD RGBA como conclusão do rasterizador PICA.
+
+**Validação registrada:** no workflow [45679244054](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45679244054), `cargo build --locked --workspace` e `cargo test --locked -p aceris-graphics` passaram em Windows, Linux e macOS; o build Android ARM64 passou. O Clippy do workspace falhou por 30 avisos `manual_is_multiple_of` em arquivos de `aceris-core`, antes dos testes completos; isso não é uma falha observada no crate gráfico. Os testes do crate gráfico são testes unitários sem GPU física. Não houve validação em GPU real neste workflow.
 
 
 ## 5. Ciclo de execução e dispositivos
 
 - [x] `System::run_frame_with_budget` executa um orçamento de instruções ARM11, avança o relógio virtual, processa command buffers pendentes, faz scanout LCD e incrementa o contador de frame
-- [~] O orçamento de instruções é determinístico, mas não é temporização ciclo-a-ciclo; o renderizador ainda não executa a pipeline gráfica PICA200
+- [~] O orçamento de instruções é determinístico, mas não é temporização ciclo-a-ciclo; a pipeline PICA200 de referência é executada por software no núcleo, enquanto o presenter OpenGL/Vulkan atual atua somente sobre frames LCD já compostos e não acelera DRAWARRAYS/DRAWELEMENTS
 - [ ] Integrar relógios e interrupções dos dispositivos ao escalonador e à CPU
 - [~] Modelo de áudio e DSP: ver `dsp::DSP` HLE acima (mixagem básica de 24 vozes; sem efeitos nem verificação com jogos)
 - [~] Saída de áudio: Linux (ALSA via `dlopen`), Windows (`waveOut`), macOS (AudioQueue) e Android (AAudio via `dlopen`), com reamostragem linear 32728 → 48000 Hz e escrita sem bloqueio (descarta o excedente). Nenhuma foi ouvida em dispositivo real: só compilação/clippy e testes do reamostrador
