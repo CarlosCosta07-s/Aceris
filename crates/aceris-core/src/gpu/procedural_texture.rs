@@ -391,14 +391,8 @@ fn procedural_noise_coefficient(
     let x_fraction = x - x_integer as f32;
     let y_fraction = y - y_integer as f32;
 
-    let x_hashes = [
-        noise_rand_1d(x_integer),
-        noise_rand_1d(x_integer + 1),
-    ];
-    let y_hashes = [
-        noise_rand_1d(y_integer),
-        noise_rand_1d(y_integer + 1),
-    ];
+    let x_hashes = [noise_rand_1d(x_integer), noise_rand_1d(x_integer + 1)];
+    let y_hashes = [noise_rand_1d(y_integer), noise_rand_1d(y_integer + 1)];
 
     let fraction_sum = x_fraction + y_fraction;
     let g00 = noise_gradient_from_hashes(x_hashes[0], y_hashes[0]) * fraction_sum;
@@ -700,8 +694,7 @@ mod tests {
                     v ^= TABLE[u as usize];
                     -1.0 + (v as f32 * 2.0 / 15.0)
                 };
-                let actual =
-                    noise_gradient_from_hashes(noise_rand_1d(x), noise_rand_1d(y));
+                let actual = noise_gradient_from_hashes(noise_rand_1d(x), noise_rand_1d(y));
                 assert_eq!(actual, expected, "lattice coordinate ({x}, {y})");
             }
         }
