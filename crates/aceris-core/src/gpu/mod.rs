@@ -94,7 +94,8 @@ pub use index::{
 };
 pub use output_map::{
     OUTMAP_REGISTER_COUNT, PicaOutputGroup, PicaOutputMapError, PicaResolvedVertex,
-    PicaVertexOutputMap, REG_SH_OUTMAP_O0, REG_VSH_ENTRYPOINT,
+    PicaVertexOutputMap, REG_SH_OUTMAP_O0, REG_SH_OUTMAP_TOTAL, REG_VSH_ENTRYPOINT,
+    REG_VSH_OUTMAP_MASK,
 };
 pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,

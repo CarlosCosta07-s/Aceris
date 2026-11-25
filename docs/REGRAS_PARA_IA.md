@@ -36,15 +36,17 @@ Estas regras são obrigatórias para qualquer IA, agente automatizado ou colabor
 - Priorizar implementações próprias em Rust e APIs públicas de plataforma. Qualquer dependência técnica inevitável deve ser identificada, justificada e submetida ao mantenedor antes de ser introduzida.
 - Não declarar o projeto integralmente livre de dependências externas sem antes auditar e resolver as dependências já existentes.
 
-## 5. Referências técnicas de outros emuladores
+## 5. Referências de código aberto de outros emuladores
 
-- É proibido consultar código-fonte interno de outros emuladores, inclusive Azahar, Citra, Lime3DS e semelhantes. Não abrir, pesquisar, baixar, copiar ou usar arquivos-fonte, testes, fixtures, shaders, patches ou organização interna.
-- A análise permitida limita-se à superfície observável do produto e à documentação pública independente de hardware, formatos, APIs e protocolos.
-- Não copiar, traduzir, portar, adaptar ou reproduzir código, assets, interfaces ou organização interna de terceiros. Toda implementação do Aceris deve ser original e em Rust.
-- Se uma fonte misturar documentação independente com código interno de emulador, não consultar a parte de código. Em caso de dúvida, interromper e pedir orientação ao mantenedor.
-- Registrar fontes documentais independentes, URLs, datas, perguntas técnicas, nível de confiança e testes próprios. Comportamento observado em outro emulador não prova o comportamento físico do console.
-- Assets e recursos visuais/sonoros de terceiros continuam proibidos. Não incorporar dependências que forneçam implementação do emulador sem autorização explícita.
-- Todas as demais regras deste documento permanecem inalteradas: Rust em todo o produto, autoria própria, somente `main`, isolamento entre agentes e proteção de conteúdo.
+- É permitido consultar código-fonte de emuladores e ferramentas que sejam efetivamente open source, inclusive Azahar, Citra, Lime3DS e semelhantes, para investigar como resolvem problemas técnicos do Aceris.
+- Antes de consultar cada repositório e arquivo, verificar a licença do projeto, a licença específica do arquivo e eventuais avisos de terceiros. Um repositório público no GitHub não é automaticamente open source; arquivos distintos podem ter cabeçalhos/licenças diferentes.
+- A consulta pode abranger algoritmos, estados internos, protocolos, casos-limite, testes e estratégias de compatibilidade. Usar essa informação para compreender o problema e elaborar uma especificação técnica própria para o Aceris.
+- Toda implementação do produto deve continuar sendo escrita em Rust, com arquitetura, estruturas, APIs, testes e organização próprios. Não copiar trechos, traduzir linha a linha, portar ou reproduzir estruturalmente uma implementação de terceiros como forma de contornar a licença.
+- A inspiração técnica e a compreensão de um algoritmo não autorizam incorporar código protegido. Se uma solução exigir reutilização ou adaptação direta de código, parar e pedir autorização explícita ao mantenedor; antes de qualquer uso, avaliar compatibilidade da licença com a licença do Aceris, preservar avisos e cumprir todas as obrigações aplicáveis. Nunca presumir que código GPL possa ser incorporado a um projeto MIT sem consequências.
+- Não copiar testes, fixtures, shaders, patches, assets, interfaces ou documentação proprietária. Cenários de teste podem inspirar testes novos, desde que os dados e a implementação sejam criados independentemente e não contenham material protegido.
+- Registrar a fonte consultada (repositório, revisão, caminho, licença e data), a pergunta técnica, o entendimento obtido, o que foi implementado de forma independente e o nível de confiança. Comportamento de outro emulador não prova, por si só, comportamento do hardware.
+- Assets e recursos visuais/sonoros de terceiros continuam proibidos. Não introduzir dependências que forneçam implementação do emulador sem autorização explícita.
+- Todas as demais regras permanecem: Rust em todo o produto, autoria própria, somente `main`, isolamento entre agentes e proteção de conteúdo.
 
 ## 6. Verificação e proteção do trabalho
 

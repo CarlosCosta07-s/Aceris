@@ -1,20 +1,16 @@
 //! PICA200 vertex shader entrypoint and output map.
 //!
-//! The output map says which shader output register component (o0-o6, lanes
-//! x/y/z/w) carries which semantic (position, color, texture coordinates...).
-//! Each of GPUREG_SH_OUTMAP_O0..O6 holds one semantic byte per lane; the value
-//! 0x1F marks a lane as unused.
+//! The output map routes compacted vertex-shader outputs (o0-o15) to PICA
+//! semantics. GPUREG_VSH_OUTMAP_MASK selects enabled shader output registers;
+//! GPUREG_SH_OUTMAP_TOTAL limits how many semantic-map rows are consumed from
+//! GPUREG_SH_OUTMAP_O0..O6. Rows map to enabled outputs in ascending register
+//! order, so a sparse mask does not shift data into the wrong shader register.
 //!
-//! Only the position, color and texture-coordinate groups are resolved. Other
-//! documented semantics (quaternion, view vector, texcoord0 w) are accepted and
-//! ignored. The semantic numbering comes from public reverse-engineered
-//! documentation and has not been checked against hardware or an independent
-//! implementation here.
+//! Only position, color and texture-coordinate groups are resolved. Other
+//! documented semantics (quaternion, view vector, texcoord0 w) are accepted
+//! and ignored. The semantic numbering follows public hardware documentation.
 //!
-//! A semantic group is all-or-nothing: a position with three lanes mapped, or
-//! a semantic mapped twice, is reported as an error rather than completed with
-//! guessed defaults. The output-count register is not consulted; registers are
-//! decoded purely from their semantic bytes.
+//! Incomplete semantic groups and duplicate semantics are explicit errors.
 
 use super::geometry::GeometryVertex;
 use super::pica200::Pica200;
@@ -22,9 +18,13 @@ use super::{PicaShadedVertex, SHADER_OUTPUT_REGISTERS};
 
 /// GPUREG_VSH_ENTRYPOINT; bits 0..15 hold the first instruction index.
 pub const REG_VSH_ENTRYPOINT: u16 = 0x2BA;
+/// GPUREG_SH_OUTMAP_TOTAL: number of semantic-map rows consumed (0..=7).
+pub const REG_SH_OUTMAP_TOTAL: u16 = 0x04F;
 /// First of the seven GPUREG_SH_OUTMAP_O registers (o0).
 pub const REG_SH_OUTMAP_O0: u16 = 0x050;
-/// Number of output registers that have an output-map register (o0-o6).
+/// GPUREG_VSH_OUTMAP_MASK: enabled vertex-shader output registers o0-o15.
+pub const REG_VSH_OUTMAP_MASK: u16 = 0x2BD;
+/// Number of output-map rows available (o0-o6).
 pub const OUTMAP_REGISTER_COUNT: usize = 7;
 
 const UNUSED_SEMANTIC: u8 = 0x1F;
@@ -55,6 +55,10 @@ pub enum PicaOutputMapError {
     IncompleteGroup { group: PicaOutputGroup },
     /// No position is mapped, so the vertex cannot be placed.
     MissingPosition,
+    /// The guest requested more semantic-map rows than the hardware exposes.
+    OutputCountExceedsMap { count: usize, maximum: usize },
+    /// The vertex-shader output mask enables fewer registers than the map uses.
+    OutputMaskTooSmall { required: usize, enabled: usize },
 }
 
 impl std::fmt::Display for PicaOutputMapError {
@@ -67,6 +71,14 @@ impl std::fmt::Display for PicaOutputMapError {
                 write!(formatter, "output group {group:?} is only partly mapped")
             }
             Self::MissingPosition => write!(formatter, "the output map has no position"),
+            Self::OutputCountExceedsMap { count, maximum } => write!(
+                formatter,
+                "PICA output-map count {count} exceeds the {maximum} available rows"
+            ),
+            Self::OutputMaskTooSmall { required, enabled } => write!(
+                formatter,
+                "PICA output-map needs {required} enabled shader outputs, but the mask enables {enabled}"
+            ),
         }
     }
 }
@@ -89,12 +101,53 @@ pub struct PicaResolvedVertex {
 }
 
 impl PicaVertexOutputMap {
-    /// Decodes the seven output-map registers (o0-o6).
+    /// Decodes all seven rows as a dense o0-o6 map.
+    ///
+    /// This convenience constructor is useful for isolated tests and callers
+    /// that already have dense output registers. Guest state should use the
+    /// masked constructor so disabled shader outputs are skipped.
     pub fn from_registers(
         registers: [u32; OUTMAP_REGISTER_COUNT],
     ) -> Result<Self, PicaOutputMapError> {
+        let dense_mask = (1u16 << OUTMAP_REGISTER_COUNT) - 1;
+        Self::from_registers_masked(registers, dense_mask, OUTMAP_REGISTER_COUNT)
+    }
+
+    /// Decodes semantic-map rows using the guest's vertex-shader output mask.
+    ///
+    /// The first output_count rows are associated with enabled shader outputs
+    /// in ascending bit order. Rows beyond output_count are intentionally
+    /// ignored, even if their register contents are stale.
+    pub fn from_registers_masked(
+        registers: [u32; OUTMAP_REGISTER_COUNT],
+        output_mask: u16,
+        output_count: usize,
+    ) -> Result<Self, PicaOutputMapError> {
+        if output_count > OUTMAP_REGISTER_COUNT {
+            return Err(PicaOutputMapError::OutputCountExceedsMap {
+                count: output_count,
+                maximum: OUTMAP_REGISTER_COUNT,
+            });
+        }
+
+        let mut enabled_outputs = [0u8; SHADER_OUTPUT_REGISTERS];
+        let mut enabled_count = 0usize;
+        for output in 0..SHADER_OUTPUT_REGISTERS {
+            if output_mask & (1u16 << output) != 0 {
+                enabled_outputs[enabled_count] = output as u8;
+                enabled_count += 1;
+            }
+        }
+        if enabled_count < output_count {
+            return Err(PicaOutputMapError::OutputMaskTooSmall {
+                required: output_count,
+                enabled: enabled_count,
+            });
+        }
+
         let mut slots = [None; SEMANTIC_SLOTS];
-        for (output, register) in registers.iter().enumerate() {
+        for (row, register) in registers.iter().take(output_count).enumerate() {
+            let shader_output = enabled_outputs[row];
             for lane in 0..4usize {
                 let semantic = ((register >> (lane * 8)) & 0xFF) as u8;
                 if semantic == UNUSED_SEMANTIC || usize::from(semantic) >= SEMANTIC_SLOTS {
@@ -104,7 +157,7 @@ impl PicaVertexOutputMap {
                 if slot.is_some() {
                     return Err(PicaOutputMapError::DuplicateSemantic { semantic });
                 }
-                *slot = Some((output as u8, lane as u8));
+                *slot = Some((shader_output, lane as u8));
             }
         }
         Ok(Self { slots })
@@ -199,13 +252,15 @@ impl Pica200 {
         (raw & 0xFFFF) as usize
     }
 
-    /// Decodes the current output-map registers.
+    /// Decodes the current output-map rows and guest output-register mask.
     pub fn vertex_output_map(&self) -> Result<PicaVertexOutputMap, PicaOutputMapError> {
         let mut registers = [0u32; OUTMAP_REGISTER_COUNT];
         for (index, register) in registers.iter_mut().enumerate() {
             *register = self.register(REG_SH_OUTMAP_O0 + index as u16).unwrap_or(0);
         }
-        PicaVertexOutputMap::from_registers(registers)
+        let output_count = (self.register(REG_SH_OUTMAP_TOTAL).unwrap_or(0) & 0x7) as usize;
+        let output_mask = self.register(REG_VSH_OUTMAP_MASK).unwrap_or(0) as u16;
+        PicaVertexOutputMap::from_registers_masked(registers, output_mask, output_count)
     }
 }
 
@@ -352,12 +407,61 @@ mod tests {
     }
 
     #[test]
+    fn sparse_output_mask_routes_map_rows_to_enabled_shader_registers() {
+        let map = PicaVertexOutputMap::from_registers_masked(
+            registers(&[0x0302_0100, 0x0B0A_0908]),
+            0x0011,
+            2,
+        )
+        .unwrap();
+        assert_eq!(map.lane_for_semantic(0x00), Some((0, 0)));
+        assert_eq!(map.lane_for_semantic(0x08), Some((4, 0)));
+
+        let outputs = outputs_with(&[
+            (0, [1.0, 2.0, 3.0, 1.0]),
+            (4, [0.25, 0.5, 0.75, 1.0]),
+        ]);
+        let resolved = map.resolve(&outputs).unwrap();
+        assert_eq!(resolved.position, [1.0, 2.0, 3.0, 1.0]);
+        assert_eq!(resolved.color, Some([0.25, 0.5, 0.75, 1.0]));
+    }
+
+    #[test]
+    fn rows_after_the_guest_output_count_are_ignored() {
+        let map = PicaVertexOutputMap::from_registers_masked(
+            registers(&[0x0302_0100, 0x0302_0100]),
+            0x0001,
+            1,
+        )
+        .unwrap();
+        assert_eq!(map.lane_for_semantic(0x00), Some((0, 0)));
+    }
+
+    #[test]
+    fn invalid_output_count_or_mask_is_reported() {
+        let rows = [0x0302_0100; OUTMAP_REGISTER_COUNT];
+        assert_eq!(
+            PicaVertexOutputMap::from_registers_masked(rows, 0x0001, 2),
+            Err(PicaOutputMapError::OutputMaskTooSmall {
+                required: 2,
+                enabled: 1
+            })
+        );
+        assert_eq!(
+            PicaVertexOutputMap::from_registers_masked(rows, 0xFFFF, 8),
+            Err(PicaOutputMapError::OutputCountExceedsMap {
+                count: 8,
+                maximum: OUTMAP_REGISTER_COUNT
+            })
+        );
+    }
+
+    #[test]
     fn output_map_is_read_from_the_live_registers() {
         let mut gpu = Pica200::new();
-        // Power-on registers are all zero, which maps position.x four times.
         assert_eq!(
             gpu.vertex_output_map(),
-            Err(PicaOutputMapError::DuplicateSemantic { semantic: 0x00 })
+            Err(PicaOutputMapError::MissingPosition)
         );
 
         for index in 0..OUTMAP_REGISTER_COUNT as u16 {
@@ -365,6 +469,8 @@ mod tests {
                 .unwrap();
         }
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+        gpu.write_register(REG_SH_OUTMAP_TOTAL, 1).unwrap();
+        gpu.write_register(REG_VSH_OUTMAP_MASK, 1).unwrap();
         let map = gpu.vertex_output_map().unwrap();
         assert_eq!(map.lane_for_semantic(0x03), Some((0, 3)));
     }
