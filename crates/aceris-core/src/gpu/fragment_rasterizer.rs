@@ -1069,7 +1069,6 @@ mod tests {
             fragment_secondary_color: [0.0; 4],
             texture_coordinates: [[0.0; 2]; 3],
             texcoord0_w: 1.0,
-            texcoord0_w: 1.0,
         }
     }
 
