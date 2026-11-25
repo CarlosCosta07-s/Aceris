@@ -169,6 +169,54 @@ adb shell /data/local/tmp/aceris-memory-profile
 
 A CI apenas compila o executável Android; a medição ARM64 física continua pendente de execução em aparelho real. Não comparar resultados de runners CI com resultados de telefone sem considerar CPU/SoC, temperatura, energia e carga de fundo.
 
+## 5.3 Execução de homebrew real — Super Mario 64 3DS Port (Luigi Version) — 25/11/2026
+
+**Arquivo de teste:** CIA fornecido localmente pelo mantenedor, Title ID `0x000400000FAA5C00`, NCCH NoCrypto. O CIA e o código extraído permaneceram fora do repositório e da CI.
+
+### Resultado do caminho de execução
+
+O benchmark release oficial carregou o CIA e preparou o ARM11 em `PC=0x00100000`, `CPSR=0x00000010`. Nos cinco primeiros quadros:
+
+| Quadro | Tempo host | Instruções guest | Stop reason | GSP lists | LCD scanouts |
+|---:|---:|---:|---|---:|---:|
+| 1 | 202,166 ms | 2.348.557 | SVC 0x38 | 0 | 0 |
+| 2 | 0,004 ms | 15 | SVC 0x39 | 0 | 0 |
+| 3 | 0,001 ms | 7 | SVC 0x3A | 0 | 0 |
+| 4 | 0,005 ms | 49 | SVC 0x3C | 0 | 0 |
+| 5 | 0,002 ms | 24 | SVC 0x3C | 0 | 0 |
+
+As capturas top-left, top-right e bottom ficaram pretas. O throughput agregado aparente de 24,73 quadros/s nesta amostra **não é FPS de jogo**: quase todo o tempo foi gasto no primeiro trecho de bootstrap e os quadros seguintes apenas pararam em chamadas de supervisor não tratadas. Não houve submissão de listas gráficas nem scanout.
+
+### Falha reproduzível no bootstrap
+
+Com seis quadros de aquecimento e orçamento de 4.000.000 instruções por quadro, a execução falha no quadro 6:
+
+- erro: `invalid memory access at 0x08007FF8`;
+- thread: `ThreadId(1)`;
+- PC: `0x001D8C1C`;
+- SP (r13): `0x08008000`;
+- tamanho de stack principal declarado: `0x40000`;
+- heap de aplicação mapeado no relatório: **0 KiB**.
+
+A instrução em `0x001D8C1C` é `push {r4, lr}`; por isso ela tenta escrever os oito bytes em `SP - 8 = 0x08007FF8`. A falha é consistente com uma stack secundária de 32 KiB posicionada no início da janela de heap, mas a região não foi mapeada.
+
+### Rastreamento SVC e interpretação
+
+O trace mostra o guest chamando `0x38`, `0x39` e `0x3A` — GetResourceLimit, GetResourceLimitLimitValues e GetResourceLimitCurrentValues — e em seguida `0x23` (CloseHandle). Esses três SVCs de ResourceLimit não possuem handlers no despacho atual do Aceris e caem no caminho de SVC não tratado. A tabela pública de SVC documenta essas assinaturas e identifica `0x3C` como Break. [Referência SVC — 3dbrew](https://www.3dbrew.org/wiki/SVC).
+
+Depois das consultas, o guest pede `ControlMemory` (`0x01`) com operação de alocação, endereço `0x08000000` e tamanho zero. O Aceris responde `0xD8E007F1`; em seguida o guest emite `Break` (`0x3C`) e continua até usar `SP=0x08008000`. O trace também mostra uma tentativa de alocação linear `0x10003` com tamanho zero. A documentação pública descreve `0x08000000) como a janela de heap mapeada por `ControlMemory`. [Layout de memória — 3dbrew](https://www.3dbrew.org/wiki/Memory_layout) e [Memory Management — 3dbrew](https://www.3dbrew.org/wiki/Memory_Management).
+
+**Conclusão sustentada pelos dados:** o primeiro bloqueio observado deste título é de inicialização de memória/serviços do kernel guest, não um gargalo de throughput de CPU ou rasterização. A sequência aponta fortemente para a ausência de SVCs ResourceLimit e para uma alocação de heap com tamanho zero; ainda é necessário conferir o contrato de inicialização usado por este título antes de definir valores ou política de alocação. Não mascarar o problema mapeando uma página arbitrária nem relaxar permissões.
+
+### Próximas tarefas verificáveis
+
+1. Auditar, com o responsável pelo módulo de sessão/SVC, a semântica de `0x38`–`0x3A` e o encerramento/retorno de `0x3C`.
+2. Rastrear a origem do tamanho zero entregue a `ControlMemory` e validar o ABI completo `r0)–`r4` para a alocação regular e linear.
+3. Corrigir o mapeamento de heap/stack somente após determinar a alocação guest pretendida; cobrir base, tamanho, alinhamento, permissões e falhas com testes.
+4. Repetir o mesmo CIA e orçamento. O critério de avanço é chegar a uma primeira apresentação LCD não preta e atividade GSP/PICA observável antes de iniciar qualquer medição de FPS ou otimização por perfil.
+
+A coleta foi feita com o benchmark do commit `9228a03201d135b13f78b2b9a2605ce09e1824b4`; o helper de falha imprime thread, PC/CPSR, registradores e resumo de memória. Nenhum módulo de CPU, sessão, SVC, memória, GPU ou frontend foi alterado nesta análise.
+
 ## 6. O que esta etapa ainda não mede
 
 1. CPU ARM11 com scheduler, MMU e D-cache ativos em uma sessão guest completa. Use o benchmark integrado e perfis externos para esse caminho.
