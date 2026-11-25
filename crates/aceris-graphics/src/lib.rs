@@ -113,7 +113,9 @@ impl GraphicsBackend {
                     Ok(wgpu::Backends::VULKAN)
                 }
             }
-            Self::Software => Err("software presentation does not create a GPU presenter".to_string()),
+            Self::Software => {
+                Err("software presentation does not create a GPU presenter".to_string())
+            }
         }
     }
 }
@@ -182,14 +184,12 @@ impl GraphicsPresenter {
         }
         .map_err(|error| format!("could not create GPU surface: {error}"))?;
 
-        let adapter = pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            },
-        ))
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }))
         .map_err(|error| format!("no compatible {:?} GPU adapter: {error}", backend))?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
@@ -385,9 +385,11 @@ impl GraphicsPresenter {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Aceris frame presentation commands"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Aceris frame presentation commands"),
+            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Aceris host presentation pass"),
@@ -471,10 +473,7 @@ fn frame_byte_len(width: u32, height: u32) -> Result<usize, String> {
 }
 
 fn convert_bgrx_to_rgba(source: &[u8], destination: &mut [u8]) {
-    for (source, destination) in source
-        .chunks_exact(4)
-        .zip(destination.chunks_exact_mut(4))
-    {
+    for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
         destination.copy_from_slice(&[source[2], source[1], source[0], 0xFF]);
     }
 }
@@ -485,15 +484,28 @@ mod tests {
 
     #[test]
     fn backend_names_are_parsed_case_insensitively() {
-        assert_eq!(GraphicsBackend::parse("OpenGL").unwrap(), GraphicsBackend::OpenGl);
-        assert_eq!(GraphicsBackend::parse("VK").unwrap(), GraphicsBackend::Vulkan);
-        assert_eq!(GraphicsBackend::parse("SOFTWARE").unwrap(), GraphicsBackend::Software);
+        assert_eq!(
+            GraphicsBackend::parse("OpenGL").unwrap(),
+            GraphicsBackend::OpenGl
+        );
+        assert_eq!(
+            GraphicsBackend::parse("VK").unwrap(),
+            GraphicsBackend::Vulkan
+        );
+        assert_eq!(
+            GraphicsBackend::parse("SOFTWARE").unwrap(),
+            GraphicsBackend::Software
+        );
         assert_eq!(GraphicsBackend::parse("auto").unwrap(), GraphicsBackend::Auto);
     }
 
     #[test]
     fn unsupported_backend_names_return_a_useful_error() {
-        assert!(GraphicsBackend::parse("directx").unwrap_err().contains("ACERIS_GRAPHICS_BACKEND"));
+        assert!(
+            GraphicsBackend::parse("directx")
+                .unwrap_err()
+                .contains("ACERIS_GRAPHICS_BACKEND")
+        );
     }
 
     #[test]
