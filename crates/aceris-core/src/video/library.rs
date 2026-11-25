@@ -63,6 +63,8 @@ pub struct Library {
     page: LibraryPage,
     favorites: std::collections::HashSet<String>,
     recent: Vec<String>,
+    sort_descending: bool,
+    external_media_playing: bool,
 }
 
 /// Reads a persistent list of simple file names from the Aceris settings folder.
@@ -131,6 +133,8 @@ impl Library {
             page: LibraryPage::Home,
             favorites,
             recent,
+            sort_descending: false,
+            external_media_playing: false,
         }
     }
 
@@ -214,6 +218,23 @@ impl Library {
             .count()
     }
 
+    /// Switches between A–Z and Z–A; the Recent section keeps its time order.
+    pub fn toggle_sort_order(&mut self) {
+        self.sort_descending = !self.sort_descending;
+        self.selected = 0;
+        self.first_visible = 0;
+        self.status = Some(if self.sort_descending { "Ordem: Z–A" } else { "Ordem: A–Z" }.to_string());
+    }
+
+    /// Updates the external-media indicator shown on the home screen.
+    pub fn set_external_media_playing(&mut self, playing: bool) {
+        self.external_media_playing = playing;
+    }
+
+    pub fn external_media_playing(&self) -> bool {
+        self.external_media_playing
+    }
+
     fn persist_library_ids(&self, file_name: &str, values: impl IntoIterator<Item = String>) {
         let directory = Path::new(&self.directory_label).join(".aceris");
         if fs::create_dir_all(&directory).is_err() {
@@ -264,10 +285,14 @@ impl Library {
                 })
                 .collect();
         }
-        self.entries
+        let mut entries: Vec<&Entry> = self.entries
             .iter()
             .filter(|entry| self.entry_matches_page(entry))
-            .collect()
+            .collect();
+        if self.sort_descending {
+            entries.reverse();
+        }
+        entries
     }
 
     /// Shows a message (for example a load error) above the footer.
@@ -446,6 +471,10 @@ impl Library {
             return ClickResult::Ignored;
         }
 
+        if (18.0..68.0).contains(&y) && (700.0..830.0).contains(&x) {
+            self.toggle_sort_order();
+            return ClickResult::Ignored;
+        }
         if (18.0..68.0).contains(&y) && x >= 842.0 {
             self.reload();
             return ClickResult::Ignored;
@@ -463,7 +492,7 @@ impl Library {
                     self.select_page(LibraryPage::Favorites);
                 } else if (232.0..348.0).contains(&y) && x >= 664.0 {
                     self.select_page(LibraryPage::Homebrew);
-                } else if (350.0..logical_height - 24.0).contains(&y) {
+                } else if (350.0..logical_height - 24.0).contains(&y) && x < 650.0 {
                     self.select_page(LibraryPage::Games);
                 }
                 ClickResult::Ignored
@@ -688,7 +717,10 @@ impl Library {
         }
 
         let page_title = match self.page {
+            LibraryPage::Home => "Início",
             LibraryPage::Games => "Biblioteca",
+            LibraryPage::Favorites => "Favoritos",
+            LibraryPage::Recent => "Recentes",
             LibraryPage::Homebrew => "Homebrew e demos",
             LibraryPage::Settings => "Configurações",
         };
@@ -1079,403 +1111,169 @@ impl Library {
         scale: f32,
         logical_height: f32,
     ) {
-        let font_scale = (scale * 1.8).round().max(2.0) as usize;
-        let small_scale = (scale * 1.15).round().max(1.0) as usize;
+        let title_scale = (scale * 1.8).round().max(2.0) as usize;
+        let text_scale = (scale * 1.12).round().max(1.0) as usize;
+        let bottom = (logical_height - 24.0).max(400.0);
+        let homebrew_count = self.entries.iter().filter(|entry| {
+            entry.path.extension().and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("3dsx"))
+        }).count();
+        let game_count = self.entries.len().saturating_sub(homebrew_count);
 
-        responsive_fill(
-            frame,
-            width as usize,
-            height as usize,
-            0.0,
-            0.0,
-            205.0,
-            logical_height,
-            scale,
-            0x160D22,
-        );
-        responsive_fill(
-            frame,
-            width as usize,
-            height as usize,
-            202.0,
-            0.0,
-            3.0,
-            logical_height,
-            scale,
-            brand::ACCENT_RED,
-        );
-        responsive_text(
-            frame,
-            width,
-            height,
-            24.0,
-            24.0,
-            font_scale,
-            "ACERIS",
-            brand::TEXT,
-        );
-        responsive_text(
-            frame,
-            width,
-            height,
-            24.0,
-            64.0,
-            small_scale,
-            "Emulador de Nintendo 3DS",
-            0xBBAFC7,
-        );
+        // Fixed navigation rail, sized for a one-handed landscape launcher.
+        responsive_fill(frame, width as usize, height as usize, 0.0, 0.0, 104.0, logical_height, scale, 0x160D22);
+        responsive_fill(frame, width as usize, height as usize, 102.0, 0.0, 2.0, logical_height, scale, 0x563B67);
+        responsive_panel(frame, width, height, 17.0, 17.0, 68.0, 48.0, scale, brand::ACCENT_RED);
+        responsive_text_centered(frame, width, height, 51.0, 32.0, title_scale, "A", brand::TEXT);
 
-        let tabs = [
-            (16.0, 118.0, LibraryPage::Games, "Jogos"),
-            (16.0, 176.0, LibraryPage::Homebrew, "Homebrew"),
-            (16.0, 234.0, LibraryPage::Settings, "Configurações"),
+        let nav = [
+            (96.0, LibraryPage::Home, "INÍCIO", "H"),
+            (152.0, LibraryPage::Games, "JOGOS", "J"),
+            (208.0, LibraryPage::Favorites, "FAVORITOS", "F"),
+            (264.0, LibraryPage::Recent, "RECENTES", "R"),
+            (320.0, LibraryPage::Homebrew, "HOMEBREW", "D"),
+            (376.0, LibraryPage::Settings, "AJUSTES", "C"),
         ];
-        for (x, y, page, label) in tabs {
+        for (y, page, label, mark) in nav {
+            if self.page == page {
+                responsive_fill(frame, width as usize, height as usize, 0.0, y, 4.0, 48.0, scale, brand::ACCENT_RED);
+            }
             responsive_panel(
-                frame,
-                width,
-                height,
-                x,
-                y,
-                174.0,
-                48.0,
-                scale,
-                if self.page == page {
-                    brand::ACCENT_RED
-                } else {
-                    0x251731
-                },
+                frame, width, height, 13.0, y + 3.0, 78.0, 42.0, scale,
+                if self.page == page { 0x422038 } else { 0x21152F },
             );
-            responsive_text(
-                frame,
-                width,
-                height,
-                38.0,
-                y + 16.0,
-                small_scale,
-                label,
-                brand::TEXT,
+            responsive_text_centered(frame, width, height, 52.0, y + 7.0, text_scale + 1, mark, brand::ACCENT_GREEN_LIGHT);
+            responsive_text_centered(
+                frame, width, height, 52.0, y + 29.0,
+                (text_scale as f32 * 0.72).round().max(1.0) as usize, label, brand::TEXT,
             );
         }
-        responsive_text(
-            frame,
-            width,
-            height,
-            24.0,
-            (logical_height - 34.0).max(160.0),
-            small_scale,
-            "PC  |  ANDROID",
-            0xBBAFC7,
-        );
+        responsive_text_centered(frame, width, height, 52.0, (logical_height - 24.0).max(0.0), text_scale, "3DS", 0xBBAFC7);
 
-        let page_title = match self.page {
-            LibraryPage::Games => "Biblioteca",
-            LibraryPage::Homebrew => "Homebrew e demos",
-            LibraryPage::Settings => "Configurações",
+        // Consistent header and two useful toolbar actions on every page.
+        responsive_fill(frame, width as usize, height as usize, 104.0, 0.0, 896.0, 84.0, scale, 0x1D1029);
+        let (page_title, subtitle) = match self.page {
+            LibraryPage::Home => ("Seu espaço de jogos", "Tudo pronto para jogar"),
+            LibraryPage::Games => ("Biblioteca", "Seus jogos instalados"),
+            LibraryPage::Favorites => ("Favoritos", "Os jogos que você marcou"),
+            LibraryPage::Recent => ("Recentes", "Continue de onde parou"),
+            LibraryPage::Homebrew => ("Homebrew & demos", "Aplicativos e projetos caseiros"),
+            LibraryPage::Settings => ("Configurações", "Personalize sua experiência"),
         };
-        let description = match self.page {
-            LibraryPage::Games => format!("{} jogo(s) encontrados", self.visible_entry_count()),
-            LibraryPage::Homebrew => {
-                format!("{} homebrew(s) encontrados", self.visible_entry_count())
+        responsive_text(frame, width, height, 130.0, 17.0, title_scale, page_title, brand::TEXT);
+        responsive_text(frame, width, height, 132.0, 56.0, text_scale, subtitle, 0xBBAFC7);
+        responsive_panel(frame, width, height, 700.0, 18.0, 130.0, 50.0, scale, 0x2D1A3B);
+        responsive_text_centered(
+            frame, width, height, 765.0, 35.0, text_scale,
+            if self.sort_descending { "ORDEM Z–A" } else { "ORDEM A–Z" }, brand::ACCENT_GREEN_LIGHT,
+        );
+        responsive_panel(frame, width, height, 842.0, 18.0, 140.0, 50.0, scale, brand::ACCENT_RED);
+        responsive_text_centered(frame, width, height, 912.0, 35.0, text_scale, "ATUALIZAR", brand::TEXT);
+
+        match self.page {
+            LibraryPage::Home => {
+                responsive_panel(frame, width, height, 128.0, 112.0, 520.0, 228.0, scale, 0x21152F);
+                responsive_text(frame, width, height, 154.0, 137.0, text_scale, "CONTINUAR JOGANDO", brand::ACCENT_GREEN_LIGHT);
+                if let Some(entry) = self.selected_entry() {
+                    responsive_panel(frame, width, height, 154.0, 166.0, 132.0, 150.0, scale, 0x2D1A3B);
+                    responsive_text_centered(frame, width, height, 220.0, 202.0, title_scale + 1, "3DS", brand::TEXT);
+                    let extension = entry.path.extension().and_then(|v| v.to_str()).unwrap_or("3ds");
+                    responsive_text_centered(frame, width, height, 220.0, 273.0, text_scale, &extension.to_ascii_uppercase(), brand::ACCENT_GREEN_LIGHT);
+                    responsive_text(frame, width, height, 312.0, 189.0, title_scale, &truncate(&entry.title, 34), brand::TEXT);
+                    responsive_text(frame, width, height, 314.0, 226.0, text_scale, "Seu último jogo", 0xBBAFC7);
+                    responsive_panel(frame, width, height, 312.0, 263.0, 270.0, 48.0, scale, brand::ACCENT_RED);
+                    responsive_text_centered(frame, width, height, 447.0, 279.0, text_scale, "CONTINUAR", brand::TEXT);
+                } else {
+                    responsive_folder_icon(frame, width, height, 220.0, 235.0, scale);
+                    responsive_text(frame, width, height, 312.0, 190.0, title_scale, "Sua coleção começa aqui", brand::TEXT);
+                    responsive_text(frame, width, height, 314.0, 231.0, text_scale, "Adicione jogos para criar sua biblioteca.", 0xBBAFC7);
+                    responsive_panel(frame, width, height, 312.0, 268.0, 270.0, 44.0, scale, brand::ACCENT_RED);
+                    responsive_text_centered(frame, width, height, 447.0, 282.0, text_scale, "VER JOGOS", brand::TEXT);
+                }
+                responsive_panel(frame, width, height, 666.0, 112.0, 304.0, 104.0, scale, 0x21152F);
+                responsive_text(frame, width, height, 690.0, 137.0, text_scale, "FAVORITOS", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(frame, width, height, 690.0, 169.0, title_scale, &self.favorite_count().to_string(), brand::TEXT);
+                responsive_text(frame, width, height, 788.0, 176.0, text_scale, "VER COLEÇÃO", 0xBBAFC7);
+                responsive_panel(frame, width, height, 666.0, 232.0, 304.0, 108.0, scale, 0x21152F);
+                responsive_text(frame, width, height, 690.0, 257.0, text_scale, "HOMEBREW & DEMOS", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(frame, width, height, 690.0, 290.0, title_scale, &homebrew_count.to_string(), brand::TEXT);
+                responsive_text(frame, width, height, 788.0, 298.0, text_scale, "EXPLORAR", 0xBBAFC7);
+                responsive_panel(frame, width, height, 128.0, 352.0, 520.0, 72.0, scale, 0x21152F);
+                responsive_text(frame, width, height, 154.0, 373.0, text_scale, "SUA BIBLIOTECA", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(frame, width, height, 154.0, 399.0, text_scale, &format!("{} jogo(s) disponíveis", game_count), brand::TEXT);
+                responsive_panel(frame, width, height, 666.0, 352.0, 304.0, 72.0, scale, 0x21152F);
+                responsive_text(frame, width, height, 690.0, 373.0, text_scale, "MÚSICA EXTERNA", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(
+                    frame, width, height, 690.0, 399.0, (text_scale as f32 * 0.82).round().max(1.0) as usize,
+                    if self.external_media_playing { "Tocando — áudio do jogo mudo" } else { "Nenhuma mídia detectada" },
+                    if self.external_media_playing { brand::ACCENT_RED_LIGHT } else { 0xBBAFC7 },
+                );
             }
-            LibraryPage::Settings => "Pastas e formatos compatíveis".to_string(),
-        };
-        responsive_text(
-            frame,
-            width,
-            height,
-            238.0,
-            28.0,
-            font_scale,
-            page_title,
-            brand::TEXT,
-        );
-        responsive_text(
-            frame,
-            width,
-            height,
-            238.0,
-            68.0,
-            small_scale,
-            &description,
-            0xBBAFC7,
-        );
-        responsive_panel(
-            frame, width, height, 826.0, 28.0, 154.0, 54.0, scale, 0x2D1A3B,
-        );
-        responsive_text(
-            frame,
-            width,
-            height,
-            850.0,
-            48.0,
-            small_scale,
-            "Atualizar",
-            brand::ACCENT_GREEN_LIGHT,
-        );
-
-        if self.page == LibraryPage::Settings {
-            responsive_panel(
-                frame, width, height, 238.0, 130.0, 742.0, 340.0, scale, 0x21152F,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                270.0,
-                166.0,
-                small_scale,
-                "Pasta de jogos",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                270.0,
-                204.0,
-                small_scale,
-                &tail(&self.directory_label, 86),
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                270.0,
-                266.0,
-                small_scale,
-                "Formatos reconhecidos",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                270.0,
-                310.0,
-                small_scale,
-                ".3ds  /  .cci  /  .3dsx",
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                270.0,
-                342.0,
-                small_scale,
-                "Os arquivos permanecem no seu dispositivo.",
-                0xBBAFC7,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                270.0,
-                366.0,
-                330.0,
-                54.0,
-                scale,
-                brand::ACCENT_RED,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                435.0,
-                385.0,
-                small_scale,
-                "Atualizar biblioteca",
-                brand::TEXT,
-            );
-        } else if self.visible_entry_count() == 0 {
-            let panel_height = (logical_height - 184.0).max(250.0);
-            responsive_panel(
-                frame,
-                width,
-                height,
-                238.0,
-                130.0,
-                742.0,
-                panel_height,
-                scale,
-                0x21152F,
-            );
-            responsive_folder_icon(frame, width, height, 609.0, 196.0, scale);
-            let (title, first_line, second_line, formats) = if self.page == LibraryPage::Homebrew {
-                (
-                    "Nenhum homebrew encontrado",
-                    "Adicione arquivos .3dsx a pasta de jogos.",
-                    "Depois, atualize a biblioteca.",
-                    "Formato: .3dsx",
-                )
-            } else {
-                (
-                    "Sua biblioteca está vazia",
-                    "Adicione seus arquivos .3ds ou .cci a pasta",
-                    "de jogos configurada no Aceris.",
-                    "Formatos: .3ds / .cci / .3dsx",
-                )
-            };
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                609.0,
-                276.0,
-                font_scale,
-                title,
-                brand::TEXT,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                609.0,
-                326.0,
-                small_scale,
-                first_line,
-                0xBBAFC7,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                609.0,
-                354.0,
-                small_scale,
-                second_line,
-                0xBBAFC7,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                609.0,
-                398.0,
-                small_scale,
-                &tail(&self.directory_label, 90),
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                490.0,
-                452.0,
-                240.0,
-                54.0,
-                scale,
-                brand::ACCENT_RED,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                610.0,
-                471.0,
-                small_scale,
-                "Atualizar biblioteca",
-                brand::TEXT,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                610.0,
-                526.0,
-                small_scale,
-                formats,
-                0xBBAFC7,
-            );
-        } else {
-            let row_height = 76.0;
-            let visible = ((logical_height - 196.0).max(row_height) / row_height)
-                .floor()
-                .max(1.0) as usize;
-            for (row, entry) in self
-                .filtered_entries()
-                .enumerate()
-                .skip(self.first_visible)
-                .take(visible)
-            {
-                let y = 142.0 + (row - self.first_visible) as f32 * row_height;
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    238.0,
-                    y,
-                    742.0,
-                    62.0,
-                    scale,
-                    if row == self.selected {
-                        0x422038
-                    } else {
-                        0x21152F
-                    },
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    252.0,
-                    y + 10.0,
-                    56.0,
-                    42.0,
-                    scale,
-                    0x2D1A3B,
-                );
+            LibraryPage::Settings => {
+                responsive_panel(frame, width, height, 128.0, 112.0, 842.0, 318.0, scale, 0x21152F);
+                responsive_text(frame, width, height, 158.0, 143.0, text_scale, "PASTA DE JOGOS", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(frame, width, height, 158.0, 176.0, text_scale, &tail(&self.directory_label, 78), brand::TEXT);
+                responsive_text(frame, width, height, 158.0, 222.0, text_scale, "FORMATOS RECONHECIDOS", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(frame, width, height, 158.0, 254.0, text_scale, ".3ds  /  .cci  /  .3dsx", brand::TEXT);
+                responsive_text(frame, width, height, 590.0, 143.0, text_scale, "ÁUDIO EM SEGUNDO PLANO", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(frame, width, height, 590.0, 176.0, text_scale, "Detecção de mídia externa: automática", brand::TEXT);
+                responsive_text(frame, width, height, 590.0, 205.0, text_scale, "Jogos são silenciados durante música externa.", 0xBBAFC7);
                 responsive_text(
-                    frame,
-                    width,
-                    height,
-                    262.0,
-                    y + 24.0,
-                    small_scale,
-                    "3DS",
-                    brand::ACCENT_GREEN_LIGHT,
+                    frame, width, height, 590.0, 254.0, text_scale,
+                    if self.external_media_playing { "Status: mídia tocando" } else { "Status: sem mídia ativa" },
+                    if self.external_media_playing { brand::ACCENT_RED_LIGHT } else { 0xBBAFC7 },
                 );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    326.0,
-                    y + 22.0,
-                    small_scale,
-                    &truncate(&entry.title, 76),
-                    brand::TEXT,
-                );
-                let extension = entry
-                    .path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("3ds");
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    900.0,
-                    y + 24.0,
-                    small_scale,
-                    &extension.to_ascii_lowercase(),
-                    brand::ACCENT_GREEN_LIGHT,
-                );
+                responsive_panel(frame, width, height, 158.0, 298.0, 240.0, 52.0, scale, brand::ACCENT_RED);
+                responsive_text_centered(frame, width, height, 278.0, 315.0, text_scale, "ATUALIZAR BIBLIOTECA", brand::TEXT);
+            }
+            LibraryPage::Games | LibraryPage::Favorites | LibraryPage::Recent | LibraryPage::Homebrew => {
+                let entries = self.filtered_entries();
+                if entries.is_empty() {
+                    responsive_panel(frame, width, height, 128.0, 112.0, 842.0, (bottom - 112.0).max(240.0), scale, 0x21152F);
+                    responsive_folder_icon(frame, width, height, 550.0, 218.0, scale);
+                    let empty = match self.page {
+                        LibraryPage::Favorites => "Nenhum favorito ainda",
+                        LibraryPage::Recent => "Nenhum jogo recente",
+                        LibraryPage::Homebrew => "Nenhum homebrew encontrado",
+                        _ => "Sua biblioteca está vazia",
+                    };
+                    responsive_text_centered(frame, width, height, 550.0, 290.0, title_scale, empty, brand::TEXT);
+                    responsive_text_centered(frame, width, height, 550.0, 326.0, text_scale, "Adicione jogos à pasta do Aceris e atualize.", 0xBBAFC7);
+                    responsive_panel(frame, width, height, 438.0, 366.0, 224.0, 46.0, scale, brand::ACCENT_RED);
+                    responsive_text_centered(frame, width, height, 550.0, 381.0, text_scale, "ATUALIZAR", brand::TEXT);
+                } else {
+                    let row_step = 94.0;
+                    let card_top = 124.0;
+                    let visible_rows = ((bottom - card_top) / row_step).floor().max(1.0) as usize;
+                    let visible_items = visible_rows * 3;
+                    for (index, entry) in entries.into_iter().enumerate().skip(self.first_visible).take(visible_items) {
+                        let relative = index - self.first_visible;
+                        let row = relative / 3;
+                        let column = relative % 3;
+                        let x = 128.0 + column as f32 * 284.0;
+                        let y = card_top + row as f32 * row_step;
+                        responsive_panel(
+                            frame, width, height, x, y, 270.0, 82.0, scale,
+                            if index == self.selected { 0x422038 } else { 0x21152F },
+                        );
+                        responsive_panel(frame, width, height, x + 8.0, y + 8.0, 56.0, 66.0, scale, 0x2D1A3B);
+                        responsive_text_centered(frame, width, height, x + 36.0, y + 24.0, text_scale + 1, "3DS", brand::ACCENT_GREEN_LIGHT);
+                        responsive_text(frame, width, height, x + 74.0, y + 19.0, text_scale, &truncate(&entry.title, 20), brand::TEXT);
+                        let extension = entry.path.extension().and_then(|v| v.to_str()).unwrap_or("3ds");
+                        responsive_text(frame, width, height, x + 74.0, y + 49.0, (text_scale as f32 * 0.84).round().max(1.0) as usize, &extension.to_ascii_uppercase(), 0xBBAFC7);
+                        responsive_panel(
+                            frame, width, height, x + 218.0, y + 8.0, 42.0, 25.0, scale,
+                            if self.is_favorite(entry) { brand::ACCENT_RED } else { 0x33223F },
+                        );
+                        responsive_text_centered(frame, width, height, x + 239.0, y + 14.0, text_scale, if self.is_favorite(entry) { "F" } else { "+" }, brand::TEXT);
+                    }
+                }
             }
         }
         if let Some(status) = &self.status {
-            responsive_text(
-                frame,
-                width,
-                height,
-                238.0,
-                (logical_height - 42.0).max(0.0),
-                small_scale,
-                &truncate(status, 110),
-                brand::ACCENT_RED_LIGHT,
-            );
+            responsive_text(frame, width, height, 128.0, (logical_height - 18.0).max(0.0), text_scale, &truncate(status, 100), brand::ACCENT_RED_LIGHT);
         }
+        responsive_text(frame, width, height, 128.0, (logical_height - 18.0).max(0.0), 1, "ACERIS  •  RUST  •  SEUS ARQUIVOS, SUAS REGRAS", 0xBBAFC7);
     }
 
     /// Draws the library as a 400x480 RGBA frame.
