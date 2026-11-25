@@ -49,7 +49,7 @@ fn print_usage() {
     );
     println!("        --window     Show both LCDs in a window and run frames until it is");
     println!("                     closed (Linux/X11 only for now)");
-    println!("        --scale <N>  Integer window scale factor, 1-4 (default 2)");
+    println!("        --scale <N>  Integer window scale factor, 1-4 (default 1)");
     println!("        --games <DIR>");
     println!("        --background-dir <DIR>");
     println!("                     Folder of 400x480 .rgba frames for an animated home background");
@@ -417,19 +417,30 @@ fn browse_library(
                 window::WindowEvent::CloseRequested => return Ok(None),
                 window::WindowEvent::Redraw => {}
                 window::WindowEvent::Key(window::Key::Escape) => return Ok(None),
-                window::WindowEvent::Key(window::Key::Up) => library.move_selection(-1),
-                window::WindowEvent::Key(window::Key::Down) => library.move_selection(1),
+                window::WindowEvent::Key(window::Key::Up) => library.move_selection_responsive(-1, window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32),
+                window::WindowEvent::Key(window::Key::Down) => library.move_selection_responsive(1, window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32),
                 window::WindowEvent::Key(window::Key::PageUp) => {
-                    library.move_selection(-(VISIBLE_ROWS as i32))
+                    library.move_selection_responsive(-(VISIBLE_ROWS as i32), window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32)
                 }
                 window::WindowEvent::Key(window::Key::PageDown) => {
-                    library.move_selection(VISIBLE_ROWS as i32)
+                    library.move_selection_responsive(VISIBLE_ROWS as i32, window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32)
                 }
-                window::WindowEvent::Key(window::Key::Enter) => activate = true,
+                window::WindowEvent::Key(window::Key::Enter) => {
+                    if library.page() == aceris_core::video::library::LibraryPage::Settings {
+                        library.reload();
+                    } else {
+                        activate = true;
+                    }
+                }
                 window::WindowEvent::Scroll(rows) => library.move_selection(rows * 3),
                 window::WindowEvent::Click { x, y } => {
                     let (x, y) = (x / scale as i32, y / scale as i32);
-                    activate = library.click(x, y) == ClickResult::Activated;
+                    activate = library.click_responsive(
+                        x,
+                        y,
+                        window::CANVAS_WIDTH as u32,
+                        window::CANVAS_HEIGHT as u32,
+                    ) == ClickResult::Activated;
                 }
                 // Controller input only matters while a game is running.
                 window::WindowEvent::Game { .. }
@@ -444,7 +455,11 @@ fn browse_library(
         }
         let started = Instant::now();
         let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
-        let rgba = library.render_animated(animation_frame, background_frame);
+        let rgba = library.render_responsive(
+            window::CANVAS_WIDTH as u32,
+            window::CANVAS_HEIGHT as u32,
+        );
+        let _ = (animation_frame, background_frame);
         let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
         present_desktop_frame(
             window,
@@ -641,7 +656,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let mut game = None;
     let mut dump_lcd = None;
     let mut window = false;
-    let mut scale = 2;
+    let mut scale = 1;
     let mut skip_intro = false;
     let mut games_dir = None;
     let mut background_dir = None;
