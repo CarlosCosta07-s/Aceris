@@ -4915,6 +4915,29 @@ mod tests {
             .map_linear_memory_region(virtual_base, physical_base, 0x6000)
             .unwrap();
 
+        // A wide read miss fills one line and returns the requested scalar.
+        memory
+            .write(physical_base + 0x80, &0x8877_6655u32.to_le_bytes())
+            .unwrap();
+        assert_eq!(
+            address_space.read32(virtual_base + 0x80).unwrap(),
+            0x8877_6655
+        );
+        assert_eq!(address_space.data_cache_line_count(), 1);
+        assert_eq!(
+            address_space.read16(virtual_base + 0x82).unwrap(),
+            0x8877
+        );
+
+        // A miss spanning two cache lines must retain the byte-wise fallback.
+        memory
+            .write(physical_base + 30, &[0xAA, 0xBB, 0xCC, 0xDD])
+            .unwrap();
+        assert_eq!(
+            address_space.read32(virtual_base + 30).unwrap(),
+            0xDDCC_BBAA
+        );
+
         // Miss, then hit: a word store followed by byte, half-word and word loads.
         address_space
             .write32(virtual_base + 4, 0x4433_2211)
