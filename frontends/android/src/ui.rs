@@ -88,8 +88,12 @@ pub unsafe extern "C" fn aceris_library_create(
         return std::ptr::null_mut();
     };
     let entries = library::scan_games(Path::new(text));
+    // Keep the legacy fixed-canvas C ABI on its historical game-list page.
+    // The NativeActivity app constructs its own Library and opens the new Home.
+    let mut library = Library::new(entries, text.to_string());
+    library.select_page(library::LibraryPage::Games);
     Box::into_raw(Box::new(AcerisLibraryHandle {
-        library: Library::new(entries, text.to_string()),
+        library,
         orientation: ORIENTATION_AUTO,
     }))
 }
