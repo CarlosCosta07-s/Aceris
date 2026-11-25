@@ -188,8 +188,10 @@ impl PicaProceduralTextureSampler {
         u = u.abs();
         v = v.abs();
 
-        u += shift_offset(self.config.u_shift, v, self.config.u_clamp)?;
-        v += shift_offset(self.config.v_shift, u, self.config.v_clamp)?;
+        let u_shift = shift_offset(self.config.u_shift, v, self.config.u_clamp)?;
+        let v_shift = shift_offset(self.config.v_shift, u, self.config.v_clamp)?;
+        u += u_shift;
+        v += v_shift;
         u = clamp_coordinate(u, self.config.u_clamp)?;
         v = clamp_coordinate(v, self.config.v_clamp)?;
 
@@ -372,10 +374,10 @@ fn clamp_coordinate(
 mod tests {
     use super::*;
     use crate::gpu::{
-        PicaFragmentPipeline, PicaFragmentVaryings, PicaProceduralTextureLut,
-        PicaTextureEnvironment, GpuPhysicalMemory, REG_PROCTEX_LUT, REG_PROCTEX_LUT_DATA0,
-        REG_TEXENV0_OPERAND, REG_TEXUNIT3_PROCTEX0, REG_TEXUNIT3_PROCTEX4,
-        REG_TEXUNIT3_PROCTEX5, REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
+        GpuPhysicalMemory, PicaFragmentPipeline, PicaFragmentVaryings,
+        PicaProceduralTextureLut, REG_PROCTEX_LUT, REG_PROCTEX_LUT_DATA0,
+        REG_TEXUNIT3_PROCTEX0, REG_TEXUNIT3_PROCTEX4, REG_TEXUNIT3_PROCTEX5,
+        REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn write(pica: &mut Pica200, register: u16, value: u32) {
@@ -466,7 +468,8 @@ mod tests {
         let color = sampler
             .sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]])
             .unwrap();
-        assert_color(color, [100, 110, 120, 64]);
+        assert_color([color[0], color[1], color[2], 1.0], [100, 110, 120, 255]);
+        assert!((color[3] - 0.25).abs() < 1.0e-6);
     }
 
     #[test]
@@ -482,7 +485,7 @@ mod tests {
         let color = sampler
             .sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]])
             .unwrap();
-        assert_color(color, [60, 70, 80, 255]);
+        assert_color(color, [35, 45, 55, 255]);
     }
 
     #[test]
