@@ -361,7 +361,7 @@ impl PicaFragmentPipeline {
     /// Evaluates one fragment after texture fetch, using the captured draw state.
     ///
     /// Texture unit 3 uses the captured procedural generator when enabled.
-    /// Unsupported noise, mipmap, bias and reserved modes fail explicitly.
+    /// Unsupported mipmap filters, non-zero bias and reserved modes fail explicitly.
     pub fn shade_fragment(
         &self,
         memory: &GpuPhysicalMemory,
