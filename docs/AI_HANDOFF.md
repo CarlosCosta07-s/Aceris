@@ -2352,3 +2352,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O commit `3b85bf258d8d197ad1dafc79333f8fdbcf7c8574` passou no workflow [45603812470](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45603812470) em Linux, Windows, macOS e Android ARM64.
 - Formatação, builds, Clippy, testes completos e benchmarks release passaram nos desktops; builds release do app e do benchmark passaram no Android.
 - O diagnóstico de serviço HLE fica visível na biblioteca ao sair do jogo pelo botão Voltar. O CIA não foi incluído na CI e o teste manual ignorado continua pendente de execução com o arquivo local.
+
+## Cookie Clicker: menu renderizado nas duas telas e desempenho (2026-11-25)
+
+- Em 900 quadros (orçamento 4M, ~8 min) o jogo mostra o **menu inicial nas duas telas** (título + cookie em cima; play/Options/mascote embaixo). A tela de abertura "PORT BY CRECKERYOP" vem antes. Serviços ainda reportados: `http:C`, `ir:rst`, `ssl:C` (não registrados) e `cfg:i`, `cfg:s`, `ptm:sysm` (negados pela ACL do NCCH do jogo — comportamento esperado).
+- **Desempenho (instrumentado com gdb + binário com `line-tables-only`):** (1) `Bus::fetch16/fetch32` (padrão = `read*`); o espaço de endereços lê o segmento de texto estático direto, sem o modelo de D-cache (boot de 60 quadros: 25,1 s → 15,6 s, PC final idêntico). (2) `cache_lines_for_range` consulta o `BTreeMap` do cache por intervalo em vez de enumerar cada linha possível (evita 9 000 inserções por flush de framebuffer). (3) `set_arm11_smp_mode` só toma o lock do SCU quando o valor muda (era um `Mutex` por instrução, ~15%). 400 quadros: 126 s → 114 s. Ainda ~3,5 quadros/s contra 60 necessários: restam alocações em VFP (`vfp_vector_register_lanes` aloca `Vec` por operação), `Result<StepEvent, Error>` grande, lookup BTreeMap do escalonador por instrução e rasterização por pixel.
+- Teste novo: `instruction_fetch_reads_text_directly_and_matches_data_reads`.

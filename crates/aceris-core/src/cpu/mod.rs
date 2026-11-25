@@ -447,9 +447,9 @@ impl Arm11Core {
 
         let thumb = self.cpsr.thumb();
         let fetched = if thumb {
-            bus.read16(pc).map(u32::from)
+            bus.fetch16(pc).map(u32::from)
         } else {
-            bus.read32(pc)
+            bus.fetch32(pc)
         };
         let instruction = fetched.inspect_err(|_| self.prefetch_fault = true)?;
         let (event, size) = if thumb {

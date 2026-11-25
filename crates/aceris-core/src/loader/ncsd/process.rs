@@ -889,6 +889,9 @@ pub struct Arm11CodeAddressSpace {
     static_backing_ids: [u64; 5],
     /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
     data_cache: BTreeMap<DataCacheKey, Arm11DataCacheLine>,
+    /// Last ACTLR.SMP value published to the SCU per core; the CPU reports it
+    /// after every instruction, so repeats must not take the SCU lock.
+    published_smp_mode: [Option<bool>; 2],
     /// Per-set least-recently-used order, oldest line first.
     data_cache_lru: Vec<VecDeque<DataCacheKey>>,
     /// FIFO of dirty D-cache lines awaiting visibility in physical memory.
@@ -990,6 +993,7 @@ impl Arm11CodeAddressSpace {
             mpcore_interrupt_controller: MpcoreInterruptController::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
+            published_smp_mode: [None; 2],
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
                 .collect(),
@@ -1087,6 +1091,7 @@ impl Arm11CodeAddressSpace {
             mpcore_interrupt_controller: MpcoreInterruptController::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
+            published_smp_mode: [None; 2],
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
                 .collect(),
@@ -1140,6 +1145,7 @@ impl Arm11CodeAddressSpace {
     /// Attaches the system-wide MPCore SCU peripheral visible to this process.
     pub fn attach_mpcore_scu(&mut self, scu: MpcoreScu) {
         self.mpcore_scu = Some(scu);
+        self.published_smp_mode = [None; 2];
     }
 
     /// Advances the application core's MPCore private timer using virtual time.
@@ -2630,6 +2636,19 @@ impl Arm11CodeAddressSpace {
     ///
     /// Returns `None` (leaving all state untouched) for anything that needs the
     /// full path: a miss, a line-crossing access, or an unreadable location.
+    /// Instruction-stream fast path: the static text segment is never written
+    /// by the guest, so it is read directly without the data-cache model.
+    #[inline]
+    fn fetch_text_bytes<const N: usize>(&self, address: u32) -> Option<[u8; N]> {
+        let segment = self.layout.text;
+        let offset = usize::try_from(address.checked_sub(segment.address)?).ok()?;
+        let bytes = self.text.get(offset..offset.checked_add(N)?)?;
+        if offset + N > segment.mapped_size_bytes as usize {
+            return None;
+        }
+        bytes.try_into().ok()
+    }
+
     fn try_read_cached_hit(&mut self, address: u32, len: usize) -> Option<u32> {
         let location = self.locate(address)?;
         if !self.location_is_readable(location) {
@@ -3028,17 +3047,20 @@ impl Arm11CodeAddressSpace {
                 });
             }
 
-            let (mut key, _target, mut offset) =
+            let (mut key, _target, offset) =
                 self.cache_location(location).ok_or(Error::InvalidAccess {
                     addr: current_address,
                 })?;
-            let mut remaining = region_end - current;
-            while remaining > 0 {
-                lines.insert(key);
-                let covered = remaining.min((ARM11_DATA_CACHE_LINE_SIZE - offset) as u64);
-                remaining -= covered;
-                offset = 0;
-                key.line_offset += ARM11_DATA_CACHE_LINE_SIZE as u64;
+            // Only resident lines matter to every caller, and the cache is
+            // ordered by (backing, line offset): query the span instead of
+            // enumerating each possible line of a large range.
+            let remaining = region_end - current;
+            let line_size = ARM11_DATA_CACHE_LINE_SIZE as u64;
+            let line_count = (offset as u64 + remaining).div_ceil(line_size);
+            let first = key;
+            key.line_offset += line_size * (line_count - 1);
+            for (resident, _) in self.data_cache.range(first..=key) {
+                lines.insert(*resident);
             }
 
             current = region_end;
@@ -3352,6 +3374,20 @@ impl Bus for Arm11CodeAddressSpace {
         Ok(u16::from_le_bytes([lo, hi]))
     }
 
+    fn fetch16(&mut self, address: u32) -> BusResult<u16> {
+        if let Some(value) = self.fetch_text_bytes::<2>(address) {
+            return Ok(u16::from_le_bytes(value));
+        }
+        self.read16(address)
+    }
+
+    fn fetch32(&mut self, address: u32) -> BusResult<u32> {
+        if let Some(value) = self.fetch_text_bytes::<4>(address) {
+            return Ok(u32::from_le_bytes(value));
+        }
+        self.read32(address)
+    }
+
     fn read32(&mut self, address: u32) -> BusResult<u32> {
         if self.mpcore_private_timer_register_offset(address).is_some() {
             return self.read_mpcore_private_timer_register(address);
@@ -3535,8 +3571,18 @@ impl Bus for Arm11CodeAddressSpace {
     }
 
     fn set_arm11_smp_mode(&mut self, core_id: u32, enabled: bool) {
+        let Some(slot) = usize::try_from(core_id)
+            .ok()
+            .and_then(|index| self.published_smp_mode.get_mut(index))
+        else {
+            return;
+        };
+        if *slot == Some(enabled) {
+            return;
+        }
         if let Some(scu) = &self.mpcore_scu {
             scu.set_cpu_smp_mode(core_id, enabled);
+            *slot = Some(enabled);
         }
     }
 
@@ -5321,6 +5367,32 @@ mod tests {
         assert!(address_space.is_writable_range(0x0800_0000, 0x2000));
         assert!(address_space.is_writable_range(0x0800_4000, 0x3000));
         assert!(!address_space.is_writable_range(0x0800_2000, 1));
+    }
+
+    #[test]
+    fn instruction_fetch_reads_text_directly_and_matches_data_reads() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let text = address_space.layout.text;
+        assert!(!text.is_empty());
+
+        let by_fetch = address_space.fetch32(text.address).unwrap();
+        let by_read = address_space.read32(text.address).unwrap();
+        assert_eq!(by_fetch, by_read);
+        let half = address_space.fetch16(text.address).unwrap();
+        assert_eq!(u32::from(half), by_read & 0xFFFF);
+
+        // Outside the text segment the fetch falls back to the data path.
+        let stack = address_space.layout.stack;
+        assert_eq!(
+            address_space.fetch32(stack.address).unwrap(),
+            address_space.read32(stack.address).unwrap()
+        );
+        // A fetch that straddles the end of text is not served directly.
+        let end = text.address + text.mapped_size_bytes;
+        assert_eq!(
+            address_space.fetch_text_bytes::<4>(end.wrapping_sub(2)),
+            None
+        );
     }
 
     #[test]

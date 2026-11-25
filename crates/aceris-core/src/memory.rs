@@ -94,6 +94,18 @@ pub trait Bus {
         Ok(())
     }
 
+    /// Fetches one halfword of instruction stream. Buses with a dedicated
+    /// instruction path may bypass the data cache model; by default this is a
+    /// plain data read.
+    fn fetch16(&mut self, addr: u32) -> Result<u16> {
+        self.read16(addr)
+    }
+
+    /// Fetches one word of instruction stream (see [`Bus::fetch16`]).
+    fn fetch32(&mut self, addr: u32) -> Result<u32> {
+        self.read32(addr)
+    }
+
     /// Completes all writes accepted by this bus before the barrier instruction.
     ///
     /// Synchronous buses may keep the default implementation because each store
