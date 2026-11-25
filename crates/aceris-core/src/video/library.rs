@@ -29,7 +29,6 @@ pub struct Entry {
     pub path: PathBuf,
 }
 
-
 /// Which launcher page is currently visible.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LibraryPage {
@@ -165,7 +164,10 @@ impl Library {
         self.entries = scan_games(Path::new(&self.directory_label));
         self.selected = 0;
         self.first_visible = 0;
-        self.status = Some(format!("BIBLIOTECA ATUALIZADA: {} JOGO(S)", self.entries.len()));
+        self.status = Some(format!(
+            "BIBLIOTECA ATUALIZADA: {} JOGO(S)",
+            self.entries.len()
+        ));
     }
 
     /// Moves selection using the number of rows actually visible on this surface.
@@ -209,7 +211,11 @@ impl Library {
         let (x, y) = (x as f32 / scale, y as f32 / scale);
         if portrait {
             if (100.0..150.0).contains(&y) {
-                self.page = if x < 200.0 { LibraryPage::Games } else { LibraryPage::Settings };
+                self.page = if x < 200.0 {
+                    LibraryPage::Games
+                } else {
+                    LibraryPage::Settings
+                };
                 self.status = None;
                 return ClickResult::Ignored;
             }
@@ -295,11 +301,16 @@ impl Library {
 
     /// Renders into a caller-owned RGBA buffer, retaining its allocation.
     pub fn render_responsive_into(&self, width: u32, height: u32, frame: &mut Vec<u8>) -> bool {
-        let Some((portrait, scale, logical_width, logical_height)) = responsive_metrics(width, height) else {
+        let Some((portrait, scale, logical_width, logical_height)) =
+            responsive_metrics(width, height)
+        else {
             frame.clear();
             return false;
         };
-        let Some(byte_len) = (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(4)) else {
+        let Some(byte_len) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+        else {
             frame.clear();
             return false;
         };
@@ -311,7 +322,17 @@ impl Library {
             }
         }
         frame.resize(byte_len, 255);
-        responsive_fill(frame, width as usize, height as usize, 0.0, 0.0, logical_width, logical_height, scale, 0x100A1B);
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            logical_width,
+            logical_height,
+            scale,
+            0x100A1B,
+        );
         if portrait {
             self.render_portrait(frame, width, height, scale, logical_height);
         } else {
@@ -320,116 +341,782 @@ impl Library {
         true
     }
 
-    fn render_portrait(&self, frame: &mut [u8], width: u32, height: u32, scale: f32, logical_height: f32) {
+    fn render_portrait(
+        &self,
+        frame: &mut [u8],
+        width: u32,
+        height: u32,
+        scale: f32,
+        logical_height: f32,
+    ) {
         let font_scale = (scale * 1.7).round().max(1.0) as usize;
         let small_scale = (font_scale as f32 * 0.67).round().max(1.0) as usize;
-        responsive_fill(frame, width as usize, height as usize, 0.0, 0.0, 400.0, 84.0, scale, 0x160D22);
-        responsive_fill(frame, width as usize, height as usize, 0.0, 82.0, 400.0, 3.0, scale, brand::ACCENT_RED);
-        responsive_text(frame, width, height, 22.0, 14.0, font_scale, "ACERIS", brand::TEXT);
-        responsive_text(frame, width, height, 24.0, 54.0, small_scale, "EMULADOR DE NINTENDO 3DS", 0xBBAFC7);
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            400.0,
+            84.0,
+            scale,
+            0x160D22,
+        );
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            82.0,
+            400.0,
+            3.0,
+            scale,
+            brand::ACCENT_RED,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            22.0,
+            14.0,
+            font_scale,
+            "ACERIS",
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            24.0,
+            54.0,
+            small_scale,
+            "EMULADOR DE NINTENDO 3DS",
+            0xBBAFC7,
+        );
 
-        let active = if self.page == LibraryPage::Games { 0 } else { 1 };
-        responsive_panel(frame, width, height, 20.0, 101.0, 174.0, 44.0, scale, if active == 0 { brand::ACCENT_RED } else { 0x251731 });
-        responsive_panel(frame, width, height, 206.0, 101.0, 174.0, 44.0, scale, if active == 1 { brand::ACCENT_RED } else { 0x251731 });
-        responsive_text(frame, width, height, 45.0, 116.0, small_scale, "JOGOS", brand::TEXT);
-        responsive_text(frame, width, height, 232.0, 116.0, small_scale, "CONFIGURACOES", brand::TEXT);
+        let active = if self.page == LibraryPage::Games {
+            0
+        } else {
+            1
+        };
+        responsive_panel(
+            frame,
+            width,
+            height,
+            20.0,
+            101.0,
+            174.0,
+            44.0,
+            scale,
+            if active == 0 {
+                brand::ACCENT_RED
+            } else {
+                0x251731
+            },
+        );
+        responsive_panel(
+            frame,
+            width,
+            height,
+            206.0,
+            101.0,
+            174.0,
+            44.0,
+            scale,
+            if active == 1 {
+                brand::ACCENT_RED
+            } else {
+                0x251731
+            },
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            45.0,
+            116.0,
+            small_scale,
+            "JOGOS",
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            232.0,
+            116.0,
+            small_scale,
+            "CONFIGURACOES",
+            brand::TEXT,
+        );
 
         if self.page == LibraryPage::Settings {
-            responsive_text(frame, width, height, 22.0, 178.0, font_scale, "CONFIGURACOES", brand::TEXT);
-            responsive_text(frame, width, height, 22.0, 210.0, small_scale, "ARMAZENAMENTO E COMPATIBILIDADE", 0xBBAFC7);
-            responsive_panel(frame, width, height, 20.0, 252.0, 360.0, 310.0, scale, 0x21152F);
-            responsive_text(frame, width, height, 38.0, 278.0, small_scale, "PASTA DE JOGOS", brand::ACCENT_GREEN_LIGHT);
-            responsive_text(frame, width, height, 38.0, 308.0, small_scale, &tail(&self.directory_label, 46), brand::TEXT);
-            responsive_text(frame, width, height, 38.0, 365.0, small_scale, "FORMATOS LISTADOS", brand::ACCENT_GREEN_LIGHT);
-            responsive_text(frame, width, height, 38.0, 395.0, small_scale, ".3DS  .CCI  .3DSX", brand::TEXT);
-            responsive_text(frame, width, height, 38.0, 452.0, small_scale, "GRAFICO: AUTO (PADRAO)", brand::TEXT);
-            responsive_text(frame, width, height, 38.0, 482.0, small_scale, "VULKAN / OPENGL ES COM FALLBACK", 0xBBAFC7);
-            responsive_panel(frame, width, height, 20.0, 600.0, 360.0, 52.0, scale, brand::ACCENT_RED);
-            responsive_text(frame, width, height, 66.0, 618.0, small_scale, "RECARREGAR BIBLIOTECA", brand::TEXT);
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                178.0,
+                font_scale,
+                "CONFIGURACOES",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                210.0,
+                small_scale,
+                "ARMAZENAMENTO E COMPATIBILIDADE",
+                0xBBAFC7,
+            );
+            responsive_panel(
+                frame, width, height, 20.0, 252.0, 360.0, 310.0, scale, 0x21152F,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                38.0,
+                278.0,
+                small_scale,
+                "PASTA DE JOGOS",
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                38.0,
+                308.0,
+                small_scale,
+                &tail(&self.directory_label, 46),
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                38.0,
+                365.0,
+                small_scale,
+                "FORMATOS LISTADOS",
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                38.0,
+                395.0,
+                small_scale,
+                ".3DS  .CCI  .3DSX",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                38.0,
+                452.0,
+                small_scale,
+                "GRAFICO: AUTO (PADRAO)",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                38.0,
+                482.0,
+                small_scale,
+                "VULKAN / OPENGL ES COM FALLBACK",
+                0xBBAFC7,
+            );
+            responsive_panel(
+                frame,
+                width,
+                height,
+                20.0,
+                600.0,
+                360.0,
+                52.0,
+                scale,
+                brand::ACCENT_RED,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                66.0,
+                618.0,
+                small_scale,
+                "RECARREGAR BIBLIOTECA",
+                brand::TEXT,
+            );
         } else {
-            responsive_text(frame, width, height, 22.0, 178.0, font_scale, "SUA BIBLIOTECA", brand::TEXT);
-            responsive_text(frame, width, height, 22.0, 212.0, small_scale, &format!("{} JOGO(S) DISPONIVEL(IS)", self.entries.len()), 0xBBAFC7);
-            responsive_panel(frame, width, height, 322.0, 174.0, 58.0, 44.0, scale, 0x2D1A3B);
-            responsive_text(frame, width, height, 329.0, 188.0, small_scale, "RECAR.", brand::ACCENT_GREEN_LIGHT);
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                178.0,
+                font_scale,
+                "SUA BIBLIOTECA",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                212.0,
+                small_scale,
+                &format!("{} JOGO(S) DISPONIVEL(IS)", self.entries.len()),
+                0xBBAFC7,
+            );
+            responsive_panel(
+                frame, width, height, 322.0, 174.0, 58.0, 44.0, scale, 0x2D1A3B,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                329.0,
+                188.0,
+                small_scale,
+                "RECAR.",
+                brand::ACCENT_GREEN_LIGHT,
+            );
             if self.entries.is_empty() {
                 let card_height = (logical_height - 320.0).clamp(340.0, 520.0);
-                responsive_panel(frame, width, height, 20.0, 250.0, 360.0, card_height, scale, 0x21152F);
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    20.0,
+                    250.0,
+                    360.0,
+                    card_height,
+                    scale,
+                    0x21152F,
+                );
                 responsive_folder_icon(frame, width, height, 166.0, 302.0, scale);
-                responsive_text(frame, width, height, 45.0, 414.0, small_scale, "SUA COLECAO COMeca AQUI", brand::TEXT);
-                responsive_text(frame, width, height, 42.0, 454.0, small_scale, "ADICIONE SEUS ARQUIVOS 3DS", 0xBBAFC7);
-                responsive_text(frame, width, height, 42.0, 482.0, small_scale, "A PASTA DE JOGOS DO ACERIS.", 0xBBAFC7);
-                responsive_text(frame, width, height, 42.0, 532.0, small_scale, &tail(&self.directory_label, 40), brand::ACCENT_GREEN_LIGHT);
-                responsive_panel(frame, width, height, 38.0, 602.0, 324.0, 52.0, scale, brand::ACCENT_RED);
-                responsive_text(frame, width, height, 74.0, 620.0, small_scale, "ATUALIZAR BIBLIOTECA", brand::TEXT);
-                responsive_text(frame, width, height, 42.0, 682.0, small_scale, "FORMATOS: .3DS  .CCI  .3DSX", 0xBBAFC7);
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    45.0,
+                    414.0,
+                    small_scale,
+                    "SUA COLECAO COMeca AQUI",
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    42.0,
+                    454.0,
+                    small_scale,
+                    "ADICIONE SEUS ARQUIVOS 3DS",
+                    0xBBAFC7,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    42.0,
+                    482.0,
+                    small_scale,
+                    "A PASTA DE JOGOS DO ACERIS.",
+                    0xBBAFC7,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    42.0,
+                    532.0,
+                    small_scale,
+                    &tail(&self.directory_label, 40),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    602.0,
+                    324.0,
+                    52.0,
+                    scale,
+                    brand::ACCENT_RED,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    74.0,
+                    620.0,
+                    small_scale,
+                    "ATUALIZAR BIBLIOTECA",
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    42.0,
+                    682.0,
+                    small_scale,
+                    "FORMATOS: .3DS  .CCI  .3DSX",
+                    0xBBAFC7,
+                );
             } else {
                 let row_height = 58.0;
-                let visible = ((logical_height - 350.0).max(row_height) / row_height).floor().max(1.0) as usize;
-                for (row, entry) in self.entries.iter().enumerate().skip(self.first_visible).take(visible) {
+                let visible = ((logical_height - 350.0).max(row_height) / row_height)
+                    .floor()
+                    .max(1.0) as usize;
+                for (row, entry) in self
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .skip(self.first_visible)
+                    .take(visible)
+                {
                     let y = 250.0 + (row - self.first_visible) as f32 * row_height;
-                    responsive_panel(frame, width, height, 20.0, y, 360.0, 50.0, scale, if row == self.selected { 0x422038 } else { 0x21152F });
-                    responsive_text(frame, width, height, 36.0, y + 17.0, small_scale, &truncate(&entry.title, 38), brand::TEXT);
-                    let ext = entry.path.extension().and_then(|v| v.to_str()).unwrap_or("3DS");
-                    responsive_text(frame, width, height, 330.0, y + 18.0, small_scale, &ext.to_ascii_uppercase(), brand::ACCENT_GREEN_LIGHT);
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        20.0,
+                        y,
+                        360.0,
+                        50.0,
+                        scale,
+                        if row == self.selected {
+                            0x422038
+                        } else {
+                            0x21152F
+                        },
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        36.0,
+                        y + 17.0,
+                        small_scale,
+                        &truncate(&entry.title, 38),
+                        brand::TEXT,
+                    );
+                    let ext = entry
+                        .path
+                        .extension()
+                        .and_then(|v| v.to_str())
+                        .unwrap_or("3DS");
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        330.0,
+                        y + 18.0,
+                        small_scale,
+                        &ext.to_ascii_uppercase(),
+                        brand::ACCENT_GREEN_LIGHT,
+                    );
                 }
             }
         }
         if let Some(status) = &self.status {
-            responsive_text(frame, width, height, 22.0, (logical_height - 62.0).max(720.0), small_scale, &truncate(status, 54), brand::ACCENT_RED_LIGHT);
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                (logical_height - 62.0).max(720.0),
+                small_scale,
+                &truncate(status, 54),
+                brand::ACCENT_RED_LIGHT,
+            );
         }
-        responsive_fill(frame, width as usize, height as usize, 0.0, (logical_height - 36.0).max(0.0), 400.0, 36.0, scale, 0x160D22);
-        responsive_text(frame, width, height, 22.0, (logical_height - 22.0).max(0.0), small_scale, "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS", 0xBBAFC7);
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            (logical_height - 36.0).max(0.0),
+            400.0,
+            36.0,
+            scale,
+            0x160D22,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            22.0,
+            (logical_height - 22.0).max(0.0),
+            small_scale,
+            "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS",
+            0xBBAFC7,
+        );
     }
 
-    fn render_landscape(&self, frame: &mut [u8], width: u32, height: u32, scale: f32, logical_height: f32) {
+    fn render_landscape(
+        &self,
+        frame: &mut [u8],
+        width: u32,
+        height: u32,
+        scale: f32,
+        logical_height: f32,
+    ) {
         let font_scale = (scale * 1.8).round().max(1.0) as usize;
         let small_scale = (font_scale as f32 * 0.67).round().max(1.0) as usize;
-        responsive_fill(frame, width as usize, height as usize, 0.0, 0.0, 205.0, logical_height, scale, 0x160D22);
-        responsive_fill(frame, width as usize, height as usize, 202.0, 0.0, 3.0, logical_height, scale, brand::ACCENT_RED);
-        responsive_text(frame, width, height, 24.0, 30.0, font_scale, "ACERIS", brand::TEXT);
-        responsive_text(frame, width, height, 24.0, 68.0, small_scale, "NINTENDO 3DS", 0xBBAFC7);
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            205.0,
+            logical_height,
+            scale,
+            0x160D22,
+        );
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            202.0,
+            0.0,
+            3.0,
+            logical_height,
+            scale,
+            brand::ACCENT_RED,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            24.0,
+            30.0,
+            font_scale,
+            "ACERIS",
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            24.0,
+            68.0,
+            small_scale,
+            "NINTENDO 3DS",
+            0xBBAFC7,
+        );
 
         let active_games = self.page == LibraryPage::Games;
-        responsive_panel(frame, width, height, 16.0, 118.0, 174.0, 48.0, scale, if active_games { brand::ACCENT_RED } else { 0x251731 });
-        responsive_text(frame, width, height, 40.0, 134.0, small_scale, "BIBLIOTECA", brand::TEXT);
-        responsive_panel(frame, width, height, 16.0, 176.0, 174.0, 48.0, scale, if !active_games { brand::ACCENT_RED } else { 0x251731 });
-        responsive_text(frame, width, height, 40.0, 192.0, small_scale, "CONFIGURACOES", brand::TEXT);
-        responsive_text(frame, width, height, 24.0, (logical_height - 62.0).max(160.0), small_scale, "PC  |  ANDROID", 0xBBAFC7);
+        responsive_panel(
+            frame,
+            width,
+            height,
+            16.0,
+            118.0,
+            174.0,
+            48.0,
+            scale,
+            if active_games {
+                brand::ACCENT_RED
+            } else {
+                0x251731
+            },
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            40.0,
+            134.0,
+            small_scale,
+            "BIBLIOTECA",
+            brand::TEXT,
+        );
+        responsive_panel(
+            frame,
+            width,
+            height,
+            16.0,
+            176.0,
+            174.0,
+            48.0,
+            scale,
+            if !active_games {
+                brand::ACCENT_RED
+            } else {
+                0x251731
+            },
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            40.0,
+            192.0,
+            small_scale,
+            "CONFIGURACOES",
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            24.0,
+            (logical_height - 62.0).max(160.0),
+            small_scale,
+            "PC  |  ANDROID",
+            0xBBAFC7,
+        );
 
-        responsive_text(frame, width, height, 238.0, 32.0, font_scale, if active_games { "SUA BIBLIOTECA" } else { "CONFIGURACOES" }, brand::TEXT);
-        responsive_text(frame, width, height, 238.0, 72.0, small_scale, "GERENCIE SEUS JOGOS E PREFERENCIAS", 0xBBAFC7);
-        responsive_panel(frame, width, height, 826.0, 28.0, 154.0, 54.0, scale, 0x2D1A3B);
-        responsive_text(frame, width, height, 850.0, 48.0, small_scale, if active_games { "ATUALIZAR" } else { "RECARREGAR" }, brand::ACCENT_GREEN_LIGHT);
+        responsive_text(
+            frame,
+            width,
+            height,
+            238.0,
+            32.0,
+            font_scale,
+            if active_games {
+                "SUA BIBLIOTECA"
+            } else {
+                "CONFIGURACOES"
+            },
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            238.0,
+            72.0,
+            small_scale,
+            "GERENCIE SEUS JOGOS E PREFERENCIAS",
+            0xBBAFC7,
+        );
+        responsive_panel(
+            frame, width, height, 826.0, 28.0, 154.0, 54.0, scale, 0x2D1A3B,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            850.0,
+            48.0,
+            small_scale,
+            if active_games {
+                "ATUALIZAR"
+            } else {
+                "RECARREGAR"
+            },
+            brand::ACCENT_GREEN_LIGHT,
+        );
 
         if !active_games {
-            responsive_panel(frame, width, height, 238.0, 130.0, 742.0, 340.0, scale, 0x21152F);
-            responsive_text(frame, width, height, 270.0, 166.0, small_scale, "PASTA DE JOGOS", brand::ACCENT_GREEN_LIGHT);
-            responsive_text(frame, width, height, 270.0, 204.0, small_scale, &tail(&self.directory_label, 86), brand::TEXT);
-            responsive_text(frame, width, height, 270.0, 266.0, small_scale, "FORMATOS LISTADOS: .3DS  .CCI  .3DSX", brand::TEXT);
-            responsive_text(frame, width, height, 270.0, 310.0, small_scale, "GRAFICO: AUTO / VULKAN / OPENGL", 0xBBAFC7);
-            responsive_panel(frame, width, height, 270.0, 366.0, 330.0, 54.0, scale, brand::ACCENT_RED);
-            responsive_text(frame, width, height, 318.0, 385.0, small_scale, "RECARREGAR BIBLIOTECA", brand::TEXT);
+            responsive_panel(
+                frame, width, height, 238.0, 130.0, 742.0, 340.0, scale, 0x21152F,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                270.0,
+                166.0,
+                small_scale,
+                "PASTA DE JOGOS",
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                270.0,
+                204.0,
+                small_scale,
+                &tail(&self.directory_label, 86),
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                270.0,
+                266.0,
+                small_scale,
+                "FORMATOS LISTADOS: .3DS  .CCI  .3DSX",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                270.0,
+                310.0,
+                small_scale,
+                "GRAFICO: AUTO / VULKAN / OPENGL",
+                0xBBAFC7,
+            );
+            responsive_panel(
+                frame,
+                width,
+                height,
+                270.0,
+                366.0,
+                330.0,
+                54.0,
+                scale,
+                brand::ACCENT_RED,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                318.0,
+                385.0,
+                small_scale,
+                "RECARREGAR BIBLIOTECA",
+                brand::TEXT,
+            );
         } else if self.entries.is_empty() {
-            responsive_panel(frame, width, height, 238.0, 130.0, 742.0, (logical_height - 184.0).max(250.0), scale, 0x21152F);
+            responsive_panel(
+                frame,
+                width,
+                height,
+                238.0,
+                130.0,
+                742.0,
+                (logical_height - 184.0).max(250.0),
+                scale,
+                0x21152F,
+            );
             responsive_folder_icon(frame, width, height, 565.0, 214.0, scale);
-            responsive_text(frame, width, height, 420.0, 318.0, font_scale, "SUA COLECAO COMeca AQUI", brand::TEXT);
-            responsive_text(frame, width, height, 408.0, 360.0, small_scale, "COLOQUE .3DS, .CCI OU .3DSX NA PASTA DE JOGOS", 0xBBAFC7);
-            responsive_text(frame, width, height, 290.0, 405.0, small_scale, &tail(&self.directory_label, 96), brand::ACCENT_GREEN_LIGHT);
-            responsive_panel(frame, width, height, 490.0, 452.0, 240.0, 54.0, scale, brand::ACCENT_RED);
-            responsive_text(frame, width, height, 520.0, 471.0, small_scale, "ATUALIZAR", brand::TEXT);
+            responsive_text(
+                frame,
+                width,
+                height,
+                420.0,
+                318.0,
+                font_scale,
+                "SUA COLECAO COMeca AQUI",
+                brand::TEXT,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                408.0,
+                360.0,
+                small_scale,
+                "COLOQUE .3DS, .CCI OU .3DSX NA PASTA DE JOGOS",
+                0xBBAFC7,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                290.0,
+                405.0,
+                small_scale,
+                &tail(&self.directory_label, 96),
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            responsive_panel(
+                frame,
+                width,
+                height,
+                490.0,
+                452.0,
+                240.0,
+                54.0,
+                scale,
+                brand::ACCENT_RED,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                520.0,
+                471.0,
+                small_scale,
+                "ATUALIZAR",
+                brand::TEXT,
+            );
         } else {
             let row_height = 76.0;
-            let visible = ((logical_height - 196.0).max(row_height) / row_height).floor().max(1.0) as usize;
-            for (row, entry) in self.entries.iter().enumerate().skip(self.first_visible).take(visible) {
+            let visible = ((logical_height - 196.0).max(row_height) / row_height)
+                .floor()
+                .max(1.0) as usize;
+            for (row, entry) in self
+                .entries
+                .iter()
+                .enumerate()
+                .skip(self.first_visible)
+                .take(visible)
+            {
                 let y = 142.0 + (row - self.first_visible) as f32 * row_height;
-                responsive_panel(frame, width, height, 238.0, y, 742.0, 62.0, scale, if row == self.selected { 0x422038 } else { 0x21152F });
-                responsive_text(frame, width, height, 264.0, y + 22.0, small_scale, &truncate(&entry.title, 86), brand::TEXT);
-                let ext = entry.path.extension().and_then(|v| v.to_str()).unwrap_or("3DS");
-                responsive_text(frame, width, height, 890.0, y + 24.0, small_scale, &ext.to_ascii_uppercase(), brand::ACCENT_GREEN_LIGHT);
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    238.0,
+                    y,
+                    742.0,
+                    62.0,
+                    scale,
+                    if row == self.selected {
+                        0x422038
+                    } else {
+                        0x21152F
+                    },
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    264.0,
+                    y + 22.0,
+                    small_scale,
+                    &truncate(&entry.title, 86),
+                    brand::TEXT,
+                );
+                let ext = entry
+                    .path
+                    .extension()
+                    .and_then(|v| v.to_str())
+                    .unwrap_or("3DS");
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    890.0,
+                    y + 24.0,
+                    small_scale,
+                    &ext.to_ascii_uppercase(),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
             }
         }
         if let Some(status) = &self.status {
-            responsive_text(frame, width, height, 238.0, (logical_height - 42.0).max(0.0), small_scale, &truncate(status, 110), brand::ACCENT_RED_LIGHT);
+            responsive_text(
+                frame,
+                width,
+                height,
+                238.0,
+                (logical_height - 42.0).max(0.0),
+                small_scale,
+                &truncate(status, 110),
+                brand::ACCENT_RED_LIGHT,
+            );
         }
     }
 
@@ -620,7 +1307,6 @@ impl Library {
     }
 }
 
-
 fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> {
     if width < 160 || height < 160 || width > 4096 || height > 4096 {
         return None;
@@ -629,8 +1315,12 @@ fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> 
     let logical_width = if portrait { 400.0 } else { 1000.0 };
     let scale = width as f32 / logical_width;
     let logical_height = height as f32 / scale;
-    (scale.is_finite() && scale > 0.0 && logical_height.is_finite())
-        .then_some((portrait, scale, logical_width, logical_height))
+    (scale.is_finite() && scale > 0.0 && logical_height.is_finite()).then_some((
+        portrait,
+        scale,
+        logical_width,
+        logical_height,
+    ))
 }
 
 fn responsive_fill(
@@ -648,13 +1338,11 @@ fn responsive_fill(
     let top = (y * scale).floor().max(0.0) as usize;
     let right = ((x + rect_width) * scale).ceil().min(width as f32) as usize;
     let bottom = ((y + rect_height) * scale).ceil().min(height as f32) as usize;
-    let pixel = [
-        (color >> 16) as u8,
-        (color >> 8) as u8,
-        color as u8,
-        255,
-    ];
-    if left >= right || top >= bottom || frame.len() != width.saturating_mul(height).saturating_mul(4) {
+    let pixel = [(color >> 16) as u8, (color >> 8) as u8, color as u8, 255];
+    if left >= right
+        || top >= bottom
+        || frame.len() != width.saturating_mul(height).saturating_mul(4)
+    {
         return;
     }
     for row in top..bottom {
@@ -677,8 +1365,28 @@ fn responsive_panel(
     scale: f32,
     color: u32,
 ) {
-    responsive_fill(frame, width as usize, height as usize, x, y, rect_width, rect_height, scale, 0x563B67);
-    responsive_fill(frame, width as usize, height as usize, x + 1.0, y + 1.0, rect_width - 2.0, rect_height - 2.0, scale, color);
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x,
+        y,
+        rect_width,
+        rect_height,
+        scale,
+        0x563B67,
+    );
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x + 1.0,
+        y + 1.0,
+        rect_width - 2.0,
+        rect_height - 2.0,
+        scale,
+        color,
+    );
 }
 
 fn responsive_text(
@@ -699,25 +1407,44 @@ fn responsive_text(
         y.round() as i32,
         text_scale.max(1),
         text,
-        [
-            (color >> 16) as u8,
-            (color >> 8) as u8,
-            color as u8,
-        ],
+        [(color >> 16) as u8, (color >> 8) as u8, color as u8],
     );
 }
 
-fn responsive_folder_icon(
-    frame: &mut [u8],
-    width: u32,
-    height: u32,
-    x: f32,
-    y: f32,
-    scale: f32,
-) {
-    responsive_fill(frame, width as usize, height as usize, x - 36.0, y - 12.0, 72.0, 48.0, scale, brand::ACCENT_GREEN_LIGHT);
-    responsive_fill(frame, width as usize, height as usize, x - 29.0, y - 21.0, 34.0, 14.0, scale, brand::ACCENT_GREEN_LIGHT);
-    responsive_fill(frame, width as usize, height as usize, x - 31.0, y - 7.0, 62.0, 38.0, scale, 0x2D1A3B);
+fn responsive_folder_icon(frame: &mut [u8], width: u32, height: u32, x: f32, y: f32, scale: f32) {
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x - 36.0,
+        y - 12.0,
+        72.0,
+        48.0,
+        scale,
+        brand::ACCENT_GREEN_LIGHT,
+    );
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x - 29.0,
+        y - 21.0,
+        34.0,
+        14.0,
+        scale,
+        brand::ACCENT_GREEN_LIGHT,
+    );
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x - 31.0,
+        y - 7.0,
+        62.0,
+        38.0,
+        scale,
+        0x2D1A3B,
+    );
 }
 
 fn blend_pixel(canvas: &mut [u8], x: i32, y: i32, color: [u8; 3], alpha: f32) {
@@ -777,7 +1504,6 @@ mod tests {
         Library::new(entries, "/games".to_string())
     }
 
-
     #[test]
     fn responsive_launcher_fills_phone_and_desktop_surfaces() {
         let library = Library::new(Vec::new(), "/games".to_string());
@@ -794,9 +1520,15 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("sample.3dsx"), b"fixture").unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
-        assert_eq!(library.click_responsive(400, 1_240, 800, 1200), ClickResult::Ignored);
+        assert_eq!(
+            library.click_responsive(400, 1_240, 800, 1200),
+            ClickResult::Ignored
+        );
         assert_eq!(library.entries().len(), 1);
-        assert_eq!(library.click_responsive(700, 250, 800, 1200), ClickResult::Ignored);
+        assert_eq!(
+            library.click_responsive(700, 250, 800, 1200),
+            ClickResult::Ignored
+        );
         assert_eq!(library.page(), LibraryPage::Settings);
         library.reload();
         assert_eq!(library.entries().len(), 1);
