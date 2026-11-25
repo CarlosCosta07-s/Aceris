@@ -5589,6 +5589,10 @@ mod tests {
             read_tls_ipc_response(&mut system, reply, 2),
             [0x0005_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]
         );
+        assert_eq!(
+            system.unhandled_requests(),
+            vec!["srv:GetServiceHandle(ssl:C) denied by NCCH service ACL".to_string()]
+        );
     }
 
     #[test]
@@ -5625,6 +5629,12 @@ mod tests {
                 .unwrap()
                 .service_manager_client_registered(service_manager),
             Some(false)
+        );
+        assert_eq!(
+            system.unhandled_requests(),
+            vec![format!(
+                "srv:GetServiceHandle rejected before RegisterClient on session {service_manager:#010x}"
+            )]
         );
     }
 
@@ -11421,6 +11431,7 @@ mod tests {
             )
             .unwrap();
         let dsp = open_hle_service(&mut system, b"dsp::DSP");
+        assert!(system.unhandled_requests().is_empty());
 
         let reply = write_tls_ipc_request(&mut system, dsp, &[0x0016_0000]);
         run_one_ipc_svc(&mut system);

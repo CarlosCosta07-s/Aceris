@@ -2335,3 +2335,6 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Because the ACI explicitly permits `dsp::DSP`, do not weaken the ACL. The likely diagnostic boundary is the preceding `srv:GetServiceHandle`/RegisterClient flow; runtime evidence is still required to identify the exact failure.
 - `System::unhandled_requests()` now records failed service-manager lookups (RegisterClient missing, malformed request, invalid name, ACL denial, unknown service and handle-allocation failure). The manual Cookie Clicker CIA test also asserts that its parsed ACI allows `dsp::DSP`.
 - No runtime DSP success is claimed. The uploaded CIA and decompressed guest code remain outside Git.
+
+
+- Regression coverage for the service-manager diagnostics: the NCCH ACL test asserts an explicit `ssl:C` denial entry, the pre-registration test asserts the missing-`RegisterClient` entry, and the DSP handshake test confirms a successful `dsp::DSP` lookup produces no false-positive diagnostic.
