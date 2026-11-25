@@ -339,8 +339,112 @@ pub fn render_virtual_pad_overlay_into(
     true
 }
 
-fn draw_glyph(pixels: &mut [u8], width: usize, height: usize, cx: i32, cy: i32, label: &str) {
-    let glyphs: &[([u8; 7], i32)] = match label {
+/// Blends the virtual controls directly into an RGBA frame without a full-screen overlay.
+///
+/// Only button bounds are visited. For overlapping controls, the last shape in
+/// the normal draw order wins, matching the transparent-overlay renderer.
+pub fn blend_virtual_pad_overlay_into(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    orientation: u32,
+    pressed_mask: u32,
+) -> bool {
+    use aceris_common::brand;
+
+    if width == 0 || height == 0 || width > 4096 || height > 4096 {
+        return false;
+    }
+    let Some(byte_len) = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+    else {
+        return false;
+    };
+    if frame.len() != byte_len {
+        return false;
+    }
+
+    let shapes = button_shapes(width, height, orientation);
+    for (index, shape) in shapes.iter().enumerate() {
+        let pressed = pressed_mask & shape.bit != 0;
+        let radius_squared = shape.radius * shape.radius;
+        let inner_radius = (shape.radius - 2.0).max(0.0);
+        let inner_radius_squared = inner_radius * inner_radius;
+        let left = (shape.x - shape.radius - 1.0).floor().max(0.0) as i32;
+        let top = (shape.y - shape.radius - 1.0).floor().max(0.0) as i32;
+        let right = (shape.x + shape.radius + 1.0).ceil().min(width as f32) as i32;
+        let bottom = (shape.y + shape.radius + 1.0).ceil().min(height as f32) as i32;
+        let glyph_cx = shape.x.round() as i32;
+        let glyph_cy = shape.y.round() as i32;
+
+        for y in top..bottom {
+            for x in left..right {
+                let dx = x as f32 + 0.5 - shape.x;
+                let dy = y as f32 + 0.5 - shape.y;
+                let distance_squared = dx * dx + dy * dy;
+                if distance_squared > radius_squared {
+                    continue;
+                }
+
+                // The original overlay is drawn in shape order, so a later
+                // circle replaces the earlier pixel instead of alpha-stacking.
+                let overwritten = shapes[index + 1..].iter().any(|later| {
+                    let later_dx = x as f32 + 0.5 - later.x;
+                    let later_dy = y as f32 + 0.5 - later.y;
+                    later_dx * later_dx + later_dy * later_dy <= later.radius * later.radius
+                });
+                if overwritten {
+                    continue;
+                }
+
+                let (color, alpha) = if glyph_contains(shape.label, glyph_cx, glyph_cy, x, y) {
+                    ([0xF5, 0xEE, 0xF8], 0xF4u32)
+                } else if pressed {
+                    (
+                        [
+                            (brand::ACCENT_RED >> 16) as u8,
+                            (brand::ACCENT_RED >> 8) as u8,
+                            brand::ACCENT_RED as u8,
+                        ],
+                        218,
+                    )
+                } else if distance_squared >= inner_radius_squared {
+                    (
+                        [
+                            (brand::TEXT >> 16) as u8,
+                            (brand::TEXT >> 8) as u8,
+                            brand::TEXT as u8,
+                        ],
+                        220,
+                    )
+                } else {
+                    (
+                        [
+                            (brand::PURPLE_DARK >> 16) as u8,
+                            (brand::PURPLE_DARK >> 8) as u8,
+                            brand::PURPLE_DARK as u8,
+                        ],
+                        154,
+                    )
+                };
+
+                let at = (y as usize * width as usize + x as usize) * 4;
+                let inverse = 255 - alpha;
+                for channel in 0..3 {
+                    frame[at + channel] = ((u32::from(color[channel]) * alpha
+                        + u32::from(frame[at + channel]) * inverse)
+                        / 255) as u8;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+fn glyph_rows(label: &str) -> &'static [([u8; 7], i32)] {
+    match label {
         "A" => &[(
             [
                 0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
@@ -402,7 +506,22 @@ fn draw_glyph(pixels: &mut [u8], width: usize, height: usize, cx: i32, cy: i32, 
             5,
         )],
         _ => &[],
-    };
+    }
+}
+
+fn glyph_contains(label: &str, cx: i32, cy: i32, x: i32, y: i32) -> bool {
+    glyph_rows(label).iter().any(|(rows, glyph_width)| {
+        let column = x - (cx - *glyph_width / 2);
+        let row = y - (cy - 3);
+        if column < 0 || row < 0 || column >= *glyph_width || row >= 7 {
+            return false;
+        }
+        rows[row as usize] & (1u8 << (*glyph_width - 1 - column)) != 0
+    })
+}
+
+fn draw_glyph(pixels: &mut [u8], width: usize, height: usize, cx: i32, cy: i32, label: &str) {
+    let glyphs = glyph_rows(label);
     for (rows, glyph_width) in glyphs {
         let start_x = cx - *glyph_width / 2;
         let start_y = cy - 3;
@@ -500,6 +619,83 @@ mod tests {
         assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] > 0));
         assert!(render_virtual_pad_overlay(0, height, ORIENTATION_PORTRAIT, 0).is_none());
+    }
+
+    fn blend_overlay_reference(frame: &mut [u8], overlay: &[u8]) {
+        for (pixel, over) in frame.chunks_exact_mut(4).zip(overlay.chunks_exact(4)) {
+            let alpha = u32::from(over[3]);
+            if alpha == 0 {
+                continue;
+            }
+            for channel in 0..3 {
+                pixel[channel] = ((u32::from(over[channel]) * alpha
+                    + u32::from(pixel[channel]) * (255 - alpha))
+                    / 255) as u8;
+            }
+        }
+    }
+
+    #[test]
+    fn direct_virtual_overlay_matches_full_frame_reference() {
+        for (width, height, orientation) in [
+            (480, 800, ORIENTATION_PORTRAIT),
+            (1280, 720, ORIENTATION_LANDSCAPE),
+            (1080, 2400, ORIENTATION_AUTO),
+        ] {
+            for pressed_mask in [
+                0,
+                buttons::A,
+                buttons::B | buttons::X | buttons::UP,
+                buttons::ALL,
+            ] {
+                let mut expected = (0..width as usize * height as usize)
+                    .flat_map(|index| {
+                        let base = (index as u32).wrapping_mul(37);
+                        [
+                            (base & 0xFF) as u8,
+                            ((base >> 3) & 0xFF) as u8,
+                            ((base >> 7) & 0xFF) as u8,
+                            255,
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                let mut actual = expected.clone();
+                let overlay =
+                    render_virtual_pad_overlay(width, height, orientation, pressed_mask).unwrap();
+                blend_overlay_reference(&mut expected, &overlay);
+
+                assert!(blend_virtual_pad_overlay_into(
+                    &mut actual,
+                    width,
+                    height,
+                    orientation,
+                    pressed_mask
+                ));
+                assert_eq!(actual, expected, "{width}x{height}, mask={pressed_mask:#X}");
+            }
+        }
+    }
+
+    #[test]
+    fn direct_virtual_overlay_rejects_invalid_frames_without_writing() {
+        let mut frame = vec![0x5A; 64];
+        let previous = frame.clone();
+        assert!(!blend_virtual_pad_overlay_into(
+            &mut frame,
+            0,
+            4,
+            ORIENTATION_AUTO,
+            buttons::A
+        ));
+        assert_eq!(frame, previous);
+        assert!(!blend_virtual_pad_overlay_into(
+            &mut frame,
+            4,
+            4,
+            ORIENTATION_AUTO,
+            buttons::A
+        ));
+        assert_eq!(frame, previous);
     }
 
     #[test]

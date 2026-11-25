@@ -47,8 +47,6 @@ pub struct App {
     library_tap: Option<(i32, i32)>,
     /// Interleaved stereo samples (32728 Hz) mixed since the last [`App::take_audio`].
     audio: Vec<i16>,
-    /// Reused transparent controls layer; its capacity follows the surface size.
-    overlay_buffer: Vec<u8>,
 }
 
 impl App {
@@ -67,7 +65,6 @@ impl App {
             key_mask: 0,
             library_tap: None,
             audio: Vec::new(),
-            overlay_buffer: Vec::new(),
         }
     }
 
@@ -195,13 +192,7 @@ impl App {
             return;
         }
         let pressed_mask = self.held_mask();
-        overlay_virtual_pad(
-            output,
-            self.width,
-            self.height,
-            pressed_mask,
-            &mut self.overlay_buffer,
-        );
+        overlay_virtual_pad(output, self.width, self.height, pressed_mask);
     }
 
     fn held_mask(&self) -> u32 {
@@ -462,34 +453,14 @@ fn compose_game_into(
 }
 
 /// Alpha-blends the virtual gamepad overlay onto an RGBA frame.
-fn overlay_virtual_pad(
-    frame: &mut [u8],
-    width: u32,
-    height: u32,
-    pressed_mask: u32,
-    overlay: &mut Vec<u8>,
-) {
-    if !frontend::render_virtual_pad_overlay_into(
+fn overlay_virtual_pad(frame: &mut [u8], width: u32, height: u32, pressed_mask: u32) {
+    frontend::blend_virtual_pad_overlay_into(
+        frame,
         width,
         height,
         ORIENTATION_AUTO,
         pressed_mask,
-        overlay,
-    ) {
-        return;
-    }
-    for (pixel, over) in frame.chunks_exact_mut(4).zip(overlay.chunks_exact(4)) {
-        let alpha = u32::from(over[3]);
-        if alpha == 0 {
-            continue;
-        }
-        for channel in 0..3 {
-            let blended = (u32::from(over[channel]) * alpha
-                + u32::from(pixel[channel]) * (255 - alpha))
-                / 255;
-            pixel[channel] = blended as u8;
-        }
-    }
+    );
 }
 
 #[cfg(test)]
@@ -704,16 +675,13 @@ mod tests {
     #[test]
     fn virtual_overlay_blends_without_touching_transparent_pixels() {
         let mut frame = [10u8, 20, 30, 255].repeat(400 * 800);
-        let mut overlay = Vec::new();
-        overlay_virtual_pad(&mut frame, 400, 800, 0, &mut overlay);
+        overlay_virtual_pad(&mut frame, 400, 800, 0);
         // The very first pixel is far from every button and stays untouched.
         assert_eq!(&frame[..4], &[10, 20, 30, 255]);
         assert!(frame.chunks_exact(4).any(|p| p != [10, 20, 30, 255]));
-        let allocation = overlay.as_ptr();
-        let capacity = overlay.capacity();
-        overlay_virtual_pad(&mut frame, 400, 800, frontend::buttons::A, &mut overlay);
-        assert_eq!(overlay.as_ptr(), allocation);
-        assert_eq!(overlay.capacity(), capacity);
+        let before = frame.clone();
+        overlay_virtual_pad(&mut frame, 400, 800, frontend::buttons::A);
+        assert_ne!(frame, before);
     }
 
     #[test]
