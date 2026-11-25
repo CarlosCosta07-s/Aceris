@@ -2038,16 +2038,20 @@ impl Arm11ProcessSession {
             });
         }
 
+        if self.scheduler.current_thread_id().is_none() {
+            return Ok(Arm11RunReport {
+                instructions_executed: 0,
+                stop_reason: Arm11RunStopReason::NoRunnableThread,
+            });
+        }
+
+        // Both values are stable through ordinary instructions. The active
+        // thread can change only while dispatching an SVC, so keep the common
+        // instruction path free of repeated scheduler and OnceLock lookups.
+        let watch_range = pc_watch_range();
         let mut executed = 0u64;
         for _ in 0..instruction_budget {
-            if self.scheduler.current_thread_id().is_none() {
-                return Ok(Arm11RunReport {
-                    instructions_executed: executed,
-                    stop_reason: Arm11RunStopReason::NoRunnableThread,
-                });
-            }
-
-            if let Some((low, high)) = pc_watch_range() {
+            if let Some((low, high)) = watch_range {
                 let core = self.core();
                 let pc = core.pc();
                 if (low..=high).contains(&pc) {
@@ -2109,7 +2113,18 @@ impl Arm11ProcessSession {
                 StepEvent::Svc(number) => {
                     executed = executed.saturating_add(1);
                     match self.dispatch_svc(number) {
-                        SvcRunDisposition::Resume => {}
+                        SvcRunDisposition::Resume => {
+                            // A resumable SVC may have blocked the caller and
+                            // selected another thread. Preserve the explicit
+                            // no-runnable stop reason without checking it on
+                            // every non-SVC instruction.
+                            if self.scheduler.current_thread_id().is_none() {
+                                return Ok(Arm11RunReport {
+                                    instructions_executed: executed,
+                                    stop_reason: Arm11RunStopReason::NoRunnableThread,
+                                });
+                            }
+                        }
                         SvcRunDisposition::ProcessExited => {
                             return Ok(Arm11RunReport {
                                 instructions_executed: executed,
