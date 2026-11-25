@@ -34,6 +34,7 @@ pub struct Entry {
 pub enum LibraryPage {
     #[default]
     Games,
+    Homebrew,
     Settings,
 }
 
@@ -113,7 +114,41 @@ impl Library {
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
-        self.entries.get(self.selected)
+        self.filtered_entries().nth(self.selected)
+    }
+
+    /// Number of entries shown by the current library filter.
+    pub fn visible_entry_count(&self) -> usize {
+        self.filtered_entries().count()
+    }
+
+    /// Changes the library section and resets its independent selection.
+    pub fn select_page(&mut self, page: LibraryPage) {
+        if self.page != page {
+            self.page = page;
+            self.selected = 0;
+            self.first_visible = 0;
+            self.status = None;
+        }
+    }
+
+    fn entry_matches_page(&self, entry: &Entry) -> bool {
+        let is_homebrew = entry
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("3dsx"));
+        match self.page {
+            LibraryPage::Games => !is_homebrew,
+            LibraryPage::Homebrew => is_homebrew,
+            LibraryPage::Settings => false,
+        }
+    }
+
+    fn filtered_entries(&self) -> impl Iterator<Item = &Entry> {
+        self.entries
+            .iter()
+            .filter(|entry| self.entry_matches_page(entry))
     }
 
     /// Shows a message (for example a load error) above the footer.
@@ -123,10 +158,11 @@ impl Library {
 
     /// Moves the selection by `delta` rows, clamped to the list.
     pub fn move_selection(&mut self, delta: i32) {
-        if self.entries.is_empty() {
+        let count = self.visible_entry_count();
+        if count == 0 {
             return;
         }
-        let last = self.entries.len() as i64 - 1;
+        let last = count as i64 - 1;
         self.selected = (self.selected as i64 + i64::from(delta)).clamp(0, last) as usize;
         self.status = None;
         if self.selected < self.first_visible {
@@ -172,7 +208,7 @@ impl Library {
 
     /// Moves selection using the number of rows actually visible on this surface.
     pub fn move_selection_responsive(&mut self, delta: i32, width: u32, height: u32) {
-        let Some((portrait, scale, _, logical_height)) = responsive_metrics(width, height) else {
+        let Some((portrait, _scale, _, logical_height)) = responsive_metrics(width, height) else {
             return;
         };
         let (list_top, row_height, list_bottom) = if portrait {
@@ -184,14 +220,14 @@ impl Library {
             .floor()
             .max(1.0) as usize;
         self.move_selection_with_visible(delta, visible);
-        let _ = scale;
     }
 
     fn move_selection_with_visible(&mut self, delta: i32, visible_rows: usize) {
-        if self.entries.is_empty() {
+        let count = self.visible_entry_count();
+        if count == 0 {
             return;
         }
-        let last = self.entries.len() as i64 - 1;
+        let last = count as i64 - 1;
         self.selected = (self.selected as i64 + i64::from(delta)).clamp(0, last) as usize;
         self.status = None;
         let visible_rows = visible_rows.max(1);
@@ -211,22 +247,24 @@ impl Library {
         let (x, y) = (x as f32 / scale, y as f32 / scale);
         if portrait {
             if (100.0..150.0).contains(&y) {
-                self.page = if x < 200.0 {
+                let page = if x < 134.0 {
                     LibraryPage::Games
+                } else if x < 266.0 {
+                    LibraryPage::Homebrew
                 } else {
                     LibraryPage::Settings
                 };
-                self.status = None;
+                self.select_page(page);
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
-                if (600.0..655.0).contains(&y) && (20.0..380.0).contains(&x) {
+                if (560.0..625.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.reload();
                 }
                 return ClickResult::Ignored;
             }
-            if ((170.0..225.0).contains(&y) && x >= 300.0)
-                || ((600.0..655.0).contains(&y) && (38.0..362.0).contains(&x))
+            if ((168.0..222.0).contains(&y) && x >= 304.0)
+                || ((560.0..625.0).contains(&y) && (38.0..362.0).contains(&x))
             {
                 self.reload();
                 return ClickResult::Ignored;
@@ -245,12 +283,17 @@ impl Library {
             self.select_or_activate(index)
         } else {
             if x < 210.0 {
-                if (104.0..158.0).contains(&y) {
-                    self.page = LibraryPage::Games;
-                    self.status = None;
-                } else if (164.0..218.0).contains(&y) {
-                    self.page = LibraryPage::Settings;
-                    self.status = None;
+                let page = if (110.0..166.0).contains(&y) {
+                    Some(LibraryPage::Games)
+                } else if (168.0..224.0).contains(&y) {
+                    Some(LibraryPage::Homebrew)
+                } else if (226.0..282.0).contains(&y) {
+                    Some(LibraryPage::Settings)
+                } else {
+                    None
+                };
+                if let Some(page) = page {
+                    self.select_page(page);
                 }
                 return ClickResult::Ignored;
             }
@@ -287,7 +330,10 @@ impl Library {
         if index == self.selected {
             ClickResult::Activated
         } else {
-            self.move_selection_with_visible(index as i32 - self.selected as i32, VISIBLE_ROWS);
+            self.move_selection_with_visible(
+                index as i32 - self.selected as i32,
+                self.visible_entry_count().max(1),
+            );
             ClickResult::Selected
         }
     }
