@@ -37,6 +37,25 @@ cargo run --release -p aceris-core --example benchmark -- "D:\Jogos\seu-jogo.cia
 
 A janela gráfica não é necessária para esse exemplo. O benchmark é um utilitário de linha de comando desktop.
 
+## Reproduzir uma sessão real com entradas determinísticas
+
+O benchmark também aceita toques programados no touchscreen inferior e pode exportar um trace CSV por quadro:
+
+- `--tap X,Y@FRAME[+HOLD]`: injeta um toque nas coordenadas inferiores 320×240 no quadro indicado. Pode ser repetido. O tempo de HOLD é medido em quadros e o padrão é 3.
+- `--frame-trace ARQUIVO.csv`: grava, depois da medição, uma linha por quadro medido com tempo de host, instruções executadas, command lists GSP/PICA, scanouts LCD, entregas de interrupção, motivo de parada, PC e CPSR.
+- O número de quadro dos toques começa em zero no primeiro quadro guest, incluindo os quadros de aquecimento. Use `--warmup 0` para manter os números iguais aos da sequência de entrada.
+
+Exemplo de sequência repetível para o homebrew Cookie Clicker que já foi exercitado manualmente no Aceris:
+
+```powershell
+cargo run --release -p aceris-core --example benchmark -- "D:\Jogos\Cookie Clicker.cia" --warmup 0 --frames 1000 --instruction-budget 4000000 --tap 160,80@600 --tap 160,120@700 --tap 160,120@720 --tap 160,120@740 --tap 160,120@760 --tap 160,120@780 --tap 160,120@800 --tap 160,120@820 --tap 160,120@840 --frame-trace .\cookie-clicker-trace.csv --dump-lcd .\cookie-clicker-profile
+```
+
+Essa sequência toca no menu no quadro 600 e depois toca oito vezes na área do cookie. O arquivo CIA continua sendo fornecido pelo usuário e deve permanecer fora do Git, da CI e dos artefatos. Use sempre o mesmo arquivo, versão release, orçamento, sequência de toques e condições da máquina ao comparar duas builds.
+
+O tempo registrado para cada linha cobre a chamada completa a `System::run_frame_with_budget`. A aplicação dos eventos de toque pelo benchmark ocorre antes do cronômetro; o processamento guest de HID permanece dentro da chamada medida. O trace correlaciona tempo e atividade por quadro, mas não divide internamente o tempo entre ARM11, scheduler, MMU, DSP, PICA200 e LCD. Para atribuir custo a funções específicas, faça uma segunda execução com um profiler de amostragem do host usando exatamente a mesma sequência de entrada. Não adicione temporizadores por instrução ao caminho quente.
+
+
 ## Imagens criptografadas: chaves fornecidas pelo usuário
 
 Sem variáveis de chave, o benchmark tenta os caminhos sem criptografia já suportados pelo carregador. Para uma imagem NCSD criptografada, o usuário pode fornecer as duas chaves exigidas pelo caminho existente:
