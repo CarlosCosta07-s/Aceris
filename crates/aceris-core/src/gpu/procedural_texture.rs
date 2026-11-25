@@ -462,7 +462,7 @@ mod tests {
         let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
         let color = sampler.sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]]).unwrap();
         assert_color([color[0], color[1], color[2], 1.0], [100, 110, 120, 255]);
-        assert!((color[3] - 0.25).abs() < 1.0e-6);
+        assert!((color[3] - (1024.0 / 4095.0)).abs() < 1.0e-6);
     }
 
     #[test]
@@ -488,7 +488,16 @@ mod tests {
         write(&mut pica, REG_PROCTEX_LUT_DATA0, 0x0019_1919);
         let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
         let color = sampler.sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]]).unwrap();
-        assert_color(color, [35, 45, 55, 255]);
+        let fraction = 3.0 * (2048.0 / 4095.0) - 1.0;
+        for (channel, base) in [10.0, 20.0, 30.0].into_iter().enumerate() {
+            let expected = (base + 50.0 * fraction) / 255.0;
+            assert!(
+                (color[channel] - expected).abs() < 1.0e-6,
+                "channel {channel}: expected {expected}, got {}",
+                color[channel]
+            );
+        }
+        assert_eq!(color[3], 1.0);
     }
 
     #[test]
