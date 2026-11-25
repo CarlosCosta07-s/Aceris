@@ -509,7 +509,11 @@ mod tests {
             render_virtual_pad_overlay(width, height, ORIENTATION_PORTRAIT, buttons::A).unwrap();
         let mut pixels = Vec::new();
         assert!(render_virtual_pad_overlay_into(
-            width, height, ORIENTATION_PORTRAIT, buttons::A, &mut pixels
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            buttons::A,
+            &mut pixels
         ));
         assert_eq!(pixels, expected);
 
@@ -518,7 +522,11 @@ mod tests {
         let expected_pressed =
             render_virtual_pad_overlay(width, height, ORIENTATION_PORTRAIT, buttons::B).unwrap();
         assert!(render_virtual_pad_overlay_into(
-            width, height, ORIENTATION_PORTRAIT, buttons::B, &mut pixels
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            buttons::B,
+            &mut pixels
         ));
         assert_eq!(pixels, expected_pressed);
         assert_eq!(pixels.as_ptr(), allocation);
@@ -526,7 +534,11 @@ mod tests {
 
         let previous = pixels.clone();
         assert!(!render_virtual_pad_overlay_into(
-            0, height, ORIENTATION_PORTRAIT, 0, &mut pixels
+            0,
+            height,
+            ORIENTATION_PORTRAIT,
+            0,
+            &mut pixels
         ));
         assert_eq!(pixels, previous);
     }
