@@ -124,3 +124,13 @@ A inclusão de `wgpu` não transforma o presenter em rasterizador PICA. O próxi
 O bit 24 de `GPUREG_FRAMEBUFFER_DIM` já era decodificado em `PicaRenderTargetConfig.vertical_flip_enabled`, mas o renderizador de fragmentos ignorava o valor. O caminho PICA de referência agora espelha viewport e scissor no eixo Y e ajusta o sinal de winding usado pelo face culling. Isso implementa a semântica de orientação documentada para o framebuffer e dá ao futuro pacote de draw um estado de viewport coerente para GL/Vulkan.
 
 A alteração não cria nem declara prontos os backends OpenGL/Vulkan e ainda precisa passar a matriz completa de CI. A convenção do bit e o efeito sobre o viewport foram comparados com 3dbrew e com a organização de estado do Azahar; a validação final em hardware PICA físico ainda não existe.
+
+
+## Upload BGRA direto para o presenter desktop — 25/11/2026
+
+- **Gargalo removido:** o desktop compõe a imagem como BGRX8, mas o presenter criava um segundo buffer e percorria todos os pixels na CPU para reorganizar BGRX em RGBA antes de cada upload.
+- **Mudança independente em Rust:** `present_bgrx` agora envia os bytes diretamente para uma textura `Bgra8Unorm` ou `Bgra8UnormSrgb`, conforme a superfície. Um entry point próprio do shader ignora o quarto byte (padding X) e escreve alpha 1.0. O caminho Android `present_rgba` continua usando `Rgba8Unorm`/`Rgba8UnormSrgb`.
+- **Efeito esperado:** elimina uma varredura e uma escrita temporária de 4 bytes por pixel no desktop. O upload de todos os pixels para a GPU continua necessário; nenhuma redução de FPS/latência foi medida e não se declara ganho numérico.
+- **Base da API:** a documentação de `wgpu::TextureFormat` descreve os formatos BGRA8 e sua conversão sRGB para valores float no shader: https://docs.rs/wgpu/latest/wgpu/enum.TextureFormat.html
+- **Testes adicionados:** seleção dos quatro formatos RGBA/BGRA nos modos linear/sRGB e verificação de que o shader BGRX força alpha opaco. A CI também executa Clippy isolado de `aceris-graphics`, antes do Clippy do workspace.
+- **Limite preservado:** essa é uma otimização do presenter host. Não altera draw calls, shader PICA, render targets guest, memória física ou temporização da PICA200.
