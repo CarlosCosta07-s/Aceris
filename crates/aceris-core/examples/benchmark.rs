@@ -767,6 +767,33 @@ fn write_frame_trace(path: &std::path::Path, samples: &[FrameTraceSample]) -> Re
     })
 }
 
+fn report_guest_failure(system: &System, phase: &str, frame: usize, error: &str) {
+    eprintln!(
+        "Guest execution failed during {phase} frame {frame}: {error}"
+    );
+    if let Some(session) = system.ncsd_session() {
+        let core = session.core();
+        eprintln!(
+            "Guest context: thread={:?} PC={:#010X} CPSR={:#010X}",
+            session.current_thread_id(),
+            core.pc(),
+            core.cpsr.0
+        );
+        for (index, value) in core.regs.iter().enumerate() {
+            eprintln!("  r{index:<2} = {value:#010X}");
+        }
+        let layout = session.address_space().layout();
+        let memory = session.address_space().memory_usage_report();
+        eprintln!(
+            "Guest memory: initial_sp={:#010X} stack_size={:#X} heap_virtual={} KiB dynamic_regions={} KiB",
+            layout.initial_stack_pointer,
+            layout.stack_size_bytes,
+            memory.application_heap_virtual_bytes / 1024,
+            memory.dynamic_region_virtual_bytes / 1024
+        );
+    }
+}
+
 fn dump_lcd(system: &System, directory: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("could not create LCD output directory: {error}"))?;
@@ -800,9 +827,13 @@ fn run(options: Options) -> Result<(), String> {
 
     for frame in 0..options.warmup_frames {
         apply_taps(&mut system, &options.taps, frame);
-        let report = system
-            .run_frame_with_budget(options.instruction_budget)
-            .map_err(|error| format!("warm-up frame {} failed: {error}", frame + 1))?;
+        let report = match system.run_frame_with_budget(options.instruction_budget) {
+            Ok(report) => report,
+            Err(error) => {
+                report_guest_failure(&system, "warm-up", frame + 1, &error.to_string());
+                return Err(format!("warm-up frame {} failed: {error}", frame + 1));
+            }
+        };
         if report.instructions_executed == 0 {
             eprintln!(
                 "warning: warm-up frame {} executed no guest instructions (stop: {:?})",
@@ -828,9 +859,13 @@ fn run(options: Options) -> Result<(), String> {
         let input_frame = options.warmup_frames.saturating_add(frame);
         apply_taps(&mut system, &options.taps, input_frame);
         let started = Instant::now();
-        let report = system
-            .run_frame_with_budget(options.instruction_budget)
-            .map_err(|error| format!("measured frame {} failed: {error}", frame + 1))?;
+        let report = match system.run_frame_with_budget(options.instruction_budget) {
+            Ok(report) => report,
+            Err(error) => {
+                report_guest_failure(&system, "measured", frame + 1, &error.to_string());
+                return Err(format!("measured frame {} failed: {error}", frame + 1));
+            }
+        };
         let elapsed_ns = started.elapsed().as_nanos();
         samples_ns.push(elapsed_ns);
 
