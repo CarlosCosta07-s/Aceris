@@ -603,7 +603,7 @@ fn run(options: Options) -> Result<(), String> {
 
     let mut system = System::new();
     let format = load_image(&mut system, image_path)?;
-    println!("Loaded {:?}: {}", format, options.image.display());
+    println!("Loaded {:?}: {}", format, image_path.display());
     println!(
         "Prepared ARM11 entry: PC={:#010X}, CPSR={:#010X}",
         system.cpu().pc(),
