@@ -739,6 +739,30 @@ fn run_component_profile() -> Result<(), String> {
     Ok(())
 }
 
+fn write_frame_trace(path: &std::path::Path, samples: &[FrameTraceSample]) -> Result<(), String> {
+    let mut csv = String::from(
+        "input_frame,report_frame,elapsed_ns,instructions_executed,gpu_command_lists,lcd_scanouts,gsp_interrupt_deliveries,cpu_stop_reason,pc,cpsr\n",
+    );
+    for sample in samples {
+        let reason = sample.cpu_stop_reason.replace('"', "\"\"");
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},\"{}\",{:#010X},{:#010X}\n",
+            sample.input_frame,
+            sample.report_frame,
+            sample.elapsed_ns,
+            sample.instructions_executed,
+            sample.gpu_command_lists_submitted,
+            sample.lcd_screens_scanned_out,
+            sample.gsp_interrupt_deliveries,
+            reason,
+            sample.pc,
+            sample.cpsr
+        ));
+    }
+    std::fs::write(path, csv)
+        .map_err(|error| format!("could not write per-frame trace {}: {error}", path.display()))
+}
+
 fn dump_lcd(system: &System, directory: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("could not create LCD output directory: {error}"))?;
@@ -898,6 +922,10 @@ fn run(options: Options) -> Result<(), String> {
             memory.gpu_physical_pages,
             memory.gpu_physical_allocated_bytes / 1024
         );
+    }
+    if let (Some(path), Some(trace)) = (options.frame_trace.as_ref(), frame_trace.as_ref()) {
+        write_frame_trace(path, trace)?;
+        println!("Per-frame trace written to {}", path.display());
     }
     if let Some(directory) = options.dump_lcd.as_ref() {
         dump_lcd(&system, directory)?;
