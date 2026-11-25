@@ -132,6 +132,43 @@ Workflow: [45649636486](https://github.com/CarlosCosta07-s/Aceris/actions/runs/4
 3. O runner macOS apresentou dispersão maior em algumas métricas (por exemplo, A32 variou aproximadamente de 35,2 M a 56,5 M instr/s; listas PICA, de 11,7 M a 19,0 M listas/s). Tratar a mediana como referência daquele runner, não como propriedade fixa da arquitetura ARM64.
 4. O Android ARM64 foi compilado com sucesso, mas a CI não executa o binário em aparelho físico. A linha de base Android continua pendente.
 
+## 5.2 Perfil de acesso ao backing físico GPU — 25/11/2026
+
+O novo exemplo `crates/aceris-core/examples/memory_profile.rs` compara padrões de acesso usando a API pública `GpuPhysicalMemory`, sem modificar a implementação de memória:
+
+```sh
+cargo run --release -p aceris-core --example memory_profile
+```
+
+O teste pré-materializa 4 MiB (1.024 páginas de 4 KiB), gera os endereços antes da região cronometrada e executa um aquecimento descartado mais cinco repetições. Cada caso faz um milhão de leituras ou escritas de 32 bits.
+
+| Padrão | Windows leitura/escrita | Linux leitura/escrita | macOS leitura/escrita |
+|---|---:|---:|---:|
+| Página quente de 4 KiB | 287,4 / 109,1 MiB/s | 332,5 / 172,1 MiB/s | 176,5 / 80,0 MiB/s |
+| Sequencial em 4 MiB | 218,8 / 72,6 MiB/s | 249,5 / 92,5 MiB/s | 173,5 / 59,2 MiB/s |
+| Pseudoaleatório em 4 MiB | 70,9 / 18,1 MiB/s | 75,0 / 20,9 MiB/s | 49,7 / 9,0 MiB/s |
+
+**Validação desktop:** workflow [45651300462](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45651300462), concluído com sucesso em Windows, Linux e macOS. Formatação, build, Clippy, suíte completa de testes, perfil de componentes e perfil de memória passaram nos três runners. O job Android compilou o app e o benchmark de componentes; a compilação do novo exemplo Android foi adicionada ao workflow seguinte.
+
+**Interpretação:**
+- O padrão pseudoaleatório foi aproximadamente 3,5×–4,4× mais lento na leitura e 6,0×–8,9× mais lento na escrita que o padrão concentrado na página quente.
+- O padrão sequencial ficou entre os dois, indicando que a localidade de página influencia bastante o custo observado.
+- A escrita inclui atualização do mapa de versões do monitor de exclusividade para os granules tocados. A leitura inclui validação de intervalo, aquisição do `RwLock` e lookup na estrutura esparsa.
+- A diferença é compatível com custo de lookup/localidade das páginas e do mapa de versões; este teste não isola individualmente esses componentes. Não concluir que o `BTreeMap` ou o lock, isoladamente, é responsável pelo resultado.
+- O perfil é single-threaded e exclui alocação inicial de páginas. Ainda não mede contenção real entre CPU, GPU, DSP e LCD, nem acesso pelo caminho completo da MMU/D-cache.
+
+### Execução no Android ARM64
+
+O workflow também compila o exemplo como executável Android em `target/aarch64-linux-android/release/examples/memory_profile`. Depois de baixar o artefato da CI:
+
+```sh
+adb push memory_profile /data/local/tmp/aceris-memory-profile
+adb shell chmod 700 /data/local/tmp/aceris-memory-profile
+adb shell /data/local/tmp/aceris-memory-profile
+```
+
+A CI apenas compila o executável Android; a medição ARM64 física continua pendente de execução em aparelho real. Não comparar resultados de runners CI com resultados de telefone sem considerar CPU/SoC, temperatura, energia e carga de fundo.
+
 ## 6. O que esta etapa ainda não mede
 
 1. CPU ARM11 com scheduler, MMU e D-cache ativos em uma sessão guest completa. Use o benchmark integrado e perfis externos para esse caminho.
