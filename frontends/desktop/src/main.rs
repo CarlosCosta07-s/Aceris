@@ -424,6 +424,8 @@ fn browse_library(
 ) -> Result<Option<PathBuf>, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut animation_frame = 0u64;
+    let mut rgba = Vec::new();
+    let mut bgrx = Vec::new();
     loop {
         for event in window.poll_events() {
             let mut activate = false;
@@ -499,12 +501,19 @@ fn browse_library(
         }
         let started = Instant::now();
         let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
-        let rgba = library.render_responsive_with_background(
+        if !library.render_responsive_into_with_background(
             window::CANVAS_WIDTH as u32,
             window::CANVAS_HEIGHT as u32,
+            &mut rgba,
             background_frame,
-        );
-        let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
+        ) || !intro::rgba_to_scaled_bgrx_into(
+            &rgba,
+            window::CANVAS_WIDTH,
+            scale,
+            &mut bgrx,
+        ) {
+            return Err("could not allocate the launcher frame".to_string());
+        }
         present_desktop_frame(
             window,
             presenter,
