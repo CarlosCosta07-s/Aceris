@@ -15,3 +15,6 @@ wgpu = { version = "30.0.2", default-features = false, features = ["std", "parki
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+naga = { version = "30.0.2", features = ["wgsl-in"] }
