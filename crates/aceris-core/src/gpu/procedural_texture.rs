@@ -207,10 +207,8 @@ impl PicaProceduralTextureSampler {
 
         if self.config.noise_enabled {
             let noise = procedural_noise_coefficient(u, v, &self.config, &self.noise)?;
-            let u_amplitude =
-                f32::from(self.config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
-            let v_amplitude =
-                f32::from(self.config.v_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
+            let u_amplitude = f32::from(self.config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
+            let v_amplitude = f32::from(self.config.v_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
             u = (u + noise * u_amplitude).abs();
             v = (v + noise * v_amplitude).abs();
         }
@@ -271,8 +269,6 @@ impl PicaProceduralTextureSampler {
         }))
     }
 }
-
-
 
 /// Decodes an IEEE-754 binary16 value from its guest register representation.
 /// Subnormals are preserved, matching the inspected software reference.
@@ -506,8 +502,8 @@ mod tests {
     use crate::gpu::{
         GpuPhysicalMemory, PicaFragmentPipeline, PicaFragmentVaryings, PicaProceduralTextureLut,
         REG_PROCTEX_LUT, REG_PROCTEX_LUT_DATA0, REG_TEXUNIT_CONFIG, REG_TEXUNIT3_PROCTEX0,
-        REG_TEXUNIT3_PROCTEX1, REG_TEXUNIT3_PROCTEX2, REG_TEXUNIT3_PROCTEX3,
-        REG_TEXUNIT3_PROCTEX4, REG_TEXUNIT3_PROCTEX5, TEXENV_STAGE_SOURCE_REGISTERS,
+        REG_TEXUNIT3_PROCTEX1, REG_TEXUNIT3_PROCTEX2, REG_TEXUNIT3_PROCTEX3, REG_TEXUNIT3_PROCTEX4,
+        REG_TEXUNIT3_PROCTEX5, TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn write(pica: &mut Pica200, register: u16, value: u32) {
@@ -636,7 +632,9 @@ mod tests {
         write(&mut pica, REG_TEXUNIT3_PROCTEX2, 0xB400_F000);
         write(&mut pica, REG_TEXUNIT3_PROCTEX3, 0x3C00_3800);
         let config = pica.procedural_texture_config();
-        assert!((f32::from(config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0 - 1.0).abs() < 0.001);
+        assert!(
+            (f32::from(config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0 - 1.0).abs() < 0.001
+        );
         assert_eq!(decode_float16(config.u_noise_phase_float1_5_10), 1.0);
         assert_eq!(decode_float16(config.v_noise_phase_float1_5_10), -0.25);
         assert_eq!(decode_float16(config.u_noise_frequency_float1_5_10), 0.5);
@@ -695,12 +693,12 @@ mod tests {
         );
         for index in 0..CURVE_LUT_SIZE {
             let value = ((index * 4095) / (CURVE_LUT_SIZE - 1)) as u32;
-            let difference = if index + 1 < CURVE_LUT_SIZE { 32_u32 } else { 0 };
-            write(
-                &mut pica,
-                REG_PROCTEX_LUT_DATA0,
-                value | (difference << 12),
-            );
+            let difference = if index + 1 < CURVE_LUT_SIZE {
+                32_u32
+            } else {
+                0
+            };
+            write(&mut pica, REG_PROCTEX_LUT_DATA0, value | (difference << 12));
         }
 
         write(
