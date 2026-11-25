@@ -105,3 +105,49 @@ No HEAD `8be7ae77f40187fe52a2210e0f5d0780d004a1c1`, o workflow [Build Android AP
 5. Após baseline físico, priorizar o primeiro bloqueio guest que impeça gameplay real; só então avançar em renderer PICA acelerado e áudio.
 
 **Resultado desta pesquisa:** nenhuma implementação de terceiros foi incorporada. O produto continua Rust original e as referências servem exclusivamente para arquitetura, comportamento, critérios de teste e prioridades.
+
+
+## Pesquisa de interface e experiência do usuário — 25/11/2026
+
+### Interfaces observadas
+
+A revisão desta etapa foi visual e documental. Não foi reutilizado código, tema, fonte, ícone, capa ou outro asset dos emuladores consultados.
+
+| Projeto | Padrões de UX observados | Aplicação possível ao Aceris |
+|---|---|---|
+| PPSSPP | Navegação por abas Recentes/Jogos/Homebrew & Demos, grade de capas, ações principais em painel lateral no desktop, configurações de tema e escala da UI | Separar a coleção por tipo, tornar as ações previsíveis e manter uma navegação equivalente entre telas |
+| Dolphin | Categorias por plataforma, grade de capas com título e metadados, temas claro/escuro, ações de biblioteca na barra superior | Hierarquia visual consistente, estado vazio claro e futuras capas com metadados |
+| Azahar | Lista de aplicações 3DS e configurações por título acessíveis por toque prolongado | Preservar o contexto do jogo e permitir perfis por título quando a configuração individual existir |
+| Eden | Alternância entre grade e visualização compacta, navegação de configuração organizada, perfil e informações do jogo, ações rápidas | Separar ajustes globais e individuais, oferecer visualização da biblioteca e não esconder ações frequentes |
+| DuckStation | Pesquisa, filtros, ordenação, gerenciamento de diretórios e opções de controle | Planejar pesquisa/filtros reais em vez de colocar botões decorativos sem comportamento |
+| PCSX2 | Categorias de configuração, separação entre opções globais e específicas de jogo, descrições contextuais | Configurações organizadas por assunto, com explicação do efeito de cada opção |
+| My Boy! | Editor de layout, perfis de controle, atalhos e botões móveis ajustáveis | Futuro editor de controles virtuais e perfis de tela no Android |
+| DraStic | Referência limitada à experiência observável e materiais públicos | Não consultar nem tentar reconstruir código fechado |
+
+### Fontes públicas consultadas
+
+- PPSSPP: [interface e configurações do sistema](https://www.ppsspp.org/docs/settings/system/), [documentação geral](https://www.ppsspp.org/docs/) e [configurações por jogo](https://www.ppsspp.org/docs/reference/custom-game-configs/).
+- Dolphin: [relatório oficial com imagens da interface Android e temas claro/escuro](https://dolphin-emu.org/blog/2023/11/25/dolphin-progress-report-august-september-and-october-2023/).
+- Azahar: [repositório e distribuição Android](https://github.com/azahar-emu/azahar) e [alterações públicas para configurações por aplicação](https://github.com/azahar-emu/azahar/releases).
+- Eden: [notas oficiais de UX da versão 0.2.0-rc1](https://git.eden-emu.dev/eden-emu/eden/releases) e [descrição da reformulação Android](https://git.eden-emu.dev/eden-emu/eden/pulls/4487).
+- DuckStation: [reescrita Android em Jetpack Compose e evolução da interface](https://downloads.duckstation.org/android-testing/).
+- PCSX2: [organização das categorias da janela de configurações](https://github.com/PCSX2/pcsx2/blob/master/pcsx2-qt/Settings/SettingsWindow.cpp).
+- My Boy!: [site oficial](https://myboy.club/) e [listagem pública](https://play.google.com/store/apps/details?id=com.fastemulator.gba).
+- DraStic: [FAQ pública](https://drasticemulator.com/frequently-asked-questions-drastic-ds-emulator/).
+
+### Decisões de produto para o Aceris
+
+1. **Biblioteca compreensível:** separar Jogos (.3ds/.cci) de Homebrew (.3dsx), com contagem de itens em cada seção.
+2. **Ação direta no celular:** um toque em um item inicia a tentativa de carregamento; o desktop mantém seleção por clique e ativação por Enter ou duplo clique.
+3. **Estado vazio útil:** explicar quais formatos são reconhecidos, mostrar a pasta de jogos e oferecer uma ação de atualização visível.
+4. **Configurações honestas:** exibir somente informações e ações que o frontend realmente implementa. Não anunciar seleção de backend gráfico, perfis ou recursos ainda inexistentes.
+5. **Layout consistente:** texto, ícones, painéis e áreas de toque usam a mesma transformação lógica/física. O defeito observado nas capturas anteriores era causado por coordenadas de texto não escaladas junto dos painéis.
+6. **Acessibilidade de leitura:** usar texto em caixa normal, acentos portugueses e alvos de toque com tamanho previsível.
+7. **Paridade de navegação:** Android usa toque; desktop usa teclado e mouse; ambos compartilham o modelo de páginas e filtros.
+
+### Limites que permanecem explícitos
+
+- Capas reais ainda dependem da leitura segura dos ícones/metadata dos títulos carregados pelo usuário. Não usar capas genéricas que possam sugerir conteúdo que não foi identificado.
+- Pesquisa, histórico de recentes, favoritos, ordenação, seleção de diretório, perfis por jogo, editor de controles, temas alternativos e configurações gráficas persistentes ainda não são funcionalidades concluídas.
+- Nenhuma opção deve aparecer como configurável até que exista armazenamento, validação e aplicação reais no frontend/core.
+- O layout novo é desenho original em Rust com a paleta e fonte bitmap próprias do Aceris. Nenhum código ou asset visual dos projetos de referência foi incorporado.
