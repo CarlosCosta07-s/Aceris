@@ -106,7 +106,7 @@ fn configure_fragment_stage(gpu: &mut Pica200) {
         (REG_FRAMEBUFFER_BLOCK32, 0),
         (
             REG_FRAMEBUFFER_DIM,
-            ((TARGET_HEIGHT - 1) << 12) | TARGET_WIDTH,
+            ((TARGET_HEIGHT - 1) << 12) | TARGET_WIDTH | (1 << 24),
         ),
         (REG_DEPTHMAP_SCALE, 0x003E_0000),
         (REG_DEPTHMAP_OFFSET, 0x003E_0000),
@@ -161,7 +161,7 @@ fn draw_elements_runs_guest_vertex_shader_and_fragment_pipeline_into_tiled_targe
         COLOR_TARGET >> 3,
         2,
         0,
-        ((TARGET_HEIGHT - 1) << 12) | TARGET_WIDTH,
+        ((TARGET_HEIGHT - 1) << 12) | TARGET_WIDTH | (1 << 24),
     )
     .unwrap();
     let pixels = target.read_rgba8(&memory).unwrap();
