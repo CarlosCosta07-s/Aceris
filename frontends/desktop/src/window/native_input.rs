@@ -14,6 +14,8 @@ pub fn key_from_virtual_key(vk: u32) -> Option<Key> {
     match vk {
         0x26 => Some(Key::Up),
         0x28 => Some(Key::Down),
+        0x25 => Some(Key::Left),
+        0x27 => Some(Key::Right),
         0x21 => Some(Key::PageUp),
         0x22 => Some(Key::PageDown),
         0x0D => Some(Key::Enter),
@@ -87,6 +89,8 @@ pub fn key_from_mac_keycode(code: u16) -> Option<Key> {
     match code {
         0x7E => Some(Key::Up),
         0x7D => Some(Key::Down),
+        0x7B => Some(Key::Left),
+        0x7C => Some(Key::Right),
         0x74 => Some(Key::PageUp),
         0x79 => Some(Key::PageDown),
         0x24 | 0x4C => Some(Key::Enter),
