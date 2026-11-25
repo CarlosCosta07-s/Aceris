@@ -2401,8 +2401,9 @@ mod tests {
         fs::write(dir.join("sample.3dsx"), b"fixture").unwrap();
         fs::write(dir.join("retail.3ds"), b"fixture").unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.select_page(LibraryPage::Games);
 
-        // Refresh from the library header.
+        // Refresh from the library header while the Games section is selected.
         assert_eq!(
             library.click_responsive(680, 384, 800, 1200),
             ClickResult::Ignored
@@ -2513,6 +2514,7 @@ mod tests {
             },
         ];
         let mut library = Library::new(entries, "/games".into());
+        library.select_page(LibraryPage::Games);
         assert_eq!(library.visible_entry_count(), 1);
         assert_eq!(library.selected_entry().unwrap().title, "Retail");
         library.select_page(LibraryPage::Homebrew);
