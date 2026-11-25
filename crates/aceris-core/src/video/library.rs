@@ -143,11 +143,14 @@ impl Library {
     }
 
     pub fn selected_entry(&self) -> Option<&Entry> {
-        let entries = self.filtered_entries();
         if self.page == LibraryPage::Home {
-            return entries.first().copied();
+            return self.recent.iter().find_map(|name| {
+                self.entries.iter().find(|entry| {
+                    entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
+                })
+            });
         }
-        entries.get(self.selected).copied()
+        self.filtered_entries().get(self.selected).copied()
     }
 
     /// Number of entries shown by the current library section.
@@ -334,15 +337,34 @@ impl Library {
         let Some((portrait, _scale, _, logical_height)) = responsive_metrics(width, height) else {
             return;
         };
-        let (list_top, row_height, list_bottom) = if portrait {
-            (250.0, 58.0, logical_height - 100.0)
+        if portrait {
+            let visible = ((logical_height - 350.0).max(58.0) / 58.0)
+                .floor()
+                .max(1.0) as usize;
+            self.move_selection_with_visible(delta, visible);
         } else {
-            (142.0, 76.0, logical_height - 54.0)
-        };
-        let visible = ((list_bottom - list_top).max(row_height) / row_height)
-            .floor()
-            .max(1.0) as usize;
-        self.move_selection_with_visible(delta, visible);
+            let visible_rows = ((logical_height - 166.0) / 94.0).floor().max(1.0) as usize;
+            let visible_items = visible_rows * 3;
+            let delta = if delta.abs() == 1 { delta * 3 } else { delta };
+            self.move_grid_selection(delta, visible_items);
+        }
+    }
+
+    fn move_grid_selection(&mut self, delta: i32, visible_items: usize) {
+        let count = self.visible_entry_count();
+        if count == 0 {
+            return;
+        }
+        self.selected = (self.selected as i64 + i64::from(delta))
+            .clamp(0, count as i64 - 1) as usize;
+        self.status = None;
+        let visible_items = visible_items.max(3);
+        if self.selected < self.first_visible {
+            self.first_visible = (self.selected / 3) * 3;
+        } else if self.selected >= self.first_visible + visible_items {
+            let needed = self.selected + 1 - visible_items;
+            self.first_visible = needed.div_ceil(3) * 3;
+        }
     }
 
     fn move_selection_with_visible(&mut self, delta: i32, visible_rows: usize) {
