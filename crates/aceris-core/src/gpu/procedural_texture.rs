@@ -1,10 +1,10 @@
 //! PICA200 procedural texture unit 3, with explicit support boundaries.
 //!
-//! This first backend covers non-noise, non-mipmapped draws. It snapshots the
-//! guest LUTs at draw setup, transforms the selected interpolated coordinate
-//! pair, evaluates the configured base-shape functions, and samples the RGB
-//! and optional alpha maps. Unknown hardware behavior is rejected rather than
-//! replaced with a synthetic texture.
+//! This backend snapshots the guest LUTs at draw setup, transforms the
+//! selected interpolated coordinate pair, evaluates the configured base-shape
+//! functions, and samples the RGB and optional alpha maps. Noise uses the
+//! publicly inspectable Citra/Azahar software-reference algorithm; its exact
+//! equivalence to the physical PICA noise generator is not established.
 
 use std::fmt;
 
@@ -21,7 +21,7 @@ const COLOR_LUT_SIZE: usize = 256;
 /// by this backend.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PicaProceduralTextureError {
-    NoiseGenerationUnsupported,
+    InvalidNoiseParameters,
     MipmapFilterUnsupported(PicaProceduralTextureFilter),
     TextureBiasUnsupported,
     CoordinateSourceUnsupported,
@@ -38,8 +38,8 @@ pub enum PicaProceduralTextureError {
 impl fmt::Display for PicaProceduralTextureError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoiseGenerationUnsupported => {
-                formatter.write_str("procedural noise generation is not implemented")
+            Self::InvalidNoiseParameters => {
+                formatter.write_str("procedural noise parameters are invalid or out of range")
             }
             Self::MipmapFilterUnsupported(filter) => {
                 write!(
@@ -100,6 +100,7 @@ impl std::error::Error for PicaProceduralTextureError {}
 #[derive(Clone, Debug, PartialEq)]
 pub struct PicaProceduralTextureSampler {
     config: PicaProceduralTextureConfig,
+    noise: [PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
     rgb_mapping: [PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
     alpha_mapping: [PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
     colors: [[u8; 4]; COLOR_LUT_SIZE],
@@ -107,13 +108,10 @@ pub struct PicaProceduralTextureSampler {
 }
 
 impl PicaProceduralTextureSampler {
-    /// Captures a supported non-noise, level-zero procedural texture setup.
+    /// Captures a supported level-zero procedural texture setup.
     pub fn from_pica(pica: &Pica200) -> Result<Self, PicaProceduralTextureError> {
         let config = pica.procedural_texture_config();
 
-        if config.noise_enabled {
-            return Err(PicaProceduralTextureError::NoiseGenerationUnsupported);
-        }
         if !matches!(
             config.minification_filter,
             PicaProceduralTextureFilter::Nearest | PicaProceduralTextureFilter::Linear
@@ -154,6 +152,10 @@ impl PicaProceduralTextureSampler {
             });
         }
 
+        let noise = std::array::from_fn(|index| {
+            pica.procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, index)
+                .expect("every index in the procedural noise table is valid")
+        });
         let rgb_mapping = std::array::from_fn(|index| {
             pica.procedural_texture_curve_entry(PicaProceduralTextureLut::RgbMapping, index)
                 .expect("every index in the RGB mapping table is valid")
@@ -173,6 +175,7 @@ impl PicaProceduralTextureSampler {
 
         Ok(Self {
             config,
+            noise,
             rgb_mapping,
             alpha_mapping,
             colors,
@@ -201,6 +204,17 @@ impl PicaProceduralTextureSampler {
 
         let u_shift = shift_offset(self.config.u_shift, v, self.config.u_clamp)?;
         let v_shift = shift_offset(self.config.v_shift, u, self.config.v_clamp)?;
+
+        if self.config.noise_enabled {
+            let noise = procedural_noise_coefficient(u, v, &self.config, &self.noise)?;
+            let u_amplitude =
+                f32::from(self.config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
+            let v_amplitude =
+                f32::from(self.config.v_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
+            u = (u + noise * u_amplitude).abs();
+            v = (v + noise * v_amplitude).abs();
+        }
+
         u += u_shift;
         v += v_shift;
         u = clamp_coordinate(u, self.config.u_clamp)?;
@@ -255,6 +269,114 @@ impl PicaProceduralTextureSampler {
                 .clamp(0.0, 255.0)
                 / 255.0
         }))
+    }
+}
+
+
+
+/// Decodes an IEEE-754 binary16 value from its guest register representation.
+/// Subnormals are preserved, matching the inspected software reference.
+fn decode_float16(raw: u16) -> f32 {
+    let sign = if raw & 0x8000 != 0 { 0x8000_0000 } else { 0 };
+    let exponent = (raw >> 10) & 0x1F;
+    let mantissa = u32::from(raw & 0x03FF);
+
+    match exponent {
+        0 if mantissa == 0 => f32::from_bits(sign),
+        0 => {
+            let value = mantissa as f32 / 16_777_216.0;
+            if sign == 0 { value } else { -value }
+        }
+        0x1F if mantissa == 0 => f32::from_bits(sign | 0x7F80_0000),
+        0x1F => f32::from_bits(sign | 0x7FC0_0000 | (mantissa << 13)),
+        _ => {
+            let exponent32 = u32::from(exponent) + 112;
+            f32::from_bits(sign | (exponent32 << 23) | (mantissa << 13))
+        }
+    }
+}
+
+/// Deterministic one-dimensional hash used by the public software-reference
+/// model of PICA procedural noise. It is not claimed to reproduce the exact
+/// internal hardware PRNG.
+fn noise_rand_1d(value: u32) -> u32 {
+    const TABLE: [u32; 16] = [0, 4, 10, 8, 4, 9, 7, 12, 5, 15, 13, 14, 11, 15, 2, 11];
+    ((((value % 9 + 2) * 3) & 0xF) ^ TABLE[((value / 9) & 0xF) as usize])
+}
+
+/// Two-dimensional signed pseudo-random gradient from the software-reference
+/// procedural-noise model.
+fn noise_rand_2d(x: u32, y: u32) -> f32 {
+    const TABLE: [u32; 16] = [10, 2, 15, 8, 0, 7, 4, 5, 5, 13, 2, 6, 13, 9, 3, 14];
+    let u = noise_rand_1d(x);
+    let mut v = noise_rand_1d(y);
+    if (u & 3) == 1 {
+        v += 4;
+    }
+    v ^= (u & 1) * 6;
+    v += 10 + u;
+    v &= 0xF;
+    v ^= TABLE[u as usize];
+    -1.0 + (v as f32 * 2.0 / 15.0)
+}
+
+/// Generates the deterministic reference noise coefficient at one U/V pair.
+/// The generated value is subsequently scaled independently by each axis'
+/// signed fixed-point amplitude.
+fn procedural_noise_coefficient(
+    u: f32,
+    v: f32,
+    config: &PicaProceduralTextureConfig,
+    noise_lut: &[PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
+) -> Result<f32, PicaProceduralTextureError> {
+    let frequency_u = decode_float16(config.u_noise_frequency_float1_5_10);
+    let frequency_v = decode_float16(config.v_noise_frequency_float1_5_10);
+    let phase_u = decode_float16(config.u_noise_phase_float1_5_10);
+    let phase_v = decode_float16(config.v_noise_phase_float1_5_10);
+    if !frequency_u.is_finite()
+        || !frequency_v.is_finite()
+        || !phase_u.is_finite()
+        || !phase_v.is_finite()
+        || frequency_u < 0.0
+        || frequency_v < 0.0
+    {
+        return Err(PicaProceduralTextureError::InvalidNoiseParameters);
+    }
+
+    let x = 9.0 * frequency_u * (u + phase_u).abs();
+    let y = 9.0 * frequency_v * (v + phase_v).abs();
+    // The reference converts these coordinates to signed 32-bit integers,
+    // then hashes the integer lattice points and their +1 neighbours.
+    if !x.is_finite()
+        || !y.is_finite()
+        || x < 0.0
+        || y < 0.0
+        || x >= (i32::MAX - 1) as f32
+        || y >= (i32::MAX - 1) as f32
+    {
+        return Err(PicaProceduralTextureError::InvalidNoiseParameters);
+    }
+
+    let x_integer = x as u32;
+    let y_integer = y as u32;
+    let x_fraction = x - x_integer as f32;
+    let y_fraction = y - y_integer as f32;
+
+    let fraction_sum = x_fraction + y_fraction;
+    let g00 = noise_rand_2d(x_integer, y_integer) * fraction_sum;
+    let g10 = noise_rand_2d(x_integer + 1, y_integer) * (fraction_sum - 1.0);
+    let g01 = noise_rand_2d(x_integer, y_integer + 1) * (fraction_sum - 1.0);
+    let g11 = noise_rand_2d(x_integer + 1, y_integer + 1) * (fraction_sum - 2.0);
+
+    let blend_x = lookup_curve(noise_lut, x_fraction)?;
+    let blend_y = lookup_curve(noise_lut, y_fraction)?;
+    let row0 = g00 + (g10 - g00) * blend_x;
+    let row1 = g01 + (g11 - g01) * blend_x;
+    let noise = row0 + (row1 - row0) * blend_y;
+    if noise.is_finite() {
+        Ok(noise)
+    } else {
+        Err(PicaProceduralTextureError::InvalidNoiseParameters)
     }
 }
 
@@ -384,6 +506,7 @@ mod tests {
     use crate::gpu::{
         GpuPhysicalMemory, PicaFragmentPipeline, PicaFragmentVaryings, PicaProceduralTextureLut,
         REG_PROCTEX_LUT, REG_PROCTEX_LUT_DATA0, REG_TEXUNIT_CONFIG, REG_TEXUNIT3_PROCTEX0,
+        REG_TEXUNIT3_PROCTEX1, REG_TEXUNIT3_PROCTEX2, REG_TEXUNIT3_PROCTEX3,
         REG_TEXUNIT3_PROCTEX4, REG_TEXUNIT3_PROCTEX5, TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
@@ -501,15 +624,109 @@ mod tests {
     }
 
     #[test]
-    fn noise_and_mipmap_modes_fail_closed() {
-        let mut noisy = fixture(false, PicaProceduralTextureFilter::Nearest);
-        let original = noisy.register(REG_TEXUNIT3_PROCTEX0).unwrap();
-        write(&mut noisy, REG_TEXUNIT3_PROCTEX0, original | (1 << 15));
-        assert_eq!(
-            PicaProceduralTextureSampler::from_pica(&noisy),
-            Err(PicaProceduralTextureError::NoiseGenerationUnsupported)
-        );
+    fn noise_parameters_decode_binary16_and_signed_fixed_amplitudes() {
+        assert_eq!(decode_float16(0x3C00), 1.0);
+        assert_eq!(decode_float16(0xB400), -0.25);
+        assert_eq!(decode_float16(0x0001), 1.0 / 16_777_216.0);
+        assert!(decode_float16(0x7C00).is_infinite());
+        assert!(decode_float16(0x7E00).is_nan());
 
+        let mut pica = fixture(false, PicaProceduralTextureFilter::Nearest);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX1, 0x3C00_1000);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX2, 0xB400_F000);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX3, 0x3C00_3800);
+        let config = pica.procedural_texture_config();
+        assert!((f32::from(config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0 - 1.0).abs() < 0.001);
+        assert_eq!(decode_float16(config.u_noise_phase_float1_5_10), 1.0);
+        assert_eq!(decode_float16(config.v_noise_phase_float1_5_10), -0.25);
+        assert_eq!(decode_float16(config.u_noise_frequency_float1_5_10), 0.5);
+        assert_eq!(decode_float16(config.v_noise_frequency_float1_5_10), 1.0);
+    }
+
+    #[test]
+    fn noise_reference_generates_a_finite_deterministic_coefficient() {
+        let mut pica = fixture(false, PicaProceduralTextureFilter::Nearest);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX1, 0x0000_0FFF);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX2, 0x0000_0FFF);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX3, 0x3C00_3C00);
+        write(
+            &mut pica,
+            REG_PROCTEX_LUT,
+            (PicaProceduralTextureLut::Noise as u32) << 8,
+        );
+        for _ in 0..CURVE_LUT_SIZE {
+            write(&mut pica, REG_PROCTEX_LUT_DATA0, 0x0000_0800);
+        }
+        let config = pica.procedural_texture_config();
+        let noise_lut = std::array::from_fn(|index| {
+            pica.procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, index)
+                .unwrap()
+        });
+        let first = procedural_noise_coefficient(0.25, 0.5, &config, &noise_lut).unwrap();
+        let second = procedural_noise_coefficient(0.25, 0.5, &config, &noise_lut).unwrap();
+        assert_eq!(first, second);
+        assert!((first - 0.2168).abs() < 0.001);
+    }
+
+    #[test]
+    fn noise_enabled_sampler_uses_the_noise_lut_before_repeat_and_mapping() {
+        let mut pica = Pica200::new();
+        write(&mut pica, REG_TEXUNIT_CONFIG, 1 << 10);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX0, 1 | (1 << 3) | (1 << 15));
+        write(&mut pica, REG_TEXUNIT3_PROCTEX1, 0x0000_0FFF);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX2, 0x0000_0FFF);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX3, 0x3C00_3C00);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX4, 128 << 11);
+        write(&mut pica, REG_TEXUNIT3_PROCTEX5, 0);
+
+        write(
+            &mut pica,
+            REG_PROCTEX_LUT,
+            (PicaProceduralTextureLut::Noise as u32) << 8,
+        );
+        for _ in 0..CURVE_LUT_SIZE {
+            write(&mut pica, REG_PROCTEX_LUT_DATA0, 0x0000_0800);
+        }
+
+        write(
+            &mut pica,
+            REG_PROCTEX_LUT,
+            (PicaProceduralTextureLut::RgbMapping as u32) << 8,
+        );
+        for index in 0..CURVE_LUT_SIZE {
+            let value = ((index * 4095) / (CURVE_LUT_SIZE - 1)) as u32;
+            let difference = if index + 1 < CURVE_LUT_SIZE { 32_u32 } else { 0 };
+            write(
+                &mut pica,
+                REG_PROCTEX_LUT_DATA0,
+                value | (difference << 12),
+            );
+        }
+
+        write(
+            &mut pica,
+            REG_PROCTEX_LUT,
+            (PicaProceduralTextureLut::Color as u32) << 8,
+        );
+        for index in 0..128_u32 {
+            write(
+                &mut pica,
+                REG_PROCTEX_LUT_DATA0,
+                index | (index << 8) | (index << 16) | (255 << 24),
+            );
+        }
+
+        let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
+        let color = sampler.sample(&[[0.25, 0.5], [0.0; 2], [0.0; 2]]).unwrap();
+        assert!(color[0] > 58.0 / 255.0);
+        assert!(color[0] < 62.0 / 255.0);
+        assert_eq!(color[0], color[1]);
+        assert_eq!(color[1], color[2]);
+        assert_eq!(color[3], 1.0);
+    }
+
+    #[test]
+    fn mipmap_modes_fail_closed() {
         let mut mipmapped = fixture(false, PicaProceduralTextureFilter::Nearest);
         write(&mut mipmapped, REG_TEXUNIT3_PROCTEX4, (4 << 11) | 2);
         assert_eq!(
