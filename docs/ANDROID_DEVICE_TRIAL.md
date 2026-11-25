@@ -31,7 +31,7 @@ O frontend Android atual procura os jogos na pasta `games` dentro do diretório 
 /storage/emulated/0/Android/data/org.aceris.emulator/files/games/
 ```
 
-Crie a pasta `games` e coloque ali um arquivo de jogo/homebrew que você tenha direito de usar e que o loader do Aceris suporte, por exemplo CIA NoCrypto. O pacote não inclui jogos, firmware, chaves, ROMs ou dados extraídos.
+Crie a pasta `games` e coloque diretamente nela um arquivo de jogo/homebrew que você tenha direito de usar, com extensão `.3ds`, `.cci` ou `.3dsx`. A biblioteca Android atual só lista esses três formatos e não pesquisa subpastas. Embora o núcleo tenha testes headless com CIA NoCrypto, a biblioteca visual ainda não lista arquivos `.cia`; portanto, não use CIA para este primeiro teste da interface. O pacote não inclui jogos, firmware, chaves, ROMs ou dados extraídos.
 
 O frontend atual ainda não oferece um seletor SAF de arquivos dentro do app. Se o gerenciador de arquivos do Android bloquear o acesso a `Android/data`, conecte o telefone a um computador com ADB e use:
 
