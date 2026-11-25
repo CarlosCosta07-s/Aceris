@@ -237,11 +237,7 @@ pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
 /// Composes both LCDs directly into a reusable, scaled BGRX frame buffer.
 ///
 /// Returns false if the requested dimensions overflow or the output allocation fails.
-pub fn compose_bgrx_into(
-    display: &DualScreenDisplay,
-    scale: usize,
-    output: &mut Vec<u8>,
-) -> bool {
+pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut Vec<u8>) -> bool {
     let scale = scale.max(1);
     let Some(width) = GAME_CANVAS_WIDTH.checked_mul(scale) else {
         output.clear();
