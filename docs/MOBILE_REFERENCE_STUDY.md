@@ -151,3 +151,47 @@ A revisão desta etapa foi visual e documental. Não foi reutilizado código, te
 - Pesquisa, histórico de recentes, favoritos, ordenação, seleção de diretório, perfis por jogo, editor de controles, temas alternativos e configurações gráficas persistentes ainda não são funcionalidades concluídas.
 - Nenhuma opção deve aparecer como configurável até que exista armazenamento, validação e aplicação reais no frontend/core.
 - O layout novo é desenho original em Rust com a paleta e fonte bitmap próprias do Aceris. Nenhum código ou asset visual dos projetos de referência foi incorporado.
+
+## Segunda rodada: launcher horizontal, recursos de jogador e áudio externo — 25/11/2026
+
+### Direção visual aplicada
+
+- Android passa a iniciar em paisagem (sensorLandscape); a tela principal usa uma barra de navegação lateral permanente e a identidade Aceris original (roxo profundo, vermelho de ação, verde de apoio e tipografia bitmap própria).
+- Páginas: Início, Jogos, Favoritos, Recentes, Homebrew e Configurações. A home destaca Continuar jogando, contagens de coleção e o estado de mídia externa.
+- Biblioteca de jogos em grade horizontal de três colunas, cartões compactos, formato do arquivo e marcador de favorito. A ordenação A–Z/Z–A é funcional; Recentes preserva a ordem temporal.
+- Android oferece toque único e D-pad; desktop oferece mouse, rolagem e setas direcionais. Favoritos e Recentes ficam persistidos em arquivos internos da pasta .aceris.
+
+### Recursos de outros emuladores que orientam o roadmap
+
+| Recurso valorizado por jogadores | Situação no Aceris | Critério antes de anunciar como concluído |
+|---|---|---|
+| Recentes e Favoritos | Implementados | Persistência e recuperação testadas com jogos ausentes/renomeados |
+| Biblioteca em grade, filtros por tipo e ordenação | Implementados | Testes de seleção, scroll, toque e orientação |
+| Capas reais e metadados de título | Pendente | Ler SMDH/metadata de entradas validadas e não inventar arte para títulos sem ícone |
+| Pesquisa e filtros textuais | Pendente | Campo de busca acessível por toque e teclado, com filtro determinístico |
+| Perfis e overrides por jogo | Pendente | Persistir configuração por identidade/versão do título e aplicar antes do boot |
+| Save states, quick save/load, backups e rewind | Pendente | Exige serialização estável do estado completo do sistema, compatibilidade de versão e testes de restauração; rewind ainda exige estratégia de memória |
+| Editor de controles virtuais, transparência, auto-ocultação, gestos e calibração analógica | Pendente | Editor visual com gravação de perfis e hit-testing real; não expor opções decorativas |
+
+### Música externa e privacidade no Android
+
+- A saída AAudio do Aceris é identificada como uso GAME quando a função do sistema está disponível (API 28+).
+- No Android API 28+, o frontend Rust consulta as configurações de reprodução ativas através do AudioManager e inspeciona somente a categoria de uso AudioAttributes. O ciclo consulta em intervalos de 500 ms.
+- Quando encontra uma sessão USAGE_MEDIA externa, o Aceris envia silêncio pela sua própria saída AAudio, mantém o stream ativo e mostra o indicador genérico na home. Quando não encontra mais sessão, a saída volta ao áudio normal.
+- Não solicita acesso às notificações e não lê nome do aplicativo, mensagens ou metadados de faixa. A consulta de configurações de reprodução é tratada pelo Android como anônima para apps sem privilégios; não é fonte para título/artista.
+- Dispositivos abaixo de API 28 deixam a detecção automática desativada para evitar classificar incorretamente o próprio som do emulador como mídia externa.
+- Exibir nome da faixa, artista, capa e plataforma exata é uma função separada: requer acesso a sessões de mídia com autorização de Notification Listener (ou privilégio equivalente). A NativeActivity atual usa hasCode=false e mantém o produto em Rust; essa etapa não foi incluída nem simulada.
+- **Validação obrigatória:** testar com Spotify, YouTube Music, outros players, áudio de navegador e reprodução pausada; confirmar que apenas a saída do Aceris é silenciada e que volta sem reiniciar o jogo. A CI não substitui esse teste em aparelho físico.
+
+### Abertura e desempenho
+
+- A sequência procedural original foi reduzida de 150 quadros/2,5 s para 84 quadros/1,4 s, reamostrando a mesma curva de movimento e os marcos visuais.
+- O Android limita a grade interna de amostragem da abertura a aproximadamente 600×360 e continua apresentando em tela cheia.
+- O renderer RGBA e a conversão BGRX agora reutilizam buffers entre quadros, eliminando alocações de vetor por quadro no caminho da abertura.
+- O tempo real deve ser medido em aparelho. Não há alegação de FPS, consumo ou ausência de engasgos até benchmark físico.
+
+### Limites e validação
+
+- O indicador atual de música é propositalmente genérico. Não mostra faixa, artista, capa ou nome do player.
+- Não foram introduzidos botões falsos para busca, save states, rewind ou perfis por jogo.
+- O layout e o JNI de áudio foram compilados/testados pela CI; a interação com serviços de mídia e a legibilidade/ergonomia da nova home ainda precisam de validação visual e funcional no Android real.
