@@ -15,9 +15,9 @@ use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     cpu::{Arm11Core, StepEvent},
     gpu::{
-        DepthFunction, FCRAM_BASE, GpuPhysicalMemory, Pica200, RasterVertex,
-        SoftwareRasterizer, REG_DEPTHMAP_ENABLE, REG_SCISSORTEST_MODE, REG_VIEWPORT_HEIGHT,
-        REG_VIEWPORT_WIDTH,
+        DepthFunction, FCRAM_BASE, GpuPhysicalMemory, Pica200, REG_DEPTHMAP_ENABLE,
+        REG_SCISSORTEST_MODE, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, RasterVertex,
+        SoftwareRasterizer,
     },
     loader::{
         ImageFormat, cia::TicketCommonKeyStore, identify_file, ncsd::session::ipc::IpcMessage,
@@ -624,9 +624,17 @@ fn run_component_profile_once() -> Result<(), String> {
     println!();
     profile_cpu(ITERATIONS)?;
     let thumb_elapsed = profile_cpu_thumb(ITERATIONS)?;
-    print_operation_rate("ARM11 interpreter (Thumb mix)", ITERATIONS as u64, thumb_elapsed);
+    print_operation_rate(
+        "ARM11 interpreter (Thumb mix)",
+        ITERATIONS as u64,
+        thumb_elapsed,
+    );
     let pica_elapsed = profile_pica_commands(PICA_COMMAND_LISTS)?;
-    print_operation_rate("PICA command lists (4 registers)", PICA_COMMAND_LISTS as u64, pica_elapsed);
+    print_operation_rate(
+        "PICA command lists (4 registers)",
+        PICA_COMMAND_LISTS as u64,
+        pica_elapsed,
+    );
     profile_memory(ITERATIONS)?;
     profile_gpu(GPU_TRIANGLES)?;
     profile_ipc(ITERATIONS)?;
