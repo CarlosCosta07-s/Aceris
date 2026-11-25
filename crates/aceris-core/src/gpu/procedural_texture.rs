@@ -468,9 +468,7 @@ mod tests {
     fn separate_alpha_uses_its_own_mapping_lut() {
         let pica = fixture(true, PicaProceduralTextureFilter::Nearest);
         let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
-        let color = sampler
-            .sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]])
-            .unwrap();
+        let color = sampler.sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]]).unwrap();
         assert_color([color[0], color[1], color[2], 1.0], [100, 110, 120, 255]);
         assert!((color[3] - 0.25).abs() < 1.0e-6);
     }
@@ -485,9 +483,7 @@ mod tests {
         );
         write(&mut pica, REG_PROCTEX_LUT_DATA0, 0x0019_1919);
         let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
-        let color = sampler
-            .sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]])
-            .unwrap();
+        let color = sampler.sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]]).unwrap();
         assert_color(color, [35, 45, 55, 255]);
     }
 
