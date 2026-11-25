@@ -407,3 +407,23 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - The register map explicitly lists selectors 0–9: nine equations plus Rmax. The procedural-pipeline overview separately describes G as having “one of six functions”. These descriptions are not reconciled by the public material consulted here; the implementation follows the explicit register table and leaves Rmax unsupported.
 - The test validates register decoding only. It does not establish how separate-alpha affects later consumption, choose LUT indices, generate noise, or validate texels on hardware.
 - Evidence: [PICA200 internal register map](https://docs.mikage.app/GPU/Internal_Registers/) and [procedural texture generation overview](https://docs.mikage.app/GPU/Procedural_Texture_Generation/).
+## Atualização PROCTEX: Rmax, ruído de referência e otimizações (25/11/2026)
+
+### Rmax e saturação
+
+- O código aberto do Azahar em `src/video_core/renderer_software/sw_proctex.cpp` define `RMax` como `((u + v) * 0.5 + sqrt(u*u + v*v)) * 0.5`, com saturação em 1.0; a distância radial também satura em 1.0 antes da LUT. O Aceris reimplementa as fórmulas em Rust original e separa `evaluate_raw` de `evaluate_for_lookup`.
+- O caminho de software consultado usa o combinador G selecionado para chamar diretamente a LUT de mapeamento. Não há uma etapa F(g) independente demonstrada por esse código. O helper triangular que existe no Aceris permanece isolado, sem conexão com o sampler, até que a seleção/semântica real seja confirmada.
+
+### Ruído procedural — modelo de referência de software
+
+- A implementação consultada em Azahar (`fd4c9abd98345dbefff9cef07aadaf61ee1f683d`, `src/video_core/renderer_software/sw_proctex.cpp`) decodifica fase e frequência como binary16; usa amplitude fixa assinada dividida por 4095; gera hashes 1D/2D para os quatro cantos da célula; usa a LUT de ruído para os pesos dos eixos; e combina os quatro gradientes por interpolação bilinear.
+- A própria fonte comenta que os resultados do ruído foram verificados contra hardware, mas que não se sabe se o algoritmo é o mesmo utilizado internamente pelo hardware. Portanto, o Aceris chama isso de modelo de compatibilidade de software, não de reprodução física bit a bit. Nenhum código C++ foi copiado: o cálculo foi reescrito em Rust.
+- A ordem descrita pela referência é importante: calcula os offsets de shift antes de gerar ruído, soma ruído com amplitudes U/V separadas, aplica `abs`, soma shifts e só então executa o clamp. O sampler do Aceris mantém essa ordem.
+- O Aceris pré-decodifica frequência/fase binary16 e amplitudes uma vez por estado de desenho; captura a LUT de ruído apenas quando habilitada. Para cada fragmento, calcula os hashes de `x`, `x+1`, `y`, `y+1` uma vez e compartilha os quatro resultados pelos quatro gradientes. Isso reduz hashes redundantes sem alterar a fórmula. Não foi publicada uma medição quantitativa do ganho; os benchmarks CI apenas constroem os exemplos release.
+- Testes no Aceris: decodificação binary16 e amplitude assinada; coeficiente determinístico; influência do ruído no texel via sampler; rejeição de fase/frequência não finitas na captura; igualdade do gradiente com os hashes pré-computados em 576 pontos de grade.
+
+### Limites e validação multiplataforma
+
+- Mipmap e bias não nulo continuam explicitamente não suportados; seletores reservados e parâmetros não finitos retornam erro. F(g) triangular não está conectado ao sampler. A unidade 3 está integrada à entrada Texture3 do TEV, mas isso não equivale a suporte completo a PROCTEX.
+- Os workflows `45530579072` e `45531640771` passaram em Linux, Windows, macOS e Android ARM64, incluindo formatação, build, Clippy, testes e benchmarks. Esses resultados validam a compilação/testes sintéticos, não a equivalência com console real nem a compatibilidade de um jogo específico.
+- Próxima validação necessária: coletar uma captura de um jogo/homebrew que use PROCTEX, comparar o comportamento do sampler no contexto do draw real e medir o impacto com benchmark de rasterização representativo.
