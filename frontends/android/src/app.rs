@@ -173,9 +173,28 @@ impl App {
                 } else {
                     Screen::Intro { frame: next }
                 };
-                let canvas = intro::render_frame(frame, self.width as usize, self.height as usize);
-                output.clear();
-                output.extend_from_slice(&canvas);
+                // Render the procedural intro at half resolution, then scale it
+                // across the whole surface. The image stays full-screen while
+                // avoiding a fourfold increase in per-pixel CPU work on phones.
+                let intro_width = (self.width / 2).max(1);
+                let intro_height = (self.height / 2).max(1);
+                let canvas =
+                    intro::render_frame(frame, intro_width as usize, intro_height as usize);
+                if reset_black_frame(output, self.width, self.height) {
+                    blit_scaled(
+                        output,
+                        self.width,
+                        &canvas,
+                        intro_width,
+                        intro_height,
+                        ScreenRect {
+                            x: 0,
+                            y: 0,
+                            width: self.width,
+                            height: self.height,
+                        },
+                    );
+                }
             }
             Screen::Library => {
                 let _ = self
