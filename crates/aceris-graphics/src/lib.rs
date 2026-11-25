@@ -622,6 +622,18 @@ mod tests {
     }
 
     #[test]
+    fn presentation_shaders_validate_as_wgsl_without_a_gpu() {
+        let module = naga::front::wgsl::parse_str(PRESENT_SHADER)
+            .expect("Aceris presentation WGSL should parse");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("Aceris presentation WGSL should validate");
+    }
+
+    #[test]
     fn bgrx_shader_ignores_the_padding_byte() {
         assert!(PRESENT_SHADER.contains("return vec4<f32>(sampled.rgb, 1.0);"));
     }
