@@ -206,17 +206,15 @@ impl Library {
     pub fn recent_count(&self) -> usize {
         self.recent
             .iter()
-            .filter(|name| self.entries.iter().any(|entry| {
-                entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
-            }))
+            .filter(|name| {
+                self.entries.iter().any(|entry| {
+                    entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
+                })
+            })
             .count()
     }
 
-    fn persist_library_ids(
-        &self,
-        file_name: &str,
-        values: impl IntoIterator<Item = String>,
-    ) {
+    fn persist_library_ids(&self, file_name: &str, values: impl IntoIterator<Item = String>) {
         let directory = Path::new(&self.directory_label).join(".aceris");
         if fs::create_dir_all(&directory).is_err() {
             return;
@@ -423,8 +421,7 @@ impl Library {
             let visible = ((logical_height - 350.0).max(row_height) / row_height)
                 .floor()
                 .max(1.0) as usize;
-            let index = self.first_visible
-                + ((y - 250.0) / row_height).floor().max(0.0) as usize;
+            let index = self.first_visible + ((y - 250.0) / row_height).floor().max(0.0) as usize;
             if index >= self.first_visible + visible || index >= self.visible_entry_count() {
                 return ClickResult::Ignored;
             }
@@ -968,6 +965,7 @@ impl Library {
                     .max(1.0) as usize;
                 for (row, entry) in self
                     .filtered_entries()
+                    .into_iter()
                     .enumerate()
                     .skip(self.first_visible)
                     .take(visible)
