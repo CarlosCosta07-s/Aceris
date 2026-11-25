@@ -7,7 +7,9 @@
 //! environment variables documented in docs/PERFORMANCE_TESTING.md. No key is
 //! embedded, discovered, persisted, or printed by this example.
 
-use std::{collections::BTreeMap, env, hint::black_box, path::PathBuf, process::ExitCode, time::Instant};
+use std::{
+    collections::BTreeMap, env, hint::black_box, path::PathBuf, process::ExitCode, time::Instant,
+};
 
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
