@@ -289,7 +289,9 @@ impl PicaTextureUnit {
         let lod = pica.register(LOD_REGISTERS[unit]).unwrap_or(0);
 
         let texture_type = (parameters >> 28) & 0x7;
-        if unit == 0 && texture_type != 0 {
+        // Unit 0 supports ordinary 2D sampling and projective 2D coordinates.
+        // Cube maps and shadow samplers remain explicitly unsupported.
+        if unit == 0 && !matches!(texture_type, 0 | 3) {
             return Err(PicaTextureError::UnsupportedType {
                 unit,
                 texture_type: texture_type as u8,

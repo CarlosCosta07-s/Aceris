@@ -6,9 +6,9 @@
 //! GPUREG_SH_OUTMAP_O0..O6. Rows map to enabled outputs in ascending register
 //! order, so a sparse mask does not shift data into the wrong shader register.
 //!
-//! Only position, color and texture-coordinate groups are resolved. Other
-//! documented semantics (quaternion, view vector, texcoord0 w) are accepted
-//! and ignored. The semantic numbering follows public hardware documentation.
+//! Position, color, texture coordinates and the scalar TexCoord0 W semantic
+//! are resolved. Other documented semantics (quaternion and view vector) are
+//! accepted and ignored. The semantic numbering follows public hardware documentation.
 //!
 //! Incomplete semantic groups and duplicate semantics are explicit errors.
 
@@ -33,6 +33,7 @@ const SEMANTIC_SLOTS: usize = 32;
 const POSITION: [u8; 4] = [0x00, 0x01, 0x02, 0x03];
 const COLOR: [u8; 4] = [0x08, 0x09, 0x0A, 0x0B];
 const TEXCOORD0: [u8; 2] = [0x0C, 0x0D];
+const TEXCOORD0_W: [u8; 1] = [0x10];
 const TEXCOORD1: [u8; 2] = [0x0E, 0x0F];
 const TEXCOORD2: [u8; 2] = [0x16, 0x17];
 
@@ -42,6 +43,7 @@ pub enum PicaOutputGroup {
     Position,
     Color,
     TexCoord0,
+    TexCoord0W,
     TexCoord1,
     TexCoord2,
 }
@@ -98,6 +100,9 @@ pub struct PicaResolvedVertex {
     pub position: [f32; 4],
     pub color: Option<[f32; 4]>,
     pub texcoords: [Option<[f32; 2]>; 3],
+    /// Dedicated scalar output semantic used by projected texture unit 0.
+    /// An unmapped hardware output semantic defaults to 1.0.
+    pub texcoord0_w: f32,
 }
 
 impl PicaVertexOutputMap {
@@ -210,6 +215,9 @@ impl PicaVertexOutputMap {
                 self.group(outputs, PicaOutputGroup::TexCoord1, TEXCOORD1)?,
                 self.group(outputs, PicaOutputGroup::TexCoord2, TEXCOORD2)?,
             ],
+            texcoord0_w: self
+                .group(outputs, PicaOutputGroup::TexCoord0W, TEXCOORD0_W)?
+                .map_or(1.0, |value| value[0]),
         })
     }
 }
@@ -385,11 +393,30 @@ mod tests {
     }
 
     #[test]
+    fn texcoord0_w_is_resolved_and_defaults_to_one() {
+        let map = PicaVertexOutputMap::from_registers(registers(&[
+            0x0302_0100, // position xyzw
+            0x1F1F_101F, // TexCoord0 W mapped to lane y
+        ]))
+        .unwrap();
+        let outputs = outputs_with(&[
+            (0, [0.0, 0.0, 0.0, 1.0]),
+            (1, [0.0, 2.5, 0.0, 0.0]),
+        ]);
+        assert_eq!(map.resolve(&outputs).unwrap().texcoord0_w, 2.5);
+
+        let ordinary_map =
+            PicaVertexOutputMap::from_registers(registers(&[0x0302_0100])).unwrap();
+        assert_eq!(ordinary_map.resolve(&outputs).unwrap().texcoord0_w, 1.0);
+    }
+
+    #[test]
     fn geometry_vertex_color_is_clamped_rounded_and_defaulted() {
         let vertex = PicaResolvedVertex {
             position: [0.0, 0.0, 0.0, 1.0],
             color: Some([1.5, -0.5, 0.5, f32::NAN]),
             texcoords: [None; 3],
+            texcoord0_w: 1.0,
         };
         let geometry = vertex.to_geometry_vertex([9, 9, 9, 9]);
         // 0.5 * 255 = 127.5, which rounds away from zero to 128.

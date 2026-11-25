@@ -29,6 +29,9 @@ const FOG_MODE_DISABLED: u32 = 0;
 const FOG_MODE_LINEAR: u32 = 1;
 const FOG_MODE_LUT: u32 = 5;
 const FOG_Z_FLIP: u32 = 1 << 16;
+const TEXTURE0_PARAM_REGISTER: u16 = 0x083;
+const TEXTURE0_PROJECTION_TYPE: u32 = 3;
+const TEXTURE0_W_EPSILON: f32 = 1.0e-8;
 
 /// Captured linear-fog state.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,6 +130,14 @@ fn fog_factor_blend(source: f32, fog: f32, factor: f32) -> f32 {
     factor.mul_add(source, (1.0 - factor) * fog)
 }
 
+fn project_texture0_coordinate(coordinate: [f32; 2], w: f32) -> Option<[f32; 2]> {
+    if !w.is_finite() || w.abs() <= TEXTURE0_W_EPSILON {
+        return None;
+    }
+    let projected = [coordinate[0] / w, coordinate[1] / w];
+    projected.iter().all(|value| value.is_finite()).then_some(projected)
+}
+
 /// Perspective-correct attributes at one fragment sample.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PicaFragmentVaryings {
@@ -135,6 +146,8 @@ pub struct PicaFragmentVaryings {
     pub fragment_secondary_color: [f32; 4],
     /// oTexCoord0, oTexCoord1 and oTexCoord2 in shader-output-map order.
     pub texture_coordinates: [[f32; 2]; 3],
+    /// Dedicated PICA TexCoord0 W semantic, perspective-correctly interpolated.
+    pub texcoord0_w: f32,
     /// Caller-provided LOD classification for texture units 0, 1 and 2.
     pub minifying: [bool; 3],
     /// Screen-derivative LOD per texture unit; `Some` takes precedence over
@@ -149,6 +162,7 @@ impl Default for PicaFragmentVaryings {
             fragment_primary_color: [1.0; 4],
             fragment_secondary_color: [0.0; 4],
             texture_coordinates: [[0.0; 2]; 3],
+            texcoord0_w: 1.0,
             minifying: [false; 3],
             texture_lod: [None; 3],
         }
@@ -163,6 +177,8 @@ pub struct PicaFragmentVertex {
     pub fragment_primary_color: [f32; 4],
     pub fragment_secondary_color: [f32; 4],
     pub texture_coordinates: [[f32; 2]; 3],
+    /// Dedicated PICA TexCoord0 W semantic.
+    pub texcoord0_w: f32,
 }
 
 impl PicaFragmentVertex {
@@ -180,6 +196,7 @@ impl PicaFragmentVertex {
             texture_coordinates: std::array::from_fn(|index| {
                 vertex.texcoords[index].unwrap_or(default_texture_coordinates[index])
             }),
+            texcoord0_w: vertex.texcoord0_w,
         }
     }
 }
@@ -322,6 +339,8 @@ pub struct PicaFragmentPipeline {
     fog_lut: Option<PicaFogLut>,
     /// Unit 2 can read either oTexCoord2 or oTexCoord1.
     texture2_coordinate_index: usize,
+    /// Unit 0 interprets its coordinates as projected 2D when type 3 is selected.
+    texture0_projection: bool,
 }
 
 impl PicaFragmentPipeline {
@@ -338,6 +357,9 @@ impl PicaFragmentPipeline {
         };
 
         let (linear_fog, fog_lut) = decode_fog_state(pica)?;
+        let texture0_projection = ((pica.register(TEXTURE0_PARAM_REGISTER).unwrap_or(0) >> 28)
+            & 0x7)
+            == TEXTURE0_PROJECTION_TYPE;
 
         Ok(Self {
             texture_environment: pica
@@ -355,6 +377,7 @@ impl PicaFragmentPipeline {
             linear_fog,
             fog_lut,
             texture2_coordinate_index: if config & (1 << 13) != 0 { 1 } else { 2 },
+            texture0_projection,
         })
     }
 
@@ -390,7 +413,11 @@ impl PicaFragmentPipeline {
             } else {
                 index
             };
-            let [s, t] = varyings.texture_coordinates[coordinate_index];
+            let [mut s, mut t] = varyings.texture_coordinates[coordinate_index];
+            if index == 0 && self.texture0_projection {
+                [s, t] = project_texture0_coordinate([s, t], varyings.texcoord0_w)
+                    .ok_or(PicaFragmentPipelineError::InvalidTexture0W)?;
+            }
             inputs.textures[index] = match varyings.texture_lod[index] {
                 Some(lod) => unit.sample_lod(memory, s, t, lod),
                 None => unit.sample(memory, s, t, varyings.minifying[index]),
@@ -458,17 +485,28 @@ impl PicaFragmentPipeline {
                 } else {
                     index
                 };
-                let [s, t] = varyings.texture_coordinates[coordinate];
-                let step = |other: [f32; 2]| {
-                    let ds = (other[0] - s) * f32::from(unit.width);
-                    let dt = (other[1] - t) * f32::from(unit.height);
-                    ds.hypot(dt)
+                let project = |sample: &PicaFragmentVaryings| {
+                    let coordinate = sample.texture_coordinates[coordinate];
+                    if index == 0 && self.texture0_projection {
+                        project_texture0_coordinate(coordinate, sample.texcoord0_w)
+                    } else {
+                        Some(coordinate)
+                    }
                 };
-                let longest = step(dx.texture_coordinates[coordinate])
-                    .max(step(dy.texture_coordinates[coordinate]));
-                if longest.is_finite() {
-                    let lod = longest.max(f32::MIN_POSITIVE).log2();
-                    varyings.texture_lod[index] = Some(if lod < LOD_EPSILON { 0.0 } else { lod });
+                if let (Some(current), Some(dx_coordinate), Some(dy_coordinate)) =
+                    (project(&varyings), project(&dx), project(&dy))
+                {
+                    let step = |other: [f32; 2]| {
+                        let ds = (other[0] - current[0]) * f32::from(unit.width);
+                        let dt = (other[1] - current[1]) * f32::from(unit.height);
+                        ds.hypot(dt)
+                    };
+                    let longest = step(dx_coordinate).max(step(dy_coordinate));
+                    if longest.is_finite() {
+                        let lod = longest.max(f32::MIN_POSITIVE).log2();
+                        varyings.texture_lod[index] =
+                            Some(if lod < LOD_EPSILON { 0.0 } else { lod });
+                    }
                 }
             }
         }
@@ -617,6 +655,7 @@ pub enum PicaFragmentPipelineError {
     UnsupportedFogMode {
         mode: u8,
     },
+    InvalidTexture0W,
     NonFiniteColor {
         attribute: &'static str,
         channel: usize,
@@ -638,6 +677,9 @@ impl std::fmt::Display for PicaFragmentPipelineError {
                 formatter,
                 "PICA fog mode {mode} is not implemented (gas and reserved modes are unsupported)"
             ),
+            Self::InvalidTexture0W => {
+                formatter.write_str("PICA projected texture unit 0 has an invalid TexCoord0 W")
+            }
             Self::NonFiniteColor { attribute, channel } => write!(
                 formatter,
                 "PICA fragment {attribute} channel {channel} is not finite"
@@ -709,11 +751,19 @@ fn interpolate_triangle_varyings(
         })
     };
 
+    let interpolate_scalar = |select: fn(&PicaFragmentVertex) -> f32| {
+        (0..3)
+            .map(|index| weights[index] * reciprocal_w[index] * select(&vertices[index]))
+            .sum::<f32>()
+            / denominator
+    };
+
     let varyings = PicaFragmentVaryings {
         primary_color: interpolate4(|vertex| vertex.primary_color),
         fragment_primary_color: interpolate4(|vertex| vertex.fragment_primary_color),
         fragment_secondary_color: interpolate4(|vertex| vertex.fragment_secondary_color),
         texture_coordinates: [interpolate2(0), interpolate2(1), interpolate2(2)],
+        texcoord0_w: interpolate_scalar(|vertex| vertex.texcoord0_w),
         minifying,
         texture_lod: [None; 3],
     };
@@ -797,6 +847,55 @@ mod tests {
             pipeline.shade_fragment(&memory, &varyings).unwrap(),
             [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 40.0 / 255.0]
         );
+    }
+
+    #[test]
+    fn projected_texture0_divides_uv_by_texcoord0_w() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_TEXUNIT_CONFIG, 1).unwrap();
+        configure_texture(&mut pica, 0, VRAM_BASE, 8, 8);
+        // Projection2D with clamp-to-border on both axes.
+        pica.write_register(0x083, (3 << 28) | (1 << 12) | (1 << 8)).unwrap();
+        configure_tev(&mut pica, PicaTevSource::Texture0);
+
+        let mut memory = GpuPhysicalMemory::new();
+        let mut texture = Vec::with_capacity(8 * 8 * 4);
+        for _ in 0..64 {
+            texture.extend_from_slice(&[40, 30, 20, 10]);
+        }
+        memory.write(VRAM_BASE, &texture).unwrap();
+
+        let pipeline = pica.fragment_pipeline().unwrap();
+        let varyings = PicaFragmentVaryings {
+            texture_coordinates: [[1.5, 0.25]; 3],
+            texcoord0_w: 2.0,
+            ..PicaFragmentVaryings::default()
+        };
+        assert_eq!(
+            pipeline.shade_fragment(&memory, &varyings).unwrap(),
+            [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 40.0 / 255.0]
+        );
+    }
+
+    #[test]
+    fn projected_texture0_rejects_zero_or_non_finite_w() {
+        let mut pica = Pica200::new();
+        pica.write_register(REG_TEXUNIT_CONFIG, 1).unwrap();
+        configure_texture(&mut pica, 0, VRAM_BASE, 8, 8);
+        pica.write_register(0x083, 3 << 28).unwrap();
+        configure_tev(&mut pica, PicaTevSource::Texture0);
+        let pipeline = pica.fragment_pipeline().unwrap();
+
+        for texcoord0_w in [0.0, f32::NAN, f32::INFINITY] {
+            let varyings = PicaFragmentVaryings {
+                texcoord0_w,
+                ..PicaFragmentVaryings::default()
+            };
+            assert_eq!(
+                pipeline.shade_fragment(&GpuPhysicalMemory::new(), &varyings),
+                Err(PicaFragmentPipelineError::InvalidTexture0W)
+            );
+        }
     }
 
     #[test]
@@ -957,6 +1056,7 @@ mod tests {
                 fragment_primary_color: [1.0; 4],
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[0.0, 0.0]; 3],
+                texcoord0_w: 1.0,
             },
             PicaFragmentVertex {
                 clip_position: [2.0, -2.0, 0.0, 2.0],
@@ -964,6 +1064,7 @@ mod tests {
                 fragment_primary_color: [1.0; 4],
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[1.0, 0.0]; 3],
+                texcoord0_w: 1.0,
             },
             PicaFragmentVertex {
                 clip_position: [0.0, 4.0, 0.0, 4.0],
@@ -971,6 +1072,7 @@ mod tests {
                 fragment_primary_color: [1.0; 4],
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[0.0, 1.0]; 3],
+                texcoord0_w: 1.0,
             },
         ];
 
@@ -997,16 +1099,19 @@ mod tests {
                 position: [-1.0, -1.0, 0.0, 1.0],
                 color: Some([1.0, 0.0, 0.0, 1.0]),
                 texcoords: [Some([0.0, 0.0]), None, None],
+                texcoord0_w: 1.0,
             },
             PicaResolvedVertex {
                 position: [2.0, -2.0, 0.0, 2.0],
                 color: Some([0.0, 1.0, 0.0, 1.0]),
                 texcoords: [Some([1.0, 0.0]), None, None],
+                texcoord0_w: 1.0,
             },
             PicaResolvedVertex {
                 position: [0.0, 4.0, 0.0, 4.0],
                 color: Some([0.0, 0.0, 1.0, 1.0]),
                 texcoords: [Some([0.0, 1.0]), None, None],
+                texcoord0_w: 1.0,
             },
         ];
         let output = pipeline
@@ -1088,6 +1193,7 @@ mod tests {
             fragment_primary_color: [1.0; 4],
             fragment_secondary_color: [0.0; 4],
             texture_coordinates: [[0.0; 2]; 3],
+            texcoord0_w: 1.0,
         };
         assert_eq!(
             pipeline.shade_triangle_sample(
