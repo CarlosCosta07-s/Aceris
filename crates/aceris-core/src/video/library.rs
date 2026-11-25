@@ -65,6 +65,7 @@ pub struct Library {
     recent: Vec<String>,
     sort_descending: bool,
     external_media_playing: bool,
+    external_media_detection_available: bool,
 }
 
 /// Reads a persistent list of simple file names from the Aceris settings folder.
@@ -135,6 +136,7 @@ impl Library {
             recent,
             sort_descending: false,
             external_media_playing: false,
+            external_media_detection_available: false,
         }
     }
 
@@ -240,6 +242,18 @@ impl Library {
 
     pub fn external_media_playing(&self) -> bool {
         self.external_media_playing
+    }
+
+    /// Indicates whether the Android host can reliably detect external media.
+    pub fn set_external_media_detection_available(&mut self, available: bool) {
+        self.external_media_detection_available = available;
+        if !available {
+            self.external_media_playing = false;
+        }
+    }
+
+    pub fn external_media_detection_available(&self) -> bool {
+        self.external_media_detection_available
     }
 
     fn persist_library_ids(&self, file_name: &str, values: impl IntoIterator<Item = String>) {
@@ -1565,7 +1579,9 @@ impl Library {
                     690.0,
                     399.0,
                     (text_scale as f32 * 0.82).round().max(1.0) as usize,
-                    if self.external_media_playing {
+                    if !self.external_media_detection_available {
+                        "Detecção indisponível neste Android"
+                    } else if self.external_media_playing {
                         "Tocando — áudio do jogo mudo"
                     } else {
                         "Nenhuma mídia detectada"
@@ -1638,7 +1654,11 @@ impl Library {
                     590.0,
                     176.0,
                     text_scale,
-                    "Detecção de mídia externa: automática",
+                    if self.external_media_detection_available {
+                        "Detecção de mídia externa: automática"
+                    } else {
+                        "Detecção indisponível neste Android"
+                    },
                     brand::TEXT,
                 );
                 responsive_text(
