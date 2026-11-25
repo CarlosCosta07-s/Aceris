@@ -416,7 +416,7 @@ fn profile_cpu(iterations: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn profile_cpu_thumb(iterations: usize) -> Result<(), String> {
+fn profile_cpu_thumb(iterations: usize) -> Result<std::time::Duration, String> {
     const CODE_BASE: u32 = 0x2000;
     const INSTRUCTIONS: [u16; 4] = [
         0x2001, // MOVS r0, #1
