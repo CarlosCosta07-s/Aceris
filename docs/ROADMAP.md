@@ -370,3 +370,16 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [x] Entrada por toque validada em headless com homebrew real (Cookie Clicker: 8 toques → 8 cookies). Android, áudio audível e desempenho em tempo real seguem não validados.
 
 - PICA200 (2026-11-25): iluminação por fragmento implementada (`gpu/lighting.rs`, LUTs 0x1C5/0x1C8–0x1CF, quaternion/view no output map); fórmulas parcialmente não verificadas e sombras não aplicadas. Pendentes: geometry shader, gas, planos de clip, depth offset, sombras.
+
+## Kernel/SVC/IPC — progresso de bootstrap — 25/11/2026
+
+- [~] SVC `GetThreadId` (0x37), `GetResourceLimit` (0x38), `GetResourceLimitLimitValues` (0x39), `GetResourceLimitCurrentValues` (0x3A) e `Break` (0x3C) integrados à sessão ARM11. `ResourceLimit` é um objeto de handle tipado e não aguardável.
+- [~] `RESLIMIT_COMMIT` (tipo 1) retorna o teto configurado de 64 MiB do perfil Old 3DS atual e uso guest-visible mapeado (segmentos estáticos, stack, TLS e regiões dinâmicas). Outros tipos e accounting de shared-memory ainda não estão implementados.
+- [~] Teste sintético integrado percorre ResourceLimit → consulta de orçamento → `ControlMemory(MEMOP_ALLOC)` e confirma aumento do COMMIT pelo tamanho alocado. Testes unitários também cobrem handles, GetThreadId e svcBreak; ainda aguardam execução em CI.
+- [~] `srv:IsServiceRegistered` (IPC 0x000E00C0) consulta o registry HLE presente, respeita a ACL NCCH e distingue endpoint disponível de serviço apenas permitido sem endpoint.
+- [ ] Ciclo de portas/sessões servidoras (`RegisterService`, `AcceptSession`, `ReplyAndReceive`), fila de `GetServiceHandle` pendente e wake-up quando serviço for registrado.
+- [ ] Reexecutar o CIA/homebrew de diagnóstico após estas alterações e registrar PC/CPSR, SVC/IPC, orçamento de heap, serviço e resultado observado. Nenhum boot comercial foi confirmado por esta revisão.
+- [ ] Ampliar `ResourceLimit` para THREAD/EVENT/MUTEX/SEMAPHORE/TIMER/SHARED_MEMORY/ADDRESS_ARBITER/CPU_TIME com limites e contadores derivados do kernel real; não responder com valores inventados.
+- [ ] Confirmar Rustfmt, Clippy, testes Linux/Windows/macOS e builds Android ARM64 no HEAD atual. O estado local não foi compilado nesta sessão.
+
+- Fronteiras preservadas: alterações de kernel/SVC em `session.rs`, `session/kernel.rs`, `session/svc.rs`; IPC/registry em `system.rs`; documentação em `AI_HANDOFF.md` e `ROADMAP.md`. Somente `main`; sem branches.
