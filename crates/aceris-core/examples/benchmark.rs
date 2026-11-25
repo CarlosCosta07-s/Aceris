@@ -759,8 +759,12 @@ fn write_frame_trace(path: &std::path::Path, samples: &[FrameTraceSample]) -> Re
             sample.cpsr
         ));
     }
-    std::fs::write(path, csv)
-        .map_err(|error| format!("could not write per-frame trace {}: {error}", path.display()))
+    std::fs::write(path, csv).map_err(|error| {
+        format!(
+            "could not write per-frame trace {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn dump_lcd(system: &System, directory: &std::path::Path) -> Result<(), String> {
