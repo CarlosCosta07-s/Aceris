@@ -59,7 +59,14 @@ fn lowercase_glyph(ch: char) -> Option<[u8; 7]> {
 }
 
 fn glyph(ch: char) -> [u8; 7] {
-    if let Some(rows) = lowercase_glyph(ch) {
+    let normalized = match ch {
+        'Á' => 'á', 'À' => 'à', 'Â' => 'â', 'Ã' => 'ã',
+        'É' => 'é', 'Ê' => 'ê', 'Í' => 'í',
+        'Ó' => 'ó', 'Ô' => 'ô', 'Õ' => 'õ',
+        'Ú' => 'ú', 'Ç' => 'ç',
+        _ => ch,
+    };
+    if let Some(rows) = lowercase_glyph(normalized) {
         return rows;
     }
     match ch.to_ascii_uppercase() {
@@ -257,7 +264,7 @@ mod tests {
         assert_ne!(glyph('a'), glyph('A'));
         assert_ne!(glyph('é'), glyph('?'));
         assert_ne!(glyph('ç'), glyph('?'));
-        assert_eq!(glyph('É'), glyph('E'));
+        assert_ne!(glyph('É'), glyph('?'));
         assert_eq!(text_width(3, 2), (3 * ADVANCE - 1) * 2);
     }
 }
