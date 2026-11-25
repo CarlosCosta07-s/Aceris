@@ -155,6 +155,8 @@ pub struct PicaFragmentRasterState {
     pub minifying: [bool; 3],
     /// Face culling by triangle winding in PICA window space (Y up).
     pub cull_mode: PicaCullMode,
+    /// GPUREG_FRAMEBUFFER_DIM bit 24 mirrors the guest viewport/scissor on Y.
+    pub flip_viewport: bool,
     /// Scissor rectangle in PICA window coordinates (origin bottom-left).
     pub scissor: PicaScissorState,
 }
@@ -172,6 +174,7 @@ impl PicaFragmentRasterState {
             depth_map: None,
             minifying: [false; 3],
             cull_mode: PicaCullMode::KeepAll,
+            flip_viewport: false,
             scissor: PicaScissorState::default(),
         }
     }
@@ -501,12 +504,14 @@ impl PicaFragmentRasterizer {
         if area == 0.0 {
             return Ok(());
         }
-        // `area` uses top-left screen coordinates (Y down); PICA window space
-        // has Y up, so the winding seen by the guest is the opposite sign.
+        // `area` uses top-left screen coordinates (Y down); the guest uses
+        // PICA window coordinates (Y up). The framebuffer flip mirrors the
+        // viewport a second time, so account for that before culling.
+        let guest_winding_area = if state.flip_viewport { -area } else { area };
         let culled = match state.cull_mode {
             PicaCullMode::KeepAll => false,
-            PicaCullMode::KeepClockwise => area < 0.0,
-            PicaCullMode::KeepCounterClockwise => area > 0.0,
+            PicaCullMode::KeepClockwise => guest_winding_area < 0.0,
+            PicaCullMode::KeepCounterClockwise => guest_winding_area > 0.0,
         };
         if culled {
             return Ok(());
@@ -582,7 +587,7 @@ impl PicaFragmentRasterizer {
                 if (0..3).any(|index| !inside_edge(edges[index], edge_top_left[index])) {
                     continue;
                 }
-                if scissor_rejects(state.scissor, x, y, self.height) {
+                if scissor_rejects(state.scissor, x, y, self.height, state.flip_viewport) {
                     continue;
                 }
 
@@ -884,12 +889,23 @@ fn to_screen(
 }
 
 /// Whether the scissor discards the pixel at top-left coordinates (`x`, `y`).
-fn scissor_rejects(scissor: PicaScissorState, x: usize, y: usize, height: usize) -> bool {
+fn scissor_rejects(
+    scissor: PicaScissorState,
+    x: usize,
+    y: usize,
+    height: usize,
+    flip_viewport: bool,
+) -> bool {
     if scissor.mode == PicaScissorMode::Disabled {
         return false;
     }
-    // Convert to PICA window coordinates (origin bottom-left).
-    let window_y = (height - 1 - y) as u64;
+    // Convert the top-left pixel row to PICA window coordinates. With a
+    // vertically flipped framebuffer, the scissor rectangle is mirrored too.
+    let window_y = if flip_viewport {
+        y as u64
+    } else {
+        (height - 1 - y) as u64
+    };
     let window_x = x as u64;
     let inside = (u64::from(scissor.x1)..=u64::from(scissor.x2)).contains(&window_x)
         && (u64::from(scissor.y1)..=u64::from(scissor.y2)).contains(&window_y);
@@ -1211,6 +1227,15 @@ mod tests {
         cull_mode: PicaCullMode,
         scissor: PicaScissorState,
     ) -> (PicaFragmentRasterReport, PicaFragmentRasterizer) {
+        raster_with_flip(order, cull_mode, scissor, false)
+    }
+
+    fn raster_with_flip(
+        order: [usize; 3],
+        cull_mode: PicaCullMode,
+        scissor: PicaScissorState,
+        flip_viewport: bool,
+    ) -> (PicaFragmentRasterReport, PicaFragmentRasterizer) {
         let mut pica = super::super::Pica200::new();
         configure_tev(&mut pica);
         let pipeline = pica.fragment_pipeline().unwrap();
@@ -1231,6 +1256,7 @@ mod tests {
             Viewport::new(0.0, 0.0, 8.0, 8.0).unwrap(),
         );
         state.cull_mode = cull_mode;
+        state.flip_viewport = flip_viewport;
         state.scissor = scissor;
         let report = rasterizer.draw(&draw, &pipeline, &memory, state).unwrap();
         (report, rasterizer)
@@ -1286,6 +1312,42 @@ mod tests {
             rect(PicaScissorMode::Disabled),
         );
         assert_eq!(disabled.covered_pixels, 28);
+    }
+
+    #[test]
+    fn framebuffer_flip_mirrors_scissor_and_preserves_guest_face_winding() {
+        let bottom_row = PicaScissorState {
+            mode: PicaScissorMode::Include,
+            x1: 0,
+            y1: 0,
+            x2: 7,
+            y2: 0,
+        };
+        let (normal, normal_pixels) =
+            raster_with([0, 1, 2], PicaCullMode::KeepAll, bottom_row);
+        assert_eq!(normal.covered_pixels, 7);
+        assert_ne!(normal_pixels.color_at(0, 7), Some([0, 0, 0, 0]));
+        assert_eq!(normal_pixels.color_at(0, 0), Some([0, 0, 0, 0]));
+
+        let (flipped, flipped_pixels) =
+            raster_with_flip([0, 1, 2], PicaCullMode::KeepAll, bottom_row, true);
+        assert_eq!(flipped.covered_pixels, 7);
+        assert_ne!(flipped_pixels.color_at(0, 0), Some([0, 0, 0, 0]));
+        assert_eq!(flipped_pixels.color_at(0, 7), Some([0, 0, 0, 0]));
+
+        let none = PicaScissorState::default();
+        let (ccw, _) =
+            raster_with_flip([0, 1, 2], PicaCullMode::KeepCounterClockwise, none, true);
+        let (cw, _) =
+            raster_with_flip([0, 2, 1], PicaCullMode::KeepClockwise, none, true);
+        let (reject_ccw, _) =
+            raster_with_flip([0, 1, 2], PicaCullMode::KeepClockwise, none, true);
+        let (reject_cw, _) =
+            raster_with_flip([0, 2, 1], PicaCullMode::KeepCounterClockwise, none, true);
+        assert_eq!(ccw.covered_pixels, 28);
+        assert_eq!(cw.covered_pixels, 28);
+        assert_eq!(reject_ccw.covered_pixels, 0);
+        assert_eq!(reject_cw.covered_pixels, 0);
     }
 
     #[test]
