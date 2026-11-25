@@ -13,7 +13,7 @@ use super::native_input::{
     scroll_rows_from_wheel,
 };
 use super::{WindowError, WindowEvent};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32DisplayHandle, Win32WindowHandle};
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::num::NonZeroIsize;
@@ -205,7 +205,7 @@ impl Window {
         let hwnd = NonZeroIsize::new(self.hwnd as isize)
             .ok_or_else(|| WindowError::Backend("Win32 window handle is null".to_owned()))?;
         Ok((
-            Some(RawDisplayHandle::Win32(Win32DisplayHandle::new())),
+            Some(RawDisplayHandle::Windows(WindowsDisplayHandle::new())),
             RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)),
         ))
     }
