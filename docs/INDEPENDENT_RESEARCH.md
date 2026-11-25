@@ -365,9 +365,10 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 
 ### Procedural LUT interpolation evidence (22/11/2026)
 
-- The public register map describes noise/RGB/alpha LUT entries as an unsigned fixed0.0.12 value plus a two's-complement 12-bit difference, where the unsigned upper half maps to [-1, 0). It describes color-difference channels as signed half-differences between adjacent RGBA entries.
-- The implementation interpolates a selected curve entry as `value/4096 + signed_delta/2048 * fraction`, and a color channel as `current + 2*signed_half_delta*fraction`. It returns floating-point channels without applying unverified rounding/saturation.
-- These formulas cover interpolation after an entry/index has already been selected. They do not assert the coordinate-to-segment mapping, full F(g) behavior, or noise generator.
+- The public register map identifies a 12-bit unsigned value and a 12-bit two's-complement difference for noise/RGB/alpha LUT entries. The independent Citra/Azahar software references describe that signed difference as approximately [-0.5, 0.5) and normalize both fields by 4095; Aceris now uses the same normalization rather than interpreting the difference as [-1, 1).
+- The implementation interpolates a selected curve entry as `value/4095 + signed_delta/4095 * fraction`, and a color channel as `current + 2*signed_half_delta*fraction`. It returns floating-point channels without applying unverified rounding/saturation.
+- Cross-check (paraphrased; no source code copied): Azahar `src/video_core/pica/pica_core.h` and `src/video_core/renderer_software/sw_proctex.cpp` at commit `fd4c9abd98345dbefff9cef07aadaf61ee1f683d`; Citra `src/video_core/pica_state.h` and `src/video_core/swrasterizer/proctex.cpp` at commit `302b0c3bc4312bc96489c11584a97664894b343f`. Both define the signed delta's half-range and divide it by 4095. This is a software-reference cross-check, not a claim of physical-hardware verification.
+- These formulas cover interpolation after an entry/index has already been selected. They do not assert hardware rounding, the complete coordinate-to-segment mapping, or the noise generator.
 
 ### G(u,v) equation helper (22/11/2026)
 

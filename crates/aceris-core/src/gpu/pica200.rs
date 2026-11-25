@@ -309,16 +309,16 @@ pub struct PicaProceduralTextureCurveEntry {
 impl PicaProceduralTextureCurveEntry {
     /// Linearly interpolates this entry toward the next LUT entry.
     ///
-    /// `fraction` must be in [0, 1]. The value uses unsigned 0.12 scaling;
-    /// the signed 12-bit difference uses a 1/2048 scale as documented by
-    /// PICA's mapping of the upper half of the unsigned range to [-1, 0).
+    /// `fraction` must be in [0, 1]. Both the unsigned value and the signed
+    /// 12-bit two's-complement difference are normalized by 4095. The signed
+    /// difference therefore spans approximately [-0.5, 0.5).
     pub fn sample_linear(self, fraction: f32) -> Option<f32> {
         if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
             return None;
         }
 
-        let value = f32::from(self.value_fixed0_0_12) / 4096.0;
-        let difference = f32::from(self.difference_fixed0_0_12) / 2048.0;
+        let value = f32::from(self.value_fixed0_0_12) / 4095.0;
+        let difference = f32::from(self.difference_fixed0_0_12) / 4095.0;
         Some(value + difference * fraction)
     }
 }
@@ -2217,9 +2217,9 @@ mod tests {
         let curve = gpu
             .procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, 7)
             .unwrap();
-        assert!((curve.sample_linear(0.0).unwrap() - (0x123 as f32 / 4096.0)).abs() < 0.000_001);
-        assert!((curve.sample_linear(0.5).unwrap() - (0x0A3 as f32 / 4096.0)).abs() < 0.000_001);
-        assert!((curve.sample_linear(1.0).unwrap() - (0x023 as f32 / 4096.0)).abs() < 0.000_001);
+        assert!((curve.sample_linear(0.0).unwrap() - (0x123 as f32 / 4095.0)).abs() < 0.000_001);
+        assert!((curve.sample_linear(0.5).unwrap() - (0x0E3 as f32 / 4095.0)).abs() < 0.000_001);
+        assert!((curve.sample_linear(1.0).unwrap() - (0x0A3 as f32 / 4095.0)).abs() < 0.000_001);
         assert_eq!(curve.sample_linear(1.01), None);
         assert_eq!(curve.sample_linear(f32::NAN), None);
 
