@@ -145,12 +145,14 @@ impl App {
                 pad::DOWN => self
                     .library
                     .move_selection_responsive(1, self.width, self.height),
-                pad::LEFT => self
-                    .library
-                    .move_selection_horizontal_responsive(-1, self.width, self.height),
-                pad::RIGHT => self
-                    .library
-                    .move_selection_horizontal_responsive(1, self.width, self.height),
+                pad::LEFT => {
+                    self.library
+                        .move_selection_horizontal_responsive(-1, self.width, self.height)
+                }
+                pad::RIGHT => {
+                    self.library
+                        .move_selection_horizontal_responsive(1, self.width, self.height)
+                }
                 pad::A | pad::START => self.launch_selected(),
                 _ => {}
             },
