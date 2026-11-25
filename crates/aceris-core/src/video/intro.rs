@@ -10,11 +10,15 @@ use aceris_common::brand;
 
 /// Frames per second the sequence is designed for.
 pub const FPS: u32 = 60;
-/// Total number of frames (2.5 seconds).
-pub const FRAME_COUNT: u32 = 150;
+/// Total number of frames (1.4 seconds at 60 Hz).
+pub const FRAME_COUNT: u32 = 84;
 
-/// Frame with the finished logo, held on screen while waiting for a game.
-pub const LOGO_FRAME: u32 = 120;
+/// Frame with the finished logo, held briefly before returning to the launcher.
+pub const LOGO_FRAME: u32 = 67;
+
+/// Original animation timeline ends at frame 149; the new sequence samples it
+/// at a higher rate instead of dropping its visual beats.
+const SOURCE_LAST_FRAME: f32 = 149.0;
 
 const DROP_END: f32 = 34.0;
 const BOUNCE_1_END: f32 = 52.0;
@@ -135,11 +139,38 @@ fn motion(frame: f32) -> (f32, f32) {
 /// `frame` is clamped to the last frame. Any size works; the layout is
 /// proportional to `width`, and the picture is centred vertically.
 pub fn render_frame(frame: u32, width: usize, height: usize) -> Vec<u8> {
-    let f = frame.min(FRAME_COUNT - 1) as f32;
-    let mut out = vec![255u8; width * height * 4];
-    if width == 0 || height == 0 {
-        return out;
+    let mut output = Vec::new();
+    let _ = render_frame_into(frame, width, height, &mut output);
+    output
+}
+
+/// Renders one frame into a reusable RGBA8 buffer without allocating after its
+/// capacity has reached the requested surface size.
+pub fn render_frame_into(
+    frame: u32,
+    width: usize,
+    height: usize,
+    output: &mut Vec<u8>,
+) -> bool {
+    let Some(byte_len) = width.checked_mul(height).and_then(|pixels| pixels.checked_mul(4)) else {
+        output.clear();
+        return false;
+    };
+    if output.capacity() < byte_len {
+        let additional = byte_len.saturating_sub(output.len());
+        if output.try_reserve_exact(additional).is_err() {
+            output.clear();
+            return false;
+        }
     }
+    output.resize(byte_len, 255);
+    output.fill(255);
+    if width == 0 || height == 0 {
+        return true;
+    }
+    let source_frame = frame.min(FRAME_COUNT - 1);
+    let f = source_frame as f32 * SOURCE_LAST_FRAME / (FRAME_COUNT - 1) as f32;
+    let out = output.as_mut_slice();
     let (w, h) = (width as f32, height as f32);
     let k = w * 0.40 / 630.0; // pixels per fruit unit
     let (cx, ground) = (w * 0.5, h * 0.50);
@@ -157,7 +188,7 @@ pub fn render_frame(frame: u32, width: usize, height: usize) -> Vec<u8> {
 
     let fade_in = (f / 12.0).clamp(0.0, 1.0);
     let fade_out =
-        1.0 - ((f - FADE_START) / (FRAME_COUNT as f32 - 1.0 - FADE_START)).clamp(0.0, 1.0);
+        1.0 - ((f - FADE_START) / (SOURCE_LAST_FRAME - FADE_START)).clamp(0.0, 1.0);
     let brightness = fade_in * fade_out;
 
     // Word-mark layout: 6 glyphs of 5 cells with one cell between them.
@@ -266,25 +297,54 @@ pub fn render_frame(frame: u32, width: usize, height: usize) -> Vec<u8> {
             }
         }
     }
-    out
+    true
 }
 
 /// Blits an RGBA frame into BGRX, enlarged by an integer `scale`.
 pub fn rgba_to_scaled_bgrx(rgba: &[u8], width: usize, scale: usize) -> Vec<u8> {
+    let mut output = Vec::new();
+    let _ = rgba_to_scaled_bgrx_into(rgba, width, scale, &mut output);
+    output
+}
+
+/// Converts/scales into a caller-owned buffer to reuse allocation between frames.
+pub fn rgba_to_scaled_bgrx_into(
+    rgba: &[u8],
+    width: usize,
+    scale: usize,
+    output: &mut Vec<u8>,
+) -> bool {
     let scale = scale.max(1);
-    let mut out = Vec::with_capacity(rgba.len() * scale * scale);
+    if width == 0 || rgba.len() % (width * 4) != 0 {
+        output.clear();
+        return false;
+    }
+    let Some(byte_len) = rgba.len().checked_mul(scale).and_then(|value| value.checked_mul(scale)) else {
+        output.clear();
+        return false;
+    };
+    if output.capacity() < byte_len {
+        let additional = byte_len.saturating_sub(output.len());
+        if output.try_reserve_exact(additional).is_err() {
+            output.clear();
+            return false;
+        }
+    }
+    output.clear();
+    let line_width = width * 4 * scale;
+    let mut line = Vec::with_capacity(line_width);
     for row in rgba.chunks_exact(width * 4) {
-        let mut line = Vec::with_capacity(width * 4 * scale);
+        line.clear();
         for pixel in row.chunks_exact(4) {
             for _ in 0..scale {
                 line.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 0xFF]);
             }
         }
         for _ in 0..scale {
-            out.extend_from_slice(&line);
+            output.extend_from_slice(&line);
         }
     }
-    out
+    true
 }
 
 #[cfg(test)]
@@ -349,6 +409,38 @@ mod tests {
                 .count()
         };
         assert!(bright(&after) > bright(&before) + 50);
+    }
+
+    #[test]
+    fn reusable_render_and_scaling_buffers_keep_their_allocations() {
+        let mut rgba = Vec::new();
+        assert!(render_frame_into(0, W, H, &mut rgba));
+        let rgba_ptr = rgba.as_ptr();
+        let rgba_capacity = rgba.capacity();
+        for frame in 1..FRAME_COUNT {
+            assert!(render_frame_into(frame, W, H, &mut rgba));
+        }
+        assert_eq!(rgba.as_ptr(), rgba_ptr);
+        assert_eq!(rgba.capacity(), rgba_capacity);
+        assert_eq!(rgba.len(), W * H * 4);
+
+        let mut bgrx = Vec::new();
+        assert!(rgba_to_scaled_bgrx_into(&rgba, W, 2, &mut bgrx));
+        let bgrx_ptr = bgrx.as_ptr();
+        let bgrx_capacity = bgrx.capacity();
+        assert!(rgba_to_scaled_bgrx_into(&rgba, W, 2, &mut bgrx));
+        assert_eq!(bgrx.as_ptr(), bgrx_ptr);
+        assert_eq!(bgrx.capacity(), bgrx_capacity);
+    }
+
+    #[test]
+    fn invalid_and_overflowing_surface_sizes_fail_without_panicking() {
+        let mut frame = vec![1, 2, 3];
+        assert!(!render_frame_into(0, usize::MAX, 2, &mut frame));
+        assert!(frame.is_empty());
+        assert!(render_frame_into(0, 0, 0, &mut frame));
+        assert!(frame.is_empty());
+        assert!(!rgba_to_scaled_bgrx_into(&[], 0, 2, &mut frame));
     }
 
     #[test]
