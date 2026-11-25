@@ -614,7 +614,6 @@ pub enum PicaFragmentPipelineError {
     Tev(PicaTevError),
     Output(PicaFragmentOutputError),
     ProceduralTexture(PicaProceduralTextureError),
-    ProceduralTextureUnitUnsupported,
     UnsupportedFogMode {
         mode: u8,
     },
@@ -634,9 +633,6 @@ impl std::fmt::Display for PicaFragmentPipelineError {
             Self::Output(error) => write!(formatter, "PICA fragment output stage failed: {error}"),
             Self::ProceduralTexture(error) => {
                 write!(formatter, "PICA procedural texture stage failed: {error}")
-            }
-            Self::ProceduralTextureUnitUnsupported => {
-                formatter.write_str("PICA procedural texture unit 3 is not implemented")
             }
             Self::UnsupportedFogMode { mode } => write!(
                 formatter,
@@ -1107,12 +1103,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_enabled_procedural_unit_instead_of_using_zero_texels() {
+    fn rejects_enabled_procedural_unit_with_invalid_zero_width() {
         let mut pica = Pica200::new();
         pica.write_register(REG_TEXUNIT_CONFIG, 1 << 10).unwrap();
         assert_eq!(
             pica.fragment_pipeline(),
-            Err(PicaFragmentPipelineError::ProceduralTextureUnitUnsupported)
+            Err(PicaFragmentPipelineError::ProceduralTexture(
+                PicaProceduralTextureError::InvalidTextureWidth(0)
+            ))
         );
     }
 
