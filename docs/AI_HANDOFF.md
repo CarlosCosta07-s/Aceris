@@ -2345,3 +2345,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Ao sair de um jogo com a tecla Voltar, o frontend Android agora lê `System::unhandled_requests()` antes de descartar o sistema e mostra a primeira falha de `srv:GetServiceHandle` na linha de status da biblioteca. Se não houver falha de SRV, mostra a primeira solicitação não atendida.
 - Se a execução parar por erro, a mensagem de interrupção inclui também o primeiro diagnóstico HLE disponível.
 - Isso torna os resultados da investigação de `dsp::DSP` visíveis no próprio aparelho, sem depender de logcat ou de um frontend desktop. O estado é exibido após sair do jogo; não é uma sobreposição durante o gameplay.
+
+
+### CI do diagnóstico visível no Android — 25/11/2026
+
+- O commit `3b85bf258d8d197ad1dafc79333f8fdbcf7c8574` passou no workflow [45603812470](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45603812470) em Linux, Windows, macOS e Android ARM64.
+- Formatação, builds, Clippy, testes completos e benchmarks release passaram nos desktops; builds release do app e do benchmark passaram no Android.
+- O diagnóstico de serviço HLE fica visível na biblioteca ao sair do jogo pelo botão Voltar. O CIA não foi incluído na CI e o teste manual ignorado continua pendente de execução com o arquivo local.

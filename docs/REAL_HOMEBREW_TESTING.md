@@ -106,7 +106,7 @@ Esse avanço chega a uma tela produzida pelo próprio aplicativo, mas não é bo
 - No ensaio manual registrado em 24/11, após 450 quadros com orçamento de 4.000.000 instruções por quadro, a tela superior exibiu a abertura do port (texto "PORT BY" e "CRECKERYOP" na orientação esperada). Cada lista observada escreveu 192.000 pixels.
 - A tela inferior continuou preta. O resultado não demonstra gameplay, entrada funcional ou áudio; a falha de inicialização `Sound.init` ainda precisa ser rastreada.
 - Em 25/11, a unidade PICA200 procedural foi conectada ao TEV e ganhou um modelo de ruído de referência em software. Isso ainda não foi validado em console físico nem confirmado como a causa de qualquer resultado visual do Cookie Clicker.
-- A CI mais recente do HEAD `d5cdc15b13e454a8c580bb8dbb50b522c05d7693` passou em Linux, Windows, macOS e Android ARM64 no workflow [45600245040](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45600245040). Nos desktops, formatação, build, Clippy, testes completos e benchmark release passaram; no Android, o app e o benchmark ARM64 release foram compilados. A CI não contém o CIA e não executa este teste manual ignorado.
+- A CI mais recente do HEAD `3b85bf258d8d197ad1dafc79333f8fdbcf7c8574` passou em Linux, Windows, macOS e Android ARM64 no workflow [45603812470](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45603812470). Nos desktops, formatação, build, Clippy, testes completos e benchmark release passaram; no Android, o app e o benchmark ARM64 release foram compilados. A CI não contém o CIA e não executa este teste manual ignorado.
 
 ### Repetir a validação com o CIA Cookie Clicker fornecido
 
