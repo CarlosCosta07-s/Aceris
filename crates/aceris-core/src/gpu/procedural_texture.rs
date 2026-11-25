@@ -94,13 +94,65 @@ impl fmt::Display for PicaProceduralTextureError {
 
 impl std::error::Error for PicaProceduralTextureError {}
 
+/// Binary16/fixed-point noise parameters and the draw-local noise LUT.
+///
+/// Decoding happens once when the PICA draw state is captured, not once per
+/// fragment. This keeps the inner sampler free of repeated format conversion.
+#[derive(Clone, Debug, PartialEq)]
+struct ProceduralNoiseState {
+    frequency: [f32; 2],
+    phase: [f32; 2],
+    amplitude: [f32; 2],
+    lut: [PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
+}
+
+impl ProceduralNoiseState {
+    fn from_pica(
+        pica: &Pica200,
+        config: &PicaProceduralTextureConfig,
+    ) -> Result<Self, PicaProceduralTextureError> {
+        let frequency = [
+            decode_float16(config.u_noise_frequency_float1_5_10),
+            decode_float16(config.v_noise_frequency_float1_5_10),
+        ];
+        let phase = [
+            decode_float16(config.u_noise_phase_float1_5_10),
+            decode_float16(config.v_noise_phase_float1_5_10),
+        ];
+        if frequency
+            .iter()
+            .chain(phase.iter())
+            .any(|value| !value.is_finite())
+            || frequency.iter().any(|value| *value < 0.0)
+        {
+            return Err(PicaProceduralTextureError::InvalidNoiseParameters);
+        }
+
+        let amplitude = [
+            f32::from(config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0,
+            f32::from(config.v_noise_amplitude_fixed1_3_12 as i16) / 4095.0,
+        ];
+        let lut = std::array::from_fn(|index| {
+            pica.procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, index)
+                .expect("every index in the procedural noise table is valid")
+        });
+
+        Ok(Self {
+            frequency,
+            phase,
+            amplitude,
+            lut,
+        })
+    }
+}
+
 /// Draw-local snapshot of the PICA procedural-texture registers and lookup
 /// tables. The snapshot keeps later FIFO uploads from changing an in-flight
 /// draw, matching the other fragment-stage state snapshots.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PicaProceduralTextureSampler {
     config: PicaProceduralTextureConfig,
-    noise: [PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
+    noise: Option<ProceduralNoiseState>,
     rgb_mapping: [PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
     alpha_mapping: [PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
     colors: [[u8; 4]; COLOR_LUT_SIZE],
@@ -152,10 +204,11 @@ impl PicaProceduralTextureSampler {
             });
         }
 
-        let noise = std::array::from_fn(|index| {
-            pica.procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, index)
-                .expect("every index in the procedural noise table is valid")
-        });
+        let noise = if config.noise_enabled {
+            Some(ProceduralNoiseState::from_pica(pica, &config)?)
+        } else {
+            None
+        };
         let rgb_mapping = std::array::from_fn(|index| {
             pica.procedural_texture_curve_entry(PicaProceduralTextureLut::RgbMapping, index)
                 .expect("every index in the RGB mapping table is valid")
@@ -205,12 +258,10 @@ impl PicaProceduralTextureSampler {
         let u_shift = shift_offset(self.config.u_shift, v, self.config.u_clamp)?;
         let v_shift = shift_offset(self.config.v_shift, u, self.config.v_clamp)?;
 
-        if self.config.noise_enabled {
-            let noise = procedural_noise_coefficient(u, v, &self.config, &self.noise)?;
-            let u_amplitude = f32::from(self.config.u_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
-            let v_amplitude = f32::from(self.config.v_noise_amplitude_fixed1_3_12 as i16) / 4095.0;
-            u = (u + noise * u_amplitude).abs();
-            v = (v + noise * v_amplitude).abs();
+        if let Some(noise_state) = &self.noise {
+            let noise = procedural_noise_coefficient(u, v, noise_state)?;
+            u = (u + noise * noise_state.amplitude[0]).abs();
+            v = (v + noise * noise_state.amplitude[1]).abs();
         }
 
         u += u_shift;
@@ -317,30 +368,15 @@ fn noise_rand_2d(x: u32, y: u32) -> f32 {
 }
 
 /// Generates the deterministic reference noise coefficient at one U/V pair.
-/// The generated value is subsequently scaled independently by each axis'
-/// signed fixed-point amplitude.
+/// Register decoding and amplitude conversion happen once when the draw
+/// state is captured; only coordinate-dependent work remains per fragment.
 fn procedural_noise_coefficient(
     u: f32,
     v: f32,
-    config: &PicaProceduralTextureConfig,
-    noise_lut: &[PicaProceduralTextureCurveEntry; CURVE_LUT_SIZE],
+    state: &ProceduralNoiseState,
 ) -> Result<f32, PicaProceduralTextureError> {
-    let frequency_u = decode_float16(config.u_noise_frequency_float1_5_10);
-    let frequency_v = decode_float16(config.v_noise_frequency_float1_5_10);
-    let phase_u = decode_float16(config.u_noise_phase_float1_5_10);
-    let phase_v = decode_float16(config.v_noise_phase_float1_5_10);
-    if !frequency_u.is_finite()
-        || !frequency_v.is_finite()
-        || !phase_u.is_finite()
-        || !phase_v.is_finite()
-        || frequency_u < 0.0
-        || frequency_v < 0.0
-    {
-        return Err(PicaProceduralTextureError::InvalidNoiseParameters);
-    }
-
-    let x = 9.0 * frequency_u * (u + phase_u).abs();
-    let y = 9.0 * frequency_v * (v + phase_v).abs();
+    let x = 9.0 * state.frequency[0] * (u + state.phase[0]).abs();
+    let y = 9.0 * state.frequency[1] * (v + state.phase[1]).abs();
     // The reference converts these coordinates to signed 32-bit integers,
     // then hashes the integer lattice points and their +1 neighbours.
     if !x.is_finite()
@@ -364,8 +400,8 @@ fn procedural_noise_coefficient(
     let g01 = noise_rand_2d(x_integer, y_integer + 1) * (fraction_sum - 1.0);
     let g11 = noise_rand_2d(x_integer + 1, y_integer + 1) * (fraction_sum - 2.0);
 
-    let blend_x = lookup_curve(noise_lut, x_fraction)?;
-    let blend_y = lookup_curve(noise_lut, y_fraction)?;
+    let blend_x = lookup_curve(&state.lut, x_fraction)?;
+    let blend_y = lookup_curve(&state.lut, y_fraction)?;
     let row0 = g00 + (g10 - g00) * blend_x;
     let row1 = g01 + (g11 - g01) * blend_x;
     let noise = row0 + (row1 - row0) * blend_y;
@@ -656,14 +692,40 @@ mod tests {
             write(&mut pica, REG_PROCTEX_LUT_DATA0, 0x0000_0800);
         }
         let config = pica.procedural_texture_config();
-        let noise_lut = std::array::from_fn(|index| {
-            pica.procedural_texture_curve_entry(PicaProceduralTextureLut::Noise, index)
-                .unwrap()
-        });
-        let first = procedural_noise_coefficient(0.25, 0.5, &config, &noise_lut).unwrap();
-        let second = procedural_noise_coefficient(0.25, 0.5, &config, &noise_lut).unwrap();
+        let noise_state = ProceduralNoiseState::from_pica(&pica, &config).unwrap();
+        let first = procedural_noise_coefficient(0.25, 0.5, &noise_state).unwrap();
+        let second = procedural_noise_coefficient(0.25, 0.5, &noise_state).unwrap();
         assert_eq!(first, second);
         assert!((first - 0.2168).abs() < 0.001);
+    }
+
+    #[test]
+    fn noise_enabled_sampler_rejects_non_finite_binary16_parameters_at_capture() {
+        let mut invalid_frequency = fixture(false, PicaProceduralTextureFilter::Nearest);
+        let proctex0 = invalid_frequency.register(REG_TEXUNIT3_PROCTEX0).unwrap();
+        write(
+            &mut invalid_frequency,
+            REG_TEXUNIT3_PROCTEX0,
+            proctex0 | (1 << 15),
+        );
+        write(&mut invalid_frequency, REG_TEXUNIT3_PROCTEX3, 0x7E00_3C00);
+        assert_eq!(
+            PicaProceduralTextureSampler::from_pica(&invalid_frequency),
+            Err(PicaProceduralTextureError::InvalidNoiseParameters)
+        );
+
+        let mut invalid_phase = fixture(false, PicaProceduralTextureFilter::Nearest);
+        let proctex0 = invalid_phase.register(REG_TEXUNIT3_PROCTEX0).unwrap();
+        write(
+            &mut invalid_phase,
+            REG_TEXUNIT3_PROCTEX0,
+            proctex0 | (1 << 15),
+        );
+        write(&mut invalid_phase, REG_TEXUNIT3_PROCTEX1, 0x7E00_0000);
+        assert_eq!(
+            PicaProceduralTextureSampler::from_pica(&invalid_phase),
+            Err(PicaProceduralTextureError::InvalidNoiseParameters)
+        );
     }
 
     #[test]
