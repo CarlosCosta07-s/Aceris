@@ -280,8 +280,12 @@ fn play_intro(
                 return Ok(false);
             }
         }
-        let rgba = intro::render_frame(frame, window::CANVAS_WIDTH, window::CANVAS_HEIGHT);
-        let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
+        // Keep the procedural intro inexpensive at large desktop sizes.
+        // A 2x nearest-neighbour presentation preserves the full window layout.
+        let intro_width = window::CANVAS_WIDTH / 2;
+        let intro_height = window::CANVAS_HEIGHT / 2;
+        let rgba = intro::render_frame(frame, intro_width, intro_height);
+        let bgrx = intro::rgba_to_scaled_bgrx(&rgba, intro_width, scale.saturating_mul(2));
         present_desktop_frame(
             window,
             presenter,
@@ -445,7 +449,11 @@ fn browse_library(
                         activate = true;
                     }
                 }
-                window::WindowEvent::Scroll(rows) => library.move_selection(rows * 3),
+                window::WindowEvent::Scroll(rows) => library.move_selection_responsive(
+                    rows * 3,
+                    window::CANVAS_WIDTH as u32,
+                    window::CANVAS_HEIGHT as u32,
+                ),
                 window::WindowEvent::Click { x, y } => {
                     let (x, y) = (x / scale as i32, y / scale as i32);
                     activate = library.click_responsive(
