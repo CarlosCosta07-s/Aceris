@@ -2454,13 +2454,12 @@ impl Arm11CodeAddressSpace {
         bytes: &[u8],
         policy: CachePolicy,
     ) -> BusResult<()> {
-        if policy == CachePolicy::WriteBack {
-            if self.try_write_cached_hit(address, bytes)
-                || self.try_write_cached_miss(address, bytes)?
-            {
-                self.invalidate_exclusive_range(address, bytes.len());
-                return Ok(());
-            }
+        if policy == CachePolicy::WriteBack
+            && (self.try_write_cached_hit(address, bytes)
+                || self.try_write_cached_miss(address, bytes)?)
+        {
+            self.invalidate_exclusive_range(address, bytes.len());
+            return Ok(());
         }
 
         let mut locations = ValidatedWriteLocations::with_capacity(bytes.len());
@@ -2757,12 +2756,10 @@ impl Arm11CodeAddressSpace {
         Ok(true)
     }
 
-    /// Cacheable read that hits a resident line entirely inside one line.
+    /// Reads immutable bytes from the prepared static text segment.
     ///
-    /// Returns `None` (leaving all state untouched) for anything that needs the
-    /// full path: a miss, a line-crossing access, or an unreadable location.
-    /// Instruction-stream fast path: the static text segment is never written
-    /// by the guest, so it is read directly without the data-cache model.
+    /// Guest writes cannot modify this executable backing, so instruction
+    /// fetch can bypass the data-cache model entirely.
     #[inline]
     fn fetch_text_bytes<const N: usize>(&self, address: u32) -> Option<[u8; N]> {
         let segment = self.layout.text;
