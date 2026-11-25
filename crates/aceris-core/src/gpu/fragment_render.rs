@@ -377,6 +377,18 @@ fn pica_viewport_top(height: f32, origin_y: i32, viewport_height: f32, flip: boo
     }
 }
 
+fn render_report(report: PicaFragmentRasterReport) -> PicaRenderReport {
+    PicaRenderReport {
+        triangles_submitted: report.input_triangles,
+        output_triangles: report.clipped_triangles,
+        pixels_written: report.shaded_pixels,
+        alpha_rejected_pixels: report.alpha_rejected_pixels,
+        depth_rejected_pixels: report.depth_rejected_pixels,
+        stencil_rejected_pixels: report.stencil_rejected_pixels,
+        executed_instructions: report.executed_instructions,
+    }
+}
+
 #[cfg(test)]
 mod orientation_tests {
     use super::pica_viewport_top;
@@ -396,14 +408,3 @@ mod orientation_tests {
     }
 }
 
-fn render_report(report: PicaFragmentRasterReport) -> PicaRenderReport {
-    PicaRenderReport {
-        triangles_submitted: report.input_triangles,
-        output_triangles: report.clipped_triangles,
-        pixels_written: report.shaded_pixels,
-        alpha_rejected_pixels: report.alpha_rejected_pixels,
-        depth_rejected_pixels: report.depth_rejected_pixels,
-        stencil_rejected_pixels: report.stencil_rejected_pixels,
-        executed_instructions: report.executed_instructions,
-    }
-}
