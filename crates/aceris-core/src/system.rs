@@ -8904,10 +8904,6 @@ mod tests {
         let frame = system.run_frame_with_budget(0).unwrap();
         assert_eq!(frame.lcd_screens_scanned_out, 2);
         let sample = (180 * WIDTH + 40) * 4;
-        assert_eq!(
-            &system.display().top_left().pixels()[sample..sample + 4],
-            &[12, 34, 56, 255]
-        );
         let mut native_pixel = [0u8; 4];
         system
             .physical_memory()
@@ -8916,7 +8912,16 @@ mod tests {
                 &mut native_pixel,
             )
             .unwrap();
-        assert_eq!(native_pixel, [255, 56, 34, 12]);
+        assert_eq!(
+            native_pixel,
+            [255, 56, 34, 12],
+            "GSP DisplayTransfer must write the PICA pixel to linear FCRAM"
+        );
+        assert_eq!(
+            &system.display().top_left().pixels()[sample..sample + 4],
+            &[12, 34, 56, 255],
+            "LCD scanout must decode the guest-published linear framebuffer"
+        );
     }
 
     #[test]
