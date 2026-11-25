@@ -118,6 +118,29 @@ const GSP_FRAMEBUFFER_INFO_HEADER_SIZE: u32 = 4;
 const GSP_FRAMEBUFFER_INFO_ENTRY_SIZE: u32 = 0x1C;
 const GSP_FRAMEBUFFER_INFO_NEW_DATA: u8 = 1;
 
+/// Returns the HLE endpoint class exposed by the current single-process system.
+///
+/// gsp::Gpu is handled separately because it carries per-client rendering state.
+fn hle_service_kind(service_name: &[u8]) -> Option<ServiceSessionKind> {
+    match service_name {
+        b"hid:USER" => Some(ServiceSessionKind::Hid),
+        b"cfg:u" | b"cfg:i" | b"cfg:s" => Some(ServiceSessionKind::Cfg),
+        b"APT:U" | b"APT:S" | b"APT:A" | b"apt:U" => Some(ServiceSessionKind::Apt),
+        b"fs:USER" => Some(ServiceSessionKind::Fs),
+        b"ptm:u" => Some(ServiceSessionKind::Ptm),
+        b"dsp::DSP" => Some(ServiceSessionKind::Dsp),
+        b"csnd:SND" => Some(ServiceSessionKind::Csnd),
+        name => STUB_SERVICES
+            .iter()
+            .position(|(stub, _)| stub.as_bytes() == name)
+            .map(|index| ServiceSessionKind::Stub(index as u8)),
+    }
+}
+
+fn hle_service_is_registered(service_name: &[u8]) -> bool {
+    service_name == b"gsp::Gpu" || hle_service_kind(service_name).is_some()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PendingGspFramebufferInfo {
     panel: LcdPanel,
@@ -1380,6 +1403,7 @@ impl System {
     ) -> Result<Vec<u32>> {
         const SRV_REGISTER_CLIENT_HEADER: u32 = 0x0001_0002;
         const SRV_GET_SERVICE_HANDLE_HEADER: u32 = 0x0005_0100;
+        const SRV_IS_SERVICE_REGISTERED_HEADER: u32 = 0x000E_00C0;
 
         let raw_header = message.header().raw();
         match raw_header {
@@ -1460,23 +1484,7 @@ impl System {
                     ));
                     return Ok(vec![0x0005_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]);
                 }
-                let hle_kind = match Some(service_name) {
-                    Some(b"hid:USER") => Some(ServiceSessionKind::Hid),
-                    Some(b"cfg:u" | b"cfg:i" | b"cfg:s") => Some(ServiceSessionKind::Cfg),
-                    // The retail names are upper case; "apt:U" is kept for older tests.
-                    Some(b"APT:U" | b"APT:S" | b"APT:A" | b"apt:U") => {
-                        Some(ServiceSessionKind::Apt)
-                    }
-                    Some(b"fs:USER") => Some(ServiceSessionKind::Fs),
-                    Some(b"ptm:u") => Some(ServiceSessionKind::Ptm),
-                    Some(b"dsp::DSP") => Some(ServiceSessionKind::Dsp),
-                    Some(b"csnd:SND") => Some(ServiceSessionKind::Csnd),
-                    Some(name) => STUB_SERVICES
-                        .iter()
-                        .position(|(stub, _)| stub.as_bytes() == name)
-                        .map(|index| ServiceSessionKind::Stub(index as u8)),
-                    None => None,
-                };
+                let hle_kind = hle_service_kind(service_name);
                 if let Some(kind) = hle_kind {
                     let hle_handle = match self
                         .ncsd_session
@@ -1524,6 +1532,59 @@ impl System {
                 // GetServiceHandle returns a COPY_HANDLE translation containing
                 // the newly created client-side gsp::Gpu session.
                 Ok(vec![0x0005_0042, 0, 0, service_handle])
+            }
+            SRV_IS_SERVICE_REGISTERED_HEADER => {
+                let registered = self
+                    .ncsd_session
+                    .as_ref()
+                    .and_then(|session| session.service_manager_client_registered(service_handle))
+                    .unwrap_or(false);
+                if !registered {
+                    self.unhandled.insert(format!(
+                        "srv:IsServiceRegistered rejected before RegisterClient on session {service_handle:#010x}"
+                    ));
+                    return Ok(vec![0x000E_0040, RESULT_INVALID_HANDLE]);
+                }
+
+                let parameters = message.normal_parameters();
+                if parameters.len() != 3 || !message.translation_words().is_empty() {
+                    self.unhandled.insert(format!(
+                        "srv:IsServiceRegistered malformed request: {} normal parameters, {} translation words",
+                        parameters.len(),
+                        message.translation_words().len()
+                    ));
+                    return Ok(vec![0x000E_0040, RESULT_INVALID_ENUM]);
+                }
+
+                let mut requested_name = [0u8; 8];
+                requested_name[..4].copy_from_slice(&parameters[0].to_le_bytes());
+                requested_name[4..].copy_from_slice(&parameters[1].to_le_bytes());
+                let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
+                if !(1..=requested_name.len()).contains(&name_length) {
+                    return Ok(vec![0x000E_0040, RESULT_SRV_INVALID_STRING_LENGTH]);
+                }
+                let service_name = &requested_name[..name_length];
+                if service_name.iter().any(|byte| !(0x21..=0x7E).contains(byte)) {
+                    return Ok(vec![0x000E_0040, RESULT_SRV_STRING_SIZE_MISMATCH]);
+                }
+
+                let access_allowed = self
+                    .ncsd_session
+                    .as_ref()
+                    .is_some_and(|session| session.allows_service_access(service_name));
+                if !access_allowed {
+                    self.unhandled.insert(format!(
+                        "srv:IsServiceRegistered({}) denied by NCCH service ACL",
+                        String::from_utf8_lossy(service_name)
+                    ));
+                    return Ok(vec![0x000E_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]);
+                }
+
+                // Registered HLE endpoints are true even when one command is
+                // intentionally unsupported. Allowed names without an endpoint
+                // (for example http:C) remain false.
+                let is_registered = hle_service_is_registered(service_name);
+                Ok(vec![0x000E_0080, 0, u32::from(is_registered)])
             }
             _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
         }
@@ -5592,6 +5653,58 @@ mod tests {
         assert_eq!(
             system.unhandled_requests(),
             vec!["srv:GetServiceHandle(ssl:C) denied by NCCH service ACL".to_string()]
+        );
+    }
+
+    #[test]
+    fn service_manager_reports_registered_and_unregistered_allowed_services() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(2)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let service_manager = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let handle = session.create_service_manager_session().unwrap();
+            session.register_service_manager_client(handle).unwrap();
+            handle
+        };
+
+        let query = |name: &[u8]| {
+            let mut padded = [0u8; 8];
+            padded[..name.len()].copy_from_slice(name);
+            vec![
+                0x000E_00C0,
+                u32::from_le_bytes(padded[..4].try_into().unwrap()),
+                u32::from_le_bytes(padded[4..].try_into().unwrap()),
+                name.len() as u32,
+            ]
+        };
+
+        let reply = write_tls_ipc_request(&mut system, service_manager, &query(b"gsp::Gpu"));
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000E_0080, 0, 1]
+        );
+
+        // http:C is authorized by this fixture but has no HLE endpoint.
+        let reply = write_tls_ipc_request(&mut system, service_manager, &query(b"http:C"));
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000E_0080, 0, 0]
+        );
+
+        // ACL enforcement also applies to registration queries.
+        let reply = write_tls_ipc_request(&mut system, service_manager, &query(b"ssl:C"));
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x000E_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]
         );
     }
 
