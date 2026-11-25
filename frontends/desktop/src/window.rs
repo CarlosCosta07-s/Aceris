@@ -228,6 +228,7 @@ pub enum Key {
 /// The top LCD is always on the left; the bottom LCD is always on the right.
 /// The returned buffer is `GAME_CANVAS_WIDTH * scale` by
 /// `GAME_CANVAS_HEIGHT * scale`, in little-endian BGRX byte order.
+#[cfg(test)]
 pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
     let mut frame = Vec::new();
     compose_bgrx_into(display, scale, &mut frame);
