@@ -342,13 +342,34 @@ impl Library {
 
     /// Renders the launcher directly at the physical surface size.
     pub fn render_responsive(&self, width: u32, height: u32) -> Vec<u8> {
+        self.render_responsive_with_background(width, height, None)
+    }
+
+    /// Renders the responsive launcher with an optional user-provided background frame.
+    pub fn render_responsive_with_background(
+        &self,
+        width: u32,
+        height: u32,
+        background: Option<&[u8]>,
+    ) -> Vec<u8> {
         let mut frame = Vec::new();
-        self.render_responsive_into(width, height, &mut frame);
+        self.render_responsive_into_with_background(width, height, &mut frame, background);
         frame
     }
 
     /// Renders into a caller-owned RGBA buffer, retaining its allocation.
     pub fn render_responsive_into(&self, width: u32, height: u32, frame: &mut Vec<u8>) -> bool {
+        self.render_responsive_into_with_background(width, height, frame, None)
+    }
+
+    /// Renders into a reusable frame and optionally composites a 400x480 user background.
+    pub fn render_responsive_into_with_background(
+        &self,
+        width: u32,
+        height: u32,
+        frame: &mut Vec<u8>,
+        background: Option<&[u8]>,
+    ) -> bool {
         let Some((portrait, scale, logical_width, logical_height)) =
             responsive_metrics(width, height)
         else {
@@ -381,6 +402,9 @@ impl Library {
             scale,
             0x100A1B,
         );
+        if let Some(background) = background {
+            responsive_blend_background(frame, width, height, background);
+        }
         if portrait {
             self.render_portrait(frame, width, height, scale, logical_height);
         } else {
@@ -1471,6 +1495,52 @@ fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> 
     ))
 }
 
+/// Cover-crops a user 400x480 RGBA background and blends it below launcher controls.
+fn responsive_blend_background(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    background: &[u8],
+) {
+    const SOURCE_WIDTH: u32 = WIDTH as u32;
+    const SOURCE_HEIGHT: u32 = HEIGHT as u32;
+    if width == 0
+        || height == 0
+        || background.len() != SOURCE_WIDTH as usize * SOURCE_HEIGHT as usize * 4
+        || frame.len() != width as usize * height as usize * 4
+    {
+        return;
+    }
+
+    let target_w = width as f64;
+    let target_h = height as f64;
+    let source_w = SOURCE_WIDTH as f64;
+    let source_h = SOURCE_HEIGHT as f64;
+    let scale = (target_w / source_w).max(target_h / source_h);
+    let scaled_w = source_w * scale;
+    let scaled_h = source_h * scale;
+    let crop_x = (scaled_w - target_w) * 0.5;
+    let crop_y = (scaled_h - target_h) * 0.5;
+
+    for y in 0..height {
+        let source_y = (((y as f64 + 0.5 + crop_y) / scale).floor() as u32)
+            .min(SOURCE_HEIGHT - 1) as usize;
+        for x in 0..width {
+            let source_x = (((x as f64 + 0.5 + crop_x) / scale).floor() as u32)
+                .min(SOURCE_WIDTH - 1) as usize;
+            let source_at = (source_y * SOURCE_WIDTH as usize + source_x) * 4;
+            let target_at = (y as usize * width as usize + x as usize) * 4;
+            let alpha = u32::from(background[source_at + 3]) * 38 / 100;
+            let inverse = 255 - alpha;
+            for channel in 0..3 {
+                frame[target_at + channel] = ((u32::from(background[source_at + channel]) * alpha
+                    + u32::from(frame[target_at + channel]) * inverse)
+                    / 255) as u8;
+            }
+        }
+    }
+}
+
 // These low-level draw primitives intentionally accept a full rectangle and target buffer.
 #[allow(clippy::too_many_arguments)]
 fn responsive_fill(
@@ -1707,6 +1777,21 @@ mod tests {
                 .chunks_exact(4)
                 .any(|pixel| pixel[..3] == [0xF5, 0xEE, 0xF8])
         );
+    }
+
+    #[test]
+    fn responsive_background_is_cover_cropped_and_invalid_frames_are_ignored() {
+        let library = Library::new(Vec::new(), "/games".to_string());
+        let (width, height) = (800, 1200);
+        let plain = library.render_responsive(width, height);
+        let background = vec![240u8; WIDTH * HEIGHT * 4];
+        let with_background =
+            library.render_responsive_with_background(width, height, Some(&background));
+        assert_ne!(plain, with_background);
+        assert_eq!(with_background.len(), plain.len());
+
+        let invalid = library.render_responsive_with_background(width, height, Some(&[255; 16]));
+        assert_eq!(invalid, plain);
     }
 
     #[test]
