@@ -217,6 +217,8 @@ pub fn touch_from_window_point(x: i32, y: i32, scale: usize) -> Option<(u16, u16
 pub enum Key {
     Up,
     Down,
+    Left,
+    Right,
     PageUp,
     PageDown,
     Enter,
