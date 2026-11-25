@@ -13,7 +13,9 @@ use super::native_input::{
     scroll_rows_from_wheel,
 };
 use super::{WindowError, WindowEvent};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle};
+use raw_window_handle::{
+    RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle,
+};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::num::NonZeroIsize;
