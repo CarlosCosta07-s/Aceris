@@ -70,6 +70,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo build --locked --workspace
+      - name: Test the native graphics backend without a physical GPU
+        run: cargo test --locked -p aceris-graphics
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo test -p aceris-core --example benchmark
