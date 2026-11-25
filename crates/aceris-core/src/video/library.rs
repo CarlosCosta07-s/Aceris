@@ -156,6 +156,11 @@ impl Library {
         self.status = Some(message.into());
     }
 
+    /// Current user-visible library status or loading diagnostic, if any.
+    pub fn status_message(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
     /// Moves the selection by `delta` rows, clamped to the list.
     pub fn move_selection(&mut self, delta: i32) {
         let count = self.visible_entry_count();
