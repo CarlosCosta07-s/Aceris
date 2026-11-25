@@ -189,7 +189,11 @@ impl App {
         };
         if let Err(error) = system.run_frame() {
             let message = format!("Execução interrompida: {error}");
+            let diagnostic = self.game_diagnostic();
             self.leave_game();
+            let message = diagnostic
+                .map(|detail| format!("{message} — HLE: {detail}"))
+                .unwrap_or(message);
             self.library.set_status(message);
             let canvas = self.library.render();
             self.letterbox_into(&canvas, output);
@@ -298,11 +302,26 @@ impl App {
         }
     }
 
+    fn game_diagnostic(&self) -> Option<String> {
+        let system = self.system.as_ref()?;
+        let requests = system.unhandled_requests();
+        requests
+            .iter()
+            .find(|request| request.starts_with("srv:GetServiceHandle"))
+            .or_else(|| requests.first())
+            .cloned()
+    }
+
     fn leave_game(&mut self) {
+        let diagnostic = self.game_diagnostic();
         self.system = None;
         self.audio.clear();
         self.key_mask = 0;
         self.screen = Screen::Library;
+        if let Some(diagnostic) = diagnostic {
+            self.library
+                .set_status(format!("Diagnóstico HLE: {diagnostic}"));
+        }
     }
 
     /// Fits the 400x480 library/intro canvas into the surface, centred.

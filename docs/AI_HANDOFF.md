@@ -2338,3 +2338,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 
 
 - Regression coverage for the service-manager diagnostics: the NCCH ACL test asserts an explicit `ssl:C` denial entry, the pre-registration test asserts the missing-`RegisterClient` entry, and the DSP handshake test confirms a successful `dsp::DSP` lookup produces no false-positive diagnostic.
+
+
+### Diagnóstico HLE visível no frontend Android — 25/11/2026
+
+- Ao sair de um jogo com a tecla Voltar, o frontend Android agora lê `System::unhandled_requests()` antes de descartar o sistema e mostra a primeira falha de `srv:GetServiceHandle` na linha de status da biblioteca. Se não houver falha de SRV, mostra a primeira solicitação não atendida.
+- Se a execução parar por erro, a mensagem de interrupção inclui também o primeiro diagnóstico HLE disponível.
+- Isso torna os resultados da investigação de `dsp::DSP` visíveis no próprio aparelho, sem depender de logcat ou de um frontend desktop. O estado é exibido após sair do jogo; não é uma sobreposição durante o gameplay.

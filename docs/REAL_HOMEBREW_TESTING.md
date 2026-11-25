@@ -138,3 +138,6 @@ O arquivo anexado nesta sessão foi mantido fora do repositório. Seu SHA-256 lo
 - The ACI therefore does not justify bypassing service permissions. The missing DSP command may be downstream of a failed `srv:GetServiceHandle` or an uninitialized `srv:` client handle. Static disassembly alone cannot distinguish those runtime outcomes.
 - The ignored CIA test now asserts that the parsed NCCH ACI grants `dsp::DSP`. The HLE service manager also records failed `GetServiceHandle` attempts in `System::unhandled_requests()`, including missing RegisterClient, malformed request, ACL denial, unknown service and HLE-handle allocation failure. This makes the next real run diagnostic instead of silently returning an IPC error.
 - The file and decompressed `.code` remain local analysis artifacts; neither was added to the repository, CI or releases.
+
+
+- O frontend Android agora preserva o primeiro diagnóstico `srv:GetServiceHandle` (ou a primeira solicitação HLE não atendida) no status da biblioteca quando o usuário sai do jogo. Se o guest parar por erro, a mensagem de interrupção também inclui esse diagnóstico. Assim o ensaio do Cookie Clicker pode ser inspecionado no próprio aparelho após voltar à biblioteca.
