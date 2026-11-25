@@ -387,9 +387,11 @@ impl GraphicsPresenter {
                     }
                     wgpu::CurrentSurfaceTexture::Timeout
                     | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
-                    wgpu::CurrentSurfaceTexture::Outdated
-                    | wgpu::CurrentSurfaceTexture::Lost => {
-                        return Err("GPU surface remained outdated or lost after reconfiguration".to_string());
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                        return Err(
+                            "GPU surface remained outdated or lost after reconfiguration"
+                                .to_string(),
+                        );
                     }
                     wgpu::CurrentSurfaceTexture::Validation => {
                         return Err("GPU surface acquisition failed validation".to_string());
