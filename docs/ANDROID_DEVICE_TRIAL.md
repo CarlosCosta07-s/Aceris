@@ -11,7 +11,7 @@ Quando a execução terminar com sucesso:
 1. Abra GitHub → Aceris → Actions.
 2. Entre no workflow **Build Android APK** mais recente com resultado verde.
 3. Baixe o artefato `aceris-android-arm64-debug`.
-4. Extraia o ZIP e instale `aceris-debug.apk).
+4. Extraia o ZIP e instale `aceris-debug.apk`.
 
 O pacote utiliza o application ID provisório `org.aceris.emulator`, definido no manifesto atual. A assinatura é regenerada em cada execução do CI; para instalar uma nova compilação sobre a anterior será necessário desinstalar a versão antiga primeiro. Isso também remove os dados locais do app. Não use esta chave descartável para distribuição pública.
 
