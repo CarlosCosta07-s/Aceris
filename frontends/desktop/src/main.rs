@@ -506,12 +506,8 @@ fn browse_library(
             window::CANVAS_HEIGHT as u32,
             &mut rgba,
             background_frame,
-        ) || !intro::rgba_to_scaled_bgrx_into(
-            &rgba,
-            window::CANVAS_WIDTH,
-            scale,
-            &mut bgrx,
-        ) {
+        ) || !intro::rgba_to_scaled_bgrx_into(&rgba, window::CANVAS_WIDTH, scale, &mut bgrx)
+        {
             return Err("could not allocate the launcher frame".to_string());
         }
         present_desktop_frame(
