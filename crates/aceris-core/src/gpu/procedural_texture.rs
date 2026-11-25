@@ -466,6 +466,18 @@ mod tests {
     }
 
     #[test]
+    fn rmax_mapping_flows_from_registers_through_the_sampler() {
+        let mut pica = fixture(false, PicaProceduralTextureFilter::Nearest);
+        let original = pica.register(REG_TEXUNIT3_PROCTEX0).unwrap();
+        write(&mut pica, REG_TEXUNIT3_PROCTEX0, original | (9 << 6));
+
+        let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
+        let color = sampler.sample(&[[0.25, 0.5], [0.0; 2], [0.0; 2]]).unwrap();
+
+        assert_color(color, [100, 110, 120, 200]);
+    }
+
+    #[test]
     fn linear_filter_interpolates_between_color_entries() {
         let mut pica = fixture(false, PicaProceduralTextureFilter::Linear);
         write(
