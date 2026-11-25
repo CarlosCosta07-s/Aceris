@@ -2319,3 +2319,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O arquivo fornecido pelo mantenedor nesta sessão tem SHA-256 `d047701f8e9b4127436046f5a650dede06e03bc1b5f1b271981d4ea27db58093`. Ele não foi copiado para o repositório, CI ou artefatos.
 - A documentação de execução foi adicionada a `docs/REAL_HOMEBREW_TESTING.md`.
 - **Validação local pendente:** este ambiente de edição não possui `cargo` nem `rustc`; portanto o teste não foi executado aqui. O workflow CI compila o alvo de integração, mas ignora sua execução por depender do CIA local. Não declarar boot novo confirmado até executar o comando manual no ambiente que contém o arquivo.
+
+
+### CI do teste local Cookie Clicker — 25/11/2026
+
+- O commit `d5cdc15b13e454a8c580bb8dbb50b522c05d7693` passou integralmente no workflow [45600245040](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45600245040): Linux, Windows, macOS e Android ARM64.
+- Linux, Windows e macOS passaram formatação, build, Clippy, `cargo test --workspace` e build release do benchmark; Android passou os builds release do app e do benchmark.
+- O novo teste `validates_and_runs_real_cookie_clicker_cia_without_console_keys` foi compilado como parte da suíte, mas não executado porque está marcado `#[ignore]` e depende do CIA local. A validação real desse arquivo permanece pendente de execução no ambiente que o contém.

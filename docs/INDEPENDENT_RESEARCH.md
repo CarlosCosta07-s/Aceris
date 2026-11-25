@@ -11,7 +11,7 @@ A pesquisa não é um atalho para incorporar implementações existentes. Códig
 ## 2. Limites obrigatórios
 
 - É permitido consultar código-fonte de Azahar, Citra, Lime3DS e outros emuladores somente quando o projeto e o arquivo consultado forem efetivamente open source e suas licenças tiverem sido verificadas.
-- A pesquisa limita-se à documentação pública independente de hardware, formatos, APIs e protocolos e à superfície observável de produtos em execução.
+- A pesquisa pode usar documentação pública independente de hardware, formatos, APIs e protocolos, comportamento observável e código-fonte open source de outros emuladores, desde que a licença do projeto e do arquivo seja verificada e a consulta seja registrada.
 - Não faça tradução linha a linha nem reproduza a estrutura expressiva do código consultado. A implementação do Aceris deve ter arquitetura, interfaces, nomes, testes e código próprios, escritos em Rust.
 - Não incorpore commits, patches, dependências, assets ou outros recursos de implementação desses projetos. Não trate nomes de funções privadas ou a organização de arquivos como especificação do hardware.
 - Registre projeto, URL, arquivo ou área consultada, commit/revisão, licença, data e pergunta técnica. Registre a conclusão conceitual em uma especificação independente, sem colar trechos de código.
