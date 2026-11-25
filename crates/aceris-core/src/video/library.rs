@@ -399,7 +399,7 @@ impl Library {
         responsive_text(frame, width, height, 238.0, 32.0, font_scale, if active_games { "SUA BIBLIOTECA" } else { "CONFIGURACOES" }, brand::TEXT);
         responsive_text(frame, width, height, 238.0, 72.0, small_scale, "GERENCIE SEUS JOGOS E PREFERENCIAS", 0xBBAFC7);
         responsive_panel(frame, width, height, 826.0, 28.0, 154.0, 54.0, scale, 0x2D1A3B);
-        responsive_text(frame, width, height, 850.0, 48.0, small_scale, active_games { "ATUALIZAR" } else { "RECARREGAR" }, brand::ACCENT_GREEN_LIGHT);
+        responsive_text(frame, width, height, 850.0, 48.0, small_scale, if active_games { "ATUALIZAR" } else { "RECARREGAR" }, brand::ACCENT_GREEN_LIGHT);
 
         if !active_games {
             responsive_panel(frame, width, height, 238.0, 130.0, 742.0, 340.0, scale, 0x21152F);
