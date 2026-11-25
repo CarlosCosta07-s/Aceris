@@ -2957,20 +2957,27 @@ impl Arm11CodeAddressSpace {
         key: DataCacheKey,
         offset: usize,
     ) -> BusResult<u8> {
-        if self.data_cache.contains_key(&key) {
+        // Resolve a resident line with one tree lookup. The previous
+        // contains_key + get sequence walked the BTreeMap twice on every hit.
+        if let Some(value) = self
+            .data_cache
+            .get(&key)
+            .and_then(|line| line.bytes.get(offset).copied())
+        {
             self.touch_data_cache_line(key);
-        } else {
-            let mut bytes = self.read_cache_target_line(target)?;
-            self.overlay_write_buffer(key, &mut bytes);
-            self.insert_data_cache_line(
-                key,
-                Arm11DataCacheLine {
-                    bytes,
-                    dirty: false,
-                    target: target.clone(),
-                },
-            )?;
+            return Ok(value);
         }
+
+        let mut bytes = self.read_cache_target_line(target)?;
+        self.overlay_write_buffer(key, &mut bytes);
+        self.insert_data_cache_line(
+            key,
+            Arm11DataCacheLine {
+                bytes,
+                dirty: false,
+                target: target.clone(),
+            },
+        )?;
 
         self.data_cache
             .get(&key)
