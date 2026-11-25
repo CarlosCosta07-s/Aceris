@@ -47,6 +47,8 @@ pub struct App {
     library_tap: Option<(i32, i32)>,
     /// Interleaved stereo samples (32728 Hz) mixed since the last [`App::take_audio`].
     audio: Vec<i16>,
+    /// Reused half-resolution intro frame to avoid one allocation per animation tick.
+    intro_buffer: Vec<u8>,
 }
 
 impl App {
@@ -65,7 +67,13 @@ impl App {
             key_mask: 0,
             library_tap: None,
             audio: Vec::new(),
+            intro_buffer: Vec::new(),
         }
+    }
+
+    /// Updates the system-level indicator for external media playback.
+    pub fn set_external_media_playing(&mut self, playing: bool) {
+        self.library.set_external_media_playing(playing);
     }
 
     /// Takes the audio the DSP mixed since the previous call (interleaved stereo
@@ -178,13 +186,17 @@ impl App {
                 // avoiding a fourfold increase in per-pixel CPU work on phones.
                 let intro_width = (self.width / 2).max(1);
                 let intro_height = (self.height / 2).max(1);
-                let canvas =
-                    intro::render_frame(frame, intro_width as usize, intro_height as usize);
-                if reset_black_frame(output, self.width, self.height) {
+                let rendered = intro::render_frame_into(
+                    frame,
+                    intro_width as usize,
+                    intro_height as usize,
+                    &mut self.intro_buffer,
+                );
+                if rendered && reset_black_frame(output, self.width, self.height) {
                     blit_scaled(
                         output,
                         self.width,
-                        &canvas,
+                        &self.intro_buffer,
                         intro_width,
                         intro_height,
                         ScreenRect {
@@ -293,7 +305,7 @@ impl App {
                 let up_y = last_y.round() as i32;
                 let dragged = up_y - down_y;
                 let portrait = self.height >= self.width;
-                let logical_row_height = if portrait { 58.0 } else { 76.0 };
+                let logical_row_height = if portrait { 58.0 } else { 94.0 };
                 let logical_width = if portrait { 400.0 } else { 1000.0 };
                 let row_height = (self.width as f32 / logical_width * logical_row_height)
                     .round()
@@ -336,6 +348,7 @@ impl App {
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
             Ok(_) => {
+                self.library.mark_launched(&path);
                 self.system = Some(system);
                 self.key_mask = 0;
                 self.screen = Screen::Game;
