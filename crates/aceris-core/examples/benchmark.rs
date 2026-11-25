@@ -768,9 +768,7 @@ fn write_frame_trace(path: &std::path::Path, samples: &[FrameTraceSample]) -> Re
 }
 
 fn report_guest_failure(system: &System, phase: &str, frame: usize, error: &str) {
-    eprintln!(
-        "Guest execution failed during {phase} frame {frame}: {error}"
-    );
+    eprintln!("Guest execution failed during {phase} frame {frame}: {error}");
     if let Some(session) = system.ncsd_session() {
         let core = session.core();
         eprintln!(
