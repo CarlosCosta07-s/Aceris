@@ -172,7 +172,7 @@ impl GraphicsPresenter {
         let backends = backend.enabled_backends()?;
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         descriptor.backends = backends;
-        let instance = wgpu::Instance::new(&descriptor);
+        let instance = wgpu::Instance::new(descriptor);
 
         // SAFETY: the caller guarantees that both raw handles remain valid
         // until this presenter (and its surface) has been dropped.
@@ -230,8 +230,8 @@ impl GraphicsPresenter {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Aceris host presentation pipeline layout"),
-            bind_group_layouts: &[&frame_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&frame_layout)],
+            immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Aceris original frame presentation shader"),
@@ -370,15 +370,45 @@ impl GraphicsPresenter {
             },
         );
 
+        let mut configure_after_present = false;
         let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.surface_config);
-                self.surface
-                    .get_current_texture()
-                    .map_err(|error| format!("could not acquire resized GPU surface: {error}"))?
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                configure_after_present = true;
+                frame
             }
-            Err(error) => return Err(format!("could not acquire GPU surface: {error}")),
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.surface_config);
+                match self.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+                    wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                        configure_after_present = true;
+                        frame
+                    }
+                    wgpu::CurrentSurfaceTexture::Timeout => {
+                        return Err("timed out acquiring the reconfigured GPU surface".to_string());
+                    }
+                    wgpu::CurrentSurfaceTexture::Occluded => {
+                        return Err("GPU surface is occluded".to_string());
+                    }
+                    wgpu::CurrentSurfaceTexture::Outdated
+                    | wgpu::CurrentSurfaceTexture::Lost => {
+                        return Err("GPU surface remained outdated or lost after reconfiguration".to_string());
+                    }
+                    wgpu::CurrentSurfaceTexture::Validation => {
+                        return Err("GPU surface acquisition failed validation".to_string());
+                    }
+                }
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                return Err("timed out acquiring the GPU surface".to_string());
+            }
+            wgpu::CurrentSurfaceTexture::Occluded => {
+                return Err("GPU surface is occluded".to_string());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("GPU surface acquisition failed validation".to_string());
+            }
         };
         let view = frame
             .texture
@@ -417,6 +447,9 @@ impl GraphicsPresenter {
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
+        if configure_after_present {
+            self.surface.configure(&self.device, &self.surface_config);
+        }
         Ok(())
     }
 
