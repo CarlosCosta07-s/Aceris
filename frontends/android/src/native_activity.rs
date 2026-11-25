@@ -193,19 +193,12 @@ fn jni_function<F: Copy>(handle: *mut c_void, index: usize) -> Option<F> {
 
 type NewGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject) -> JniObject;
 type DeleteGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
-type AttachCurrentThreadFn = unsafe extern "system" fn(
-    *mut c_void,
-    *mut JniEnv,
-    *mut c_void,
-) -> i32;
+type AttachCurrentThreadFn =
+    unsafe extern "system" fn(*mut c_void, *mut JniEnv, *mut c_void) -> i32;
 type DetachCurrentThreadFn = unsafe extern "system" fn(*mut c_void) -> i32;
 type GetObjectClassFn = unsafe extern "system" fn(JniEnv, JniObject) -> JniObject;
-type GetMethodIdFn = unsafe extern "system" fn(
-    JniEnv,
-    JniObject,
-    *const c_char,
-    *const c_char,
-) -> JniMethod;
+type GetMethodIdFn =
+    unsafe extern "system" fn(JniEnv, JniObject, *const c_char, *const c_char) -> JniMethod;
 type NewStringUtfFn = unsafe extern "system" fn(JniEnv, *const c_char) -> JniObject;
 type CallObjectMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> JniObject;
@@ -330,8 +323,7 @@ impl AttachedMediaMonitor {
             b"(Ljava/lang/String;)Ljava/lang/Object;\0",
         )?;
         // SAFETY: the service name is static NUL-terminated UTF-8.
-        let service_name =
-            unsafe { get_string(self.env, b"audio\0".as_ptr().cast()) };
+        let service_name = unsafe { get_string(self.env, b"audio\0".as_ptr().cast()) };
         if service_name.is_null() {
             self.delete_local(activity_class);
             self.clear_exception();
@@ -341,8 +333,14 @@ impl AttachedMediaMonitor {
             object_value: service_name,
         }];
         // SAFETY: method ID and arguments match Context.getSystemService(String).
-        let audio_manager =
-            unsafe { call_object(self.env, self.activity, get_system_service, service_args.as_ptr()) };
+        let audio_manager = unsafe {
+            call_object(
+                self.env,
+                self.activity,
+                get_system_service,
+                service_args.as_ptr(),
+            )
+        };
         self.delete_local(service_name);
         self.delete_local(activity_class);
         if audio_manager.is_null() || self.exception_pending() {
@@ -368,8 +366,7 @@ impl AttachedMediaMonitor {
 
         let list_class = self.class_of(configurations)?;
         let size_method = self.method(list_class, b"size\0", b"()I\0")?;
-        let get_method =
-            self.method(list_class, b"get\0", b"(I)Ljava/lang/Object;\0")?;
+        let get_method = self.method(list_class, b"get\0", b"(I)Ljava/lang/Object;\0")?;
         // SAFETY: List.size() takes no arguments and returns an int.
         let size = unsafe { call_int(self.env, configurations, size_method, ptr::null()) };
         if self.exception_pending() {
@@ -416,9 +413,7 @@ impl AttachedMediaMonitor {
                 self.delete_local(attributes);
                 continue;
             };
-            let Some(usage_method) =
-                self.method(attributes_class, b"getUsage\0", b"()I\0")
-            else {
+            let Some(usage_method) = self.method(attributes_class, b"getUsage\0", b"()I\0") else {
                 self.delete_local(attributes_class);
                 self.delete_local(attributes);
                 continue;
@@ -677,11 +672,8 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let mut app = App::new(&games_dir);
     let mut frame = Vec::new();
     let mut audio = AAudioOutput::open();
-    let media_monitor = AttachedMediaMonitor::attach(
-        host.java_vm,
-        host.activity_global,
-        host.sdk_version,
-    );
+    let media_monitor =
+        AttachedMediaMonitor::attach(host.java_vm, host.activity_global, host.sdk_version);
     let mut external_media_playing = false;
     let mut last_media_poll = Instant::now()
         .checked_sub(Duration::from_secs(1))
