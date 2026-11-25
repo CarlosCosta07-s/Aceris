@@ -690,7 +690,7 @@ mod tests {
         assert_eq!(frame, previous);
         assert!(!blend_virtual_pad_overlay_into(
             &mut frame,
-            4,
+            5,
             4,
             ORIENTATION_AUTO,
             buttons::A
