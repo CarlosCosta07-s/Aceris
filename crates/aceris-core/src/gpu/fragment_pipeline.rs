@@ -7,6 +7,7 @@
 //! alpha/depth-independent output operations for the rasterizer to apply in
 //! the intended fragment-stage order.
 
+use super::lighting::{PicaLightingError, PicaLightingInput, PicaLightingState};
 use super::{
     FOG_LUT_ENTRY_COUNT, GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
     PicaFragmentOutputState, PicaOutputMapError, PicaProceduralTextureError,
@@ -151,6 +152,10 @@ pub struct PicaFragmentVaryings {
     pub texture_coordinates: [[f32; 2]; 3],
     /// Dedicated PICA TexCoord0 W semantic, perspective-correctly interpolated.
     pub texcoord0_w: f32,
+    /// Normal quaternion (x, y, z, w) for fragment lighting.
+    pub quaternion: [f32; 4],
+    /// View vector for fragment lighting.
+    pub view: [f32; 3],
     /// Caller-provided LOD classification for texture units 0, 1 and 2.
     pub minifying: [bool; 3],
     /// Screen-derivative LOD per texture unit; `Some` takes precedence over
@@ -166,6 +171,8 @@ impl Default for PicaFragmentVaryings {
             fragment_secondary_color: [0.0; 4],
             texture_coordinates: [[0.0; 2]; 3],
             texcoord0_w: 1.0,
+            quaternion: [0.0, 0.0, 0.0, 1.0],
+            view: [0.0, 0.0, 1.0],
             minifying: [false; 3],
             texture_lod: [None; 3],
         }
@@ -182,6 +189,10 @@ pub struct PicaFragmentVertex {
     pub texture_coordinates: [[f32; 2]; 3],
     /// Dedicated PICA TexCoord0 W semantic.
     pub texcoord0_w: f32,
+    /// Normal quaternion (x, y, z, w); identity when the shader omits it.
+    pub quaternion: [f32; 4],
+    /// View vector; +Z when the shader omits it.
+    pub view: [f32; 3],
 }
 
 impl PicaFragmentVertex {
@@ -200,6 +211,8 @@ impl PicaFragmentVertex {
                 vertex.texcoords[index].unwrap_or(default_texture_coordinates[index])
             }),
             texcoord0_w: vertex.texcoord0_w,
+            quaternion: vertex.quaternion.unwrap_or([0.0, 0.0, 0.0, 1.0]),
+            view: vertex.view.unwrap_or([0.0, 0.0, 1.0]),
         }
     }
 }
@@ -344,6 +357,8 @@ pub struct PicaFragmentPipeline {
     texture2_coordinate_index: usize,
     /// Unit 0 interprets its coordinates as projected 2D when type 3 is selected.
     texture0_projection: bool,
+    /// Fragment lighting captured from the light environment, when enabled.
+    lighting: Option<PicaLightingState>,
 }
 
 impl PicaFragmentPipeline {
@@ -381,6 +396,8 @@ impl PicaFragmentPipeline {
             fog_lut,
             texture2_coordinate_index: if config & (1 << 13) != 0 { 1 } else { 2 },
             texture0_projection,
+            lighting: PicaLightingState::from_pica(pica)
+                .map_err(PicaFragmentPipelineError::Lighting)?,
         })
     }
 
@@ -432,6 +449,19 @@ impl PicaFragmentPipeline {
             inputs.textures[3] = procedural_texture
                 .sample(&varyings.texture_coordinates)
                 .map_err(PicaFragmentPipelineError::ProceduralTexture)?;
+        }
+
+        if let Some(lighting) = &self.lighting {
+            let bump_texel = lighting
+                .bump_texture_unit()
+                .map(|unit| inputs.textures[unit]);
+            let lit = lighting.evaluate(&PicaLightingInput {
+                quaternion: varyings.quaternion,
+                view: varyings.view,
+                bump_texel,
+            });
+            inputs.fragment_primary_color = lit.primary;
+            inputs.fragment_secondary_color = lit.secondary;
         }
 
         self.texture_environment
@@ -655,6 +685,7 @@ pub enum PicaFragmentPipelineError {
     Tev(PicaTevError),
     Output(PicaFragmentOutputError),
     ProceduralTexture(PicaProceduralTextureError),
+    Lighting(PicaLightingError),
     UnsupportedFogMode {
         mode: u8,
     },
@@ -675,6 +706,9 @@ impl std::fmt::Display for PicaFragmentPipelineError {
             Self::Output(error) => write!(formatter, "PICA fragment output stage failed: {error}"),
             Self::ProceduralTexture(error) => {
                 write!(formatter, "PICA procedural texture stage failed: {error}")
+            }
+            Self::Lighting(error) => {
+                write!(formatter, "PICA fragment lighting failed: {error}")
             }
             Self::UnsupportedFogMode { mode } => write!(
                 formatter,
@@ -776,6 +810,17 @@ fn interpolate_triangle_varyings(
         fragment_secondary_color: interpolate4(|vertex| vertex.fragment_secondary_color),
         texture_coordinates: [interpolate2(0), interpolate2(1), interpolate2(2)],
         texcoord0_w: interpolate_scalar(|vertex| vertex.texcoord0_w),
+        quaternion: [
+            interpolate_scalar(|vertex| vertex.quaternion[0]),
+            interpolate_scalar(|vertex| vertex.quaternion[1]),
+            interpolate_scalar(|vertex| vertex.quaternion[2]),
+            interpolate_scalar(|vertex| vertex.quaternion[3]),
+        ],
+        view: [
+            interpolate_scalar(|vertex| vertex.view[0]),
+            interpolate_scalar(|vertex| vertex.view[1]),
+            interpolate_scalar(|vertex| vertex.view[2]),
+        ],
         minifying,
         texture_lod: [None; 3],
     };
@@ -1070,6 +1115,8 @@ mod tests {
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[0.0, 0.0]; 3],
                 texcoord0_w: 1.0,
+                quaternion: [0.0, 0.0, 0.0, 1.0],
+                view: [0.0, 0.0, 1.0],
             },
             PicaFragmentVertex {
                 clip_position: [2.0, -2.0, 0.0, 2.0],
@@ -1078,6 +1125,8 @@ mod tests {
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[1.0, 0.0]; 3],
                 texcoord0_w: 1.0,
+                quaternion: [0.0, 0.0, 0.0, 1.0],
+                view: [0.0, 0.0, 1.0],
             },
             PicaFragmentVertex {
                 clip_position: [0.0, 4.0, 0.0, 4.0],
@@ -1086,6 +1135,8 @@ mod tests {
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[0.0, 1.0]; 3],
                 texcoord0_w: 1.0,
+                quaternion: [0.0, 0.0, 0.0, 1.0],
+                view: [0.0, 0.0, 1.0],
             },
         ];
 
@@ -1113,18 +1164,24 @@ mod tests {
                 color: Some([1.0, 0.0, 0.0, 1.0]),
                 texcoords: [Some([0.0, 0.0]), None, None],
                 texcoord0_w: 1.0,
+                quaternion: None,
+                view: None,
             },
             PicaResolvedVertex {
                 position: [2.0, -2.0, 0.0, 2.0],
                 color: Some([0.0, 1.0, 0.0, 1.0]),
                 texcoords: [Some([1.0, 0.0]), None, None],
                 texcoord0_w: 1.0,
+                quaternion: None,
+                view: None,
             },
             PicaResolvedVertex {
                 position: [0.0, 4.0, 0.0, 4.0],
                 color: Some([0.0, 0.0, 1.0, 1.0]),
                 texcoords: [Some([0.0, 1.0]), None, None],
                 texcoord0_w: 1.0,
+                quaternion: None,
+                view: None,
             },
         ];
         let output = pipeline
@@ -1207,6 +1264,8 @@ mod tests {
             fragment_secondary_color: [0.0; 4],
             texture_coordinates: [[0.0; 2]; 3],
             texcoord0_w: 1.0,
+            quaternion: [0.0, 0.0, 0.0, 1.0],
+            view: [0.0, 0.0, 1.0],
         };
         assert_eq!(
             pipeline.shade_triangle_sample(
@@ -1248,5 +1307,50 @@ mod tests {
                 channel: 0,
             })
         );
+    }
+    #[test]
+    fn enabled_lighting_feeds_the_fragment_primary_color_into_tev() {
+        let mut pica = Pica200::new();
+        configure_tev(&mut pica, PicaTevSource::FragmentPrimaryColor);
+        // Unlit: the default fragment primary color is white.
+        let unlit = pica.fragment_pipeline().unwrap();
+        let vertex = |position: [f32; 4]| PicaFragmentVertex {
+            clip_position: position,
+            primary_color: [0.0; 4],
+            fragment_primary_color: [1.0; 4],
+            fragment_secondary_color: [0.0; 4],
+            texture_coordinates: [[0.0; 2]; 3],
+            texcoord0_w: 1.0,
+            quaternion: [0.0, 0.0, 0.0, 1.0],
+            view: [0.0, 0.0, 1.0],
+        };
+        let triangle = [
+            vertex([-1.0, -1.0, 0.0, 1.0]),
+            vertex([1.0, -1.0, 0.0, 1.0]),
+            vertex([0.0, 1.0, 0.0, 1.0]),
+        ];
+        let memory = GpuPhysicalMemory::new();
+        let white = unlit
+            .shade_triangle_sample(&memory, triangle, [0.3, 0.3, 0.4], [false; 3])
+            .unwrap();
+        assert_eq!(white, [1.0; 4]);
+
+        // Lit with one light whose only contribution is the scene ambient.
+        pica.write_register(0x08F, 1).unwrap();
+        pica.write_register(0x1C0, 255 << 20).unwrap();
+        pica.write_register(0x1C4, 0xFF00_FF00).unwrap();
+        pica.write_register(0x1D9, 0).unwrap();
+        let lit = pica.fragment_pipeline().unwrap();
+        let red = lit
+            .shade_triangle_sample(&memory, triangle, [0.3, 0.3, 0.4], [false; 3])
+            .unwrap();
+        assert_eq!(red, [1.0, 0.0, 0.0, 1.0]);
+
+        // An invalid LUT configuration is surfaced instead of being ignored.
+        pica.write_register(0x1C3, 7 << 4).unwrap();
+        assert!(matches!(
+            pica.fragment_pipeline(),
+            Err(PicaFragmentPipelineError::Lighting(_))
+        ));
     }
 }

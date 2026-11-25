@@ -15,6 +15,7 @@ mod gsp_interrupt;
 mod gsp_queue;
 mod index;
 mod input_fetch;
+mod lighting;
 mod output_map;
 mod physical_memory;
 mod pica200;

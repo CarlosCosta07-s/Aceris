@@ -7,8 +7,8 @@
 //! order, so a sparse mask does not shift data into the wrong shader register.
 //!
 //! Position, color, texture coordinates and the scalar TexCoord0 W semantic
-//! are resolved. Other documented semantics (quaternion and view vector) are
-//! accepted and ignored. The semantic numbering follows public hardware documentation.
+//! are resolved together with the normal quaternion and the view vector used
+//! by fragment lighting. The semantic numbering follows public hardware documentation.
 //!
 //! Incomplete semantic groups and duplicate semantics are explicit errors.
 
@@ -34,6 +34,8 @@ const POSITION: [u8; 4] = [0x00, 0x01, 0x02, 0x03];
 const COLOR: [u8; 4] = [0x08, 0x09, 0x0A, 0x0B];
 const TEXCOORD0: [u8; 2] = [0x0C, 0x0D];
 const TEXCOORD0_W: [u8; 1] = [0x10];
+const QUATERNION: [u8; 4] = [0x04, 0x05, 0x06, 0x07];
+const VIEW: [u8; 3] = [0x12, 0x13, 0x14];
 const TEXCOORD1: [u8; 2] = [0x0E, 0x0F];
 const TEXCOORD2: [u8; 2] = [0x16, 0x17];
 
@@ -103,6 +105,10 @@ pub struct PicaResolvedVertex {
     /// Dedicated scalar output semantic used by projected texture unit 0.
     /// An unmapped hardware output semantic defaults to 1.0.
     pub texcoord0_w: f32,
+    /// Normal quaternion (x, y, z, w) semantics 0x04..0x07, when mapped.
+    pub quaternion: Option<[f32; 4]>,
+    /// View vector semantics 0x12..0x14, when mapped.
+    pub view: Option<[f32; 3]>,
 }
 
 impl PicaVertexOutputMap {
@@ -199,6 +205,26 @@ impl PicaVertexOutputMap {
         Ok(Some(values))
     }
 
+    /// Like [`Self::group`] but tolerant of partial mappings: lanes that are not
+    /// mapped take `defaults`. Lighting vectors are consumed best-effort so a
+    /// shader that exports only some lanes does not halt rendering.
+    fn lenient_group<const N: usize>(
+        &self,
+        outputs: &[[f32; 4]; SHADER_OUTPUT_REGISTERS],
+        semantics: [u8; N],
+        defaults: [f32; N],
+    ) -> Option<[f32; N]> {
+        let mut any = false;
+        let mut values = defaults;
+        for (value, semantic) in values.iter_mut().zip(semantics) {
+            if let Some((output, lane)) = self.lane_for_semantic(semantic) {
+                *value = outputs[usize::from(output)][usize::from(lane)];
+                any = true;
+            }
+        }
+        any.then_some(values)
+    }
+
     /// Routes raw shader outputs into position, color and texture coordinates.
     pub fn resolve(
         &self,
@@ -218,6 +244,8 @@ impl PicaVertexOutputMap {
             texcoord0_w: self
                 .group(outputs, PicaOutputGroup::TexCoord0W, TEXCOORD0_W)?
                 .map_or(1.0, |value| value[0]),
+            quaternion: self.lenient_group(outputs, QUATERNION, [0.0, 0.0, 0.0, 1.0]),
+            view: self.lenient_group(outputs, VIEW, [0.0, 0.0, 1.0]),
         })
     }
 }
@@ -342,7 +370,7 @@ mod tests {
 
     #[test]
     fn unused_and_untracked_semantics_are_ignored() {
-        // 0x04 (quaternion), 0x12 (view) and 0x1F (unused) do not affect resolution.
+        // Partly mapped quaternion/view lanes are tolerated; 0x1F is unused.
         let map = PicaVertexOutputMap::from_registers(registers(&[
             0x0302_0100,
             0x1F12_0704, // o1: quat.x, quat.w, view.x, unused
@@ -353,6 +381,9 @@ mod tests {
             .unwrap();
         assert_eq!(vertex.color, None);
         assert_eq!(vertex.texcoords, [None, None, None]);
+        // Unmapped lanes keep identity/+Z defaults.
+        assert_eq!(vertex.quaternion, Some([0.0, 0.0, 0.0, 0.0]));
+        assert_eq!(vertex.view, Some([0.0, 0.0, 1.0]));
     }
 
     #[test]
@@ -413,6 +444,8 @@ mod tests {
             color: Some([1.5, -0.5, 0.5, f32::NAN]),
             texcoords: [None; 3],
             texcoord0_w: 1.0,
+            quaternion: None,
+            view: None,
         };
         let geometry = vertex.to_geometry_vertex([9, 9, 9, 9]);
         // 0.5 * 255 = 127.5, which rounds away from zero to 128.

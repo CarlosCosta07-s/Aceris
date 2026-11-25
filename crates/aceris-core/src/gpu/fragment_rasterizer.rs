@@ -102,6 +102,11 @@ impl ClipVertex {
                 }),
                 texcoord0_w: self.varying.texcoord0_w
                     + (other.varying.texcoord0_w - self.varying.texcoord0_w) * amount,
+                quaternion: interpolate4(self.varying.quaternion, other.varying.quaternion),
+                view: std::array::from_fn(|lane| {
+                    self.varying.view[lane]
+                        + (other.varying.view[lane] - self.varying.view[lane]) * amount
+                }),
             },
         }
     }
@@ -578,6 +583,8 @@ impl PicaFragmentRasterizer {
                         fragment_secondary_color: [0.0; 4],
                         texture_coordinates: [[0.0; 2]; 3],
                         texcoord0_w: 1.0,
+                        quaternion: [0.0; 4],
+                        view: [0.0; 3],
                     },
                     x: x as f32 + 0.5,
                     y: y as f32 + 0.5,
@@ -1069,6 +1076,8 @@ mod tests {
             fragment_secondary_color: [0.0; 4],
             texture_coordinates: [[0.0; 2]; 3],
             texcoord0_w: 1.0,
+            quaternion: [0.0, 0.0, 0.0, 1.0],
+            view: [0.0, 0.0, 1.0],
         }
     }
 
@@ -1754,6 +1763,8 @@ mod tests {
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[0.0, 0.0]; 3],
                 texcoord0_w: 1.0,
+                quaternion: [0.0, 0.0, 0.0, 1.0],
+                view: [0.0, 0.0, 1.0],
             },
         };
         let second = ClipVertex {
@@ -1764,6 +1775,8 @@ mod tests {
                 fragment_secondary_color: [0.0; 4],
                 texture_coordinates: [[1.0, 0.0]; 3],
                 texcoord0_w: 1.0,
+                quaternion: [0.0, 0.0, 0.0, 1.0],
+                view: [0.0, 0.0, 1.0],
             },
         };
         let clipped = first.interpolate(second, 0.5);

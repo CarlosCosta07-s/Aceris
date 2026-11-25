@@ -67,6 +67,12 @@ pub const REG_FOG_LUT_INDEX: u16 = 0x0E6;
 pub const REG_FOG_LUT_DATA0: u16 = 0x0E8;
 /// Number of entries in the PICA200 fog lookup table.
 pub const FOG_LUT_ENTRY_COUNT: usize = 128;
+/// GPUREG_LIGHTING_LUT_INDEX: bits 0..7 entry pointer, bits 8..12 table selector.
+pub const REG_LIGHTING_LUT_INDEX: u16 = 0x1C5;
+/// First of the eight GPUREG_LIGHTING_LUT_DATA ports.
+pub const REG_LIGHTING_LUT_DATA0: u16 = 0x1C8;
+/// Number of lighting LUT tables (selector values 0..=23).
+pub const LIGHTING_LUT_TABLE_COUNT: usize = 24;
 const FOG_LUT_DATA_REGISTER_COUNT: u16 = 8;
 /// GPUREG_GAS_LUT_INDEX: next entry written by the gas LUT FIFO.
 pub const REG_GAS_LUT_INDEX: u16 = 0x123;
@@ -615,6 +621,8 @@ pub struct Pica200 {
     fog_lut: [u32; FOG_LUT_ENTRY_COUNT],
     /// Raw 24-bit RGB gas LUT entries; gas rendering is not implemented yet.
     gas_lut: [u32; GAS_LUT_ENTRY_COUNT],
+    /// Fragment-lighting LUTs: 24 samplers of 256 raw 24-bit entries each.
+    lighting_luts: Box<[[u32; 256]; LIGHTING_LUT_TABLE_COUNT]>,
     /// Uploaded procedural noise, RGB-map and alpha-map tables (128 entries each).
     procedural_texture_map_luts: [[u32; 128]; 3],
     /// Uploaded procedural color and color-difference tables (256 entries each).
@@ -646,6 +654,7 @@ impl Default for Pica200 {
             registers: [0; REGISTER_COUNT],
             fog_lut: [0; FOG_LUT_ENTRY_COUNT],
             gas_lut: [0; GAS_LUT_ENTRY_COUNT],
+            lighting_luts: Box::new([[0; 256]; LIGHTING_LUT_TABLE_COUNT]),
             procedural_texture_map_luts: [[0; 128]; 3],
             procedural_texture_color_lut: [0; 256],
             procedural_texture_color_difference_lut: [0; 256],
@@ -684,6 +693,11 @@ impl Pica200 {
     /// Reads one uploaded 24-bit fog LUT entry.
     pub fn fog_lut_entry(&self, index: usize) -> Option<u32> {
         self.fog_lut.get(index).copied()
+    }
+
+    /// Reads one raw 24-bit fragment-lighting LUT entry (table 0..=23, entry 0..=255).
+    pub fn lighting_lut_entry(&self, table: usize, index: usize) -> Option<u32> {
+        self.lighting_luts.get(table)?.get(index).copied()
     }
 
     /// Reads one uploaded raw RGB gas LUT entry.
@@ -1257,6 +1271,20 @@ impl Pica200 {
             return;
         }
 
+        let lighting_data_end = REG_LIGHTING_LUT_DATA0 + 7;
+        if (REG_LIGHTING_LUT_DATA0..=lighting_data_end).contains(&id) {
+            let index_register = usize::from(REG_LIGHTING_LUT_INDEX);
+            let selector = self.registers[index_register];
+            let table = ((selector >> 8) & 0x1F) as usize;
+            let index = (selector & 0xFF) as usize;
+            // Selector values above the 24 known tables are dropped.
+            if let Some(entries) = self.lighting_luts.get_mut(table) {
+                entries[index] = self.registers[usize::from(id)] & 0x00FF_FFFF;
+            }
+            self.registers[index_register] = (selector & !0xFF) | (((index + 1) & 0xFF) as u32);
+            return;
+        }
+
         if id == REG_GAS_LUT_INDEX {
             self.registers[usize::from(REG_GAS_LUT_INDEX)] &= 0xFFFF;
             return;
@@ -1623,6 +1651,7 @@ impl Pica200 {
         self.registers.fill(0);
         self.fog_lut.fill(0);
         self.gas_lut.fill(0);
+        self.lighting_luts.fill([0; 256]);
         self.procedural_texture_map_luts.fill([0; 128]);
         self.procedural_texture_color_lut.fill(0);
         self.procedural_texture_color_difference_lut.fill(0);

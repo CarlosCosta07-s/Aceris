@@ -368,3 +368,5 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [~] Cookie Clicker (CIA): primeira imagem guest-driven registrada em 24/11 — após 450 quadros com orçamento de 4M, a tela superior mostra a abertura do port ("PORT BY" / "CRECKERYOP"), com 192.000 pixels escritos por lista; a tela inferior permanece preta. `Sound.init`, áudio, entrada e gameplay contínuo seguem pendentes. O teste manual do CIA mais recente está documentado em `docs/REAL_HOMEBREW_TESTING.md`; o arquivo permanece fora do repositório e da CI.
 
 - [x] Entrada por toque validada em headless com homebrew real (Cookie Clicker: 8 toques → 8 cookies). Android, áudio audível e desempenho em tempo real seguem não validados.
+
+- PICA200 (2026-11-25): iluminação por fragmento implementada (`gpu/lighting.rs`, LUTs 0x1C5/0x1C8–0x1CF, quaternion/view no output map); fórmulas parcialmente não verificadas e sombras não aplicadas. Pendentes: geometry shader, gas, planos de clip, depth offset, sombras.
