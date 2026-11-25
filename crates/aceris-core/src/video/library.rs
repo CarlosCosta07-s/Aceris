@@ -2337,7 +2337,9 @@ mod tests {
                 path: PathBuf::from(format!("g{i}.3ds")),
             })
             .collect();
-        Library::new(entries, "/games".to_string())
+        let mut library = Library::new(entries, "/games".to_string());
+        library.select_page(LibraryPage::Games);
+        library
     }
 
     #[test]
@@ -2439,6 +2441,39 @@ mod tests {
     }
 
     #[test]
+    fn home_continue_uses_the_most_recent_game() {
+        let dir = std::env::temp_dir().join(format!("aceris-home-recent-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("latest.3ds");
+        fs::write(&path, b"fixture").unwrap();
+        let entry = Entry {
+            title: "Latest game".into(),
+            path: path.clone(),
+        };
+        let mut library = Library::new(vec![entry], dir.display().to_string());
+        assert_eq!(library.page(), LibraryPage::Home);
+        assert!(library.selected_entry().is_none());
+        library.mark_launched(&path);
+        assert_eq!(library.selected_entry().unwrap().title, "Latest game");
+        assert_eq!(
+            library.click_responsive(200, 200, 1000, 600),
+            ClickResult::Activated
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn horizontal_grid_navigation_moves_by_rows_and_columns() {
+        let mut library = library(18);
+        library.move_selection_responsive(1, 1000, 480);
+        assert_eq!(library.selected_index(), 3);
+        library.move_selection_horizontal_responsive(1, 1000, 480);
+        assert_eq!(library.selected_index(), 4);
+        library.move_selection_responsive(-1, 1000, 480);
+        assert_eq!(library.selected_index(), 1);
+    }
+
+    #[test]
     fn library_sort_order_and_external_media_indicator_are_stateful() {
         let entries = vec![
             Entry {
@@ -2451,6 +2486,7 @@ mod tests {
             },
         ];
         let mut library = Library::new(entries, "/games".into());
+        library.select_page(LibraryPage::Games);
         assert_eq!(library.selected_entry().unwrap().title, "Alpha");
         library.toggle_sort_order();
         assert_eq!(library.selected_entry().unwrap().title, "Beta");
