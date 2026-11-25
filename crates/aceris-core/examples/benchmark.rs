@@ -456,13 +456,13 @@ fn profile_pica_commands(command_lists: usize) -> Result<std::time::Duration, St
     const FULL_BYTE_MASK: u32 = 0xF << 16;
     const COMMANDS: [u32; 8] = [
         400,
-        u32::from(REG_VIEWPORT_WIDTH) | FULL_BYTE_MASK,
+        REG_VIEWPORT_WIDTH as u32 | FULL_BYTE_MASK,
         240,
-        u32::from(REG_VIEWPORT_HEIGHT) | FULL_BYTE_MASK,
+        REG_VIEWPORT_HEIGHT as u32 | FULL_BYTE_MASK,
         0,
-        u32::from(REG_SCISSORTEST_MODE) | FULL_BYTE_MASK,
+        REG_SCISSORTEST_MODE as u32 | FULL_BYTE_MASK,
         0,
-        u32::from(REG_DEPTHMAP_ENABLE) | FULL_BYTE_MASK,
+        REG_DEPTHMAP_ENABLE as u32 | FULL_BYTE_MASK,
     ];
 
     let mut pica = Pica200::new();
@@ -611,23 +611,32 @@ fn profile_ipc(iterations: usize) -> Result<(), String> {
 fn run_component_profile_once() -> Result<(), String> {
     const ITERATIONS: usize = 1_000_000;
     const GPU_TRIANGLES: usize = 64;
+    const PICA_COMMAND_LISTS: usize = 250_000;
 
     println!();
     println!("Aceris standalone component profile");
     println!("Host: {} / {}", env::consts::OS, env::consts::ARCH);
-    println!("CPU instructions: {ITERATIONS}");
+    println!("CPU A32/Thumb instructions: {ITERATIONS} each");
+    println!("PICA command lists: {PICA_COMMAND_LISTS} (four register writes/list)");
     println!("Memory operations per path: {ITERATIONS}");
     println!("GPU triangles: {GPU_TRIANGLES} at 400x240");
     println!("IPC messages: {ITERATIONS}");
     println!();
     profile_cpu(ITERATIONS)?;
+    let thumb_elapsed = profile_cpu_thumb(ITERATIONS)?;
+    print_operation_rate("ARM11 interpreter (Thumb mix)", ITERATIONS as u64, thumb_elapsed);
+    let pica_elapsed = profile_pica_commands(PICA_COMMAND_LISTS)?;
+    print_operation_rate("PICA command lists (4 registers)", PICA_COMMAND_LISTS as u64, pica_elapsed);
     profile_memory(ITERATIONS)?;
     profile_gpu(GPU_TRIANGLES)?;
     profile_ipc(ITERATIONS)?;
     println!();
     println!("Scope and interpretation:");
     println!(
-        "- CPU measures the bare A32 interpreter with a small deterministic instruction mix; it excludes the process scheduler and guest MMU."
+        "- CPU measures bare A32 and Thumb instruction mixes; both exclude the process scheduler and guest MMU."
+    );
+    println!(
+        "- PICA measures command-list decoding and four register writes per list; it excludes geometry, shaders, rasterization and GPU memory traffic."
     );
     println!(
         "- Memory compares FlatMemory with the sparse GPU physical backing; it does not measure the full ARM11 D-cache/session path."
