@@ -159,12 +159,10 @@ pub enum PicaProceduralTextureMappingFunction {
 }
 
 impl PicaProceduralTextureMappingFunction {
-    /// Evaluates the documented G(u, v) base-shape equation before F(g) and
-    /// the color lookup table.
+    /// Evaluates the selected G(u, v) base-shape equation before the mapping LUT.
     ///
-    /// Coordinates are passed through unchanged: this helper does not apply
-    /// noise, wrapping, shifts, normalization, or output clamping. Rmax is
-    /// deliberately unsupported until its equation is independently verified.
+    /// This raw helper does not apply noise, wrapping, shifts, coordinate
+    /// normalization, or the PICA unit-interval saturation on radial functions.
     pub fn evaluate_raw(self, u: f32, v: f32) -> Option<f32> {
         if !u.is_finite() || !v.is_finite() {
             return None;
@@ -180,12 +178,25 @@ impl PicaProceduralTextureMappingFunction {
             Self::RadialDistance => (u * u + v * v).sqrt(),
             Self::Minimum => u.min(v),
             Self::Maximum => u.max(v),
-            Self::Rmax | Self::Reserved(_) => return None,
+            Self::Rmax => ((u + v) * 0.5 + (u * u + v * v).sqrt()) * 0.5,
+            Self::Reserved(_) => return None,
         };
 
         // Finite inputs can still overflow during squaring, addition or sqrt.
         // Do not leak an infinite/NaN intermediate into later texture stages.
         value.is_finite().then_some(value)
+    }
+
+    /// Evaluates G(u, v) as it enters the procedural mapping lookup table.
+    ///
+    /// PICA saturates the radial and Rmax functions at 1.0; the other
+    /// documented functions are returned without an extra output clamp.
+    pub fn evaluate_for_lookup(self, u: f32, v: f32) -> Option<f32> {
+        let value = self.evaluate_raw(u, v)?;
+        Some(match self {
+            Self::RadialDistance | Self::Rmax => value.min(1.0),
+            _ => value,
+        })
     }
 }
 
@@ -2281,9 +2292,19 @@ mod tests {
             );
         }
 
+        let expected_rmax = ((u + v) * 0.5 + (u * u + v * v).sqrt()) * 0.5;
+        let actual_rmax = PicaProceduralTextureMappingFunction::Rmax
+            .evaluate_raw(u, v)
+            .unwrap();
+        assert!((actual_rmax - expected_rmax).abs() < 0.000_001);
+
         assert_eq!(
-            PicaProceduralTextureMappingFunction::Rmax.evaluate_raw(u, v),
-            None
+            PicaProceduralTextureMappingFunction::RadialDistance.evaluate_for_lookup(1.0, 1.0),
+            Some(1.0)
+        );
+        assert_eq!(
+            PicaProceduralTextureMappingFunction::Rmax.evaluate_for_lookup(1.0, 1.0),
+            Some(1.0)
         );
         assert_eq!(
             PicaProceduralTextureMappingFunction::Reserved(10).evaluate_raw(u, v),
@@ -2304,6 +2325,7 @@ mod tests {
             PicaProceduralTextureMappingFunction::Average,
             PicaProceduralTextureMappingFunction::SquaredAverage,
             PicaProceduralTextureMappingFunction::RadialDistance,
+            PicaProceduralTextureMappingFunction::Rmax,
         ] {
             assert_eq!(
                 function.evaluate_raw(f32::MAX, f32::MAX),

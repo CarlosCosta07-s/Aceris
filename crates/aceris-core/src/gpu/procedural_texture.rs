@@ -206,7 +206,7 @@ impl PicaProceduralTextureSampler {
         u = clamp_coordinate(u, self.config.u_clamp)?;
         v = clamp_coordinate(v, self.config.v_clamp)?;
 
-        let rgb_shape = self.config.rgb_mapping_function.evaluate_raw(u, v).ok_or(
+        let rgb_shape = self.config.rgb_mapping_function.evaluate_for_lookup(u, v).ok_or(
             PicaProceduralTextureError::MappingFunctionUnsupported(
                 self.config.rgb_mapping_function,
             ),
@@ -220,7 +220,7 @@ impl PicaProceduralTextureSampler {
             let alpha_shape = self
                 .config
                 .alpha_mapping_function
-                .evaluate_raw(u, v)
+                .evaluate_for_lookup(u, v)
                 .ok_or(PicaProceduralTextureError::MappingFunctionUnsupported(
                     self.config.alpha_mapping_function,
                 ))?;
@@ -277,8 +277,7 @@ fn validate_mapping(
 ) -> Result<(), PicaProceduralTextureError> {
     if matches!(
         function,
-        PicaProceduralTextureMappingFunction::Rmax
-            | PicaProceduralTextureMappingFunction::Reserved(_)
+        PicaProceduralTextureMappingFunction::Reserved(_)
     ) {
         Err(PicaProceduralTextureError::MappingFunctionUnsupported(
             function,
