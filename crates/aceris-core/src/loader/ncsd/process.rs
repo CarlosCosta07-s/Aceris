@@ -3576,11 +3576,7 @@ impl Bus for Arm11CodeAddressSpace {
         Ok(u16::from_le_bytes([lo, hi]))
     }
 
-    fn read16_with_cache_policy(
-        &mut self,
-        address: u32,
-        policy: CachePolicy,
-    ) -> BusResult<u16> {
+    fn read16_with_cache_policy(&mut self, address: u32, policy: CachePolicy) -> BusResult<u16> {
         if matches!(
             policy,
             CachePolicy::WriteThrough | CachePolicy::WriteBack | CachePolicy::WriteBackNoAllocate
