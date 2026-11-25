@@ -204,14 +204,14 @@ A instrução em `0x001D8C1C` é `push {r4, lr}`; por isso ela tenta escrever os
 
 O trace mostra o guest chamando `0x38`, `0x39` e `0x3A` — GetResourceLimit, GetResourceLimitLimitValues e GetResourceLimitCurrentValues — e em seguida `0x23` (CloseHandle). Esses três SVCs de ResourceLimit não possuem handlers no despacho atual do Aceris e caem no caminho de SVC não tratado. A tabela pública de SVC documenta essas assinaturas e identifica `0x3C` como Break. [Referência SVC — 3dbrew](https://www.3dbrew.org/wiki/SVC).
 
-Depois das consultas, o guest pede `ControlMemory` (`0x01`) com operação de alocação, endereço `0x08000000` e tamanho zero. O Aceris responde `0xD8E007F1`; em seguida o guest emite `Break` (`0x3C`) e continua até usar `SP=0x08008000`. O trace também mostra uma tentativa de alocação linear `0x10003` com tamanho zero. A documentação pública descreve `0x08000000) como a janela de heap mapeada por `ControlMemory`. [Layout de memória — 3dbrew](https://www.3dbrew.org/wiki/Memory_layout) e [Memory Management — 3dbrew](https://www.3dbrew.org/wiki/Memory_Management).
+Depois das consultas, o guest pede `ControlMemory` (`0x01`) com operação de alocação, endereço `0x08000000` e tamanho zero. O Aceris responde `0xD8E007F1`; em seguida o guest emite `Break` (`0x3C`) e continua até usar `SP=0x08008000`. O trace também mostra uma tentativa de alocação linear `0x10003` com tamanho zero. A documentação pública descreve `0x08000000` como a janela de heap mapeada por `ControlMemory`. [Layout de memória — 3dbrew](https://www.3dbrew.org/wiki/Memory_layout) e [Memory Management — 3dbrew](https://www.3dbrew.org/wiki/Memory_Management).
 
 **Conclusão sustentada pelos dados:** o primeiro bloqueio observado deste título é de inicialização de memória/serviços do kernel guest, não um gargalo de throughput de CPU ou rasterização. A sequência aponta fortemente para a ausência de SVCs ResourceLimit e para uma alocação de heap com tamanho zero; ainda é necessário conferir o contrato de inicialização usado por este título antes de definir valores ou política de alocação. Não mascarar o problema mapeando uma página arbitrária nem relaxar permissões.
 
 ### Próximas tarefas verificáveis
 
 1. Auditar, com o responsável pelo módulo de sessão/SVC, a semântica de `0x38`–`0x3A` e o encerramento/retorno de `0x3C`.
-2. Rastrear a origem do tamanho zero entregue a `ControlMemory` e validar o ABI completo `r0)–`r4` para a alocação regular e linear.
+2. Rastrear a origem do tamanho zero entregue a `ControlMemory` e validar o ABI completo `r0`–`r4` para a alocação regular e linear.
 3. Corrigir o mapeamento de heap/stack somente após determinar a alocação guest pretendida; cobrir base, tamanho, alinhamento, permissões e falhas com testes.
 4. Repetir o mesmo CIA e orçamento. O critério de avanço é chegar a uma primeira apresentação LCD não preta e atividade GSP/PICA observável antes de iniciar qualquer medição de FPS ou otimização por perfil.
 
