@@ -2,9 +2,11 @@
 //!
 //! This crate deliberately stays outside aceris-core: operating-system
 //! windows, GPU instances, surfaces, swapchains and host API objects are not
-//! guest PICA state. The first GPU path uploads a completed RGBA frame to a
-//! host texture and presents it through Vulkan or OpenGL/OpenGL ES. The
-//! software PICA renderer remains the compatibility reference and fallback.
+//! guest PICA state. The first GPU path uploads completed LCD frames to a host
+//! texture and presents them through Vulkan or OpenGL/OpenGL ES. Android RGBA
+//! frames and desktop BGRX frames are uploaded in their native byte order; the
+//! BGRX path avoids a per-frame CPU channel-conversion pass. The software PICA
+//! renderer remains the compatibility reference and fallback.
 //!
 //! The raw-surface constructor is unsafe because the caller owns the native
 //! display/window lifetime. The presenter must be dropped before those native
@@ -41,8 +43,7 @@ fn vertex_main(@builtin(vertex_index) index: u32) -> VertexOutput {
 @group(0) @binding(0)
 var frame_texture: texture_2d<f32>;
 
-@fragment
-fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn sample_frame(input: VertexOutput) -> vec4<f32> {
     let dimensions = textureDimensions(frame_texture);
     let upper = vec2<i32>(dimensions) - vec2<i32>(1, 1);
     let coordinates = clamp(
@@ -52,7 +53,37 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     );
     return textureLoad(frame_texture, coordinates, 0);
 }
+
+@fragment
+fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return sample_frame(input);
+}
+
+// Desktop frames use BGRX: the final byte is padding, not alpha.
+@fragment
+fn fragment_bgrx_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let sampled = sample_frame(input);
+    return vec4<f32>(sampled.rgb, 1.0);
+}
 "#;
+
+/// Pixel byte layout of an uploaded host frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameUploadFormat {
+    Rgba,
+    Bgrx,
+}
+
+impl FrameUploadFormat {
+    fn texture_format(self, srgb: bool) -> wgpu::TextureFormat {
+        match (self, srgb) {
+            (Self::Rgba, false) => wgpu::TextureFormat::Rgba8Unorm,
+            (Self::Rgba, true) => wgpu::TextureFormat::Rgba8UnormSrgb,
+            (Self::Bgrx, false) => wgpu::TextureFormat::Bgra8Unorm,
+            (Self::Bgrx, true) => wgpu::TextureFormat::Bgra8UnormSrgb,
+        }
+    }
+}
 
 /// Selects which native host API wgpu should initialize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +151,43 @@ impl GraphicsBackend {
     }
 }
 
+
+fn create_present_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    surface_format: wgpu::TextureFormat,
+    fragment_entry: &'static str,
+    label: &'static str,
+) -> wgpu::RenderPipeline {
+    let color_targets = [Some(wgpu::ColorTargetState {
+        format: surface_format,
+        blend: None,
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vertex_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fragment_entry),
+            compilation_options: Default::default(),
+            targets: &color_targets,
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// Describes the GPU actually selected by the host.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphicsAdapterInfo {
@@ -142,11 +210,12 @@ pub struct GraphicsPresenter {
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
+    bgrx_pipeline: wgpu::RenderPipeline,
     frame_layout: wgpu::BindGroupLayout,
     frame_texture: Option<wgpu::Texture>,
     frame_bind_group: Option<wgpu::BindGroup>,
     frame_dimensions: (u32, u32),
-    upload_rgba: Vec<u8>,
+    frame_upload_format: Option<FrameUploadFormat>,
     adapter_info: GraphicsAdapterInfo,
 }
 
@@ -237,32 +306,22 @@ impl GraphicsPresenter {
             label: Some("Aceris original frame presentation shader"),
             source: wgpu::ShaderSource::Wgsl(PRESENT_SHADER.into()),
         });
-        let color_targets = [Some(wgpu::ColorTargetState {
-            format: surface_config.format,
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Aceris host presentation pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vertex_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fragment_main"),
-                compilation_options: Default::default(),
-                targets: &color_targets,
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = create_present_pipeline(
+            &device,
+            &pipeline_layout,
+            &shader,
+            surface_config.format,
+            "fragment_main",
+            "Aceris RGBA host presentation pipeline",
+        );
+        let bgrx_pipeline = create_present_pipeline(
+            &device,
+            &pipeline_layout,
+            &shader,
+            surface_config.format,
+            "fragment_bgrx_main",
+            "Aceris BGRX host presentation pipeline",
+        );
 
         let info = adapter.get_info();
         let adapter_info = GraphicsAdapterInfo {
@@ -280,11 +339,12 @@ impl GraphicsPresenter {
             queue,
             surface_config,
             pipeline,
+            bgrx_pipeline,
             frame_layout,
             frame_texture: None,
             frame_bind_group: None,
             frame_dimensions: (0, 0),
-            upload_rgba: Vec::new(),
+            frame_upload_format: None,
             adapter_info,
         })
     }
@@ -317,10 +377,11 @@ impl GraphicsPresenter {
                 byte_len
             ));
         }
-        self.present_pixels(rgba, width, height)
+        self.present_pixels(rgba, width, height, FrameUploadFormat::Rgba)
     }
 
-    /// Uploads a tightly packed BGRX8 frame, converting it into a reusable RGBA buffer.
+    /// Uploads tightly packed BGRX8 bytes directly as a BGRA texture.
+    /// The shader ignores the padding byte and forces alpha to fully opaque.
     pub fn present_bgrx(&mut self, bgrx: &[u8], width: u32, height: u32) -> Result<(), String> {
         let byte_len = frame_byte_len(width, height)?;
         if bgrx.len() != byte_len {
@@ -330,19 +391,20 @@ impl GraphicsPresenter {
                 byte_len
             ));
         }
-        self.upload_rgba.resize(byte_len, 0);
-        convert_bgrx_to_rgba(bgrx, &mut self.upload_rgba);
-        let upload = std::mem::take(&mut self.upload_rgba);
-        let result = self.present_pixels(&upload, width, height);
-        self.upload_rgba = upload;
-        result
+        self.present_pixels(bgrx, width, height, FrameUploadFormat::Bgrx)
     }
 
-    fn present_pixels(&mut self, rgba: &[u8], width: u32, height: u32) -> Result<(), String> {
+    fn present_pixels(
+        &mut self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        upload_format: FrameUploadFormat,
+    ) -> Result<(), String> {
         if width != self.surface_config.width || height != self.surface_config.height {
             self.resize(width, height)?;
         }
-        self.ensure_frame_texture(width, height);
+        self.ensure_frame_texture(width, height, upload_format);
         let texture = self
             .frame_texture
             .as_ref()
@@ -357,7 +419,7 @@ impl GraphicsPresenter {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            rgba,
+            pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(bytes_per_row),
@@ -430,7 +492,10 @@ impl GraphicsPresenter {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(match upload_format {
+                FrameUploadFormat::Rgba => &self.pipeline,
+                FrameUploadFormat::Bgrx => &self.bgrx_pipeline,
+            });
             pass.set_bind_group(
                 0,
                 self.frame_bind_group
@@ -448,15 +513,18 @@ impl GraphicsPresenter {
         Ok(())
     }
 
-    fn ensure_frame_texture(&mut self, width: u32, height: u32) {
-        if self.frame_dimensions == (width, height) {
+    fn ensure_frame_texture(
+        &mut self,
+        width: u32,
+        height: u32,
+        upload_format: FrameUploadFormat,
+    ) {
+        if self.frame_dimensions == (width, height)
+            && self.frame_upload_format == Some(upload_format)
+        {
             return;
         }
-        let format = if self.surface_config.format.is_srgb() {
-            wgpu::TextureFormat::Rgba8UnormSrgb
-        } else {
-            wgpu::TextureFormat::Rgba8Unorm
-        };
+        let format = upload_format.texture_format(self.surface_config.format.is_srgb());
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Aceris completed frame texture"),
             size: wgpu::Extent3d {
@@ -483,6 +551,7 @@ impl GraphicsPresenter {
         self.frame_texture = Some(texture);
         self.frame_bind_group = Some(bind_group);
         self.frame_dimensions = (width, height);
+        self.frame_upload_format = Some(upload_format);
     }
 }
 
@@ -496,12 +565,6 @@ fn frame_byte_len(width: u32, height: u32) -> Result<usize, String> {
         .checked_mul(height)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| "frame dimensions overflow".to_string())
-}
-
-fn convert_bgrx_to_rgba(source: &[u8], destination: &mut [u8]) {
-    for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
-        destination.copy_from_slice(&[source[2], source[1], source[0], 0xFF]);
-    }
 }
 
 #[cfg(test)]
@@ -545,10 +608,27 @@ mod tests {
     }
 
     #[test]
-    fn bgrx_conversion_preserves_red_green_blue_order_and_sets_alpha() {
-        let source = [0x11, 0x22, 0x33, 0x00, 0xAA, 0xBB, 0xCC, 0xDD];
-        let mut output = [0; 8];
-        convert_bgrx_to_rgba(&source, &mut output);
-        assert_eq!(output, [0x33, 0x22, 0x11, 0xFF, 0xCC, 0xBB, 0xAA, 0xFF]);
+    fn rgba_and_bgrx_uploads_select_native_texture_formats() {
+        assert_eq!(
+            FrameUploadFormat::Rgba.texture_format(false),
+            wgpu::TextureFormat::Rgba8Unorm
+        );
+        assert_eq!(
+            FrameUploadFormat::Rgba.texture_format(true),
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        );
+        assert_eq!(
+            FrameUploadFormat::Bgrx.texture_format(false),
+            wgpu::TextureFormat::Bgra8Unorm
+        );
+        assert_eq!(
+            FrameUploadFormat::Bgrx.texture_format(true),
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+    }
+
+    #[test]
+    fn bgrx_shader_ignores_the_padding_byte() {
+        assert!(PRESENT_SHADER.contains("return vec4<f32>(sampled.rgb, 1.0);"));
     }
 }
