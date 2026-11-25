@@ -1323,6 +1323,8 @@ fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> 
     ))
 }
 
+// These low-level draw primitives intentionally accept a full rectangle and target buffer.
+#[allow(clippy::too_many_arguments)]
 fn responsive_fill(
     frame: &mut [u8],
     width: usize,
@@ -1354,6 +1356,8 @@ fn responsive_fill(
     }
 }
 
+// Panels share the target geometry directly to avoid transient layout allocations.
+#[allow(clippy::too_many_arguments)]
 fn responsive_panel(
     frame: &mut [u8],
     width: u32,
@@ -1389,6 +1393,8 @@ fn responsive_panel(
     );
 }
 
+// Text coordinates and scale are explicit so all frontend layouts use the same renderer.
+#[allow(clippy::too_many_arguments)]
 fn responsive_text(
     frame: &mut [u8],
     width: u32,
