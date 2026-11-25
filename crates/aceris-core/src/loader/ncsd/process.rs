@@ -2309,19 +2309,20 @@ impl Arm11CodeAddressSpace {
             }
         }
 
+        // Translated ARM11 accesses arrive here with a physical FCRAM
+        // address. That range is disjoint from both virtual linear-alias
+        // windows, so resolve it first and avoid a guaranteed-miss virtual
+        // mapping search on every physical-memory access.
+        if let Some(location) = self.linear_region_at_physical_address(address) {
+            return Some(location);
+        }
+
         if let Some((index, region)) = self.linear_region_at_virtual_address(address) {
             let offset = address - region.virtual_base;
             return Some(MemoryLocation::Physical {
                 index,
                 address: region.physical_base + offset,
             });
-        }
-
-        // A translated ARM11 access reaches this bus with its physical
-        // address. Both linear aliases are resolved with at most two binary
-        // searches while retaining the old-alias-first selection order.
-        if let Some(location) = self.linear_region_at_physical_address(address) {
-            return Some(location);
         }
 
         let shared_index = self
