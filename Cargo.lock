@@ -37,6 +37,7 @@ dependencies = [
 name = "aceris-graphics"
 version = "0.0.1"
 dependencies = [
+ "naga",
  "pollster",
  "raw-window-handle",
  "wgpu",
