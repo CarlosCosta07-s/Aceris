@@ -7942,6 +7942,8 @@ mod tests {
         }
         configure_guest_clip_transform(gpu);
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+        gpu.write_register(REG_SH_OUTMAP_TOTAL, 1).unwrap();
+        gpu.write_register(REG_VSH_OUTMAP_MASK, 1).unwrap();
 
         system.set_pica_fragment_rendering(Some(PicaRenderSettings {
             clip_depth_range: ClipDepthRange::NegativeOneToOne,
