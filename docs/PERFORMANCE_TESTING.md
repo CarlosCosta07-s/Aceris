@@ -56,6 +56,38 @@ Essa sequência toca no menu no quadro 600 e depois toca oito vezes na área do 
 O tempo registrado para cada linha cobre a chamada completa a `System::run_frame_with_budget`. A aplicação dos eventos de toque pelo benchmark ocorre antes do cronômetro; o processamento guest de HID permanece dentro da chamada medida. O trace correlaciona tempo e atividade por quadro, mas não divide internamente o tempo entre ARM11, scheduler, MMU, DSP, PICA200 e LCD. Para atribuir custo a funções específicas, faça uma segunda execução com um profiler de amostragem do host usando exatamente a mesma sequência de entrada. Não adicione temporizadores por instrução ao caminho quente.
 
 
+## Exemplo de diagnóstico com Super Mario 64 3DS Port (Luigi Version)
+
+Em 25/11/2026, o CIA NoCrypto fornecido pelo mantenedor foi carregado pelo benchmark release. O arquivo permaneceu local; não foi enviado ao repositório nem à CI. Para reproduzir os primeiros cinco quadros e obter o CSV:
+
+```powershell
+cargo run --release -p aceris-core --example benchmark -- "D:\Jogos\Super Mario 64 Luigi.cia" --warmup 0 --frames 5 --instruction-budget 4000000 --frame-trace .\sm64-luigi-first5.csv --dump-lcd .\sm64-luigi-first5-lcd
+```
+
+Resultado desta execução no host Linux x86-64:
+
+| Quadro | Tempo host | Instruções ARM11 | Stop reason | GSP lists | LCD scanouts |
+|---:|---:|---:|---|---:|---:|
+| 1 | 202,166 ms | 2.348.557 | SVC 0x38 | 0 | 0 |
+| 2 | 0,004 ms | 15 | SVC 0x39 | 0 | 0 |
+| 3 | 0,001 ms | 7 | SVC 0x3A | 0 | 0 |
+| 4 | 0,005 ms | 49 | SVC 0x3C | 0 | 0 |
+| 5 | 0,002 ms | 24 | SVC 0x3C | 0 | 0 |
+
+Esta janela **não mede FPS de jogo**. O primeiro quadro gasta quase todo o tempo no bootstrap; os seguintes param em chamadas SVC não tratadas. Não houve submissão de listas gráficas nem scanout, e as três capturas LCD ficaram pretas.
+
+Para reproduzir a falha no sexto quadro e imprimir o contexto ARM11, use seis quadros de aquecimento:
+
+```powershell
+$env:ACERIS_TRACE_SVC = "1"
+cargo run --release -p aceris-core --example benchmark -- "D:\Jogos\Super Mario 64 Luigi.cia" --warmup 6 --frames 1 --instruction-budget 4000000
+Remove-Item Env:ACERIS_TRACE_SVC
+```
+
+A falha observada foi `invalid memory access at 0x08007FF8`, no PC `0x001D8C1C`, com SP `0x08008000`. A instrução nesse PC é `push {r4, lr}`, que tenta gravar em SP−8. O relatório registrou 0 KiB de heap de aplicação mapeado. Antes disso, o guest chama SVCs `0x38`–`0x3A` (consultas ResourceLimit sem handler no despacho atual), tenta `ControlMemory` em `0x08000000` com tamanho zero e recebe `0xD8E007F1`. A tabela pública documenta os SVCs ResourceLimit e Break; o mapa público descreve `0x08000000` como heap mapeado por ControlMemory: [SVC](https://www.3dbrew.org/wiki/SVC), [Memory layout](https://www.3dbrew.org/wiki/Memory_layout), [Memory Management](https://www.3dbrew.org/wiki/Memory_Management).
+
+**Interpretação:** isto identifica primeiro um bloqueio de compatibilidade na inicialização de heap/stack e nos SVCs do kernel guest, não um gargalo de CPU/GPU já mensurável. Não otimize o rasterizador, o decoder ou a memória com base nesses cinco quadros. Primeiro é necessário confirmar o contrato dos SVCs e a origem do tamanho zero, mapear corretamente a região pretendida e alcançar uma primeira apresentação LCD não preta.
+
 ## Imagens criptografadas: chaves fornecidas pelo usuário
 
 Sem variáveis de chave, o benchmark tenta os caminhos sem criptografia já suportados pelo carregador. Para uma imagem NCSD criptografada, o usuário pode fornecer as duas chaves exigidas pelo caminho existente:
