@@ -14,7 +14,11 @@ use std::{
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     cpu::{Arm11Core, StepEvent},
-    gpu::{DepthFunction, FCRAM_BASE, GpuPhysicalMemory, RasterVertex, SoftwareRasterizer},
+    gpu::{
+        DepthFunction, FCRAM_BASE, GpuPhysicalMemory, Pica200, RasterVertex,
+        SoftwareRasterizer, REG_DEPTHMAP_ENABLE, REG_SCISSORTEST_MODE, REG_VIEWPORT_HEIGHT,
+        REG_VIEWPORT_WIDTH,
+    },
     loader::{
         ImageFormat, cia::TicketCommonKeyStore, identify_file, ncsd::session::ipc::IpcMessage,
     },
@@ -410,6 +414,68 @@ fn profile_cpu(iterations: usize) -> Result<(), String> {
     black_box((cpu.regs[0], cpu.regs[1], cpu.cpsr.0));
     print_operation_rate("ARM11 interpreter (A32 mix)", iterations as u64, elapsed);
     Ok(())
+}
+
+fn profile_cpu_thumb(iterations: usize) -> Result<(), String> {
+    const CODE_BASE: u32 = 0x2000;
+    const INSTRUCTIONS: [u16; 4] = [
+        0x2001, // MOVS r0, #1
+        0x3001, // ADDS r0, #1
+        0x2880, // CMP r0, #0x80
+        0x0001, // MOVS r1, r0
+    ];
+    let code_bytes = (INSTRUCTIONS.len() * 2) as u32;
+    let mut memory = FlatMemory::new(CODE_BASE, code_bytes as usize);
+    for (index, instruction) in INSTRUCTIONS.iter().copied().enumerate() {
+        Bus::write16(&mut memory, CODE_BASE + (index as u32 * 2), instruction)
+            .map_err(|error| format!("Thumb profile setup failed: {error}"))?;
+    }
+
+    let mut cpu = Arm11Core::new();
+    cpu.regs[15] = CODE_BASE;
+    cpu.cpsr.set_thumb(true);
+    let started = Instant::now();
+    for _ in 0..iterations {
+        if cpu.regs[15] >= CODE_BASE + code_bytes {
+            cpu.regs[15] = CODE_BASE;
+        }
+        match cpu
+            .step(&mut memory)
+            .map_err(|error| format!("Thumb profile instruction failed: {error}"))?
+        {
+            StepEvent::Executed => {}
+            event => return Err(format!("Thumb profile stopped unexpectedly: {event:?}")),
+        }
+    }
+    let elapsed = started.elapsed();
+    black_box((cpu.regs[0], cpu.regs[1], cpu.cpsr.0));
+    Ok(elapsed)
+}
+
+fn profile_pica_commands(command_lists: usize) -> Result<std::time::Duration, String> {
+    const FULL_BYTE_MASK: u32 = 0xF << 16;
+    const COMMANDS: [u32; 8] = [
+        400,
+        u32::from(REG_VIEWPORT_WIDTH) | FULL_BYTE_MASK,
+        240,
+        u32::from(REG_VIEWPORT_HEIGHT) | FULL_BYTE_MASK,
+        0,
+        u32::from(REG_SCISSORTEST_MODE) | FULL_BYTE_MASK,
+        0,
+        u32::from(REG_DEPTHMAP_ENABLE) | FULL_BYTE_MASK,
+    ];
+
+    let mut pica = Pica200::new();
+    let started = Instant::now();
+    for _ in 0..command_lists {
+        let report = pica
+            .execute_command_list(&COMMANDS)
+            .map_err(|error| format!("PICA command profile failed: {error}"))?;
+        black_box(report);
+    }
+    let elapsed = started.elapsed();
+    black_box(pica.register(REG_VIEWPORT_WIDTH));
+    Ok(elapsed)
 }
 
 fn profile_memory(iterations: usize) -> Result<(), String> {
