@@ -163,9 +163,307 @@ struct Shared {
     looper: Raw,
 }
 
+type JniEnv = *mut c_void;
+type JniObject = *mut c_void;
+type JniMethod = *mut c_void;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union JniValue {
+    int_value: i32,
+    object_value: JniObject,
+}
+
+fn jni_function<F: Copy>(handle: *mut c_void, index: usize) -> Option<F> {
+    if handle.is_null() {
+        return None;
+    }
+    // JNIEnv and JavaVM are pointers to pointers to their respective function tables.
+    let table = unsafe { *(handle as *const *const *const c_void) };
+    if table.is_null() {
+        return None;
+    }
+    let address = unsafe { *table.add(index) };
+    if address.is_null() {
+        return None;
+    }
+    assert_eq!(size_of::<F>(), size_of::<*const c_void>());
+    Some(unsafe { std::mem::transmute_copy::<*const c_void, F>(&address) })
+}
+
+type NewGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject) -> JniObject;
+type DeleteGlobalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
+type AttachCurrentThreadFn = unsafe extern "system" fn(
+    *mut c_void,
+    *mut JniEnv,
+    *mut c_void,
+) -> i32;
+type DetachCurrentThreadFn = unsafe extern "system" fn(*mut c_void) -> i32;
+type GetObjectClassFn = unsafe extern "system" fn(JniEnv, JniObject) -> JniObject;
+type GetMethodIdFn = unsafe extern "system" fn(
+    JniEnv,
+    JniObject,
+    *const c_char,
+    *const c_char,
+) -> JniMethod;
+type NewStringUtfFn = unsafe extern "system" fn(JniEnv, *const c_char) -> JniObject;
+type CallObjectMethodAFn =
+    unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> JniObject;
+type CallIntMethodAFn =
+    unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> i32;
+type DeleteLocalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
+type ExceptionCheckFn = unsafe extern "system" fn(JniEnv) -> u8;
+type ExceptionClearFn = unsafe extern "system" fn(JniEnv);
+
+/// Owns a JavaVM attachment on the app thread and polls anonymous playback
+/// attributes. No notification-listener permission or track metadata is read.
+struct AttachedMediaMonitor {
+    java_vm: *mut c_void,
+    env: JniEnv,
+    activity: JniObject,
+    delete_global_ref: DeleteGlobalRefFn,
+    detach_current_thread: DetachCurrentThreadFn,
+}
+
+impl AttachedMediaMonitor {
+    fn attach(java_vm: Raw, activity: Raw, sdk_version: i32) -> Option<Self> {
+        // AAudio's dedicated game usage is available from API 28. Earlier
+        // releases can report our own stream as media, so detection stays off.
+        if sdk_version < 28 || java_vm.is_null() || activity.is_null() {
+            return None;
+        }
+        let vm = java_vm.get();
+        let attach: AttachCurrentThreadFn = jni_function(vm, 4)?;
+        let detach: DetachCurrentThreadFn = jni_function(vm, 5)?;
+        let mut env: JniEnv = ptr::null_mut();
+        // SAFETY: this worker thread is not attached yet; the VM owns the returned JNIEnv.
+        if unsafe { attach(vm, &mut env, ptr::null_mut()) } != 0 || env.is_null() {
+            return None;
+        }
+        let Some(delete_global_ref) = jni_function(env, 22) else {
+            // SAFETY: the preceding attach succeeded.
+            unsafe { detach(vm) };
+            return None;
+        };
+        Some(Self {
+            java_vm: vm,
+            env,
+            activity: activity.get(),
+            delete_global_ref,
+            detach_current_thread: detach,
+        })
+    }
+
+    fn exception_pending(&self) -> bool {
+        let Some(check): Option<ExceptionCheckFn> = jni_function(self.env, 228) else {
+            return false;
+        };
+        // SAFETY: self.env belongs to this attached thread.
+        unsafe { check(self.env) != 0 }
+    }
+
+    fn clear_exception(&self) {
+        if let Some(clear): Option<ExceptionClearFn> = jni_function(self.env, 17) {
+            // SAFETY: clearing a pending JNI exception on this attached thread.
+            unsafe { clear(self.env) };
+        }
+    }
+
+    fn delete_local(&self, object: JniObject) {
+        if !object.is_null() {
+            if let Some(delete): Option<DeleteLocalRefFn> = jni_function(self.env, 23) {
+                // SAFETY: object is a local reference created during this JNI call.
+                unsafe { delete(self.env, object) };
+            }
+        }
+    }
+
+    fn method(
+        &self,
+        class: JniObject,
+        name: &'static [u8],
+        signature: &'static [u8],
+    ) -> Option<JniMethod> {
+        let get: GetMethodIdFn = jni_function(self.env, 33)?;
+        // SAFETY: both static byte strings are NUL-terminated JNI method descriptors.
+        let method = unsafe {
+            get(
+                self.env,
+                class,
+                name.as_ptr().cast(),
+                signature.as_ptr().cast(),
+            )
+        };
+        if method.is_null() || self.exception_pending() {
+            self.clear_exception();
+            None
+        } else {
+            Some(method)
+        }
+    }
+
+    fn class_of(&self, object: JniObject) -> Option<JniObject> {
+        let get: GetObjectClassFn = jni_function(self.env, 31)?;
+        // SAFETY: object is a live local or global reference on this thread.
+        let class = unsafe { get(self.env, object) };
+        if class.is_null() || self.exception_pending() {
+            self.clear_exception();
+            None
+        } else {
+            Some(class)
+        }
+    }
+
+    /// Returns true when an active external playback session has USAGE_MEDIA.
+    fn external_media_active(&self) -> Option<bool> {
+        const AUDIO_USAGE_MEDIA: i32 = 1;
+        let get_string: NewStringUtfFn = jni_function(self.env, 167)?;
+        let call_object: CallObjectMethodAFn = jni_function(self.env, 36)?;
+        let call_int: CallIntMethodAFn = jni_function(self.env, 51)?;
+
+        let activity_class = self.class_of(self.activity)?;
+        let get_system_service = self.method(
+            activity_class,
+            b"getSystemService\0",
+            b"(Ljava/lang/String;)Ljava/lang/Object;\0",
+        )?;
+        // SAFETY: the service name is static NUL-terminated UTF-8.
+        let service_name =
+            unsafe { get_string(self.env, b"audio\0".as_ptr().cast()) };
+        if service_name.is_null() {
+            self.delete_local(activity_class);
+            self.clear_exception();
+            return None;
+        }
+        let service_args = [JniValue {
+            object_value: service_name,
+        }];
+        // SAFETY: method ID and arguments match Context.getSystemService(String).
+        let audio_manager =
+            unsafe { call_object(self.env, self.activity, get_system_service, service_args.as_ptr()) };
+        self.delete_local(service_name);
+        self.delete_local(activity_class);
+        if audio_manager.is_null() || self.exception_pending() {
+            self.clear_exception();
+            return None;
+        }
+
+        let manager_class = self.class_of(audio_manager)?;
+        let get_active = self.method(
+            manager_class,
+            b"getActivePlaybackConfigurations\0",
+            b"()Ljava/util/List;\0",
+        )?;
+        // SAFETY: method ID is obtained from the AudioManager object's class.
+        let configurations =
+            unsafe { call_object(self.env, audio_manager, get_active, ptr::null()) };
+        self.delete_local(manager_class);
+        self.delete_local(audio_manager);
+        if configurations.is_null() || self.exception_pending() {
+            self.clear_exception();
+            return None;
+        }
+
+        let list_class = self.class_of(configurations)?;
+        let size_method = self.method(list_class, b"size\0", b"()I\0")?;
+        let get_method =
+            self.method(list_class, b"get\0", b"(I)Ljava/lang/Object;\0")?;
+        // SAFETY: List.size() takes no arguments and returns an int.
+        let size = unsafe { call_int(self.env, configurations, size_method, ptr::null()) };
+        if self.exception_pending() {
+            self.clear_exception();
+            self.delete_local(list_class);
+            self.delete_local(configurations);
+            return None;
+        }
+
+        let mut found = false;
+        for index in 0..size.clamp(0, 64) {
+            let args = [JniValue { int_value: index }];
+            // SAFETY: List.get(int) returns a local object reference for this index.
+            let configuration =
+                unsafe { call_object(self.env, configurations, get_method, args.as_ptr()) };
+            if configuration.is_null() || self.exception_pending() {
+                self.clear_exception();
+                continue;
+            }
+            let Some(configuration_class) = self.class_of(configuration) else {
+                self.delete_local(configuration);
+                continue;
+            };
+            let Some(attributes_method) = self.method(
+                configuration_class,
+                b"getAudioAttributes\0",
+                b"()Landroid/media/AudioAttributes;\0",
+            ) else {
+                self.delete_local(configuration_class);
+                self.delete_local(configuration);
+                continue;
+            };
+            // SAFETY: method ID matches AudioPlaybackConfiguration.getAudioAttributes().
+            let attributes =
+                unsafe { call_object(self.env, configuration, attributes_method, ptr::null()) };
+            self.delete_local(configuration_class);
+            self.delete_local(configuration);
+            if attributes.is_null() || self.exception_pending() {
+                self.clear_exception();
+                continue;
+            }
+
+            let Some(attributes_class) = self.class_of(attributes) else {
+                self.delete_local(attributes);
+                continue;
+            };
+            let Some(usage_method) =
+                self.method(attributes_class, b"getUsage\0", b"()I\0")
+            else {
+                self.delete_local(attributes_class);
+                self.delete_local(attributes);
+                continue;
+            };
+            // SAFETY: AudioAttributes.getUsage() returns an int.
+            let usage = unsafe { call_int(self.env, attributes, usage_method, ptr::null()) };
+            self.delete_local(attributes_class);
+            self.delete_local(attributes);
+            if self.exception_pending() {
+                self.clear_exception();
+                continue;
+            }
+            if usage == AUDIO_USAGE_MEDIA {
+                found = true;
+                break;
+            }
+        }
+        self.delete_local(list_class);
+        self.delete_local(configurations);
+        Some(found)
+    }
+}
+
+impl Drop for AttachedMediaMonitor {
+    fn drop(&mut self) {
+        // SAFETY: the activity global reference is released while this thread is attached.
+        unsafe { (self.delete_global_ref)(self.env, self.activity) };
+        // SAFETY: this is the same thread that was attached in attach().
+        unsafe { (self.detach_current_thread)(self.java_vm) };
+    }
+}
+
+fn create_activity_global_ref(env: *mut c_void, activity: *mut c_void) -> Raw {
+    let Some(new_global): Option<NewGlobalRefFn> = jni_function(env, 21) else {
+        return Raw::default();
+    };
+    // SAFETY: called on NativeActivity's UI thread with a live activity jobject.
+    let global = unsafe { new_global(env, activity) };
+    Raw::new(global)
+}
+
 struct Host {
     shared: Mutex<Shared>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    java_vm: Raw,
+    activity_global: Raw,
+    sdk_version: i32,
 }
 
 static HOST: Mutex<Option<std::sync::Arc<Host>>> = Mutex::new(None);
@@ -218,6 +516,9 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         let host = std::sync::Arc::new(Host {
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
+            java_vm: Raw::new((*activity).vm),
+            activity_global: create_activity_global_ref((*activity).env, (*activity).clazz),
+            sdk_version: (*activity).sdk_version,
         });
         *lock(&HOST) = Some(host.clone());
         let worker = host.clone();
@@ -374,6 +675,15 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let mut app = App::new(&games_dir);
     let mut frame = Vec::new();
     let mut audio = AAudioOutput::open();
+    let media_monitor = AttachedMediaMonitor::attach(
+        host.java_vm,
+        host.activity_global,
+        host.sdk_version,
+    );
+    let mut external_media_playing = false;
+    let mut last_media_poll = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
     let mut attached_queue = Raw::default();
     let mut size = (0u32, 0u32);
     let mut gpu_presenter: Option<AndroidGpuPresenter> = None;
@@ -427,6 +737,27 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
         poll_looper(wait, &mut app, attached_queue);
 
         if resumed && !window.is_null() && Instant::now() >= next_frame {
+            let now = Instant::now();
+            if now.duration_since(last_media_poll) >= Duration::from_millis(500) {
+                last_media_poll = now;
+                let output_is_classified_as_game =
+                    audio.as_ref().is_none_or(AAudioOutput::uses_game_usage);
+                let detected = if output_is_classified_as_game {
+                    media_monitor
+                        .as_ref()
+                        .and_then(AttachedMediaMonitor::external_media_active)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                if detected != external_media_playing {
+                    external_media_playing = detected;
+                    app.set_external_media_playing(detected);
+                    if let Some(audio) = audio.as_mut() {
+                        audio.set_muted(detected);
+                    }
+                }
+            }
             next_frame += FRAME_INTERVAL;
             if next_frame < Instant::now() {
                 // Fell behind (paused or slow frame): do not run catch-up frames.
