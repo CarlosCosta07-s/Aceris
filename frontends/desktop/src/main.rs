@@ -176,7 +176,7 @@ fn run_frame_with_diagnostics(system: &mut System) -> Result<(), String> {
 }
 
 /// Frames of the start-up animation written by `--dump-intro`.
-const INTRO_DUMP_FRAMES: [u32; 8] = [0, 20, 36, 50, 70, 90, 115, 149];
+const INTRO_DUMP_FRAMES: [u32; 8] = [0, 10, 20, 28, 39, 50, 64, 83];
 
 /// Writes key frames of the start-up animation as PNG files into `dir`.
 fn dump_intro(dir: &Path) -> io::Result<()> {
@@ -273,6 +273,8 @@ fn play_intro(
     scale: usize,
 ) -> Result<bool, String> {
     let frame_time = Duration::from_micros(1_000_000 / u64::from(intro::FPS));
+    let mut rgba = Vec::new();
+    let mut bgrx = Vec::new();
     for frame in 0..intro::FRAME_COUNT {
         let started = Instant::now();
         for event in window.poll_events() {
@@ -284,8 +286,16 @@ fn play_intro(
         // A 2x nearest-neighbour presentation preserves the full window layout.
         let intro_width = window::CANVAS_WIDTH / 2;
         let intro_height = window::CANVAS_HEIGHT / 2;
-        let rgba = intro::render_frame(frame, intro_width, intro_height);
-        let bgrx = intro::rgba_to_scaled_bgrx(&rgba, intro_width, scale.saturating_mul(2));
+        if !intro::render_frame_into(frame, intro_width, intro_height, &mut rgba)
+            || !intro::rgba_to_scaled_bgrx_into(
+                &rgba,
+                intro_width,
+                scale.saturating_mul(2),
+                &mut bgrx,
+            )
+        {
+            return Err("could not allocate the startup animation frame".to_string());
+        }
         present_desktop_frame(
             window,
             presenter,
