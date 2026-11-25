@@ -933,6 +933,9 @@ pub struct Arm11CodeAddressSpace {
     /// Linear CPU mappings that alias the GPU-visible physical FCRAM backing.
     linear_regions: Vec<LinearMemoryRegion>,
     gpu_memory: Option<GpuPhysicalMemory>,
+    /// Immutable identity cached at attach time, avoiding an RwLock lookup on
+    /// every CPU access used to form a physical D-cache tag.
+    gpu_memory_backing_id: Option<u64>,
     /// Shared ARM11 MPCore Snoop Control Unit registers for this system.
     mpcore_scu: Option<MpcoreScu>,
     /// Core-0 MPCore private timer, driven by the session's virtual clock.
@@ -1042,6 +1045,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            gpu_memory_backing_id: None,
             mpcore_scu: None,
             mpcore_private_timer: MpcorePrivateTimer::default(),
             mpcore_interrupt_controller: MpcoreInterruptController::default(),
@@ -1193,6 +1197,7 @@ impl Arm11CodeAddressSpace {
 
     /// Attaches the shared physical backing used by linear CPU mappings and devices.
     pub fn attach_gpu_memory(&mut self, memory: GpuPhysicalMemory) {
+        self.gpu_memory_backing_id = Some(memory.backing_id());
         self.gpu_memory = Some(memory);
     }
 
@@ -2570,7 +2575,7 @@ impl Arm11CodeAddressSpace {
                 let memory = self.gpu_memory.as_ref()?.clone();
                 let line_address = physical_address & !((ARM11_DATA_CACHE_LINE_SIZE as u32) - 1);
                 let key = DataCacheKey {
-                    backing_id: memory.backing_id(),
+                    backing_id: self.gpu_memory_backing_id?,
                     line_offset: u64::from(line_address),
                 };
                 Some((
@@ -2649,7 +2654,7 @@ impl Arm11CodeAddressSpace {
                 address: physical_address,
                 ..
             } => {
-                let backing_id = self.gpu_memory.as_ref()?.backing_id();
+                let backing_id = self.gpu_memory_backing_id?;
                 let line_address = physical_address & !(line_mask as u32);
                 Some((
                     DataCacheKey {
@@ -4575,6 +4580,35 @@ mod tests {
         assert!(address_space.is_writable_range(0x0010_4000, 1));
         assert!(!address_space.is_writable_range(0x0010_6000, 1));
         assert!(!address_space.is_writable_range(0x0010_3000, 0));
+    }
+
+    #[test]
+    fn gpu_backing_identity_is_cached_when_attached_and_used_for_physical_tags() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x1000).unwrap();
+        let virtual_base = physical_base - 0x0C00_0000;
+        let backing_id = memory.backing_id();
+
+        address_space.attach_gpu_memory(memory.clone());
+        address_space
+            .map_linear_memory_region(virtual_base, physical_base, 0x1000)
+            .unwrap();
+
+        assert_eq!(address_space.gpu_memory_backing_id, Some(backing_id));
+        let location = address_space.locate(physical_base).unwrap();
+        let (key, offset) = address_space.cache_key_for(location).unwrap();
+        assert_eq!(key.backing_id, backing_id);
+        assert_eq!(key.line_offset, u64::from(physical_base));
+        assert_eq!(offset, 0);
+
+        // Reattaching a different backing must update the cached identity,
+        // otherwise new physical accesses could alias old D-cache tags.
+        let replacement = GpuPhysicalMemory::new();
+        let replacement_id = replacement.backing_id();
+        address_space.attach_gpu_memory(replacement);
+        assert_ne!(replacement_id, backing_id);
+        assert_eq!(address_space.gpu_memory_backing_id, Some(replacement_id));
     }
 
     #[test]
