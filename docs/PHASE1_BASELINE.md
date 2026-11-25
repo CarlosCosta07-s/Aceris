@@ -72,11 +72,38 @@ Faça pelo menos três execuções independentes por plataforma e compare a medi
 
 | Plataforma | CPU A32 (instr/s) | FlatMemory R/W (MiB/s) | GPU backing R/W (MiB/s) | Rasterizer (pixels/s) | IPC (msg/s) | Commit |
 |---|---:|---:|---:|---:|---:|---|
-| Windows x86-64 | Pendente | Pendente | Pendente | Pendente | Pendente | — |
-| Linux x86-64 | Pendente | Pendente | Pendente | Pendente | Pendente | — |
-| Android ARM64 | Pendente | Pendente | Pendente | Pendente | Pendente | — |
+| Windows x86-64 (CI) | 47.78 M | 1,119.2 / 8,838.5 | 68.8 / 176.8 | 32.39 M | 15.98 M | `a07936e` |
+| Linux x86-64 (CI) | 55.05 M | 2,691.8 / 7,602.3 | 102.1 / 365.4 | 42.90 M | 43.73 M | `a07936e` |
+| macOS ARM64 (CI) | 29.24 M | 946.4 / 5,379.1 | 74.0 / 202.1 | 63.06 M | 32.49 M | `a07936e` |
+| Android ARM64 físico | Pendente | Pendente | Pendente | Pendente | Pendente | — |
 
-## 5. O que esta etapa ainda não mede
+## 5. Fotografia inicial dos runners CI — 25/11/2026
+
+Workflow: [45646435525](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45646435525), commit `a07936ec797d5769d36fbdd193985fa5e99b2162`. Formatação, build, Clippy, testes completos, build release do benchmark e execução dos perfis passaram em Windows x86-64, Linux x86-64 e macOS ARM64. O job Android ARM64 aprovou os builds release do aplicativo e do executável benchmark.
+
+Cada runner executou uma única amostra de 250.000 instruções/operações e 32 triângulos, sem repetição estatística nem aquecimento separado:
+
+| Métrica | Windows x86-64 | Linux x86-64 | macOS ARM64 |
+|---|---:|---:|---:|
+| Interpretador ARM11 A32 (ops/s) | 47.784.701 | 55.050.461 | 29.240.481 |
+| FlatMemory write32 (MiB/s efetivos) | 1.119,2 | 2.691,8 | 946,4 |
+| FlatMemory read32 (MiB/s efetivos) | 8.838,5 | 7.602,3 | 5.379,1 |
+| GPU backing write32 (MiB/s efetivos) | 68,8 | 102,1 | 74,0 |
+| GPU backing read32 (MiB/s efetivos) | 176,8 | 365,4 | 202,1 |
+| Rasterizador de referência (pixels/s) | 32.387.283 | 42.899.890 | 63.062.048 |
+| Decodificação IPC (mensagens/s) | 15.975.564 | 43.734.675 | 32.487.046 |
+
+Os números de memória representam quatro bytes processados por operação no conjunto de dados deste microbenchmark. Não são medição de largura de banda DRAM do aparelho: o FlatMemory usa uma região de 64 KiB e o backing GPU usa páginas esparsas/lookup sincronizado. Os resultados variam com CPU, cache, compilador, sistema operacional, runner e carga de fundo. O valor do macOS é ARM64, não x86-64.
+
+**Leitura inicial, não conclusão de gargalo:**
+- O backing físico esparso tem custo por operação bem acima do `FlatMemory` neste cenário sintético. Vale um benchmark mais específico de acesso por página, cruzamento de página, contenção e lock antes de mudar sua estrutura.
+- A rasterização de referência mostra diferenças expressivas entre runners, mas não mede o fragment rasterizer PICA200 completo. Não autoriza otimizar a GPU guest com base isolada nesse número.
+- O throughput do interpretador A32 é somente o custo de `Arm11Core::step` com uma pequena sequência sintética; não inclui MMU, D-cache, scheduler, serviços, nem espera de dispositivos.
+- IPC mede a decodificação de mensagens/descritores com alocação de resultado. A parte de resolução SRV/ACL/handles/HLE ainda exige profiling ponta a ponta.
+
+Não calcular uma classificação de plataformas a partir desses valores: runners CI podem usar CPUs, caches e limites de carga diferentes. O passo seguinte é coletar pelo menos três execuções em cada máquina local, além do benchmark integrado com um mesmo homebrew e orçamento.
+
+## 6. O que esta etapa ainda não mede
 
 1. CPU ARM11 com scheduler, MMU e D-cache ativos em uma sessão guest completa. Use o benchmark integrado e perfis externos para esse caminho.
 2. Tempos separados dos estágios PICA200 (vertex, clipping, fragment, textura, TEV e render target). O perfil atual mede apenas o rasterizador de referência.
@@ -86,7 +113,7 @@ Faça pelo menos três execuções independentes por plataforma e compare a medi
 
 Esses itens permanecem no backlog da Fase 1. Não adicionar temporizadores por instrução nem locks de profiling aos caminhos quentes sem uma medição que justifique o custo. A próxima instrumentação integrada deve ser agregada por lote/quadro e desligada por padrão.
 
-## 6. Critério de saída da Fase 1
+## 7. Critério de saída da Fase 1
 
 A Fase 1 só estará concluída quando houver:
 
