@@ -454,13 +454,7 @@ fn compose_game_into(
 
 /// Alpha-blends the virtual gamepad overlay onto an RGBA frame.
 fn overlay_virtual_pad(frame: &mut [u8], width: u32, height: u32, pressed_mask: u32) {
-    frontend::blend_virtual_pad_overlay_into(
-        frame,
-        width,
-        height,
-        ORIENTATION_AUTO,
-        pressed_mask,
-    );
+    frontend::blend_virtual_pad_overlay_into(frame, width, height, ORIENTATION_AUTO, pressed_mask);
 }
 
 #[cfg(test)]
