@@ -4924,10 +4924,7 @@ mod tests {
             0x8877_6655
         );
         assert_eq!(address_space.data_cache_line_count(), 1);
-        assert_eq!(
-            address_space.read16(virtual_base + 0x82).unwrap(),
-            0x8877
-        );
+        assert_eq!(address_space.read16(virtual_base + 0x82).unwrap(), 0x8877);
 
         // A miss spanning two cache lines must retain the byte-wise fallback.
         memory
