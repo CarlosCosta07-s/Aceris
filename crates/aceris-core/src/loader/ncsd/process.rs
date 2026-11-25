@@ -1144,6 +1144,7 @@ impl Arm11CodeAddressSpace {
             shared_regions: Vec::new(),
             linear_regions: Vec::new(),
             gpu_memory: None,
+            gpu_memory_backing_id: None,
             mpcore_scu: None,
             mpcore_private_timer: MpcorePrivateTimer::default(),
             mpcore_interrupt_controller: MpcoreInterruptController::default(),
