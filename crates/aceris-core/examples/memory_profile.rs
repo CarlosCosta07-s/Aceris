@@ -60,10 +60,7 @@ fn patterns() -> [Pattern; 3] {
     ]
 }
 
-fn read_pattern(
-    memory: &GpuPhysicalMemory,
-    addresses: &[u32],
-) -> Result<Duration, String> {
+fn read_pattern(memory: &GpuPhysicalMemory, addresses: &[u32]) -> Result<Duration, String> {
     let started = Instant::now();
     for address in addresses {
         let value = memory
@@ -74,10 +71,7 @@ fn read_pattern(
     Ok(started.elapsed())
 }
 
-fn write_pattern(
-    memory: &mut GpuPhysicalMemory,
-    addresses: &[u32],
-) -> Result<Duration, String> {
+fn write_pattern(memory: &mut GpuPhysicalMemory, addresses: &[u32]) -> Result<Duration, String> {
     let started = Instant::now();
     for (index, address) in addresses.iter().enumerate() {
         memory
@@ -95,10 +89,8 @@ fn median_duration(samples: &mut [Duration]) -> Duration {
 fn print_rate(label: &str, duration: Duration) {
     let seconds = duration.as_secs_f64().max(f64::MIN_POSITIVE);
     let operations_per_second = ITERATIONS as f64 / seconds;
-    let nanoseconds_per_operation =
-        duration.as_nanos() as f64 / ITERATIONS as f64;
-    let mebibytes_per_second =
-        ITERATIONS as f64 * 4.0 / seconds / (1024.0 * 1024.0);
+    let nanoseconds_per_operation = duration.as_nanos() as f64 / ITERATIONS as f64;
+    let mebibytes_per_second = ITERATIONS as f64 * 4.0 / seconds / (1024.0 * 1024.0);
 
     println!(
         "{label:<32} {operations_per_second:>12.0} ops/s  \
@@ -115,7 +107,11 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("could not pre-materialize physical pages: {error}"))?;
 
     println!("Aceris sparse GPU physical-memory profile");
-    println!("Host: {} / {}", std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "Host: {} / {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     println!("Working set: {} MiB", WORKING_SET_BYTES / (1024 * 1024));
     println!("Materialized pages: {}", memory.allocated_page_count());
     println!("Operations per case: {ITERATIONS}");
@@ -149,11 +145,19 @@ fn run() -> Result<(), String> {
     println!();
     println!("Interpretation:");
     println!("- All cases use the same pre-materialized 4 MiB backing and 4-byte operations.");
-    println!("- Hot-page accesses stay within one 4 KiB page; sequential and pseudo-random cases span 4 MiB.");
+    println!(
+        "- Hot-page accesses stay within one 4 KiB page; sequential and pseudo-random cases span 4 MiB."
+    );
     println!("- Writes include the implementation's exclusive-reservation version updates.");
-    println!("- Reads/writes include range validation, RwLock acquisition and sparse BTreeMap lookup.");
-    println!("- This is a single-threaded host microbenchmark, not DRAM bandwidth or a full guest CPU/GPU workload.");
-    println!("- No memory implementation, synchronization policy or emulation semantics are changed.");
+    println!(
+        "- Reads/writes include range validation, RwLock acquisition and sparse BTreeMap lookup."
+    );
+    println!(
+        "- This is a single-threaded host microbenchmark, not DRAM bandwidth or a full guest CPU/GPU workload."
+    );
+    println!(
+        "- No memory implementation, synchronization policy or emulation semantics are changed."
+    );
     Ok(())
 }
 
