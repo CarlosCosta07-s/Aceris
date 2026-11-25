@@ -2304,3 +2304,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Efeito esperado: elimina o buffer RGBA extra do overlay, o clear de toda a superfície e a varredura de mistura por todos os pixels; o trabalho acompanha as áreas dos botões. O frame principal ainda é composto e copiado para o ANativeWindow como antes. Não foi medido FPS nesta etapa.
 - Limite: esta otimização altera apenas a interface host dos controles virtuais; não modifica pixels produzidos pela PICA200, composição das duas LCDs, temporização guest ou ordem de comandos.
 - Correção da primeira execução de CI: a fixture de buffer inválido usava 64 bytes para uma imagem 4×4, que é um frame RGBA válido. O teste foi corrigido para fornecer 64 bytes a uma imagem 5×4; a implementação não foi alterada por essa falha.
+
+## Buffers de áudio e escalonamento nearest-neighbour — Android (25/11/2026, ChatGPT)
+
+- O app thread Android movia o Vec de amostras para fora do estado do App e o descartava após AAudio.feed, fazendo o buffer de mistura perder sua capacidade a cada quadro. Agora ele é devolvido vazio a App após a chamada de saída, retendo a mesma alocação para o próximo frame. O buffer interno de resampling AAudio já era reutilizado e não foi alterado.
+- A rotina de blit RGBA da interface substitui a divisão inteira por coluna por um passo inteiro e acumulador de resto. A origem de cada coluna continua seguindo floor(coluna × source_width / destino_width); o mapeamento de linhas permanece inalterado.
+- Testes: reciclagem preserva capacidade em atualizações sucessivas; o novo escalonador é comparado com a implementação de referência em várias dimensões, fatores de escala e recortes parcialmente fora do alvo.
+- Efeito esperado: menos alocação de amostras por quadro e menos divisões inteiras no loop de pixels do frontend. Não foi medido FPS nem latência de áudio nesta etapa; o envio AAudio continua com timeout zero.

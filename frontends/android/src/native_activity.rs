@@ -368,6 +368,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
             if let Some(audio) = audio.as_mut() {
                 audio.feed(&samples);
             }
+            app.recycle_audio_buffer(samples);
         }
     }
 

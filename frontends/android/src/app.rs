@@ -74,6 +74,15 @@ impl App {
         std::mem::take(&mut self.audio)
     }
 
+    /// Reclaims the audio buffer after the host output has consumed its samples.
+    ///
+    /// Clearing retains the allocation so the next frame can mix into the same
+    /// storage instead of allocating a new sample vector.
+    pub fn recycle_audio_buffer(&mut self, mut samples: Vec<i16>) {
+        samples.clear();
+        self.audio = samples;
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn screen(&self) -> &Screen {
         &self.screen
@@ -400,21 +409,34 @@ fn blit_scaled(
         return;
     }
     let target_height = (target.len() / 4) as u32 / target_width.max(1);
+    // Compute the nearest-neighbour horizontal step once, then advance it
+    // with integer error accumulation instead of dividing for every pixel.
+    let source_step = source_width / rect.width;
+    let source_remainder = source_width % rect.width;
     for row in 0..rect.height {
         let y = rect.y + row as i32;
         if y < 0 || y as u32 >= target_height {
             continue;
         }
         let source_y = (row * source_height / rect.height).min(source_height - 1) as usize;
+        let mut source_x = 0u32;
+        let mut source_error = 0u32;
         for column in 0..rect.width {
             let x = rect.x + column as i32;
-            if x < 0 || x as u32 >= target_width {
-                continue;
+            if x >= 0 && (x as u32) < target_width {
+                let from = (source_y * source_width as usize
+                    + source_x.min(source_width - 1) as usize)
+                    * 4;
+                let to = (y as usize * target_width as usize + x as usize) * 4;
+                target[to..to + 4].copy_from_slice(&source[from..from + 4]);
             }
-            let source_x = (column * source_width / rect.width).min(source_width - 1) as usize;
-            let from = (source_y * source_width as usize + source_x) * 4;
-            let to = (y as usize * target_width as usize + x as usize) * 4;
-            target[to..to + 4].copy_from_slice(&source[from..from + 4]);
+
+            source_x += source_step;
+            source_error += source_remainder;
+            if source_error >= rect.width {
+                source_x += 1;
+                source_error -= rect.width;
+            }
         }
     }
 }
@@ -493,6 +515,102 @@ mod tests {
 
     fn release(app: &mut App) {
         app.set_pointers(&[]);
+    }
+
+    #[test]
+    fn recycled_audio_buffer_keeps_capacity_between_frames() {
+        let (mut app, dir) = app_with_games(0);
+        app.audio.reserve_exact(64);
+        let capacity = app.audio.capacity();
+        app.audio.extend([1, 2, 3, 4]);
+
+        let samples = app.take_audio();
+        assert_eq!(samples, [1, 2, 3, 4]);
+        app.recycle_audio_buffer(samples);
+
+        assert!(app.audio.is_empty());
+        assert_eq!(app.audio.capacity(), capacity);
+        app.audio.extend([5, 6]);
+        let samples = app.take_audio();
+        assert_eq!(samples, [5, 6]);
+        app.recycle_audio_buffer(samples);
+        assert_eq!(app.audio.capacity(), capacity);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    fn reference_blit_scaled(
+        target: &mut [u8],
+        target_width: u32,
+        source: &[u8],
+        source_width: u32,
+        source_height: u32,
+        rect: ScreenRect,
+    ) {
+        if rect.width == 0 || rect.height == 0 || source_width == 0 || source_height == 0 {
+            return;
+        }
+        let target_height = (target.len() / 4) as u32 / target_width.max(1);
+        for row in 0..rect.height {
+            let y = rect.y + row as i32;
+            if y < 0 || y as u32 >= target_height {
+                continue;
+            }
+            let source_y = (row * source_height / rect.height).min(source_height - 1) as usize;
+            for column in 0..rect.width {
+                let x = rect.x + column as i32;
+                if x < 0 || x as u32 >= target_width {
+                    continue;
+                }
+                let source_x = (column * source_width / rect.width).min(source_width - 1) as usize;
+                let from = (source_y * source_width as usize + source_x) * 4;
+                let to = (y as usize * target_width as usize + x as usize) * 4;
+                target[to..to + 4].copy_from_slice(&source[from..from + 4]);
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_blit_matches_the_reference_for_scaled_and_clipped_rectangles() {
+        for (source_width, source_height) in [(2, 3), (3, 2), (5, 4)] {
+            let source = (0..source_width as usize * source_height as usize)
+                .flat_map(|index| {
+                    let value = (index as u8).wrapping_mul(17);
+                    [value, value.wrapping_add(1), value.wrapping_add(2), 255]
+                })
+                .collect::<Vec<_>>();
+            for rect_width in [1, 2, 3, 4, 5, 6, 7] {
+                for rect_height in [1, 2, 3, 5, 6] {
+                    let rect = ScreenRect {
+                        x: -2,
+                        y: 1,
+                        width: rect_width,
+                        height: rect_height,
+                    };
+                    let mut expected = vec![0xA5; 9 * 7 * 4];
+                    let mut actual = expected.clone();
+                    reference_blit_scaled(
+                        &mut expected,
+                        9,
+                        &source,
+                        source_width,
+                        source_height,
+                        rect,
+                    );
+                    blit_scaled(
+                        &mut actual,
+                        9,
+                        &source,
+                        source_width,
+                        source_height,
+                        rect,
+                    );
+                    assert_eq!(
+                        actual, expected,
+                        "source={source_width}x{source_height}, rect={rect_width}x{rect_height}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
