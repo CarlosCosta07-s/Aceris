@@ -34,6 +34,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aceris-gl"
+version = "0.0.1"
+
+[[package]]
 name = "aceris-graphics"
 version = "0.0.1"
 dependencies = [
@@ -42,10 +46,6 @@ dependencies = [
  "raw-window-handle",
  "wgpu",
 ]
-
-[[package]]
-name = "aceris-gl"
-version = "0.0.1"
 
 [[package]]
 name = "aceris-icongen"
