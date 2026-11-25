@@ -42,6 +42,10 @@ fn print_usage() {
     println!("                     After the frame, write top_left.png, top_right.png and");
     println!("                     bottom.png into DIR (created if missing)");
     println!("        --frames <N> Headless: run N extra frames and report unimplemented requests");
+    println!("        --tap <X,Y@FRAME[+HOLD]>");
+    println!(
+        "                     Headless: touch the bottom screen (320x240) at FRAME for HOLD frames (repeatable)"
+    );
     println!("        --window     Show both LCDs in a window and run frames until it is");
     println!("                     closed (Linux/X11 only for now)");
     println!("        --scale <N>  Integer window scale factor, 1-4 (default 2)");
@@ -437,7 +441,8 @@ fn run(options: RunOptions) -> ExitCode {
             eprintln!("error: {message}");
             return ExitCode::FAILURE;
         }
-        for _ in 0..=options.frames {
+        for frame in 0..=options.frames {
+            apply_taps(&mut system, &options.taps, frame);
             if let Err(message) = run_frame_with_diagnostics(&mut system) {
                 eprintln!("error: {message}");
                 report_unhandled(&system);
@@ -481,6 +486,45 @@ struct RunOptions {
     background_fps: u32,
     /// Extra frames to run in headless mode (0 = just the first frame).
     frames: u32,
+    /// Scripted touches for headless runs (`--tap X,Y@FRAME[+HOLD]`).
+    taps: Vec<Tap>,
+}
+
+/// One scripted touch on the bottom screen (320x240 coordinates).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Tap {
+    x: i32,
+    y: i32,
+    frame: u32,
+    hold_frames: u32,
+}
+
+/// Parses `X,Y@FRAME` or `X,Y@FRAME+HOLD` (hold defaults to 3 frames).
+fn parse_tap(text: &str) -> Result<Tap, String> {
+    let bad = || format!("--tap expects X,Y@FRAME[+HOLD], got {text}");
+    let (point, when) = text.split_once('@').ok_or_else(bad)?;
+    let (x, y) = point.split_once(',').ok_or_else(bad)?;
+    let (frame, hold) = match when.split_once('+') {
+        Some((frame, hold)) => (frame, hold.parse::<u32>().map_err(|_| bad())?),
+        None => (when, 3),
+    };
+    Ok(Tap {
+        x: x.trim().parse().map_err(|_| bad())?,
+        y: y.trim().parse().map_err(|_| bad())?,
+        frame: frame.trim().parse().map_err(|_| bad())?,
+        hold_frames: hold.max(1),
+    })
+}
+
+/// Presses or releases the scripted touches that start or end on `frame`.
+fn apply_taps(system: &mut System, taps: &[Tap], frame: u32) {
+    for tap in taps {
+        if frame == tap.frame {
+            system.input_mut().touch(tap.x, tap.y);
+        } else if frame == tap.frame.saturating_add(tap.hold_frames) {
+            system.input_mut().touch_end();
+        }
+    }
 }
 
 /// Parses `<GAME> [--dump-lcd <DIR>] [--window] [--scale <N>]` in any order.
@@ -495,6 +539,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let mut background_fps = 24;
     let mut background_fps_configured = false;
     let mut frames = 0u32;
+    let mut taps = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -511,6 +556,12 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
                 frames = value
                     .parse::<u32>()
                     .map_err(|_| format!("--frames must be a number, got {value}"))?;
+            }
+            "--tap" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "--tap requires X,Y@FRAME[+HOLD]".to_string())?;
+                taps.push(parse_tap(value)?);
             }
             "--window" => window = true,
             "--skip-intro" => skip_intro = true,
@@ -567,6 +618,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
         background_dir,
         background_fps,
         frames,
+        taps,
     })
 }
 
@@ -616,6 +668,7 @@ fn main() -> ExitCode {
             background_dir: None,
             background_fps: 24,
             frames: 0,
+            taps: Vec::new(),
         }),
     }
 }
@@ -639,7 +692,24 @@ mod tests {
             background_dir: None,
             background_fps: 24,
             frames: 0,
+            taps: Vec::new(),
         }
+    }
+
+    #[test]
+    fn tap_arguments_parse_with_default_and_explicit_hold() {
+        assert_eq!(
+            parse_tap("160,120@400").unwrap(),
+            Tap {
+                x: 160,
+                y: 120,
+                frame: 400,
+                hold_frames: 3
+            }
+        );
+        assert_eq!(parse_tap("1,2@3+9").unwrap().hold_frames, 9);
+        assert!(parse_tap("160,120").is_err());
+        assert!(parse_tap("a,b@c").is_err());
     }
 
     #[test]
