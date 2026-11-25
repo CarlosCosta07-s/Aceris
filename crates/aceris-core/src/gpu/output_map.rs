@@ -456,8 +456,9 @@ mod tests {
     #[test]
     fn output_map_is_read_from_the_live_registers() {
         let mut gpu = Pica200::new();
+        let empty_map = gpu.vertex_output_map().unwrap();
         assert_eq!(
-            gpu.vertex_output_map(),
+            empty_map.resolve(&[[0.0; 4]; SHADER_OUTPUT_REGISTERS]),
             Err(PicaOutputMapError::MissingPosition)
         );
 

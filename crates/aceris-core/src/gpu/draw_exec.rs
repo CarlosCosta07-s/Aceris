@@ -546,7 +546,9 @@ mod tests {
 
     #[test]
     fn registered_entrypoint_and_output_map_produce_geometry_vertices() {
-        use crate::gpu::{REG_SH_OUTMAP_O0, REG_VSH_ENTRYPOINT};
+        use crate::gpu::{
+            REG_SH_OUTMAP_O0, REG_SH_OUTMAP_TOTAL, REG_VSH_ENTRYPOINT, REG_VSH_OUTMAP_MASK,
+        };
 
         let mut gpu = gpu_with_byte_vertices();
         // Code layout: [0] = END (skipped), [1] = MOV o0, v0, [2] = END.
@@ -562,6 +564,8 @@ mod tests {
                 .unwrap();
         }
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+        gpu.write_register(REG_SH_OUTMAP_TOTAL, 1).unwrap();
+        gpu.write_register(REG_VSH_OUTMAP_MASK, 1).unwrap();
 
         let request = draw_arrays(&mut gpu, 3);
         let memory = memory_with(&[10, 20, 30], None);

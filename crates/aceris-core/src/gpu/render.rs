@@ -432,7 +432,7 @@ mod tests {
         ClipDepthRange, FCRAM_BASE, Matrix4, PicaShadedVertex, REG_ATTRIBBUFFER0_OFFSET,
         REG_ATTRIBBUFFERS_FORMAT_HIGH, REG_ATTRIBBUFFERS_FORMAT_LOW, REG_ATTRIBBUFFERS_LOC,
         REG_DEPTH_COLOR_MASK, REG_DRAWARRAYS, REG_NUMVERTICES, REG_SH_OUTMAP_O0,
-        REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
+        REG_SH_OUTMAP_TOTAL, REG_VSH_OUTMAP_MASK, REG_VIEWPORT_HEIGHT, REG_VIEWPORT_WIDTH, REG_VIEWPORT_XY,
         REG_VSH_ATTRIBUTES_PERMUTATION_HIGH, REG_VSH_ATTRIBUTES_PERMUTATION_LOW,
         REG_VSH_CODETRANSFER_DATA0, REG_VSH_CODETRANSFER_INDEX, REG_VSH_FLOATUNIFORM_DATA0,
         REG_VSH_FLOATUNIFORM_INDEX, REG_VSH_INPUTBUFFER_CONFIG, REG_VSH_OPDESCS_DATA0,
@@ -645,6 +645,8 @@ mod tests {
                 .unwrap();
         }
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+        gpu.write_register(REG_SH_OUTMAP_TOTAL, 1).unwrap();
+        gpu.write_register(REG_VSH_OUTMAP_MASK, 1).unwrap();
 
         gpu.write_register(REG_NUMVERTICES, 3).unwrap();
         gpu.write_register(REG_DRAWARRAYS, 1).unwrap();
@@ -780,6 +782,8 @@ mod tests {
                 .unwrap();
         }
         gpu.write_register(REG_SH_OUTMAP_O0, 0x0302_0100).unwrap();
+        gpu.write_register(REG_SH_OUTMAP_TOTAL, 1).unwrap();
+        gpu.write_register(REG_VSH_OUTMAP_MASK, 1).unwrap();
         gpu.write_register(REG_NUMVERTICES, 3).unwrap();
         configure_guest_viewport(gpu, SIZE, SIZE);
     }
