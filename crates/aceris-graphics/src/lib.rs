@@ -151,7 +151,6 @@ impl GraphicsBackend {
     }
 }
 
-
 fn create_present_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -513,12 +512,7 @@ impl GraphicsPresenter {
         Ok(())
     }
 
-    fn ensure_frame_texture(
-        &mut self,
-        width: u32,
-        height: u32,
-        upload_format: FrameUploadFormat,
-    ) {
+    fn ensure_frame_texture(&mut self, width: u32, height: u32, upload_format: FrameUploadFormat) {
         if self.frame_dimensions == (width, height)
             && self.frame_upload_format == Some(upload_format)
         {
