@@ -42,6 +42,12 @@ pub struct AAudioOutput {
     muted: bool,
 }
 
+fn mute_samples(samples: &mut [i16], muted: bool) {
+    if muted {
+        samples.fill(0);
+    }
+}
+
 fn load<F: Copy>(library: *mut c_void, name: &str) -> Option<F> {
     assert_eq!(size_of::<F>(), size_of::<*mut c_void>());
     let symbol = CString::new(name).ok()?;
@@ -140,9 +146,7 @@ impl AAudioOutput {
         }
         self.resampled.clear();
         self.resampler.process(samples, &mut self.resampled);
-        if self.muted {
-            self.resampled.fill(0);
-        }
+        mute_samples(&mut self.resampled, self.muted);
         let frames = i32::try_from(self.resampled.len() / 2).unwrap_or(i32::MAX);
         // SAFETY: `resampled` holds `frames` interleaved stereo frames; a zero
         // timeout makes the write non-blocking and extra frames are dropped.
@@ -154,21 +158,19 @@ impl AAudioOutput {
 
 #[cfg(test)]
 mod tests {
-    fn silence(samples: &mut [i16], muted: bool) {
-        if muted {
-            samples.fill(0);
-        }
-    }
+    use super::mute_samples;
 
     #[test]
     fn muting_keeps_a_silent_buffer_with_the_same_length() {
         let mut samples = [1200, -800, 300, -100];
         let len = samples.len();
-        silence(&mut samples, true);
+        mute_samples(&mut samples, true);
         assert_eq!(samples, [0; 4]);
         assert_eq!(samples.len(), len);
-        silence(&mut samples, false);
-        assert_eq!(samples, [0; 4]);
+
+        samples.copy_from_slice(&[1200, -800, 300, -100]);
+        mute_samples(&mut samples, false);
+        assert_eq!(samples, [1200, -800, 300, -100]);
     }
 }
 
