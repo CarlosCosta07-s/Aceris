@@ -7,21 +7,32 @@
 //! environment variables documented in docs/PERFORMANCE_TESTING.md. No key is
 //! embedded, discovered, persisted, or printed by this example.
 
-use std::{collections::BTreeMap, env, path::PathBuf, process::ExitCode, time::Instant};
+use std::{
+    collections::BTreeMap,
+    env,
+    hint::black_box,
+    path::PathBuf,
+    process::ExitCode,
+    time::Instant,
+};
 
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
-    loader::{ImageFormat, cia::TicketCommonKeyStore, identify_file},
+    cpu::{Arm11Core, StepEvent},
+    gpu::{DepthFunction, FCRAM_BASE, GpuPhysicalMemory, RasterVertex, SoftwareRasterizer},
+    loader::{ImageFormat, cia::TicketCommonKeyStore, identify_file, ncsd::session::ipc::IpcMessage},
+    memory::{Bus, FlatMemory},
     system::SystemFrameReport,
 };
 
 #[derive(Debug)]
 struct Options {
-    image: PathBuf,
+    image: Option<PathBuf>,
     frames: usize,
     warmup_frames: usize,
     instruction_budget: usize,
     dump_lcd: Option<PathBuf>,
+    profile_components: bool,
 }
 
 struct BenchmarkSummary<'a> {
@@ -42,7 +53,9 @@ fn usage() {
         "Aceris performance benchmark\n\
          USAGE:\n\
          cargo run --release -p aceris-core --example benchmark -- <GAME> [OPTIONS]\n\
+         cargo run --release -p aceris-core --example benchmark -- --profile-components\n\
          OPTIONS:\n\
+         --profile-components      Run standalone CPU/memory/GPU/IPC microbenchmarks (no game required)\n\
          --frames <N>              Measured frames (default: 120)\n\
          --warmup <N>              Warm-up frames excluded from results (default: 15)\n\
          --instruction-budget <N>  ARM11 instruction budget per frame (default: {DEFAULT_FRAME_INSTRUCTION_BUDGET})\n\
@@ -66,21 +79,30 @@ fn parse_positive(value: &str, option: &str) -> Result<usize, String> {
 fn parse_args() -> Result<Option<Options>, String> {
     let mut args = env::args().skip(1);
     let Some(first) = args.next() else {
-        return Err("missing game image path".to_string());
+        return Err("missing game image path (or use --profile-components)".to_string());
     };
     if first == "--help" || first == "-h" {
         return Ok(None);
     }
 
+    let profile_only = first == "--profile-components";
     let mut options = Options {
-        image: PathBuf::from(first),
+        image: (!profile_only).then(|| PathBuf::from(first)),
         frames: 120,
         warmup_frames: 15,
         instruction_budget: DEFAULT_FRAME_INSTRUCTION_BUDGET,
         dump_lcd: None,
+        profile_components: profile_only,
     };
 
     while let Some(argument) = args.next() {
+        if argument == "--profile-components" {
+            options.profile_components = true;
+            continue;
+        }
+        if options.image.is_none() {
+            return Err(format!("{argument} requires a game image; standalone component profiling accepts no other options"));
+        }
         let value = args
             .next()
             .ok_or_else(|| format!("{argument} requires a value"))?;
@@ -336,6 +358,217 @@ fn print_summary(options: &Options, summary: BenchmarkSummary<'_>) {
     );
 }
 
+fn print_operation_rate(label: &str, operations: u64, elapsed: std::time::Duration) {
+    let seconds = elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
+    let operations_per_second = operations as f64 / seconds;
+    let nanoseconds_per_operation = elapsed.as_nanos() as f64 / operations.max(1) as f64;
+    println!(
+        "{label:<34} {operations_per_second:>12.0} ops/s  {nanoseconds_per_operation:>10.1} ns/op"
+    );
+}
+
+fn print_memory_rate(label: &str, operations: u64, elapsed: std::time::Duration) {
+    let seconds = elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
+    let operations_per_second = operations as f64 / seconds;
+    let nanoseconds_per_operation = elapsed.as_nanos() as f64 / operations.max(1) as f64;
+    let mebibytes_per_second =
+        operations as f64 * 4.0 / seconds / (1024.0 * 1024.0);
+    println!(
+        "{label:<34} {operations_per_second:>12.0} ops/s  {nanoseconds_per_operation:>10.1} ns/op  {mebibytes_per_second:>9.1} MiB/s"
+    );
+}
+
+fn profile_cpu(iterations: usize) -> Result<(), String> {
+    const CODE_BASE: u32 = 0x1000;
+    const INSTRUCTIONS: [u32; 4] = [
+        0xE3A0_0001, // MOV r0, #1
+        0xE280_0001, // ADD r0, r0, #1
+        0xE350_0080, // CMP r0, #0x80
+        0xE1A0_1000, // MOV r1, r0
+    ];
+    let code_bytes = (INSTRUCTIONS.len() * 4) as u32;
+    let mut memory = FlatMemory::new(CODE_BASE, code_bytes as usize);
+    for (index, instruction) in INSTRUCTIONS.iter().copied().enumerate() {
+        Bus::write32(&mut memory, CODE_BASE + (index as u32 * 4), instruction)
+            .map_err(|error| format!("CPU profile setup failed: {error}"))?;
+    }
+
+    let mut cpu = Arm11Core::new();
+    cpu.regs[15] = CODE_BASE;
+    let started = Instant::now();
+    for _ in 0..iterations {
+        if cpu.regs[15] >= CODE_BASE + code_bytes {
+            cpu.regs[15] = CODE_BASE;
+        }
+        match cpu
+            .step(&mut memory)
+            .map_err(|error| format!("CPU profile instruction failed: {error}"))?
+        {
+            StepEvent::Executed => {}
+            event => return Err(format!("CPU profile stopped unexpectedly: {event:?}")),
+        }
+    }
+    let elapsed = started.elapsed();
+    black_box((cpu.regs[0], cpu.regs[1], cpu.cpsr.0));
+    print_operation_rate("ARM11 interpreter (A32 mix)", iterations as u64, elapsed);
+    Ok(())
+}
+
+fn profile_memory(iterations: usize) -> Result<(), String> {
+    const BASE: u32 = 0x1000;
+    const REGION_BYTES: usize = 64 * 1024;
+    const WORD_COUNT: usize = REGION_BYTES / 4;
+
+    let mut flat = FlatMemory::new(BASE, REGION_BYTES);
+    let mut physical = GpuPhysicalMemory::new();
+    let physical_base = FCRAM_BASE + 0x1000;
+
+    for index in 0..WORD_COUNT {
+        let value = index as u32 ^ 0xA5A5_5A5A;
+        let address = BASE + (index as u32 * 4);
+        Bus::write32(&mut flat, address, value)
+            .map_err(|error| format!("FlatMemory profile initialization failed: {error}"))?;
+        physical
+            .write_u32(physical_base + (index as u32 * 4), value)
+            .map_err(|error| format!("GPU memory profile initialization failed: {error}"))?;
+    }
+
+    let started = Instant::now();
+    for index in 0..iterations {
+        let slot = index & (WORD_COUNT - 1);
+        let address = BASE + (slot as u32 * 4);
+        Bus::write32(&mut flat, address, black_box(index as u32))
+            .map_err(|error| format!("FlatMemory write benchmark failed: {error}"))?;
+    }
+    let elapsed = started.elapsed();
+    print_memory_rate("FlatMemory write32", iterations as u64, elapsed);
+
+    let started = Instant::now();
+    for index in 0..iterations {
+        let slot = index & (WORD_COUNT - 1);
+        let address = BASE + (slot as u32 * 4);
+        black_box(
+            Bus::read32(&mut flat, address)
+                .map_err(|error| format!("FlatMemory read benchmark failed: {error}"))?,
+        );
+    }
+    let elapsed = started.elapsed();
+    print_memory_rate("FlatMemory read32", iterations as u64, elapsed);
+
+    let started = Instant::now();
+    for index in 0..iterations {
+        let slot = index & (WORD_COUNT - 1);
+        let address = physical_base + (slot as u32 * 4);
+        physical
+            .write_u32(address, black_box(index as u32))
+            .map_err(|error| format!("GPU backing write benchmark failed: {error}"))?;
+    }
+    let elapsed = started.elapsed();
+    print_memory_rate("Sparse GPU backing write32", iterations as u64, elapsed);
+
+    let started = Instant::now();
+    for index in 0..iterations {
+        let slot = index & (WORD_COUNT - 1);
+        let address = physical_base + (slot as u32 * 4);
+        black_box(
+            physical
+                .read_u32(address)
+                .map_err(|error| format!("GPU backing read benchmark failed: {error}"))?,
+        );
+    }
+    let elapsed = started.elapsed();
+    print_memory_rate("Sparse GPU backing read32", iterations as u64, elapsed);
+    Ok(())
+}
+
+fn profile_gpu(iterations: usize) -> Result<(), String> {
+    const WIDTH: usize = 400;
+    const HEIGHT: usize = 240;
+    let mut rasterizer = SoftwareRasterizer::new(WIDTH, HEIGHT)
+        .map_err(|error| format!("GPU profile target creation failed: {error}"))?;
+    let triangle = [
+        RasterVertex::new(0.0, 0.0, 0.5, [255, 64, 32, 255]),
+        RasterVertex::new(WIDTH as f32, 0.0, 0.5, [64, 255, 32, 255]),
+        RasterVertex::new(0.0, HEIGHT as f32, 0.5, [32, 64, 255, 255]),
+    ];
+
+    let started = Instant::now();
+    let mut pixels_written = 0u64;
+    for _ in 0..iterations {
+        let report = rasterizer
+            .draw_triangle(triangle, DepthFunction::Always)
+            .map_err(|error| format!("GPU profile rasterization failed: {error}"))?;
+        pixels_written = pixels_written.saturating_add(report.pixels_written);
+    }
+    let elapsed = started.elapsed();
+    let seconds = elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
+    let triangles_per_second = iterations as f64 / seconds;
+    let pixels_per_second = pixels_written as f64 / seconds;
+    println!(
+        "{:<34} {:>12.1} triangles/s  {:>12.0} pixels/s",
+        "Software rasterizer (reference)",
+        triangles_per_second,
+        pixels_per_second
+    );
+    black_box(rasterizer.color_buffer());
+    Ok(())
+}
+
+fn profile_ipc(iterations: usize) -> Result<(), String> {
+    // Two normal parameters plus one mapped-buffer descriptor and its address.
+    const MESSAGE: [u32; 5] = [
+        0x1234_0082,
+        0xAABB_CCDD,
+        0x1122_3344,
+        0x0001_000A,
+        0x0040_0000,
+    ];
+
+    let started = Instant::now();
+    let mut decoded_parameters = 0usize;
+    for _ in 0..iterations {
+        let message = IpcMessage::decode(&MESSAGE)
+            .map_err(|error| format!("IPC profile message decode failed: {error:?}"))?;
+        let parameters = message
+            .translation_parameters()
+            .map_err(|error| format!("IPC profile translation decode failed: {error:?}"))?;
+        decoded_parameters = decoded_parameters.saturating_add(parameters.len());
+        black_box(message.header().command_id());
+        black_box(parameters);
+    }
+    let elapsed = started.elapsed();
+    black_box(decoded_parameters);
+    print_operation_rate("IPC message + translation decode", iterations as u64, elapsed);
+    Ok(())
+}
+
+fn run_component_profile() -> Result<(), String> {
+    const ITERATIONS: usize = 250_000;
+    const GPU_TRIANGLES: usize = 32;
+
+    println!();
+    println!("Aceris standalone component profile");
+    println!("Host: {} / {}", env::consts::OS, env::consts::ARCH);
+    println!("CPU instructions: {ITERATIONS}");
+    println!("Memory operations per path: {ITERATIONS}");
+    println!("GPU triangles: {GPU_TRIANGLES} at 400x240");
+    println!("IPC messages: {ITERATIONS}");
+    println!();
+    profile_cpu(ITERATIONS)?;
+    profile_memory(ITERATIONS)?;
+    profile_gpu(GPU_TRIANGLES)?;
+    profile_ipc(ITERATIONS)?;
+    println!();
+    println!("Scope and interpretation:");
+    println!("- CPU measures the bare A32 interpreter with a small deterministic instruction mix; it excludes the process scheduler and guest MMU.");
+    println!("- Memory compares FlatMemory with the sparse GPU physical backing; it does not measure the full ARM11 D-cache/session path.");
+    println!("- GPU measures the software reference rasterizer only; it is not the complete PICA200 shader/texture/TEV pipeline.");
+    println!("- IPC measures message and translation-descriptor decoding; it excludes SRV lookup, handle transfer, scheduling and service execution.");
+    println!("- These are host microbenchmarks. Use the game benchmark separately for end-to-end guest throughput.");
+    println!();
+    Ok(())
+}
+
 fn dump_lcd(system: &System, directory: &std::path::Path) -> Result<(), String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("could not create LCD output directory: {error}"))?;
@@ -351,8 +584,15 @@ fn dump_lcd(system: &System, directory: &std::path::Path) -> Result<(), String> 
 }
 
 fn run(options: Options) -> Result<(), String> {
+    if options.profile_components {
+        run_component_profile()?;
+    }
+    let Some(image_path) = options.image.as_deref() else {
+        return Ok(());
+    };
+
     let mut system = System::new();
-    let format = load_image(&mut system, &options.image)?;
+    let format = load_image(&mut system, image_path)?;
     println!("Loaded {:?}: {}", format, options.image.display());
     println!(
         "Prepared ARM11 entry: PC={:#010X}, CPSR={:#010X}",
