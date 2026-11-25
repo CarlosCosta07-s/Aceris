@@ -5119,7 +5119,7 @@ mod tests {
                 offset: 0x0FFF
             })
         ));
-        assert!(matches!(address_space.locate(0x0800_2000), None));
+        assert!(address_space.locate(0x0800_2000).is_none());
         assert!(matches!(
             address_space.locate(0x0800_5FFF),
             Some(MemoryLocation::Dynamic {
@@ -5127,7 +5127,7 @@ mod tests {
                 offset: 0x1FFF
             })
         ));
-        assert!(matches!(address_space.locate(0x0800_6000), None));
+        assert!(address_space.locate(0x0800_6000).is_none());
 
         assert!(matches!(
             address_space.locate(0x0900_0FFF),
@@ -5136,7 +5136,7 @@ mod tests {
                 offset: 0x0FFF
             })
         ));
-        assert!(matches!(address_space.locate(0x0900_2000), None));
+        assert!(address_space.locate(0x0900_2000).is_none());
         assert!(matches!(
             address_space.locate(0x0900_4FFF),
             Some(MemoryLocation::Shared {
@@ -5144,7 +5144,7 @@ mod tests {
                 offset: 0x0FFF
             })
         ));
-        assert!(matches!(address_space.locate(0x0900_5000), None));
+        assert!(address_space.locate(0x0900_5000).is_none());
     }
 
     #[test]
