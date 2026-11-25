@@ -417,14 +417,27 @@ fn browse_library(
                 window::WindowEvent::CloseRequested => return Ok(None),
                 window::WindowEvent::Redraw => {}
                 window::WindowEvent::Key(window::Key::Escape) => return Ok(None),
-                window::WindowEvent::Key(window::Key::Up) => library.move_selection_responsive(-1, window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32),
-                window::WindowEvent::Key(window::Key::Down) => library.move_selection_responsive(1, window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32),
-                window::WindowEvent::Key(window::Key::PageUp) => {
-                    library.move_selection_responsive(-(VISIBLE_ROWS as i32), window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32)
-                }
-                window::WindowEvent::Key(window::Key::PageDown) => {
-                    library.move_selection_responsive(VISIBLE_ROWS as i32, window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32)
-                }
+                window::WindowEvent::Key(window::Key::Up) => library.move_selection_responsive(
+                    -1,
+                    window::CANVAS_WIDTH as u32,
+                    window::CANVAS_HEIGHT as u32,
+                ),
+                window::WindowEvent::Key(window::Key::Down) => library.move_selection_responsive(
+                    1,
+                    window::CANVAS_WIDTH as u32,
+                    window::CANVAS_HEIGHT as u32,
+                ),
+                window::WindowEvent::Key(window::Key::PageUp) => library.move_selection_responsive(
+                    -(VISIBLE_ROWS as i32),
+                    window::CANVAS_WIDTH as u32,
+                    window::CANVAS_HEIGHT as u32,
+                ),
+                window::WindowEvent::Key(window::Key::PageDown) => library
+                    .move_selection_responsive(
+                        VISIBLE_ROWS as i32,
+                        window::CANVAS_WIDTH as u32,
+                        window::CANVAS_HEIGHT as u32,
+                    ),
                 window::WindowEvent::Key(window::Key::Enter) => {
                     if library.page() == aceris_core::video::library::LibraryPage::Settings {
                         library.reload();
@@ -455,10 +468,8 @@ fn browse_library(
         }
         let started = Instant::now();
         let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
-        let rgba = library.render_responsive(
-            window::CANVAS_WIDTH as u32,
-            window::CANVAS_HEIGHT as u32,
-        );
+        let rgba =
+            library.render_responsive(window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32);
         let _ = (animation_frame, background_frame);
         let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
         present_desktop_frame(
