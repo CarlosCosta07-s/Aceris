@@ -964,7 +964,6 @@ fn main() -> ExitCode {
     run_cli()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
