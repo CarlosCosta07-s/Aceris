@@ -1496,12 +1496,7 @@ fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> 
 }
 
 /// Cover-crops a user 400x480 RGBA background and blends it below launcher controls.
-fn responsive_blend_background(
-    frame: &mut [u8],
-    width: u32,
-    height: u32,
-    background: &[u8],
-) {
+fn responsive_blend_background(frame: &mut [u8], width: u32, height: u32, background: &[u8]) {
     const SOURCE_WIDTH: u32 = WIDTH as u32;
     const SOURCE_HEIGHT: u32 = HEIGHT as u32;
     if width == 0
@@ -1523,11 +1518,11 @@ fn responsive_blend_background(
     let crop_y = (scaled_h - target_h) * 0.5;
 
     for y in 0..height {
-        let source_y = (((y as f64 + 0.5 + crop_y) / scale).floor() as u32)
-            .min(SOURCE_HEIGHT - 1) as usize;
+        let source_y =
+            (((y as f64 + 0.5 + crop_y) / scale).floor() as u32).min(SOURCE_HEIGHT - 1) as usize;
         for x in 0..width {
-            let source_x = (((x as f64 + 0.5 + crop_x) / scale).floor() as u32)
-                .min(SOURCE_WIDTH - 1) as usize;
+            let source_x =
+                (((x as f64 + 0.5 + crop_x) / scale).floor() as u32).min(SOURCE_WIDTH - 1) as usize;
             let source_at = (source_y * SOURCE_WIDTH as usize + source_x) * 4;
             let target_at = (y as usize * width as usize + x as usize) * 4;
             let alpha = u32::from(background[source_at + 3]) * 38 / 100;
