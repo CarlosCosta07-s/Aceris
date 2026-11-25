@@ -394,6 +394,7 @@ fn run_windowed(
             library.set_status(message);
             continue;
         }
+        library.mark_launched(&path);
         let outcome = emulate(system, &mut window, &mut presenter, scale);
         report_unhandled(system);
         match outcome {
@@ -494,7 +495,6 @@ fn browse_library(
             }
             if activate {
                 if let Some(path) = library.selected_entry().map(|entry| entry.path.clone()) {
-                    library.mark_launched(&path);
                     return Ok(Some(path));
                 }
             }
