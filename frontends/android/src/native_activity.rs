@@ -563,7 +563,8 @@ unsafe extern "C" fn on_destroy(activity: *mut NativeActivity) {
         // thread after the worker detached, even when the monitor was unavailable.
         if !host.activity_global.is_null() {
             let env = unsafe { (*activity).env };
-            if let Some(delete_global): Option<DeleteGlobalRefFn> = jni_function(env, 22) {
+            let delete_global: Option<DeleteGlobalRefFn> = jni_function(env, 22);
+            if let Some(delete_global) = delete_global {
                 // SAFETY: the app thread has joined, so no monitor call can use this reference.
                 unsafe { delete_global(env, host.activity_global.get()) };
             }
