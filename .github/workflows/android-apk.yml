@@ -37,7 +37,6 @@ jobs:
       - name: Install Android platform, build tools and NDK
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
           sdkmanager \
             "platforms;android-35" \
             "build-tools;35.0.0" \
