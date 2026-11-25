@@ -258,13 +258,15 @@ impl Library {
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
-                if (560.0..625.0).contains(&y) && (38.0..362.0).contains(&x) {
+                if (500.0..552.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.reload();
                 }
                 return ClickResult::Ignored;
             }
+            let empty_button_y = if logical_height < 720.0 { 490.0 } else { 535.0 };
             if ((168.0..222.0).contains(&y) && x >= 304.0)
-                || ((560.0..625.0).contains(&y) && (38.0..362.0).contains(&x))
+                || ((empty_button_y..empty_button_y + 52.0).contains(&y)
+                    && (38.0..362.0).contains(&x))
             {
                 self.reload();
                 return ClickResult::Ignored;
@@ -277,7 +279,7 @@ impl Library {
                 .floor()
                 .max(1.0) as usize;
             let index = self.first_visible + ((y - 250.0) / row_height).floor().max(0.0) as usize;
-            if index >= self.first_visible + visible || index >= self.entries.len() {
+            if index >= self.first_visible + visible || index >= self.visible_entry_count() {
                 return ClickResult::Ignored;
             }
             self.select_or_activate(index)
@@ -1371,24 +1373,66 @@ mod tests {
     }
 
     #[test]
-    fn responsive_navigation_refreshes_and_selects_games() {
+    fn responsive_navigation_filters_games_and_homebrew_and_refreshes_settings() {
         let dir = std::env::temp_dir().join(format!("aceris-responsive-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("sample.3dsx"), b"fixture").unwrap();
+        fs::write(dir.join("retail.3ds"), b"fixture").unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
+
+        // Refresh from the library header.
         assert_eq!(
-            library.click_responsive(400, 1_240, 800, 1200),
+            library.click_responsive(680, 384, 800, 1200),
             ClickResult::Ignored
         );
-        assert_eq!(library.entries().len(), 1);
+        assert_eq!(library.entries().len(), 2);
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(
+            library.selected_entry().unwrap().path.extension().unwrap(),
+            "3ds"
+        );
+
+        // Switch to Homebrew and verify the .3dsx-only filter.
+        assert_eq!(
+            library.click_responsive(400, 250, 800, 1200),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Homebrew);
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(
+            library.selected_entry().unwrap().path.extension().unwrap(),
+            "3dsx"
+        );
+
+        // Settings exposes the same real refresh action.
         assert_eq!(
             library.click_responsive(700, 250, 800, 1200),
             ClickResult::Ignored
         );
         assert_eq!(library.page(), LibraryPage::Settings);
-        library.reload();
-        assert_eq!(library.entries().len(), 1);
+        assert_eq!(
+            library.click_responsive(400, 1_040, 800, 1200),
+            ClickResult::Ignored
+        );
+        assert!(library.status.is_some());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn homebrew_filter_does_not_mix_executable_cartridges() {
+        let entries = vec![
+            Entry { title: "Retail".into(), path: PathBuf::from("retail.3ds") },
+            Entry { title: "Demo".into(), path: PathBuf::from("demo.3dsx") },
+        ];
+        let mut library = Library::new(entries, "/games".into());
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(library.selected_entry().unwrap().title, "Retail");
+        library.select_page(LibraryPage::Homebrew);
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(library.selected_entry().unwrap().title, "Demo");
+        library.select_page(LibraryPage::Settings);
+        assert_eq!(library.visible_entry_count(), 0);
+        assert!(library.selected_entry().is_none());
     }
 
     #[test]
