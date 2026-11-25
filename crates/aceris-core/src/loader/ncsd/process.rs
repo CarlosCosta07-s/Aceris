@@ -3576,6 +3576,26 @@ impl Bus for Arm11CodeAddressSpace {
         Ok(u16::from_le_bytes([lo, hi]))
     }
 
+    fn read16_with_cache_policy(
+        &mut self,
+        address: u32,
+        policy: CachePolicy,
+    ) -> BusResult<u16> {
+        if matches!(
+            policy,
+            CachePolicy::WriteThrough | CachePolicy::WriteBack | CachePolicy::WriteBackNoAllocate
+        ) && !self.range_touches_mpcore_registers(address, 2)
+        {
+            if let Some(value) = self.read_cached_value(address, 2)? {
+                return Ok(value as u16);
+            }
+        }
+
+        let low = self.read8_with_cache_policy(address, policy)?;
+        let high = self.read8_with_cache_policy(address.wrapping_add(1), policy)?;
+        Ok(u16::from_le_bytes([low, high]))
+    }
+
     fn fetch16(&mut self, address: u32) -> BusResult<u16> {
         if let Some(value) = self.fetch_text_bytes::<2>(address) {
             return Ok(u16::from_le_bytes(value));
@@ -5030,6 +5050,15 @@ mod tests {
         );
         assert_eq!(address_space.data_cache_line_count(), 1);
         assert_eq!(address_space.read16(virtual_base + 0x82).unwrap(), 0x8877);
+
+        // The cache-policy halfword read also fills and returns a line miss.
+        memory.write(physical_base + 0xA0, &[0x34, 0x12]).unwrap();
+        assert_eq!(
+            address_space
+                .read16_with_cache_policy(virtual_base + 0xA0, CachePolicy::WriteBack)
+                .unwrap(),
+            0x1234
+        );
 
         // A miss spanning two cache lines must retain the byte-wise fallback.
         memory
