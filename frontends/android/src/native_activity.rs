@@ -204,6 +204,8 @@ type CallObjectMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> JniObject;
 type CallIntMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> i32;
+type CallVoidMethodAFn =
+    unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue);
 type DeleteLocalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type ExceptionCheckFn = unsafe extern "system" fn(JniEnv) -> u8;
 type ExceptionClearFn = unsafe extern "system" fn(JniEnv);
@@ -446,6 +448,61 @@ fn create_activity_global_ref(env: *mut c_void, activity: *mut c_void) -> Raw {
     Raw::new(global)
 }
 
+/// Associates the physical volume rocker with game/media output as required
+/// by AAudio when a stream declares AAUDIO_USAGE_GAME.
+fn set_activity_volume_stream(env: JniEnv, activity: JniObject) {
+    const STREAM_MUSIC: i32 = 3;
+    let Some(class): Option<JniObject> = {
+        let get: Option<GetObjectClassFn> = jni_function(env, 31);
+        get.map(|get| unsafe { get(env, activity) })
+    } else {
+        return;
+    };
+    let method = {
+        let get: Option<GetMethodIdFn> = jni_function(env, 33);
+        get.and_then(|get| unsafe {
+            get(
+                env,
+                class,
+                b"setVolumeControlStream\\0".as_ptr().cast(),
+                b"(I)V\\0".as_ptr().cast(),
+            )
+            .is_null()
+            .then_some(ptr::null_mut())
+            .or_else(|| {
+                Some(
+                    get(
+                        env,
+                        class,
+                        b"setVolumeControlStream\\0".as_ptr().cast(),
+                        b"(I)V\\0".as_ptr().cast(),
+                    ),
+                )
+            })
+        })
+    };
+    if let Some(method) = method.filter(|method| !method.is_null()) {
+        if let Some(call): Option<CallVoidMethodAFn> = jni_function(env, 63) {
+            let args = [JniValue {
+                int_value: STREAM_MUSIC,
+            }];
+            // SAFETY: method and one-int argument match Activity.setVolumeControlStream(int).
+            unsafe { call(env, activity, method, args.as_ptr()) };
+            if let Some(clear): Option<ExceptionClearFn> = jni_function(env, 17) {
+                let pending: Option<ExceptionCheckFn> = jni_function(env, 228);
+                if pending.is_some_and(|check| unsafe { check(env) != 0 }) {
+                    // SAFETY: clears only the exception raised by this best-effort configuration.
+                    unsafe { clear(env) };
+                }
+            }
+        }
+    }
+    if let Some(delete): Option<DeleteLocalRefFn> = jni_function(env, 23) {
+        // SAFETY: class is the local reference returned by GetObjectClass.
+        unsafe { delete(env, class) };
+    }
+}
+
 struct Host {
     shared: Mutex<Shared>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -501,6 +558,7 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         callbacks.on_input_queue_destroyed = Some(on_queue_destroyed);
 
         let games_dir = games_directory(&*activity);
+        set_activity_volume_stream((*activity).env, (*activity).clazz);
         let host = std::sync::Arc::new(Host {
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
