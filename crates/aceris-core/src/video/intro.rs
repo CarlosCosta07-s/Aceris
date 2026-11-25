@@ -316,7 +316,7 @@ pub fn rgba_to_scaled_bgrx_into(
         output.clear();
         return false;
     };
-    if rgba.len() % row_bytes != 0 {
+    if !rgba.len().is_multiple_of(row_bytes) {
         output.clear();
         return false;
     }
