@@ -424,14 +424,10 @@ impl PicaFragmentRasterizer {
             let first = polygon[0];
             for index in 1..polygon.len() - 1 {
                 let triangle = [first, polygon[index], polygon[index + 1]];
-                let screen = triangle.map(|vertex| {
-                    to_screen(
-                        vertex,
-                        state.viewport,
-                        state.depth_map,
-                        state.flip_viewport,
-                    )
-                })
+                let screen = triangle
+                    .map(|vertex| {
+                        to_screen(vertex, state.viewport, state.depth_map, state.flip_viewport)
+                    })
                     .into_iter()
                     .collect::<Result<Vec<_>, _>>()?;
                 report.clipped_triangles = report.clipped_triangles.saturating_add(1);
