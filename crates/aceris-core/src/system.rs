@@ -8744,7 +8744,8 @@ mod tests {
             default_color: [200, 100, 50, 255],
         }));
         let mut texture_data = vec![0u8; 8 * 8 * 4];
-        texture_data[..4].copy_from_slice(&[255, 56, 34, 12]);
+        // Texture t=0 samples the bottom stored row; (x=0, y=7) is Morton index 42.
+        texture_data[42 * 4..43 * 4].copy_from_slice(&[255, 56, 34, 12]);
         system
             .physical_memory_mut()
             .write(TEXTURE_ADDRESS, &texture_data)
