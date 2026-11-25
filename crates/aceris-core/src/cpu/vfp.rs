@@ -66,6 +66,30 @@ const FPEXC_WRITABLE: u32 =
     FPEXC_EX | FPEXC_EN | FPEXC_FP2V | FPEXC_VECITR | FPEXC_INV | FPEXC_UFC | FPEXC_OFC | FPEXC_IOC;
 const FPINST_RESET: u32 = 0xEE00_0A00;
 
+const VFP_MAX_VECTOR_LANES: usize = 8;
+const VFP_MAX_VECTOR_SOURCES: usize = 2;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct VfpVectorLane {
+    destination: usize,
+    sources: [usize; VFP_MAX_VECTOR_SOURCES],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VfpVectorLanes {
+    entries: [VfpVectorLane; VFP_MAX_VECTOR_LANES],
+    len: usize,
+}
+
+impl Default for VfpVectorLanes {
+    fn default() -> Self {
+        Self {
+            entries: [VfpVectorLane::default(); VFP_MAX_VECTOR_LANES],
+            len: 0,
+        }
+    }
+}
+
 /// VFP register state of one core.
 #[derive(Clone, Debug)]
 pub struct Vfp {
@@ -1100,7 +1124,11 @@ impl Arm11Core {
         prec: Prec,
         destination: usize,
         sources: &[(usize, bool)],
-    ) -> Result<Vec<(usize, Vec<usize>)>> {
+    ) -> Result<VfpVectorLanes> {
+        if sources.is_empty() || sources.len() > VFP_MAX_VECTOR_SOURCES {
+            return Err(self.vfp_undefined(word));
+        }
+
         let bank_size = match prec {
             Prec::Single => 8,
             Prec::Double => 4,
@@ -1108,35 +1136,33 @@ impl Arm11Core {
         let len_field = self.vfp.vector_len_field();
         let stride_field = self.vfp.vector_stride_field();
 
-        // Only STRIDE encodings 00 (one register) and 11 (two registers)
-        // are defined. Validate the FPSCR configuration before scalar/vector
-        // destination selection: an invalid encoding remains unpredictable
-        // even when Fd happens to reside in bank zero.
+        // Only STRIDE encodings 00 (one register) and 11 (two registers) are
+        // defined. Validate FPSCR before scalar/vector destination selection.
         if !matches!(stride_field, 0b00 | 0b11) {
             return Err(self.vfp_undefined(word));
         }
 
-        if len_field == 0 {
-            if stride_field != 0 {
-                return Err(self.vfp_undefined(word));
-            }
-            return Ok(vec![(
+        if len_field == 0 && stride_field != 0 {
+            return Err(self.vfp_undefined(word));
+        }
+
+        let mut lanes = VfpVectorLanes::default();
+        if len_field == 0 || destination < bank_size {
+            let mut lane = VfpVectorLane {
                 destination,
-                sources.iter().map(|(source, _)| *source).collect(),
-            )]);
+                ..VfpVectorLane::default()
+            };
+            for (source_index, (source, _)) in sources.iter().copied().enumerate() {
+                lane.sources[source_index] = source;
+            }
+            lanes.entries[0] = lane;
+            lanes.len = 1;
+            return Ok(lanes);
         }
 
         let stride = if stride_field == 0b00 { 1 } else { 2 };
-
-        // Any destination in bank 0 forces a scalar operation, even when
-        // FPSCR.LEN is nonzero. Other destinations select short-vector mode.
-        if destination < bank_size {
-            return Ok(vec![(
-                destination,
-                sources.iter().map(|(source, _)| *source).collect(),
-            )]);
-        }
         let length = len_field + 1;
+
         // A vector may wrap within its bank, but it must never reuse a
         // register. Invalid LEN/STRIDE/precision combinations are UNPREDICTABLE.
         if (length - 1) * stride >= bank_size {
@@ -1148,21 +1174,20 @@ impl Arm11Core {
             bank_base(register) + (register % bank_size + iteration * stride) % bank_size
         };
 
-        let mut lanes = Vec::with_capacity(length);
         for iteration in 0..length {
-            let destination_register = bank_offset(destination, iteration);
-            let source_registers = sources
-                .iter()
-                .map(|(source, scalar_if_bank_zero)| {
-                    if *scalar_if_bank_zero && *source < bank_size {
-                        *source
-                    } else {
-                        bank_offset(*source, iteration)
-                    }
-                })
-                .collect();
-            lanes.push((destination_register, source_registers));
+            let lane = &mut lanes.entries[iteration];
+            lane.destination = bank_offset(destination, iteration);
+            for (source_index, (source, scalar_if_bank_zero)) in
+                sources.iter().copied().enumerate()
+            {
+                lane.sources[source_index] = if scalar_if_bank_zero && source < bank_size {
+                    source
+                } else {
+                    bank_offset(source, iteration)
+                };
+            }
         }
+        lanes.len = length;
         Ok(lanes)
     }
 
@@ -1184,33 +1209,34 @@ impl Arm11Core {
         }
         let (d, n, m) = (d?, n?, m?);
         let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(n, false), (m, true)])?;
-        let vector_exception_mode = lanes.len() > 1 && self.vfp.has_enabled_traps();
+        let lane_count = lanes.len;
+        let vector_exception_mode = lane_count > 1 && self.vfp.has_enabled_traps();
         if vector_exception_mode {
             *vector_exceptions_processed = true;
         }
 
         // Snapshot every source and accumulator before committing any lane.
-        // This preserves vector behavior when destination and source banks overlap.
-        let inputs: Vec<_> = lanes
-            .into_iter()
-            .map(|(destination, sources)| {
-                (
-                    destination,
-                    sources[0],
-                    sources[1],
-                    self.vfp.read(prec, destination),
-                    self.vfp.read(prec, sources[0]),
-                    self.vfp.read(prec, sources[1]),
-                )
-            })
-            .collect();
+        // Fixed-size stack storage avoids heap allocation for each VFP vector op.
+        let mut inputs = [(0usize, 0usize, 0usize, 0u64, 0u64, 0u64); VFP_MAX_VECTOR_LANES];
+        for iteration in 0..lane_count {
+            let lane = lanes.entries[iteration];
+            let source_n = lane.sources[0];
+            let source_m = lane.sources[1];
+            inputs[iteration] = (
+                lane.destination,
+                source_n,
+                source_m,
+                self.vfp.read(prec, lane.destination),
+                self.vfp.read(prec, source_n),
+                self.vfp.read(prec, source_m),
+            );
+        }
 
-        let lane_count = inputs.len();
-        let mut results = Vec::with_capacity(lane_count);
+        let mut results = [(0usize, 0u64); VFP_MAX_VECTOR_LANES];
+        let mut results_len = 0usize;
         let mut accumulated_exceptions = 0;
-        for (iteration, (destination, source_n, source_m, fd, fn_, fm)) in
-            inputs.into_iter().enumerate()
-        {
+        for iteration in 0..lane_count {
+            let (destination, source_n, source_m, fd, fn_, fm) = inputs[iteration];
             if vector_exception_mode {
                 self.vfp.clear_exception_status();
             }
@@ -1244,7 +1270,7 @@ impl Arm11Core {
                 if trapped != 0 {
                     self.vfp
                         .merge_exception_status(previous_fpscr, accumulated_exceptions | raised);
-                    for (completed_destination, completed_result) in results {
+                    for &(completed_destination, completed_result) in &results[..results_len] {
                         self.vfp
                             .write(prec, completed_destination, completed_result);
                     }
@@ -1259,14 +1285,15 @@ impl Arm11Core {
                 }
                 accumulated_exceptions |= raised;
             }
-            results.push((destination, result));
+            results[results_len] = (destination, result);
+            results_len += 1;
         }
 
         if vector_exception_mode {
             self.vfp
                 .merge_exception_status(previous_fpscr, accumulated_exceptions);
         }
-        for (destination, result) in results {
+        for &(destination, result) in &results[..results_len] {
             self.vfp.write(prec, destination, result);
         }
         Ok(())
@@ -1297,21 +1324,30 @@ impl Arm11Core {
                 let d = self.vfp_reg(word, prec, vd, d_low)?;
                 let m = self.vfp_reg(word, prec, vm, m_low)?;
                 let lanes = self.vfp_vector_register_lanes(word, prec, d, &[(m, true)])?;
-                let vector_exception_mode = lanes.len() > 1 && self.vfp.has_enabled_traps();
+                let lane_count = lanes.len;
+                let vector_exception_mode = lane_count > 1 && self.vfp.has_enabled_traps();
                 if vector_exception_mode {
                     *vector_exceptions_processed = true;
                 }
-                let inputs: Vec<_> = lanes
-                    .into_iter()
-                    .map(|(destination, sources)| {
-                        (destination, sources[0], self.vfp.read(prec, sources[0]))
-                    })
-                    .collect();
 
-                let lane_count = inputs.len();
-                let mut results = Vec::with_capacity(lane_count);
+                // Capture source values before committing destinations, preserving
+                // overlapping vector-register semantics without allocating Vecs.
+                let mut inputs = [(0usize, 0usize, 0u64); VFP_MAX_VECTOR_LANES];
+                for iteration in 0..lane_count {
+                    let lane = lanes.entries[iteration];
+                    let source = lane.sources[0];
+                    inputs[iteration] = (
+                        lane.destination,
+                        source,
+                        self.vfp.read(prec, source),
+                    );
+                }
+
+                let mut results = [(0usize, 0u64); VFP_MAX_VECTOR_LANES];
+                let mut results_len = 0usize;
                 let mut accumulated_exceptions = 0;
-                for (iteration, (destination, source, value)) in inputs.into_iter().enumerate() {
+                for iteration in 0..lane_count {
+                    let (destination, source, value) = inputs[iteration];
                     if vector_exception_mode {
                         self.vfp.clear_exception_status();
                     }
@@ -1330,7 +1366,9 @@ impl Arm11Core {
                                 previous_fpscr,
                                 accumulated_exceptions | raised,
                             );
-                            for (completed_destination, completed_result) in results {
+                            for &(completed_destination, completed_result) in
+                                &results[..results_len]
+                            {
                                 self.vfp
                                     .write(prec, completed_destination, completed_result);
                             }
@@ -1345,13 +1383,14 @@ impl Arm11Core {
                         }
                         accumulated_exceptions |= raised;
                     }
-                    results.push((destination, result));
+                    results[results_len] = (destination, result);
+                    results_len += 1;
                 }
                 if vector_exception_mode {
                     self.vfp
                         .merge_exception_status(previous_fpscr, accumulated_exceptions);
                 }
-                for (destination, result) in results {
+                for &(destination, result) in &results[..results_len] {
                     self.vfp.write(prec, destination, result);
                 }
             }
