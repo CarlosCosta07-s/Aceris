@@ -5086,11 +5086,7 @@ mod tests {
             0xA1B2_C3D4
         );
         address_space
-            .write16_with_cache_policy(
-                policy_store + 4,
-                0x8877,
-                CachePolicy::WriteBack,
-            )
+            .write16_with_cache_policy(policy_store + 4, 0x8877, CachePolicy::WriteBack)
             .unwrap();
         assert_eq!(
             address_space
