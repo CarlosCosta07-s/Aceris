@@ -483,7 +483,16 @@ impl Library {
             LibraryPage::Homebrew => "Homebrew e demos",
             LibraryPage::Settings => "Configurações",
         };
-        responsive_text(frame, width, height, 22.0, 174.0, font_scale, page_title, brand::TEXT);
+        responsive_text(
+            frame,
+            width,
+            height,
+            22.0,
+            174.0,
+            font_scale,
+            page_title,
+            brand::TEXT,
+        );
 
         if self.page == LibraryPage::Settings {
             responsive_text(
@@ -579,7 +588,14 @@ impl Library {
                 _ => format!("{count} jogos disponíveis"),
             };
             responsive_text(
-                frame, width, height, 22.0, 212.0, small_scale, &count_text, 0xBBAFC7,
+                frame,
+                width,
+                height,
+                22.0,
+                212.0,
+                small_scale,
+                &count_text,
+                0xBBAFC7,
             );
             responsive_panel(
                 frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, 0x2D1A3B,
@@ -857,14 +873,46 @@ impl Library {
         let small_scale = (scale * 1.15).round().max(2.0) as usize;
 
         responsive_fill(
-            frame, width as usize, height as usize, 0.0, 0.0, 205.0, logical_height, scale, 0x160D22,
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            205.0,
+            logical_height,
+            scale,
+            0x160D22,
         );
         responsive_fill(
-            frame, width as usize, height as usize, 202.0, 0.0, 3.0, logical_height, scale, brand::ACCENT_RED,
+            frame,
+            width as usize,
+            height as usize,
+            202.0,
+            0.0,
+            3.0,
+            logical_height,
+            scale,
+            brand::ACCENT_RED,
         );
-        responsive_text(frame, width, height, 24.0, 24.0, font_scale, "ACERIS", brand::TEXT);
         responsive_text(
-            frame, width, height, 24.0, 64.0, small_scale, "Emulador de Nintendo 3DS", 0xBBAFC7,
+            frame,
+            width,
+            height,
+            24.0,
+            24.0,
+            font_scale,
+            "ACERIS",
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            24.0,
+            64.0,
+            small_scale,
+            "Emulador de Nintendo 3DS",
+            0xBBAFC7,
         );
 
         let tabs = [
@@ -917,11 +965,31 @@ impl Library {
         };
         let description = match self.page {
             LibraryPage::Games => format!("{} jogo(s) encontrados", self.visible_entry_count()),
-            LibraryPage::Homebrew => format!("{} homebrew(s) encontrados", self.visible_entry_count()),
+            LibraryPage::Homebrew => {
+                format!("{} homebrew(s) encontrados", self.visible_entry_count())
+            }
             LibraryPage::Settings => "Pastas e formatos compatíveis".to_string(),
         };
-        responsive_text(frame, width, height, 238.0, 28.0, font_scale, page_title, brand::TEXT);
-        responsive_text(frame, width, height, 238.0, 68.0, small_scale, &description, 0xBBAFC7);
+        responsive_text(
+            frame,
+            width,
+            height,
+            238.0,
+            28.0,
+            font_scale,
+            page_title,
+            brand::TEXT,
+        );
+        responsive_text(
+            frame,
+            width,
+            height,
+            238.0,
+            68.0,
+            small_scale,
+            &description,
+            0xBBAFC7,
+        );
         responsive_panel(
             frame, width, height, 826.0, 28.0, 154.0, 54.0, scale, 0x2D1A3B,
         );
@@ -1014,45 +1082,102 @@ impl Library {
         } else if self.visible_entry_count() == 0 {
             let panel_height = (logical_height - 184.0).max(250.0);
             responsive_panel(
-                frame, width, height, 238.0, 130.0, 742.0, panel_height, scale, 0x21152F,
+                frame,
+                width,
+                height,
+                238.0,
+                130.0,
+                742.0,
+                panel_height,
+                scale,
+                0x21152F,
             );
             responsive_folder_icon(frame, width, height, 609.0, 196.0, scale);
-            let (title, first_line, second_line, formats) =
-                if self.page == LibraryPage::Homebrew {
-                    (
-                        "Nenhum homebrew encontrado",
-                        "Adicione arquivos .3dsx a pasta de jogos.",
-                        "Depois, atualize a biblioteca.",
-                        "Formato: .3dsx",
-                    )
-                } else {
-                    (
-                        "Sua biblioteca está vazia",
-                        "Adicione seus arquivos .3ds ou .cci a pasta",
-                        "de jogos configurada no Aceris.",
-                        "Formatos: .3ds / .cci / .3dsx",
-                    )
-                };
+            let (title, first_line, second_line, formats) = if self.page == LibraryPage::Homebrew {
+                (
+                    "Nenhum homebrew encontrado",
+                    "Adicione arquivos .3dsx a pasta de jogos.",
+                    "Depois, atualize a biblioteca.",
+                    "Formato: .3dsx",
+                )
+            } else {
+                (
+                    "Sua biblioteca está vazia",
+                    "Adicione seus arquivos .3ds ou .cci a pasta",
+                    "de jogos configurada no Aceris.",
+                    "Formatos: .3ds / .cci / .3dsx",
+                )
+            };
             responsive_text_centered(
-                frame, width, height, 609.0, 276.0, font_scale, title, brand::TEXT,
+                frame,
+                width,
+                height,
+                609.0,
+                276.0,
+                font_scale,
+                title,
+                brand::TEXT,
             );
             responsive_text_centered(
-                frame, width, height, 609.0, 326.0, small_scale, first_line, 0xBBAFC7,
+                frame,
+                width,
+                height,
+                609.0,
+                326.0,
+                small_scale,
+                first_line,
+                0xBBAFC7,
             );
             responsive_text_centered(
-                frame, width, height, 609.0, 354.0, small_scale, second_line, 0xBBAFC7,
+                frame,
+                width,
+                height,
+                609.0,
+                354.0,
+                small_scale,
+                second_line,
+                0xBBAFC7,
             );
             responsive_text_centered(
-                frame, width, height, 609.0, 398.0, small_scale, &tail(&self.directory_label, 90), brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                609.0,
+                398.0,
+                small_scale,
+                &tail(&self.directory_label, 90),
+                brand::ACCENT_GREEN_LIGHT,
             );
             responsive_panel(
-                frame, width, height, 490.0, 452.0, 240.0, 54.0, scale, brand::ACCENT_RED,
+                frame,
+                width,
+                height,
+                490.0,
+                452.0,
+                240.0,
+                54.0,
+                scale,
+                brand::ACCENT_RED,
             );
             responsive_text_centered(
-                frame, width, height, 610.0, 471.0, small_scale, "Atualizar biblioteca", brand::TEXT,
+                frame,
+                width,
+                height,
+                610.0,
+                471.0,
+                small_scale,
+                "Atualizar biblioteca",
+                brand::TEXT,
             );
             responsive_text_centered(
-                frame, width, height, 610.0, 526.0, small_scale, formats, 0xBBAFC7,
+                frame,
+                width,
+                height,
+                610.0,
+                526.0,
+                small_scale,
+                formats,
+                0xBBAFC7,
             );
         } else {
             let row_height = 76.0;
