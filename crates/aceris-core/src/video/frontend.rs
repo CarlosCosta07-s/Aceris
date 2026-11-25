@@ -257,15 +257,41 @@ pub fn render_virtual_pad_overlay(
     orientation: u32,
     pressed_mask: u32,
 ) -> Option<Vec<u8>> {
+    let mut pixels = Vec::new();
+    render_virtual_pad_overlay_into(width, height, orientation, pressed_mask, &mut pixels)
+        .then_some(pixels)
+}
+
+/// Renders the virtual controls into a caller-owned buffer, retaining its allocation.
+///
+/// Returns false for invalid dimensions or when the output buffer cannot be reserved.
+/// On failure the caller's buffer is left unchanged.
+pub fn render_virtual_pad_overlay_into(
+    width: u32,
+    height: u32,
+    orientation: u32,
+    pressed_mask: u32,
+    pixels: &mut Vec<u8>,
+) -> bool {
     use aceris_common::brand;
 
     if width == 0 || height == 0 || width > 4096 || height > 4096 {
-        return None;
+        return false;
     }
-    let byte_len = (width as usize)
-        .checked_mul(height as usize)?
-        .checked_mul(4)?;
-    let mut pixels = vec![0u8; byte_len];
+    let Some(byte_len) = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+    else {
+        return false;
+    };
+    if pixels.capacity() < byte_len {
+        let additional = byte_len.saturating_sub(pixels.len());
+        if pixels.try_reserve_exact(additional).is_err() {
+            return false;
+        }
+    }
+    pixels.resize(byte_len, 0);
+    pixels.fill(0);
 
     for shape in button_shapes(width, height, orientation) {
         let pressed = pressed_mask & shape.bit != 0;
@@ -301,7 +327,7 @@ pub fn render_virtual_pad_overlay(
             }
         }
         draw_glyph(
-            &mut pixels,
+            pixels,
             width as usize,
             height as usize,
             shape.x.round() as i32,
@@ -310,7 +336,7 @@ pub fn render_virtual_pad_overlay(
         );
     }
 
-    Some(pixels)
+    true
 }
 
 fn draw_glyph(pixels: &mut [u8], width: usize, height: usize, cx: i32, cy: i32, label: &str) {
@@ -474,5 +500,34 @@ mod tests {
         assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(overlay.chunks_exact(4).any(|pixel| pixel[3] > 0));
         assert!(render_virtual_pad_overlay(0, height, ORIENTATION_PORTRAIT, 0).is_none());
+    }
+
+    #[test]
+    fn virtual_overlay_into_reuses_storage_and_matches_allocating_renderer() {
+        let (width, height) = (480, 800);
+        let expected =
+            render_virtual_pad_overlay(width, height, ORIENTATION_PORTRAIT, buttons::A).unwrap();
+        let mut pixels = Vec::new();
+        assert!(render_virtual_pad_overlay_into(
+            width, height, ORIENTATION_PORTRAIT, buttons::A, &mut pixels
+        ));
+        assert_eq!(pixels, expected);
+
+        let allocation = pixels.as_ptr();
+        let capacity = pixels.capacity();
+        let expected_pressed =
+            render_virtual_pad_overlay(width, height, ORIENTATION_PORTRAIT, buttons::B).unwrap();
+        assert!(render_virtual_pad_overlay_into(
+            width, height, ORIENTATION_PORTRAIT, buttons::B, &mut pixels
+        ));
+        assert_eq!(pixels, expected_pressed);
+        assert_eq!(pixels.as_ptr(), allocation);
+        assert_eq!(pixels.capacity(), capacity);
+
+        let previous = pixels.clone();
+        assert!(!render_virtual_pad_overlay_into(
+            0, height, ORIENTATION_PORTRAIT, 0, &mut pixels
+        ));
+        assert_eq!(pixels, previous);
     }
 }

@@ -47,6 +47,8 @@ pub struct App {
     library_tap: Option<(i32, i32)>,
     /// Interleaved stereo samples (32728 Hz) mixed since the last [`App::take_audio`].
     audio: Vec<i16>,
+    /// Reused transparent controls layer; its capacity follows the surface size.
+    overlay_buffer: Vec<u8>,
 }
 
 impl App {
@@ -65,6 +67,7 @@ impl App {
             key_mask: 0,
             library_tap: None,
             audio: Vec::new(),
+            overlay_buffer: Vec::new(),
         }
     }
 
@@ -133,12 +136,24 @@ impl App {
         true
     }
 
-    /// Advances one 60 Hz tick and returns the RGBA8 frame for the surface.
+    /// Advances one 60 Hz tick and returns an owned RGBA8 frame.
     ///
-    /// The frame is `width * height * 4` bytes; empty when the surface is unset.
+    /// Hosts that present every frame should use step_into to retain the
+    /// output allocation between ticks.
     pub fn step(&mut self) -> Vec<u8> {
+        let mut frame = Vec::new();
+        self.step_into(&mut frame);
+        frame
+    }
+
+    /// Advances one tick and writes into a caller-owned RGBA8 frame buffer.
+    ///
+    /// The buffer keeps its capacity between calls and is cleared when the
+    /// surface has no usable dimensions.
+    pub fn step_into(&mut self, output: &mut Vec<u8>) {
         if self.width == 0 || self.height == 0 {
-            return Vec::new();
+            output.clear();
+            return;
         }
         match self.screen {
             Screen::Intro { frame } => {
@@ -149,32 +164,44 @@ impl App {
                     Screen::Intro { frame: next }
                 };
                 let canvas = intro::render_frame(frame, library::WIDTH, library::HEIGHT);
-                self.letterbox(&canvas)
+                self.letterbox_into(&canvas, output);
             }
             Screen::Library => {
                 let canvas = self.library.render();
-                self.letterbox(&canvas)
+                self.letterbox_into(&canvas, output);
             }
-            Screen::Game => self.step_game(),
+            Screen::Game => self.step_game_into(output),
         }
     }
 
-    fn step_game(&mut self) -> Vec<u8> {
+    fn step_game_into(&mut self, output: &mut Vec<u8>) {
         let Some(system) = self.system.as_mut() else {
             self.screen = Screen::Library;
-            return self.letterbox(&self.library.render());
+            let canvas = self.library.render();
+            self.letterbox_into(&canvas, output);
+            return;
         };
         if let Err(error) = system.run_frame() {
             let message = format!("Execução interrompida: {error}");
             self.leave_game();
             self.library.set_status(message);
-            return self.letterbox(&self.library.render());
+            let canvas = self.library.render();
+            self.letterbox_into(&canvas, output);
+            return;
         }
         system.take_audio_samples(&mut self.audio);
         let system = self.system.as_ref().expect("system exists while in game");
-        let mut frame = compose_game(system.display(), self.width, self.height);
-        overlay_virtual_pad(&mut frame, self.width, self.height, self.held_mask());
-        frame
+        if !compose_game_into(system.display(), self.width, self.height, output) {
+            return;
+        }
+        let pressed_mask = self.held_mask();
+        overlay_virtual_pad(
+            output,
+            self.width,
+            self.height,
+            pressed_mask,
+            &mut self.overlay_buffer,
+        );
     }
 
     fn held_mask(&self) -> u32 {
@@ -279,18 +306,19 @@ impl App {
     }
 
     /// Fits the 400x480 library/intro canvas into the surface, centred.
-    fn letterbox(&self, canvas: &[u8]) -> Vec<u8> {
+    fn letterbox_into(&self, canvas: &[u8], frame: &mut Vec<u8>) {
+        if !reset_black_frame(frame, self.width, self.height) {
+            return;
+        }
         let rect = self.canvas_rect();
-        let mut frame = black_frame(self.width, self.height);
         blit_scaled(
-            &mut frame,
+            frame,
             self.width,
             canvas,
             library::WIDTH as u32,
             library::HEIGHT as u32,
             rect,
         );
-        frame
     }
 
     fn canvas_rect(&self) -> ScreenRect {
@@ -345,8 +373,27 @@ pub fn pad_from_android_keycode(code: i32) -> Option<u32> {
     })
 }
 
-fn black_frame(width: u32, height: u32) -> Vec<u8> {
-    [0u8, 0, 0, 0xFF].repeat(width as usize * height as usize)
+fn reset_black_frame(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
+    let Some(byte_len) = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+    else {
+        frame.clear();
+        return false;
+    };
+    if frame.capacity() < byte_len {
+        let additional = byte_len.saturating_sub(frame.len());
+        if frame.try_reserve_exact(additional).is_err() {
+            frame.clear();
+            return false;
+        }
+    }
+    frame.resize(byte_len, 0);
+    frame.fill(0);
+    for pixel in frame.chunks_exact_mut(4) {
+        pixel[3] = 0xFF;
+    }
+    true
 }
 
 /// Nearest-neighbour blit of an RGBA `source` into `rect` of an RGBA `target`.
@@ -383,11 +430,25 @@ fn blit_scaled(
 
 /// Composes both LCDs into an RGBA frame of the surface size.
 pub fn compose_game(display: &DualScreenDisplay, width: u32, height: u32) -> Vec<u8> {
+    let mut frame = Vec::new();
+    compose_game_into(display, width, height, &mut frame);
+    frame
+}
+
+/// Composes both LCDs into a reusable RGBA frame buffer.
+fn compose_game_into(
+    display: &DualScreenDisplay,
+    width: u32,
+    height: u32,
+    frame: &mut Vec<u8>,
+) -> bool {
+    if !reset_black_frame(frame, width, height) {
+        return false;
+    }
     let layout = compute_screen_layout(width, height, ORIENTATION_AUTO);
-    let mut frame = black_frame(width, height);
     let mut draw = |surface: &ScreenSurface, rect: ScreenRect| {
         blit_scaled(
-            &mut frame,
+            frame,
             width,
             surface.pixels(),
             surface.width() as u32,
@@ -397,16 +458,26 @@ pub fn compose_game(display: &DualScreenDisplay, width: u32, height: u32) -> Vec
     };
     draw(display.top_left(), layout.top);
     draw(display.bottom(), layout.bottom);
-    frame
+    true
 }
 
 /// Alpha-blends the virtual gamepad overlay onto an RGBA frame.
-fn overlay_virtual_pad(frame: &mut [u8], width: u32, height: u32, pressed_mask: u32) {
-    let Some(overlay) =
-        frontend::render_virtual_pad_overlay(width, height, ORIENTATION_AUTO, pressed_mask)
-    else {
+fn overlay_virtual_pad(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    pressed_mask: u32,
+    overlay: &mut Vec<u8>,
+) {
+    if !frontend::render_virtual_pad_overlay_into(
+        width,
+        height,
+        ORIENTATION_AUTO,
+        pressed_mask,
+        overlay,
+    ) {
         return;
-    };
+    }
     for (pixel, over) in frame.chunks_exact_mut(4).zip(overlay.chunks_exact(4)) {
         let alpha = u32::from(over[3]);
         if alpha == 0 {
@@ -469,6 +540,22 @@ mod tests {
             app.step();
         }
         assert!(matches!(app.screen(), Screen::Library));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn step_into_reuses_the_surface_frame_allocation() {
+        let (mut app, dir) = app_with_games(0);
+        let mut frame = Vec::new();
+        app.step_into(&mut frame);
+        let allocation = frame.as_ptr();
+        let capacity = frame.capacity();
+        for _ in 0..8 {
+            app.step_into(&mut frame);
+        }
+        assert_eq!(frame.len(), 800 * 960 * 4);
+        assert_eq!(frame.as_ptr(), allocation);
+        assert_eq!(frame.capacity(), capacity);
         fs::remove_dir_all(dir).ok();
     }
 
@@ -617,10 +704,16 @@ mod tests {
     #[test]
     fn virtual_overlay_blends_without_touching_transparent_pixels() {
         let mut frame = [10u8, 20, 30, 255].repeat(400 * 800);
-        overlay_virtual_pad(&mut frame, 400, 800, 0);
+        let mut overlay = Vec::new();
+        overlay_virtual_pad(&mut frame, 400, 800, 0, &mut overlay);
         // The very first pixel is far from every button and stays untouched.
         assert_eq!(&frame[..4], &[10, 20, 30, 255]);
         assert!(frame.chunks_exact(4).any(|p| p != [10, 20, 30, 255]));
+        let allocation = overlay.as_ptr();
+        let capacity = overlay.capacity();
+        overlay_virtual_pad(&mut frame, 400, 800, frontend::buttons::A, &mut overlay);
+        assert_eq!(overlay.as_ptr(), allocation);
+        assert_eq!(overlay.capacity(), capacity);
     }
 
     #[test]

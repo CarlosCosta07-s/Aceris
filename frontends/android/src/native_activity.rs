@@ -308,6 +308,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     lock(&host.shared).looper = Raw::new(looper);
 
     let mut app = App::new(&games_dir);
+    let mut frame = Vec::new();
     let mut audio = AAudioOutput::open();
     let mut attached_queue = Raw::default();
     let mut size = (0u32, 0u32);
@@ -362,7 +363,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 // Fell behind (paused or slow frame): do not run catch-up frames.
                 next_frame = Instant::now() + FRAME_INTERVAL;
             }
-            render(host, &mut app, &mut size);
+            render(host, &mut app, &mut frame, &mut size);
             let samples = app.take_audio();
             if let Some(audio) = audio.as_mut() {
                 audio.feed(&samples);
@@ -477,7 +478,7 @@ unsafe fn handle_motion(event: *mut c_void, app: &mut App) {
 }
 
 /// Steps the app and copies its RGBA frame into the window.
-fn render(host: &Host, app: &mut App, size: &mut (u32, u32)) {
+fn render(host: &Host, app: &mut App, frame: &mut Vec<u8>, size: &mut (u32, u32)) {
     // Holding the lock keeps the window alive: `on_window_destroyed` takes it
     // before releasing the reference.
     let shared = lock(&host.shared);
@@ -494,7 +495,7 @@ fn render(host: &Host, app: &mut App, size: &mut (u32, u32)) {
             app.resize(width, height);
             *size = (width, height);
         }
-        let frame = app.step();
+        app.step_into(frame);
         if frame.is_empty() {
             return;
         }
