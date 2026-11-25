@@ -37,7 +37,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: aceris-pc-benchmark-${{ matrix.os }}
-          path: target/release/examples/benchmark*
+          path: |
+            target/release/examples/benchmark*
+            target/release/examples/memory_profile*
           if-no-files-found: error
 
   android:
@@ -54,8 +56,11 @@ jobs:
           tool: cargo-ndk
       - run: cargo ndk -t arm64-v8a build -p aceris-android --release
       - run: cargo ndk -t arm64-v8a build -p aceris-android --bin aceris-benchmark --release
+      - run: cargo ndk -t arm64-v8a build -p aceris-core --example memory_profile --release
       - uses: actions/upload-artifact@v4
         with:
           name: aceris-android-benchmark-arm64-v8a
-          path: target/aarch64-linux-android/release/aceris-benchmark
+          path: |
+            target/aarch64-linux-android/release/aceris-benchmark
+            target/aarch64-linux-android/release/examples/memory_profile
           if-no-files-found: error
