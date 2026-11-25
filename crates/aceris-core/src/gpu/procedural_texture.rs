@@ -297,7 +297,7 @@ fn decode_float16(raw: u16) -> f32 {
 /// internal hardware PRNG.
 fn noise_rand_1d(value: u32) -> u32 {
     const TABLE: [u32; 16] = [0, 4, 10, 8, 4, 9, 7, 12, 5, 15, 13, 14, 11, 15, 2, 11];
-    ((((value % 9 + 2) * 3) & 0xF) ^ TABLE[((value / 9) & 0xF) as usize])
+    (((value % 9 + 2) * 3) & 0xF) ^ TABLE[((value / 9) & 0xF) as usize]
 }
 
 /// Two-dimensional signed pseudo-random gradient from the software-reference
