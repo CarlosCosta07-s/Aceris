@@ -859,7 +859,8 @@ mod tests {
 
     #[test]
     fn run_arguments_accept_options_in_any_order() {
-        let expected = options("game.3ds", Some("out"), false, 2);
+        // The redesigned desktop launcher uses a 960x600 logical canvas at scale 1.
+        let expected = options("game.3ds", Some("out"), false, 1);
         assert_eq!(
             parse_run_args(&strings(&["game.3ds", "--dump-lcd", "out"])).unwrap(),
             expected
@@ -870,7 +871,7 @@ mod tests {
         );
         assert_eq!(
             parse_run_args(&strings(&["game.3ds"])).unwrap(),
-            options("game.3ds", None, false, 2)
+            options("game.3ds", None, false, 1)
         );
         assert_eq!(
             parse_run_args(&strings(&["--scale", "3", "--window", "game.3ds"])).unwrap(),
