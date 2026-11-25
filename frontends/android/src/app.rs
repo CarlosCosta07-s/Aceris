@@ -131,8 +131,8 @@ impl App {
                 self.apply_game_input();
             }
             Screen::Library if pressed => match bit {
-                pad::UP => self.library.move_selection(-1),
-                pad::DOWN => self.library.move_selection(1),
+                pad::UP => self.library.move_selection_responsive(-1, self.width, self.height),
+                pad::DOWN => self.library.move_selection_responsive(1, self.width, self.height),
                 pad::A | pad::START => self.launch_selected(),
                 _ => {}
             },
@@ -169,12 +169,12 @@ impl App {
                 } else {
                     Screen::Intro { frame: next }
                 };
-                let canvas = intro::render_frame(frame, library::WIDTH, library::HEIGHT);
-                self.letterbox_into(&canvas, output);
+                let canvas = intro::render_frame(frame, self.width as usize, self.height as usize);
+                output.clear();
+                output.extend_from_slice(&canvas);
             }
             Screen::Library => {
-                let canvas = self.library.render();
-                self.letterbox_into(&canvas, output);
+                let _ = self.library.render_responsive_into(self.width, self.height, output);
             }
             Screen::Game => self.step_game_into(output),
         }
@@ -183,8 +183,7 @@ impl App {
     fn step_game_into(&mut self, output: &mut Vec<u8>) {
         let Some(system) = self.system.as_mut() else {
             self.screen = Screen::Library;
-            let canvas = self.library.render();
-            self.letterbox_into(&canvas, output);
+            let _ = self.library.render_responsive_into(self.width, self.height, output);
             return;
         };
         if let Err(error) = system.run_frame() {
@@ -195,8 +194,7 @@ impl App {
                 .map(|detail| format!("{message} — HLE: {detail}"))
                 .unwrap_or(message);
             self.library.set_status(message);
-            let canvas = self.library.render();
-            self.letterbox_into(&canvas, output);
+            let _ = self.library.render_responsive_into(self.width, self.height, output);
             return;
         }
         system.take_audio_samples(&mut self.audio);
@@ -255,21 +253,30 @@ impl App {
     fn update_library_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
         if previous.is_empty() {
             if let Some((&_id, &(x, y))) = self.pointers.iter().next() {
-                self.library_tap = self.to_canvas(x, y);
+                self.library_tap = Some((x.round() as i32, y.round() as i32));
             }
             return;
         }
         if self.pointers.is_empty() {
             let (_, &(last_x, last_y)) = previous.iter().next().expect("previous not empty");
-            if let (Some((_, down_y)), Some((up_x, up_y))) =
-                (self.library_tap.take(), self.to_canvas(last_x, last_y))
-            {
+            if let Some((_, down_y)) = self.library_tap.take() {
+                let up_x = last_x.round() as i32;
+                let up_y = last_y.round() as i32;
                 let dragged = up_y - down_y;
-                if dragged.abs() >= library::HEIGHT as i32 / 24 {
-                    // Vertical drag scrolls: one row per ~36 canvas pixels.
-                    self.library.move_selection(-(dragged / 36));
+                let portrait = self.height >= self.width;
+                let logical_row_height = if portrait { 58.0 } else { 76.0 };
+                let logical_width = if portrait { 400.0 } else { 1000.0 };
+                let row_height = (self.width as f32 / logical_width * logical_row_height)
+                    .round()
+                    .max(12.0) as i32;
+                if dragged.abs() >= (self.height as i32 / 80).max(12) {
+                    let mut rows = -(dragged as f32 / row_height as f32).round() as i32;
+                    if rows == 0 {
+                        rows = -dragged.signum();
+                    }
+                    self.library.move_selection_responsive(rows, self.width, self.height);
                 } else {
-                    match self.library.click(up_x, up_y) {
+                    match self.library.click_responsive(up_x, up_y, self.width, self.height) {
                         ClickResult::Activated => self.launch_selected(),
                         ClickResult::Selected | ClickResult::Ignored => {}
                     }
@@ -279,6 +286,10 @@ impl App {
     }
 
     fn launch_selected(&mut self) {
+        if self.library.page() == library::LibraryPage::Settings {
+            self.library.reload();
+            return;
+        }
         let Some(entry) = self.library.selected_entry() else {
             self.library.set_status("Nenhum jogo na pasta.");
             return;
@@ -324,48 +335,7 @@ impl App {
         }
     }
 
-    /// Fits the 400x480 library/intro canvas into the surface, centred.
-    fn letterbox_into(&self, canvas: &[u8], frame: &mut Vec<u8>) {
-        if !reset_black_frame(frame, self.width, self.height) {
-            return;
-        }
-        let rect = self.canvas_rect();
-        blit_scaled(
-            frame,
-            self.width,
-            canvas,
-            library::WIDTH as u32,
-            library::HEIGHT as u32,
-            rect,
-        );
-    }
 
-    fn canvas_rect(&self) -> ScreenRect {
-        let scale = (self.width as f32 / library::WIDTH as f32)
-            .min(self.height as f32 / library::HEIGHT as f32);
-        let width = ((library::WIDTH as f32 * scale).round() as u32).max(1);
-        let height = ((library::HEIGHT as f32 * scale).round() as u32).max(1);
-        ScreenRect {
-            x: ((self.width - width.min(self.width)) / 2) as i32,
-            y: ((self.height - height.min(self.height)) / 2) as i32,
-            width,
-            height,
-        }
-    }
-
-    /// Maps surface pixels to library canvas coordinates (None outside it).
-    fn to_canvas(&self, x: f32, y: f32) -> Option<(i32, i32)> {
-        let rect = self.canvas_rect();
-        let dx = x as i32 - rect.x;
-        let dy = y as i32 - rect.y;
-        if dx < 0 || dy < 0 || dx >= rect.width as i32 || dy >= rect.height as i32 {
-            return None;
-        }
-        Some((
-            dx * library::WIDTH as i32 / rect.width as i32,
-            dy * library::HEIGHT as i32 / rect.height as i32,
-        ))
-    }
 }
 
 pub const AKEYCODE_BACK: i32 = 4;
@@ -674,15 +644,12 @@ mod tests {
     }
 
     #[test]
-    fn library_taps_map_through_the_letterbox_and_act_on_release() {
+    fn library_taps_use_the_full_surface_and_act_on_release() {
         let (mut app, dir) = app_with_games(2);
         app.screen = Screen::Library;
-        let rect = app.canvas_rect();
-        assert_eq!((rect.x, rect.width), (0, 800));
-        // Canvas row 0 of the list sits at LIST_TOP; tap the second row twice:
-        // the first tap selects, the second activates and fails to load the
-        // fake image, leaving the library with a status message.
-        let y = (library::HEIGHT as f32 * 0.2) * 2.0;
+        // The responsive portrait layout starts game cards at logical y=250;
+        // tap its second row twice, selecting first and activating second.
+        let y = 328.0 * 2.0;
         for _ in 0..3 {
             touch(&mut app, 100.0, y);
             release(&mut app);
