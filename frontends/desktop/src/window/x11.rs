@@ -483,7 +483,9 @@ impl Window {
 /// Maps an X keysym to a front-end key (arrows, paging, Return, Escape).
 fn key_from_keysym(keysym: c_ulong) -> Option<Key> {
     match keysym {
+        0xFF51 => Some(Key::Left),
         0xFF52 => Some(Key::Up),
+        0xFF53 => Some(Key::Right),
         0xFF54 => Some(Key::Down),
         0xFF55 => Some(Key::PageUp),
         0xFF56 => Some(Key::PageDown),
