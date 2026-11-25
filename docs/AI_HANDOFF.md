@@ -2496,3 +2496,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A resposta reflete o registry HLE desta build: HID, CFG, APT, FS, PTM, DSP, CSND, serviços stub explícitos e gsp::Gpu são marcados registrados; serviços apenas autorizados pelo exheader, mas sem endpoint HLE (como http:C/ir:rst), retornam false.
 - O comando não cria sessões nem simula conectividade. A ACL continua sendo aplicada também à consulta, e serviços sem endpoint não são anunciados como disponíveis.
 - Teste adicionado para gsp::Gpu=true, http:C=false e ssl:C negado por ACL. CI pendente.
+
+## Validação de orçamento ResourceLimit → ControlMemory — 25/11/2026
+
+- Adicionado teste integrado ao Arm11ProcessSession: obtém ResourceLimit, consulta o teto e o COMMIT atual, calcula o orçamento restante alinhado a 4 KiB e usa uma página desse orçamento em ControlMemory(MEMOP_ALLOC).
+- O teste verifica a criação real do mapeamento no heap de aplicação e confirma que a consulta de COMMIT atual sobe exatamente pelo tamanho mapeado. Isso é uma regressão sintética de ABI/kernel, não substitui reexecutar um CIA real nem prova o bootstrap de um jogo.
+- CI e execução do teste ainda precisam ser confirmadas.
