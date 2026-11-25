@@ -33,7 +33,31 @@ struct Options {
     warmup_frames: usize,
     instruction_budget: usize,
     dump_lcd: Option<PathBuf>,
+    frame_trace: Option<PathBuf>,
+    taps: Vec<Tap>,
     profile_components: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Tap {
+    x: i32,
+    y: i32,
+    frame: usize,
+    hold_frames: usize,
+}
+
+#[derive(Clone, Debug)]
+struct FrameTraceSample {
+    input_frame: usize,
+    report_frame: u64,
+    elapsed_ns: u128,
+    instructions_executed: u64,
+    gpu_command_lists_submitted: u64,
+    lcd_screens_scanned_out: u8,
+    gsp_interrupt_deliveries: u8,
+    cpu_stop_reason: String,
+    pc: u32,
+    cpsr: u32,
 }
 
 struct BenchmarkSummary<'a> {
@@ -61,6 +85,8 @@ fn usage() {
          --warmup <N>              Warm-up frames excluded from results (default: 15)\n\
          --instruction-budget <N>  ARM11 instruction budget per frame (default: {DEFAULT_FRAME_INSTRUCTION_BUDGET})\n\
          --dump-lcd <DIR>          Save final LCD surfaces as PNG after timing\n\
+         --frame-trace <CSV>       Save per-frame timing and guest activity to CSV\n\
+         --tap <X,Y@FRAME[+HOLD]>  Script a bottom-screen touch (repeatable; default HOLD=3)\n\
          -h, --help                Show this help\n\
          \n\
          Supports 3DSX, NCSD (.3ds/.cci) and CIA files supported by the current loader."
