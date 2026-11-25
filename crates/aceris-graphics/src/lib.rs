@@ -441,7 +441,7 @@ impl GraphicsPresenter {
             pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        self.queue.present(frame);
         if configure_after_present {
             self.surface.configure(&self.device, &self.surface_config);
         }
