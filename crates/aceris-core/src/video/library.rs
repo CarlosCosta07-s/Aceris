@@ -368,7 +368,9 @@ impl Library {
             return ClickResult::Ignored;
         };
         let (x, y) = (x as f32 / scale, y as f32 / scale);
+
         if portrait {
+            // Portrait rendering remains a fallback for non-Android hosts.
             if (100.0..150.0).contains(&y) {
                 let page = if x < 134.0 {
                     LibraryPage::Games
@@ -386,10 +388,8 @@ impl Library {
                 }
                 return ClickResult::Ignored;
             }
-            let empty_button_y = if logical_height < 720.0 { 490.0 } else { 535.0 };
             if ((168.0..222.0).contains(&y) && x >= 304.0)
-                || ((empty_button_y..empty_button_y + 52.0).contains(&y)
-                    && (38.0..362.0).contains(&x))
+                || ((490.0..542.0).contains(&y) && (38.0..362.0).contains(&x))
             {
                 self.reload();
                 return ClickResult::Ignored;
@@ -401,53 +401,98 @@ impl Library {
             let visible = ((logical_height - 350.0).max(row_height) / row_height)
                 .floor()
                 .max(1.0) as usize;
-            let index = self.first_visible + ((y - 250.0) / row_height).floor().max(0.0) as usize;
+            let index = self.first_visible
+                + ((y - 250.0) / row_height).floor().max(0.0) as usize;
             if index >= self.first_visible + visible || index >= self.visible_entry_count() {
                 return ClickResult::Ignored;
             }
-            self.select_or_activate(index)
-        } else {
-            if x < 210.0 {
-                let page = if (110.0..166.0).contains(&y) {
-                    Some(LibraryPage::Games)
-                } else if (168.0..224.0).contains(&y) {
-                    Some(LibraryPage::Homebrew)
-                } else if (226.0..282.0).contains(&y) {
-                    Some(LibraryPage::Settings)
-                } else {
-                    None
-                };
-                if let Some(page) = page {
-                    self.select_page(page);
-                }
-                return ClickResult::Ignored;
+            return self.select_or_activate(index);
+        }
+
+        // Permanent horizontal launcher: the rail remains in the same place
+        // and every target is a generous, predictable touch area.
+        if x < 104.0 {
+            let page = match y as i32 {
+                96..=151 => Some(LibraryPage::Home),
+                152..=207 => Some(LibraryPage::Games),
+                208..=263 => Some(LibraryPage::Favorites),
+                264..=319 => Some(LibraryPage::Recent),
+                320..=375 => Some(LibraryPage::Homebrew),
+                376..=432 => Some(LibraryPage::Settings),
+                _ => None,
+            };
+            if let Some(page) = page {
+                self.select_page(page);
             }
-            if self.page == LibraryPage::Settings {
-                if ((30.0..86.0).contains(&y) && x >= 820.0)
-                    || ((366.0..422.0).contains(&y) && (270.0..600.0).contains(&x))
-                {
+            return ClickResult::Ignored;
+        }
+
+        if (18.0..68.0).contains(&y) && x >= 842.0 {
+            self.reload();
+            return ClickResult::Ignored;
+        }
+
+        match self.page {
+            LibraryPage::Home => {
+                if (112.0..340.0).contains(&y) && (126.0..650.0).contains(&x) {
+                    if self.recent_count() > 0 {
+                        self.selected = 0;
+                        return ClickResult::Activated;
+                    }
+                    self.select_page(LibraryPage::Games);
+                } else if (110.0..225.0).contains(&y) && x >= 664.0 {
+                    self.select_page(LibraryPage::Favorites);
+                } else if (232.0..348.0).contains(&y) && x >= 664.0 {
+                    self.select_page(LibraryPage::Homebrew);
+                } else if (350.0..logical_height - 24.0).contains(&y) {
+                    self.select_page(LibraryPage::Games);
+                }
+                ClickResult::Ignored
+            }
+            LibraryPage::Settings => {
+                if (350.0..412.0).contains(&y) && (128.0..450.0).contains(&x) {
                     self.reload();
                 }
-                return ClickResult::Ignored;
+                ClickResult::Ignored
             }
-            if ((30.0..86.0).contains(&y) && x >= 820.0)
-                || ((452.0..508.0).contains(&y) && (490.0..730.0).contains(&x))
-            {
-                self.reload();
-                return ClickResult::Ignored;
+            LibraryPage::Games
+            | LibraryPage::Favorites
+            | LibraryPage::Recent
+            | LibraryPage::Homebrew => {
+                let columns = 3usize;
+                let card_top = 124.0;
+                let card_height = 82.0;
+                let row_step = 94.0;
+                let card_width = 270.0;
+                let card_gap = 14.0;
+                if y < card_top {
+                    return ClickResult::Ignored;
+                }
+                let row = ((y - card_top) / row_step).floor().max(0.0) as usize;
+                let column = ((x - 128.0) / (card_width + card_gap)).floor().max(0.0) as usize;
+                if column >= columns {
+                    return ClickResult::Ignored;
+                }
+                let card_x = 128.0 + column as f32 * (card_width + card_gap);
+                let card_y = card_top + row as f32 * row_step;
+                if x < card_x || x >= card_x + card_width || y >= card_y + card_height {
+                    return ClickResult::Ignored;
+                }
+                let visible_rows = ((logical_height - card_top - 42.0) / row_step)
+                    .floor()
+                    .max(1.0) as usize;
+                let index = self.first_visible + row * columns + column;
+                if row >= visible_rows || index >= self.visible_entry_count() {
+                    return ClickResult::Ignored;
+                }
+                self.selected = index;
+                // The small favorite control is independent of the card's launch action.
+                if x >= card_x + card_width - 58.0 && y <= card_y + 40.0 {
+                    self.toggle_selected_favorite();
+                    return ClickResult::Ignored;
+                }
+                self.select_or_activate(index)
             }
-            if y < 142.0 {
-                return ClickResult::Ignored;
-            }
-            let row_height = 76.0;
-            let visible = ((logical_height - 196.0).max(row_height) / row_height)
-                .floor()
-                .max(1.0) as usize;
-            let index = self.first_visible + ((y - 142.0) / row_height).floor().max(0.0) as usize;
-            if index >= self.first_visible + visible || index >= self.visible_entry_count() {
-                return ClickResult::Ignored;
-            }
-            self.select_or_activate(index)
         }
     }
 
@@ -455,10 +500,8 @@ impl Library {
         if index == self.selected {
             ClickResult::Activated
         } else {
-            self.move_selection_with_visible(
-                index as i32 - self.selected as i32,
-                self.visible_entry_count().max(1),
-            );
+            self.selected = index;
+            self.status = None;
             ClickResult::Selected
         }
     }
