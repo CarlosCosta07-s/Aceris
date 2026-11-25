@@ -264,7 +264,7 @@ impl Library {
         if fs::create_dir_all(&directory).is_err() {
             return;
         }
-        let content = values.into_iter().collect::<Vec<_>>().join("\\n");
+        let content = values.into_iter().collect::<Vec<_>>().join("\n");
         let _ = fs::write(directory.join(file_name), content);
     }
 
@@ -2466,11 +2466,41 @@ mod tests {
     }
 
     #[test]
+    fn favorites_and_recent_are_restored_after_reopening_the_library() {
+        let dir = std::env::temp_dir().join(format!("aceris-library-persistence-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let alpha = dir.join("alpha.3ds");
+        let beta = dir.join("beta.3ds");
+        fs::write(&alpha, b"fixture").unwrap();
+        fs::write(&beta, b"fixture").unwrap();
+
+        {
+            let mut library = Library::new(scan_games(&dir), dir.display().to_string());
+            library.select_page(LibraryPage::Games);
+            assert!(library.toggle_selected_favorite());
+            library.mark_launched(&beta);
+        }
+
+        let reopened = Library::new(scan_games(&dir), dir.display().to_string());
+        assert_eq!(reopened.favorite_count(), 1);
+        assert_eq!(reopened.recent_count(), 1);
+        assert_eq!(
+            fs::read_to_string(dir.join(".aceris").join("favorites.txt")).unwrap(),
+            "alpha.3ds"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(".aceris").join("recent.txt")).unwrap(),
+            "beta.3ds"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn favorite_count_ignores_files_missing_from_the_game_folder() {
         let dir = std::env::temp_dir().join(format!("aceris-favorite-count-{}", std::process::id()));
         fs::create_dir_all(dir.join(".aceris")).unwrap();
         fs::write(dir.join("alpha.3ds"), b"fixture").unwrap();
-        fs::write(dir.join(".aceris").join("favorites.txt"), "alpha.3ds\\nremoved.3ds").unwrap();
+        fs::write(dir.join(".aceris").join("favorites.txt"), "alpha.3ds\nremoved.3ds").unwrap();
 
         let library = Library::new(scan_games(&dir), dir.display().to_string());
         assert_eq!(library.favorite_count(), 1);
