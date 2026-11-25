@@ -321,7 +321,7 @@ impl Library {
                 .floor()
                 .max(1.0) as usize;
             let index = self.first_visible + ((y - 142.0) / row_height).floor().max(0.0) as usize;
-            if index >= self.first_visible + visible || index >= self.entries.len() {
+            if index >= self.first_visible + visible || index >= self.visible_entry_count() {
                 return ClickResult::Ignored;
             }
             self.select_or_activate(index)
@@ -447,7 +447,7 @@ impl Library {
         let page_title = match self.page {
             LibraryPage::Games => "Biblioteca",
             LibraryPage::Homebrew => "Homebrew e demos",
-            LibraryPage::Settings => "Configuracoes",
+            LibraryPage::Settings => "Configurações",
         };
         responsive_text(frame, width, height, 22.0, 174.0, font_scale, page_title, brand::TEXT);
 
@@ -459,7 +459,7 @@ impl Library {
                 22.0,
                 212.0,
                 small_scale,
-                "Pastas e formatos compativeis",
+                "Pastas e formatos compatíveis",
                 0xBBAFC7,
             );
             responsive_panel(
@@ -517,10 +517,10 @@ impl Library {
         } else {
             let count = self.visible_entry_count();
             let count_text = match (self.page, count) {
-                (LibraryPage::Homebrew, 1) => "1 homebrew disponivel".to_string(),
-                (LibraryPage::Homebrew, _) => format!("{count} homebrews disponiveis"),
-                (_, 1) => "1 jogo disponivel".to_string(),
-                _ => format!("{count} jogos disponiveis"),
+                (LibraryPage::Homebrew, 1) => "1 homebrew disponível".to_string(),
+                (LibraryPage::Homebrew, _) => format!("{count} homebrews disponíveis"),
+                (_, 1) => "1 jogo disponível".to_string(),
+                _ => format!("{count} jogos disponíveis"),
             };
             responsive_text(
                 frame, width, height, 22.0, 212.0, small_scale, &count_text, 0xBBAFC7,
@@ -560,14 +560,14 @@ impl Library {
                     if self.page == LibraryPage::Homebrew {
                         (
                             "Nenhum homebrew encontrado",
-                            "Adicione arquivos .3dsx a pasta",
+                            "Adicione arquivos .3dsx à pasta",
                             "de jogos configurada no Aceris.",
                             "Formato: .3dsx",
                         )
                     } else {
                         (
-                            "Sua biblioteca esta vazia",
-                            "Adicione seus arquivos de jogos a pasta",
+                            "Sua biblioteca está vazia",
+                            "Adicione seus arquivos de jogos à pasta",
                             "do Aceris para comecar a jogar.",
                             "Formatos: .3ds  /  .cci  /  .3dsx",
                         )
@@ -716,7 +716,7 @@ impl Library {
         logical_height: f32,
     ) {
         let font_scale = (scale * 1.8).round().max(2.0) as usize;
-        let small_scale = (scale * 1.15).round().max(1.0) as usize;
+        let small_scale = (scale * 1.15).round().max(2.0) as usize;
 
         responsive_fill(
             frame, width as usize, height as usize, 0.0, 0.0, 205.0, logical_height, scale, 0x160D22,
@@ -732,7 +732,7 @@ impl Library {
         let tabs = [
             (16.0, 118.0, LibraryPage::Games, "Jogos"),
             (16.0, 176.0, LibraryPage::Homebrew, "Homebrew"),
-            (16.0, 234.0, LibraryPage::Settings, "Configuracoes"),
+            (16.0, 234.0, LibraryPage::Settings, "Configurações"),
         ];
         for (x, y, page, label) in tabs {
             responsive_panel(
@@ -764,12 +764,12 @@ impl Library {
         let page_title = match self.page {
             LibraryPage::Games => "Biblioteca",
             LibraryPage::Homebrew => "Homebrew e demos",
-            LibraryPage::Settings => "Configuracoes",
+            LibraryPage::Settings => "Configurações",
         };
         let description = match self.page {
             LibraryPage::Games => format!("{} jogo(s) encontrados", self.visible_entry_count()),
             LibraryPage::Homebrew => format!("{} homebrew(s) encontrados", self.visible_entry_count()),
-            LibraryPage::Settings => "Pastas e formatos compativeis".to_string(),
+            LibraryPage::Settings => "Pastas e formatos compatíveis".to_string(),
         };
         responsive_text(frame, width, height, 238.0, 28.0, font_scale, page_title, brand::TEXT);
         responsive_text(frame, width, height, 238.0, 68.0, small_scale, &description, 0xBBAFC7);
@@ -828,7 +828,7 @@ impl Library {
                     )
                 } else {
                     (
-                        "Sua biblioteca esta vazia",
+                        "Sua biblioteca está vazia",
                         "Adicione seus arquivos .3ds ou .cci a pasta",
                         "de jogos configurada no Aceris.",
                         "Formatos: .3ds / .cci / .3dsx",
