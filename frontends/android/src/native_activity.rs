@@ -733,10 +733,8 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let mut audio = AAudioOutput::open();
     let media_monitor =
         AttachedMediaMonitor::attach(host.java_vm, host.activity_global, host.sdk_version);
-    let media_detection_available = media_monitor.is_some()
-        && audio
-            .as_ref()
-            .is_some_and(AAudioOutput::uses_game_usage);
+    let media_detection_available =
+        media_monitor.is_some() && audio.as_ref().is_some_and(AAudioOutput::uses_game_usage);
     app.set_external_media_detection_available(media_detection_available);
     let mut external_media_playing = false;
     let mut last_media_poll = Instant::now()
