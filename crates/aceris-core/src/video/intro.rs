@@ -320,7 +320,15 @@ pub fn rgba_to_scaled_bgrx_into(
         output.clear();
         return false;
     }
-    let Some(byte_len) = rgba.len().checked_mul(scale).and_then(|value| value.checked_mul(scale)) else {
+    let Some(line_width) = row_bytes.checked_mul(scale) else {
+        output.clear();
+        return false;
+    };
+    let Some(byte_len) = rgba
+        .len()
+        .checked_mul(scale)
+        .and_then(|value| value.checked_mul(scale))
+    else {
         output.clear();
         return false;
     };
@@ -331,18 +339,18 @@ pub fn rgba_to_scaled_bgrx_into(
             return false;
         }
     }
-    output.clear();
-    let line_width = width * 4 * scale;
-    let mut line = Vec::with_capacity(line_width);
-    for row in rgba.chunks_exact(width * 4) {
-        line.clear();
-        for pixel in row.chunks_exact(4) {
-            for _ in 0..scale {
-                line.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 0xFF]);
+    output.resize(byte_len, 0xFF);
+    for (source_row_index, row) in rgba.chunks_exact(row_bytes).enumerate() {
+        for y_repeat in 0..scale {
+            let destination_row = (source_row_index * scale + y_repeat) * line_width;
+            for (source_x, pixel) in row.chunks_exact(4).enumerate() {
+                let destination_x = source_x * scale * 4;
+                for x_repeat in 0..scale {
+                    let destination = destination_row + destination_x + x_repeat * 4;
+                    output[destination..destination + 4]
+                        .copy_from_slice(&[pixel[2], pixel[1], pixel[0], 0xFF]);
+                }
             }
-        }
-        for _ in 0..scale {
-            output.extend_from_slice(&line);
         }
     }
     true
