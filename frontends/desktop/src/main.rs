@@ -476,9 +476,11 @@ fn browse_library(
         }
         let started = Instant::now();
         let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
-        let rgba =
-            library.render_responsive(window::CANVAS_WIDTH as u32, window::CANVAS_HEIGHT as u32);
-        let _ = (animation_frame, background_frame);
+        let rgba = library.render_responsive_with_background(
+            window::CANVAS_WIDTH as u32,
+            window::CANVAS_HEIGHT as u32,
+            background_frame,
+        );
         let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
         present_desktop_frame(
             window,
