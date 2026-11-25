@@ -6,9 +6,9 @@
 //! 0xFF0000/0x00FF00/0x0000FF masks are supported.
 
 use super::{Key, WindowError, WindowEvent, game_key_from_keysym};
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle, XlibDisplayHandle, XlibWindowHandle};
 use std::ffi::{CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::ptr::{self, NonNull};
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle, XlibDisplayHandle, XlibWindowHandle};
 
 unsafe extern "C" {
     fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
@@ -192,9 +192,7 @@ fn backend_error(message: &str) -> WindowError {
 
 impl Window {
     /// Returns the Xlib display/window handles while this Window is alive.
-    pub fn raw_handles(
-        &self,
-    ) -> Result<(Option<RawDisplayHandle>, RawWindowHandle), WindowError> {
+    pub fn raw_handles(&self) -> Result<(Option<RawDisplayHandle>, RawWindowHandle), WindowError> {
         let display = XlibDisplayHandle::new(Some(self.display), self.screen);
         let window = XlibWindowHandle::new(self.window);
         Ok((

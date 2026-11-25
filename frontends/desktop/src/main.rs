@@ -9,7 +9,6 @@ mod background;
 mod window;
 
 use aceris_common::{NAME, VERSION};
-use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     video::{
@@ -17,6 +16,7 @@ use aceris_core::{
         library::{ClickResult, Library, VISIBLE_ROWS, scan_games},
     },
 };
+use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use std::{
     env, fs, io,
     path::{Path, PathBuf},

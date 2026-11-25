@@ -14,7 +14,9 @@
 use crate::aaudio::AAudioOutput;
 use crate::app::{App, Pointer};
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
-use raw_window_handle::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle};
+use raw_window_handle::{
+    AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
+};
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::path::PathBuf;
 use std::ptr::{self, NonNull};
@@ -342,9 +344,7 @@ fn create_android_gpu_presenter(
     let native_window = RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(window));
     // SAFETY: this object owns an extra ANativeWindow reference, released only
     // after its WGPU surface has been destroyed by Drop.
-    match unsafe {
-        GraphicsPresenter::new(Some(display), native_window, width, height, backend)
-    } {
+    match unsafe { GraphicsPresenter::new(Some(display), native_window, width, height, backend) } {
         Ok(presenter) => {
             let info = presenter.adapter_info();
             eprintln!(

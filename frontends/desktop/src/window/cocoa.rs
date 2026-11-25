@@ -14,9 +14,11 @@ use super::native_input::{
     game_key_from_mac_keycode, key_from_mac_keycode, scroll_rows_from_mac_delta,
 };
 use super::{WindowError, WindowEvent};
+use raw_window_handle::{
+    AppKitDisplayHandle, AppKitWindowHandle, RawDisplayHandle, RawWindowHandle,
+};
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr::{self, NonNull};
-use raw_window_handle::{AppKitDisplayHandle, AppKitWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 type Id = *mut c_void;
 type Sel = *mut c_void;

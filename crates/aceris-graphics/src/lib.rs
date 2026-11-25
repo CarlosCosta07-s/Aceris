@@ -192,14 +192,12 @@ impl GraphicsPresenter {
         }))
         .map_err(|error| format!("no compatible {:?} GPU adapter: {error}", backend))?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("Aceris host presentation device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: adapter.limits(),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Aceris host presentation device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: adapter.limits(),
+            ..Default::default()
+        }))
         .map_err(|error| format!("could not create GPU device: {error}"))?;
 
         let mut surface_config = surface
@@ -496,7 +494,10 @@ mod tests {
             GraphicsBackend::parse("SOFTWARE").unwrap(),
             GraphicsBackend::Software
         );
-        assert_eq!(GraphicsBackend::parse("auto").unwrap(), GraphicsBackend::Auto);
+        assert_eq!(
+            GraphicsBackend::parse("auto").unwrap(),
+            GraphicsBackend::Auto
+        );
     }
 
     #[test]

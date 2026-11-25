@@ -13,11 +13,11 @@ use super::native_input::{
     scroll_rows_from_wheel,
 };
 use super::{WindowError, WindowEvent};
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32DisplayHandle, Win32WindowHandle};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
-use std::ptr;
 use std::num::NonZeroIsize;
-use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32DisplayHandle, Win32WindowHandle};
+use std::ptr;
 
 type Hwnd = *mut c_void;
 type Hinstance = *mut c_void;
