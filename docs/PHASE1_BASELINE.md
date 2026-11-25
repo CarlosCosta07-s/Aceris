@@ -103,6 +103,35 @@ Os números de memória representam quatro bytes processados por operação no c
 
 Não calcular uma classificação de plataformas a partir desses valores: runners CI podem usar CPUs, caches e limites de carga diferentes. O passo seguinte é coletar pelo menos três execuções em cada máquina local, além do benchmark integrado com um mesmo homebrew e orçamento.
 
+## 5.1 Linha de base repetida — CI do commit 7b01668 (25/11/2026)
+
+Workflow: [45649636486](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45649636486). Todos os quatro jobs concluíram com sucesso: Windows x86-64, Linux x86-64, macOS ARM64 e build Android ARM64. Os três runners desktop executaram um aquecimento descartado e cinco repetições medidas. Os valores abaixo são medianas das cinco repetições extraídas dos logs; não misturar com a fotografia de amostra única da seção anterior.
+
+| Métrica | Windows x86-64 | Linux x86-64 | macOS ARM64 |
+|---|---:|---:|---:|
+| Interpretador ARM11 A32 (instr/s) | 50,34 M | 57,97 M | 40,15 M |
+| Interpretador ARM11 Thumb (instr/s) | 73,59 M | 82,43 M | 66,91 M |
+| Despacho de listas PICA (listas/s; 4 writes/lista) | 15,21 M | 17,61 M | 16,37 M |
+| FlatMemory write32 (MiB/s efetivos) | 1.260,0 | 2.761,9 | 1.489,0 |
+| FlatMemory read32 (MiB/s efetivos) | 6.150,8 | 10.532,6 | 8.361,7 |
+| Backing GPU write32 (MiB/s efetivos) | 74,4 | 99,3 | 67,6 |
+| Backing GPU read32 (MiB/s efetivos) | 178,9 | 381,3 | 188,7 |
+| Rasterizador de referência (pixels/s) | 26,48 M | 42,70 M | 51,97 M |
+| Decodificação IPC (mensagens/s) | 16,82 M | 37,11 M | 24,81 M |
+
+**Escopo dos resultados adicionais:**
+- A32 e Thumb executam sequências curtas e determinísticas diretamente em `Arm11Core::step`; não incluem MMU, D-cache, scheduler ou serviços.
+- PICA mede listas de quatro escritas de registradores no decoder `Pica200::execute_command_list`; não executa vertex/fragment shaders nem o restante do pipeline gráfico.
+- O backing GPU e o FlatMemory usam estruturas e sincronização diferentes. Os MiB/s indicam somente quatro bytes por operação no workload de 64 KiB; não representam largura de banda DRAM.
+- Rasterização é o rasterizador de referência, não a etapa fragment do pipeline PICA200.
+- IPC mede `IpcMessage::decode` e descritores; não inclui lookup SRV, ACL, handles, scheduler ou execução HLE.
+
+**Leitura inicial para orientar a próxima investigação:**
+1. O backing GPU esparso permanece claramente mais caro por operação que o `FlatMemory` neste workload. A razão entre os valores medianos de escrita é aproximadamente 17×–28×; para leitura, aproximadamente 28×–44×. Isso justifica um perfil dedicado de acesso por página, padrão sequencial/aleatório, cruzamento de página e contenção. Não justifica trocar `BTreeMap`, locks ou o modelo de páginas antes de medir esses casos.
+2. O throughput A32/Thumb não é o gargalo global do emulador: o custo do guest real inclui MMU, D-cache, exceções, scheduler e dispositivos. O benchmark integrado continua necessário para separar custo por instrução de throughput por quadro.
+3. O runner macOS apresentou dispersão maior em algumas métricas (por exemplo, A32 variou aproximadamente de 35,2 M a 56,5 M instr/s; listas PICA, de 11,7 M a 19,0 M listas/s). Tratar a mediana como referência daquele runner, não como propriedade fixa da arquitetura ARM64.
+4. O Android ARM64 foi compilado com sucesso, mas a CI não executa o binário em aparelho físico. A linha de base Android continua pendente.
+
 ## 6. O que esta etapa ainda não mede
 
 1. CPU ARM11 com scheduler, MMU e D-cache ativos em uma sessão guest completa. Use o benchmark integrado e perfis externos para esse caminho.
