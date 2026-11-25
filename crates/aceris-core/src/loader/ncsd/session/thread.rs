@@ -236,14 +236,22 @@ impl Arm11ThreadScheduler {
             processor_id: resolved_processor_id,
             state: ThreadState::Ready,
         };
-        self.insert_thread(id, ThreadControlBlock { info, core, ready_order: Some(order) });
+        self.insert_thread(
+            id,
+            ThreadControlBlock {
+                info,
+                core,
+                ready_order: Some(order),
+            },
+        );
         self.reschedule_if_needed();
         Ok(id)
     }
 
     /// Returns a thread's current priority.
     pub fn priority(&self, id: ThreadId) -> std::result::Result<u8, ThreadSchedulerError> {
-        self.thread(id).map(|thread| thread.info.priority)
+        self.thread(id)
+            .map(|thread| thread.info.priority)
             .ok_or(ThreadSchedulerError::UnknownThread(id))
     }
 
@@ -254,7 +262,8 @@ impl Arm11ThreadScheduler {
         priority: i32,
     ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let priority = validate_priority(priority)?;
-        let thread = self.thread_mut(id)
+        let thread = self
+            .thread_mut(id)
             .ok_or(ThreadSchedulerError::UnknownThread(id))?;
         if thread.info.state == ThreadState::Exited {
             return Err(ThreadSchedulerError::InvalidState {
@@ -275,8 +284,7 @@ impl Arm11ThreadScheduler {
     pub fn yield_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
         let order = self.allocate_ready_order();
-        let current = self.thread_mut(id)
-            .expect("current thread must exist");
+        let current = self.thread_mut(id).expect("current thread must exist");
         current.info.state = ThreadState::Ready;
         current.ready_order = Some(order);
         self.current = None;
@@ -290,7 +298,8 @@ impl Arm11ThreadScheduler {
         &mut self,
         id: ThreadId,
     ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
-        let thread = self.thread_mut(id)
+        let thread = self
+            .thread_mut(id)
             .ok_or(ThreadSchedulerError::UnknownThread(id))?;
         if thread.info.state == ThreadState::Exited {
             return Err(ThreadSchedulerError::InvalidState {
@@ -330,14 +339,16 @@ impl Arm11ThreadScheduler {
         {
             return false;
         }
-        self.threads.get_mut(id.raw() as usize).and_then(Option::take).is_some()
+        self.threads
+            .get_mut(id.raw() as usize)
+            .and_then(Option::take)
+            .is_some()
     }
 
     /// Blocks the current thread until it is explicitly woken.
     pub fn wait_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
-        let current = self.thread_mut(id)
-            .expect("current thread must exist");
+        let current = self.thread_mut(id).expect("current thread must exist");
         current.info.state = ThreadState::Waiting;
         current.ready_order = None;
         self.current = None;
@@ -384,8 +395,7 @@ impl Arm11ThreadScheduler {
             value if value > 0 => {
                 let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
                 let deadline = self.virtual_time_ns.saturating_add(value as u64);
-                let current = self.thread_mut(id)
-                    .expect("current thread must exist");
+                let current = self.thread_mut(id).expect("current thread must exist");
                 current.info.state = ThreadState::Sleeping {
                     wake_deadline_ns: deadline,
                 };
@@ -420,8 +430,7 @@ impl Arm11ThreadScheduler {
 
         for id in expired {
             let order = self.allocate_ready_order();
-            let thread = self.thread_mut(id)
-                .expect("expired thread must exist");
+            let thread = self.thread_mut(id).expect("expired thread must exist");
             thread.info.state = ThreadState::Ready;
             thread.ready_order = Some(order);
         }
@@ -555,8 +564,7 @@ impl Arm11ThreadScheduler {
         if ready_priority < current_priority {
             let order = self.allocate_ready_order();
             let current = self
-                .threads
-                .get_mut(&current_id)
+                .thread_mut(current_id)
                 .expect("current thread must exist");
             current.info.state = ThreadState::Ready;
             current.ready_order = Some(order);
@@ -812,7 +820,10 @@ mod tests {
 
         let second = create(&mut scheduler, 0x0030_0000, 0x30);
         assert_eq!(second.raw(), 3);
-        assert_eq!(scheduler.thread_info(second).unwrap().entrypoint, 0x0030_0000);
+        assert_eq!(
+            scheduler.thread_info(second).unwrap().entrypoint,
+            0x0030_0000
+        );
         assert!(scheduler.core(second).is_some());
         assert_eq!(scheduler.thread_count(), 2);
     }
