@@ -2711,7 +2711,7 @@ impl Arm11CodeAddressSpace {
         let Some(end) = offset.checked_add(bytes.len()) else {
             return Ok(false);
         };
-        if end > ARM11_DATA_CACHE_LINE_SIZE || self.data_cache.contains_key(&key) {
+        if end > ARM11_DATA_CACHE_LINE_SIZE {
             return Ok(false);
         }
 
