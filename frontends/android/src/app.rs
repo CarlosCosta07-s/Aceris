@@ -689,7 +689,7 @@ mod tests {
 
         assert!(matches!(app.screen(), Screen::Library));
         assert_eq!(app.library.selected_index(), 1);
-        assert!(app.library.status.is_some());
+        assert!(app.library.status_message().is_some());
         assert!(app.system.is_none());
         fs::remove_dir_all(dir).ok();
     }
