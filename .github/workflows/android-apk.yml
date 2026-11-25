@@ -1,0 +1,120 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  android-apk:
+    name: Android APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Java for Android build tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform, build tools and NDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain and Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - name: Build native Rust application
+        run: cargo ndk -t arm64-v8a build --locked -p aceris-android --release
+
+      - name: Package and sign development APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p build/native/lib/arm64-v8a
+
+          "$BUILD_TOOLS/aapt2" compile \
+            --dir frontends/android/res \
+            -o build/aceris-resources.zip
+
+          "$BUILD_TOOLS/aapt2" link \
+            -I "$ANDROID_HOME/platforms/android-35/android.jar" \
+            --manifest frontends/android/AndroidManifest.xml \
+            --min-sdk-version 24 \
+            --target-sdk-version 34 \
+            --version-code 1 \
+            --version-name "0.0.1-dev" \
+            -o build/aceris-unsigned.apk \
+            build/aceris-resources.zip
+
+          install -m 0644 \
+            target/aarch64-linux-android/release/libaceris_android.so \
+            build/native/lib/arm64-v8a/libaceris_android.so
+
+          (
+            cd build/native
+            zip -q -0 ../aceris-unsigned.apk lib/arm64-v8a/libaceris_android.so
+          )
+
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            build/aceris-unsigned.apk build/aceris-aligned.apk
+
+          keytool -genkeypair -noprompt \
+            -keystore build/aceris-ci-debug.keystore \
+            -storepass android \
+            -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks build/aceris-ci-debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out build/aceris-debug.apk \
+            build/aceris-aligned.apk
+
+          "$BUILD_TOOLS/apksigner" verify --verbose build/aceris-debug.apk
+          "$BUILD_TOOLS/aapt" dump badging build/aceris-debug.apk | \
+            grep -F "package: name='org.aceris.emulator'"
+          unzip -l build/aceris-debug.apk | grep -F "lib/arm64-v8a/libaceris_android.so"
+          sha256sum build/aceris-debug.apk
+
+      - name: Upload installable development APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: aceris-android-arm64-debug
+          path: build/aceris-debug.apk
+          if-no-files-found: error
+          retention-days: 14
