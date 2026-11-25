@@ -441,6 +441,18 @@ fn browse_library(
                     window::CANVAS_WIDTH as u32,
                     window::CANVAS_HEIGHT as u32,
                 ),
+                window::WindowEvent::Key(window::Key::Left) => library
+                    .move_selection_horizontal_responsive(
+                        -1,
+                        window::CANVAS_WIDTH as u32,
+                        window::CANVAS_HEIGHT as u32,
+                    ),
+                window::WindowEvent::Key(window::Key::Right) => library
+                    .move_selection_horizontal_responsive(
+                        1,
+                        window::CANVAS_WIDTH as u32,
+                        window::CANVAS_HEIGHT as u32,
+                    ),
                 window::WindowEvent::Key(window::Key::PageUp) => library.move_selection_responsive(
                     -(VISIBLE_ROWS as i32),
                     window::CANVAS_WIDTH as u32,
@@ -479,8 +491,9 @@ fn browse_library(
                 | window::WindowEvent::FocusLost => {}
             }
             if activate {
-                if let Some(entry) = library.selected_entry() {
-                    return Ok(Some(entry.path.clone()));
+                if let Some(path) = library.selected_entry().map(|entry| entry.path.clone()) {
+                    library.mark_launched(&path);
+                    return Ok(Some(path));
                 }
             }
         }
