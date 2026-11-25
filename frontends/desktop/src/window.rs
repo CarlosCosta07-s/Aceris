@@ -57,9 +57,9 @@ mod cocoa;
 mod win32;
 
 /// Width of the home/library canvas in pixels.
-pub const CANVAS_WIDTH: usize = 400;
+pub const CANVAS_WIDTH: usize = 960;
 /// Height of the home/library canvas in pixels.
-pub const CANVAS_HEIGHT: usize = 480;
+pub const CANVAS_HEIGHT: usize = 600;
 const TOP_WIDTH: usize = 400;
 const BOTTOM_WIDTH: usize = 320;
 const SCREEN_GAP: usize = 16;
