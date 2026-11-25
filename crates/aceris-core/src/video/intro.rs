@@ -315,7 +315,11 @@ pub fn rgba_to_scaled_bgrx_into(
     output: &mut Vec<u8>,
 ) -> bool {
     let scale = scale.max(1);
-    if width == 0 || rgba.len() % (width * 4) != 0 {
+    let Some(row_bytes) = width.checked_mul(4).filter(|value| *value > 0) else {
+        output.clear();
+        return false;
+    };
+    if rgba.len() % row_bytes != 0 {
         output.clear();
         return false;
     }
@@ -392,7 +396,7 @@ mod tests {
     #[test]
     fn fruit_is_off_screen_while_dropping_and_red_once_landed() {
         let early = render_frame(4, W, H);
-        let landed = render_frame(110, W, H);
+        let landed = render_frame(62, W, H);
         let red = |p: [u8; 3]| p[0] > 150 && p[1] < 90;
         assert!(!(0..H).any(|y| red(at(&early, W / 2, y))));
         assert!((0..H).any(|y| red(at(&landed, W / 2, y))));
@@ -400,8 +404,8 @@ mod tests {
 
     #[test]
     fn wordmark_appears_after_the_fruit_lands() {
-        let before = render_frame(80, W, H);
-        let after = render_frame(120, W, H);
+        let before = render_frame(45, W, H);
+        let after = render_frame(67, W, H);
         let bright = |frame: &[u8]| {
             frame
                 .chunks_exact(4)
