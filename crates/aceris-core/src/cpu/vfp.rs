@@ -1174,8 +1174,7 @@ impl Arm11Core {
             bank_base(register) + (register % bank_size + iteration * stride) % bank_size
         };
 
-        for iteration in 0..length {
-            let lane = &mut lanes.entries[iteration];
+        for (iteration, lane) in lanes.entries.iter_mut().take(length).enumerate() {
             lane.destination = bank_offset(destination, iteration);
             let source_registers = sources.iter().copied().enumerate();
             for (source_index, (source, scalar_if_bank_zero)) in source_registers {
@@ -1217,11 +1216,10 @@ impl Arm11Core {
         // Snapshot every source and accumulator before committing any lane.
         // Fixed-size stack storage avoids heap allocation for each VFP vector op.
         let mut inputs = [(0usize, 0usize, 0usize, 0u64, 0u64, 0u64); VFP_MAX_VECTOR_LANES];
-        for iteration in 0..lane_count {
-            let lane = lanes.entries[iteration];
+        for (input, lane) in inputs.iter_mut().zip(lanes.entries.iter()).take(lane_count) {
             let source_n = lane.sources[0];
             let source_m = lane.sources[1];
-            inputs[iteration] = (
+            *input = (
                 lane.destination,
                 source_n,
                 source_m,
@@ -1234,8 +1232,9 @@ impl Arm11Core {
         let mut results = [(0usize, 0u64); VFP_MAX_VECTOR_LANES];
         let mut results_len = 0usize;
         let mut accumulated_exceptions = 0;
-        for iteration in 0..lane_count {
-            let (destination, source_n, source_m, fd, fn_, fm) = inputs[iteration];
+        for (iteration, &(destination, source_n, source_m, fd, fn_, fm)) in
+            inputs.iter().take(lane_count).enumerate()
+        {
             if vector_exception_mode {
                 self.vfp.clear_exception_status();
             }
@@ -1332,17 +1331,17 @@ impl Arm11Core {
                 // Capture source values before committing destinations, preserving
                 // overlapping vector-register semantics without allocating Vecs.
                 let mut inputs = [(0usize, 0usize, 0u64); VFP_MAX_VECTOR_LANES];
-                for iteration in 0..lane_count {
-                    let lane = lanes.entries[iteration];
+                for (input, lane) in inputs.iter_mut().zip(lanes.entries.iter()).take(lane_count) {
                     let source = lane.sources[0];
-                    inputs[iteration] = (lane.destination, source, self.vfp.read(prec, source));
+                    *input = (lane.destination, source, self.vfp.read(prec, source));
                 }
 
                 let mut results = [(0usize, 0u64); VFP_MAX_VECTOR_LANES];
                 let mut results_len = 0usize;
                 let mut accumulated_exceptions = 0;
-                for iteration in 0..lane_count {
-                    let (destination, source, value) = inputs[iteration];
+                for (iteration, &(destination, source, value)) in
+                    inputs.iter().take(lane_count).enumerate()
+                {
                     if vector_exception_mode {
                         self.vfp.clear_exception_status();
                     }
