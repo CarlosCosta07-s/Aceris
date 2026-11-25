@@ -72,6 +72,8 @@ jobs:
       - run: cargo build --locked --workspace
       - name: Test the native graphics backend without a physical GPU
         run: cargo test --locked -p aceris-graphics
+      - name: Lint the graphics backend independently
+        run: cargo clippy --locked -p aceris-graphics --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo test -p aceris-core --example benchmark
