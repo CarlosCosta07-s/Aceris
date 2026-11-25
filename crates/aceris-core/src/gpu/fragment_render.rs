@@ -117,9 +117,16 @@ impl PicaFragmentRenderSession {
         let guest_viewport = pica.viewport_state();
         let viewport_width = guest_viewport.half_width * 2.0;
         let viewport_height = guest_viewport.half_height * 2.0;
-        // PICA uses a bottom-left origin; the software framebuffer is top-left.
-        let viewport_top =
-            config.height as f32 - (guest_viewport.origin_y as f32 + viewport_height);
+        // The guest framebuffer bit mirrors the viewport vertically. The
+        // software target is top-left, so convert the guest rectangle and
+        // apply the optional second mirror before creating the viewport.
+        let flip_viewport = config.vertical_flip_enabled;
+        let viewport_top = pica_viewport_top(
+            config.height as f32,
+            guest_viewport.origin_y,
+            viewport_height,
+            flip_viewport,
+        );
         let viewport = Viewport::new(
             guest_viewport.origin_x as f32,
             viewport_top,
@@ -199,6 +206,7 @@ impl PicaFragmentRenderSession {
             depth_map: Some(depth_map),
             minifying: [false; 3],
             cull_mode: pica.cull_mode(),
+            flip_viewport,
             scissor: pica.scissor_state(),
         };
 
@@ -358,6 +366,33 @@ impl PicaFragmentRenderSession {
                 .map_err(PicaFragmentRenderSessionError::Rasterizer)?;
         }
         Ok(rasterizer)
+    }
+}
+
+fn pica_viewport_top(height: f32, origin_y: i32, viewport_height: f32, flip: bool) -> f32 {
+    if flip {
+        origin_y as f32
+    } else {
+        height - (origin_y as f32 + viewport_height)
+    }
+}
+
+#[cfg(test)]
+mod orientation_tests {
+    use super::pica_viewport_top;
+
+    #[test]
+    fn framebuffer_flip_mirrors_the_guest_viewport_rectangle() {
+        // H=240, guest Y=30 and height=100. The ordinary bottom-left to
+        // top-left conversion places it at 110; bit-24 flip mirrors it to 30.
+        assert_eq!(pica_viewport_top(240.0, 30, 100.0, false), 110.0);
+        assert_eq!(pica_viewport_top(240.0, 30, 100.0, true), 30.0);
+    }
+
+    #[test]
+    fn framebuffer_flip_preserves_negative_guest_viewport_origins() {
+        assert_eq!(pica_viewport_top(240.0, -12, 100.0, false), 152.0);
+        assert_eq!(pica_viewport_top(240.0, -12, 100.0, true), -12.0);
     }
 }
 
