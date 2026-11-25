@@ -2444,7 +2444,8 @@ mod tests {
 
     #[test]
     fn landscape_settings_refresh_button_matches_its_visible_bounds() {
-        let dir = std::env::temp_dir().join(format!("aceris-landscape-settings-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-landscape-settings-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("sample.3ds"), b"fixture").unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
