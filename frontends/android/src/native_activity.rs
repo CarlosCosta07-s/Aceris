@@ -13,9 +13,11 @@
 
 use crate::aaudio::AAudioOutput;
 use crate::app::{App, Pointer};
+use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
+use raw_window_handle::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::path::PathBuf;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -301,6 +303,68 @@ unsafe extern "C" fn on_queue_destroyed(_activity: *mut NativeActivity, queue: *
     });
 }
 
+/// Owns the extra native-window reference required by the GPU surface.
+struct AndroidGpuPresenter {
+    presenter: Option<GraphicsPresenter>,
+    window: NonNull<c_void>,
+}
+
+impl Drop for AndroidGpuPresenter {
+    fn drop(&mut self) {
+        // Destroy the WGPU surface before releasing the ANativeWindow reference.
+        self.presenter.take();
+        // SAFETY: create_android_gpu_presenter acquired this reference once.
+        unsafe { ANativeWindow_release(self.window.as_ptr()) };
+    }
+}
+
+/// Attempts a native Vulkan or OpenGL ES presenter for the current ANativeWindow.
+fn create_android_gpu_presenter(
+    window: *mut c_void,
+    width: u32,
+    height: u32,
+) -> Option<AndroidGpuPresenter> {
+    let backend = match GraphicsBackend::from_env() {
+        Ok(backend) => backend,
+        Err(error) => {
+            eprintln!("GPU presentation configuration ignored: {error}");
+            return None;
+        }
+    };
+    if backend == GraphicsBackend::Software {
+        return None;
+    }
+    let window = NonNull::new(window)?;
+    // SAFETY: this is called while the shared native-window lock is held.
+    unsafe { ANativeWindow_acquire(window.as_ptr()) };
+
+    let display = RawDisplayHandle::Android(AndroidDisplayHandle::new());
+    let native_window = RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(window));
+    // SAFETY: this object owns an extra ANativeWindow reference, released only
+    // after its WGPU surface has been destroyed by Drop.
+    match unsafe {
+        GraphicsPresenter::new(Some(display), native_window, width, height, backend)
+    } {
+        Ok(presenter) => {
+            let info = presenter.adapter_info();
+            eprintln!(
+                "Aceris Android GPU presentation: {} ({}, {})",
+                info.name, info.backend, info.device_type
+            );
+            Some(AndroidGpuPresenter {
+                presenter: Some(presenter),
+                window,
+            })
+        }
+        Err(error) => {
+            eprintln!("Android GPU presentation unavailable; using CPU fallback: {error}");
+            // SAFETY: balances the acquire above after surface creation failed.
+            unsafe { ANativeWindow_release(window.as_ptr()) };
+            None
+        }
+    }
+}
+
 /// The app thread: owns the emulator, input-queue attachment and rendering.
 fn run_app_thread(host: &Host, games_dir: PathBuf) {
     // SAFETY: preparing a looper for this thread; it lives as long as the thread.
@@ -312,6 +376,10 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let mut audio = AAudioOutput::open();
     let mut attached_queue = Raw::default();
     let mut size = (0u32, 0u32);
+    let mut gpu_presenter: Option<AndroidGpuPresenter> = None;
+    let mut gpu_window = Raw::default();
+    let mut attempted_gpu_window = Raw::default();
+    let mut cpu_geometry_size = (0u32, 0u32);
     let mut next_frame = Instant::now();
 
     loop {
@@ -325,6 +393,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
             )
         };
         if destroyed {
+            gpu_presenter.take();
             break;
         }
 
@@ -363,7 +432,16 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 // Fell behind (paused or slow frame): do not run catch-up frames.
                 next_frame = Instant::now() + FRAME_INTERVAL;
             }
-            render(host, &mut app, &mut frame, &mut size);
+            render(
+                host,
+                &mut app,
+                &mut frame,
+                &mut size,
+                &mut gpu_presenter,
+                &mut gpu_window,
+                &mut attempted_gpu_window,
+                &mut cpu_geometry_size,
+            );
             let samples = app.take_audio();
             if let Some(audio) = audio.as_mut() {
                 audio.feed(&samples);
@@ -478,27 +556,81 @@ unsafe fn handle_motion(event: *mut c_void, app: &mut App) {
     }
 }
 
-/// Steps the app and copies its RGBA frame into the window.
-fn render(host: &Host, app: &mut App, frame: &mut Vec<u8>, size: &mut (u32, u32)) {
+/// Steps the app and presents its RGBA frame through the GPU when available.
+fn render(
+    host: &Host,
+    app: &mut App,
+    frame: &mut Vec<u8>,
+    size: &mut (u32, u32),
+    gpu_presenter: &mut Option<AndroidGpuPresenter>,
+    gpu_window: &mut Raw,
+    attempted_gpu_window: &mut Raw,
+    cpu_geometry_size: &mut (u32, u32),
+) {
     // Holding the lock keeps the window alive: `on_window_destroyed` takes it
     // before releasing the reference.
     let shared = lock(&host.shared);
     let window = shared.window;
     if window.is_null() {
+        gpu_presenter.take();
+        *gpu_window = Raw::default();
+        *attempted_gpu_window = Raw::default();
+        *size = (0, 0);
+        *cpu_geometry_size = (0, 0);
         return;
     }
-    // SAFETY: `window` is valid while the shared lock is held.
+    if *gpu_window != window {
+        // Rotation, pause/resume, or surface recreation can replace ANativeWindow.
+        gpu_presenter.take();
+        *gpu_window = window;
+        *attempted_gpu_window = Raw::default();
+        *size = (0, 0);
+        *cpu_geometry_size = (0, 0);
+    }
+
+    // SAFETY: `window` is valid while the shared lock is held. The GPU
+    // presenter acquires an additional reference before this lock is released.
     unsafe {
         let width = ANativeWindow_getWidth(window.get()).max(0) as u32;
         let height = ANativeWindow_getHeight(window.get()).max(0) as u32;
+        if width == 0 || height == 0 {
+            return;
+        }
         if (width, height) != *size {
-            ANativeWindow_setBuffersGeometry(window.get(), 0, 0, WINDOW_FORMAT_RGBA_8888);
             app.resize(width, height);
             *size = (width, height);
         }
         app.step_into(frame);
         if frame.is_empty() {
             return;
+        }
+
+        if gpu_presenter.is_none() && *attempted_gpu_window != window {
+            *attempted_gpu_window = window;
+            *gpu_presenter = create_android_gpu_presenter(window.get(), width, height);
+        }
+
+        let gpu_result = gpu_presenter.as_mut().map(|gpu| {
+            gpu.presenter
+                .as_mut()
+                .expect("Android GPU presenter is present while its owner is alive")
+                .present_rgba(frame, width, height)
+        });
+        if let Some(Ok(())) = gpu_result {
+            return;
+        }
+        if let Some(Err(error)) = gpu_result {
+            eprintln!("Android GPU surface lost; switching to CPU presentation: {error}");
+            gpu_presenter.take();
+        }
+
+        // The original RGBA ANativeWindow path remains the fallback.
+        if *cpu_geometry_size != (width, height) {
+            if ANativeWindow_setBuffersGeometry(window.get(), 0, 0, WINDOW_FORMAT_RGBA_8888) != 0 {
+                eprintln!("ANativeWindow could not select RGBA_8888 fallback buffers");
+                return;
+            }
+            *cpu_geometry_size = (width, height);
         }
         let mut buffer = NativeWindowBuffer {
             width: 0,
@@ -511,7 +643,7 @@ fn render(host: &Host, app: &mut App, frame: &mut Vec<u8>, size: &mut (u32, u32)
         if ANativeWindow_lock(window.get(), &mut buffer, ptr::null_mut()) != 0 {
             return;
         }
-        copy_frame(&frame, width, height, &buffer);
+        copy_frame(frame, width, height, &buffer);
         ANativeWindow_unlockAndPost(window.get());
     }
 }

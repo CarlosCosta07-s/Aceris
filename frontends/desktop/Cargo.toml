@@ -15,6 +15,8 @@ path = "src/main.rs"
 [dependencies]
 aceris-common.workspace = true
 aceris-core.workspace = true
+aceris-graphics.workspace = true
+raw-window-handle.workspace = true
 
 [lints]
 workspace = true

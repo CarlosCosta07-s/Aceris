@@ -8,6 +8,7 @@
 use super::{Key, WindowError, WindowEvent, game_key_from_keysym};
 use std::ffi::{CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use std::ptr::{self, NonNull};
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle, XlibDisplayHandle, XlibWindowHandle};
 
 unsafe extern "C" {
     fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
@@ -182,6 +183,7 @@ pub struct Window {
     delete_atom: c_ulong,
     visual: *mut c_void,
     depth: c_int,
+    screen: c_int,
 }
 
 fn backend_error(message: &str) -> WindowError {
@@ -189,6 +191,18 @@ fn backend_error(message: &str) -> WindowError {
 }
 
 impl Window {
+    /// Returns the Xlib display/window handles while this Window is alive.
+    pub fn raw_handles(
+        &self,
+    ) -> Result<(Option<RawDisplayHandle>, RawWindowHandle), WindowError> {
+        let display = XlibDisplayHandle::new(Some(self.display), self.screen);
+        let window = XlibWindowHandle::new(self.window);
+        Ok((
+            Some(RawDisplayHandle::Xlib(display)),
+            RawWindowHandle::Xlib(window),
+        ))
+    }
+
     /// Opens and maps a window whose client area is `width` x `height` pixels.
     pub fn open(title: &str, width: usize, height: usize) -> Result<Self, WindowError> {
         let (w, h) = (
@@ -301,6 +315,7 @@ impl Window {
                 delete_atom,
                 visual,
                 depth,
+                screen,
             })
         }
     }

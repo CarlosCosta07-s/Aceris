@@ -9,6 +9,7 @@ mod background;
 mod window;
 
 use aceris_common::{NAME, VERSION};
+use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     video::{
@@ -190,8 +191,87 @@ fn dump_intro(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Attempts to create a hardware presenter; the CPU path remains the fallback.
+fn create_gpu_presenter(
+    window: &window::Window,
+    width: usize,
+    height: usize,
+) -> Option<GraphicsPresenter> {
+    let backend = match GraphicsBackend::from_env() {
+        Ok(backend) => backend,
+        Err(error) => {
+            eprintln!("GPU presentation configuration ignored: {error}");
+            return None;
+        }
+    };
+    if backend == GraphicsBackend::Software {
+        return None;
+    }
+    let (display, raw_window) = match window.raw_handles() {
+        Ok(handles) => handles,
+        Err(error) => {
+            eprintln!("GPU presentation unavailable; using CPU window path: {error}");
+            return None;
+        }
+    };
+    let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else {
+        eprintln!("GPU presentation unavailable: requested surface size is too large");
+        return None;
+    };
+
+    // SAFETY: Window is declared before the presenter and lives for the whole
+    // run_windowed call. Rust drops the presenter before the native Window.
+    match unsafe { GraphicsPresenter::new(display, raw_window, width, height, backend) } {
+        Ok(presenter) => {
+            let info = presenter.adapter_info();
+            println!(
+                "GPU presentation enabled: {} ({}, {})",
+                info.name, info.backend, info.device_type
+            );
+            Some(presenter)
+        }
+        Err(error) => {
+            eprintln!("GPU presentation unavailable; using CPU fallback: {error}");
+            None
+        }
+    }
+}
+
+/// Presents through GPU when available; permanently falls back to the native
+/// CPU window path if the surface or device is lost.
+fn present_desktop_frame(
+    window: &mut window::Window,
+    presenter: &mut Option<GraphicsPresenter>,
+    bgrx: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<(), String> {
+    let gpu_result = presenter.as_mut().map(|gpu| {
+        gpu.present_bgrx(
+            bgrx,
+            u32::try_from(width).map_err(|_| "GPU frame width is too large".to_string())?,
+            u32::try_from(height).map_err(|_| "GPU frame height is too large".to_string())?,
+        )
+    });
+    match gpu_result {
+        Some(Ok(())) => return Ok(()),
+        Some(Err(error)) => {
+            eprintln!("GPU presenter lost; switching to CPU presentation: {error}");
+            presenter.take();
+        }
+        None => {}
+    }
+    window
+        .present(bgrx)
+        .map_err(|error| format!("could not draw the frame: {error}"))
+}
+
 /// Plays the start-up animation; returns `Ok(false)` if the window was closed.
-fn play_intro(window: &mut window::Window, scale: usize) -> Result<bool, String> {
+fn play_intro(
+    window: &mut window::Window,
+    presenter: &mut Option<GraphicsPresenter>,
+    scale: usize,
+) -> Result<bool, String> {
     let frame_time = Duration::from_micros(1_000_000 / u64::from(intro::FPS));
     for frame in 0..intro::FRAME_COUNT {
         let started = Instant::now();
@@ -202,9 +282,13 @@ fn play_intro(window: &mut window::Window, scale: usize) -> Result<bool, String>
         }
         let rgba = intro::render_frame(frame, window::CANVAS_WIDTH, window::CANVAS_HEIGHT);
         let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
-        window
-            .present(&bgrx)
-            .map_err(|err| format!("could not draw the frame: {err}"))?;
+        present_desktop_frame(
+            window,
+            presenter,
+            &bgrx,
+            window::CANVAS_WIDTH * scale,
+            window::CANVAS_HEIGHT * scale,
+        )?;
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);
         }
@@ -249,7 +333,12 @@ fn run_windowed(
         window::CANVAS_HEIGHT * scale,
     )
     .map_err(|err| format!("could not open a window: {err}"))?;
-    if !skip_intro && !play_intro(&mut window, scale)? {
+    let mut presenter = create_gpu_presenter(
+        &window,
+        window::CANVAS_WIDTH * scale,
+        window::CANVAS_HEIGHT * scale,
+    );
+    if !skip_intro && !play_intro(&mut window, &mut presenter, scale)? {
         return Ok(());
     }
     let mut library = Library::new(scan_games(games_dir), games_dir.display().to_string());
@@ -260,7 +349,13 @@ fn run_windowed(
     loop {
         let path = match next.take() {
             Some(path) => path,
-            None => match browse_library(&mut window, &mut library, scale, background.as_ref())? {
+            None => match browse_library(
+                &mut window,
+                &mut presenter,
+                &mut library,
+                scale,
+                background.as_ref(),
+            )? {
                 Some(path) => path,
                 None => return Ok(()),
             },
@@ -285,7 +380,7 @@ fn run_windowed(
             library.set_status(message);
             continue;
         }
-        let outcome = emulate(system, &mut window, scale);
+        let outcome = emulate(system, &mut window, &mut presenter, scale);
         report_unhandled(system);
         match outcome {
             Ok(Flow::Quit) => return Ok(()),
@@ -308,6 +403,7 @@ fn run_windowed(
 /// Shows the library until a game is chosen; `None` means the window closed.
 fn browse_library(
     window: &mut window::Window,
+    presenter: &mut Option<GraphicsPresenter>,
     library: &mut Library,
     scale: usize,
     background: Option<&background::Sequence>,
@@ -350,9 +446,13 @@ fn browse_library(
         let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
         let rgba = library.render_animated(animation_frame, background_frame);
         let bgrx = intro::rgba_to_scaled_bgrx(&rgba, window::CANVAS_WIDTH, scale);
-        window
-            .present(&bgrx)
-            .map_err(|err| format!("could not draw the frame: {err}"))?;
+        present_desktop_frame(
+            window,
+            presenter,
+            &bgrx,
+            window::CANVAS_WIDTH * scale,
+            window::CANVAS_HEIGHT * scale,
+        )?;
         animation_frame = animation_frame.wrapping_add(1);
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);
@@ -380,7 +480,12 @@ fn report_unhandled(system: &System) {
 }
 
 /// Runs frames at roughly 60 Hz until the window closes or Esc is pressed.
-fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Result<Flow, String> {
+fn emulate(
+    system: &mut System,
+    window: &mut window::Window,
+    presenter: &mut Option<GraphicsPresenter>,
+    scale: usize,
+) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut keyboard = window::KeyboardInput::default();
     let mut audio = audio::AudioOutput::open();
@@ -408,9 +513,13 @@ fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Re
         if !window::compose_bgrx_into(system.display(), scale, &mut frame) {
             return Err("could not allocate the desktop presentation buffer".to_string());
         }
-        window
-            .present(&frame)
-            .map_err(|err| format!("could not draw the frame: {err}"))?;
+        present_desktop_frame(
+            window,
+            presenter,
+            &frame,
+            window::GAME_CANVAS_WIDTH * scale,
+            window::GAME_CANVAS_HEIGHT * scale,
+        )?;
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);
         }

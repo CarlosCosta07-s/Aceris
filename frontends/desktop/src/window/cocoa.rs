@@ -15,7 +15,8 @@ use super::native_input::{
 };
 use super::{WindowError, WindowEvent};
 use std::ffi::{CStr, c_char, c_void};
-use std::ptr;
+use std::ptr::{self, NonNull};
+use raw_window_handle::{AppKitDisplayHandle, AppKitWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 type Id = *mut c_void;
 type Sel = *mut c_void;
@@ -137,6 +138,16 @@ pub struct Window {
 }
 
 impl Window {
+    /// Returns the AppKit content-view handle while this Window is alive.
+    pub fn raw_handles(&self) -> Result<(Option<RawDisplayHandle>, RawWindowHandle), WindowError> {
+        let view = NonNull::new(self.content_view)
+            .ok_or_else(|| WindowError::Backend("AppKit content view is null".to_owned()))?;
+        Ok((
+            Some(RawDisplayHandle::AppKit(AppKitDisplayHandle::new())),
+            RawWindowHandle::AppKit(AppKitWindowHandle::new(view)),
+        ))
+    }
+
     pub fn open(title: &str, width: usize, height: usize) -> Result<Self, WindowError> {
         // SAFETY: AppKit messages are sent with the documented selectors and
         // argument types; every receiver is checked for nil before use.

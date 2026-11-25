@@ -25,6 +25,8 @@ authors = ["Aceris contributors"]
 [workspace.dependencies]
 aceris-common = { path = "crates/aceris-common" }
 aceris-core = { path = "crates/aceris-core" }
+aceris-graphics = { path = "crates/aceris-graphics" }
+raw-window-handle = "0.6.2"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

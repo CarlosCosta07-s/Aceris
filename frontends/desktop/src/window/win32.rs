@@ -16,6 +16,8 @@ use super::{WindowError, WindowEvent};
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::ptr;
+use std::num::NonZeroIsize;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32DisplayHandle, Win32WindowHandle};
 
 type Hwnd = *mut c_void;
 type Hinstance = *mut c_void;
@@ -198,6 +200,16 @@ pub struct Window {
 }
 
 impl Window {
+    /// Returns HWND and the Win32 display handle while this Window is alive.
+    pub fn raw_handles(&self) -> Result<(Option<RawDisplayHandle>, RawWindowHandle), WindowError> {
+        let hwnd = NonZeroIsize::new(self.hwnd as isize)
+            .ok_or_else(|| WindowError::Backend("Win32 window handle is null".to_owned()))?;
+        Ok((
+            Some(RawDisplayHandle::Win32(Win32DisplayHandle::new())),
+            RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)),
+        ))
+    }
+
     pub fn open(title: &str, width: usize, height: usize) -> Result<Self, WindowError> {
         let class_name = wide("AcerisWindow");
         let title = wide(title);
