@@ -5,7 +5,6 @@
 //! CreateThread yet: the process address space still needs per-thread stack
 //! reservation and validation before guest code may run on a new context.
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::cpu::Arm11Core;
@@ -138,7 +137,8 @@ struct ThreadControlBlock {
 /// caller invokes [\`advance_time\`](Self::advance_time).
 #[derive(Debug)]
 pub struct Arm11ThreadScheduler {
-    threads: BTreeMap<ThreadId, ThreadControlBlock>,
+    /// Monotonic thread IDs map directly to dense slots for fast hot-path lookup.
+    threads: Vec<Option<ThreadControlBlock>>,
     current: Option<ThreadId>,
     next_thread_id: u32,
     next_ready_order: u64,
@@ -166,8 +166,7 @@ impl Arm11ThreadScheduler {
             core: main_core,
             ready_order: None,
         };
-        let mut threads = BTreeMap::new();
-        threads.insert(MAIN_THREAD_ID, main_thread);
+        let threads = vec![None, Some(main_thread)];
 
         Ok(Self {
             threads,
@@ -237,23 +236,14 @@ impl Arm11ThreadScheduler {
             processor_id: resolved_processor_id,
             state: ThreadState::Ready,
         };
-        self.threads.insert(
-            id,
-            ThreadControlBlock {
-                info,
-                core,
-                ready_order: Some(order),
-            },
-        );
+        self.insert_thread(id, ThreadControlBlock { info, core, ready_order: Some(order) });
         self.reschedule_if_needed();
         Ok(id)
     }
 
     /// Returns a thread's current priority.
     pub fn priority(&self, id: ThreadId) -> std::result::Result<u8, ThreadSchedulerError> {
-        self.threads
-            .get(&id)
-            .map(|thread| thread.info.priority)
+        self.thread(id).map(|thread| thread.info.priority)
             .ok_or(ThreadSchedulerError::UnknownThread(id))
     }
 
@@ -264,9 +254,7 @@ impl Arm11ThreadScheduler {
         priority: i32,
     ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let priority = validate_priority(priority)?;
-        let thread = self
-            .threads
-            .get_mut(&id)
+        let thread = self.thread_mut(id)
             .ok_or(ThreadSchedulerError::UnknownThread(id))?;
         if thread.info.state == ThreadState::Exited {
             return Err(ThreadSchedulerError::InvalidState {
@@ -287,9 +275,7 @@ impl Arm11ThreadScheduler {
     pub fn yield_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
         let order = self.allocate_ready_order();
-        let current = self
-            .threads
-            .get_mut(&id)
+        let current = self.thread_mut(id)
             .expect("current thread must exist");
         current.info.state = ThreadState::Ready;
         current.ready_order = Some(order);
@@ -304,9 +290,7 @@ impl Arm11ThreadScheduler {
         &mut self,
         id: ThreadId,
     ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
-        let thread = self
-            .threads
-            .get_mut(&id)
+        let thread = self.thread_mut(id)
             .ok_or(ThreadSchedulerError::UnknownThread(id))?;
         if thread.info.state == ThreadState::Exited {
             return Err(ThreadSchedulerError::InvalidState {
@@ -341,21 +325,18 @@ impl Arm11ThreadScheduler {
             return false;
         }
         if self
-            .threads
-            .get(&id)
+            .thread(id)
             .is_none_or(|thread| thread.info.state != ThreadState::Exited)
         {
             return false;
         }
-        self.threads.remove(&id).is_some()
+        self.threads.get_mut(id.raw() as usize).and_then(Option::take).is_some()
     }
 
     /// Blocks the current thread until it is explicitly woken.
     pub fn wait_current(&mut self) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
-        let current = self
-            .threads
-            .get_mut(&id)
+        let current = self.thread_mut(id)
             .expect("current thread must exist");
         current.info.state = ThreadState::Waiting;
         current.ready_order = None;
@@ -370,8 +351,7 @@ impl Arm11ThreadScheduler {
         id: ThreadId,
     ) -> std::result::Result<Option<ThreadId>, ThreadSchedulerError> {
         let state = self
-            .threads
-            .get(&id)
+            .thread(id)
             .ok_or(ThreadSchedulerError::UnknownThread(id))?
             .info
             .state;
@@ -384,7 +364,7 @@ impl Arm11ThreadScheduler {
         }
 
         let order = self.allocate_ready_order();
-        let thread = self.threads.get_mut(&id).expect("thread was checked above");
+        let thread = self.thread_mut(id).expect("thread was checked above");
         thread.info.state = ThreadState::Ready;
         thread.ready_order = Some(order);
         self.reschedule_if_needed();
@@ -404,9 +384,7 @@ impl Arm11ThreadScheduler {
             value if value > 0 => {
                 let id = self.current.ok_or(ThreadSchedulerError::NoCurrentThread)?;
                 let deadline = self.virtual_time_ns.saturating_add(value as u64);
-                let current = self
-                    .threads
-                    .get_mut(&id)
+                let current = self.thread_mut(id)
                     .expect("current thread must exist");
                 current.info.state = ThreadState::Sleeping {
                     wake_deadline_ns: deadline,
@@ -426,21 +404,23 @@ impl Arm11ThreadScheduler {
         let expired = self
             .threads
             .iter()
-            .filter_map(|(id, thread)| match thread.info.state {
-                ThreadState::Sleeping { wake_deadline_ns }
-                    if wake_deadline_ns <= self.virtual_time_ns =>
-                {
-                    Some(*id)
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                let thread = slot.as_ref()?;
+                match thread.info.state {
+                    ThreadState::Sleeping { wake_deadline_ns }
+                        if wake_deadline_ns <= self.virtual_time_ns =>
+                    {
+                        Some(ThreadId(index as u32))
+                    }
+                    _ => None,
                 }
-                _ => None,
             })
             .collect::<Vec<_>>();
 
         for id in expired {
             let order = self.allocate_ready_order();
-            let thread = self
-                .threads
-                .get_mut(&id)
+            let thread = self.thread_mut(id)
                 .expect("expired thread must exist");
             thread.info.state = ThreadState::Ready;
             thread.ready_order = Some(order);
@@ -452,7 +432,7 @@ impl Arm11ThreadScheduler {
 
     /// Returns immutable information about one thread.
     pub fn thread_info(&self, id: ThreadId) -> Option<ThreadInfo> {
-        self.threads.get(&id).map(|thread| thread.info)
+        self.thread(id).map(|thread| thread.info)
     }
 
     /// Returns the currently selected thread identifier.
@@ -472,17 +452,17 @@ impl Arm11ThreadScheduler {
     /// handle table and handle closing semantics are not implemented yet.
     pub fn thread_id_for_handle(&self, handle: u32) -> Option<ThreadId> {
         let id = ThreadId(handle);
-        self.threads.contains_key(&id).then_some(id)
+        self.thread(id).is_some().then_some(id)
     }
 
     /// Returns a thread's mutable saved CPU context.
     pub fn core_mut(&mut self, id: ThreadId) -> Option<&mut Arm11Core> {
-        self.threads.get_mut(&id).map(|thread| &mut thread.core)
+        self.thread_mut(id).map(|thread| &mut thread.core)
     }
 
     /// Returns a thread's saved CPU context.
     pub fn core(&self, id: ThreadId) -> Option<&Arm11Core> {
-        self.threads.get(&id).map(|thread| &thread.core)
+        self.thread(id).map(|thread| &thread.core)
     }
 
     /// Returns the selected thread's CPU context, if a thread is running.
@@ -493,12 +473,31 @@ impl Arm11ThreadScheduler {
     /// Returns the selected thread's mutable CPU context.
     pub fn current_core_mut(&mut self) -> Option<&mut Arm11Core> {
         let id = self.current?;
-        self.threads.get_mut(&id).map(|thread| &mut thread.core)
+        self.thread_mut(id).map(|thread| &mut thread.core)
     }
 
     /// Returns the number of known threads, including exited threads.
     pub fn thread_count(&self) -> usize {
-        self.threads.len()
+        self.threads.iter().filter(|slot| slot.is_some()).count()
+    }
+
+    #[inline]
+    fn thread(&self, id: ThreadId) -> Option<&ThreadControlBlock> {
+        self.threads.get(id.raw() as usize)?.as_ref()
+    }
+
+    #[inline]
+    fn thread_mut(&mut self, id: ThreadId) -> Option<&mut ThreadControlBlock> {
+        self.threads.get_mut(id.raw() as usize)?.as_mut()
+    }
+
+    fn insert_thread(&mut self, id: ThreadId, thread: ThreadControlBlock) {
+        let index = id.raw() as usize;
+        if index >= self.threads.len() {
+            self.threads.resize_with(index + 1, || None);
+        }
+        debug_assert!(self.threads[index].is_none());
+        self.threads[index] = Some(thread);
     }
 
     fn allocate_ready_order(&mut self) -> u64 {
@@ -510,11 +509,16 @@ impl Arm11ThreadScheduler {
     fn best_ready_thread(&self) -> Option<ThreadId> {
         self.threads
             .iter()
-            .filter(|(_, thread)| thread.info.state == ThreadState::Ready)
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                let thread = slot.as_ref()?;
+                (thread.info.state == ThreadState::Ready)
+                    .then_some((ThreadId(index as u32), thread))
+            })
             .min_by_key(|(_, thread)| {
                 (thread.info.priority, thread.ready_order.unwrap_or(u64::MAX))
             })
-            .map(|(id, _)| *id)
+            .map(|(id, _)| id)
     }
 
     fn schedule_next(&mut self) {
@@ -522,7 +526,7 @@ impl Arm11ThreadScheduler {
             return;
         }
         if let Some(id) = self.best_ready_thread() {
-            let thread = self.threads.get_mut(&id).expect("ready thread must exist");
+            let thread = self.thread_mut(id).expect("ready thread must exist");
             thread.info.state = ThreadState::Running;
             thread.ready_order = None;
             self.current = Some(id);
@@ -535,8 +539,7 @@ impl Arm11ThreadScheduler {
             return;
         };
         let current_priority = self
-            .threads
-            .get(&current_id)
+            .thread(current_id)
             .expect("current thread must exist")
             .info
             .priority;
@@ -544,8 +547,7 @@ impl Arm11ThreadScheduler {
             return;
         };
         let ready_priority = self
-            .threads
-            .get(&ready_id)
+            .thread(ready_id)
             .expect("ready thread must exist")
             .info
             .priority;
