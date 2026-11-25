@@ -454,14 +454,11 @@ fn run(options: Options) -> Result<(), String> {
         );
         println!(
             "Exclusive monitor entries:    {} virtual / {} shared",
-            memory.virtual_exclusive_monitor_entries,
-            memory.sparse_exclusive_monitor_entries
+            memory.virtual_exclusive_monitor_entries, memory.sparse_exclusive_monitor_entries
         );
         println!(
             "TLS slots:                     {}/{} in use; IPC aliases: {}",
-            memory.tls_slots_in_use,
-            memory.tls_slots_total,
-            memory.ipc_temporary_mapping_count
+            memory.tls_slots_in_use, memory.tls_slots_total, memory.ipc_temporary_mapping_count
         );
         println!(
             "GPU physical backing:          {} pages / {} KiB",

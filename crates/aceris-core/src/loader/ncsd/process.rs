@@ -353,8 +353,7 @@ impl SharedMemoryBacking {
             let absolute = start + copied;
             let page_number = absolute / SHARED_BACKING_PAGE_SIZE;
             let page_offset = absolute % SHARED_BACKING_PAGE_SIZE;
-            let count =
-                (SHARED_BACKING_PAGE_SIZE - page_offset).min(output.len() - copied);
+            let count = (SHARED_BACKING_PAGE_SIZE - page_offset).min(output.len() - copied);
 
             if let Some(page) = store.pages.get(&page_number) {
                 output[copied..copied + count]
@@ -439,8 +438,7 @@ impl SharedMemoryBacking {
             let Some(page) = store.pages.get_mut(&page_number) else {
                 return false;
             };
-            page[page_offset..page_offset + count]
-                .copy_from_slice(&input[copied..copied + count]);
+            page[page_offset..page_offset + count].copy_from_slice(&input[copied..copied + count]);
             copied += count;
         }
         drop(store);
@@ -902,7 +900,6 @@ pub struct Arm11CodeAddressSpace {
     /// Temporary IPC aliases and their surrounding unmapped guard pages.
     ipc_temporary_regions: Vec<IpcTemporaryMappingRegion>,
 }
-
 
 /// Snapshot of guest memory reservations and host-side allocations.
 ///
@@ -3162,19 +3159,23 @@ impl Arm11CodeAddressSpace {
             .dynamic_regions
             .iter()
             .fold(0usize, |total, region| total.saturating_add(region.len()));
-        let shared_mapping_virtual_bytes = self
-            .shared_regions
-            .iter()
-            .fold(0usize, |total, region| total.saturating_add(region.backing.length));
+        let shared_mapping_virtual_bytes =
+            self.shared_regions.iter().fold(0usize, |total, region| {
+                total.saturating_add(region.backing.length)
+            });
 
         let mut unique_backings = BTreeMap::<u64, &SharedMemoryBacking>::new();
         for region in &self.dynamic_regions {
             let backing = region.backing.backing_ref();
-            unique_backings.entry(backing.backing_id()).or_insert(backing);
+            unique_backings
+                .entry(backing.backing_id())
+                .or_insert(backing);
         }
         for region in &self.shared_regions {
             let backing = &region.backing;
-            unique_backings.entry(backing.backing_id()).or_insert(backing);
+            unique_backings
+                .entry(backing.backing_id())
+                .or_insert(backing);
         }
 
         let (
