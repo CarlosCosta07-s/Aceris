@@ -402,12 +402,37 @@ impl Library {
 
         // Brand header.
         responsive_fill(
-            frame, width as usize, height as usize, 0.0, 0.0, 400.0, 84.0, scale, 0x160D22,
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            0.0,
+            400.0,
+            84.0,
+            scale,
+            0x160D22,
         );
         responsive_fill(
-            frame, width as usize, height as usize, 0.0, 82.0, 400.0, 3.0, scale, brand::ACCENT_RED,
+            frame,
+            width as usize,
+            height as usize,
+            0.0,
+            82.0,
+            400.0,
+            3.0,
+            scale,
+            brand::ACCENT_RED,
         );
-        responsive_text(frame, width, height, 22.0, 14.0, font_scale, "ACERIS", brand::TEXT);
+        responsive_text(
+            frame,
+            width,
+            height,
+            22.0,
+            14.0,
+            font_scale,
+            "ACERIS",
+            brand::TEXT,
+        );
         responsive_text(
             frame,
             width,
@@ -441,7 +466,16 @@ impl Library {
                     0x251731
                 },
             );
-            responsive_text(frame, width, height, text_x, 116.0, small_scale, label, brand::TEXT);
+            responsive_text(
+                frame,
+                width,
+                height,
+                text_x,
+                116.0,
+                small_scale,
+                label,
+                brand::TEXT,
+            );
         }
 
         let page_title = match self.page {
@@ -466,7 +500,14 @@ impl Library {
                 frame, width, height, 20.0, 250.0, 360.0, 300.0, scale, 0x21152F,
             );
             responsive_text(
-                frame, width, height, 38.0, 278.0, small_scale, "Pasta de jogos", brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                38.0,
+                278.0,
+                small_scale,
+                "Pasta de jogos",
+                brand::ACCENT_GREEN_LIGHT,
             );
             responsive_text(
                 frame,
@@ -509,10 +550,25 @@ impl Library {
                 0xBBAFC7,
             );
             responsive_panel(
-                frame, width, height, 38.0, 500.0, 324.0, 52.0, scale, brand::ACCENT_RED,
+                frame,
+                width,
+                height,
+                38.0,
+                500.0,
+                324.0,
+                52.0,
+                scale,
+                brand::ACCENT_RED,
             );
             responsive_text_centered(
-                frame, width, height, 200.0, 518.0, small_scale, "Atualizar biblioteca", brand::TEXT,
+                frame,
+                width,
+                height,
+                200.0,
+                518.0,
+                small_scale,
+                "Atualizar biblioteca",
+                brand::TEXT,
             );
         } else {
             let count = self.visible_entry_count();
@@ -529,7 +585,14 @@ impl Library {
                 frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, 0x2D1A3B,
             );
             responsive_text(
-                frame, width, height, 311.0, 188.0, small_scale, "Atualizar", brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                311.0,
+                188.0,
+                small_scale,
+                "Atualizar",
+                brand::ACCENT_GREEN_LIGHT,
             );
 
             if count == 0 {
@@ -549,11 +612,25 @@ impl Library {
                 );
                 let (icon_y, title_y, line_one_y, line_two_y, path_y, button_y, formats_y) =
                     if compact {
-                        (card_top + 42.0, card_top + 105.0, card_top + 138.0, card_top + 160.0,
-                         card_top + 186.0, card_top + 240.0, card_top + 294.0)
+                        (
+                            card_top + 42.0,
+                            card_top + 105.0,
+                            card_top + 138.0,
+                            card_top + 160.0,
+                            card_top + 186.0,
+                            card_top + 240.0,
+                            card_top + 294.0,
+                        )
                     } else {
-                        (card_top + 58.0, card_top + 130.0, card_top + 168.0, card_top + 192.0,
-                         card_top + 226.0, card_top + 285.0, card_top + 350.0)
+                        (
+                            card_top + 58.0,
+                            card_top + 130.0,
+                            card_top + 168.0,
+                            card_top + 192.0,
+                            card_top + 226.0,
+                            card_top + 285.0,
+                            card_top + 350.0,
+                        )
                     };
                 responsive_folder_icon(frame, width, height, 200.0, icon_y, scale);
                 let (empty_title, first_line, second_line, formats) =
@@ -573,16 +650,44 @@ impl Library {
                         )
                     };
                 responsive_text_centered(
-                    frame, width, height, 200.0, title_y, small_scale, empty_title, brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    title_y,
+                    small_scale,
+                    empty_title,
+                    brand::TEXT,
                 );
                 responsive_text_centered(
-                    frame, width, height, 200.0, line_one_y, small_scale, first_line, 0xBBAFC7,
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    line_one_y,
+                    small_scale,
+                    first_line,
+                    0xBBAFC7,
                 );
                 responsive_text_centered(
-                    frame, width, height, 200.0, line_two_y, small_scale, second_line, 0xBBAFC7,
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    line_two_y,
+                    small_scale,
+                    second_line,
+                    0xBBAFC7,
                 );
                 responsive_text(
-                    frame, width, height, 38.0, path_y - 22.0, small_scale, "Pasta de jogos", brand::ACCENT_GREEN_LIGHT,
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    path_y - 22.0,
+                    small_scale,
+                    "Pasta de jogos",
+                    brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_panel(
                     frame, width, height, 38.0, path_y, 324.0, 48.0, scale, 0x2D1A3B,
@@ -609,10 +714,24 @@ impl Library {
                     brand::ACCENT_RED,
                 );
                 responsive_text_centered(
-                    frame, width, height, 200.0, button_y + 18.0, small_scale, "Atualizar biblioteca", brand::TEXT,
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    button_y + 18.0,
+                    small_scale,
+                    "Atualizar biblioteca",
+                    brand::TEXT,
                 );
                 responsive_text_centered(
-                    frame, width, height, 200.0, formats_y, small_scale, formats, 0xBBAFC7,
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    formats_y,
+                    small_scale,
+                    formats,
+                    0xBBAFC7,
                 );
             } else {
                 let row_height = 58.0;
@@ -635,13 +754,32 @@ impl Library {
                         360.0,
                         50.0,
                         scale,
-                        if row == self.selected { 0x422038 } else { 0x21152F },
+                        if row == self.selected {
+                            0x422038
+                        } else {
+                            0x21152F
+                        },
                     );
                     responsive_panel(
-                        frame, width, height, 30.0, y + 7.0, 46.0, 36.0, scale, 0x2D1A3B,
+                        frame,
+                        width,
+                        height,
+                        30.0,
+                        y + 7.0,
+                        46.0,
+                        36.0,
+                        scale,
+                        0x2D1A3B,
                     );
                     responsive_text(
-                        frame, width, height, 36.0, y + 19.0, small_scale, "3DS", brand::ACCENT_GREEN_LIGHT,
+                        frame,
+                        width,
+                        height,
+                        36.0,
+                        y + 19.0,
+                        small_scale,
+                        "3DS",
+                        brand::ACCENT_GREEN_LIGHT,
                     );
                     responsive_text(
                         frame,
@@ -744,10 +882,21 @@ impl Library {
                 174.0,
                 48.0,
                 scale,
-                if self.page == page { brand::ACCENT_RED } else { 0x251731 },
+                if self.page == page {
+                    brand::ACCENT_RED
+                } else {
+                    0x251731
+                },
             );
             responsive_text(
-                frame, width, height, 38.0, y + 16.0, small_scale, label, brand::TEXT,
+                frame,
+                width,
+                height,
+                38.0,
+                y + 16.0,
+                small_scale,
+                label,
+                brand::TEXT,
             );
         }
         responsive_text(
@@ -777,7 +926,14 @@ impl Library {
             frame, width, height, 826.0, 28.0, 154.0, 54.0, scale, 0x2D1A3B,
         );
         responsive_text(
-            frame, width, height, 850.0, 48.0, small_scale, "Atualizar", brand::ACCENT_GREEN_LIGHT,
+            frame,
+            width,
+            height,
+            850.0,
+            48.0,
+            small_scale,
+            "Atualizar",
+            brand::ACCENT_GREEN_LIGHT,
         );
 
         if self.page == LibraryPage::Settings {
@@ -785,7 +941,14 @@ impl Library {
                 frame, width, height, 238.0, 130.0, 742.0, 340.0, scale, 0x21152F,
             );
             responsive_text(
-                frame, width, height, 270.0, 166.0, small_scale, "Pasta de jogos", brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                270.0,
+                166.0,
+                small_scale,
+                "Pasta de jogos",
+                brand::ACCENT_GREEN_LIGHT,
             );
             responsive_text(
                 frame,
@@ -798,19 +961,55 @@ impl Library {
                 brand::TEXT,
             );
             responsive_text(
-                frame, width, height, 270.0, 266.0, small_scale, "Formatos reconhecidos", brand::ACCENT_GREEN_LIGHT,
+                frame,
+                width,
+                height,
+                270.0,
+                266.0,
+                small_scale,
+                "Formatos reconhecidos",
+                brand::ACCENT_GREEN_LIGHT,
             );
             responsive_text(
-                frame, width, height, 270.0, 310.0, small_scale, ".3ds  /  .cci  /  .3dsx", brand::TEXT,
+                frame,
+                width,
+                height,
+                270.0,
+                310.0,
+                small_scale,
+                ".3ds  /  .cci  /  .3dsx",
+                brand::TEXT,
             );
             responsive_text(
-                frame, width, height, 270.0, 342.0, small_scale, "Os arquivos permanecem no seu dispositivo.", 0xBBAFC7,
+                frame,
+                width,
+                height,
+                270.0,
+                342.0,
+                small_scale,
+                "Os arquivos permanecem no seu dispositivo.",
+                0xBBAFC7,
             );
             responsive_panel(
-                frame, width, height, 270.0, 366.0, 330.0, 54.0, scale, brand::ACCENT_RED,
+                frame,
+                width,
+                height,
+                270.0,
+                366.0,
+                330.0,
+                54.0,
+                scale,
+                brand::ACCENT_RED,
             );
             responsive_text_centered(
-                frame, width, height, 435.0, 385.0, small_scale, "Atualizar biblioteca", brand::TEXT,
+                frame,
+                width,
+                height,
+                435.0,
+                385.0,
+                small_scale,
+                "Atualizar biblioteca",
+                brand::TEXT,
             );
         } else if self.visible_entry_count() == 0 {
             let panel_height = (logical_height - 184.0).max(250.0);
@@ -876,13 +1075,32 @@ impl Library {
                     742.0,
                     62.0,
                     scale,
-                    if row == self.selected { 0x422038 } else { 0x21152F },
+                    if row == self.selected {
+                        0x422038
+                    } else {
+                        0x21152F
+                    },
                 );
                 responsive_panel(
-                    frame, width, height, 252.0, y + 10.0, 56.0, 42.0, scale, 0x2D1A3B,
+                    frame,
+                    width,
+                    height,
+                    252.0,
+                    y + 10.0,
+                    56.0,
+                    42.0,
+                    scale,
+                    0x2D1A3B,
                 );
                 responsive_text(
-                    frame, width, height, 262.0, y + 24.0, small_scale, "3DS", brand::ACCENT_GREEN_LIGHT,
+                    frame,
+                    width,
+                    height,
+                    262.0,
+                    y + 24.0,
+                    small_scale,
+                    "3DS",
+                    brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_text(
                     frame,
@@ -1359,7 +1577,11 @@ mod tests {
         let (width, height) = (800, 1200);
         let mut frame = vec![0u8; width as usize * height as usize * 4];
         responsive_text_centered(&mut frame, width, height, 200.0, 40.0, 2, "OK", 0xF5EEF8);
-        assert!(frame.chunks_exact(4).any(|pixel| pixel[..3] == [0xF5, 0xEE, 0xF8]));
+        assert!(
+            frame
+                .chunks_exact(4)
+                .any(|pixel| pixel[..3] == [0xF5, 0xEE, 0xF8])
+        );
     }
 
     #[test]
@@ -1421,8 +1643,14 @@ mod tests {
     #[test]
     fn homebrew_filter_does_not_mix_executable_cartridges() {
         let entries = vec![
-            Entry { title: "Retail".into(), path: PathBuf::from("retail.3ds") },
-            Entry { title: "Demo".into(), path: PathBuf::from("demo.3dsx") },
+            Entry {
+                title: "Retail".into(),
+                path: PathBuf::from("retail.3ds"),
+            },
+            Entry {
+                title: "Demo".into(),
+                path: PathBuf::from("demo.3dsx"),
+            },
         ];
         let mut library = Library::new(entries, "/games".into());
         assert_eq!(library.visible_entry_count(), 1);
