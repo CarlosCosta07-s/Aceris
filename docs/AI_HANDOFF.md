@@ -2484,3 +2484,8 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Testes novos cobrem criação/fechamento/type-safety do ResourceLimit, consulta de limite/uso, rejeição de tipo/handle inválido e parada guest-side por svcBreak.
 - Próximo marco: repetir o bootstrap SM64 com a mesma amostra local, confirmar que os valores COMMIT não são zero e que ControlMemory recebe tamanhos de heap alinhados e não nulos; depois implementar apenas o próximo SVC/serviço efetivamente observado.
 - Nenhum arquivo de GPU, CPU/Thumb, frontend ou serviço HLE foi alterado nesta etapa. Alterações restritas a session/kernel.rs, session/svc.rs, session.rs e este handoff. Somente main; nenhuma branch criada.
+## Kernel: GetThreadId — 25/11/2026
+
+- Implementado SVC 0x37 GetThreadId: recebe ponteiro de saída em r0 e handle/pseudo-handle de thread em r1; grava o identificador interno guest-visible em memória, valida handle e endereço.
+- O caminho reutiliza a resolução tipada do kernel, incluindo CURRENT_THREAD_HANDLE e handles regulares, sem confundir GetThreadId com GetProcessIdOfThread (0x36).
+- Teste cobre thread atual, thread secundária e handle inválido. CI ainda precisa validar os commits.
