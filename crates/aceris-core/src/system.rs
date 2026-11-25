@@ -8904,6 +8904,13 @@ mod tests {
         let frame = system.run_frame_with_budget(0).unwrap();
         assert_eq!(frame.lcd_screens_scanned_out, 2);
         let sample = (180 * WIDTH + 40) * 4;
+        let tiled_config = system.gpu().render_target_config().unwrap();
+        let tiled_pixels = tiled_config.read_rgba8(system.physical_memory()).unwrap();
+        assert_eq!(
+            &tiled_pixels[sample..sample + 4],
+            &[12, 34, 56, 255],
+            "PICA must publish the expected shaded color to its tiled target"
+        );
         let mut native_pixel = [0u8; 4];
         system
             .physical_memory()
