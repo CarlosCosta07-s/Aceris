@@ -310,8 +310,10 @@ impl App {
                         .library
                         .click_responsive(up_x, up_y, self.width, self.height)
                     {
-                        ClickResult::Activated => self.launch_selected(),
-                        ClickResult::Selected | ClickResult::Ignored => {}
+                        // On touch devices, one deliberate tap should launch a game.
+                        // Desktop keeps the familiar select-then-Enter/double-click flow.
+                        ClickResult::Activated | ClickResult::Selected => self.launch_selected(),
+                        ClickResult::Ignored => {}
                     }
                 }
             }
