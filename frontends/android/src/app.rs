@@ -190,8 +190,13 @@ impl App {
                 // Render the procedural intro at half resolution, then scale it
                 // across the whole surface. The image stays full-screen while
                 // avoiding a fourfold increase in per-pixel CPU work on phones.
-                let intro_width = (self.width / 2).max(1);
-                let intro_height = (self.height / 2).max(1);
+                // Cap the procedural pixel workload on large/high-DPI phones.
+                // The image remains full-screen; only the internal sample grid is smaller.
+                let intro_scale = (self.width as f32 / 600.0)
+                    .max(self.height as f32 / 360.0)
+                    .max(1.0);
+                let intro_width = ((self.width as f32 / intro_scale).round() as u32).max(1);
+                let intro_height = ((self.height as f32 / intro_scale).round() as u32).max(1);
                 let rendered = intro::render_frame_into(
                     frame,
                     intro_width as usize,
