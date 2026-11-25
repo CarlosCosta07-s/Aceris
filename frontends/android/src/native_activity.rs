@@ -263,7 +263,8 @@ impl AttachedMediaMonitor {
     }
 
     fn clear_exception(&self) {
-        if let Some(clear): Option<ExceptionClearFn> = jni_function(self.env, 17) {
+        let clear: Option<ExceptionClearFn> = jni_function(self.env, 17);
+        if let Some(clear) = clear {
             // SAFETY: clearing a pending JNI exception on this attached thread.
             unsafe { clear(self.env) };
         }
@@ -271,7 +272,8 @@ impl AttachedMediaMonitor {
 
     fn delete_local(&self, object: JniObject) {
         if !object.is_null() {
-            if let Some(delete): Option<DeleteLocalRefFn> = jni_function(self.env, 23) {
+            let delete: Option<DeleteLocalRefFn> = jni_function(self.env, 23);
+            if let Some(delete) = delete {
                 // SAFETY: object is a local reference created during this JNI call.
                 unsafe { delete(self.env, object) };
             }
