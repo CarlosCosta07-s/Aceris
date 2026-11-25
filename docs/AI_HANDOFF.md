@@ -2311,3 +2311,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A rotina de blit RGBA da interface substitui a divisão inteira por coluna por um passo inteiro e acumulador de resto. A origem de cada coluna continua seguindo floor(coluna × source_width / destino_width); o mapeamento de linhas permanece inalterado.
 - Testes: reciclagem preserva capacidade em atualizações sucessivas; o novo escalonador é comparado com a implementação de referência em várias dimensões, fatores de escala e recortes parcialmente fora do alvo.
 - Efeito esperado: menos alocação de amostras por quadro e menos divisões inteiras no loop de pixels do frontend. Não foi medido FPS nem latência de áudio nesta etapa; o envio AAudio continua com timeout zero.
+
+## Teste local dedicado ao CIA Cookie Clicker — 25/11/2026
+
+- Foi acrescentado em `crates/aceris-core/tests/cia_real_homebrew.rs` o teste ignorado `validates_and_runs_real_cookie_clicker_cia_without_console_keys`, separado do teste existente do Super Mario 64.
+- O novo teste espera o Title ID `0x0004000000F23F00`, boot content 0, ticket correspondente, conteúdo sem criptografia CIA externa e NCCH com NoCrypto. Em seguida valida a preparação ARM11, carrega pelo caminho padrão e exige que pelo menos uma instrução guest seja executada.
+- O arquivo fornecido pelo mantenedor nesta sessão tem SHA-256 `d047701f8e9b4127436046f5a650dede06e03bc1b5f1b271981d4ea27db58093`. Ele não foi copiado para o repositório, CI ou artefatos.
+- A documentação de execução foi adicionada a `docs/REAL_HOMEBREW_TESTING.md`.
+- **Validação local pendente:** este ambiente de edição não possui `cargo` nem `rustc`; portanto o teste não foi executado aqui. O workflow CI compila o alvo de integração, mas ignora sua execução por depender do CIA local. Não declarar boot novo confirmado até executar o comando manual no ambiente que contém o arquivo.

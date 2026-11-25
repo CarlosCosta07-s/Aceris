@@ -351,4 +351,4 @@ Este documento registra o estado observado no código. Não marque um item como 
 
 Não marcar marcos como concluídos apenas por testes unitários, fixtures sintéticas ou compilação multiplataforma.
 
-- [~] Cookie Clicker (CIA): o jogo agora envia command lists contínuas com renderização guest ligada (formato de vértice corrigido); faltam pixels (`pixels_written: 0`) e velocidade. Ver `docs/AI_HANDOFF.md` (2026-11-24).
+- [~] Cookie Clicker (CIA): primeira imagem guest-driven registrada em 24/11 — após 450 quadros com orçamento de 4M, a tela superior mostra a abertura do port ("PORT BY" / "CRECKERYOP"), com 192.000 pixels escritos por lista; a tela inferior permanece preta. `Sound.init`, áudio, entrada e gameplay contínuo seguem pendentes. O teste manual do CIA mais recente está documentado em `docs/REAL_HOMEBREW_TESTING.md`; o arquivo permanece fora do repositório e da CI.

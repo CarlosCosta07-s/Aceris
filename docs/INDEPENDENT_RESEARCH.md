@@ -1,16 +1,16 @@
 # Pesquisa técnica independente
 
-> Revisão histórica: 17/11/2026. **Regra vigente do mantenedor, 22/11/2026:** não consultar código-fonte interno de outros emuladores. Menções históricas a leitura de código estão supersedidas e não autorizam abrir, pesquisar ou usar esses fontes. A pesquisa atual limita-se à superfície observável e à documentação pública independente de hardware, formatos e protocolos.
+> **Regra vigente do mantenedor, atualizada em 24/11/2026:** é permitido consultar código-fonte de emuladores efetivamente open source, inclusive para investigar algoritmos, estados, protocolos e casos-limite, desde que a licença do repositório e do arquivo seja verificada antes da consulta. A implementação do Aceris continua independente: não copiar, traduzir, portar ou reproduzir estruturalmente código, testes ou assets. Aplicam-se integralmente as [regras obrigatórias para IAs](REGRAS_PARA_IA.md), especialmente a seção 5.
 
 ## 1. Objetivo
 
 Acelerar o Aceris usando especificações públicas, documentação de hardware, descrições independentes de formatos e protocolos, testes próprios e comportamento observável. O resultado de cada pesquisa deve ser uma especificação verificável que oriente uma implementação original em Rust.
 
-A pesquisa não é um atalho para incorporar implementações existentes. Não consultar código-fonte de emuladores; utilizar documentação pública independente e observações externas permitidas, convertendo evidências em especificações e testes próprios.
+A pesquisa não é um atalho para incorporar implementações existentes. Código-fonte open source pode ser consultado como referência após auditoria de licença; documentação pública independente, testes próprios e observações externas continuam sendo evidências importantes. Converter o entendimento obtido em especificações e testes próprios, sem incorporar a implementação consultada.
 
 ## 2. Limites obrigatórios
 
-- É proibido consultar código-fonte de Azahar, Citra, Lime3DS ou qualquer outro emulador.
+- É permitido consultar código-fonte de Azahar, Citra, Lime3DS e outros emuladores somente quando o projeto e o arquivo consultado forem efetivamente open source e suas licenças tiverem sido verificadas.
 - A pesquisa limita-se à documentação pública independente de hardware, formatos, APIs e protocolos e à superfície observável de produtos em execução.
 - Não faça tradução linha a linha nem reproduza a estrutura expressiva do código consultado. A implementação do Aceris deve ter arquitetura, interfaces, nomes, testes e código próprios, escritos em Rust.
 - Não incorpore commits, patches, dependências, assets ou outros recursos de implementação desses projetos. Não trate nomes de funções privadas ou a organização de arquivos como especificação do hardware.
@@ -27,7 +27,7 @@ Estas regras complementam `docs/REGRAS_PARA_IA.md` e `CONTRIBUTING.md`; não cri
 Cada tarefa técnica deve seguir esta sequência:
 
 1. **Definir a pergunta:** formular um comportamento observável e delimitado, evitando objetivos vagos como “melhorar a GPU”.
-2. **Localizar fontes:** priorizar manuais oficiais, documentação de arquitetura e especificações públicas independentes. Wikis de engenharia reversa devem ser identificadas como fontes não oficiais; não abrir código-fonte de emuladores.
+2. **Localizar fontes:** priorizar manuais oficiais e documentação independente. Quando o código de um emulador open source for útil, verificar primeiro a licença do repositório, o cabeçalho/licença do arquivo e a revisão exata; registrar a consulta e não copiar sua implementação. Wikis de engenharia reversa devem ser identificadas como fontes não oficiais.
 3. **Registrar evidências:** anotar a afirmação, a URL, o tipo de fonte, a data de consulta, o nível de confiança e eventuais divergências.
 4. **Escrever o contrato:** descrever entradas, saídas, estados, erros, efeitos colaterais, ordenação e limites de memória em termos independentes, sem reproduzir trechos nem a estrutura expressiva da implementação consultada.
 5. **Derivar testes próprios:** construir casos pequenos e determinísticos diretamente do contrato. Para cada caso, registrar os bytes/valores de entrada e o resultado esperado.
@@ -37,7 +37,7 @@ Cada tarefa técnica deve seguir esta sequência:
 
 ## 3.1 Registro de fontes independentes
 
-Registre título, autoria, URL, data, tipo de fonte, pergunta técnica, conclusão, nível de confiança e testes Aceris que confirmam ou contestam a interpretação. Não registre nem consulte arquivos-fonte de emuladores. Se uma página misturar documentação e código interno de terceiros, não abra nem utilize a parte de código.
+Registre título, autoria, URL, data, tipo de fonte, pergunta técnica, conclusão, nível de confiança e testes Aceris que confirmam ou contestam a interpretação. Para código consultado, registre também repositório, commit, caminho, licença do projeto e do arquivo, e a conclusão técnica parafraseada. Não copie trechos nem reproduza a estrutura expressiva da fonte.
 
 ## 4. Níveis de evidência
 

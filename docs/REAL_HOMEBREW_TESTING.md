@@ -98,3 +98,34 @@ Um homebrew real fornecido localmente pelo mantenedor foi usado para avançar al
 Esse avanço chega a uma tela produzida pelo próprio aplicativo, mas não é boot funcional nem gameplay. O teste anterior de Super Mario 64 – 3DS Port não deve ser descrito como execução real concluída sem evidência adicional.
 
 > **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+
+## Atualização: primeiro quadro gráfico do Cookie Clicker (24–25/11/2026)
+
+- Com a renderização PICA200 guest habilitada nos frontends e as correções de stride/formato/layout de atributos, o homebrew Lua Player Plus Cookie Clicker deixou de produzir apenas uma tela preta.
+- No ensaio manual registrado em 24/11, após 450 quadros com orçamento de 4.000.000 instruções por quadro, a tela superior exibiu a abertura do port (texto "PORT BY" e "CRECKERYOP" na orientação esperada). Cada lista observada escreveu 192.000 pixels.
+- A tela inferior continuou preta. O resultado não demonstra gameplay, entrada funcional ou áudio; a falha de inicialização `Sound.init` ainda precisa ser rastreada.
+- Em 25/11, a unidade PICA200 procedural foi conectada ao TEV e ganhou um modelo de ruído de referência em software. Isso ainda não foi validado em console físico nem confirmado como a causa de qualquer resultado visual do Cookie Clicker.
+- A CI mais recente do HEAD `3a50a6f8b71aee1395d6233a6e6743420987ebb1` passou em Linux, Windows, macOS e Android ARM64 no workflow [45569245972](https://github.com/CarlosCosta07-s/Aceris/actions/runs/45569245972). A CI não contém o CIA e não executa este teste manual.
+
+### Repetir a validação com o CIA Cookie Clicker fornecido
+
+O teste `validates_and_runs_real_cookie_clicker_cia_without_console_keys` foi adicionado como teste ignorado. Ele valida Title ID, ticket, seleção do conteúdo de boot, ausência de criptografia externa, flag NoCrypto do NCCH, preparação ARM11, carregamento pelo caminho padrão e execução de um quadro. O arquivo permanece no computador do mantenedor.
+
+Linux/macOS:
+
+```sh
+export ACERIS_COOKIE_CLICKER_CIA="/caminho/local/para/0004000000F23F00 Cookie Clicker.cia"
+cargo test -p aceris-core --test cia_real_homebrew validates_and_runs_real_cookie_clicker_cia_without_console_keys -- --ignored --nocapture
+unset ACERIS_COOKIE_CLICKER_CIA
+```
+
+PowerShell:
+
+```powershell
+$env:ACERIS_COOKIE_CLICKER_CIA = "C:\caminho\para\0004000000F23F00 Cookie Clicker.cia"
+cargo test -p aceris-core --test cia_real_homebrew validates_and_runs_real_cookie_clicker_cia_without_console_keys -- --ignored --nocapture
+Remove-Item Env:ACERIS_COOKIE_CLICKER_CIA
+```
+
+O arquivo anexado nesta sessão foi mantido fora do repositório. Seu SHA-256 local é `d047701f8e9b4127436046f5a650dede06e03bc1b5f1b271981d4ea27db58093`. **Esse fingerprint identifica o arquivo, mas não significa que o teste acima tenha sido executado nesta sessão.**
