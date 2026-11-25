@@ -1583,7 +1583,7 @@ impl Library {
                     399.0,
                     (text_scale as f32 * 0.82).round().max(1.0) as usize,
                     if !self.external_media_detection_available {
-                        "Detecção indisponível neste Android"
+                        "Detecção indisponível nesta plataforma"
                     } else if self.external_media_playing {
                         "Tocando — áudio do jogo mudo"
                     } else {
@@ -1660,7 +1660,7 @@ impl Library {
                     if self.external_media_detection_available {
                         "Detecção de mídia externa: automática"
                     } else {
-                        "Detecção indisponível neste Android"
+                        "Detecção indisponível nesta plataforma"
                     },
                     brand::TEXT,
                 );
@@ -1671,7 +1671,11 @@ impl Library {
                     590.0,
                     205.0,
                     text_scale,
-                    "Jogos são silenciados durante música externa.",
+                    if self.external_media_detection_available {
+                        "Jogos são silenciados durante música externa."
+                    } else {
+                        "Recurso disponível apenas em plataformas compatíveis."
+                    },
                     0xBBAFC7,
                 );
                 responsive_text(
