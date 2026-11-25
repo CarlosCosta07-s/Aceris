@@ -417,10 +417,7 @@ mod tests {
         assert_eq!(map.lane_for_semantic(0x00), Some((0, 0)));
         assert_eq!(map.lane_for_semantic(0x08), Some((4, 0)));
 
-        let outputs = outputs_with(&[
-            (0, [1.0, 2.0, 3.0, 1.0]),
-            (4, [0.25, 0.5, 0.75, 1.0]),
-        ]);
+        let outputs = outputs_with(&[(0, [1.0, 2.0, 3.0, 1.0]), (4, [0.25, 0.5, 0.75, 1.0])]);
         let resolved = map.resolve(&outputs).unwrap();
         assert_eq!(resolved.position, [1.0, 2.0, 3.0, 1.0]);
         assert_eq!(resolved.color, Some([0.25, 0.5, 0.75, 1.0]));
