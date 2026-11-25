@@ -2507,6 +2507,22 @@ impl Arm11CodeAddressSpace {
         Ok(())
     }
 
+    /// Returns true if any byte in a small scalar access targets an MPCore
+    /// register window. Such accesses retain the byte/device-specific path.
+    fn range_touches_mpcore_registers(&self, address: u32, length: usize) -> bool {
+        (0..length).any(|index| {
+            let Some(current) = address.checked_add(index as u32) else {
+                return true;
+            };
+            self.mpcore_private_timer_register_offset(current).is_some()
+                || self.mpcore_cpu_interface_register_offset(current).is_some()
+                || self
+                    .mpcore_gic_distributor_register_offset(current)
+                    .is_some()
+                || self.mpcore_scu_register_offset(current).is_some()
+        })
+    }
+
     fn static_backing_slot(kind: Arm11SegmentKind) -> usize {
         match kind {
             Arm11SegmentKind::Text => 0,
@@ -3694,10 +3710,32 @@ impl Bus for Arm11CodeAddressSpace {
         if self.mpcore_scu_register_offset(address).is_some() && address & 3 == 0 {
             return self.write_mpcore_scu_register(address, value);
         }
-        for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
-            self.write8_with_cache_policy(address.wrapping_add(index as u32), byte, policy)?;
+        let bytes = value.to_le_bytes();
+        if self.range_touches_mpcore_registers(address, bytes.len()) {
+            for (index, byte) in bytes.into_iter().enumerate() {
+                self.write8_with_cache_policy(address.wrapping_add(index as u32), byte, policy)?;
+            }
+            Ok(())
+        } else {
+            self.write_bytes_with_cache_policy(address, &bytes, policy)
         }
-        Ok(())
+    }
+
+    fn write16_with_cache_policy(
+        &mut self,
+        address: u32,
+        value: u16,
+        policy: CachePolicy,
+    ) -> BusResult<()> {
+        let bytes = value.to_le_bytes();
+        if self.range_touches_mpcore_registers(address, bytes.len()) {
+            for (index, byte) in bytes.into_iter().enumerate() {
+                self.write8_with_cache_policy(address.wrapping_add(index as u32), byte, policy)?;
+            }
+            Ok(())
+        } else {
+            self.write_bytes_with_cache_policy(address, &bytes, policy)
+        }
     }
 
     fn write16(&mut self, address: u32, value: u16) -> BusResult<()> {
