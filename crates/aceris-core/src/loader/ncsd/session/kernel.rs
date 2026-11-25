@@ -205,6 +205,8 @@ enum KernelObject {
     Semaphore(KernelSemaphore),
     Timer(KernelTimer),
     MemoryBlock(KernelMemoryBlock),
+    /// Process resource-limit handle; values are resolved by the owning session.
+    ResourceLimit,
     ServiceSession(ServiceSessionKind),
     /// Address arbiter; waiters are tracked by the session (see `ArbitrateAddress`).
     AddressArbiter,
@@ -323,6 +325,19 @@ impl Arm11KernelObjectTable {
             }
             _ => None,
         }
+    }
+
+    /// Creates the resource-limit handle for the current process.
+    ///
+    /// The resource values are resolved by Arm11ProcessSession so COMMIT usage
+    /// reflects the live address space rather than a stale snapshot.
+    pub fn insert_resource_limit(&mut self) -> Result<u32, KernelHandleError> {
+        self.insert(KernelObject::ResourceLimit)
+    }
+
+    /// Returns whether handle refers to a resource-limit object.
+    pub fn is_resource_limit_handle(&self, handle: u32) -> bool {
+        matches!(self.object(handle), Some(KernelObject::ResourceLimit))
     }
 
     /// Creates a process-local service-manager client session.
@@ -871,6 +886,7 @@ impl Arm11KernelObjectTable {
             }
             Some(KernelObject::Thread(thread)) => Ok(thread.terminated),
             Some(KernelObject::MemoryBlock(_))
+            | Some(KernelObject::ResourceLimit)
             | Some(KernelObject::ServiceSession(_))
             | Some(KernelObject::AddressArbiter) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
@@ -909,6 +925,7 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Timer(timer)) => timer.signaled,
                 Some(KernelObject::Thread(thread)) => thread.terminated,
                 Some(KernelObject::MemoryBlock(_))
+                | Some(KernelObject::ResourceLimit)
                 | Some(KernelObject::ServiceSession(_))
                 | Some(KernelObject::AddressArbiter) => {
                     return Err(KernelHandleError::WrongType);
@@ -953,6 +970,7 @@ impl Arm11KernelObjectTable {
                 // Thread objects are sticky: termination is never consumed.
                 KernelObject::Thread(_) => {}
                 KernelObject::MemoryBlock(_)
+                | KernelObject::ResourceLimit
                 | KernelObject::ServiceSession(_)
                 | KernelObject::AddressArbiter => {
                     unreachable!("wait-all preflight rejected non-waitable objects")
@@ -980,6 +998,7 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Timer(timer)) => &mut timer.waiters,
                 Some(KernelObject::Thread(thread)) => &mut thread.waiters,
                 Some(KernelObject::MemoryBlock(_))
+                | Some(KernelObject::ResourceLimit)
                 | Some(KernelObject::ServiceSession(_))
                 | Some(KernelObject::AddressArbiter) => {
                     return Err(KernelHandleError::WrongType);
@@ -1023,6 +1042,7 @@ impl Arm11KernelObjectTable {
                 KernelObject::Timer(timer) => &mut timer.waiters,
                 KernelObject::Thread(thread) => &mut thread.waiters,
                 KernelObject::MemoryBlock(_)
+                | KernelObject::ResourceLimit
                 | KernelObject::ServiceSession(_)
                 | KernelObject::AddressArbiter => continue,
             };
@@ -1377,6 +1397,7 @@ fn object_has_internal_references(object: &KernelObject) -> bool {
         KernelObject::Semaphore(semaphore) => !semaphore.waiters.is_empty(),
         KernelObject::Timer(timer) => !timer.waiters.is_empty(),
         KernelObject::MemoryBlock(_)
+        | KernelObject::ResourceLimit
         | KernelObject::ServiceSession(_)
         | KernelObject::AddressArbiter => false,
     }
@@ -1767,6 +1788,30 @@ mod tests {
 
         assert_eq!(table.handle_count(), 0);
         assert_eq!(table.retained_object_count(), 0);
+    }
+
+    #[test]
+    fn resource_limit_handles_are_typed_non_waitable_and_closeable() {
+        let mut table = Arm11KernelObjectTable::default();
+        let handle = table.insert_resource_limit().unwrap();
+
+        assert!(table.is_resource_limit_handle(handle));
+        assert!(!table.is_resource_limit_handle(0xDEAD));
+        assert_eq!(
+            table.try_wait_synchronization(handle, thread_id(1)),
+            Err(KernelHandleError::WrongType)
+        );
+        assert_eq!(
+            table.enqueue_waiter(handle, thread_id(1)),
+            Err(KernelHandleError::WrongType)
+        );
+
+        table.close_handle(handle).unwrap();
+        assert!(!table.is_resource_limit_handle(handle));
+        assert_eq!(
+            table.close_handle(handle),
+            Err(KernelHandleError::InvalidHandle)
+        );
     }
 
     #[test]
