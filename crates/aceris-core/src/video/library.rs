@@ -214,12 +214,14 @@ impl Library {
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
-                if (300.0..365.0).contains(&y) && (20.0..380.0).contains(&x) {
+                if (600.0..655.0).contains(&y) && (20.0..380.0).contains(&x) {
                     self.reload();
                 }
                 return ClickResult::Ignored;
             }
-            if (170.0..225.0).contains(&y) && x >= 300.0 {
+            if ((170.0..225.0).contains(&y) && x >= 300.0)
+                || ((600.0..655.0).contains(&y) && (38.0..362.0).contains(&x))
+            {
                 self.reload();
                 return ClickResult::Ignored;
             }
@@ -247,12 +249,16 @@ impl Library {
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
-                if (300.0..365.0).contains(&y) && x >= 250.0 {
+                if ((30.0..86.0).contains(&y) && x >= 820.0)
+                    || ((366.0..422.0).contains(&y) && (270.0..600.0).contains(&x))
+                {
                     self.reload();
                 }
                 return ClickResult::Ignored;
             }
-            if (30.0..86.0).contains(&y) && x >= 820.0 {
+            if ((30.0..86.0).contains(&y) && x >= 820.0)
+                || ((452.0..508.0).contains(&y) && (490.0..730.0).contains(&x))
+            {
                 self.reload();
                 return ClickResult::Ignored;
             }
@@ -344,7 +350,7 @@ impl Library {
             responsive_text(frame, width, height, 22.0, 178.0, font_scale, "SUA BIBLIOTECA", brand::TEXT);
             responsive_text(frame, width, height, 22.0, 212.0, small_scale, &format!("{} JOGO(S) DISPONIVEL(IS)", self.entries.len()), 0xBBAFC7);
             responsive_panel(frame, width, height, 322.0, 174.0, 58.0, 44.0, scale, 0x2D1A3B);
-            responsive_text(frame, width, height, 337.0, 188.0, small_scale, "↻", brand::ACCENT_GREEN_LIGHT);
+            responsive_text(frame, width, height, 329.0, 188.0, small_scale, "RECAR.", brand::ACCENT_GREEN_LIGHT);
             if self.entries.is_empty() {
                 let card_height = (logical_height - 320.0).clamp(340.0, 520.0);
                 responsive_panel(frame, width, height, 20.0, 250.0, 360.0, card_height, scale, 0x21152F);
@@ -788,9 +794,9 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("sample.3dsx"), b"fixture").unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
-        assert_eq!(library.click_responsive(400, 520, 800, 1200), ClickResult::Ignored);
+        assert_eq!(library.click_responsive(400, 1_240, 800, 1200), ClickResult::Ignored);
         assert_eq!(library.entries().len(), 1);
-        assert_eq!(library.click_responsive(700, 350, 800, 1200), ClickResult::Ignored);
+        assert_eq!(library.click_responsive(700, 250, 800, 1200), ClickResult::Ignored);
         assert_eq!(library.page(), LibraryPage::Settings);
         library.reload();
         assert_eq!(library.entries().len(), 1);
