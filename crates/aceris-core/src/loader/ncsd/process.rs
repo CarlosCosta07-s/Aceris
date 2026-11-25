@@ -5040,6 +5040,36 @@ mod tests {
             0xDDCC_BBAA
         );
 
+        // MMU-policy scalar stores use the bulk validator and fill one line.
+        let policy_store = virtual_base + 0xC0;
+        address_space
+            .write32_with_cache_policy(policy_store, 0xA1B2_C3D4, CachePolicy::WriteBack)
+            .unwrap();
+        let mut policy_backing = [0xFFu8; 4];
+        memory
+            .read(physical_base + 0xC0, &mut policy_backing)
+            .unwrap();
+        assert_eq!(policy_backing, [0; 4]);
+        assert_eq!(
+            address_space
+                .read32_with_cache_policy(policy_store, CachePolicy::WriteBack)
+                .unwrap(),
+            0xA1B2_C3D4
+        );
+        address_space
+            .write16_with_cache_policy(
+                policy_store + 4,
+                0x8877,
+                CachePolicy::WriteBack,
+            )
+            .unwrap();
+        assert_eq!(
+            address_space
+                .read16_with_cache_policy(policy_store + 4, CachePolicy::WriteBack)
+                .unwrap(),
+            0x8877
+        );
+
         // Miss, then hit: a word store followed by byte, half-word and word loads.
         address_space
             .write32(virtual_base + 4, 0x4433_2211)
