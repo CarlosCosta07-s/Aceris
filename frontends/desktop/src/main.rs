@@ -380,6 +380,7 @@ fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Re
     let frame_time = Duration::from_micros(16_667);
     let mut keyboard = window::KeyboardInput::default();
     let mut audio = audio::AudioOutput::open();
+    let mut frame = Vec::new();
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
@@ -400,8 +401,11 @@ fn emulate(system: &mut System, window: &mut window::Window, scale: usize) -> Re
         if let Some(audio) = audio.as_mut() {
             audio.feed(system);
         }
+        if !window::compose_bgrx_into(system.display(), scale, &mut frame) {
+            return Err("could not allocate the desktop presentation buffer".to_string());
+        }
         window
-            .present(&window::compose_bgrx(system.display(), scale))
+            .present(&frame)
             .map_err(|err| format!("could not draw the frame: {err}"))?;
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);

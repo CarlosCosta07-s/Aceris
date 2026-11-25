@@ -229,8 +229,48 @@ pub enum Key {
 /// The returned buffer is `GAME_CANVAS_WIDTH * scale` by
 /// `GAME_CANVAS_HEIGHT * scale`, in little-endian BGRX byte order.
 pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
+    let mut frame = Vec::new();
+    compose_bgrx_into(display, scale, &mut frame);
+    frame
+}
+
+/// Composes both LCDs directly into a reusable, scaled BGRX frame buffer.
+///
+/// Returns false if the requested dimensions overflow or the output allocation fails.
+pub fn compose_bgrx_into(
+    display: &DualScreenDisplay,
+    scale: usize,
+    output: &mut Vec<u8>,
+) -> bool {
     let scale = scale.max(1);
-    let mut canvas = [0u8, 0, 0, 0xFF].repeat(GAME_CANVAS_WIDTH * GAME_CANVAS_HEIGHT);
+    let Some(width) = GAME_CANVAS_WIDTH.checked_mul(scale) else {
+        output.clear();
+        return false;
+    };
+    let Some(height) = GAME_CANVAS_HEIGHT.checked_mul(scale) else {
+        output.clear();
+        return false;
+    };
+    let Some(byte_len) = width
+        .checked_mul(height)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+    else {
+        output.clear();
+        return false;
+    };
+    if output.capacity() < byte_len {
+        let additional = byte_len.saturating_sub(output.len());
+        if output.try_reserve_exact(additional).is_err() {
+            output.clear();
+            return false;
+        }
+    }
+    output.resize(byte_len, 0);
+    output.fill(0);
+    for pixel in output.chunks_exact_mut(4) {
+        pixel[3] = 0xFF;
+    }
+
     let mut blit =
         |surface: &aceris_core::video::ScreenSurface, origin_x: usize, origin_y: usize| {
             for (y, row) in surface
@@ -238,10 +278,18 @@ pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
                 .chunks_exact(surface.stride_bytes())
                 .enumerate()
             {
-                let start = ((origin_y + y) * GAME_CANVAS_WIDTH + origin_x) * 4;
+                let scaled_y = (origin_y + y) * scale;
+                let scaled_x = origin_x * scale;
                 for (x, pixel) in row.chunks_exact(4).enumerate() {
-                    let at = start + x * 4;
-                    canvas[at..at + 4].copy_from_slice(&[pixel[2], pixel[1], pixel[0], 0xFF]);
+                    let color = [pixel[2], pixel[1], pixel[0], 0xFF];
+                    let column_start = scaled_x + x * scale;
+                    for row_offset in 0..scale {
+                        let row_start = ((scaled_y + row_offset) * width + column_start) * 4;
+                        for column_offset in 0..scale {
+                            let at = row_start + column_offset * 4;
+                            output[at..at + 4].copy_from_slice(&color);
+                        }
+                    }
                 }
             }
         };
@@ -260,21 +308,7 @@ pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
         layout.bottom.x as usize,
         layout.bottom.y as usize,
     );
-
-    if scale == 1 {
-        return canvas;
-    }
-    let (width, height) = (GAME_CANVAS_WIDTH * scale, GAME_CANVAS_HEIGHT * scale);
-    let mut scaled = Vec::with_capacity(width * height * 4);
-    for y in 0..height {
-        let source_row = &canvas[(y / scale) * GAME_CANVAS_WIDTH * 4..][..GAME_CANVAS_WIDTH * 4];
-        for pixel in source_row.chunks_exact(4) {
-            for _ in 0..scale {
-                scaled.extend_from_slice(pixel);
-            }
-        }
-    }
-    scaled
+    true
 }
 
 #[cfg(test)]
@@ -333,6 +367,22 @@ mod tests {
         }
         // The second LCD starts at x=416 and is scaled without a vertical offset.
         assert_eq!(pixel(&scaled, 3, 416 * 3, 0), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn compose_bgrx_into_reuses_the_scaled_output_allocation() {
+        let display = DualScreenDisplay::new().unwrap();
+        let mut output = Vec::new();
+        assert!(compose_bgrx_into(&display, 2, &mut output));
+        let allocation = output.as_ptr();
+        let capacity = output.capacity();
+        let expected = compose_bgrx(&display, 2);
+        assert_eq!(output, expected);
+        assert!(compose_bgrx_into(&display, 2, &mut output));
+        assert_eq!(output.as_ptr(), allocation);
+        assert_eq!(output.capacity(), capacity);
+        assert!(!compose_bgrx_into(&display, usize::MAX, &mut output));
+        assert!(output.is_empty());
     }
 
     #[test]
