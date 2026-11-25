@@ -30,6 +30,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo build --locked --release -p aceris-core --example benchmark
+      - name: Run standalone component profiling
+        run: cargo run --release -p aceris-core --example benchmark -- --profile-components
       - uses: actions/upload-artifact@v4
         with:
           name: aceris-pc-benchmark-${{ matrix.os }}
