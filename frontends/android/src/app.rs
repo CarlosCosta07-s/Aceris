@@ -677,17 +677,20 @@ mod tests {
     }
 
     #[test]
-    fn library_taps_use_the_full_surface_and_act_on_release() {
+    fn one_library_tap_attempts_to_launch_the_selected_homebrew() {
         let (mut app, dir) = app_with_games(2);
         app.screen = Screen::Library;
-        // The responsive portrait layout starts game cards at logical y=250;
-        // tap its second row twice, selecting first and activating second.
-        let y = 328.0 * 2.0;
-        for _ in 0..3 {
-            touch(&mut app, 100.0, y);
-            release(&mut app);
-        }
+        app.library.select_page(library::LibraryPage::Homebrew);
+
+        // The responsive portrait layout starts cards at logical y=250.
+        // A single tap on the second card must attempt to load it.
+        touch(&mut app, 100.0, 328.0 * 2.0);
+        release(&mut app);
+
         assert!(matches!(app.screen(), Screen::Library));
+        assert_eq!(app.library.selected_index(), 1);
+        assert!(app.library.status.is_some());
+        assert!(app.system.is_none());
         fs::remove_dir_all(dir).ok();
     }
 
@@ -695,6 +698,7 @@ mod tests {
     fn loading_an_invalid_image_reports_an_error_and_stays_in_the_library() {
         let (mut app, dir) = app_with_games(1);
         app.screen = Screen::Library;
+        app.library.select_page(library::LibraryPage::Homebrew);
         assert!(app.key(96, true)); // A launches the selected entry
         assert!(matches!(app.screen(), Screen::Library));
         assert!(app.system.is_none());
