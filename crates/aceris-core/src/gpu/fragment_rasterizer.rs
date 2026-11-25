@@ -1323,8 +1323,7 @@ mod tests {
             x2: 7,
             y2: 0,
         };
-        let (normal, normal_pixels) =
-            raster_with([0, 1, 2], PicaCullMode::KeepAll, bottom_row);
+        let (normal, normal_pixels) = raster_with([0, 1, 2], PicaCullMode::KeepAll, bottom_row);
         assert_eq!(normal.covered_pixels, 7);
         assert_ne!(normal_pixels.color_at(0, 7), Some([0, 0, 0, 0]));
         assert_eq!(normal_pixels.color_at(0, 0), Some([0, 0, 0, 0]));
@@ -1336,12 +1335,9 @@ mod tests {
         assert_eq!(flipped_pixels.color_at(0, 7), Some([0, 0, 0, 0]));
 
         let none = PicaScissorState::default();
-        let (ccw, _) =
-            raster_with_flip([0, 1, 2], PicaCullMode::KeepCounterClockwise, none, true);
-        let (cw, _) =
-            raster_with_flip([0, 2, 1], PicaCullMode::KeepClockwise, none, true);
-        let (reject_ccw, _) =
-            raster_with_flip([0, 1, 2], PicaCullMode::KeepClockwise, none, true);
+        let (ccw, _) = raster_with_flip([0, 1, 2], PicaCullMode::KeepCounterClockwise, none, true);
+        let (cw, _) = raster_with_flip([0, 2, 1], PicaCullMode::KeepClockwise, none, true);
+        let (reject_ccw, _) = raster_with_flip([0, 1, 2], PicaCullMode::KeepClockwise, none, true);
         let (reject_cw, _) =
             raster_with_flip([0, 2, 1], PicaCullMode::KeepCounterClockwise, none, true);
         assert_eq!(ccw.covered_pixels, 28);
