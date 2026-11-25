@@ -204,8 +204,7 @@ type CallObjectMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> JniObject;
 type CallIntMethodAFn =
     unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue) -> i32;
-type CallVoidMethodAFn =
-    unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue);
+type CallVoidMethodAFn = unsafe extern "system" fn(JniEnv, JniObject, JniMethod, *const JniValue);
 type DeleteLocalRefFn = unsafe extern "system" fn(JniEnv, JniObject);
 type ExceptionCheckFn = unsafe extern "system" fn(JniEnv) -> u8;
 type ExceptionClearFn = unsafe extern "system" fn(JniEnv);
