@@ -399,14 +399,10 @@ mod tests {
             0x1F1F_101F, // TexCoord0 W mapped to lane y
         ]))
         .unwrap();
-        let outputs = outputs_with(&[
-            (0, [0.0, 0.0, 0.0, 1.0]),
-            (1, [0.0, 2.5, 0.0, 0.0]),
-        ]);
+        let outputs = outputs_with(&[(0, [0.0, 0.0, 0.0, 1.0]), (1, [0.0, 2.5, 0.0, 0.0])]);
         assert_eq!(map.resolve(&outputs).unwrap().texcoord0_w, 2.5);
 
-        let ordinary_map =
-            PicaVertexOutputMap::from_registers(registers(&[0x0302_0100])).unwrap();
+        let ordinary_map = PicaVertexOutputMap::from_registers(registers(&[0x0302_0100])).unwrap();
         assert_eq!(ordinary_map.resolve(&outputs).unwrap().texcoord0_w, 1.0);
     }
 

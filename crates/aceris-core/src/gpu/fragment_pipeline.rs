@@ -135,7 +135,10 @@ fn project_texture0_coordinate(coordinate: [f32; 2], w: f32) -> Option<[f32; 2]>
         return None;
     }
     let projected = [coordinate[0] / w, coordinate[1] / w];
-    projected.iter().all(|value| value.is_finite()).then_some(projected)
+    projected
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(projected)
 }
 
 /// Perspective-correct attributes at one fragment sample.
@@ -855,7 +858,8 @@ mod tests {
         pica.write_register(REG_TEXUNIT_CONFIG, 1).unwrap();
         configure_texture(&mut pica, 0, VRAM_BASE, 8, 8);
         // Projection2D with clamp-to-border on both axes.
-        pica.write_register(0x083, (3 << 28) | (1 << 12) | (1 << 8)).unwrap();
+        pica.write_register(0x083, (3 << 28) | (1 << 12) | (1 << 8))
+            .unwrap();
         configure_tev(&mut pica, PicaTevSource::Texture0);
 
         let mut memory = GpuPhysicalMemory::new();
