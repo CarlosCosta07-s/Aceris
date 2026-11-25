@@ -47,8 +47,10 @@ use svc::{
     SVC_CLEAR_TIMER, SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
     SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
-    SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD, SVC_GET_PROCESS_INFO, SVC_GET_SYSTEM_TICK,
-    SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY,
+    SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD, SVC_GET_PROCESS_INFO,
+    SVC_GET_RESOURCE_LIMIT, SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES,
+    SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_INFO,
+    SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_BREAK,
     SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY,
     SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT,
     SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
@@ -117,7 +119,7 @@ pub enum Arm11RunStopReason {
     SupervisorCall { number: u32 },
     /// A process-scoped ExitProcess call was handled.
     ProcessExited,
-    /// A BKPT instruction stopped execution for a debugger or exception layer.
+    /// A BKPT instruction or guest SVC Break stopped execution for diagnostics.
     Breakpoint(u16),
     /// A WFI instruction is waiting for an IRQ or FIQ, even when masked.
     WaitForInterrupt,
@@ -239,6 +241,8 @@ enum SvcRunDisposition {
     NoRunnableThread,
     KernelServiceError { number: u32, result: u32 },
     IpcRequest,
+    /// A guest explicitly invoked SVC Break; stop without pretending it returned.
+    GuestBreak(u16),
 }
 
 /// An initialized ARM11 process with an address space, per-thread CPU contexts,
@@ -2158,6 +2162,12 @@ impl Arm11ProcessSession {
                                 stop_reason: Arm11RunStopReason::IpcRequest,
                             });
                         }
+                        SvcRunDisposition::GuestBreak(reason) => {
+                            return Ok(Arm11RunReport {
+                                instructions_executed: executed,
+                                stop_reason: Arm11RunStopReason::Breakpoint(reason),
+                            });
+                        }
                     }
                 }
             }
@@ -2217,6 +2227,21 @@ impl Arm11ProcessSession {
             SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
             SVC_GET_PROCESS_ID => self.svc_get_process_id(caller),
             SVC_GET_PROCESS_ID_OF_THREAD => self.svc_get_process_id_of_thread(caller),
+            SVC_GET_RESOURCE_LIMIT => self.svc_get_resource_limit(caller),
+            SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES => {
+                self.svc_get_resource_limit_values(caller, true)
+            }
+            SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES => {
+                self.svc_get_resource_limit_values(caller, false)
+            }
+            SVC_BREAK => {
+                let reason = self
+                    .scheduler
+                    .core(caller)
+                    .expect("caller context exists")
+                    .regs[0] as u16;
+                SvcRunDisposition::GuestBreak(reason)
+            }
             SVC_GET_PROCESS_INFO => self.svc_get_process_info(caller),
             0x2A => self.svc_get_system_info(caller),
             SVC_GET_SYSTEM_TICK => self.svc_get_system_tick(caller),
@@ -3585,6 +3610,121 @@ impl Arm11ProcessSession {
         self.write_svc_result(caller, result)
     }
 
+    /// Maximum COMMIT allocation for the configured Old 3DS application memory pool.
+    ///
+    /// This matches the 64 MiB APPMEMALLOC value published in configuration memory.
+    /// It is the current Aceris target configuration, not a universal value for
+    /// every 3DS memory type or New 3DS allocation profile.
+    const RESOURCE_LIMIT_COMMIT_MAX_BYTES: u64 = 0x0400_0000;
+
+    /// Returns the process's currently committed image, stack, TLS and dynamic mappings.
+    ///
+    /// The value is derived from guest-visible mapping sizes, not host Vec capacity.
+    fn process_committed_memory_bytes(&self) -> u64 {
+        let layout = self.address_space.layout();
+        let static_bytes = [
+            layout.text.mapped_size_bytes,
+            layout.read_only.mapped_size_bytes,
+            layout.data.mapped_size_bytes,
+            layout.bss.mapped_size_bytes,
+            layout.stack.mapped_size_bytes,
+        ]
+        .into_iter()
+        .map(u64::from)
+        .fold(0u64, u64::saturating_add);
+        let dynamic_bytes =
+            self.address_space.memory_usage_report().dynamic_region_virtual_bytes as u64;
+        static_bytes.saturating_add(dynamic_bytes)
+    }
+
+    /// Handles GetResourceLimit: r0 = writable handle output, r1 = process handle.
+    fn svc_get_resource_limit(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        if registers[1] != CURRENT_PROCESS_HANDLE {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
+
+        let handle = match self.kernel_objects.insert_resource_limit() {
+            Ok(handle) => handle,
+            Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
+        };
+        if self.address_space.write32(registers[0], handle).is_err() {
+            let _ = self.kernel_objects.close_handle(handle);
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.set_svc_handle_output(caller, handle);
+        self.write_svc_result(caller, 0)
+    }
+
+    /// Handles GetResourceLimitLimitValues/GetResourceLimitCurrentValues.
+    ///
+    /// r0 = writable s64 output array, r1 = ResourceLimit handle,
+    /// r2 = readable u32 resource-type array, r3 = signed element count.
+    /// COMMIT (type 1) is modelled; other resource counters fail closed until
+    /// their kernel accounting is implemented.
+    fn svc_get_resource_limit_values(
+        &mut self,
+        caller: ThreadId,
+        return_limit: bool,
+    ) -> SvcRunDisposition {
+        const RESOURCE_LIMIT_COMMIT: u32 = 1;
+        const MAX_RESOURCE_TYPES: i32 = 10;
+
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
+        if !self.kernel_objects.is_resource_limit_handle(registers[1]) {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        }
+
+        let count = registers[3] as i32;
+        if !(0..=MAX_RESOURCE_TYPES).contains(&count) {
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+        }
+        if count == 0 {
+            return self.write_svc_result(caller, 0);
+        }
+
+        let output_address = registers[0];
+        let types_address = registers[2];
+        if output_address & 3 != 0 || types_address & 3 != 0 {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        let type_bytes_len = count as usize * std::mem::size_of::<u32>();
+        let mut type_bytes = vec![0; type_bytes_len];
+        if self.read_memory_bytes(types_address, &mut type_bytes).is_err() {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        let commit_value = if return_limit {
+            Self::RESOURCE_LIMIT_COMMIT_MAX_BYTES
+        } else {
+            self.process_committed_memory_bytes()
+        };
+        let mut output = Vec::with_capacity(count as usize * std::mem::size_of::<u64>());
+        for resource_type_bytes in type_bytes.chunks_exact(4) {
+            let resource_type =
+                u32::from_le_bytes(resource_type_bytes.try_into().expect("four-byte chunk"));
+            let value = match resource_type {
+                RESOURCE_LIMIT_COMMIT => commit_value,
+                _ => return self.write_svc_result(caller, RESULT_INVALID_ENUM),
+            };
+            output.extend_from_slice(&value.to_le_bytes());
+        }
+
+        if self.write_memory_bytes(output_address, &output).is_err() {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.write_svc_result(caller, 0)
+    }
+
     /// Handles GetProcessId: r0 = writable PID output pointer, r1 = process handle.
     ///
     /// The current bootstrap models one application process. Its virtual PID is
@@ -3863,6 +4003,97 @@ mod tests {
             0xE3A0_1005, // MOV r1, #5
             0xEF00_0042, // SVC #0x42
         ])
+    }
+
+    #[test]
+    fn resource_limit_svc_reports_commit_pool_and_live_process_usage() {
+        let mut session = test_session();
+        const HANDLE_OUTPUT: u32 = 0x0020_0000;
+        const TYPES: u32 = 0x0020_0020;
+        const VALUES: u32 = 0x0020_0040;
+
+        session.write_memory_u32(TYPES, 1).unwrap(); // RESLIMIT_COMMIT
+        session.set_current_register(0, HANDLE_OUTPUT);
+        session.set_current_register(1, CURRENT_PROCESS_HANDLE);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let handle = session.read_memory_u32(HANDLE_OUTPUT).unwrap();
+        assert_ne!(handle, 0);
+        assert_eq!(session.current_registers().unwrap()[1], handle);
+
+        session.set_current_register(0, VALUES);
+        session.set_current_register(1, handle);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, 1);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut limit_bytes = [0; 8];
+        session.read_memory_bytes(VALUES, &mut limit_bytes).unwrap();
+        assert_eq!(
+            u64::from_le_bytes(limit_bytes),
+            Arm11ProcessSession::RESOURCE_LIMIT_COMMIT_MAX_BYTES
+        );
+
+        session.set_current_register(0, VALUES);
+        session.set_current_register(1, handle);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, 1);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut current_bytes = [0; 8];
+        session.read_memory_bytes(VALUES, &mut current_bytes).unwrap();
+        let current = u64::from_le_bytes(current_bytes);
+        assert!(current > 0);
+        assert!(current < Arm11ProcessSession::RESOURCE_LIMIT_COMMIT_MAX_BYTES);
+
+        session.write_memory_u32(TYPES, 2).unwrap(); // THREAD is not yet accounted.
+        session
+            .write_memory_bytes(VALUES, &0xA5A5_A5A5_A5A5_A5A5u64.to_le_bytes())
+            .unwrap();
+        session.set_current_register(0, VALUES);
+        session.set_current_register(1, handle);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, 1);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES);
+        assert_eq!(
+            session.current_registers().unwrap()[0],
+            RESULT_INVALID_ENUM
+        );
+        let mut unchanged = [0; 8];
+        session.read_memory_bytes(VALUES, &mut unchanged).unwrap();
+        assert_eq!(u64::from_le_bytes(unchanged), 0xA5A5_A5A5_A5A5_A5A5);
+    }
+
+    #[test]
+    fn resource_limit_svc_rejects_foreign_process_and_invalid_resource_handles() {
+        let mut session = test_session();
+        session.set_current_register(0, 0x0020_0000);
+        session.set_current_register(1, 7);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT);
+        assert_eq!(
+            session.current_registers().unwrap()[0],
+            RESULT_INVALID_HANDLE
+        );
+        assert_eq!(session.kernel_objects.handle_count(), 0);
+
+        session.set_current_register(0, 0x0020_0040);
+        session.set_current_register(1, 0xDEAD);
+        session.set_current_register(2, 0x0020_0020);
+        session.set_current_register(3, 1);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
+        assert_eq!(
+            session.current_registers().unwrap()[0],
+            RESULT_INVALID_HANDLE
+        );
+    }
+
+    #[test]
+    fn guest_svc_break_stops_execution_instead_of_returning_fake_success() {
+        let mut session = test_session_with_program(&[0xEF00_003C]); // SVC #0x3C
+        session.set_current_register(0, 1); // USERBREAK_ASSERT
+        let report = session.run_instructions(1).unwrap();
+        assert_eq!(report.instructions_executed, 1);
+        assert_eq!(report.stop_reason, Arm11RunStopReason::Breakpoint(1));
     }
 
     #[test]
