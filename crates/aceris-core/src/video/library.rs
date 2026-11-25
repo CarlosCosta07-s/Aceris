@@ -518,7 +518,8 @@ impl Library {
                 ClickResult::Ignored
             }
             LibraryPage::Settings => {
-                if (350.0..412.0).contains(&y) && (128.0..450.0).contains(&x) {
+                // Match the visible refresh button in the landscape settings card.
+                if (298.0..350.0).contains(&y) && (158.0..398.0).contains(&x) {
                     self.reload();
                 }
                 ClickResult::Ignored
@@ -2438,6 +2439,24 @@ mod tests {
             ClickResult::Ignored
         );
         assert!(library.status.is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn landscape_settings_refresh_button_matches_its_visible_bounds() {
+        let dir = std::env::temp_dir().join(format!("aceris-landscape-settings-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("sample.3ds"), b"fixture").unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.select_page(LibraryPage::Settings);
+
+        assert_eq!(
+            library.click_responsive(278, 315, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.entries().len(), 1);
+        assert!(library.status_message().is_some());
+
         fs::remove_dir_all(dir).unwrap();
     }
 
