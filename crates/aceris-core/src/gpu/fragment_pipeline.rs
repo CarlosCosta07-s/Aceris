@@ -816,10 +816,12 @@ mod tests {
 
         let pipeline = pica.fragment_pipeline().unwrap();
         let varyings = PicaFragmentVaryings {
+            // t is inverted by the sampler (rows are stored bottom to top),
+            // so 1 - t addresses the stored row used to fill the texture.
             texture_coordinates: [
-                [0.5 / 8.0, 0.5 / 8.0],
-                [1.5 / 8.0, 2.5 / 8.0],
-                [5.5 / 8.0, 6.5 / 8.0],
+                [0.5 / 8.0, 1.0 - 0.5 / 8.0],
+                [1.5 / 8.0, 1.0 - 2.5 / 8.0],
+                [5.5 / 8.0, 1.0 - 6.5 / 8.0],
             ],
             ..PicaFragmentVaryings::default()
         };

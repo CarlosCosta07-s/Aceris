@@ -467,6 +467,9 @@ impl PicaTextureUnit {
         if t == 1.0 {
             y = level.height as i64 - 1;
         }
+        // Texture rows are stored bottom to top: t = 0 selects the last row
+        // of the stored data.
+        y = level.height as i64 - 1 - y;
         self.read_wrapped_texel(memory, level, x, y)
     }
 
@@ -484,6 +487,8 @@ impl PicaTextureUnit {
             return Ok(self.border_color);
         };
 
+        // Same bottom-to-top row order as the nearest path.
+        let t = 1.0 - t;
         let x = f64::from(s) * level.width as f64 - 0.5;
         let y = f64::from(t) * level.height as f64 - 0.5;
         if !x.is_finite() || !y.is_finite() {
@@ -902,6 +907,8 @@ mod tests {
     }
 
     #[test]
+    // Rows are stored bottom to top, so t is inverted: 1 - t addresses the
+    // stored row directly in these tests.
     fn samples_rgba8888_from_morton_ordered_8x8_tile() {
         let mut memory = GpuPhysicalMemory::new();
         let morton = morton_index(3, 5);
@@ -910,7 +917,8 @@ mod tests {
             .unwrap();
         let unit = sample_unit(PicaTextureFormat::Rgba8);
         assert_eq!(
-            unit.sample(&memory, 3.5 / 8.0, 5.5 / 8.0, false).unwrap(),
+            unit.sample(&memory, 3.5 / 8.0, 1.0 - (5.5 / 8.0), false)
+                .unwrap(),
             [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 40.0 / 255.0]
         );
     }
@@ -1003,11 +1011,13 @@ mod tests {
 
         let mut unit = sample_unit(PicaTextureFormat::Rgba8);
         unit.magnification_filter = PicaTextureFilter::Linear;
-        let filtered = unit.sample(&memory, 1.0 / 8.0, 0.5 / 8.0, false).unwrap();
+        let filtered = unit
+            .sample(&memory, 1.0 / 8.0, 1.0 - (0.5 / 8.0), false)
+            .unwrap();
         assert!((filtered[0] - 128.0 / 255.0).abs() < 1.0e-6);
         assert_eq!(&filtered[1..], &[0.0, 0.0, 1.0]);
         assert_eq!(
-            unit.sample(&memory, 0.0, 0.0, false).unwrap(),
+            unit.sample(&memory, 0.0, 1.0 - (0.0), false).unwrap(),
             [0.0, 0.0, 0.0, 1.0]
         );
     }
@@ -1036,7 +1046,8 @@ mod tests {
         let unit = sample_unit(PicaTextureFormat::HiLo8);
 
         assert_eq!(
-            unit.sample(&memory, 3.5 / 8.0, 5.5 / 8.0, false).unwrap(),
+            unit.sample(&memory, 3.5 / 8.0, 1.0 - (5.5 / 8.0), false)
+                .unwrap(),
             [0x12 as f32 / 255.0, 0xE4 as f32 / 255.0, 0.0, 1.0]
         );
     }
@@ -1060,7 +1071,9 @@ mod tests {
         unit.magnification_filter = PicaTextureFilter::Linear;
 
         // At (4/8, 1/8), four neighboring texels contribute equally.
-        let sampled = unit.sample(&memory, 4.0 / 8.0, 1.0 / 8.0, false).unwrap();
+        let sampled = unit
+            .sample(&memory, 4.0 / 8.0, 1.0 - (1.0 / 8.0), false)
+            .unwrap();
         assert!((sampled[0] - 125.0 / 255.0).abs() < 1.0e-6);
         assert!((sampled[1] - 100.0 / 255.0).abs() < 1.0e-6);
         assert_eq!(&sampled[2..], &[0.0, 1.0]);
@@ -1191,8 +1204,12 @@ mod tests {
         memory.write(VRAM_BASE, &tile).unwrap();
         for format in [PicaTextureFormat::Intensity4, PicaTextureFormat::Alpha4] {
             let unit = sample_unit(format);
-            let low = unit.sample(&memory, 2.5 / 8.0, 5.5 / 8.0, false).unwrap();
-            let high = unit.sample(&memory, 3.5 / 8.0, 5.5 / 8.0, false).unwrap();
+            let low = unit
+                .sample(&memory, 2.5 / 8.0, 1.0 - (5.5 / 8.0), false)
+                .unwrap();
+            let high = unit
+                .sample(&memory, 3.5 / 8.0, 1.0 - (5.5 / 8.0), false)
+                .unwrap();
             if format == PicaTextureFormat::Intensity4 {
                 assert_eq!(low, [51.0 / 255.0, 51.0 / 255.0, 51.0 / 255.0, 1.0]);
                 assert_eq!(high[0], 204.0 / 255.0);
@@ -1220,7 +1237,7 @@ mod tests {
         memory.write(VRAM_BASE, &etc1_block(bytes)).unwrap();
         let unit = sample_unit(PicaTextureFormat::Etc1);
         let rgba = |x: f32, y: f32| {
-            unit.sample(&memory, x / 8.0, y / 8.0, false)
+            unit.sample(&memory, x / 8.0, 1.0 - (y / 8.0), false)
                 .unwrap()
                 .map(|channel| (channel * 255.0).round() as i32)
         };
@@ -1240,7 +1257,9 @@ mod tests {
         memory.write(VRAM_BASE, &etc1_block(bytes)).unwrap();
         let unit = sample_unit(PicaTextureFormat::Etc1);
         let rgb = |x: f32, y: f32| {
-            let c = unit.sample(&memory, x / 8.0, y / 8.0, false).unwrap();
+            let c = unit
+                .sample(&memory, x / 8.0, 1.0 - (y / 8.0), false)
+                .unwrap();
             [c[0], c[1], c[2]].map(|channel| (channel * 255.0).round() as i32)
         };
         // Base 1: 5-bit 16 -> 132; base 2: 5-bit 17 -> 140; modifier +2.
@@ -1258,12 +1277,15 @@ mod tests {
         tile[24..32].copy_from_slice(&color);
         memory.write(VRAM_BASE, &tile).unwrap();
         let unit = sample_unit(PicaTextureFormat::Etc1A4);
-        let texel = unit.sample(&memory, 4.5 / 8.0, 0.5 / 8.0, false).unwrap();
+        let texel = unit
+            .sample(&memory, 4.5 / 8.0, 1.0 - (0.5 / 8.0), false)
+            .unwrap();
         assert_eq!(texel[3], 170.0 / 255.0);
         assert_eq!((texel[0] * 255.0).round() as i32, 0x88 + 2);
         // Block 0 is empty memory: alpha 0.
         assert_eq!(
-            unit.sample(&memory, 0.5 / 8.0, 0.5 / 8.0, false).unwrap()[3],
+            unit.sample(&memory, 0.5 / 8.0, 1.0 - (0.5 / 8.0), false)
+                .unwrap()[3],
             0.0
         );
     }

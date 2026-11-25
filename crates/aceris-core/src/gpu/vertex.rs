@@ -408,6 +408,8 @@ impl PicaVertexInputLayout {
             bit_width: AttributeBitWidth::Bits8,
         };
         let mut formats = [default_format; MAX_VERTEX_ATTRIBUTES];
+        // Components per attribute: bits 2-3 of each format nibble plus one.
+        let mut format_component_counts = [1usize; MAX_VERTEX_ATTRIBUTES];
 
         for (index, format) in formats.iter_mut().enumerate() {
             let field = if index < 8 {
@@ -416,6 +418,7 @@ impl PicaVertexInputLayout {
                 (format_high >> ((index - 8) * 4)) & 0xF
             };
             *format = VertexAttributeFormat::decode(field);
+            format_component_counts[index] = ((field >> 2) & 0x3) as usize + 1;
         }
 
         let mut decoded_arrays = Vec::with_capacity(arrays.len());
@@ -454,32 +457,35 @@ impl PicaVertexInputLayout {
                         });
                     }
 
-                    component_counts[attribute] += 1;
-                    if component_counts[attribute] > MAX_COMPONENTS_PER_ATTRIBUTE {
-                        return Err(VertexInputError::TooManyComponentsForAttribute {
-                            attribute,
-                            count: component_counts[attribute],
-                        });
-                    }
-
+                    // A selector names a whole attribute: it contributes as
+                    // many scalar components as its format declares.
                     let width = formats[attribute].bit_width.byte_width();
-                    cursor = align_up(cursor, width);
-                    components.push(ArrayComponent {
-                        attribute: Some(code),
-                        byte_offset: u8::try_from(cursor).map_err(|_| {
+                    for _ in 0..format_component_counts[attribute] {
+                        component_counts[attribute] += 1;
+                        if component_counts[attribute] > MAX_COMPONENTS_PER_ATTRIBUTE {
+                            return Err(VertexInputError::TooManyComponentsForAttribute {
+                                attribute,
+                                count: component_counts[attribute],
+                            });
+                        }
+                        cursor = align_up(cursor, width);
+                        components.push(ArrayComponent {
+                            attribute: Some(code),
+                            byte_offset: u8::try_from(cursor).map_err(|_| {
+                                VertexInputError::InvalidComponentCount {
+                                    array: array_index,
+                                    count: component_count,
+                                }
+                            })?,
+                            byte_width: width as u8,
+                        });
+                        cursor = cursor.checked_add(width).ok_or(
                             VertexInputError::InvalidComponentCount {
                                 array: array_index,
                                 count: component_count,
-                            }
-                        })?,
-                        byte_width: width as u8,
-                    });
-                    cursor = cursor.checked_add(width).ok_or(
-                        VertexInputError::InvalidComponentCount {
-                            array: array_index,
-                            count: component_count,
-                        },
-                    )?;
+                            },
+                        )?;
+                    }
                 } else {
                     let padding_bytes = match code {
                         12 => 4,
@@ -729,17 +735,19 @@ mod tests {
 
     #[test]
     fn decodes_component_alignment_padding_and_stride() {
+        // Attribute 0: one unsigned byte. Attribute 1: two signed shorts
+        // (aligned to 2). Then four bytes of padding (aligned to 4).
         let format_low = 1 | (6 << 4);
         let config1 = (1 << 4) | (12 << 8);
-        let config2 = (8 << 16) | (3 << 28);
+        let config2 = (12 << 16) | (3 << 28);
         let layout =
             PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0x20, config1, config2)])
                 .unwrap();
 
         let array = &layout.arrays()[0];
         assert_eq!(array.base_offset(), 0x20);
-        assert_eq!(array.stride_bytes(), 8);
-        assert_eq!(array.minimum_record_size(), 8);
+        assert_eq!(array.stride_bytes(), 12);
+        assert_eq!(array.minimum_record_size(), 12);
     }
 
     #[test]
@@ -748,13 +756,16 @@ mod tests {
         let physical_base = FCRAM_BASE + 0x1000;
         let format_low = 1 | (6 << 4);
         let config1 = (1 << 4) | (12 << 8);
-        let config2 = (8 << 16) | (3 << 28);
+        let config2 = (12 << 16) | (3 << 28);
         let layout =
             PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0x20, config1, config2)])
                 .unwrap();
 
         memory
-            .write(physical_base + 0x20, &[0x7F, 0x00, 0xFE, 0xFF, 0, 0, 0, 0])
+            .write(
+                physical_base + 0x20,
+                &[0x7F, 0x00, 0xFE, 0xFF, 0x01, 0x00, 0, 0, 0, 0, 0, 0],
+            )
             .unwrap();
         let vertex = layout.read_vertex(&memory, physical_base, 0).unwrap();
 
@@ -765,8 +776,8 @@ mod tests {
 
         let second = vertex.attributes[1].unwrap();
         assert_eq!(second.format.data_type, AttributeDataType::SignedShort);
-        assert_eq!(second.component_count, 1);
-        assert_eq!(second.components[0], 0xFFFE);
+        assert_eq!(second.component_count, 2);
+        assert_eq!(second.components[..2], [0xFFFE, 1]);
     }
 
     #[test]
@@ -775,7 +786,8 @@ mod tests {
         let physical_base = VRAM_BASE + 0x1000;
         let format_low = 0xB;
         let config1 = 0;
-        let config2 = (12 << 16) | (3 << 28);
+        // One selector naming a three-component float attribute (12 bytes).
+        let config2 = (12 << 16) | (1 << 28);
         let layout =
             PicaVertexInputLayout::from_registers(format_low, 1 << 28, &[(0, config1, config2)])
                 .unwrap();
@@ -802,7 +814,7 @@ mod tests {
     fn converts_signed_unsigned_short_and_float_components_to_numeric_values() {
         let mut memory = GpuPhysicalMemory::new();
         let physical_base = FCRAM_BASE + 0x8000;
-        let format_low = (1 << 4) | (6 << 8) | (15 << 12);
+        let format_low = (1 << 4) | (2 << 8) | (3 << 12);
         let config1 = 0x3210;
         let config2 = (8 << 16) | (4 << 28);
         let layout =
@@ -844,6 +856,37 @@ mod tests {
                 .unwrap();
         assert_eq!(padded.arrays()[0].stride_bytes(), 4);
         assert_eq!(padded.arrays()[0].minimum_record_size(), 1);
+    }
+
+    #[test]
+    fn selectors_name_whole_attributes_with_per_format_component_counts() {
+        // Layout observed from a real title: attribute 0 = three floats,
+        // attribute 1 = two floats, one array with two selectors, stride 20.
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = FCRAM_BASE + 0x2000;
+        let layout =
+            PicaVertexInputLayout::from_registers(0x7B, 1 << 28, &[(0, 0x10, 0x2014_0000)])
+                .unwrap();
+        let array = &layout.arrays()[0];
+        assert_eq!(array.stride_bytes(), 20);
+        assert_eq!(array.minimum_record_size(), 20);
+
+        let mut bytes = Vec::new();
+        for value in [400.0f32, 0.0, 0.0, 0.5, 0.25] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        memory.write(physical_base, &bytes).unwrap();
+        let vertex = layout
+            .read_vertex(&memory, physical_base, 0)
+            .unwrap()
+            .to_numeric()
+            .unwrap();
+        let position = vertex.attributes[0].unwrap();
+        let texcoord = vertex.attributes[1].unwrap();
+        assert_eq!(position.component_count, 3);
+        assert_eq!(position.components[..3], [400.0, 0.0, 0.0]);
+        assert_eq!(texcoord.component_count, 2);
+        assert_eq!(texcoord.components[..2], [0.5, 0.25]);
     }
 
     #[test]
