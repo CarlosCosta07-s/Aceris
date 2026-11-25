@@ -10,9 +10,8 @@ use std::fmt;
 
 use super::{
     Pica200, PicaProceduralTextureClamp, PicaProceduralTextureConfig,
-    PicaProceduralTextureCurveEntry, PicaProceduralTextureFilter,
-    PicaProceduralTextureLut, PicaProceduralTextureMappingFunction,
-    PicaProceduralTextureShift,
+    PicaProceduralTextureCurveEntry, PicaProceduralTextureFilter, PicaProceduralTextureLut,
+    PicaProceduralTextureMappingFunction, PicaProceduralTextureShift,
 };
 
 const CURVE_LUT_SIZE: usize = 128;
@@ -43,7 +42,10 @@ impl fmt::Display for PicaProceduralTextureError {
                 formatter.write_str("procedural noise generation is not implemented")
             }
             Self::MipmapFilterUnsupported(filter) => {
-                write!(formatter, "procedural mipmap filter {filter:?} is not implemented")
+                write!(
+                    formatter,
+                    "procedural mipmap filter {filter:?} is not implemented"
+                )
             }
             Self::TextureBiasUnsupported => {
                 formatter.write_str("non-zero procedural texture bias is not implemented")
@@ -52,13 +54,22 @@ impl fmt::Display for PicaProceduralTextureError {
                 formatter.write_str("procedural texture coordinate selector is reserved")
             }
             Self::ClampModeUnsupported(mode) => {
-                write!(formatter, "procedural coordinate clamp {mode:?} is reserved")
+                write!(
+                    formatter,
+                    "procedural coordinate clamp {mode:?} is reserved"
+                )
             }
             Self::ShiftModeUnsupported(mode) => {
-                write!(formatter, "procedural coordinate shift {mode:?} is reserved")
+                write!(
+                    formatter,
+                    "procedural coordinate shift {mode:?} is reserved"
+                )
             }
             Self::MappingFunctionUnsupported(function) => {
-                write!(formatter, "procedural mapping function {function:?} is not implemented")
+                write!(
+                    formatter,
+                    "procedural mapping function {function:?} is not implemented"
+                )
             }
             Self::InvalidTextureWidth(width) => {
                 write!(formatter, "procedural color table width {width} is invalid")
@@ -225,10 +236,7 @@ impl PicaProceduralTextureSampler {
         Ok(color)
     }
 
-    fn sample_color_table(
-        &self,
-        position: f32,
-    ) -> Result<[f32; 4], PicaProceduralTextureError> {
+    fn sample_color_table(&self, position: f32) -> Result<[f32; 4], PicaProceduralTextureError> {
         if !position.is_finite() || !(0.0..=(COLOR_LUT_SIZE - 1) as f32).contains(&position) {
             return Err(PicaProceduralTextureError::ColorLookupOutOfRange);
         }
@@ -345,7 +353,11 @@ fn clamp_coordinate(
     }
     Ok(match mode {
         PicaProceduralTextureClamp::ClampToZero => {
-            if coordinate > 1.0 { 0.0 } else { coordinate }
+            if coordinate > 1.0 {
+                0.0
+            } else {
+                coordinate
+            }
         }
         PicaProceduralTextureClamp::ClampToEdge => coordinate.min(1.0),
         PicaProceduralTextureClamp::SymmetricalRepeat => coordinate - coordinate.floor(),
@@ -362,7 +374,11 @@ fn clamp_coordinate(
             }
         }
         PicaProceduralTextureClamp::Pulse => {
-            if coordinate <= 0.5 { 0.0 } else { 1.0 }
+            if coordinate <= 0.5 {
+                0.0
+            } else {
+                1.0
+            }
         }
         PicaProceduralTextureClamp::Reserved(_) => {
             return Err(PicaProceduralTextureError::ClampModeUnsupported(mode));
@@ -374,10 +390,9 @@ fn clamp_coordinate(
 mod tests {
     use super::*;
     use crate::gpu::{
-        GpuPhysicalMemory, PicaFragmentPipeline, PicaFragmentVaryings,
-        PicaProceduralTextureLut, REG_PROCTEX_LUT, REG_PROCTEX_LUT_DATA0,
-        REG_TEXUNIT3_PROCTEX0, REG_TEXUNIT3_PROCTEX4, REG_TEXUNIT3_PROCTEX5,
-        REG_TEXUNIT_CONFIG, TEXENV_STAGE_SOURCE_REGISTERS,
+        GpuPhysicalMemory, PicaFragmentPipeline, PicaFragmentVaryings, PicaProceduralTextureLut,
+        REG_PROCTEX_LUT, REG_PROCTEX_LUT_DATA0, REG_TEXUNIT_CONFIG, REG_TEXUNIT3_PROCTEX0,
+        REG_TEXUNIT3_PROCTEX4, REG_TEXUNIT3_PROCTEX5, TEXENV_STAGE_SOURCE_REGISTERS,
     };
 
     fn write(pica: &mut Pica200, register: u16, value: u32) {
@@ -388,21 +403,13 @@ mod tests {
         let mut pica = Pica200::new();
         write(&mut pica, REG_TEXUNIT_CONFIG, 1 << 10);
         let alpha_flag = if separate_alpha { 1 << 14 } else { 0 };
-        write(
-            &mut pica,
-            REG_TEXUNIT3_PROCTEX0,
-            1 | (1 << 3) | alpha_flag,
-        );
+        write(&mut pica, REG_TEXUNIT3_PROCTEX0, 1 | (1 << 3) | alpha_flag);
         let filter_value = match filter {
             PicaProceduralTextureFilter::Nearest => 0,
             PicaProceduralTextureFilter::Linear => 1,
             _ => 0,
         };
-        write(
-            &mut pica,
-            REG_TEXUNIT3_PROCTEX4,
-            (4 << 11) | filter_value,
-        );
+        write(&mut pica, REG_TEXUNIT3_PROCTEX4, (4 << 11) | filter_value);
         write(&mut pica, REG_TEXUNIT3_PROCTEX5, 0);
 
         write(
@@ -435,10 +442,8 @@ mod tests {
             [100, 110, 120, 200],
             [150, 160, 170, 128],
         ] {
-            let packed = u32::from(r)
-                | (u32::from(g) << 8)
-                | (u32::from(b) << 16)
-                | (u32::from(a) << 24);
+            let packed =
+                u32::from(r) | (u32::from(g) << 8) | (u32::from(b) << 16) | (u32::from(a) << 24);
             write(&mut pica, REG_PROCTEX_LUT_DATA0, packed);
         }
         pica
@@ -455,9 +460,7 @@ mod tests {
     fn samples_rgb_mapping_and_color_luts_when_noise_is_disabled() {
         let pica = fixture(false, PicaProceduralTextureFilter::Nearest);
         let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
-        let color = sampler
-            .sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]])
-            .unwrap();
+        let color = sampler.sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]]).unwrap();
         assert_color(color, [100, 110, 120, 200]);
     }
 

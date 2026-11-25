@@ -9,9 +9,10 @@
 
 use super::{
     FOG_LUT_ENTRY_COUNT, GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
-    PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw, PicaTevError,
-    PicaProceduralTextureError, PicaProceduralTextureSampler, PicaTextureEnvironment,
-    PicaTextureError, PicaTextureUnit, PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
+    PicaFragmentOutputState, PicaOutputMapError, PicaProceduralTextureError,
+    PicaProceduralTextureSampler, PicaResolvedVertex, PicaShadedDraw, PicaTevError,
+    PicaTextureEnvironment, PicaTextureError, PicaTextureUnit, PicaVertexOutputMap,
+    REG_TEXUNIT_CONFIG,
 };
 
 /// GPUREG_TEXENV_UPDATE_BUFFER: fog mode and depth-flip control.
@@ -311,7 +312,7 @@ impl std::fmt::Display for PicaFragmentInterpolationError {
 impl std::error::Error for PicaFragmentInterpolationError {}
 
 /// Decoded fixed-function fragment state for one PICA draw.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PicaFragmentPipeline {
     texture_environment: PicaTextureEnvironment,
     texture_units: [PicaTextureUnit; 3],

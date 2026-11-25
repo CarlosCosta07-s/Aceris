@@ -102,7 +102,6 @@ pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,
     VRAM_BASE, VRAM_SIZE,
 };
-pub use procedural_texture::{PicaProceduralTextureError, PicaProceduralTextureSampler};
 pub use pica200::{
     FOG_LUT_ENTRY_COUNT, GAS_LUT_ENTRY_COUNT, PROCTEX_LUT_DATA_REGISTER_COUNT, Pica200,
     PicaCommandBufferDescriptor, PicaCommandError, PicaCommandListReport, PicaCullMode,
@@ -129,6 +128,7 @@ pub use pica200::{
     REG_VSH_OPDESCS_INDEX, REGISTER_COUNT, VSH_CODE_TRANSFER_WORDS, VSH_FLOAT_UNIFORM_COUNT,
     VSH_OPDESC_TRANSFER_WORDS,
 };
+pub use procedural_texture::{PicaProceduralTextureError, PicaProceduralTextureSampler};
 pub use rasterizer::{
     DepthFunction, PicaDepthMap, PicaDepthMode, RasterVertex, RasterizationReport, RasterizerError,
     SoftwareRasterizer,
