@@ -18,6 +18,7 @@ mod input_fetch;
 mod output_map;
 mod physical_memory;
 mod pica200;
+mod procedural_texture;
 mod rasterizer;
 mod render;
 mod render_target;
@@ -101,6 +102,7 @@ pub use physical_memory::{
     FCRAM_BASE, FCRAM_SIZE, GpuPhysicalMemory, GpuPhysicalMemoryError, PHYSICAL_PAGE_SIZE,
     VRAM_BASE, VRAM_SIZE,
 };
+pub use procedural_texture::{PicaProceduralTextureError, PicaProceduralTextureSampler};
 pub use pica200::{
     FOG_LUT_ENTRY_COUNT, GAS_LUT_ENTRY_COUNT, PROCTEX_LUT_DATA_REGISTER_COUNT, Pica200,
     PicaCommandBufferDescriptor, PicaCommandError, PicaCommandListReport, PicaCullMode,

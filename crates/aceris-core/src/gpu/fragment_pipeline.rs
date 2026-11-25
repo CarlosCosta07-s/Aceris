@@ -10,8 +10,8 @@
 use super::{
     FOG_LUT_ENTRY_COUNT, GpuPhysicalMemory, Pica200, PicaFragmentInputs, PicaFragmentOutputError,
     PicaFragmentOutputState, PicaOutputMapError, PicaResolvedVertex, PicaShadedDraw, PicaTevError,
-    PicaTextureEnvironment, PicaTextureError, PicaTextureUnit, PicaVertexOutputMap,
-    REG_TEXUNIT_CONFIG,
+    PicaProceduralTextureError, PicaProceduralTextureSampler, PicaTextureEnvironment,
+    PicaTextureError, PicaTextureUnit, PicaVertexOutputMap, REG_TEXUNIT_CONFIG,
 };
 
 /// GPUREG_TEXENV_UPDATE_BUFFER: fog mode and depth-flip control.
@@ -315,6 +315,7 @@ impl std::error::Error for PicaFragmentInterpolationError {}
 pub struct PicaFragmentPipeline {
     texture_environment: PicaTextureEnvironment,
     texture_units: [PicaTextureUnit; 3],
+    procedural_texture: Option<PicaProceduralTextureSampler>,
     output_state: PicaFragmentOutputState,
     linear_fog: Option<PicaLinearFog>,
     fog_lut: Option<PicaFogLut>,
@@ -326,9 +327,14 @@ impl PicaFragmentPipeline {
     /// Captures TEV and texture-unit registers before a draw is executed.
     pub fn from_pica(pica: &Pica200) -> Result<Self, PicaFragmentPipelineError> {
         let config = pica.register(REG_TEXUNIT_CONFIG).unwrap_or(0);
-        if config & (1 << 10) != 0 {
-            return Err(PicaFragmentPipelineError::ProceduralTextureUnitUnsupported);
-        }
+        let procedural_texture = if config & (1 << 10) != 0 {
+            Some(
+                PicaProceduralTextureSampler::from_pica(pica)
+                    .map_err(PicaFragmentPipelineError::ProceduralTexture)?,
+            )
+        } else {
+            None
+        };
 
         let (linear_fog, fog_lut) = decode_fog_state(pica)?;
 
@@ -341,6 +347,7 @@ impl PicaFragmentPipeline {
                 PicaTextureUnit::from_pica(pica, 1).map_err(PicaFragmentPipelineError::Texture)?,
                 PicaTextureUnit::from_pica(pica, 2).map_err(PicaFragmentPipelineError::Texture)?,
             ],
+            procedural_texture,
             output_state: pica
                 .fragment_output_state()
                 .map_err(PicaFragmentPipelineError::Output)?,
@@ -352,9 +359,8 @@ impl PicaFragmentPipeline {
 
     /// Evaluates one fragment after texture fetch, using the captured draw state.
     ///
-    /// Texture unit 3 is the PICA procedural-texture generator and is not
-    /// silently substituted with a normal 2D sampler. Enabling it is rejected
-    /// by from_pica; when disabled, its TEV source resolves to zero.
+    /// Texture unit 3 uses the captured procedural generator when enabled.
+    /// Unsupported noise, mipmap, bias and reserved modes fail explicitly.
     pub fn shade_fragment(
         &self,
         memory: &GpuPhysicalMemory,
@@ -389,6 +395,12 @@ impl PicaFragmentPipeline {
                 None => unit.sample(memory, s, t, varyings.minifying[index]),
             }
             .map_err(PicaFragmentPipelineError::Texture)?;
+        }
+
+        if let Some(procedural_texture) = &self.procedural_texture {
+            inputs.textures[3] = procedural_texture
+                .sample(&varyings.texture_coordinates)
+                .map_err(PicaFragmentPipelineError::ProceduralTexture)?;
         }
 
         self.texture_environment
@@ -600,6 +612,7 @@ pub enum PicaFragmentPipelineError {
     Texture(PicaTextureError),
     Tev(PicaTevError),
     Output(PicaFragmentOutputError),
+    ProceduralTexture(PicaProceduralTextureError),
     ProceduralTextureUnitUnsupported,
     UnsupportedFogMode {
         mode: u8,
@@ -618,6 +631,9 @@ impl std::fmt::Display for PicaFragmentPipelineError {
             }
             Self::Tev(error) => write!(formatter, "PICA TEV combiner failed: {error}"),
             Self::Output(error) => write!(formatter, "PICA fragment output stage failed: {error}"),
+            Self::ProceduralTexture(error) => {
+                write!(formatter, "PICA procedural texture stage failed: {error}")
+            }
             Self::ProceduralTextureUnitUnsupported => {
                 formatter.write_str("PICA procedural texture unit 3 is not implemented")
             }
