@@ -616,12 +616,13 @@ fn render(
                 .expect("Android GPU presenter is present while its owner is alive")
                 .present_rgba(frame, width, height)
         });
-        if let Some(Ok(())) = gpu_result {
-            return;
-        }
-        if let Some(Err(error)) = gpu_result {
-            eprintln!("Android GPU surface lost; switching to CPU presentation: {error}");
-            gpu_presenter.take();
+        match gpu_result {
+            Some(Ok(())) => return,
+            Some(Err(error)) => {
+                eprintln!("Android GPU surface lost; switching to CPU presentation: {error}");
+                gpu_presenter.take();
+            }
+            None => {}
         }
 
         // The original RGBA ANativeWindow path remains the fallback.
