@@ -2454,9 +2454,13 @@ impl Arm11CodeAddressSpace {
         bytes: &[u8],
         policy: CachePolicy,
     ) -> BusResult<()> {
-        if policy == CachePolicy::WriteBack && self.try_write_cached_hit(address, bytes) {
-            self.invalidate_exclusive_range(address, bytes.len());
-            return Ok(());
+        if policy == CachePolicy::WriteBack {
+            if self.try_write_cached_hit(address, bytes)
+                || self.try_write_cached_miss(address, bytes)?
+            {
+                self.invalidate_exclusive_range(address, bytes.len());
+                return Ok(());
+            }
         }
 
         let mut locations = ValidatedWriteLocations::with_capacity(bytes.len());
@@ -2685,6 +2689,72 @@ impl Arm11CodeAddressSpace {
         line.dirty = true;
         self.touch_data_cache_line(key);
         true
+    }
+
+    /// Handles a small write-back store that misses in the D-cache but stays
+    /// inside one resident-line-sized span. Every guest byte is validated
+    /// against the same backing line before that line is loaded or modified.
+    fn try_write_cached_miss(&mut self, address: u32, bytes: &[u8]) -> BusResult<bool> {
+        if bytes.is_empty() || bytes.len() > INLINE_WRITE_LOCATION_CAPACITY {
+            return Ok(false);
+        }
+
+        let Some(location) = self.locate(address) else {
+            return Ok(false);
+        };
+        if !self.location_is_writable(location) {
+            return Ok(false);
+        }
+        let Some((key, offset)) = self.cache_key_for(location) else {
+            return Ok(false);
+        };
+        let Some(end) = offset.checked_add(bytes.len()) else {
+            return Ok(false);
+        };
+        if end > ARM11_DATA_CACHE_LINE_SIZE || self.data_cache.contains_key(&key) {
+            return Ok(false);
+        }
+
+        // Do not assume neighboring virtual addresses share a backing store.
+        // Verify every byte before filling the line, so cross-region writes
+        // preserve the general path's validate-before-mutate guarantee.
+        for index in 1..bytes.len() {
+            let current_address = address
+                .checked_add(index as u32)
+                .ok_or(Error::InvalidAccess { addr: address })?;
+            let Some(current_location) = self.locate(current_address) else {
+                return Ok(false);
+            };
+            if !self.location_is_writable(current_location) {
+                return Ok(false);
+            }
+            let Some((current_key, current_offset)) = self.cache_key_for(current_location) else {
+                return Ok(false);
+            };
+            if current_key != key || current_offset != offset + index {
+                return Ok(false);
+            }
+        }
+
+        let Some((target_key, target, target_offset)) = self.cache_location(location) else {
+            return Ok(false);
+        };
+        debug_assert_eq!(target_key, key);
+        debug_assert_eq!(target_offset, offset);
+
+        let mut line_bytes = self.read_cache_target_line(&target)?;
+        self.overlay_write_buffer(key, &mut line_bytes);
+        line_bytes[offset..end].copy_from_slice(bytes);
+        self.insert_data_cache_line(
+            key,
+            Arm11DataCacheLine {
+                bytes: line_bytes,
+                dirty: true,
+                target,
+            },
+        )?;
+
+        Ok(true)
     }
 
     /// Cacheable read that hits a resident line entirely inside one line.
