@@ -2970,6 +2970,10 @@ impl Arm11CodeAddressSpace {
 
         let mut bytes = self.read_cache_target_line(target)?;
         self.overlay_write_buffer(key, &mut bytes);
+        let value = bytes
+            .get(offset)
+            .copied()
+            .ok_or(Error::InvalidAccess { addr: 0 })?;
         self.insert_data_cache_line(
             key,
             Arm11DataCacheLine {
@@ -2979,10 +2983,7 @@ impl Arm11CodeAddressSpace {
             },
         )?;
 
-        self.data_cache
-            .get(&key)
-            .and_then(|line| line.bytes.get(offset).copied())
-            .ok_or(Error::InvalidAccess { addr: 0 })
+        Ok(value)
     }
 
     fn write_cached_byte(
