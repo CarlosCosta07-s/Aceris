@@ -400,7 +400,7 @@ impl Library {
             logical_width,
             logical_height,
             scale,
-            0x100A1B,
+            brand::PURPLE_DARK,
         );
         if let Some(background) = background {
             responsive_blend_background(frame, width, height, background);
@@ -422,7 +422,7 @@ impl Library {
         logical_height: f32,
     ) {
         let font_scale = (scale * 1.7).round().max(2.0) as usize;
-        let small_scale = (scale * 1.15).round().max(2.0) as usize;
+        let small_scale = (scale * 1.15).round().max(1.0) as usize;
 
         // Brand header.
         responsive_fill(
@@ -894,7 +894,7 @@ impl Library {
         logical_height: f32,
     ) {
         let font_scale = (scale * 1.8).round().max(2.0) as usize;
-        let small_scale = (scale * 1.15).round().max(2.0) as usize;
+        let small_scale = (scale * 1.15).round().max(1.0) as usize;
 
         responsive_fill(
             frame,
