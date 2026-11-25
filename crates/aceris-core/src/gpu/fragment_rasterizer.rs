@@ -424,8 +424,14 @@ impl PicaFragmentRasterizer {
             let first = polygon[0];
             for index in 1..polygon.len() - 1 {
                 let triangle = [first, polygon[index], polygon[index + 1]];
-                let screen = triangle
-                    .map(|vertex| to_screen(vertex, state.viewport, state.depth_map))
+                let screen = triangle.map(|vertex| {
+                    to_screen(
+                        vertex,
+                        state.viewport,
+                        state.depth_map,
+                        state.flip_viewport,
+                    )
+                })
                     .into_iter()
                     .collect::<Result<Vec<_>, _>>()?;
                 report.clipped_triangles = report.clipped_triangles.saturating_add(1);
@@ -854,6 +860,7 @@ fn to_screen(
     vertex: ClipVertex,
     viewport: Viewport,
     depth_map: Option<PicaDepthMap>,
+    flip_viewport: bool,
 ) -> Result<ScreenVertex, PicaFragmentRasterError> {
     let [clip_x, clip_y, clip_z, clip_w] = vertex.varying.clip_position;
     if !clip_w.is_finite() || clip_w < CLIP_W_EPSILON {
@@ -864,7 +871,11 @@ fn to_screen(
     let ndc_y = clip_y * reciprocal_w;
     let ndc_z = clip_z * reciprocal_w;
     let x = viewport.x + (ndc_x + 1.0) * (viewport.width * 0.5);
-    let y = viewport.y + (1.0 - ndc_y) * (viewport.height * 0.5);
+    let y = if flip_viewport {
+        viewport.y + (ndc_y + 1.0) * (viewport.height * 0.5)
+    } else {
+        viewport.y + (1.0 - ndc_y) * (viewport.height * 0.5)
+    };
     if !reciprocal_w.is_finite() || !ndc_x.is_finite() || !ndc_y.is_finite() || !ndc_z.is_finite() {
         return Err(PicaFragmentRasterError::InvalidPerspectiveDivide);
     }
