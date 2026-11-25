@@ -469,8 +469,8 @@ fn set_activity_volume_stream(env: JniEnv, activity: JniObject) {
             get_method(
                 env,
                 class,
-                b"setVolumeControlStream\\0".as_ptr().cast(),
-                b"(I)V\\0".as_ptr().cast(),
+                b"setVolumeControlStream\0".as_ptr().cast(),
+                b"(I)V\0".as_ptr().cast(),
             )
         };
         (!method.is_null()).then_some(method)
