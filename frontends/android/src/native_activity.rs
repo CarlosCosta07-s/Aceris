@@ -214,7 +214,6 @@ struct AttachedMediaMonitor {
     java_vm: *mut c_void,
     env: JniEnv,
     activity: JniObject,
-    delete_global_ref: DeleteGlobalRefFn,
     detach_current_thread: DetachCurrentThreadFn,
 }
 
@@ -233,16 +232,10 @@ impl AttachedMediaMonitor {
         if unsafe { attach(vm, &mut env, ptr::null_mut()) } != 0 || env.is_null() {
             return None;
         }
-        let Some(delete_global_ref) = jni_function(env, 22) else {
-            // SAFETY: the preceding attach succeeded.
-            unsafe { detach(vm) };
-            return None;
-        };
         Some(Self {
             java_vm: vm,
             env,
             activity: activity.get(),
-            delete_global_ref,
             detach_current_thread: detach,
         })
     }
@@ -439,8 +432,6 @@ impl AttachedMediaMonitor {
 
 impl Drop for AttachedMediaMonitor {
     fn drop(&mut self) {
-        // SAFETY: the activity global reference is released while this thread is attached.
-        unsafe { (self.delete_global_ref)(self.env, self.activity) };
         // SAFETY: this is the same thread that was attached in attach().
         unsafe { (self.detach_current_thread)(self.java_vm) };
     }
@@ -514,7 +505,11 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
             shared: Mutex::new(Shared::default()),
             thread: Mutex::new(None),
             java_vm: Raw::new((*activity).vm),
-            activity_global: create_activity_global_ref((*activity).env, (*activity).clazz),
+            activity_global: if (*activity).sdk_version >= 28 {
+                create_activity_global_ref((*activity).env, (*activity).clazz)
+            } else {
+                Raw::default()
+            },
             sdk_version: (*activity).sdk_version,
         });
         *lock(&HOST) = Some(host.clone());
@@ -556,13 +551,22 @@ unsafe extern "C" fn on_pause(_activity: *mut NativeActivity) {
     update_shared(|shared| shared.resumed = false);
 }
 
-unsafe extern "C" fn on_destroy(_activity: *mut NativeActivity) {
+unsafe extern "C" fn on_destroy(activity: *mut NativeActivity) {
     update_shared(|shared| shared.destroyed = true);
     let host = lock(&HOST).take();
     if let Some(host) = host {
         let handle = lock(&host.thread).take();
         if let Some(handle) = handle {
             let _ = handle.join();
+        }
+        // The Activity owns this global reference; release it on the callback
+        // thread after the worker detached, even when the monitor was unavailable.
+        if !host.activity_global.is_null() {
+            let env = unsafe { (*activity).env };
+            if let Some(delete_global): Option<DeleteGlobalRefFn> = jni_function(env, 22) {
+                // SAFETY: the app thread has joined, so no monitor call can use this reference.
+                unsafe { delete_global(env, host.activity_global.get()) };
+            }
         }
     }
 }
