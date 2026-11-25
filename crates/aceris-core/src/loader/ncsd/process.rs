@@ -618,12 +618,21 @@ impl ValidatedWriteLocations {
     }
 
     fn iter(&self) -> impl Iterator<Item = MemoryLocation> + '_ {
-        match self {
-            Self::Inline { entries, len } => entries[..*len]
-                .iter()
-                .map(|entry| entry.expect("validated inline write location is populated")),
-            Self::Heap(entries) => entries.iter().copied(),
-        }
+        let mut index = 0;
+        std::iter::from_fn(move || {
+            let location = match self {
+                Self::Inline { entries, len } => {
+                    if index < *len {
+                        entries[index]
+                    } else {
+                        None
+                    }
+                }
+                Self::Heap(entries) => entries.get(index).copied(),
+            };
+            index += 1;
+            location
+        })
     }
 }
 
