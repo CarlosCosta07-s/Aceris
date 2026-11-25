@@ -542,9 +542,9 @@ fn profile_ipc(iterations: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn run_component_profile() -> Result<(), String> {
-    const ITERATIONS: usize = 250_000;
-    const GPU_TRIANGLES: usize = 32;
+fn run_component_profile_once() -> Result<(), String> {
+    const ITERATIONS: usize = 1_000_000;
+    const GPU_TRIANGLES: usize = 64;
 
     println!();
     println!("Aceris standalone component profile");
@@ -576,6 +576,23 @@ fn run_component_profile() -> Result<(), String> {
         "- These are host microbenchmarks. Use the game benchmark separately for end-to-end guest throughput."
     );
     println!();
+    Ok(())
+}
+
+fn run_component_profile() -> Result<(), String> {
+    const MEASURED_REPETITIONS: usize = 5;
+
+    println!("Component profile warm-up");
+    run_component_profile_once()?;
+
+    for repetition in 1..=MEASURED_REPETITIONS {
+        println!();
+        println!("Component profile repetition {repetition}/{MEASURED_REPETITIONS}");
+        run_component_profile_once()?;
+    }
+
+    println!();
+    println!("Use the median of the five measured repetitions; discard the warm-up above.");
     Ok(())
 }
 
