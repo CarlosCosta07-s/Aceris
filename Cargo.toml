@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/aceris-common",
     "crates/aceris-core",
+    "crates/aceris-graphics",
     "frontends/desktop",
     "frontends/android",
     "tools/icongen",
@@ -16,7 +17,7 @@ default-members = [
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 license = "MIT"
 repository = "https://github.com/CarlosCosta07-s/Aceris"
 authors = ["Aceris contributors"]

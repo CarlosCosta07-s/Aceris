@@ -1,0 +1,17 @@
+[package]
+name = "aceris-graphics"
+description = "Native GPU presentation and graphics backends for Aceris"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+pollster = "0.4.0"
+raw-window-handle = "0.6.2"
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "metal", "wgsl"] }
+
+[lints]
+workspace = true

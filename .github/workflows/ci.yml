@@ -6,13 +6,49 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: aceris-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lockfile:
+    name: Resolve Cargo.lock
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.publish.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate and publish the dependency lockfile
+        id: publish
+        shell: bash
+        run: |
+          cargo generate-lockfile
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]] && ! git diff --quiet -- Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Cargo.lock
+            git commit -m "chore: resolve workspace dependency lockfile"
+            git push origin HEAD:main
+          fi
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Upload resolved lockfile for pull-request checks
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lockfile
+          path: Cargo.lock
+          if-no-files-found: error
+
   check:
+    needs: lockfile
     name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -21,6 +57,17 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.lockfile.outputs.ref }}
+      - name: Use the generated lockfile for pull requests
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-lockfile
+          path: .lockfile
+      - name: Install pull-request lockfile
+        if: github.event_name == 'pull_request'
+        run: cp .lockfile/Cargo.lock Cargo.lock
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -45,9 +92,21 @@ jobs:
 
   android:
     name: Android (arm64-v8a)
+    needs: lockfile
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.lockfile.outputs.ref }}
+      - name: Use the generated lockfile for pull requests
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-lockfile
+          path: .lockfile
+      - name: Install pull-request lockfile
+        if: github.event_name == 'pull_request'
+        run: cp .lockfile/Cargo.lock Cargo.lock
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
