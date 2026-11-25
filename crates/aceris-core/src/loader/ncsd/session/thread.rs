@@ -800,6 +800,24 @@ mod tests {
     }
 
     #[test]
+    fn dense_thread_slots_keep_monotonic_ids_after_reaping() {
+        let mut scheduler = scheduler();
+        let first = create(&mut scheduler, 0x0020_0000, 0x30);
+
+        assert_eq!(first.raw(), 2);
+        scheduler.terminate_thread(first).unwrap();
+        assert!(scheduler.reap_exited_thread(first));
+        assert_eq!(scheduler.thread_count(), 1);
+        assert_eq!(scheduler.thread_id_for_handle(first.raw()), None);
+
+        let second = create(&mut scheduler, 0x0030_0000, 0x30);
+        assert_eq!(second.raw(), 3);
+        assert_eq!(scheduler.thread_info(second).unwrap().entrypoint, 0x0030_0000);
+        assert!(scheduler.core(second).is_some());
+        assert_eq!(scheduler.thread_count(), 2);
+    }
+
+    #[test]
     fn sleeping_threads_wake_only_after_the_virtual_deadline() {
         let mut scheduler = scheduler_with_priority(0x10);
         let other = create(&mut scheduler, 0x0020_0000, 0x20);
