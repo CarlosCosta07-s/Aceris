@@ -2048,6 +2048,58 @@ impl Arm11CodeAddressSpace {
         self.bytes_for(kind)
     }
 
+    /// Finds the last linear mapping whose virtual base does not exceed the address.
+    ///
+    /// Linear mappings are kept sorted and non-overlapping in virtual address
+    /// order by map/unmap operations.
+    fn linear_region_at_virtual_address(
+        &self,
+        address: u32,
+    ) -> Option<(usize, &LinearMemoryRegion)> {
+        let index = self
+            .linear_regions
+            .partition_point(|region| region.virtual_base <= address)
+            .checked_sub(1)?;
+        let region = self.linear_regions.get(index)?;
+        (u64::from(address) < region.virtual_end()).then_some((index, region))
+    }
+
+    /// Resolves an FCRAM physical address through either documented linear alias.
+    ///
+    /// Every valid linear mapping is a subrange of one of two affine windows.
+    /// Deriving those two possible virtual addresses avoids scanning all process
+    /// mappings on every MMU-translated memory access. The old alias sorts before
+    /// the new alias, matching the former first-match behavior when both exist.
+    fn linear_region_at_physical_address(&self, address: u32) -> Option<MemoryLocation> {
+        let fcram_end = u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE);
+        if address < FCRAM_BASE || u64::from(address) >= fcram_end {
+            return None;
+        }
+
+        if let Some(old_virtual) = address.checked_sub(0x0C00_0000)
+            && old_virtual >= OLD_LINEAR_BASE
+            && u64::from(old_virtual) < OLD_LINEAR_END
+            && let Some((index, region)) = self.linear_region_at_virtual_address(old_virtual)
+        {
+            let offset = old_virtual - region.virtual_base;
+            if u64::from(region.physical_base) + u64::from(offset) == u64::from(address) {
+                return Some(MemoryLocation::Physical { index, address });
+            }
+        }
+
+        let new_virtual = NEW_LINEAR_BASE.checked_add(address - FCRAM_BASE)?;
+        if u64::from(new_virtual) < NEW_LINEAR_END
+            && let Some((index, region)) = self.linear_region_at_virtual_address(new_virtual)
+        {
+            let offset = new_virtual - region.virtual_base;
+            if u64::from(region.physical_base) + u64::from(offset) == u64::from(address) {
+                return Some(MemoryLocation::Physical { index, address });
+            }
+        }
+
+        None
+    }
+
     fn locate(&self, address: u32) -> Option<MemoryLocation> {
         let segments = [
             (Arm11SegmentKind::Text, self.layout.text),
@@ -2069,9 +2121,7 @@ impl Arm11CodeAddressSpace {
             }
         }
 
-        if let Some((index, region)) = self.linear_regions.iter().enumerate().find(|(_, region)| {
-            address >= region.virtual_base && u64::from(address) < region.virtual_end()
-        }) {
+        if let Some((index, region)) = self.linear_region_at_virtual_address(address) {
             let offset = address - region.virtual_base;
             return Some(MemoryLocation::Physical {
                 index,
@@ -2080,39 +2130,41 @@ impl Arm11CodeAddressSpace {
         }
 
         // A translated ARM11 access reaches this bus with its physical
-        // address. Resolve registered linear FCRAM backing in both directions
-        // so MMU-enabled CPU accesses and device accesses share the same cache.
-        if let Some((index, _)) = self.linear_regions.iter().enumerate().find(|(_, region)| {
-            address >= region.physical_base
-                && u64::from(address) < u64::from(region.physical_base) + u64::from(region.size)
-        }) {
-            return Some(MemoryLocation::Physical { index, address });
+        // address. Both linear aliases are resolved with at most two binary
+        // searches while retaining the old-alias-first selection order.
+        if let Some(location) = self.linear_region_at_physical_address(address) {
+            return Some(location);
         }
 
-        if let Some((index, region)) = self.shared_regions.iter().enumerate().find(|(_, region)| {
-            address >= region.address
-                && region
-                    .end_address()
-                    .is_some_and(|end| u64::from(address) < end)
-        }) {
-            let offset = usize::try_from(address - region.address).ok()?;
-            return Some(MemoryLocation::Shared { index, offset });
+        let shared_index = self
+            .shared_regions
+            .partition_point(|region| region.address <= address)
+            .checked_sub(1);
+        if let Some(index) = shared_index {
+            let region = &self.shared_regions[index];
+            if region
+                .end_address()
+                .is_some_and(|end| u64::from(address) < end)
+            {
+                let offset = usize::try_from(address - region.address).ok()?;
+                return Some(MemoryLocation::Shared { index, offset });
+            }
         }
 
-        self.dynamic_regions
-            .iter()
-            .enumerate()
-            .find_map(|(index, region)| {
-                if address < region.address {
-                    return None;
-                }
-                let offset = u64::from(address) - u64::from(region.address);
-                (offset < region.len() as u64).then(|| {
-                    usize::try_from(offset)
-                        .ok()
-                        .map(|offset| MemoryLocation::Dynamic { index, offset })
-                })?
-            })
+        let dynamic_index = self
+            .dynamic_regions
+            .partition_point(|region| region.address <= address)
+            .checked_sub(1)?;
+        let region = self.dynamic_regions.get(dynamic_index)?;
+        let offset = u64::from(address) - u64::from(region.address);
+        if offset < region.len() as u64 {
+            return Some(MemoryLocation::Dynamic {
+                index: dynamic_index,
+                offset: usize::try_from(offset).ok()?,
+            });
+        }
+
+        None
     }
 
     fn bytes_for(&self, kind: Arm11SegmentKind) -> &[u8] {
@@ -5003,6 +5055,160 @@ mod tests {
         assert!(address_space.is_writable_range(0x0800_0000, 0x2000));
         assert!(address_space.is_writable_range(0x0800_4000, 0x3000));
         assert!(!address_space.is_writable_range(0x0800_2000, 1));
+    }
+
+    #[test]
+    fn locate_uses_ordered_lookup_for_static_shared_and_dynamic_regions() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+
+        // Insert heap and shared mappings in reverse address order. Their
+        // vectors are sorted at insertion and lookup must honour exact ends/gaps.
+        address_space
+            .allocate_application_heap_region(0x0800_4000, 0x2000)
+            .unwrap();
+        address_space
+            .allocate_application_heap_region(0x0800_0000, 0x1000)
+            .unwrap();
+        address_space
+            .map_shared_memory_region(
+                0x0900_4000,
+                SharedMemoryBacking::zeroed(0x1000).unwrap(),
+                3,
+            )
+            .unwrap();
+        address_space
+            .map_shared_memory_region(
+                0x0900_0000,
+                SharedMemoryBacking::zeroed(0x1000).unwrap(),
+                1,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            address_space.locate(0x0010_1FFF),
+            Some(MemoryLocation::Static {
+                kind: Arm11SegmentKind::Text,
+                offset: 0x1FFF,
+            })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0010_2000),
+            Some(MemoryLocation::Static {
+                kind: Arm11SegmentKind::ReadOnly,
+                offset: 0,
+            })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0010_3000),
+            Some(MemoryLocation::Static {
+                kind: Arm11SegmentKind::Data,
+                offset: 0,
+            })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0010_4000),
+            Some(MemoryLocation::Static {
+                kind: Arm11SegmentKind::Bss,
+                offset: 0,
+            })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0FFF_C000),
+            Some(MemoryLocation::Static {
+                kind: Arm11SegmentKind::Stack,
+                offset: 0,
+            })
+        ));
+
+        assert!(matches!(
+            address_space.locate(0x0800_0FFF),
+            Some(MemoryLocation::Dynamic { index: 0, offset: 0x0FFF })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0800_2000),
+            None
+        ));
+        assert!(matches!(
+            address_space.locate(0x0800_5FFF),
+            Some(MemoryLocation::Dynamic { index: 1, offset: 0x1FFF })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0800_6000),
+            None
+        ));
+
+        assert!(matches!(
+            address_space.locate(0x0900_0FFF),
+            Some(MemoryLocation::Shared { index: 0, offset: 0x0FFF })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0900_2000),
+            None
+        ));
+        assert!(matches!(
+            address_space.locate(0x0900_4FFF),
+            Some(MemoryLocation::Shared { index: 1, offset: 0x0FFF })
+        ));
+        assert!(matches!(
+            address_space.locate(0x0900_5000),
+            None
+        ));
+    }
+
+    #[test]
+    fn locate_resolves_linear_aliases_and_physical_fcram_with_ordered_lookup() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let mut memory = GpuPhysicalMemory::new();
+        let physical_base = memory.allocate_linear_fcram(0x2000).unwrap();
+        let old_virtual_base = physical_base - 0x0C00_0000;
+        let new_virtual_base = NEW_LINEAR_BASE + (physical_base - FCRAM_BASE);
+        address_space.attach_gpu_memory(memory.clone());
+
+        // Insert in reverse virtual order. Sorting and binary lookup must still
+        // select the old alias first when an MMU access supplies the physical address.
+        address_space
+            .map_linear_memory_region(new_virtual_base, physical_base, 0x2000)
+            .unwrap();
+        address_space
+            .map_linear_memory_region(old_virtual_base, physical_base, 0x2000)
+            .unwrap();
+
+        assert!(matches!(
+            address_space.locate(old_virtual_base),
+            Some(MemoryLocation::Physical {
+                index: 0,
+                address,
+            }) if address == physical_base
+        ));
+        assert!(matches!(
+            address_space.locate(old_virtual_base + 0x1FFF),
+            Some(MemoryLocation::Physical {
+                index: 0,
+                address,
+            }) if address == physical_base + 0x1FFF
+        ));
+        assert!(matches!(
+            address_space.locate(new_virtual_base),
+            Some(MemoryLocation::Physical {
+                index: 1,
+                address,
+            }) if address == physical_base
+        ));
+        assert!(matches!(
+            address_space.locate(physical_base),
+            Some(MemoryLocation::Physical {
+                index: 0,
+                address,
+            }) if address == physical_base
+        ));
+        assert!(matches!(
+            address_space.locate(physical_base + 0x1FFF),
+            Some(MemoryLocation::Physical {
+                index: 0,
+                address,
+            }) if address == physical_base + 0x1FFF
+        ));
+        assert!(address_space.locate(physical_base + 0x2000).is_none());
     }
 
     #[test]
