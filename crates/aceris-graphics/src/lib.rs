@@ -385,12 +385,8 @@ impl GraphicsPresenter {
                         configure_after_present = true;
                         frame
                     }
-                    wgpu::CurrentSurfaceTexture::Timeout => {
-                        return Err("timed out acquiring the reconfigured GPU surface".to_string());
-                    }
-                    wgpu::CurrentSurfaceTexture::Occluded => {
-                        return Err("GPU surface is occluded".to_string());
-                    }
+                    wgpu::CurrentSurfaceTexture::Timeout
+                    | wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
                     wgpu::CurrentSurfaceTexture::Outdated
                     | wgpu::CurrentSurfaceTexture::Lost => {
                         return Err("GPU surface remained outdated or lost after reconfiguration".to_string());
@@ -400,11 +396,8 @@ impl GraphicsPresenter {
                     }
                 }
             }
-            wgpu::CurrentSurfaceTexture::Timeout => {
-                return Err("timed out acquiring the GPU surface".to_string());
-            }
-            wgpu::CurrentSurfaceTexture::Occluded => {
-                return Err("GPU surface is occluded".to_string());
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Validation => {
                 return Err("GPU surface acquisition failed validation".to_string());
