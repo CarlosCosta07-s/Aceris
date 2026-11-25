@@ -351,12 +351,9 @@ fn noise_rand_1d(value: u32) -> u32 {
     (((value % 9 + 2) * 3) & 0xF) ^ TABLE[((value / 9) & 0xF) as usize]
 }
 
-/// Two-dimensional signed pseudo-random gradient from the software-reference
-/// procedural-noise model.
-fn noise_rand_2d(x: u32, y: u32) -> f32 {
+/// Two-dimensional signed pseudo-random gradient from precomputed 1D hashes.
+fn noise_gradient_from_hashes(u: u32, mut v: u32) -> f32 {
     const TABLE: [u32; 16] = [10, 2, 15, 8, 0, 7, 4, 5, 5, 13, 2, 6, 13, 9, 3, 14];
-    let u = noise_rand_1d(x);
-    let mut v = noise_rand_1d(y);
     if (u & 3) == 1 {
         v += 4;
     }
@@ -394,11 +391,20 @@ fn procedural_noise_coefficient(
     let x_fraction = x - x_integer as f32;
     let y_fraction = y - y_integer as f32;
 
+    let x_hashes = [
+        noise_rand_1d(x_integer),
+        noise_rand_1d(x_integer + 1),
+    ];
+    let y_hashes = [
+        noise_rand_1d(y_integer),
+        noise_rand_1d(y_integer + 1),
+    ];
+
     let fraction_sum = x_fraction + y_fraction;
-    let g00 = noise_rand_2d(x_integer, y_integer) * fraction_sum;
-    let g10 = noise_rand_2d(x_integer + 1, y_integer) * (fraction_sum - 1.0);
-    let g01 = noise_rand_2d(x_integer, y_integer + 1) * (fraction_sum - 1.0);
-    let g11 = noise_rand_2d(x_integer + 1, y_integer + 1) * (fraction_sum - 2.0);
+    let g00 = noise_gradient_from_hashes(x_hashes[0], y_hashes[0]) * fraction_sum;
+    let g10 = noise_gradient_from_hashes(x_hashes[1], y_hashes[0]) * (fraction_sum - 1.0);
+    let g01 = noise_gradient_from_hashes(x_hashes[0], y_hashes[1]) * (fraction_sum - 1.0);
+    let g11 = noise_gradient_from_hashes(x_hashes[1], y_hashes[1]) * (fraction_sum - 2.0);
 
     let blend_x = lookup_curve(&state.lut, x_fraction)?;
     let blend_y = lookup_curve(&state.lut, y_fraction)?;
@@ -675,6 +681,30 @@ mod tests {
         assert_eq!(decode_float16(config.v_noise_phase_float1_5_10), -0.25);
         assert_eq!(decode_float16(config.u_noise_frequency_float1_5_10), 0.5);
         assert_eq!(decode_float16(config.v_noise_frequency_float1_5_10), 1.0);
+    }
+
+    #[test]
+    fn noise_axis_hash_cache_preserves_reference_gradient_values() {
+        for x in 0_u32..24 {
+            for y in 0_u32..24 {
+                let expected = {
+                    let u = noise_rand_1d(x);
+                    let mut v = noise_rand_1d(y);
+                    const TABLE: [u32; 16] = [10, 2, 15, 8, 0, 7, 4, 5, 5, 13, 2, 6, 13, 9, 3, 14];
+                    if (u & 3) == 1 {
+                        v += 4;
+                    }
+                    v ^= (u & 1) * 6;
+                    v += 10 + u;
+                    v &= 0xF;
+                    v ^= TABLE[u as usize];
+                    -1.0 + (v as f32 * 2.0 / 15.0)
+                };
+                let actual =
+                    noise_gradient_from_hashes(noise_rand_1d(x), noise_rand_1d(y));
+                assert_eq!(actual, expected, "lattice coordinate ({x}, {y})");
+            }
+        }
     }
 
     #[test]
