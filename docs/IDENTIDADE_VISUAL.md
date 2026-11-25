@@ -34,27 +34,41 @@ continuam presentes no SVG do ícone e no fundo do ícone adaptativo.
 - Android: `frontends/android/res/mipmap-*` (ícone adaptativo, fundo `#2A1240`).
 - Regenerar tudo: `cargo run --release -p aceris-icongen`.
 
-## Abertura e biblioteca animadas
-`aceris_core::video::intro` gera a abertura (2,5 s a 60 FPS, 150 quadros) como função pura
-do número do quadro, então PC e Android compartilham a mesma sequência original. A biblioteca
-também é renderizada pelo núcleo em RGBA8 e recebe animação sutil da própria paleta.
+## Abertura e launcher responsivo
 
-- PC: a biblioteca redesenha a 60 FPS no X11 e aceita fundos personalizados por sequência de quadros
-  RGBA8 400x480 usando `--background-dir` e `--background-fps`.
-- Android: a ABI nativa expõe renderização da biblioteca com quadro de fundo fornecido pelo host,
-  orientação automática/vertical/horizontal, geometria das telas e camada/hit-test dos controles
-  virtuais. O host ainda precisa aplicar a orientação à Activity e encaminhar o estado dos botões.
-- Fluxo no PC: abrir o ícone → abertura → **biblioteca** (lista de jogos `.3ds`/`.cci` da pasta
-  `--games`, `$ACERIS_GAMES` ou `~/Aceris/Games`). Setas/PgUp/PgDn/roda do mouse navegam, Enter ou
-  segundo clique jogam, Esc volta à biblioteca durante o jogo (e sai dela). Telas em
-  `aceris_core::video::library` (reutilizável no Android).
-- Atalho de Linux: `packaging/linux/aceris.desktop` (`Exec=aceris --window`).
-- Fundos personalizados são escurecidos na composição para preservar contraste e a identidade Aceris.
+aceris_core::video::intro gera a abertura original em Rust como função do número
+do quadro. Os frontends Android e desktop ampliam um buffer interno reduzido para
+ocupar a superfície completa, evitando multiplicar o trabalho da animação pela
+resolução física do aparelho.
 
-## Pendências
-- Ícone na janela X11 (`_NET_WM_ICON`) e backends Win32/Cocoa.
-- Tela inicial/splash e tema da interface Android (a UI ainda não existe).
-- Versão monocromática do ícone (Android 13 themed icon).
+A biblioteca usa o renderer responsivo de aceris_core::video::library, partilhado
+entre Android e desktop. Texto, painéis, ícones e áreas de toque usam a mesma
+transformação lógica/física. A tipografia bitmap própria oferece letras minúsculas
+e acentos portugueses, com rótulos em caixa normal para melhorar a leitura.
+
+- **Android:** renderiza diretamente na superfície da NativeActivity, em retrato
+  ou paisagem. As seções são **Jogos**, **Homebrew** e **Configurações**. Um toque
+  num item tenta iniciá-lo; setas/botões físicos também podem navegar. A interface
+  continua em Rust, sem camada Kotlin ou Java.
+- **Desktop:** abre a biblioteca num canvas widescreen de 960×600; teclado,
+  rolagem do mouse e cliques navegam. Um clique seleciona e um segundo clique
+  ou Enter inicia. Esc durante o jogo volta à biblioteca.
+- **Formatos atualmente listados:** .3ds e .cci na seção Jogos; .3dsx
+  na seção Homebrew. A pasta padrão pode ser escolhida por --games,
+  $ACERIS_GAMES ou ~/Aceris/Games.
+- **Fundos personalizados no desktop:** --background-dir aceita sequências
+  RGBA8 400×480 e --background-fps define a frequência de origem. O renderer
+  responsivo faz cover-crop e mistura o fundo abaixo dos controles, mantendo
+  contraste. A ausência de um fundo personalizado usa o tema Aceris.
+- **Princípio de honestidade da interface:** não expor opções de backend,
+  histórico, capas, perfis ou controles configuráveis antes de haver uma ação
+  real que as persista e aplique.
+
+A composição atual é um primeiro launcher funcional e responsivo, não a interface
+final. Capa e metadados reais dependem de extrair e validar informações dos títulos
+fornecidos pelo usuário. Busca, favoritos, histórico de recentes, ordenação,
+seletor de diretórios, configurações por jogo, editor de controles virtuais e temas
+alternativos continuam planejados, não concluídos.
 
 
 ## Estado de integração visual — 22/11/2026
