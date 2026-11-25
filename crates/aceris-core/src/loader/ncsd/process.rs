@@ -2993,7 +2993,22 @@ impl Arm11CodeAddressSpace {
         offset: usize,
         value: u8,
     ) -> BusResult<()> {
-        let _ = self.read_cached_byte(target, key, offset)?;
+        // A resident write needs only one mutable lookup; loading the old byte
+        // first added no architectural effect because this operation replaces it.
+        if let Some(line) = self.data_cache.get_mut(&key) {
+            let byte = line
+                .bytes
+                .get_mut(offset)
+                .ok_or(Error::InvalidAccess { addr: 0 })?;
+            *byte = value;
+            line.dirty = true;
+            self.touch_data_cache_line(key);
+            return Ok(());
+        }
+
+        // On a miss, allocate/fill the line first so untouched bytes and any
+        // pending write-buffer overlays retain their existing semantics.
+        self.read_cached_byte(target, key, offset)?;
         let line = self
             .data_cache
             .get_mut(&key)
