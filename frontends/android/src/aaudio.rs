@@ -40,6 +40,7 @@ pub struct AAudioOutput {
     resampler: Resampler,
     resampled: Vec<i16>,
     muted: bool,
+    game_usage: bool,
 }
 
 fn mute_samples(samples: &mut [i16], muted: bool) {
@@ -88,6 +89,7 @@ impl AAudioOutput {
         // API 28+: identify Aceris output as game audio rather than media.
         // Older Android releases simply keep the system default.
         let set_usage: Option<SetI32Fn> = load(library, "AAudioStreamBuilder_setUsage");
+        let game_usage = set_usage.is_some();
         let open_stream: OpenStreamFn = load(library, "AAudioStreamBuilder_openStream")?;
         let delete_builder: BuilderDeleteFn = load(library, "AAudioStreamBuilder_delete")?;
         let start: StreamFn = load(library, "AAudioStream_requestStart")?;
@@ -131,12 +133,18 @@ impl AAudioOutput {
             resampler: Resampler::new(System::audio_sample_rate(), OUTPUT_RATE),
             resampled: Vec::new(),
             muted: false,
+            game_usage,
         })
     }
 
     /// Mutes only the emulator's output while keeping the stream clock alive.
     pub fn set_muted(&mut self, muted: bool) {
         self.muted = muted;
+    }
+
+    /// True when the platform accepted the dedicated game-audio usage.
+    pub fn uses_game_usage(&self) -> bool {
+        self.game_usage
     }
 
     /// Queues interleaved stereo samples (core rate) without blocking.
