@@ -1208,16 +1208,40 @@ fn responsive_text(
     text: &str,
     color: u32,
 ) {
+    let Some((_, ui_scale, _, _)) = responsive_metrics(width, height) else {
+        return;
+    };
     draw_text(
         frame,
         width as usize,
         height as usize,
-        x.round() as i32,
-        y.round() as i32,
+        (x * ui_scale).round() as i32,
+        (y * ui_scale).round() as i32,
         text_scale.max(1),
         text,
         [(color >> 16) as u8, (color >> 8) as u8, color as u8],
     );
+}
+
+/// Draws text centred on a logical X coordinate, accounting for the UI scale.
+#[allow(clippy::too_many_arguments)]
+fn responsive_text_centered(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    center_x: f32,
+    y: f32,
+    text_scale: usize,
+    text: &str,
+    color: u32,
+) {
+    let Some((_, ui_scale, logical_width, _)) = responsive_metrics(width, height) else {
+        return;
+    };
+    let glyph_width = font::text_width(text.chars().count(), text_scale.max(1)) as f32;
+    let logical_text_width = glyph_width / ui_scale;
+    let x = (center_x - logical_text_width * 0.5).clamp(0.0, logical_width);
+    responsive_text(frame, width, height, x, y, text_scale, text, color);
 }
 
 fn responsive_folder_icon(frame: &mut [u8], width: u32, height: u32, x: f32, y: f32, scale: f32) {
@@ -1311,6 +1335,29 @@ mod tests {
             })
             .collect();
         Library::new(entries, "/games".to_string())
+    }
+
+    #[test]
+    fn responsive_text_coordinates_follow_the_surface_scale() {
+        let (width, height) = (800, 1200);
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+        responsive_text(&mut frame, width, height, 10.0, 10.0, 2, "A", 0xE5173F);
+
+        // Portrait UI scale is 2: the first lit pixel in the 5x7 A glyph
+        // must appear at logical (11, 10) transformed to physical (22, 20).
+        let scaled = (20usize * width as usize + 22) * 4;
+        assert_eq!(&frame[scaled..scaled + 3], &[0xE5, 0x17, 0x3F]);
+
+        let unscaled = (10usize * width as usize + 11) * 4;
+        assert_eq!(&frame[unscaled..unscaled + 3], &[0, 0, 0]);
+    }
+
+    #[test]
+    fn responsive_centered_text_uses_measured_bitmap_width() {
+        let (width, height) = (800, 1200);
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+        responsive_text_centered(&mut frame, width, height, 200.0, 40.0, 2, "OK", 0xF5EEF8);
+        assert!(frame.chunks_exact(4).any(|pixel| pixel[..3] == [0xF5, 0xEE, 0xF8]));
     }
 
     #[test]
