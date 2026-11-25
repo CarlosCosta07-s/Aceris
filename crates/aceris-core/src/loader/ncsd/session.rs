@@ -49,7 +49,8 @@ use svc::{
     SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
     SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD, SVC_GET_PROCESS_INFO,
     SVC_GET_RESOURCE_LIMIT, SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES,
-    SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_INFO,
+    SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID,
+    SVC_GET_THREAD_INFO,
     SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_BREAK,
     SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY,
     SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT,
@@ -2227,6 +2228,7 @@ impl Arm11ProcessSession {
             SVC_GET_HANDLE_INFO => self.svc_get_handle_info(caller),
             SVC_GET_PROCESS_ID => self.svc_get_process_id(caller),
             SVC_GET_PROCESS_ID_OF_THREAD => self.svc_get_process_id_of_thread(caller),
+            SVC_GET_THREAD_ID => self.svc_get_thread_id(caller),
             SVC_GET_RESOURCE_LIMIT => self.svc_get_resource_limit(caller),
             SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES => {
                 self.svc_get_resource_limit_values(caller, true)
@@ -3749,6 +3751,23 @@ impl Arm11ProcessSession {
         self.write_svc_result(caller, 0)
     }
 
+    /// Handles GetThreadId: r0 = writable thread-ID output pointer,
+    /// r1 = a thread handle or the current-thread pseudo-handle.
+    fn svc_get_thread_id(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        let Some(thread) = self.thread_id_for_handle(registers[1]) else {
+            return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
+        };
+        if self.address_space.write32(registers[0], thread.raw()).is_err() {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.write_svc_result(caller, 0)
+    }
+
     /// Handles GetProcessIdOfThread: r0 = writable PID output pointer,
     /// r1 = a thread handle or the current-thread pseudo-handle.
     fn svc_get_process_id_of_thread(&mut self, caller: ThreadId) -> SvcRunDisposition {
@@ -4003,6 +4022,40 @@ mod tests {
             0xE3A0_1005, // MOV r1, #5
             0xEF00_0042, // SVC #0x42
         ])
+    }
+
+    #[test]
+    fn get_thread_id_svc_resolves_current_and_regular_thread_handles() {
+        let mut session = test_session();
+        const OUTPUT: u32 = 0x0020_0000;
+
+        session.set_current_register(0, OUTPUT);
+        session.set_current_register(1, CURRENT_THREAD_HANDLE);
+        session.dispatch_svc(SVC_GET_THREAD_ID);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(
+            session.read_memory_u32(OUTPUT).unwrap(),
+            session.current_thread_id().unwrap().raw()
+        );
+
+        let child = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x0020_0000, 0x20, 0)
+            .unwrap();
+        let child_handle = session.kernel_objects.insert_thread(child).unwrap();
+        session.set_current_register(0, OUTPUT);
+        session.set_current_register(1, child_handle);
+        session.dispatch_svc(SVC_GET_THREAD_ID);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(session.read_memory_u32(OUTPUT).unwrap(), child.raw());
+
+        session.set_current_register(0, OUTPUT);
+        session.set_current_register(1, 0xDEAD);
+        session.dispatch_svc(SVC_GET_THREAD_ID);
+        assert_eq!(
+            session.current_registers().unwrap()[0],
+            RESULT_INVALID_HANDLE
+        );
     }
 
     #[test]
