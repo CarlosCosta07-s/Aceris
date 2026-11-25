@@ -203,9 +203,12 @@ impl Library {
         self.status = None;
     }
 
-    /// Number of games currently saved in Favorites.
+    /// Number of existing game entries currently saved in Favorites.
     pub fn favorite_count(&self) -> usize {
-        self.favorites.len()
+        self.entries
+            .iter()
+            .filter(|entry| self.is_favorite(entry))
+            .count()
     }
 
     /// Number of valid game entries kept in Recent.
@@ -2459,6 +2462,19 @@ mod tests {
             ClickResult::Ignored
         );
         assert!(library.status.is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn favorite_count_ignores_files_missing_from_the_game_folder() {
+        let dir = std::env::temp_dir().join(format!("aceris-favorite-count-{}", std::process::id()));
+        fs::create_dir_all(dir.join(".aceris")).unwrap();
+        fs::write(dir.join("alpha.3ds"), b"fixture").unwrap();
+        fs::write(dir.join(".aceris").join("favorites.txt"), "alpha.3ds\\nremoved.3ds").unwrap();
+
+        let library = Library::new(scan_games(&dir), dir.display().to_string());
+        assert_eq!(library.favorite_count(), 1);
+
         fs::remove_dir_all(dir).unwrap();
     }
 
