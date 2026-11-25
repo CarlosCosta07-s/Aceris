@@ -103,6 +103,36 @@ fn parse_positive(value: &str, option: &str) -> Result<usize, String> {
     Ok(parsed)
 }
 
+fn parse_tap(value: &str) -> Result<Tap, String> {
+    let invalid = || format!("--tap expects X,Y@FRAME[+HOLD], got {value:?}");
+    let (point, timing) = value.split_once('@').ok_or_else(invalid)?;
+    let (x, y) = point.split_once(',').ok_or_else(invalid)?;
+    let (frame, hold_frames) = match timing.split_once('+') {
+        Some((frame, hold)) => (
+            frame,
+            hold.trim().parse::<usize>().map_err(|_| invalid())?.max(1),
+        ),
+        None => (timing, 3),
+    };
+
+    Ok(Tap {
+        x: x.trim().parse().map_err(|_| invalid())?,
+        y: y.trim().parse().map_err(|_| invalid())?,
+        frame: frame.trim().parse().map_err(|_| invalid())?,
+        hold_frames,
+    })
+}
+
+fn apply_taps(system: &mut System, taps: &[Tap], frame: usize) {
+    for tap in taps {
+        if frame == tap.frame {
+            system.input_mut().touch(tap.x, tap.y);
+        } else if frame == tap.frame.saturating_add(tap.hold_frames) {
+            system.input_mut().touch_end();
+        }
+    }
+}
+
 fn parse_args() -> Result<Option<Options>, String> {
     let mut args = env::args().skip(1);
     let Some(first) = args.next() else {
@@ -119,6 +149,8 @@ fn parse_args() -> Result<Option<Options>, String> {
         warmup_frames: 15,
         instruction_budget: DEFAULT_FRAME_INSTRUCTION_BUDGET,
         dump_lcd: None,
+        frame_trace: None,
+        taps: Vec::new(),
         profile_components: profile_only,
     };
 
@@ -146,6 +178,8 @@ fn parse_args() -> Result<Option<Options>, String> {
                 options.instruction_budget = parse_positive(&value, "--instruction-budget")?;
             }
             "--dump-lcd" => options.dump_lcd = Some(PathBuf::from(value)),
+            "--frame-trace" => options.frame_trace = Some(PathBuf::from(value)),
+            "--tap" => options.taps.push(parse_tap(&value)?),
             _ => return Err(format!("unknown option: {argument}")),
         }
     }
