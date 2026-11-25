@@ -5070,18 +5070,10 @@ mod tests {
             .allocate_application_heap_region(0x0800_0000, 0x1000)
             .unwrap();
         address_space
-            .map_shared_memory_region(
-                0x0900_4000,
-                SharedMemoryBacking::zeroed(0x1000).unwrap(),
-                3,
-            )
+            .map_shared_memory_region(0x0900_4000, SharedMemoryBacking::zeroed(0x1000).unwrap(), 3)
             .unwrap();
         address_space
-            .map_shared_memory_region(
-                0x0900_0000,
-                SharedMemoryBacking::zeroed(0x1000).unwrap(),
-                1,
-            )
+            .map_shared_memory_region(0x0900_0000, SharedMemoryBacking::zeroed(0x1000).unwrap(), 1)
             .unwrap();
 
         assert!(matches!(
@@ -5122,37 +5114,37 @@ mod tests {
 
         assert!(matches!(
             address_space.locate(0x0800_0FFF),
-            Some(MemoryLocation::Dynamic { index: 0, offset: 0x0FFF })
+            Some(MemoryLocation::Dynamic {
+                index: 0,
+                offset: 0x0FFF
+            })
         ));
-        assert!(matches!(
-            address_space.locate(0x0800_2000),
-            None
-        ));
+        assert!(matches!(address_space.locate(0x0800_2000), None));
         assert!(matches!(
             address_space.locate(0x0800_5FFF),
-            Some(MemoryLocation::Dynamic { index: 1, offset: 0x1FFF })
+            Some(MemoryLocation::Dynamic {
+                index: 1,
+                offset: 0x1FFF
+            })
         ));
-        assert!(matches!(
-            address_space.locate(0x0800_6000),
-            None
-        ));
+        assert!(matches!(address_space.locate(0x0800_6000), None));
 
         assert!(matches!(
             address_space.locate(0x0900_0FFF),
-            Some(MemoryLocation::Shared { index: 0, offset: 0x0FFF })
+            Some(MemoryLocation::Shared {
+                index: 0,
+                offset: 0x0FFF
+            })
         ));
-        assert!(matches!(
-            address_space.locate(0x0900_2000),
-            None
-        ));
+        assert!(matches!(address_space.locate(0x0900_2000), None));
         assert!(matches!(
             address_space.locate(0x0900_4FFF),
-            Some(MemoryLocation::Shared { index: 1, offset: 0x0FFF })
+            Some(MemoryLocation::Shared {
+                index: 1,
+                offset: 0x0FFF
+            })
         ));
-        assert!(matches!(
-            address_space.locate(0x0900_5000),
-            None
-        ));
+        assert!(matches!(address_space.locate(0x0900_5000), None));
     }
 
     #[test]
