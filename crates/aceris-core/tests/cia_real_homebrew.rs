@@ -1,7 +1,7 @@
-//! Manual boot test for the maintainer-supplied Super Mario 64 3DS CIA.
+//! Manual boot tests for locally supplied Nintendo 3DS CIA homebrew.
 //!
-//! The archive is deliberately not stored in this repository or CI. Set
-//! ACERIS_REAL_CIA to the local file path and run this ignored test explicitly.
+//! Archives are deliberately not stored in this repository or CI. Set the
+//! corresponding environment variable and run the ignored test explicitly.
 
 use std::{fs::File, path::PathBuf};
 
@@ -83,7 +83,6 @@ fn validates_and_runs_real_super_mario_64_luigi_cia_without_console_keys() {
         frame.lcd_screens_scanned_out
     );
 }
-
 
 /// Manual boot test for the maintainer-supplied Lua Player Plus Cookie Clicker CIA.
 /// The file remains local and is never uploaded to CI or committed.
