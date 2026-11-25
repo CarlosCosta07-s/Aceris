@@ -2534,10 +2534,14 @@ mod tests {
         library.toggle_sort_order();
         assert_eq!(library.selected_entry().unwrap().title, "Alpha");
 
+        assert!(!library.external_media_detection_available());
         assert!(!library.external_media_playing());
+        library.set_external_media_detection_available(true);
+        assert!(library.external_media_detection_available());
         library.set_external_media_playing(true);
         assert!(library.external_media_playing());
-        library.set_external_media_playing(false);
+        library.set_external_media_detection_available(false);
+        assert!(!library.external_media_detection_available());
         assert!(!library.external_media_playing());
     }
 
