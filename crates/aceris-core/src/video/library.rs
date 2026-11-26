@@ -2805,8 +2805,7 @@ mod tests {
 
     #[test]
     fn list_mode_clicks_rows_and_favorite_control_independently() {
-        let dir =
-            std::env::temp_dir().join(format!("aceris-list-view-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("aceris-list-view-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let entries = (0..8)
             .map(|index| Entry {
