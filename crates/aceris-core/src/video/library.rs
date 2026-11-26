@@ -119,10 +119,7 @@ pub fn scan_games(directory: &Path) -> Vec<Entry> {
 /// `MAX_SCAN_DEPTH`; symbolic links encountered below a root are not followed.
 /// Missing, non-directory, or unreadable roots are skipped independently so
 /// one unavailable folder does not hide games in the remaining folders.
-pub fn scan_games_from_directories(
-    directories: &[PathBuf],
-    options: ScanOptions,
-) -> Vec<Entry> {
+pub fn scan_games_from_directories(directories: &[PathBuf], options: ScanOptions) -> Vec<Entry> {
     let mut pending = Vec::new();
     let mut visited_directories = std::collections::HashSet::new();
     let mut seen_files = std::collections::HashSet::new();
@@ -193,12 +190,14 @@ pub fn scan_games_from_directories(
 }
 
 fn is_supported_game_image(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("3ds")
-            || ext.eq_ignore_ascii_case("cci")
-            || ext.eq_ignore_ascii_case("3dsx")
-            || ext.eq_ignore_ascii_case("cia")
-    })
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("3ds")
+                || ext.eq_ignore_ascii_case("cci")
+                || ext.eq_ignore_ascii_case("3dsx")
+                || ext.eq_ignore_ascii_case("cia")
+        })
 }
 
 fn scan_path_identity(path: &Path) -> PathBuf {
@@ -3414,14 +3413,23 @@ mod tests {
         fs::write(nested.join("nested.CCI"), b"x").unwrap();
 
         let direct = scan_games(&dir);
-        assert_eq!(direct.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(), ["base"]);
+        assert_eq!(
+            direct
+                .iter()
+                .map(|entry| entry.title.as_str())
+                .collect::<Vec<_>>(),
+            ["base"]
+        );
 
         let recursive = scan_games_from_directories(
             std::slice::from_ref(&dir),
             ScanOptions { recursive: true },
         );
         assert_eq!(
-            recursive.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(),
+            recursive
+                .iter()
+                .map(|entry| entry.title.as_str())
+                .collect::<Vec<_>>(),
             ["base", "nested"]
         );
 
@@ -3445,11 +3453,17 @@ mod tests {
             ScanOptions { recursive: true },
         );
         assert_eq!(
-            entries.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(),
+            entries
+                .iter()
+                .map(|entry| entry.title.as_str())
+                .collect::<Vec<_>>(),
             ["alpha", "beta", "shared"]
         );
         assert_eq!(
-            entries.iter().filter(|entry| entry.path == nested.join("shared.3dsx")).count(),
+            entries
+                .iter()
+                .filter(|entry| entry.path == nested.join("shared.3dsx"))
+                .count(),
             1
         );
 
@@ -3464,10 +3478,7 @@ mod tests {
         fs::create_dir_all(&available).unwrap();
         fs::write(available.join("working.3ds"), b"x").unwrap();
 
-        let entries = scan_games_from_directories(
-            &[missing, available],
-            ScanOptions::default(),
-        );
+        let entries = scan_games_from_directories(&[missing, available], ScanOptions::default());
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "working");
 
