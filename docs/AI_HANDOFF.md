@@ -2743,3 +2743,8 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 
 - A CI da revisão anterior revelou que a substituição da seção Configurações havia removido o token `else` que inicia a renderização das páginas de jogos no modo vertical. O delimitador foi restaurado; o erro era sintático e bloqueava Rustfmt e os builds.
 - A CI da revisão atual deve confirmar a análise sintática, o formato e o build Android. Ainda não declarar testes aprovados antes dos resultados.
+
+
+## Ajuste de expectativa do teste da biblioteca (26/11/2026, ChatGPT)
+
+- O teste da interface alterna explicitamente a varredura recursiva para ligada antes de adicionar/remover uma raiz. A remoção mantém a opção global, portanto o teste agora verifica que ela permanece ligada depois de reabrir a configuração.

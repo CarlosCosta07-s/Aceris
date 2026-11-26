@@ -4453,7 +4453,7 @@ mod tests {
 
         let reopened = Library::from_scan_settings(&settings, &primary);
         assert_eq!(reopened.scan_config().directories.len(), 1);
-        assert!(!reopened.scan_config().options.recursive);
+        assert!(reopened.scan_config().options.recursive);
         fs::remove_dir_all(dir).unwrap();
     }
 
