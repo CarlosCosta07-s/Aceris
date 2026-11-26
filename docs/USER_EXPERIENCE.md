@@ -41,7 +41,7 @@ No Android, os pedidos mais visíveis incluem controle virtual confortável, bot
 A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/src/video/frontend.rs`, `frontends/android/src/app.rs`, `frontends/android/src/ui.rs` e `docs/FRONTENDS.md` identifica estes recursos existentes:
 
 - Tela inicial, início da biblioteca e páginas de Jogos, Favoritos, Recentes, Homebrew e Configurações.
-- Biblioteca em grade no modo paisagem e lista adaptável no modo retrato.
+- Biblioteca com visualização de grade e lista selecionável no modo paisagem; o fallback em retrato continua usando lista adaptável.
 - Favoritos e Recentes persistidos localmente; ordenação A–Z/Z–A e atualização manual da biblioteca.
 - Plano de fundo personalizado na biblioteca, com suporte a quadros animados fornecidos pelo host.
 - Apresentação das duas telas do 3DS com ajuste proporcional ao espaço disponível.
@@ -50,7 +50,7 @@ A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/s
 - Pastas de dados de usuário por jogo para arquivos de save/extdata nos caminhos HLE atualmente implementados.
 - Diagnósticos de carregamento/execução em evolução.
 
-**Limites atuais que a nova experiência precisa resolver:** o scanner da biblioteca lista `.3ds`, `.cci`, `.cia` e `.3dsx` no diretório configurado; CIA só pode ser carregado nas condições suportadas pelo núcleo (conteúdo de boot em claro e NCCH NoCrypto), sem instalação persistente ou gerenciamento de atualizações. A busca é direta, sem pesquisa recursiva; A página de configurações da biblioteca ainda é básica. Não há editor completo de controles, perfis por jogo, painel de propriedades por jogo ou menu de pausa completo. Não há sistema de save states/rewind disponível ao usuário. O armazenamento de save data do jogo não deve ser confundido com save state do emulador.
+**Limites atuais que a nova experiência precisa resolver:** o scanner da biblioteca lista `.3ds`, `.cci`, `.cia` e `.3dsx` no diretório configurado; CIA só pode ser carregado nas condições suportadas pelo núcleo (conteúdo de boot em claro e NCCH NoCrypto), sem instalação persistente ou gerenciamento de atualizações. A busca é direta, sem pesquisa recursiva; a página de configurações da biblioteca ainda é básica. Não há editor completo de controles, perfis por jogo, painel de propriedades por jogo ou menu de pausa completo. Não há sistema de save states/rewind disponível ao usuário. O armazenamento de save data do jogo não deve ser confundido com save state do emulador.
 
 O layout do jogo atualmente compõe as telas conforme a orientação disponível, mas ainda não oferece todas as opções avançadas de disposição descritas abaixo.
 

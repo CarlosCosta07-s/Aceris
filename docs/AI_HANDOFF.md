@@ -2634,3 +2634,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Nenhum jogo/CIA, firmware, chave ou dado extraído foi incluído no repositório. Nenhuma dependência foi adicionada.
 - **Validação:** a mudança precisa passar pelo CI do novo commit. Não declarar Rustfmt, build, Clippy ou testes aprovados até consultar os workflows correspondentes.
 - **Fronteiras:** alteração limitada à varredura/renderização de formatos da biblioteca e documentação de experiência; não altera `app.rs`, `native_activity.rs`, CPU, MMU, kernel, serviços, GPU/PICA, DSP ou CSND.
+
+
+## Biblioteca — alternância Grade/Lista (26/11/2026, ChatGPT)
+
+- A pedido de Carlos, a biblioteca horizontal recebeu uma opção funcional entre visualização em grade (padrão) e lista nas páginas Jogos, Favoritos, Recentes e Homebrew.
+- A alternância está no cabeçalho, mantém seleção coerente ao trocar de modo e atualiza a navegação: no modo Lista, cima/baixo percorre um título por vez e esquerda/direita não desloca a seleção; no modo Grade, o comportamento de três colunas permanece.
+- O hit-test da Lista corresponde às linhas efetivamente renderizadas. O controle de favorito da linha é independente da ação de selecionar/abrir o título; os alvos permanecem limitados ao cartão visível.
+- O fallback de retrato continua sendo uma lista adaptável automática. A escolha Grade/Lista é mantida somente durante a sessão e ainda não é persistida.
+- Foram adicionados testes para alternância pelo cabeçalho, navegação vertical/horizontal e seleção/ativação/favoritos por toque.
+- Alteração de código restrita a `crates/aceris-core/src/video/library.rs`; documentação atualizada em `docs/USER_EXPERIENCE.md` e `docs/FRONTENDS.md`. Nenhum frontend de outro agente, core de emulação, dependência ou asset foi alterado. Nenhum dado de jogo/firmware/chave foi adicionado.
+- **Validação:** os testes e o lint desta revisão precisam ser confirmados pela CI do commit. Não declarar aprovação antes de consultar os workflows.
+- **Fronteiras:** somente a branch `main`; nenhuma branch ou PR foi criada.

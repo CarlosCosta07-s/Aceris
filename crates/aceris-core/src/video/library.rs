@@ -41,6 +41,13 @@ pub enum LibraryPage {
     Settings,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum LibraryViewMode {
+    #[default]
+    Grid,
+    List,
+}
+
 /// What a click did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClickResult {
@@ -64,6 +71,7 @@ pub struct Library {
     favorites: std::collections::HashSet<String>,
     recent: Vec<String>,
     sort_descending: bool,
+    view_mode: LibraryViewMode,
     external_media_playing: bool,
     external_media_detection_available: bool,
 }
@@ -136,6 +144,7 @@ impl Library {
             favorites,
             recent,
             sort_descending: false,
+            view_mode: LibraryViewMode::Grid,
             external_media_playing: false,
             external_media_detection_available: false,
         }
@@ -237,6 +246,28 @@ impl Library {
             }
             .to_string(),
         );
+    }
+
+    /// Switches the landscape collection between a compact grid and a readable list.
+    pub fn toggle_view_mode(&mut self) {
+        self.view_mode = match self.view_mode {
+            LibraryViewMode::Grid => LibraryViewMode::List,
+            LibraryViewMode::List => LibraryViewMode::Grid,
+        };
+        self.selected = 0;
+        self.first_visible = 0;
+        self.status = Some(
+            match self.view_mode {
+                LibraryViewMode::Grid => "Visualização: grade",
+                LibraryViewMode::List => "Visualização: lista",
+            }
+            .to_string(),
+        );
+    }
+
+    /// True when the responsive landscape collection is displayed as a list.
+    pub fn is_list_view(&self) -> bool {
+        self.view_mode == LibraryViewMode::List
     }
 
     /// Updates the external-media indicator shown on the home screen.
@@ -389,6 +420,9 @@ impl Library {
         if portrait {
             let visible = ((logical_height - 350.0).max(58.0) / 58.0).floor().max(1.0) as usize;
             self.move_selection_with_visible(delta, visible);
+        } else if self.view_mode == LibraryViewMode::List {
+            let visible_rows = ((logical_height - 174.0) / 54.0).floor().max(1.0) as usize;
+            self.move_selection_with_visible(delta, visible_rows);
         } else {
             let visible_rows = ((logical_height - 166.0) / 94.0).floor().max(1.0) as usize;
             let visible_items = visible_rows * 3;
@@ -438,7 +472,7 @@ impl Library {
         if portrait {
             let visible = ((logical_height - 350.0).max(58.0) / 58.0).floor().max(1.0) as usize;
             self.move_selection_with_visible(delta, visible);
-        } else {
+        } else if self.view_mode == LibraryViewMode::Grid {
             let visible_rows = ((logical_height - 166.0) / 94.0).floor().max(1.0) as usize;
             self.move_grid_selection(delta, visible_rows * 3);
         }
@@ -509,6 +543,19 @@ impl Library {
             return ClickResult::Ignored;
         }
 
+        if (18.0..68.0).contains(&y)
+            && (540.0..680.0).contains(&x)
+            && matches!(
+                self.page,
+                LibraryPage::Games
+                    | LibraryPage::Favorites
+                    | LibraryPage::Recent
+                    | LibraryPage::Homebrew
+            )
+        {
+            self.toggle_view_mode();
+            return ClickResult::Ignored;
+        }
         if (18.0..68.0).contains(&y) && (700.0..830.0).contains(&x) {
             self.toggle_sort_order();
             return ClickResult::Ignored;
@@ -546,6 +593,34 @@ impl Library {
             | LibraryPage::Favorites
             | LibraryPage::Recent
             | LibraryPage::Homebrew => {
+                if self.view_mode == LibraryViewMode::List {
+                    let list_top = 150.0;
+                    let row_step = 54.0;
+                    let row_height = 48.0;
+                    let visible_rows = ((logical_height - 174.0) / row_step)
+                        .floor()
+                        .max(1.0) as usize;
+                    if !(128.0..970.0).contains(&x) || y < list_top {
+                        return ClickResult::Ignored;
+                    }
+                    let row = ((y - list_top) / row_step).floor().max(0.0) as usize;
+                    let row_y = list_top + row as f32 * row_step;
+                    let index = self.first_visible + row;
+                    if row >= visible_rows
+                        || y >= row_y + row_height
+                        || index >= self.visible_entry_count()
+                    {
+                        return ClickResult::Ignored;
+                    }
+                    self.selected = index;
+                    if (910.0..958.0).contains(&x)
+                        && (row_y + 8.0..row_y + 40.0).contains(&y)
+                    {
+                        self.toggle_selected_favorite();
+                        return ClickResult::Ignored;
+                    }
+                    return self.select_or_activate(index);
+                }
                 let columns = 3usize;
                 let card_top = 124.0;
                 let card_height = 82.0;
@@ -1313,6 +1388,43 @@ impl Library {
         responsive_text(
             frame, width, height, 132.0, 56.0, text_scale, subtitle, 0xBBAFC7,
         );
+        if matches!(
+            self.page,
+            LibraryPage::Games
+                | LibraryPage::Favorites
+                | LibraryPage::Recent
+                | LibraryPage::Homebrew
+        ) {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                540.0,
+                18.0,
+                140.0,
+                50.0,
+                scale,
+                if self.view_mode == LibraryViewMode::List {
+                    brand::ACCENT_RED
+                } else {
+                    0x2D1A3B
+                },
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                610.0,
+                35.0,
+                text_scale,
+                if self.view_mode == LibraryViewMode::List {
+                    "VISTA: LISTA"
+                } else {
+                    "VISTA: GRADE"
+                },
+                brand::TEXT,
+            );
+        }
         responsive_panel(
             frame, width, height, 700.0, 18.0, 130.0, 50.0, scale, 0x2D1A3B,
         );
@@ -1784,6 +1896,128 @@ impl Library {
                         "ATUALIZAR",
                         brand::TEXT,
                     );
+                } else if self.view_mode == LibraryViewMode::List {
+                    let list_top = 150.0;
+                    let row_step = 54.0;
+                    let row_height = 48.0;
+                    let visible_rows = ((bottom - list_top) / row_step)
+                        .floor()
+                        .max(1.0) as usize;
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        146.0,
+                        128.0,
+                        text_scale,
+                        "TÍTULO",
+                        0xBBAFC7,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        790.0,
+                        128.0,
+                        text_scale,
+                        "FORMATO",
+                        0xBBAFC7,
+                    );
+                    for (index, entry) in entries
+                        .into_iter()
+                        .enumerate()
+                        .skip(self.first_visible)
+                        .take(visible_rows)
+                    {
+                        let row = index - self.first_visible;
+                        let y = list_top + row as f32 * row_step;
+                        responsive_panel(
+                            frame,
+                            width,
+                            height,
+                            128.0,
+                            y,
+                            842.0,
+                            row_height,
+                            scale,
+                            if index == self.selected {
+                                0x422038
+                            } else {
+                                0x21152F
+                            },
+                        );
+                        responsive_panel(
+                            frame,
+                            width,
+                            height,
+                            140.0,
+                            y + 7.0,
+                            48.0,
+                            34.0,
+                            scale,
+                            0x2D1A3B,
+                        );
+                        responsive_text_centered(
+                            frame,
+                            width,
+                            height,
+                            164.0,
+                            y + 19.0,
+                            text_scale,
+                            "3DS",
+                            brand::ACCENT_GREEN_LIGHT,
+                        );
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            202.0,
+                            y + 17.0,
+                            text_scale,
+                            &truncate(&entry.title, 58),
+                            brand::TEXT,
+                        );
+                        let extension = entry
+                            .path
+                            .extension()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("3ds");
+                        responsive_text(
+                            frame,
+                            width,
+                            height,
+                            790.0,
+                            y + 18.0,
+                            text_scale,
+                            &extension.to_ascii_uppercase(),
+                            brand::ACCENT_GREEN_LIGHT,
+                        );
+                        responsive_panel(
+                            frame,
+                            width,
+                            height,
+                            910.0,
+                            y + 8.0,
+                            48.0,
+                            32.0,
+                            scale,
+                            if self.is_favorite(entry) {
+                                brand::ACCENT_RED
+                            } else {
+                                0x33223F
+                            },
+                        );
+                        responsive_text_centered(
+                            frame,
+                            width,
+                            height,
+                            934.0,
+                            y + 17.0,
+                            text_scale,
+                            if self.is_favorite(entry) { "F" } else { "+" },
+                            brand::TEXT,
+                        );
+                    }
                 } else {
                     let row_step = 94.0;
                     let card_top = 124.0;
@@ -2558,6 +2792,56 @@ mod tests {
             ClickResult::Activated
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn landscape_library_can_switch_between_grid_and_list() {
+        let mut library = library(12);
+        assert!(!library.is_list_view());
+        assert_eq!(
+            library.click_responsive(610, 40, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(library.is_list_view());
+        assert_eq!(
+            library.click_responsive(610, 40, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(!library.is_list_view());
+    }
+
+    #[test]
+    fn list_mode_uses_vertical_row_navigation_and_ignores_horizontal_steps() {
+        let mut library = library(12);
+        library.toggle_view_mode();
+        library.move_selection_responsive(1, 1000, 600);
+        assert_eq!(library.selected_index(), 1);
+        library.move_selection_horizontal_responsive(1, 1000, 600);
+        assert_eq!(library.selected_index(), 1);
+        library.move_selection_responsive(1, 1000, 600);
+        assert_eq!(library.selected_index(), 2);
+    }
+
+    #[test]
+    fn list_mode_clicks_rows_and_favorite_control_independently() {
+        let mut library = library(8);
+        library.toggle_view_mode();
+        assert_eq!(
+            library.click_responsive(420, 204, 1000, 600),
+            ClickResult::Selected
+        );
+        assert_eq!(library.selected_entry().unwrap().title, "Game 1");
+        assert_eq!(
+            library.click_responsive(420, 204, 1000, 600),
+            ClickResult::Activated
+        );
+
+        assert_eq!(
+            library.click_responsive(934, 169, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.favorite_count(), 1);
+        assert_eq!(library.selected_entry().unwrap().title, "Game 0");
     }
 
     #[test]
