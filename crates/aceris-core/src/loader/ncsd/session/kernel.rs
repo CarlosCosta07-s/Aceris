@@ -468,10 +468,7 @@ impl Arm11KernelObjectTable {
         }
 
         let client_handle = self.allocate_handle()?;
-        let server_handle = match self.allocate_handle() {
-            Ok(handle) => handle,
-            Err(error) => return Err(error),
-        };
+        let server_handle = self.allocate_handle()?;
         self.objects.insert(
             client_handle,
             KernelObject::SessionEndpoint(KernelSessionEndpoint {

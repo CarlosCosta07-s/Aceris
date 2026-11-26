@@ -1387,14 +1387,11 @@ impl System {
         port_handle: u32,
     ) -> Result<bool> {
         let mut woke_any = false;
-        loop {
-            let Some(index) = self
-                .pending_service_lookups
-                .iter()
-                .position(|pending| pending.service_name == service_name)
-            else {
-                break;
-            };
+        while let Some(index) = self
+            .pending_service_lookups
+            .iter()
+            .position(|pending| pending.service_name == service_name)
+        {
             let pending = self.pending_service_lookups[index];
             let manager_registered = self
                 .ncsd_session
