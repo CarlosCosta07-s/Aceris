@@ -527,3 +527,12 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Testes novos cobrem todos os oito seletores de fog e todos os oito seletores do formato do framebuffer, incluindo rejeição explícita de RGB8 nas combinações atuais.
 - Fontes: Azahar src/video_core/pica/regs_texturing.h e regs_framebuffer.h, revisão c621eafbf316699c55f4c9c0c689d4e49498d360 (cabeçalhos individuais GPLv2-or-later); 3dbrew, GPU/Internal Registers, consulta de 26/11/2026. Foram usados valores de campos documentados, sem copiar implementação, testes ou estrutura do código GPL.
 - Limite: completar a tabela de seletores não implementa o processamento Gas nem habilita RGB8. Esses comportamentos continuam tarefas separadas, com contratos independentes e validação própria.
+
+
+## PICA200 — parâmetros do estágio Shadow (26/11/2026)
+
+- Foi identificada a posição de GPUREG_FRAGOP_SHADOW como registrador 0x130: o bloco de framebuffer ocupa 0x100–0x11F, os registradores de Gas ocupam 0x120–0x12F e o parâmetro Shadow vem em seguida. A estrutura pública do Azahar posiciona o mesmo campo após os 16 registradores reservados para Gas.
+- A documentação independente 3dbrew descreve bits 0–15 como soma de penumbra scale+bias e bits 16–31 como penumbra scale com sinal invertido; ambos são float1.5.10. O Aceris agora captura as duas metades em PicaShadowState, sem converter o formato fixo/flutuante sem validar a regra de arredondamento.
+- Teste próprio usa padrão assimétrico 0xBEEF1234 para verificar extração low/high de 16 bits.
+- Limite: a operação de fragmento Shadow (GPUREG_COLOR_OPERATION=3), comparação de shadow map e aplicação de penumbra ainda não estão implementadas. Apenas o registrador de parâmetros é capturado.
+- Referência de posição/layout: Azahar src/video_core/pica/regs_framebuffer.h, commit c621eafbf316699c55f4c9c0c689d4e49498d360 (GPLv2-or-later); sem incorporação de código ou estrutura de implementação. Semântica dos bits: 3dbrew GPU/Internal Registers, consultado em 26/11/2026.

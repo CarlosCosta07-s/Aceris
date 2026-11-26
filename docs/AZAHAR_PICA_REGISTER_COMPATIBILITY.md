@@ -173,3 +173,13 @@ PicaFogMode agora nomeia os oito valores possíveis do campo de três bits. A de
 | 5–7 | Reservado | Rejeitado explicitamente |
 
 PicaColorBufferFormatSelector representa o campo de formato independentemente do campo pixel-size. Isso permite preservar o código RGB8 observado no enum do Azahar sem habilitar uma combinação que a tabela independente de registradores PICA interno não confirma. PicaColorBufferFormat continua representando somente os formatos que o backend consegue codificar e armazenar corretamente.
+
+
+## Parâmetros de sombra — GPUREG_FRAGOP_SHADOW (0x130)
+
+| Bits | Campo | Formato |
+|---:|---|---|
+| 0–15 | Soma da escala de penumbra e do bias | float1.5.10 |
+| 16–31 | Escala de penumbra com sinal invertido | float1.5.10 |
+
+O Aceris expõe os dois campos por meio de PicaShadowState e preserva os valores brutos de 16 bits. A captura do estado não equivale ao processamento Shadow: o seletor 3 de GPUREG_COLOR_OPERATION continua sem integração no fragment pipeline.

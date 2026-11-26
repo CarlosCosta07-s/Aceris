@@ -357,6 +357,8 @@ pub const REG_GAS_LIGHT_Z_COLOR: u16 = 0x122;
 pub const REG_GAS_ACCMAX_FEEDBACK: u16 = 0x125;
 /// GPUREG_GAS_DELTAZ_DEPTH: depth attenuation and comparison-family selector.
 pub const REG_GAS_DELTAZ_DEPTH: u16 = 0x126;
+/// GPUREG_FRAGOP_SHADOW: shadow penumbra constant and reversed scale.
+pub const REG_FRAGOP_SHADOW: u16 = 0x130;
 const REG_COLOR_OPERATION_FOR_GAS: usize = 0x100;
 const REG_TEXENV_UPDATE_BUFFER_FOR_GAS: usize = 0x0E0;
 
@@ -408,6 +410,19 @@ pub struct PicaGasState {
     pub color_lut_input: PicaGasColorLutInput,
     pub depth_attenuation_fixed0_16_8: u32,
     pub depth_function: PicaGasDepthFunction,
+}
+
+/// Raw parameters from GPUREG_FRAGOP_SHADOW.
+///
+/// Both fields are documented as float1.5.10. They remain raw until the
+/// shadow comparison/penumbra interpolation path has a verified conversion
+/// and is implemented in the fragment pipeline.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PicaShadowState {
+    /// Sum of penumbra scale and penumbra bias, bits 0..15.
+    pub penumbra_scale_plus_bias_float1_5_10: u16,
+    /// Penumbra scale with reversed sign, bits 16..31.
+    pub negative_penumbra_scale_float1_5_10: u16,
 }
 
 /// Decoded viewport data written by the guest through PICA registers.
@@ -968,6 +983,18 @@ impl Pica200 {
                 2 => PicaGasDepthFunction::GreaterThanOrGreaterEqual,
                 _ => PicaGasDepthFunction::LessThanLessEqualEqualOrNotEqual,
             },
+        }
+    }
+
+    /// Returns the raw GPUREG_FRAGOP_SHADOW penumbra parameters.
+    ///
+    /// This captures guest state only; shadow fragment processing is not
+    /// implemented by the software rasterizer yet.
+    pub fn shadow_state(&self) -> PicaShadowState {
+        let value = self.register(REG_FRAGOP_SHADOW).unwrap_or(0);
+        PicaShadowState {
+            penumbra_scale_plus_bias_float1_5_10: value as u16,
+            negative_penumbra_scale_float1_5_10: (value >> 16) as u16,
         }
     }
 
@@ -2490,6 +2517,20 @@ mod tests {
         gpu.write_register(REG_TEXENV_UPDATE_BUFFER_FOR_GAS as u16, 7)
             .unwrap();
         assert_eq!(gpu.gas_state().density_source, PicaGasDensitySource::Plain);
+    }
+
+    #[test]
+    fn shadow_state_decodes_both_float1_5_10_register_halves() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_FRAGOP_SHADOW, 0xBEEF_1234).unwrap();
+
+        assert_eq!(
+            gpu.shadow_state(),
+            PicaShadowState {
+                penumbra_scale_plus_bias_float1_5_10: 0x1234,
+                negative_penumbra_scale_float1_5_10: 0xBEEF,
+            }
+        );
     }
 
     #[test]

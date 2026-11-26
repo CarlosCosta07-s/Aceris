@@ -2556,3 +2556,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - PicaColorBufferFormatSelector nomeia os códigos de formato 0–4 e reserva 5–7. RGB8 (1) é conhecido pelo enum de Azahar, mas permanece fora do render target por falta de confirmação do pixel-size/formato interno.
 - Testes adicionados para os campos completos de três bits, incluindo os casos fail-closed. As novas tabelas não devem ser descritas como implementação de Gas ou RGB8.
 - Referências consultadas: Azahar regs_texturing.h e regs_framebuffer.h, revisão c621eafbf316699c55f4c9c0c689d4e49498d360; 3dbrew GPU/Internal Registers. Nenhum código GPL ou teste do Azahar foi incorporado.
+
+
+## PICA200 — snapshot de parâmetros Shadow — 26/11/2026
+
+- Adicionado REG_FRAGOP_SHADOW (0x130) e PicaShadowState. O snapshot separa os dois campos float1.5.10 documentados: soma escala+bias da penumbra (bits 0–15) e escala com sinal invertido (bits 16–31).
+- Teste próprio cobre a extração das duas metades. Os valores permanecem brutos, sem conversão numérica presumida.
+- Isto não implementa a operação Shadow: o modo 3 de GPUREG_COLOR_OPERATION, shadow-map compare e composição da penumbra continuam pendentes.
+- Fontes: Azahar regs_framebuffer.h, revisão c621eafbf316699c55f4c9c0c689d4e49498d360; 3dbrew GPU/Internal Registers.
