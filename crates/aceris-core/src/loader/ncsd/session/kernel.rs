@@ -439,10 +439,21 @@ impl Arm11KernelObjectTable {
         self.service_registry.remove(name)
     }
 
-    /// Returns the live server port registered under an exact eight-byte name.
+    /// Returns an open handle to the server port registered under an exact name.
+    ///
+    /// The original handle may have been closed while a duplicate remains open;
+    /// resolve that live alias instead of prematurely hiding the service.
     pub fn service_port_handle(&self, name: &[u8; 8]) -> Option<u32> {
-        let handle = *self.service_registry.get(name)?;
-        matches!(self.object(handle), Some(KernelObject::Port(_))).then_some(handle)
+        let object_key = *self.service_registry.get(name)?;
+        if !matches!(self.object_by_key(object_key), Some(KernelObject::Port(_))) {
+            return None;
+        }
+        if self.objects.contains_key(&object_key) {
+            return Some(object_key);
+        }
+        self.handle_aliases
+            .iter()
+            .find_map(|(handle, key)| (*key == object_key).then_some(*handle))
     }
 
     /// Reports whether a private service port is currently registered.
@@ -532,9 +543,10 @@ impl Arm11KernelObjectTable {
 
     /// Returns a port's registered name, if it is still discoverable by srv:.
     pub fn service_name_for_port(&self, port_handle: u32) -> Option<[u8; 8]> {
+        let object_key = self.object_key(port_handle)?;
         self.service_registry
             .iter()
-            .find_map(|(name, handle)| (*handle == port_handle).then_some(*name))
+            .find_map(|(name, registered)| (*registered == object_key).then_some(*name))
     }
 
     /// Creates a process-local GSP GPU client session.
@@ -1442,6 +1454,10 @@ impl Arm11KernelObjectTable {
             // handle was already closed and no other aliases remain.
             let has_aliases = self.handle_aliases.values().any(|key| *key == object_key);
             if !has_aliases && !self.objects.contains_key(&object_key) {
+                if matches!(self.object_by_key(object_key), Some(KernelObject::Port(_))) {
+                    self.service_registry
+                        .retain(|_, registered| *registered != object_key);
+                }
                 self.close_session_endpoint_by_key(object_key);
             }
             self.collect_retired_objects();
@@ -1453,9 +1469,10 @@ impl Arm11KernelObjectTable {
             .remove(&handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
         let has_aliases = self.handle_aliases.values().any(|key| *key == handle);
-        if matches!(&object, KernelObject::Port(_)) {
-            // Closing the server's final port handle stops new connections,
-            // even when existing sessions keep the port object retired.
+        if matches!(&object, KernelObject::Port(_)) && !has_aliases {
+            // The service registry remains reachable through duplicate handles.
+            // Closing the final port handle stops new connections, even when
+            // existing sessions keep the port object retired.
             self.service_registry
                 .retain(|_, registered| *registered != handle);
         }
@@ -1478,8 +1495,10 @@ impl Arm11KernelObjectTable {
         };
         let peer_key = endpoint.peer_key;
         let port_key = endpoint.port_key;
+        let role = endpoint.role;
         let already_closed = endpoint.remote_closed;
 
+        self.discard_unaccepted_server_peer(port_key, peer_key, role);
         if let Some(KernelObject::SessionEndpoint(peer)) = self.object_mut_by_key(peer_key) {
             peer.remote_closed = true;
         }
@@ -1499,7 +1518,10 @@ impl Arm11KernelObjectTable {
         };
         let peer_key = endpoint.peer_key;
         let port_key = endpoint.port_key;
+        let role = endpoint.role;
         let already_closed = endpoint.remote_closed;
+
+        self.discard_unaccepted_server_peer(port_key, peer_key, role);
         if let Some(KernelObject::SessionEndpoint(peer)) = self.object_mut_by_key(peer_key) {
             peer.remote_closed = true;
         }
@@ -1509,6 +1531,39 @@ impl Arm11KernelObjectTable {
                 port.pending_sessions
                     .retain(|pending| *pending != object_key && *pending != endpoint.peer_key);
             }
+        }
+    }
+
+    /// Drops a server endpoint that was queued on a port but never accepted.
+    ///
+    /// The pending server endpoint is retained only by the port queue. If the
+    /// client disappears before AcceptSession, discard that unobservable peer
+    /// rather than leaving an orphaned endpoint outside the queue.
+    fn discard_unaccepted_server_peer(
+        &mut self,
+        port_key: u32,
+        peer_key: u32,
+        closing_role: SessionRole,
+    ) {
+        if closing_role != SessionRole::Client {
+            return;
+        }
+
+        let server_is_pending = matches!(
+            self.object_by_key(peer_key),
+            Some(KernelObject::SessionEndpoint(KernelSessionEndpoint {
+                role: SessionRole::Server,
+                ..
+            }))
+        ) && matches!(
+            self.object_by_key(port_key),
+            Some(KernelObject::Port(port)) if port.pending_sessions.contains(&peer_key)
+        );
+        if server_is_pending
+            && !self.handle_aliases.values().any(|key| *key == peer_key)
+        {
+            self.objects.remove(&peer_key);
+            self.retired_objects.remove(&peer_key);
         }
     }
 
@@ -2320,6 +2375,47 @@ mod tests {
         );
 
         assert_eq!(table.unregister_service_port(&name), Some(port));
+        assert_eq!(table.service_port_handle(&name), None);
+    }
+
+    #[test]
+    fn closing_unaccepted_client_discards_the_queued_server_endpoint() {
+        let mut table = Arm11KernelObjectTable::default();
+        let port = table.register_service_port(*b"test:svc", 1).unwrap();
+        let client = table.create_session_to_port(port).unwrap();
+        let server = match table.objects.get(&port).unwrap() {
+            KernelObject::Port(port) => *port.pending_sessions.front().unwrap(),
+            _ => unreachable!("register_service_port returns a port object"),
+        };
+
+        assert!(table.is_open_handle(server));
+        table.close_handle(client).unwrap();
+
+        assert!(!table.is_open_handle(server));
+        assert_eq!(
+            table.accept_session(port),
+            Err(KernelHandleError::NoPendingSessions)
+        );
+        assert!(table.create_session_to_port(port).is_ok());
+    }
+
+    #[test]
+    fn duplicate_service_port_keeps_registry_until_last_alias_closes() {
+        let mut table = Arm11KernelObjectTable::default();
+        let name = *b"test:svc";
+        let port = table.register_service_port(name, 2).unwrap();
+        let duplicate = table.duplicate_handle(port).unwrap();
+
+        table.close_handle(port).unwrap();
+
+        assert_eq!(table.service_port_handle(&name), Some(duplicate));
+        assert_eq!(table.service_name_for_port(duplicate), Some(name));
+        let client = table.create_session_to_port(duplicate).unwrap();
+        let server = table.accept_session(duplicate).unwrap();
+        table.close_handle(client).unwrap();
+        table.close_handle(server).unwrap();
+        table.close_handle(duplicate).unwrap();
+
         assert_eq!(table.service_port_handle(&name), None);
     }
 

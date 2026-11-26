@@ -378,7 +378,7 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [~] `RESLIMIT_COMMIT` (tipo 1) retorna o teto configurado de 64 MiB do perfil Old 3DS atual e uso guest-visible mapeado (segmentos estáticos, stack, TLS e regiões dinâmicas). Outros tipos e accounting de shared-memory ainda não estão implementados.
 - [~] Teste sintético integrado percorre ResourceLimit → consulta de orçamento → `ControlMemory(MEMOP_ALLOC)` e confirma aumento do COMMIT pelo tamanho alocado. Testes unitários também cobrem handles, GetThreadId e svcBreak; ainda aguardam execução em CI.
 - [~] `srv:IsServiceRegistered` (IPC 0x000E00C0) consulta o registry HLE presente, respeita a ACL NCCH e distingue endpoint disponível de serviço apenas permitido sem endpoint.
-- [ ] Ciclo de portas/sessões servidoras (`RegisterService`, `AcceptSession`, `ReplyAndReceive`), fila de `GetServiceHandle` pendente e wake-up quando serviço for registrado.
+- [~] Ciclo de portas/sessões do Service Manager: `RegisterService`, `UnregisterService`, `AcceptSession`, fila FIFO de `GetServiceHandle` pendente e wake-up após registro/liberação de vaga. `ReplyAndReceive` e o transporte de mensagens entre endpoints continuam pendentes.
 - [ ] Reexecutar o CIA/homebrew de diagnóstico após estas alterações e registrar PC/CPSR, SVC/IPC, orçamento de heap, serviço e resultado observado. Nenhum boot comercial foi confirmado por esta revisão.
 - [ ] Ampliar `ResourceLimit` para THREAD/EVENT/MUTEX/SEMAPHORE/TIMER/SHARED_MEMORY/ADDRESS_ARBITER/CPU_TIME com limites e contadores derivados do kernel real; não responder com valores inventados.
 - [ ] Confirmar Rustfmt, Clippy, testes Linux/Windows/macOS e builds Android ARM64 no HEAD atual. O estado local não foi compilado nesta sessão.
