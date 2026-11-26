@@ -43,7 +43,7 @@ A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/s
 - Tela inicial, início da biblioteca e páginas de Jogos, Favoritos, Recentes, Homebrew e Configurações.
 - Biblioteca com visualização de grade e lista selecionável no modo paisagem; o fallback em retrato continua usando lista adaptável.
 - Pesquisa funcional por título, nome do arquivo e caminho, sem diferenciar maiúsculas/minúsculas ou acentos. Desktop usa texto do teclado do sistema; Android oferece teclado virtual desenhado em Rust e aceita caracteres Unicode de teclados físicos.
-- Favoritos e Recentes persistidos localmente; ordenação A–Z/Z–A e atualização manual da biblioteca.
+- Favoritos e Recentes persistidos localmente com identidade por caminho completo (inclui migração dos antigos registros por nome); ordenação A–Z/Z–A e atualização manual da biblioteca.
 - Plano de fundo personalizado na biblioteca, com suporte a quadros animados fornecidos pelo host.
 - O scanner compartilhado em Rust agora tem API para uma lista de pastas e varredura recursiva opcional, sem seguir links simbólicos e deduplicando diretórios/arquivos sobrepostos; os frontends ainda não expõem esses controles ao usuário.
 - Apresentação das duas telas do 3DS com ajuste proporcional ao espaço disponível.

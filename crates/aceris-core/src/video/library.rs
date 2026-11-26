@@ -80,8 +80,34 @@ pub struct Library {
     external_media_detection_available: bool,
 }
 
-/// Reads a persistent list of simple file names from the Aceris settings folder.
-/// Invalid path components are ignored so the collection can never escape its game folder.
+/// Versioned prefix for full-path identifiers stored in Favorites and Recent.
+const LIBRARY_PATH_ID_PREFIX: &str = "path-v1:";
+
+/// Produces a line-safe identifier from the UTF-8 path used by a library entry.
+/// Hex encoding preserves path bytes without introducing separators or newlines.
+fn library_path_id(path: &Path) -> Option<String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut id = String::from(LIBRARY_PATH_ID_PREFIX);
+    for byte in path.to_str()?.as_bytes() {
+        id.push(HEX[(byte >> 4) as usize] as char);
+        id.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Some(id)
+}
+
+fn is_valid_library_id(value: &str) -> bool {
+    if let Some(encoded) = value.strip_prefix(LIBRARY_PATH_ID_PREFIX) {
+        return !encoded.is_empty()
+            && encoded.len() % 2 == 0
+            && encoded.bytes().all(|byte| byte.is_ascii_hexdigit());
+    }
+
+    // Older versions stored only a filename. Continue accepting that format
+    // long enough to migrate it relative to the original single game folder.
+    Path::new(value).file_name().and_then(|name| name.to_str()) == Some(value)
+}
+
+/// Reads path identifiers and legacy file names from the Aceris settings folder.
 fn load_library_ids(path: &Path) -> Vec<String> {
     let Ok(contents) = fs::read_to_string(path) else {
         return Vec::new();
@@ -89,12 +115,33 @@ fn load_library_ids(path: &Path) -> Vec<String> {
     contents
         .lines()
         .map(str::trim)
-        .filter(|name| {
-            !name.is_empty()
-                && Path::new(name).file_name().and_then(|value| value.to_str()) == Some(*name)
-        })
+        .filter(|value| !value.is_empty() && is_valid_library_id(value))
         .map(str::to_string)
         .collect()
+}
+
+/// Converts old filename-only entries into paths under the original game folder.
+/// Existing path identifiers are retained and duplicate identifiers are removed.
+fn migrate_library_ids(ids: Vec<String>, legacy_directory: &Path) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    ids.into_iter()
+        .filter_map(|value| {
+            let id = if value.starts_with(LIBRARY_PATH_ID_PREFIX) {
+                value
+            } else {
+                library_path_id(&legacy_directory.join(value))?
+            };
+            seen.insert(id.clone()).then_some(id)
+        })
+        .collect()
+}
+
+fn write_library_ids(settings_directory: &Path, file_name: &str, values: impl IntoIterator<Item = String>) {
+    if fs::create_dir_all(settings_directory).is_err() {
+        return;
+    }
+    let content = values.into_iter().collect::<Vec<_>>().join("\n");
+    let _ = fs::write(settings_directory.join(file_name), content);
 }
 
 /// Options controlling how the library scanner traverses user-selected folders.
@@ -207,10 +254,22 @@ fn scan_path_identity(path: &Path) -> PathBuf {
 impl Library {
     pub fn new(entries: Vec<Entry>, directory_label: String) -> Self {
         let directory = PathBuf::from(&directory_label);
-        let favorites = load_library_ids(&directory.join(".aceris").join("favorites.txt"))
-            .into_iter()
-            .collect();
-        let recent = load_library_ids(&directory.join(".aceris").join("recent.txt"));
+        let settings_directory = directory.join(".aceris");
+        let legacy_favorites = load_library_ids(&settings_directory.join("favorites.txt"));
+        let legacy_recent = load_library_ids(&settings_directory.join("recent.txt"));
+        let favorite_ids = migrate_library_ids(legacy_favorites.clone(), &directory);
+        let recent = migrate_library_ids(legacy_recent.clone(), &directory);
+
+        // Rewrite legacy filename-only records once so later multi-folder scans
+        // cannot accidentally attach them to a different file with the same name.
+        if favorite_ids != legacy_favorites {
+            write_library_ids(&settings_directory, "favorites.txt", favorite_ids.clone());
+        }
+        if recent != legacy_recent {
+            write_library_ids(&settings_directory, "recent.txt", recent.clone());
+        }
+
+        let favorites = favorite_ids.into_iter().collect();
         Self {
             entries,
             selected: 0,
@@ -241,9 +300,9 @@ impl Library {
 
     pub fn selected_entry(&self) -> Option<&Entry> {
         if self.page == LibraryPage::Home {
-            return self.recent.iter().find_map(|name| {
+            return self.recent.iter().find_map(|id| {
                 self.entries.iter().find(|entry| {
-                    entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
+                    library_path_id(&entry.path).as_deref() == Some(id.as_str())
                 })
             });
         }
@@ -257,11 +316,7 @@ impl Library {
 
     /// True when an entry is in the user's persistent favorites collection.
     pub fn is_favorite(&self, entry: &Entry) -> bool {
-        entry
-            .path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| self.favorites.contains(name))
+        library_path_id(&entry.path).is_some_and(|id| self.favorites.contains(&id))
     }
 
     /// Adds or removes the currently selected item from Favorites.
@@ -269,12 +324,11 @@ impl Library {
         let Some(entry) = self.selected_entry() else {
             return false;
         };
-        let Some(name) = entry.path.file_name().and_then(|value| value.to_str()) else {
+        let Some(id) = library_path_id(&entry.path) else {
             return false;
         };
-        let name = name.to_string();
-        if !self.favorites.remove(&name) {
-            self.favorites.insert(name);
+        if !self.favorites.remove(&id) {
+            self.favorites.insert(id);
         }
         self.persist_library_ids("favorites.txt", self.favorites.iter().cloned());
         self.status = Some("Favoritos atualizados".to_string());
@@ -283,12 +337,11 @@ impl Library {
 
     /// Records a successfully launched game at the front of the persistent Recent list.
     pub fn mark_launched(&mut self, path: &Path) {
-        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        let Some(id) = library_path_id(path) else {
             return;
         };
-        let name = name.to_string();
-        self.recent.retain(|item| item != &name);
-        self.recent.insert(0, name);
+        self.recent.retain(|item| item != &id);
+        self.recent.insert(0, id);
         self.recent.truncate(24);
         self.persist_library_ids("recent.txt", self.recent.iter().cloned());
         self.status = None;
@@ -306,9 +359,9 @@ impl Library {
     pub fn recent_count(&self) -> usize {
         self.recent
             .iter()
-            .filter(|name| {
+            .filter(|id| {
                 self.entries.iter().any(|entry| {
-                    entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
+                    library_path_id(&entry.path).as_deref() == Some(id.as_str())
                 })
             })
             .count()
@@ -444,11 +497,7 @@ impl Library {
 
     fn persist_library_ids(&self, file_name: &str, values: impl IntoIterator<Item = String>) {
         let directory = Path::new(&self.directory_label).join(".aceris");
-        if fs::create_dir_all(&directory).is_err() {
-            return;
-        }
-        let content = values.into_iter().collect::<Vec<_>>().join("\n");
-        let _ = fs::write(directory.join(file_name), content);
+        write_library_ids(&directory, file_name, values);
     }
 
     /// Changes the library section and resets its independent selection.
@@ -478,8 +527,8 @@ impl Library {
             LibraryPage::Home => false,
             LibraryPage::Games => !is_homebrew,
             LibraryPage::Favorites => self.is_favorite(entry),
-            LibraryPage::Recent => self.recent.iter().any(|name| {
-                entry.path.file_name().and_then(|value| value.to_str()) == Some(name.as_str())
+            LibraryPage::Recent => self.recent.iter().any(|id| {
+                library_path_id(&entry.path).as_deref() == Some(id.as_str())
             }),
             LibraryPage::Homebrew => is_homebrew,
             LibraryPage::Settings => false,
@@ -491,10 +540,9 @@ impl Library {
             let entries: Vec<&Entry> = self
                 .recent
                 .iter()
-                .filter_map(|name| {
+                .filter_map(|id| {
                     self.entries.iter().find(|entry| {
-                        entry.path.file_name().and_then(|value| value.to_str())
-                            == Some(name.as_str())
+                        library_path_id(&entry.path).as_deref() == Some(id.as_str())
                     })
                 })
                 .filter(|entry| self.entry_matches_search(entry))
@@ -3080,13 +3128,106 @@ mod tests {
         assert_eq!(reopened.recent_count(), 1);
         assert_eq!(
             fs::read_to_string(dir.join(".aceris").join("favorites.txt")).unwrap(),
-            "alpha.3ds"
+            library_path_id(&alpha).unwrap()
         );
         assert_eq!(
             fs::read_to_string(dir.join(".aceris").join("recent.txt")).unwrap(),
-            "beta.3ds"
+            library_path_id(&beta).unwrap()
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+
+    #[test]
+    fn favorites_and_recent_distinguish_same_filename_in_different_roots() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-duplicate-names-{}", std::process::id()));
+        let secondary = root.join("secondary");
+        fs::create_dir_all(&secondary).unwrap();
+        let primary_game = root.join("shared.3ds");
+        let secondary_game = secondary.join("shared.3ds");
+        fs::write(&primary_game, b"primary").unwrap();
+        fs::write(&secondary_game, b"secondary").unwrap();
+
+        let entries = vec![
+            Entry {
+                title: "Primary".into(),
+                path: primary_game.clone(),
+            },
+            Entry {
+                title: "Secondary".into(),
+                path: secondary_game.clone(),
+            },
+        ];
+        let mut library = Library::new(entries.clone(), root.display().to_string());
+        library.select_page(LibraryPage::Games);
+        library.move_selection(1);
+        assert_eq!(library.selected_entry().unwrap().path, secondary_game);
+        assert!(library.toggle_selected_favorite());
+        assert!(library.is_favorite(&entries[1]));
+        assert!(!library.is_favorite(&entries[0]));
+
+        library.mark_launched(&primary_game);
+        library.mark_launched(&secondary_game);
+        assert_eq!(library.recent_count(), 2);
+        library.select_page(LibraryPage::Recent);
+        assert_eq!(library.selected_entry().unwrap().path, secondary_game);
+        library.select_page(LibraryPage::Home);
+        assert_eq!(library.selected_entry().unwrap().path, secondary_game);
+
+        let reopened = Library::new(entries, root.display().to_string());
+        assert!(reopened.is_favorite(&reopened.entries()[1]));
+        assert!(!reopened.is_favorite(&reopened.entries()[0]));
+        assert_eq!(reopened.recent_count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_filename_ids_migrate_to_the_original_games_folder() {
+        let root = std::env::temp_dir()
+            .join(format!("aceris-legacy-library-ids-{}", std::process::id()));
+        let secondary = root.join("secondary");
+        let settings = root.join(".aceris");
+        fs::create_dir_all(&secondary).unwrap();
+        fs::create_dir_all(&settings).unwrap();
+        let primary_game = root.join("legacy.3ds");
+        let secondary_game = secondary.join("legacy.3ds");
+        fs::write(&primary_game, b"primary").unwrap();
+        fs::write(&secondary_game, b"secondary").unwrap();
+        fs::write(settings.join("favorites.txt"), "legacy.3ds").unwrap();
+        fs::write(settings.join("recent.txt"), "legacy.3ds").unwrap();
+
+        let entries = vec![
+            Entry {
+                title: "Primary".into(),
+                path: primary_game.clone(),
+            },
+            Entry {
+                title: "Secondary".into(),
+                path: secondary_game.clone(),
+            },
+        ];
+        let mut library = Library::new(entries.clone(), root.display().to_string());
+        assert!(library.is_favorite(&entries[0]));
+        assert!(!library.is_favorite(&entries[1]));
+        library.select_page(LibraryPage::Recent);
+        assert_eq!(library.selected_entry().unwrap().path, primary_game);
+        assert_eq!(
+            fs::read_to_string(settings.join("favorites.txt")).unwrap(),
+            library_path_id(&primary_game).unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(settings.join("recent.txt")).unwrap(),
+            library_path_id(&primary_game).unwrap()
+        );
+
+        // A newly favourited file with the same basename remains independent.
+        library.select_page(LibraryPage::Games);
+        library.move_selection(1);
+        assert!(library.toggle_selected_favorite());
+        assert!(library.is_favorite(&entries[0]));
+        assert!(library.is_favorite(&entries[1]));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

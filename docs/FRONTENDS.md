@@ -52,7 +52,7 @@ O ciclo de vida de NativeActivity, pause/resume, destruição e recriação de s
 - A pesquisa filtra o catálogo em memória por título, nome do arquivo e caminho, com comparação sem distinção de caixa/acentos. Android recebe Unicode do NDK para teclados físicos e oferece teclado virtual Rust básico para toque. Desktop usa os eventos de texto nativos de X11, Win32 e AppKit. O teclado virtual tem letras latinas, espaço, apagar, limpar e OK; não é um IME completo.
 - Fundos personalizados podem ser fornecidos ao renderer como quadros RGBA8 400×480. A ABI não decodifica vídeos nem retém ponteiros do host após a chamada.
 - A ABI preserva helpers de orientação/geometria e de controles virtuais para hosts que optem por usá-los. O aplicativo Android atual é horizontal; não se deve inferir que todos os modos de orientação oferecidos pela ABI estejam expostos na interface.
-- Favoritos e Recentes são persistidos em arquivos da pasta de dados do Aceris. Metadados/capas reais, seleção SAF, perfis por jogo, editor de controles e temas alternativos permanecem como trabalho futuro.
+- Favoritos e Recentes são persistidos em arquivos da pasta de dados do Aceris usando identificadores derivados do caminho completo, evitando colisões entre arquivos com o mesmo nome em pastas diferentes. Registros antigos, baseados somente no nome, são migrados para a pasta de jogos original. Metadados/capas reais, seleção SAF, perfis por jogo, editor de controles e temas alternativos permanecem como trabalho futuro.
 
 ## Estado de validação
 

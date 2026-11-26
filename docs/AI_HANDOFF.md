@@ -2670,3 +2670,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Documentação atualizada em `docs/FRONTENDS.md` e `docs/USER_EXPERIENCE.md`; removidos bullets duplicados sobre a pesquisa nas mesmas páginas.
 - **Fronteiras:** somente scanner compartilhado de biblioteca e documentação. Nenhuma mudança em frontends Android/desktop ou nos módulos de emulação. Nenhuma dependência, asset, ROM, CIA, firmware ou chave adicionada. Somente `main`; sem branches ou PRs.
 - **Validação:** executar Rustfmt, build, testes e Clippy da CI deste commit antes de marcar esta base como aprovada.
+
+
+## Biblioteca — identidade de Favoritos e Recentes por caminho (26/11/2026, ChatGPT)
+
+- Corrigida a identidade persistida dos jogos: antes, Favorites/Recent armazenavam somente o nome do arquivo, o que confundia dois títulos diferentes chamados, por exemplo, `game.3ds` em pastas distintas.
+- Novas entradas usam identificador versionado `path-v1:` derivado dos bytes UTF-8 do caminho completo e codificado em hexadecimal (seguro para o armazenamento linha a linha). Não é criptografia; é apenas codificação estável.
+- Na inicialização, registros antigos que continham apenas o nome são migrados como caminhos relativos à pasta única original da biblioteca. Assim, o registro legado não passa a marcar por engano um arquivo homônimo que esteja em outra pasta. Favoritos e Recentes já usam o novo ID para leitura, ordenação, contagem, seleção da Home e persistência.
+- A migração é escrita imediatamente quando o arquivo antigo precisa ser convertido. IDs repetidos são deduplicados sem alterar a ordem de Recentes.
+- Testes cobrem dois arquivos com mesmo nome em raízes diferentes, persistência após reabrir a biblioteca e migração de registros legados apontando para a pasta original.
+- Limite explícito: caminhos não UTF-8 não recebem identidade persistente nesta versão, seguindo a limitação já existente da antiga lógica que exigia nome de arquivo UTF-8. Os frontends ainda usam uma única pasta; o trabalho prepara a identidade para múltiplas raízes, mas não habilita essa UI.
+- **Fronteiras:** somente `crates/aceris-core/src/video/library.rs` e documentação. Sem mudanças nos frontends, módulos de emulação ou dependências. Sem assets/conteúdo de jogos, firmware ou chaves. Somente `main`, sem branch ou PR.
+- **Validação:** confirmar Rustfmt, build, testes e Clippy nos workflows gerados para este commit; teste físico Android/desktop permanece necessário.
