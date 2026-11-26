@@ -2737,3 +2737,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O rótulo de caminho agora é construído em uma variável `String` antes de ser passado a `responsive_text`, corrigindo a vida útil da referência.
 - Os blocos de Configurações, teclado virtual, hit-test e fixtures dos testes foram alinhados ao formato do workspace. Nova CI ainda deve confirmar a validação.
 - Nenhum subsistema de emulação, dependência ou arquivo de outro agente foi alterado.
+
+
+## Correção da ramificação da renderização vertical (26/11/2026, ChatGPT)
+
+- A CI da revisão anterior revelou que a substituição da seção Configurações havia removido o token `else` que inicia a renderização das páginas de jogos no modo vertical. O delimitador foi restaurado; o erro era sintático e bloqueava Rustfmt e os builds.
+- A CI da revisão atual deve confirmar a análise sintática, o formato e o build Android. Ainda não declarar testes aprovados antes dos resultados.

@@ -1661,7 +1661,7 @@ impl Library {
                 "ATUALIZAR BIBLIOTECA",
                 brand::TEXT,
             );
-        }
+        } else {
             let count = self.visible_entry_count();
             let count_text = match (self.page, count) {
                 (LibraryPage::Homebrew, 1) => "1 homebrew disponível".to_string(),
