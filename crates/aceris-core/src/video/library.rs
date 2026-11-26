@@ -66,6 +66,8 @@ pub struct Library {
     selected: usize,
     first_visible: usize,
     directory_label: String,
+    scan_config: LibraryScanConfig,
+    scan_settings_directory: PathBuf,
     status: Option<String>,
     page: LibraryPage,
     favorites: std::collections::HashSet<String>,
@@ -479,6 +481,7 @@ impl Library {
     pub fn new(entries: Vec<Entry>, directory_label: String) -> Self {
         let directory = PathBuf::from(&directory_label);
         let settings_directory = directory.join(".aceris");
+        let scan_config = LibraryScanConfig::single_directory(directory.clone());
         let legacy_favorites = load_library_ids(&settings_directory.join("favorites.txt"));
         let legacy_recent = load_library_ids(&settings_directory.join("recent.txt"));
         let favorite_ids = migrate_library_ids(legacy_favorites.clone(), &directory);
@@ -499,6 +502,8 @@ impl Library {
             selected: 0,
             first_visible: 0,
             directory_label,
+            scan_config,
+            scan_settings_directory: settings_directory,
             status: None,
             page: LibraryPage::Home,
             favorites,
@@ -512,6 +517,74 @@ impl Library {
             external_media_playing: false,
             external_media_detection_available: false,
         }
+    }
+
+    /// Loads persisted folder configuration and scans it before creating the library.
+    ///
+    /// `settings_directory` must be writable by the host for later changes.
+    /// `fallback_directory` preserves compatibility when no valid config exists.
+    pub fn from_scan_settings(settings_directory: &Path, fallback_directory: &Path) -> Self {
+        let scan_config = load_library_scan_config(settings_directory, fallback_directory);
+        let entries = scan_games_from_config(&scan_config);
+        let mut library = Self::new(entries, fallback_directory.display().to_string());
+        library.scan_config = scan_config;
+        library.scan_settings_directory = settings_directory.to_path_buf();
+        library
+    }
+
+    /// Current persisted roots and scanner options.
+    pub fn scan_config(&self) -> &LibraryScanConfig {
+        &self.scan_config
+    }
+
+    /// Adds a game folder and immediately persists and rescans the library.
+    ///
+    /// Returns `Ok(false)` when the folder is already configured.
+    pub fn add_scan_directory(&mut self, directory: impl Into<PathBuf>) -> std::io::Result<bool> {
+        let mut updated = self.scan_config.clone();
+        if !updated.add_directory(directory) {
+            return Ok(false);
+        }
+        save_library_scan_config(&self.scan_settings_directory, &updated)?;
+        self.scan_config = updated;
+        self.reload();
+        self.status = Some("PASTA ADICIONADA À BIBLIOTECA".to_string());
+        Ok(true)
+    }
+
+    /// Removes a configured folder and immediately persists and rescans.
+    ///
+    /// Returns `Ok(false)` if the folder is unknown or it is the last root.
+    pub fn remove_scan_directory(&mut self, directory: &Path) -> std::io::Result<bool> {
+        let mut updated = self.scan_config.clone();
+        if !updated.remove_directory(directory) {
+            return Ok(false);
+        }
+        save_library_scan_config(&self.scan_settings_directory, &updated)?;
+        self.scan_config = updated;
+        self.reload();
+        self.status = Some("PASTA REMOVIDA DA BIBLIOTECA".to_string());
+        Ok(true)
+    }
+
+    /// Enables or disables recursive scanning and immediately persists and rescans.
+    ///
+    /// Returns `Ok(false)` when the requested value is already active.
+    pub fn set_recursive_scan(&mut self, recursive: bool) -> std::io::Result<bool> {
+        if self.scan_config.options.recursive == recursive {
+            return Ok(false);
+        }
+        let mut updated = self.scan_config.clone();
+        updated.options.recursive = recursive;
+        save_library_scan_config(&self.scan_settings_directory, &updated)?;
+        self.scan_config = updated;
+        self.reload();
+        self.status = Some(if recursive {
+            "BUSCA RECURSIVA ATIVADA".to_string()
+        } else {
+            "BUSCA RECURSIVA DESATIVADA".to_string()
+        });
+        Ok(true)
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -834,9 +907,9 @@ impl Library {
         self.page
     }
 
-    /// Re-scans the user's game folder without restarting the application.
+    /// Re-scans every configured game folder without restarting the application.
     pub fn reload(&mut self) {
-        self.entries = scan_games(Path::new(&self.directory_label));
+        self.entries = scan_games_from_config(&self.scan_config);
         self.selected = 0;
         self.first_visible = 0;
         self.status = Some(format!(
@@ -3767,6 +3840,83 @@ mod tests {
         assert_eq!(titles, ["A", "b", "C", "homebrew"]);
         fs::remove_dir_all(&dir).unwrap();
         assert!(scan_games(&dir).is_empty());
+    }
+
+
+    #[test]
+    fn library_model_loads_and_manages_persisted_scan_roots() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-library-scan-model-{}", std::process::id()));
+        let primary = root.join("primary");
+        let secondary = root.join("secondary");
+        let third = root.join("third");
+        let settings = root.join("app-settings");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(secondary.join("nested")).unwrap();
+        fs::create_dir_all(&third).unwrap();
+        fs::write(primary.join("base.3ds"), b"x").unwrap();
+        fs::write(secondary.join("nested").join("extra.3ds"), b"x").unwrap();
+        fs::write(third.join("third.cia"), b"x").unwrap();
+
+        let mut config = LibraryScanConfig::single_directory(primary.clone());
+        assert!(config.add_directory(secondary.clone()));
+        config.options.recursive = true;
+        save_library_scan_config(&settings, &config).unwrap();
+
+        let mut library = Library::from_scan_settings(&settings, &primary);
+        assert_eq!(library.entries().len(), 2);
+        assert!(library.scan_config().options.recursive);
+        assert_eq!(library.scan_config().directories.len(), 2);
+
+        assert!(library.set_recursive_scan(false).unwrap());
+        assert_eq!(library.entries().len(), 1);
+        assert!(!library.set_recursive_scan(false).unwrap());
+
+        assert!(library.add_scan_directory(third.clone()).unwrap());
+        assert_eq!(library.entries().len(), 2);
+        assert!(!library.add_scan_directory(third.clone()).unwrap());
+
+        assert!(library.remove_scan_directory(&secondary).unwrap());
+        assert_eq!(library.entries().len(), 2);
+        assert!(!library.remove_scan_directory(&secondary).unwrap());
+        assert!(library.remove_scan_directory(&primary).unwrap());
+        assert_eq!(library.scan_config().directories.len(), 1);
+
+        let reopened = Library::from_scan_settings(&settings, &primary);
+        assert_eq!(reopened.entries().len(), 2);
+        assert_eq!(reopened.scan_config().directories.len(), 2);
+        assert_eq!(
+            reopened
+                .entries()
+                .iter()
+                .map(|entry| entry.title.as_str())
+                .collect::<Vec<_>>(),
+            ["base", "third"]
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_library_scan_config_write_does_not_change_live_library_state() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-library-scan-write-fail-{}", std::process::id()));
+        let games = root.join("games");
+        let blocked_settings = root.join("not-a-directory");
+        fs::create_dir_all(&games).unwrap();
+        fs::write(games.join("base.3ds"), b"x").unwrap();
+        fs::write(&blocked_settings, b"block").unwrap();
+
+        let mut library = Library::from_scan_settings(&blocked_settings, &games);
+        let original_config = library.scan_config().clone();
+        let additional = root.join("additional");
+        fs::create_dir_all(&additional).unwrap();
+
+        assert!(library.add_scan_directory(additional).is_err());
+        assert_eq!(library.scan_config(), &original_config);
+        assert_eq!(library.entries().len(), 1);
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

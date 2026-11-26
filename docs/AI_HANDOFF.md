@@ -2694,3 +2694,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - **Importante:** esta etapa é infraestrutura do core, não habilita ainda a configuração na interface. Desktop e Android continuam chamando o scanner de uma única pasta; SAF/content URIs não são convertidos em `PathBuf` e exigem integração Android separada. A gravação recebe um diretório de configurações do host para não pressupor que todas as raízes sejam graváveis.
 - **Fronteiras:** somente `crates/aceris-core/src/video/library.rs` e documentação. Sem mudanças nos frontends, módulos de emulação ou dependências. Sem assets/conteúdo de jogos, firmware ou chaves. Somente `main`, sem branch ou PR.
 - **Validação:** executar Rustfmt, build, testes e Clippy na CI deste commit; nenhum teste físico de seletor de pastas foi feito.
+
+
+## Biblioteca — integração do scanner configurável ao modelo Library (26/11/2026, ChatGPT)
+
+- `Library` agora mantém `LibraryScanConfig` e o diretório gravável onde a configuração deve ser persistida. O construtor antigo `Library::new(entries, directory_label)` permanece compatível e começa com uma única raiz, sem recursão.
+- Novo construtor `Library::from_scan_settings(settings_directory, fallback_directory)` lê a configuração versionada e monta a lista inicial varrendo todas as raízes configuradas. A pasta fallback continua usada para recuperar configuração ausente/inválida e para compatibilidade dos metadados de biblioteca já existentes.
+- Adicionados os métodos `scan_config()`, `add_scan_directory`, `remove_scan_directory` e `set_recursive_scan`. As operações salvam o novo arquivo primeiro; somente depois de escrita bem-sucedida substituem o estado em memória e atualizam os jogos. Falha de escrita não altera configuração nem catálogo ativos. Remoção da última raiz continua proibida.
+- `Library::reload()` agora percorre a configuração atual em vez de chamar diretamente o scanner de uma única pasta.
+- Testes cobrem reabertura com múltiplas raízes, ativação/desativação de recursão, adição/remoção, duplicação, proteção da última raiz e falha de persistência sem alteração do estado vivo.
+- **Importante:** desktop e Android ainda usam o construtor legado, logo o comportamento visível permanece em uma única pasta até a próxima integração dos frontends e dos seletores de pasta. SAF/content URIs continuam fora desta implementação.
+- **Fronteiras:** somente `crates/aceris-core/src/video/library.rs` e documentação. Sem alterações no código dos frontends, módulos de emulação, dependências ou assets. Sem dados de jogos, firmware ou chaves. Somente `main`, sem branch/PR.
+- **Validação:** executar Rustfmt, build, testes e Clippy na CI gerada pelo commit.

@@ -45,7 +45,7 @@ A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/s
 - Pesquisa funcional por título, nome do arquivo e caminho, sem diferenciar maiúsculas/minúsculas ou acentos. Desktop usa texto do teclado do sistema; Android oferece teclado virtual desenhado em Rust e aceita caracteres Unicode de teclados físicos.
 - Favoritos e Recentes persistidos localmente com identidade por caminho completo (inclui migração dos antigos registros por nome); ordenação A–Z/Z–A e atualização manual da biblioteca.
 - Plano de fundo personalizado na biblioteca, com suporte a quadros animados fornecidos pelo host.
-- O scanner compartilhado em Rust aceita múltiplas raízes e recursão opcional, sem seguir links simbólicos e deduplicando diretórios/arquivos sobrepostos. `LibraryScanConfig` também oferece gravação/carregamento versionado das pastas e da opção de recursão; os frontends ainda não conectam essa configuração à interface.
+- O scanner compartilhado em Rust aceita múltiplas raízes e recursão opcional, sem seguir links simbólicos e deduplicando diretórios/arquivos sobrepostos. O modelo `Library` também consegue carregar essa configuração e adicionar/remover raízes ou alternar recursão com persistência antes de atualizar a lista; os frontends ainda não conectam esses controles à interface.
 - Apresentação das duas telas do 3DS com ajuste proporcional ao espaço disponível.
 - Camada básica de controle virtual e identificação de toque na tela inferior.
 - Entrada básica por teclado, toque e alguns eventos de controle físico encaminhados pelo host.
