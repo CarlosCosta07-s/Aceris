@@ -536,3 +536,11 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Teste próprio usa padrão assimétrico 0xBEEF1234 para verificar extração low/high de 16 bits.
 - Limite: a operação de fragmento Shadow (GPUREG_COLOR_OPERATION=3), comparação de shadow map e aplicação de penumbra ainda não estão implementadas. Apenas o registrador de parâmetros é capturado.
 - Referência de posição/layout: Azahar src/video_core/pica/regs_framebuffer.h, commit c621eafbf316699c55f4c9c0c689d4e49498d360 (GPLv2-or-later); sem incorporação de código ou estrutura de implementação. Semântica dos bits: 3dbrew GPU/Internal Registers, consultado em 26/11/2026.
+
+
+## PICA200 — captura do plano de clipping (26/11/2026)
+
+- Adicionados os registradores GPUREG_FRAGOP_CLIP (0x047) e GPUREG_FRAGOP_CLIP_DATA0..3 (0x048–0x04B), conforme a tabela pública 3dbrew GPU/Internal Registers.
+- PicaClipPlaneState guarda bit 0 de habilitação e quatro coeficientes float1.7.16 em formato bruto, mascarados para 24 bits. O teste cobre a habilitação e cada uma das quatro palavras com valores diferentes.
+- Limite: não há ainda avaliação da equação de clipping durante a rasterização. A captura tipada não é anunciada como suporte funcional do clipping.
+- Fonte: 3dbrew, GPU/Internal Registers, sessão de 26/11/2026; mapa de registradores de hardware, sem portar código do Azahar.

@@ -33,6 +33,10 @@ pub const REG_VIEWPORT_INV_WIDTH: u16 = 0x042;
 pub const REG_VIEWPORT_HEIGHT: u16 = 0x043;
 /// Reciprocal viewport height (retained for diagnostics and future derivative rules).
 pub const REG_VIEWPORT_INV_HEIGHT: u16 = 0x044;
+/// GPUREG_FRAGOP_CLIP: enables the fragment clipping plane with bit 0.
+pub const REG_FRAGOP_CLIP: u16 = 0x047;
+/// First coefficient register for the float1.7.16 fragment clipping plane.
+pub const REG_FRAGOP_CLIP_DATA0: u16 = 0x048;
 /// PICA normalized-depth scale, encoded as float24.
 pub const REG_DEPTHMAP_SCALE: u16 = 0x04D;
 /// PICA normalized-depth offset, encoded as float24.
@@ -423,6 +427,16 @@ pub struct PicaShadowState {
     pub penumbra_scale_plus_bias_float1_5_10: u16,
     /// Penumbra scale with reversed sign, bits 16..31.
     pub negative_penumbra_scale_float1_5_10: u16,
+}
+
+/// Raw coefficients and enable state for the PICA fragment clipping plane.
+///
+/// The four coefficients are float1.7.16 values. Their raw 24-bit
+/// representations are retained until the clipping equation is validated.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PicaClipPlaneState {
+    pub enabled: bool,
+    pub coefficients_float1_7_16_raw: [u32; 4],
 }
 
 /// Decoded viewport data written by the guest through PICA registers.
@@ -995,6 +1009,22 @@ impl Pica200 {
         PicaShadowState {
             penumbra_scale_plus_bias_float1_5_10: value as u16,
             negative_penumbra_scale_float1_5_10: (value >> 16) as u16,
+        }
+    }
+
+    /// Returns the raw PICA fragment clipping-plane register state.
+    ///
+    /// This snapshots GPUREG_FRAGOP_CLIP and its four float1.7.16
+    /// coefficients. It does not yet apply the plane to clipped primitives.
+    pub fn clip_plane_state(&self) -> PicaClipPlaneState {
+        let enable = self.register(REG_FRAGOP_CLIP).unwrap_or(0);
+        PicaClipPlaneState {
+            enabled: enable & 1 != 0,
+            coefficients_float1_7_16_raw: std::array::from_fn(|index| {
+                self.register(REG_FRAGOP_CLIP_DATA0 + index as u16)
+                    .unwrap_or(0)
+                    & 0x00FF_FFFF
+            }),
         }
     }
 
@@ -2531,6 +2561,38 @@ mod tests {
                 negative_penumbra_scale_float1_5_10: 0xBEEF,
             }
         );
+    }
+
+    #[test]
+    fn clip_plane_state_decodes_enable_and_four_float1_7_16_coefficients() {
+        let mut gpu = Pica200::new();
+        gpu.write_register(REG_FRAGOP_CLIP, 0xA5A5_0001).unwrap();
+        let raw_coefficients = [
+            0xFFA1_2345,
+            0xFFB2_3456,
+            0xFFC3_4567,
+            0xFFD4_5678,
+        ];
+        for (index, value) in raw_coefficients.into_iter().enumerate() {
+            gpu.write_register(REG_FRAGOP_CLIP_DATA0 + index as u16, value)
+                .unwrap();
+        }
+
+        assert_eq!(
+            gpu.clip_plane_state(),
+            PicaClipPlaneState {
+                enabled: true,
+                coefficients_float1_7_16_raw: [
+                    0x00A1_2345,
+                    0x00B2_3456,
+                    0x00C3_4567,
+                    0x00D4_5678,
+                ],
+            }
+        );
+
+        gpu.write_register(REG_FRAGOP_CLIP, 0).unwrap();
+        assert!(!gpu.clip_plane_state().enabled);
     }
 
     #[test]

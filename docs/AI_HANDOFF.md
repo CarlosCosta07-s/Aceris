@@ -2564,3 +2564,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Teste próprio cobre a extração das duas metades. Os valores permanecem brutos, sem conversão numérica presumida.
 - Isto não implementa a operação Shadow: o modo 3 de GPUREG_COLOR_OPERATION, shadow-map compare e composição da penumbra continuam pendentes.
 - Fontes: Azahar regs_framebuffer.h, revisão c621eafbf316699c55f4c9c0c689d4e49498d360; 3dbrew GPU/Internal Registers.
+
+
+## PICA200 — snapshot do plano de clipping — 26/11/2026
+
+- `PicaClipPlaneState` foi adicionado para GPUREG_FRAGOP_CLIP (0x047) e quatro coeficientes em 0x048–0x04B. O bit de habilitação e os valores float1.7.16 de 24 bits são preservados em representação bruta.
+- Teste próprio confirma a extração dos quatro coeficientes e do bit enable.
+- O rasterizador ainda não aplica a equação de clipping, portanto isso é somente captura do estado do registrador.
+- Fonte: 3dbrew GPU/Internal Registers.

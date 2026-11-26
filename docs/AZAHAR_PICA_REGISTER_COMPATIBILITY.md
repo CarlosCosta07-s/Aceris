@@ -183,3 +183,16 @@ PicaColorBufferFormatSelector representa o campo de formato independentemente do
 | 16–31 | Escala de penumbra com sinal invertido | float1.5.10 |
 
 O Aceris expõe os dois campos por meio de PicaShadowState e preserva os valores brutos de 16 bits. A captura do estado não equivale ao processamento Shadow: o seletor 3 de GPUREG_COLOR_OPERATION continua sem integração no fragment pipeline.
+
+
+## Plano de clipping do fragment shader — GPUREG_FRAGOP_CLIP (0x047)
+
+| Registrador | Campo | Codificação |
+|---|---|---|
+| 0x047 | bit 0 habilita o plano | booleano |
+| 0x048 | coeficiente 0 | float1.7.16 |
+| 0x049 | coeficiente 1 | float1.7.16 |
+| 0x04A | coeficiente 2 | float1.7.16 |
+| 0x04B | coeficiente 3 | float1.7.16 |
+
+PicaClipPlaneState expõe a habilitação e os quatro coeficientes como valores brutos de 24 bits. O estado é capturado, mas a equação ainda não é aplicada ao clipping dos triângulos pelo rasterizador.
