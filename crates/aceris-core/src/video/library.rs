@@ -997,8 +997,7 @@ impl Library {
                         .find(|entry| library_path_id(&entry.path).as_deref() == Some(id.as_str()))
                 })
                 .filter(|entry| {
-                    self.entry_matches_search(entry)
-                        && self.format_filter.matches_path(&entry.path)
+                    self.entry_matches_search(entry) && self.format_filter.matches_path(&entry.path)
                 })
                 .collect();
             return entries;
@@ -1767,15 +1766,7 @@ impl Library {
                     | LibraryPage::Homebrew
             ) {
                 responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    20.0,
-                    222.0,
-                    360.0,
-                    26.0,
-                    scale,
-                    0x2D1A3B,
+                    frame, width, height, 20.0, 222.0, 360.0, 26.0, scale, 0x2D1A3B,
                 );
                 responsive_text_centered(
                     frame,
@@ -2425,15 +2416,7 @@ impl Library {
                 brand::TEXT,
             );
             responsive_panel(
-                frame,
-                width,
-                height,
-                760.0,
-                90.0,
-                210.0,
-                32.0,
-                scale,
-                0x2D1A3B,
+                frame, width, height, 760.0, 90.0, 210.0, 32.0, scale, 0x2D1A3B,
             );
             responsive_text_centered(
                 frame,
@@ -4660,15 +4643,17 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-
     #[test]
     fn file_format_filter_cycles_and_matches_extensions_case_insensitively() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-format-filter-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("aceris-format-filter-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        for name in ["alpha.3ds", "beta.CCI", "gamma.cia", "demo.3dsx", "notes.txt"] {
+        for name in [
+            "alpha.3ds",
+            "beta.CCI",
+            "gamma.cia",
+            "demo.3dsx",
+            "notes.txt",
+        ] {
             fs::write(dir.join(name), b"fixture").unwrap();
         }
 
@@ -4703,10 +4688,8 @@ mod tests {
 
     #[test]
     fn responsive_format_filter_control_works_in_portrait_and_landscape() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-format-filter-ui-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-format-filter-ui-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("alpha.3ds"), b"fixture").unwrap();
         fs::write(dir.join("beta.cci"), b"fixture").unwrap();

@@ -2771,4 +2771,4 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O filtro só classifica extensões já reconhecidas pelo scanner. Não valida o conteúdo dos contêineres, não altera o loader e não transforma a presença de .CIA em instalação persistente ou gerenciável.
 - Testes adicionados para ciclo de filtros, comparação case-insensitive, interação nos dois layouts e manutenção do filtro na página Homebrew.
 - Fronteiras: somente `crates/aceris-core/src/video/library.rs` e documentação da experiência/frontends. Nenhum subsistema de emulação, dependência, asset ou conteúdo de jogo foi alterado/adicionado. Trabalho restrito à branch `main`.
-- Validação: os testes novos e os workflows multiplataforma aguardam a CI deste commit; nenhum build ou teste local foi executado nesta revisão.
+- Validação: a primeira CI apontou somente diferenças de Rustfmt, confirmadas nos logs de Linux/macOS; os trechos foram alinhados ao formato emitido pelo próprio verificador. A nova CI precisa executar formatação, builds, testes e Clippy antes de marcar a etapa como aprovada.
