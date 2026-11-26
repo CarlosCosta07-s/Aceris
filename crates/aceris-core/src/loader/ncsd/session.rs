@@ -7853,6 +7853,8 @@ mod tests {
     }
 
 
+    #[test]
+    fn send_sync_request_svc_yields_to_the_system_ipc_dispatcher() {
         let mut session = test_session_with_program(&[0xEF00_0032]);
         let service_handle = session.create_gsp_gpu_session().unwrap();
         session.scheduler.current_core_mut().unwrap().regs[0] = service_handle;
