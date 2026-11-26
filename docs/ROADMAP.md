@@ -390,3 +390,12 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - Foram substituídas 30 expressões sinalizadas por Clippy em 12 arquivos do núcleo, usando `is_multiple_of`, estável no MSRV declarado (Rust 1.87).
 - O loader dinâmico OpenGL agora usa APIs nativas distintas para Unix e Windows; o teste Windows verifica a resolução de um símbolo de `kernel32.dll`.
 - O workflow disparado por estas alterações precisa confirmar todas as plataformas. Não marcar a CI como verde até os jobs concluírem.
+
+
+## Kernel — encerramento de processo e próximos bloqueios (26/11/2026)
+
+- [~] SVC ExitProcess agora termina todas as threads vivas pela rotina compartilhada de teardown, libera seus TLS, remove esperas e handoffs, libera mutexes owned, sinaliza threads encerradas, descarta a tabela de objetos/handles e limpa bindings de IRQ. Contextos não-main são reaped; o contexto principal permanece para diagnóstico. Teste cobre thread secundária, evento, handle e IRQ.
+- [~] Ciclo de vida ainda parcial: `System` mantém a session/address-space terminada até unload/reload; backings dinâmicos/linear e estado externo de serviços não são liberados de forma imediata e centralizada. Múltiplos processos, process handles, OpenProcess/OpenThread, namespaces de handles isolados e limpeza integrada do gerenciador global permanecem pendentes.
+- [ ] Memória completa: implementar as operações RESERVE/MAP/UNMAP/PROTECT com estados de QueryMemory coerentes, accounting completo por região e classes de ResourceLimit; conservar o caminho COMMIT/heap atual e a compatibilidade já testada.
+- [ ] IPC genérico entre processos: implementar ReplyAndReceive (SVC 0x4F), fila de requests/replies por SessionEndpoint, transferência de handles e descritores de buffers entre espaços de processo, fechamento remoto e wakeups/timeout. As portas e pares client/server existentes são apenas fundação, não IPC completo.
+- [ ] Fechar a ABI SVC por contrato público e traces de jogos, sem implementar valores estimados ou transformar stubs documentados em falsos sucessos.

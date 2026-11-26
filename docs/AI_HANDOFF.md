@@ -2572,3 +2572,14 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Teste próprio confirma a extração dos quatro coeficientes e do bit enable.
 - O rasterizador ainda não aplica a equação de clipping, portanto isso é somente captura do estado do registrador.
 - Fonte: 3dbrew GPU/Internal Registers.
+
+
+## Kernel — encerramento do processo e comparação de arquitetura (26/11/2026, ChatGPT)
+
+- Comparação de alto nível registrada em `docs/INDEPENDENT_RESEARCH.md` após consulta read-only ao Azahar, commit `6d6e846afa7b02f3dd85183a968b40cd1561f700`, com os limites de licença e não adaptação preservados. Foram usados também contratos públicos do 3dbrew para memória, SVC, processos e IPC.
+- **Implementado em Rust original:** o caminho SVC ExitProcess agora chama a rotina de teardown da sessão. Todas as threads ainda vivas são terminadas pelo mesmo caminho central usado por ExitThread, incluindo liberação de TLS, remoção de esperas/handoffs, devolução de mutexes e sinalização de término. Depois são limpas as filas de deadline/arbiter/wait-all, a tabela de handles/objetos e as associações de interrupção; contextos não-main terminados são recuperados.
+- O contexto principal encerrado é mantido para diagnóstico do estado final. A session/address-space ainda fica retida pelo `System` até descarregamento ou substituição do título; este passo não reivindica liberação imediata de todos os backings de heap/linear nem múltiplos processos simultâneos.
+- Teste novo: término com uma thread secundária, TLS, handle de thread, evento e binding de IRQ; verifica que não restam threads executáveis, handles ou bindings do processo.
+- Arquivos de código: `crates/aceris-core/src/loader/ncsd/session.rs` e `crates/aceris-core/src/loader/ncsd/session/thread.rs`. Arquivos de pesquisa/registro: `docs/INDEPENDENT_RESEARCH.md`, `docs/AI_HANDOFF.md` e `docs/ROADMAP.md`.
+- **Validação pendente:** não declarar fmt/build/Clippy/testes aprovados até a nova CI deste commit terminar. O HEAD anterior `889126b361504a64cf09771a019ebfeb82a167b8` tinha CI aprovada em Linux, Windows, macOS e Android ARM64.
+- Pendências não cobertas nesta etapa: RESERVE/MAP/UNMAP/PROTECT completos no ControlMemory; accounting de todos os tipos de ResourceLimit; OpenProcess/OpenThread e múltiplos processos com namespaces separados; ReplyAndReceive 0x4F e transferência genérica de mensagens/handles/buffers; serviço HLE somente deve ser ampliado a partir de traces de inicialização reproduzíveis.

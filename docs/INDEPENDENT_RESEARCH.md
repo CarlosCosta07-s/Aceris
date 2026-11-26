@@ -544,3 +544,32 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - PicaClipPlaneState guarda bit 0 de habilitação e quatro coeficientes float1.7.16 em formato bruto, mascarados para 24 bits. O teste cobre a habilitação e cada uma das quatro palavras com valores diferentes.
 - Limite: não há ainda avaliação da equação de clipping durante a rasterização. A captura tipada não é anunciada como suporte funcional do clipping.
 - Fonte: 3dbrew, GPU/Internal Registers, sessão de 26/11/2026; mapa de registradores de hardware, sem portar código do Azahar.
+
+
+## Azahar — kernel ARM11, processo, handles e IPC (26/11/2026)
+
+### Auditoria de licença e revisão consultada
+
+- Repositório de referência: `azahar-emu/azahar`, branch `master`, commit consultado `6d6e846afa7b02f3dd85183a968b40cd1561f700` (26/11/2026). A licença declarada pelo repositório é GPL-3.0.
+- Arquivos consultados somente para observação de arquitetura/contratos: `src/core/hle/kernel/kernel.h`, `process.cpp`, `handle_table.cpp`, `memory.cpp`, `svc.cpp`, `client_session.cpp`, `server_session.cpp`, `resource_limit.cpp` e `thread.cpp`. Os cabeçalhos dos arquivos consultados indicam GPLv2-or-later ou GPLv3-or-later, conforme o arquivo.
+- Nenhum código-fonte, pseudocódigo, teste, fixture, shader, asset, tradução ou estrutura de implementação do Azahar foi copiado, portado, traduzido ou adaptado ao Aceris. As mudanças do Aceris descritas nesta auditoria são implementações originais em Rust; a comparação registra apenas responsabilidades e contratos observáveis.
+
+### Diferenças arquiteturais relevantes
+
+- No Azahar, o kernel central coordena objetos de processo, lista de processos, gerenciadores de threads por CPU, resource limits, portas e pares de sessões. O processo tem endereço virtual e tabela de handles próprios; terminar um processo também termina suas threads e remove a instância da lista do kernel.
+- O handle table do Azahar separa criação, duplicação, fechamento, validação, consulta e limpeza. O Aceris já tem objetos tipados, aliases de handles, objetos aposentados retidos por waiters/owners e identidade estável; os handles atuais são monotônicos e não reutilizados. Não é correto substituir essa política por reuso com geração sem uma mudança completa e testada da ABI.
+- A memória do Azahar distingue alocação física por região de FCRAM e gerenciamento de mapeamentos virtuais. O Aceris tem segmentos estáticos, TLS, heap dinâmico esparso, regiões compartilhadas e aliases lineares, mas ainda não representa todo o ciclo de reserva/commit/proteção e nem todos os tipos de resource limit.
+- O IPC do 3DS não é somente a chamada síncrona de serviço: o cliente usa o endpoint client-session com `SendSyncRequest`; o servidor aguarda por sessões e requisições com `ReplyAndReceive`, recebendo o command buffer na própria TLS. O kernel transfere dados e descritores entre o espaço do remetente e o do destinatário. No Aceris, portas e endpoints já têm pareamento e ciclo de conexão, mas o transporte genérico por endpoint e namespaces de processos diferentes ainda não existem.
+- O Aceris já implementa uma parte considerável do conjunto de objetos de sincronização (thread, event, mutex, semaphore, timer, address arbiter), mas precisa fechar a limpeza abrangente no término do processo e ampliar o accounting dos recursos.
+
+### Contratos independentes usados para conferir o comportamento
+
+- 3dbrew, `Memory Management`: operações FREE=1, RESERVE=2, COMMIT=3, MAP=4, UNMAP=5, PROTECT=6; regiões APP/SYSTEM/BASE e modificador LINEAR=0x10000.
+- 3dbrew, `Multi-threading`: processos isolam handles/recursos e as permissões de SVC dependem das capacidades do exheader.
+- 3dbrew, `IPC Command Structure`: sessões possuem lado cliente e servidor; SendSyncRequest e ReplyAndReceive são o fluxo de request/reply; tradução de handles e buffers ocorre entre contextos.
+- 3dbrew, `SVC`: ReplyAndReceive 0x4F é a chamada genérica atual; 0x4D e 0x4E são variantes marcadas como stubbed nas notas consultadas.
+
+### Conclusão e limites
+
+- Prioridade técnica: concluir resource accounting e operações de memória antes de anunciar memória completa; estabelecer um gerenciador de processos/namespace independente antes de afirmar IPC entre processos; implementar ReplyAndReceive e transporte de descritores como uma única cadeia testável; só então completar os serviços observados no bootstrap de jogos.
+- A consulta de Azahar não concede licença para reutilizar sua implementação. O Aceris mantém código próprio em Rust e a política de repositório prevalece sobre qualquer conveniência de desenvolvimento.

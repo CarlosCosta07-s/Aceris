@@ -2384,6 +2384,9 @@ impl Arm11ProcessSession {
                 }
             }
         };
+        if matches!(disposition, SvcRunDisposition::ProcessExited) {
+            self.terminate_process_kernel_state();
+        }
         if svc_trace_enabled() {
             if let Some(core) = self.scheduler.core(caller) {
                 eprintln!(
@@ -2865,6 +2868,40 @@ impl Arm11ProcessSession {
                 SvcRunDisposition::Resume
             }
             Err(code) => self.write_create_thread_error(caller, code),
+        }
+    }
+
+    /// Tears down process-local kernel state after SVC ExitProcess.
+    ///
+    /// Every live thread is terminated through the same path as ExitThread so
+    /// TLS, waits, mutex ownership and observable thread-exit signals are
+    /// handled consistently. The process handle namespace and interrupt
+    /// registrations are then discarded; the main CPU context is retained only
+    /// so the host can report the final guest state after the process stops.
+    fn terminate_process_kernel_state(&mut self) {
+        let threads = self.scheduler.thread_ids().collect::<Vec<_>>();
+
+        for target in threads.iter().copied() {
+            let is_live = self
+                .scheduler
+                .thread_info(target)
+                .is_some_and(|info| info.state != ThreadState::Exited);
+            if is_live {
+                let _ = self.terminate_thread_context(target);
+            }
+        }
+
+        self.wait_deadlines.clear();
+        self.arbiter_waiters.clear();
+        self.multi_waits.clear();
+        self.wait_all_waits.clear();
+        self.kernel_objects = Arm11KernelObjectTable::default();
+        self.interrupts = Arm11InterruptController::default();
+
+        for thread in threads {
+            if thread != MAIN_THREAD_ID {
+                let _ = self.scheduler.reap_exited_thread(thread);
+            }
         }
     }
 
@@ -5669,6 +5706,59 @@ mod tests {
         assert_eq!(second_report.instructions_executed, 0);
         assert_eq!(second_report.stop_reason, Arm11RunStopReason::ProcessExited);
         assert_eq!(session.core().pc(), 0x0010_0008);
+    }
+
+    #[test]
+    fn exit_process_terminates_threads_and_discards_kernel_objects() {
+        let mut session = test_session_with_program(&[
+            0xE3A0_00FF, // MOV r0, #255
+            0xEF00_0003, // SVC #0x03 - ExitProcess
+        ]);
+
+        session
+            .address_space
+            .allocate_application_heap_region(0x0800_0000, 0x1000)
+            .unwrap();
+        let tls = session.address_space.allocate_thread_local_storage().unwrap();
+        let worker = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x0800_1000, 0x3F, 0)
+            .unwrap();
+        session
+            .scheduler
+            .core_mut(worker)
+            .unwrap()
+            .cp15_mut()
+            .set_tpidruro(tls);
+
+        let worker_handle = session.kernel_objects.insert_thread(worker).unwrap();
+        let event_handle = session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        session
+            .interrupts
+            .bind(0x28, event_handle, 4, false, InterruptTargetKind::Event)
+            .unwrap();
+
+        let report = session.run_instructions(16).unwrap();
+
+        assert_eq!(report.stop_reason, Arm11RunStopReason::ProcessExited);
+        assert!(session.process_exited());
+        assert_eq!(session.scheduler.current_thread_id(), None);
+        assert_eq!(
+            session.scheduler.thread_info(MAIN_THREAD_ID).unwrap().state,
+            ThreadState::Exited
+        );
+        assert_eq!(session.scheduler.thread_info(worker), None);
+        assert_eq!(session.kernel_objects.handle_count(), 0);
+        assert_eq!(
+            session
+                .kernel_objects
+                .thread_id(worker_handle, MAIN_THREAD_ID),
+            None
+        );
+        assert_eq!(session.interrupts.binding(0x28), None);
     }
 
     #[test]
