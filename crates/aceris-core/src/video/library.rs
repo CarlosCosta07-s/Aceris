@@ -3857,7 +3857,7 @@ mod tests {
     }
 
     #[test]
-    fn landscape_settings_refresh_button_matches_its_visible_bounds() {
+    fn landscape_settings_toolbar_refresh_matches_its_visible_bounds() {
         let dir =
             std::env::temp_dir().join(format!("aceris-landscape-settings-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
@@ -3865,8 +3865,9 @@ mod tests {
         let mut library = Library::new(Vec::new(), dir.display().to_string());
         library.select_page(LibraryPage::Settings);
 
+        // Landscape Settings uses the shared header refresh control at the top-right.
         assert_eq!(
-            library.click_responsive(278, 315, 1000, 600),
+            library.click_responsive(912, 35, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.entries().len(), 1);

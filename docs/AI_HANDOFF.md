@@ -2754,3 +2754,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 
 - Os quatro trechos apontados pelo verificador de formatação foram ajustados ao estilo exato do workspace: braços de `match` e as duas tabelas do teclado virtual.
 - Aguardando nova CI para confirmar formatação, compilação multiplataforma e APK Android.
+
+
+## Compatibilidade do botão de atualização em paisagem (26/11/2026, ChatGPT)
+
+- A suíte apontou que o teste antigo usava o retângulo do botão local de atualização removido do painel paisagem. A atualização agora é a ação compartilhada do cabeçalho, no canto superior direito; o teste foi movido para esse alvo visível.
+- A atualização continua acessível em Configurações nos dois layouts: botão local no painel vertical e ação global no cabeçalho paisagem.
