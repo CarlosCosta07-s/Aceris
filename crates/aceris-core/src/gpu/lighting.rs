@@ -125,12 +125,20 @@ pub enum PicaLightingSampler {
 impl PicaLightingSampler {
     /// LUT index for one of the eight per-light spotlight attenuation curves.
     pub const fn spotlight_attenuation_table(light_index: usize) -> Option<usize> {
-        if light_index < 8 { Some(8 + light_index) } else { None }
+        if light_index < 8 {
+            Some(8 + light_index)
+        } else {
+            None
+        }
     }
 
     /// LUT index for one of the eight per-light distance attenuation curves.
     pub const fn distance_attenuation_table(light_index: usize) -> Option<usize> {
-        if light_index < 8 { Some(16 + light_index) } else { None }
+        if light_index < 8 {
+            Some(16 + light_index)
+        } else {
+            None
+        }
     }
 }
 
@@ -292,8 +300,11 @@ impl PicaLightingState {
         let config0 = register(REG_LIGHTING_CONFIG0);
         let config1 = register(REG_LIGHTING_CONFIG1);
         let config_value = (config0 >> 4) & 0xF;
-        let config = PicaLightingConfiguration::from_register(config_value)
-            .ok_or(PicaLightingError::Configuration { value: config_value })?;
+        let config = PicaLightingConfiguration::from_register(config_value).ok_or(
+            PicaLightingError::Configuration {
+                value: config_value,
+            },
+        )?;
         let bump_selector = ((config0 >> 22) & 3) as usize;
         if bump_selector > 2 {
             return Err(PicaLightingError::BumpSelector {
@@ -777,7 +788,10 @@ mod tests {
         ];
 
         for (raw, configuration, expected) in configurations {
-            assert_eq!(PicaLightingConfiguration::from_register(raw), Some(configuration));
+            assert_eq!(
+                PicaLightingConfiguration::from_register(raw),
+                Some(configuration)
+            );
             for (sampler, supported) in sampler_order.into_iter().zip(expected) {
                 assert_eq!(
                     configuration.supports_sampler(sampler),
@@ -788,7 +802,10 @@ mod tests {
         }
         assert_eq!(PicaLightingConfiguration::from_register(7), None);
         assert_eq!(PicaLightingSampler::spotlight_attenuation_table(0), Some(8));
-        assert_eq!(PicaLightingSampler::spotlight_attenuation_table(7), Some(15));
+        assert_eq!(
+            PicaLightingSampler::spotlight_attenuation_table(7),
+            Some(15)
+        );
         assert_eq!(PicaLightingSampler::spotlight_attenuation_table(8), None);
         assert_eq!(PicaLightingSampler::distance_attenuation_table(0), Some(16));
         assert_eq!(PicaLightingSampler::distance_attenuation_table(7), Some(23));

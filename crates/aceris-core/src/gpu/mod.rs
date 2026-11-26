@@ -90,11 +90,11 @@ pub use gsp_queue::{
     GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer,
     GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES,
 };
-pub use lighting::{PicaLightingConfiguration, PicaLightingSampler};
 pub use index::{
     IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
     PicaIndexInputState, REG_INDEXBUFFER_CONFIG, REG_NUMVERTICES, REG_VERTEX_OFFSET,
 };
+pub use lighting::{PicaLightingConfiguration, PicaLightingSampler};
 pub use output_map::{
     OUTMAP_REGISTER_COUNT, PicaOutputGroup, PicaOutputMapError, PicaResolvedVertex,
     PicaVertexOutputMap, REG_SH_OUTMAP_O0, REG_SH_OUTMAP_TOTAL, REG_VSH_ENTRYPOINT,

@@ -1668,7 +1668,8 @@ impl Arm11Core {
                 || rt == PC
                 || rd == rn
                 || rd == rt
-                || (size == 8 && (!rt.is_multiple_of(2) || rt == LR || second_rt >= PC || rd == second_rt))
+                || (size == 8
+                    && (!rt.is_multiple_of(2) || rt == LR || second_rt >= PC || rd == second_rt))
             {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),

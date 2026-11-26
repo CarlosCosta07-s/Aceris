@@ -122,7 +122,8 @@ impl GpuDmaAddressSpace {
         if size == 0 {
             return Err(GpuAddressSpaceError::EmptyMapping);
         }
-        if !virtual_base.is_multiple_of(LINEAR_PAGE_SIZE) || !size.is_multiple_of(LINEAR_PAGE_SIZE) {
+        if !virtual_base.is_multiple_of(LINEAR_PAGE_SIZE) || !size.is_multiple_of(LINEAR_PAGE_SIZE)
+        {
             return Err(GpuAddressSpaceError::MisalignedMapping {
                 address: virtual_base,
                 size,

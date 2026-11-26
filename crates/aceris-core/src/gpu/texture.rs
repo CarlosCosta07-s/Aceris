@@ -340,7 +340,10 @@ impl PicaTextureUnit {
         // Only unit 0 consumes this selector. Cube and shadow types remain
         // explicit unsupported cases rather than falling through to 2D.
         if unit == 0
-            && !matches!(texture_type, PicaTextureType::Texture2D | PicaTextureType::Projection2D)
+            && !matches!(
+                texture_type,
+                PicaTextureType::Texture2D | PicaTextureType::Projection2D
+            )
         {
             return Err(PicaTextureError::UnsupportedType {
                 unit,
@@ -738,17 +741,25 @@ fn wrap_coordinate(value: f32, mode: PicaTextureWrap) -> Option<f32> {
         PicaTextureWrap::ClampToEdge => Some(value.clamp(0.0, 1.0)),
         PicaTextureWrap::ClampToEdge2 => Some(if value < 0.0 {
             value.rem_euclid(1.0)
-        } else { value.clamp(0.0, 1.0) }),
+        } else {
+            value.clamp(0.0, 1.0)
+        }),
         PicaTextureWrap::ClampToBorder => Some(value),
         PicaTextureWrap::ClampToBorder2 => Some(if value < 0.0 {
             value.rem_euclid(1.0)
-        } else { value }),
+        } else {
+            value
+        }),
         PicaTextureWrap::Repeat | PicaTextureWrap::Repeat2 | PicaTextureWrap::Repeat3 => {
             Some(value.rem_euclid(1.0))
         }
         PicaTextureWrap::MirroredRepeat => {
             let mirrored = value.rem_euclid(2.0);
-            Some(if mirrored > 1.0 { 2.0 - mirrored } else { mirrored })
+            Some(if mirrored > 1.0 {
+                2.0 - mirrored
+            } else {
+                mirrored
+            })
         }
     }
 }
@@ -760,11 +771,19 @@ fn wrap_index(value: i64, extent: usize, mode: PicaTextureWrap) -> Option<usize>
         PicaTextureWrap::ClampToEdge2 if value < 0 => Some(value.rem_euclid(extent) as usize),
         PicaTextureWrap::ClampToEdge2 => Some(value.min(extent - 1) as usize),
         PicaTextureWrap::ClampToBorder => {
-            if value < 0 || value >= extent { None } else { Some(value as usize) }
+            if value < 0 || value >= extent {
+                None
+            } else {
+                Some(value as usize)
+            }
         }
         PicaTextureWrap::ClampToBorder2 if value < 0 => Some(value.rem_euclid(extent) as usize),
         PicaTextureWrap::ClampToBorder2 => {
-            if value >= extent { None } else { Some(value as usize) }
+            if value >= extent {
+                None
+            } else {
+                Some(value as usize)
+            }
         }
         PicaTextureWrap::Repeat | PicaTextureWrap::Repeat2 | PicaTextureWrap::Repeat3 => {
             Some(value.rem_euclid(extent) as usize)
@@ -949,10 +968,14 @@ mod tests {
     #[test]
     fn texture_type_selector_table_is_explicit() {
         let expected = [
-            PicaTextureType::Texture2D, PicaTextureType::TextureCube,
-            PicaTextureType::Shadow2D, PicaTextureType::Projection2D,
-            PicaTextureType::ShadowCube, PicaTextureType::Disabled,
-            PicaTextureType::Reserved(6), PicaTextureType::Reserved(7),
+            PicaTextureType::Texture2D,
+            PicaTextureType::TextureCube,
+            PicaTextureType::Shadow2D,
+            PicaTextureType::Projection2D,
+            PicaTextureType::ShadowCube,
+            PicaTextureType::Disabled,
+            PicaTextureType::Reserved(6),
+            PicaTextureType::Reserved(7),
         ];
         for (selector, expected_type) in expected.into_iter().enumerate() {
             let decoded = PicaTextureType::from_register(selector as u32);
@@ -964,10 +987,14 @@ mod tests {
     #[test]
     fn texture_wrap_selector_table_decodes_all_eight_modes() {
         let expected = [
-            PicaTextureWrap::ClampToEdge, PicaTextureWrap::ClampToBorder,
-            PicaTextureWrap::Repeat, PicaTextureWrap::MirroredRepeat,
-            PicaTextureWrap::ClampToEdge2, PicaTextureWrap::ClampToBorder2,
-            PicaTextureWrap::Repeat2, PicaTextureWrap::Repeat3,
+            PicaTextureWrap::ClampToEdge,
+            PicaTextureWrap::ClampToBorder,
+            PicaTextureWrap::Repeat,
+            PicaTextureWrap::MirroredRepeat,
+            PicaTextureWrap::ClampToEdge2,
+            PicaTextureWrap::ClampToBorder2,
+            PicaTextureWrap::Repeat2,
+            PicaTextureWrap::Repeat3,
         ];
         for (selector, expected_mode) in expected.into_iter().enumerate() {
             assert_eq!(
@@ -1119,18 +1146,33 @@ mod tests {
         let t = 0.5 / 8.0;
 
         unit.wrap_s = PicaTextureWrap::ClampToEdge2;
-        assert_eq!(unit.sample(&memory, negative, t, false).unwrap()[0], 20.0 / 255.0);
-        assert_eq!(unit.sample(&memory, positive_outside, t, false).unwrap()[0], 140.0 / 255.0);
+        assert_eq!(
+            unit.sample(&memory, negative, t, false).unwrap()[0],
+            20.0 / 255.0
+        );
+        assert_eq!(
+            unit.sample(&memory, positive_outside, t, false).unwrap()[0],
+            140.0 / 255.0
+        );
 
         unit.wrap_s = PicaTextureWrap::ClampToBorder2;
-        assert_eq!(unit.sample(&memory, negative, t, false).unwrap()[0], 20.0 / 255.0);
+        assert_eq!(
+            unit.sample(&memory, negative, t, false).unwrap()[0],
+            20.0 / 255.0
+        );
         let border = [7.0 / 255.0, 11.0 / 255.0, 13.0 / 255.0, 17.0 / 255.0];
-        assert_eq!(unit.sample(&memory, positive_outside, t, false).unwrap(), border);
+        assert_eq!(
+            unit.sample(&memory, positive_outside, t, false).unwrap(),
+            border
+        );
         assert_eq!(unit.sample(&memory, 1.0, t, false).unwrap(), border);
 
         for mode in [PicaTextureWrap::Repeat2, PicaTextureWrap::Repeat3] {
             unit.wrap_s = mode;
-            assert_eq!(unit.sample(&memory, positive_outside, t, false).unwrap()[0], 20.0 / 255.0);
+            assert_eq!(
+                unit.sample(&memory, positive_outside, t, false).unwrap()[0],
+                20.0 / 255.0
+            );
         }
 
         unit.wrap_s = PicaTextureWrap::ClampToBorder;
