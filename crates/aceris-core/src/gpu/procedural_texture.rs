@@ -43,7 +43,10 @@ impl fmt::Display for PicaProceduralTextureError {
                 formatter.write_str("procedural noise parameters are invalid or out of range")
             }
             Self::FilterUnsupported(filter) => {
-                write!(formatter, "procedural texture filter {filter:?} is reserved")
+                write!(
+                    formatter,
+                    "procedural texture filter {filter:?} is reserved"
+                )
             }
             Self::TextureBiasUnsupported => {
                 formatter.write_str("non-zero procedural texture bias is not implemented")
@@ -304,9 +307,7 @@ impl PicaProceduralTextureSampler {
         let (index, fraction) = match self.config.minification_filter {
             PicaProceduralTextureFilter::Nearest
             | PicaProceduralTextureFilter::NearestMipmapNearest
-            | PicaProceduralTextureFilter::NearestMipmapLinear => {
-                (position.round() as usize, 0.0)
-            }
+            | PicaProceduralTextureFilter::NearestMipmapLinear => (position.round() as usize, 0.0),
             PicaProceduralTextureFilter::Linear
             | PicaProceduralTextureFilter::LinearMipmapNearest
             | PicaProceduralTextureFilter::LinearMipmapLinear => {
@@ -853,9 +854,7 @@ mod tests {
         let pica = fixture(false, PicaProceduralTextureFilter::Reserved(6));
         assert_eq!(
             PicaProceduralTextureSampler::from_pica(&pica).unwrap_err(),
-            PicaProceduralTextureError::FilterUnsupported(
-                PicaProceduralTextureFilter::Reserved(6)
-            )
+            PicaProceduralTextureError::FilterUnsupported(PicaProceduralTextureFilter::Reserved(6))
         );
     }
 
