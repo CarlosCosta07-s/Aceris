@@ -2646,3 +2646,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Alteração de código restrita a `crates/aceris-core/src/video/library.rs`; documentação atualizada em `docs/USER_EXPERIENCE.md` e `docs/FRONTENDS.md`. Nenhum frontend de outro agente, core de emulação, dependência ou asset foi alterado. Nenhum dado de jogo/firmware/chave foi adicionado.
 - **Validação:** os testes e o lint desta revisão precisam ser confirmados pela CI do commit. Não declarar aprovação antes de consultar os workflows.
 - **Fronteiras:** somente a branch `main`; nenhuma branch ou PR foi criada.
+
+
+## Biblioteca — pesquisa com entrada de texto real (26/11/2026, ChatGPT)
+
+- A biblioteca filtra em memória por título, nome de arquivo e caminho, ignorando caixa e diacríticos comuns do português. A busca não é recursiva e não consulta Title ID nem metadados externos.
+- O campo aparece nas páginas Jogos, Favoritos, Recentes e Homebrew. A seleção/scroll reinicia quando a consulta muda; Recentes preserva a ordem de execução.
+- Android: `NativeActivity` encaminha Unicode do NDK para teclados físicos. Para toque, o renderer Rust oferece teclado virtual básico com letras latinas, espaço, apagar, limpar e OK. Back, Enter e Backspace respeitam o foco; não é um IME completo.
+- Desktop: X11 usa `XLookupString`, Windows recebe `WM_CHAR` após `TranslateMessage`, e macOS lê `NSString.characters` como UTF-8. Escape fecha o foco de pesquisa antes de sair; Enter encerra a entrada e ativa o item selecionado.
+- Testes adicionados no core para busca por título/caminho sem acento e fluxo do teclado touch; o frontend Android testa entrada física, Backspace e Enter.
+- **Fronteiras:** alteração limitada à biblioteca do core, entrada de texto NativeActivity/App Android, eventos compartilhados de janela, adaptadores X11/Win32/AppKit, loop do launcher desktop e documentação. Nenhum módulo de CPU, MMU, kernel, GPU/PICA, DSP ou CSND foi tocado. Nenhuma dependência, asset ou conteúdo de jogo foi adicionado.
+- **Validação:** Rustfmt, builds, Clippy, testes Linux/Windows/macOS e Android ARM64/APK precisam ser confirmados nos novos workflows. Teste em Android físico e validação visual/teclado em desktops ainda são necessários.
+- **Fronteiras:** somente `main`; nenhuma branch ou PR foi criada.

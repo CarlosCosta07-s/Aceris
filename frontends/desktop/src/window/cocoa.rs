@@ -353,7 +353,9 @@ impl Window {
                         if !utf8.is_null()
                             && let Ok(text) = CStr::from_ptr(utf8).to_str()
                         {
-                            for character in text.chars().filter(|character| !character.is_control()) {
+                            for character in
+                                text.chars().filter(|character| !character.is_control())
+                            {
                                 events.push(WindowEvent::Text(character));
                             }
                         }

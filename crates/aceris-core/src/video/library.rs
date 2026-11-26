@@ -1411,7 +1411,15 @@ impl Library {
             (636.0, 140.0, "OK"),
         ] {
             responsive_panel(
-                frame, width, height, x, top + 128.0, key_width, 34.0, scale, 0x422038,
+                frame,
+                width,
+                height,
+                x,
+                top + 128.0,
+                key_width,
+                34.0,
+                scale,
+                0x422038,
             );
             responsive_text_centered(
                 frame,
@@ -1638,17 +1646,7 @@ impl Library {
                     0xBBAFC7
                 },
             );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                920.0,
-                93.0,
-                40.0,
-                26.0,
-                scale,
-                0x33223F,
-            );
+            responsive_panel(frame, width, height, 920.0, 93.0, 40.0, 26.0, scale, 0x33223F);
             responsive_text_centered(
                 frame,
                 width,
@@ -2148,14 +2146,7 @@ impl Library {
                         brand::TEXT,
                     );
                     responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        550.0,
-                        326.0,
-                        text_scale,
-                        empty_hint,
-                        0xBBAFC7,
+                        frame, width, height, 550.0, 326.0, text_scale, empty_hint, 0xBBAFC7,
                     );
                     responsive_panel(
                         frame,

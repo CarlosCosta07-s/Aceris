@@ -101,13 +101,8 @@ struct Xlib {
     next_event: unsafe extern "C" fn(*mut Display, *mut u64) -> c_int,
     flush: unsafe extern "C" fn(*mut Display) -> c_int,
     keycode_to_keysym: unsafe extern "C" fn(*mut Display, u8, c_int) -> c_ulong,
-    lookup_string: unsafe extern "C" fn(
-        *mut c_void,
-        *mut c_char,
-        c_int,
-        *mut c_ulong,
-        *mut c_void,
-    ) -> c_int,
+    lookup_string:
+        unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, *mut c_ulong, *mut c_void) -> c_int,
 }
 
 fn load(library: *mut c_void, name: &str) -> Result<*mut c_void, WindowError> {
