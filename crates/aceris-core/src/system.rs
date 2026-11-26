@@ -51,6 +51,13 @@ struct PendingGspAcquire {
     thread_id: ThreadId,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingServiceLookup {
+    thread_id: ThreadId,
+    service_manager_handle: u32,
+    service_name: [u8; 8],
+}
+
 const GSP_BUSY_MEMORY_FILL: u8 = 1 << 0;
 const GSP_BUSY_DISPLAY_TRANSFER: u8 = 1 << 1;
 const GSP_BUSY_TEXTURE_COPY: u8 = 1 << 2;
@@ -185,6 +192,9 @@ pub struct System {
     /// Device-wide GX busy flags; completion interrupts release asynchronous kinds.
     gsp_busy_state: GspBusyState,
     pending_gsp_acquires: Vec<PendingGspAcquire>,
+    /// Guest GetServiceHandle calls suspended until their named service is registered
+    /// or a previously-full service port releases a session slot.
+    pending_service_lookups: Vec<PendingServiceLookup>,
     /// `gsp::Gpu` sessions that called AcquireRight before registering a client
     /// (libctru does so); the right is granted when the client is registered.
     gsp_early_acquires: Vec<u32>,
@@ -239,11 +249,6 @@ const RESULT_SRV_INVALID_STRING_LENGTH: u32 = 0xD8E0_6405;
 const RESULT_SRV_STRING_SIZE_MISMATCH: u32 = 0xD8E0_6407;
 /// srv result when the process ACL does not grant the requested service.
 const RESULT_SRV_SERVICE_ACCESS_DENIED: u32 = 0xD8E0_6406;
-/// Temporary fallback used for allowed names without an implemented endpoint.
-///
-/// Retail SRV waits for a registered service; pending registration and wake-up
-/// are not implemented by this single-process bootstrap yet.
-const RESULT_SRV_SERVICE_NOT_REGISTERED: u32 = RESULT_SRV_SERVICE_ACCESS_DENIED;
 /// Result for a command a stub service does not implement (public tables; unverified).
 const RESULT_INVALID_COMMAND: u32 = 0xD900_182F;
 /// Minimal HLE services: name and how their commands are answered.
@@ -463,6 +468,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
         self.cpu = Arm11Core::new();
         Ok(format)
@@ -495,6 +501,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
         Ok(ImageFormat::ThreeDsx)
     }
@@ -592,6 +599,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
         // Serve the title's cleartext RomFS (if any) through fs:USER, replacing
         // whatever the previous game had attached.
@@ -689,6 +697,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
         Ok(ImageFormat::Cia)
     }
@@ -793,6 +802,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
         Ok(ImageFormat::Cia)
     }
@@ -870,6 +880,7 @@ impl System {
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
+        self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
         Ok(ImageFormat::Ncsd)
     }
@@ -1169,6 +1180,9 @@ impl System {
     /// and scheduler states without claiming that one instruction budget equals
     /// one video frame.
     pub fn run_instructions(&mut self, instruction_budget: usize) -> Result<Arm11RunReport> {
+        // Closing a client or server endpoint can free a session slot. Retry
+        // queued SRV lookups before scheduling more guest instructions.
+        self.wake_registered_service_lookups()?;
         let mut instructions_executed = 0u64;
         let mut stop_reason = Arm11RunStopReason::InstructionBudgetExhausted;
 
@@ -1201,6 +1215,7 @@ impl System {
             stop_reason = Arm11RunStopReason::InstructionBudgetExhausted;
         }
 
+        self.wake_registered_service_lookups()?;
         let session = self.ncsd_session.as_ref().ok_or(Error::Unimplemented(
             "an NCSD ARM11 process session has not been prepared",
         ))?;
@@ -1290,9 +1305,10 @@ impl System {
             ))
         })?;
         let pending_before = self.pending_gsp_acquires.len();
+        let pending_service_before = self.pending_service_lookups.len();
         let response_words = match service_kind {
             ServiceSessionKind::ServiceManager { .. } => {
-                self.dispatch_service_manager_request(service_handle, message)?
+                self.dispatch_service_manager_request(request_thread, service_handle, message)?
             }
             ServiceSessionKind::Hid => self.dispatch_hid_request(message)?,
             ServiceSessionKind::Cfg => self.dispatch_cfg_request(message)?,
@@ -1331,7 +1347,9 @@ impl System {
                 request_words[0]
             ));
         }
-        if self.pending_gsp_acquires.len() > pending_before {
+        if self.pending_gsp_acquires.len() > pending_before
+            || self.pending_service_lookups.len() > pending_service_before
+        {
             return Ok(true);
         }
 
@@ -1359,6 +1377,85 @@ impl System {
             )));
         }
         Ok(false)
+    }
+
+    /// Completes FIFO GetServiceHandle waiters when a named service port appears
+    /// or regains capacity. Replies are written before threads become Ready.
+    fn wake_pending_service_lookups(
+        &mut self,
+        service_name: [u8; 8],
+        port_handle: u32,
+    ) -> Result<bool> {
+        let mut woke_any = false;
+        loop {
+            let Some(index) = self
+                .pending_service_lookups
+                .iter()
+                .position(|pending| pending.service_name == service_name)
+            else {
+                break;
+            };
+            let pending = self.pending_service_lookups[index];
+            let manager_registered = self
+                .ncsd_session
+                .as_ref()
+                .and_then(|session| {
+                    session.service_manager_client_registered(pending.service_manager_handle)
+                })
+                .unwrap_or(false);
+
+            let response = if !manager_registered {
+                vec![0x0005_0040, RESULT_INVALID_HANDLE]
+            } else {
+                let created = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session unavailable"))?
+                    .create_session_to_port(port_handle);
+                match created {
+                    Ok(client_session) => vec![0x0005_0042, 0, 0, client_session],
+                    Err(crate::loader::ncsd::session::KernelHandleError::SessionLimitReached) => {
+                        // Preserve FIFO ordering for this service. A later run
+                        // retries when a session endpoint is closed.
+                        break;
+                    }
+                    Err(_) => vec![0x0005_0040, RESULT_OUT_OF_MEMORY],
+                }
+            };
+
+            let session = self.ncsd_session.as_mut().ok_or(Error::Unimplemented(
+                "ARM11 process session unavailable while waking GetServiceHandle",
+            ))?;
+            session.write_ipc_response_to_thread(pending.thread_id, &response)?;
+            session
+                .wake_thread_for_ipc(pending.thread_id)
+                .map_err(|error| Error::Io(io::Error::other(error.to_string())))?;
+            self.pending_service_lookups.remove(index);
+            woke_any = true;
+        }
+        Ok(woke_any)
+    }
+
+    /// Re-checks service ports that have pending lookups. This also releases
+    /// requests queued behind a full port after either endpoint closes.
+    fn wake_registered_service_lookups(&mut self) -> Result<bool> {
+        let mut names = Vec::new();
+        for pending in &self.pending_service_lookups {
+            if !names.contains(&pending.service_name) {
+                names.push(pending.service_name);
+            }
+        }
+        let mut woke_any = false;
+        for name in names {
+            let port = self
+                .ncsd_session
+                .as_ref()
+                .and_then(|session| session.service_port_handle(&name));
+            if let Some(port_handle) = port {
+                woke_any |= self.wake_pending_service_lookups(name, port_handle)?;
+            }
+        }
+        Ok(woke_any)
     }
 
     /// Completes every queued IPC request belonging to a GSP rendering-right owner.
@@ -1398,10 +1495,13 @@ impl System {
 
     fn dispatch_service_manager_request(
         &mut self,
+        request_thread: ThreadId,
         service_handle: u32,
         message: IpcMessage<'_>,
     ) -> Result<Vec<u32>> {
         const SRV_REGISTER_CLIENT_HEADER: u32 = 0x0001_0002;
+        const SRV_REGISTER_SERVICE_HEADER: u32 = 0x0003_0100;
+        const SRV_UNREGISTER_SERVICE_HEADER: u32 = 0x0004_00C0;
         const SRV_GET_SERVICE_HANDLE_HEADER: u32 = 0x0005_0100;
         const SRV_IS_SERVICE_REGISTERED_HEADER: u32 = 0x000E_00C0;
 
@@ -1428,6 +1528,90 @@ impl System {
                     .map(|()| 0)
                     .unwrap_or(RESULT_INVALID_HANDLE);
                 Ok(vec![0x0001_0040, result])
+            }
+            SRV_REGISTER_SERVICE_HEADER => {
+                let registered = self
+                    .ncsd_session
+                    .as_ref()
+                    .and_then(|session| session.service_manager_client_registered(service_handle))
+                    .unwrap_or(false);
+                if !registered {
+                    return Ok(vec![0x0003_0040, RESULT_INVALID_HANDLE]);
+                }
+                let parameters = message.normal_parameters();
+                if parameters.len() != 4 || !message.translation_words().is_empty() {
+                    self.unhandled.insert("srv:RegisterService malformed request".to_string());
+                    return Ok(vec![0x0003_0040, RESULT_INVALID_ENUM]);
+                }
+                let mut requested_name = [0u8; 8];
+                requested_name[..4].copy_from_slice(&parameters[0].to_le_bytes());
+                requested_name[4..].copy_from_slice(&parameters[1].to_le_bytes());
+                let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
+                if !(1..=8).contains(&name_length) {
+                    return Ok(vec![0x0003_0040, RESULT_SRV_INVALID_STRING_LENGTH]);
+                }
+                if requested_name[..name_length]
+                    .iter()
+                    .any(|byte| !(0x21..=0x7E).contains(byte))
+                {
+                    return Ok(vec![0x0003_0040, RESULT_SRV_STRING_SIZE_MISMATCH]);
+                }
+                requested_name[name_length..].fill(0);
+                let max_sessions = match u16::try_from(parameters[3]) {
+                    Ok(value) if value != 0 => value,
+                    _ => return Ok(vec![0x0003_0040, RESULT_INVALID_ENUM]),
+                };
+                let port_handle = match self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                    .register_service_port(requested_name, max_sessions)
+                {
+                    Ok(handle) => handle,
+                    Err(crate::loader::ncsd::session::KernelHandleError::AlreadyRegistered) => {
+                        return Ok(vec![0x0003_0040, RESULT_INVALID_ENUM]);
+                    }
+                    Err(_) => return Ok(vec![0x0003_0040, RESULT_OUT_OF_MEMORY]),
+                };
+                self.wake_pending_service_lookups(requested_name, port_handle)?;
+                // MOVE_HANDLE descriptor (bit 4) transfers the server port to
+                // the service provider; the registry only retains its name.
+                Ok(vec![0x0003_0042, 0, 0x10, port_handle])
+            }
+            SRV_UNREGISTER_SERVICE_HEADER => {
+                let registered = self
+                    .ncsd_session
+                    .as_ref()
+                    .and_then(|session| session.service_manager_client_registered(service_handle))
+                    .unwrap_or(false);
+                if !registered {
+                    return Ok(vec![0x0004_0040, RESULT_INVALID_HANDLE]);
+                }
+                let parameters = message.normal_parameters();
+                if parameters.len() != 3 || !message.translation_words().is_empty() {
+                    return Ok(vec![0x0004_0040, RESULT_INVALID_ENUM]);
+                }
+                let mut requested_name = [0u8; 8];
+                requested_name[..4].copy_from_slice(&parameters[0].to_le_bytes());
+                requested_name[4..].copy_from_slice(&parameters[1].to_le_bytes());
+                let name_length = usize::try_from(parameters[2]).unwrap_or(usize::MAX);
+                if !(1..=8).contains(&name_length) {
+                    return Ok(vec![0x0004_0040, RESULT_SRV_INVALID_STRING_LENGTH]);
+                }
+                if requested_name[..name_length]
+                    .iter()
+                    .any(|byte| !(0x21..=0x7E).contains(byte))
+                {
+                    return Ok(vec![0x0004_0040, RESULT_SRV_STRING_SIZE_MISMATCH]);
+                }
+                requested_name[name_length..].fill(0);
+                let removed = self
+                    .ncsd_session
+                    .as_mut()
+                    .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                    .unregister_service_port(&requested_name)
+                    .is_some();
+                Ok(vec![0x0004_0040, if removed { 0 } else { RESULT_INVALID_HANDLE }])
             }
             SRV_GET_SERVICE_HANDLE_HEADER => {
                 let registered = self
@@ -1460,6 +1644,7 @@ impl System {
                     ));
                     return Ok(vec![0x0005_0040, RESULT_SRV_INVALID_STRING_LENGTH]);
                 }
+                requested_name[name_length..].fill(0);
                 let Some(service_name) = requested_name.get(..name_length) else {
                     return Ok(vec![0x0005_0040, RESULT_INVALID_ENUM]);
                 };
@@ -1503,35 +1688,57 @@ impl System {
                     };
                     return Ok(vec![0x0005_0042, 0, 0, hle_handle]);
                 }
-                if name_length != 8 || &requested_name != b"gsp::Gpu" {
-                    let name = requested_name
-                        .get(..name_length)
-                        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-                        .unwrap_or_else(|| "<invalid name length>".to_string());
-                    self.unhandled.insert(format!(
-                        "srv:GetServiceHandle({name}) failed: service is not registered"
-                    ));
-                    return Ok(vec![0x0005_0040, RESULT_SRV_SERVICE_NOT_REGISTERED]);
+                // gsp::Gpu is a native Aceris HLE endpoint, not an externally
+                // registered service port. Preserve its existing client path.
+                if &requested_name == b"gsp::Gpu" {
+                    let gpu_session = match self
+                        .ncsd_session
+                        .as_mut()
+                        .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                        .create_gsp_gpu_session()
+                    {
+                        Ok(handle) => handle,
+                        Err(_) => return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]),
+                    };
+                    return Ok(vec![0x0005_0042, 0, 0, gpu_session]);
                 }
 
-                let service_handle = match self
+                let port_handle = self
+                    .ncsd_session
+                    .as_ref()
+                    .and_then(|session| session.service_port_handle(&requested_name));
+                if let Some(port_handle) = port_handle {
+                    let result = self
+                        .ncsd_session
+                        .as_mut()
+                        .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
+                        .create_session_to_port(port_handle);
+                    match result {
+                        Ok(client_session) => {
+                            return Ok(vec![0x0005_0042, 0, 0, client_session]);
+                        }
+                        Err(crate::loader::ncsd::session::KernelHandleError::SessionLimitReached) => {
+                            // The name is registered, but its port is currently
+                            // full. This is still a pending GetServiceHandle.
+                        }
+                        Err(_) => return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]),
+                    }
+                }
+
+                let wait_result = self
                     .ncsd_session
                     .as_mut()
                     .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
-                    .create_gsp_gpu_session()
-                {
-                    Ok(handle) => handle,
-                    Err(_) => {
-                        self.unhandled.insert(
-                            "srv:GetServiceHandle(gsp::Gpu) failed: could not allocate GPU session"
-                                .to_string(),
-                        );
-                        return Ok(vec![0x0005_0040, RESULT_OUT_OF_MEMORY]);
-                    }
-                };
-                // GetServiceHandle returns a COPY_HANDLE translation containing
-                // the newly created client-side gsp::Gpu session.
-                Ok(vec![0x0005_0042, 0, 0, service_handle])
+                    .wait_current_thread_for_ipc();
+                if wait_result.is_err() {
+                    return Ok(vec![0x0005_0040, RESULT_INVALID_HANDLE]);
+                }
+                self.pending_service_lookups.push(PendingServiceLookup {
+                    thread_id: request_thread,
+                    service_manager_handle: service_handle,
+                    service_name: requested_name,
+                });
+                Ok(Vec::new())
             }
             SRV_IS_SERVICE_REGISTERED_HEADER => {
                 let registered = self
@@ -1563,6 +1770,7 @@ impl System {
                 if !(1..=requested_name.len()).contains(&name_length) {
                     return Ok(vec![0x000E_0040, RESULT_SRV_INVALID_STRING_LENGTH]);
                 }
+                requested_name[name_length..].fill(0);
                 let service_name = &requested_name[..name_length];
                 if service_name.iter().any(|byte| !(0x21..=0x7E).contains(byte)) {
                     return Ok(vec![0x000E_0040, RESULT_SRV_STRING_SIZE_MISMATCH]);
@@ -1580,10 +1788,14 @@ impl System {
                     return Ok(vec![0x000E_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]);
                 }
 
-                // Registered HLE endpoints are true even when one command is
-                // intentionally unsupported. Allowed names without an endpoint
-                // (for example http:C) remain false.
-                let is_registered = hle_service_is_registered(service_name);
+                // Registered HLE endpoints and srv:RegisterService ports are
+                // both visible. ACL authorization alone does not imply registration.
+                let service_name_key = requested_name;
+                let registered_port = self
+                    .ncsd_session
+                    .as_ref()
+                    .is_some_and(|session| session.service_port_is_registered(&service_name_key));
+                let is_registered = registered_port || hle_service_is_registered(service_name);
                 Ok(vec![0x000E_0080, 0, u32::from(is_registered)])
             }
             _ => Ok(vec![(raw_header & 0xFFFF_0000) | 0x40, RESULT_INVALID_ENUM]),
@@ -5705,6 +5917,180 @@ mod tests {
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 2),
             [0x000E_0040, RESULT_SRV_SERVICE_ACCESS_DENIED]
+        );
+    }
+
+    #[test]
+    fn service_manager_registers_ports_wakes_pending_lookups_and_releases_slots() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(2)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let service_manager = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let handle = session.create_service_manager_session().unwrap();
+            session.register_service_manager_client(handle).unwrap();
+            handle
+        };
+
+        let mut padded_name = [0u8; 8];
+        padded_name[..6].copy_from_slice(b"http:C");
+        let words = [
+            0x0005_0100,
+            u32::from_le_bytes(padded_name[..4].try_into().unwrap()),
+            u32::from_le_bytes(padded_name[4..].try_into().unwrap()),
+            6,
+            0,
+        ];
+        let request_buffer = write_tls_ipc_request(&mut system, service_manager, &words);
+        let request_thread = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_thread_id()
+            .unwrap();
+        let request = IpcMessage::decode(&words).unwrap();
+
+        // http:C is ACL-authorized in this fixture but is not yet registered.
+        // GetServiceHandle must suspend the guest thread rather than return an
+        // immediate "not registered" error.
+        let deferred = system
+            .dispatch_service_manager_request(request_thread, service_manager, request)
+            .unwrap();
+        assert!(deferred.is_empty());
+        assert_eq!(system.pending_service_lookups.len(), 1);
+        assert_eq!(
+            system.ncsd_session.as_ref().unwrap().current_thread_id(),
+            None
+        );
+
+        // RegisterService creates a server port and wakes the suspended lookup.
+        let register_words = [
+            0x0003_0100,
+            u32::from_le_bytes(padded_name[..4].try_into().unwrap()),
+            u32::from_le_bytes(padded_name[4..].try_into().unwrap()),
+            6,
+            1,
+        ];
+        let register = IpcMessage::decode(&register_words).unwrap();
+        let register_reply = system
+            .dispatch_service_manager_request(request_thread, service_manager, register)
+            .unwrap();
+        assert_eq!(register_reply.len(), 4);
+        assert_eq!(register_reply[..3], [0x0003_0042, 0, 0x10]);
+        let port_handle = register_reply[3];
+        assert!(system.pending_service_lookups.is_empty());
+        assert_eq!(
+            read_tls_ipc_response(&mut system, request_buffer, 4)[..3],
+            [0x0005_0042, 0, 0]
+        );
+        let first_client = read_tls_ipc_response(&mut system, request_buffer, 4)[3];
+        assert_ne!(first_client, 0);
+        let first_server = system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .accept_service_session(port_handle)
+            .unwrap();
+
+        // A max-session count of one makes the next lookup wait. Closing the
+        // client endpoint frees the slot; the retry loop then replies and wakes it.
+        let second_buffer = write_tls_ipc_request(&mut system, service_manager, &words);
+        let second_thread = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_thread_id()
+            .unwrap();
+        let second_request = IpcMessage::decode(&words).unwrap();
+        assert!(system
+            .dispatch_service_manager_request(second_thread, service_manager, second_request)
+            .unwrap()
+            .is_empty());
+        assert_eq!(system.pending_service_lookups.len(), 1);
+        system.ncsd_session.as_mut().unwrap().close_handle(first_client).unwrap();
+        assert!(system.wake_registered_service_lookups().unwrap());
+        assert!(system.pending_service_lookups.is_empty());
+        let second_response = read_tls_ipc_response(&mut system, second_buffer, 4);
+        assert_eq!(&second_response[..3], &[0x0005_0042, 0, 0]);
+        assert_ne!(second_response[3], 0);
+        let second_server = system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .accept_service_session(port_handle)
+            .unwrap();
+
+        // The old server endpoint observes the peer close; both ends can then
+        // be closed without consuming a second session slot.
+        system.ncsd_session.as_mut().unwrap().close_handle(first_server).unwrap();
+        system.ncsd_session.as_mut().unwrap().close_handle(second_response[3]).unwrap();
+        system.ncsd_session.as_mut().unwrap().close_handle(second_server).unwrap();
+    }
+
+    #[test]
+    fn service_manager_register_service_returns_server_port_and_unregisters_name() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(2)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let service_manager = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let handle = session.create_service_manager_session().unwrap();
+            session.register_service_manager_client(handle).unwrap();
+            handle
+        };
+
+        let mut name = [0u8; 8];
+        name[..6].copy_from_slice(b"http:C");
+        let word0 = u32::from_le_bytes(name[..4].try_into().unwrap());
+        let word1 = u32::from_le_bytes(name[4..].try_into().unwrap());
+        let request_thread = system
+            .ncsd_session
+            .as_ref()
+            .unwrap()
+            .current_thread_id()
+            .unwrap();
+
+        let register_words = [0x0003_0100, word0, word1, 6, 2];
+        let register = IpcMessage::decode(&register_words).unwrap();
+        let reply = system
+            .dispatch_service_manager_request(request_thread, service_manager, register)
+            .unwrap();
+        assert_eq!(&reply[..3], &[0x0003_0042, 0, 0x10]);
+        let port = reply[3];
+        assert!(system.ncsd_session.as_ref().unwrap().service_port_is_registered(&name));
+
+        let query_words = [0x000E_00C0, word0, word1, 6];
+        let query = IpcMessage::decode(&query_words).unwrap();
+        assert_eq!(
+            system
+                .dispatch_service_manager_request(request_thread, service_manager, query)
+                .unwrap(),
+            [0x000E_0080, 0, 1]
+        );
+
+        let unregister_words = [0x0004_00C0, word0, word1, 6];
+        let unregister = IpcMessage::decode(&unregister_words).unwrap();
+        assert_eq!(
+            system
+                .dispatch_service_manager_request(request_thread, service_manager, unregister)
+                .unwrap(),
+            [0x0004_0040, 0]
+        );
+        assert!(!system.ncsd_session.as_ref().unwrap().service_port_is_registered(&name));
+        // Unregister removes the name, not the already-issued server endpoint.
+        assert_eq!(
+            system.ncsd_session.as_mut().unwrap().accept_service_session(port),
+            Err(crate::loader::ncsd::session::KernelHandleError::NoPendingSessions)
         );
     }
 

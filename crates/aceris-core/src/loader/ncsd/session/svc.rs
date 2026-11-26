@@ -6,6 +6,9 @@
 /// Connects to a kernel-visible service-manager port.
 pub const SVC_CONNECT_TO_PORT: u32 = 0x2D;
 
+/// Accepts the oldest pending client connection from a server port.
+pub const SVC_ACCEPT_SESSION: u32 = 0x4A;
+
 /// Binds an event or semaphore handle to an ARM11 interrupt.
 pub const SVC_BIND_INTERRUPT: u32 = 0x50;
 

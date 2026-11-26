@@ -112,6 +112,12 @@ pub enum KernelHandleError {
     InvalidMemoryBlockSize,
     /// A shared-memory permission value is outside the supported R/W range.
     InvalidMemoryPermission,
+    /// A service name is already registered.
+    AlreadyRegistered,
+    /// A service port has reached its simultaneous-session limit.
+    SessionLimitReached,
+    /// A port has no pending connection to accept.
+    NoPendingSessions,
     /// Host allocation for a shared-memory block failed.
     OutOfMemory,
     /// The selected address or block does not describe a valid mapping.
@@ -161,6 +167,29 @@ struct KernelMemoryBlock {
     other_permissions: u32,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct KernelPort {
+    max_sessions: u16,
+    active_sessions: u16,
+    pending_sessions: VecDeque<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionRole {
+    Client,
+    Server,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct KernelSessionEndpoint {
+    peer_key: u32,
+    port_key: u32,
+    role: SessionRole,
+    /// Set when the peer endpoint is closed. The first endpoint close also
+    /// releases the port's active-session slot; closing the peer later is inert.
+    remote_closed: bool,
+}
+
 /// HLE service endpoint attached to a process-local session handle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServiceSessionKind {
@@ -207,6 +236,8 @@ enum KernelObject {
     MemoryBlock(KernelMemoryBlock),
     /// Process resource-limit handle; values are resolved by the owning session.
     ResourceLimit,
+    Port(KernelPort),
+    SessionEndpoint(KernelSessionEndpoint),
     ServiceSession(ServiceSessionKind),
     /// Address arbiter; waiters are tracked by the session (see `ArbitrateAddress`).
     AddressArbiter,
@@ -227,6 +258,8 @@ pub struct Arm11KernelObjectTable {
     retired_objects: BTreeMap<u32, KernelObject>,
     /// Duplicate guest handles mapped to their stable object anchor.
     handle_aliases: BTreeMap<u32, u32>,
+    /// Service names registered by srv: and their server-side port handles.
+    service_registry: BTreeMap<[u8; 8], u32>,
     /// Handle used by each thread when it queued on a particular object.
     waiter_handles: BTreeMap<(ThreadId, u32), u32>,
     /// Original handle and object anchor pinned by each pending wait-all.
@@ -245,6 +278,7 @@ impl Default for Arm11KernelObjectTable {
             objects: BTreeMap::new(),
             retired_objects: BTreeMap::new(),
             handle_aliases: BTreeMap::new(),
+            service_registry: BTreeMap::new(),
             waiter_handles: BTreeMap::new(),
             wait_all_refs: BTreeMap::new(),
             high_water_handle_count: 0,
@@ -374,6 +408,133 @@ impl Arm11KernelObjectTable {
             })) => Some(*client_registered),
             _ => None,
         }
+    }
+
+    /// Creates and registers a private server port for a service.
+    ///
+    /// The guest receives the server-side handle. The registry retains the
+    /// service-name association until UnregisterService is processed.
+    pub fn register_service_port(
+        &mut self,
+        name: [u8; 8],
+        max_sessions: u16,
+    ) -> Result<u32, KernelHandleError> {
+        if max_sessions == 0 {
+            return Err(KernelHandleError::InvalidCount);
+        }
+        if self.service_registry.contains_key(&name) {
+            return Err(KernelHandleError::AlreadyRegistered);
+        }
+        let handle = self.insert(KernelObject::Port(KernelPort {
+            max_sessions,
+            active_sessions: 0,
+            pending_sessions: VecDeque::new(),
+        }))?;
+        self.service_registry.insert(name, handle);
+        Ok(handle)
+    }
+
+    /// Removes a service-name association without destroying already-open sessions.
+    pub fn unregister_service_port(&mut self, name: &[u8; 8]) -> Option<u32> {
+        self.service_registry.remove(name)
+    }
+
+    /// Returns the live server port registered under an exact eight-byte name.
+    pub fn service_port_handle(&self, name: &[u8; 8]) -> Option<u32> {
+        let handle = *self.service_registry.get(name)?;
+        matches!(self.object(handle), Some(KernelObject::Port(_))).then_some(handle)
+    }
+
+    /// Reports whether a private service port is currently registered.
+    pub fn is_service_port_registered(&self, name: &[u8; 8]) -> bool {
+        self.service_port_handle(name).is_some()
+    }
+
+    /// Creates a client/server session pair and queues the server endpoint on its port.
+    ///
+    /// The service-manager reply returns the client endpoint. The server accepts
+    /// the queued endpoint through SVC AcceptSession (0x4A).
+    pub fn create_session_to_port(
+        &mut self,
+        port_handle: u32,
+    ) -> Result<u32, KernelHandleError> {
+        let port_key = self.object_key(port_handle).ok_or(KernelHandleError::InvalidHandle)?;
+        let (active_sessions, max_sessions) = match self.object_by_key(port_key) {
+            Some(KernelObject::Port(port)) => (port.active_sessions, port.max_sessions),
+            Some(_) => return Err(KernelHandleError::WrongType),
+            None => return Err(KernelHandleError::InvalidHandle),
+        };
+        if active_sessions >= max_sessions {
+            return Err(KernelHandleError::SessionLimitReached);
+        }
+
+        let client_handle = self.allocate_handle()?;
+        let server_handle = match self.allocate_handle() {
+            Ok(handle) => handle,
+            Err(error) => return Err(error),
+        };
+        self.objects.insert(client_handle, KernelObject::SessionEndpoint(
+            KernelSessionEndpoint {
+                peer_key: server_handle,
+                port_key,
+                role: SessionRole::Client,
+                remote_closed: false,
+            },
+        ));
+        self.objects.insert(server_handle, KernelObject::SessionEndpoint(
+            KernelSessionEndpoint {
+                peer_key: client_handle,
+                port_key,
+                role: SessionRole::Server,
+                remote_closed: false,
+            },
+        ));
+        let Some(KernelObject::Port(port)) = self.object_mut_by_key(port_key) else {
+            self.objects.remove(&client_handle);
+            self.objects.remove(&server_handle);
+            return Err(KernelHandleError::InvalidHandle);
+        };
+        port.active_sessions = port.active_sessions.saturating_add(1);
+        port.pending_sessions.push_back(server_handle);
+        self.update_handle_high_water_mark();
+        Ok(client_handle)
+    }
+
+    /// Accepts the oldest incoming server endpoint from a registered port.
+    pub fn accept_session(&mut self, port_handle: u32) -> Result<u32, KernelHandleError> {
+        let port_key = self.object_key(port_handle).ok_or(KernelHandleError::InvalidHandle)?;
+        let Some(KernelObject::Port(port)) = self.object_mut_by_key(port_key) else {
+            return match self.object_by_key(port_key) {
+                Some(_) => Err(KernelHandleError::WrongType),
+                None => Err(KernelHandleError::InvalidHandle),
+            };
+        };
+        port.pending_sessions
+            .pop_front()
+            .ok_or(KernelHandleError::NoPendingSessions)
+    }
+
+    /// Returns the port key associated with an open service-side session.
+    pub fn session_port_key(&self, handle: u32) -> Option<u32> {
+        match self.object(handle) {
+            Some(KernelObject::SessionEndpoint(endpoint)) => Some(endpoint.port_key),
+            _ => None,
+        }
+    }
+
+    /// Returns which side of a connected session a guest handle represents.
+    pub fn session_role(&self, handle: u32) -> Option<SessionRole> {
+        match self.object(handle) {
+            Some(KernelObject::SessionEndpoint(endpoint)) => Some(endpoint.role),
+            _ => None,
+        }
+    }
+
+    /// Returns a port's registered name, if it is still discoverable by srv:.
+    pub fn service_name_for_port(&self, port_handle: u32) -> Option<[u8; 8]> {
+        self.service_registry
+            .iter()
+            .find_map(|(name, handle)| (*handle == port_handle).then_some(*name))
     }
 
     /// Creates a process-local GSP GPU client session.
@@ -1043,6 +1204,8 @@ impl Arm11KernelObjectTable {
                 KernelObject::Thread(thread) => &mut thread.waiters,
                 KernelObject::MemoryBlock(_)
                 | KernelObject::ResourceLimit
+                | KernelObject::Port(_)
+                | KernelObject::SessionEndpoint(_)
                 | KernelObject::ServiceSession(_)
                 | KernelObject::AddressArbiter => continue,
             };
@@ -1266,7 +1429,13 @@ impl Arm11KernelObjectTable {
     /// references it; the final reference release reclaims the object.
     /// Pseudo-handles are not stored in the table and cannot be closed.
     pub fn close_handle(&mut self, handle: u32) -> Result<(), KernelHandleError> {
-        if self.handle_aliases.remove(&handle).is_some() {
+        if let Some(object_key) = self.handle_aliases.remove(&handle) {
+            // A duplicate is the final live reference only when its original
+            // handle was already closed and no other aliases remain.
+            let has_aliases = self.handle_aliases.values().any(|key| *key == object_key);
+            if !has_aliases && !self.objects.contains_key(&object_key) {
+                self.close_session_endpoint_by_key(object_key);
+            }
             self.collect_retired_objects();
             return Ok(());
         }
@@ -1276,6 +1445,14 @@ impl Arm11KernelObjectTable {
             .remove(&handle)
             .ok_or(KernelHandleError::InvalidHandle)?;
         let has_aliases = self.handle_aliases.values().any(|key| *key == handle);
+        if matches!(&object, KernelObject::Port(_)) {
+            // Closing the server's final port handle stops new connections,
+            // even when existing sessions keep the port object retired.
+            self.service_registry.retain(|_, registered| *registered != handle);
+        }
+        if !has_aliases {
+            self.close_session_endpoint_object(handle, &object);
+        }
         let keep_alive = has_aliases
             || object_has_internal_references(&object)
             || self.has_wait_all_reference(handle);
@@ -1284,6 +1461,46 @@ impl Arm11KernelObjectTable {
         }
         self.collect_retired_objects();
         Ok(())
+    }
+
+    fn close_session_endpoint_by_key(&mut self, object_key: u32) {
+        let Some(KernelObject::SessionEndpoint(endpoint)) = self.object_by_key(object_key) else {
+            return;
+        };
+        let peer_key = endpoint.peer_key;
+        let port_key = endpoint.port_key;
+        let already_closed = endpoint.remote_closed;
+
+        if let Some(KernelObject::SessionEndpoint(peer)) = self.object_mut_by_key(peer_key) {
+            peer.remote_closed = true;
+        }
+        if already_closed {
+            return;
+        }
+        if let Some(KernelObject::Port(port)) = self.object_mut_by_key(port_key) {
+            port.active_sessions = port.active_sessions.saturating_sub(1);
+            port.pending_sessions
+                .retain(|pending| *pending != object_key && *pending != peer_key);
+        }
+    }
+
+    fn close_session_endpoint_object(&mut self, object_key: u32, object: &KernelObject) {
+        let KernelObject::SessionEndpoint(endpoint) = object else {
+            return;
+        };
+        let peer_key = endpoint.peer_key;
+        let port_key = endpoint.port_key;
+        let already_closed = endpoint.remote_closed;
+        if let Some(KernelObject::SessionEndpoint(peer)) = self.object_mut_by_key(peer_key) {
+            peer.remote_closed = true;
+        }
+        if !already_closed {
+            if let Some(KernelObject::Port(port)) = self.object_mut_by_key(port_key) {
+                port.active_sessions = port.active_sessions.saturating_sub(1);
+                port.pending_sessions
+                    .retain(|pending| *pending != object_key && *pending != endpoint.peer_key);
+            }
+        }
     }
 
     /// Returns the number of currently open regular handles.
@@ -1396,6 +1613,8 @@ fn object_has_internal_references(object: &KernelObject) -> bool {
         KernelObject::Mutex(mutex) => mutex.owner.is_some() || !mutex.waiters.is_empty(),
         KernelObject::Semaphore(semaphore) => !semaphore.waiters.is_empty(),
         KernelObject::Timer(timer) => !timer.waiters.is_empty(),
+        KernelObject::Port(port) => port.active_sessions != 0 || !port.pending_sessions.is_empty(),
+        KernelObject::SessionEndpoint(_) => false,
         KernelObject::MemoryBlock(_)
         | KernelObject::ResourceLimit
         | KernelObject::ServiceSession(_)
@@ -2050,6 +2269,49 @@ mod tests {
             table.cancel_timer(0xDEAD),
             Err(KernelHandleError::InvalidHandle)
         );
+    }
+
+    #[test]
+    fn registered_service_port_pairs_accept_fifo_sessions_and_enforce_limits() {
+        let mut table = Arm11KernelObjectTable::default();
+        let name = *b"http:C\0\0";
+        let port = table.register_service_port(name, 1).unwrap();
+
+        assert_eq!(table.service_port_handle(&name), Some(port));
+        let first_client = table.create_session_to_port(port).unwrap();
+        assert_eq!(table.session_role(first_client), Some(SessionRole::Client));
+        assert_eq!(
+            table.create_session_to_port(port),
+            Err(KernelHandleError::SessionLimitReached)
+        );
+
+        let first_server = table.accept_session(port).unwrap();
+        assert_eq!(table.session_role(first_server), Some(SessionRole::Server));
+        assert_eq!(
+            table.accept_session(port),
+            Err(KernelHandleError::NoPendingSessions)
+        );
+
+        // Closing either endpoint releases one port slot and marks its peer
+        // disconnected. Closing the peer later must not decrement twice.
+        table.close_handle(first_client).unwrap();
+        table.close_handle(first_server).unwrap();
+        let second_client = table.create_session_to_port(port).unwrap();
+        let second_server = table.accept_session(port).unwrap();
+        table.close_handle(second_server).unwrap();
+        table.close_handle(second_client).unwrap();
+
+        let third_client = table.create_session_to_port(port).unwrap();
+        let third_server = table.accept_session(port).unwrap();
+        table.close_handle(third_client).unwrap();
+        table.close_handle(third_server).unwrap();
+        assert_eq!(
+            table.accept_session(port),
+            Err(KernelHandleError::NoPendingSessions)
+        );
+
+        assert_eq!(table.unregister_service_port(&name), Some(port));
+        assert_eq!(table.service_port_handle(&name), None);
     }
 
     #[test]

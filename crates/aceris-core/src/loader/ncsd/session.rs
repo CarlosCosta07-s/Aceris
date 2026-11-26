@@ -52,6 +52,7 @@ use svc::{
     SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID,
     SVC_GET_THREAD_INFO,
     SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_BREAK,
+    SVC_ACCEPT_SESSION,
     SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY,
     SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT,
     SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
@@ -535,6 +536,46 @@ impl Arm11ProcessSession {
     pub fn service_manager_client_registered(&self, handle: u32) -> Option<bool> {
         self.kernel_objects
             .service_manager_client_registered(handle)
+    }
+
+    /// Registers a private server port under an exact eight-byte service name.
+    pub fn register_service_port(
+        &mut self,
+        name: [u8; 8],
+        max_sessions: u16,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.register_service_port(name, max_sessions)
+    }
+
+    /// Removes the name-to-port association while existing sessions remain alive.
+    pub fn unregister_service_port(&mut self, name: &[u8; 8]) -> Option<u32> {
+        self.kernel_objects.unregister_service_port(name)
+    }
+
+    /// Finds the currently registered server port for a service name.
+    pub fn service_port_handle(&self, name: &[u8; 8]) -> Option<u32> {
+        self.kernel_objects.service_port_handle(name)
+    }
+
+    /// Reports a service registered through the Service Manager port.
+    pub fn service_port_is_registered(&self, name: &[u8; 8]) -> bool {
+        self.kernel_objects.is_service_port_registered(name)
+    }
+
+    /// Creates a client/server session pair through a registered server port.
+    pub fn create_session_to_port(
+        &mut self,
+        port_handle: u32,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.create_session_to_port(port_handle)
+    }
+
+    /// Accepts the oldest server session queued on a service port.
+    pub fn accept_service_session(
+        &mut self,
+        port_handle: u32,
+    ) -> std::result::Result<u32, KernelHandleError> {
+        self.kernel_objects.accept_session(port_handle)
     }
 
     /// Checks the NCCH exheader ACL for a requested service name.
@@ -2200,6 +2241,7 @@ impl Arm11ProcessSession {
             SVC_BIND_INTERRUPT => self.svc_bind_interrupt(caller),
             SVC_UNBIND_INTERRUPT => self.svc_unbind_interrupt(caller),
             SVC_CONNECT_TO_PORT => self.svc_connect_to_port(caller),
+            SVC_ACCEPT_SESSION => self.svc_accept_session(caller),
             SVC_SEND_SYNC_REQUEST => self.svc_send_sync_request(caller),
             SVC_CREATE_MEMORY_BLOCK => self.svc_create_memory_block(caller),
             SVC_CONTROL_MEMORY => self.svc_control_memory(caller),
@@ -2449,6 +2491,26 @@ impl Arm11ProcessSession {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
         self.set_svc_handle_output(caller, handle);
+        self.write_svc_result(caller, 0)
+    }
+
+    /// Handles AcceptSession: r0 = output handle pointer, r1 = server port handle.
+    fn svc_accept_session(&mut self, caller: ThreadId) -> SvcRunDisposition {
+        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let output_address = registers[0];
+        let port_handle = registers[1];
+        if !self.address_space.is_writable_range(output_address, 4) {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        let server_session = match self.accept_service_session(port_handle) {
+            Ok(handle) => handle,
+            Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
+        };
+        if self.address_space.write32(output_address, server_session).is_err() {
+            let _ = self.close_handle(server_session);
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+        self.set_svc_handle_output(caller, server_session);
         self.write_svc_result(caller, 0)
     }
 
@@ -3882,7 +3944,10 @@ fn kernel_handle_result_code(error: KernelHandleError) -> u32 {
         KernelHandleError::InvalidCount
         | KernelHandleError::InvalidDuration
         | KernelHandleError::CountLimitExceeded
-        | KernelHandleError::InvalidMemoryPermission => RESULT_INVALID_ENUM,
+        | KernelHandleError::InvalidMemoryPermission
+        | KernelHandleError::AlreadyRegistered => RESULT_INVALID_ENUM,
+        KernelHandleError::SessionLimitReached
+        | KernelHandleError::NoPendingSessions => RESULT_INVALID_HANDLE,
         KernelHandleError::InvalidMemoryBlockSize => RESULT_MISALIGNED_ADDRESS,
         KernelHandleError::OutOfMemory => RESULT_OUT_OF_MEMORY,
         KernelHandleError::InvalidMemoryBlockMapping => RESULT_INVALID_ADDRESS,
@@ -7757,7 +7822,37 @@ mod tests {
     }
 
     #[test]
-    fn send_sync_request_svc_yields_to_the_system_ipc_dispatcher() {
+    fn accept_session_svc_returns_the_oldest_server_endpoint() {
+        let mut session = test_session_with_program(&[0xEF00_004A]);
+        let service_name = *b"test:svc";
+        let port = session.register_service_port(service_name, 2).unwrap();
+        let client = session.create_session_to_port(port).unwrap();
+        assert_eq!(
+            session.kernel_objects.session_role(client),
+            Some(kernel::SessionRole::Client)
+        );
+
+        const OUTPUT: u32 = 0x0020_0000;
+        session.set_current_register(0, OUTPUT);
+        session.set_current_register(1, port);
+        let report = session.run_instructions(1).unwrap();
+
+        assert_eq!(report.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(report.instructions_executed, 1);
+        let server = session.read_memory_u32(OUTPUT).unwrap();
+        assert_ne!(server, 0);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        assert_eq!(session.current_registers().unwrap()[1], server);
+        assert_eq!(
+            session.kernel_objects.session_role(server),
+            Some(kernel::SessionRole::Server)
+        );
+
+        session.close_handle(client).unwrap();
+        session.close_handle(server).unwrap();
+    }
+
+
         let mut session = test_session_with_program(&[0xEF00_0032]);
         let service_handle = session.create_gsp_gpu_session().unwrap();
         session.scheduler.current_core_mut().unwrap().regs[0] = service_handle;
