@@ -494,3 +494,12 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Testes novos verificam seletores de tipo e wrapping, modos assimétricos, aliases 6/7, borda superior e matriz de configuração de iluminação.
 - Cube maps, shadow maps completos, geometry shader, gas, clipping e depth offset continuam com limites explícitos. Reconhecer um seletor não significa simular a funcionalidade inteira.
 - Confiança: os modos 0–3 também aparecem na documentação independente consultada; 4–7 têm correspondência com a referência de software, mas ainda precisam de comparação com hardware físico.
+
+
+## Azahar — operação de fragmento e formatos de framebuffer (26/11/2026)
+
+- Arquivos adicionais consultados em `c621eafbf316699c55f4c9c0c689d4e49498d360`: `src/video_core/pica/regs_framebuffer.h` (GPLv2-or-later), `src/video_core/renderer_software/sw_framebuffer.cpp` (GPLv2-or-later), `src/common/color.h` (GPLv2-or-later). A documentação independente consultada foi 3dbrew, páginas GPU/Internal Registers e GPU/External Registers.
+- `PicaFragmentOperation::from_register` agora nomeia os seletores Default (0), Gas (1), Reserved (2) e Shadow (3). O dispatcher do Aceris continua executando apenas Default e retorna erro explícito para os outros modos; não houve simulação falsa de Gas/Shadow.
+- Blend equation 0–4 permanece mapeada para Add/Subtract/ReverseSubtract/Minimum/Maximum. Os seletores 5–7 foram mantidos como aliases observados de Add conforme a descrição independente 3dbrew; o enum de referência Azahar lista só 0–4, portanto a diferença está registrada como evidência observacional.
+- RGB8 aparece no enum e na implementação de framebuffer do Azahar, mas a descrição independente de GPUREG_COLORBUFFER_FORMAT consultada não atribui RGB8 a um valor válido de pixel-size/formato interno. O Aceris mantém rejeição de combinações não confirmadas em vez de inventar o valor de pixel-size. O RGB8 do controlador externo de display é um contrato separado.
+- Nenhum código ou tabela de implementação do Azahar foi copiado; foram criados enum e testes Rust originais para o seletor de modo de fragmento.

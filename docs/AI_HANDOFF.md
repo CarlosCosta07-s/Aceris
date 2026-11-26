@@ -2524,3 +2524,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A dependência de workspace não utilizada `aceris-gl` foi removida de `[workspace.dependencies]`; o crate permanece membro do workspace. O README foi atualizado para Rust 1.87, dependências reais da camada de apresentação, estado headless do homebrew e validação Android ainda pendente.
 - **Validação:** as alterações devem ser confirmadas pelo novo workflow de CI. Não declarar Rustfmt, build, Clippy ou testes aprovados até inspecionar os resultados. Nenhum console físico ou aparelho Android foi testado nesta etapa.
 - **Fronteiras:** a autorização explícita do mantenedor permitiu alterações nos módulos GPU/PICA, loader, memória, CPU, `aceris-gl`, manifestos Cargo e documentação. Somente a branch `main` do Aceris foi usada.
+
+
+## PICA200 — tabela do modo de operação de fragmento (26/11/2026)
+
+- `PicaFragmentOperation::from_register` agora nomeia Default/Gas/Reserved/Shadow (0/1/2/3). Somente Default é executado; Gas e Shadow continuam pendentes e são rejeitados explicitamente.
+- O blend equation selector 5–7 permanece alias de Add por evidência independente 3dbrew, apesar de o enum do Azahar listar as cinco equações principais 0–4. Não remover essa compatibilidade sem evidência adicional.
+- RGB8 foi identificado no enum de framebuffer de Azahar, mas não possui combinação de pixel-size validada na descrição dos registradores PICA internos. Não habilitar por suposição; consultar a especificação/hardware antes.
+- Referências e distinções de evidência foram adicionadas a `docs/AZAHAR_PICA_REGISTER_COMPATIBILITY.md` e `docs/INDEPENDENT_RESEARCH.md`.

@@ -177,10 +177,25 @@ impl PicaStencilState {
     }
 }
 
-/// Supported fixed-function fragment operation.
+/// PICA fragment operation mode selected by GPUREG_COLOR_OPERATION bits 0–1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaFragmentOperation {
     Default,
+    Gas,
+    Reserved(u8),
+    Shadow,
+}
+
+impl PicaFragmentOperation {
+    /// Names all selector values while leaving non-default processing explicit.
+    pub const fn from_register(value: u32) -> Self {
+        match value & 0x3 {
+            0 => Self::Default,
+            1 => Self::Gas,
+            2 => Self::Reserved(2),
+            _ => Self::Shadow,
+        }
+    }
 }
 
 /// How the color operation combines source and destination.
@@ -402,14 +417,13 @@ impl PicaFragmentOutputState {
     /// Decodes the PICA color operation, blend, logic-op and blend-color registers.
     pub fn from_pica(pica: &Pica200) -> Result<Self, PicaFragmentOutputError> {
         let color_operation = pica.register(REG_COLOR_OPERATION).unwrap_or(0);
-        let operation = match color_operation & 0x3 {
-            0 => PicaFragmentOperation::Default,
-            value => {
-                return Err(PicaFragmentOutputError::UnsupportedFragmentOperation {
-                    value: value as u8,
-                });
-            }
-        };
+        let raw_operation = color_operation & 0x3;
+        let operation = PicaFragmentOperation::from_register(raw_operation);
+        if operation != PicaFragmentOperation::Default {
+            return Err(PicaFragmentOutputError::UnsupportedFragmentOperation {
+                value: raw_operation as u8,
+            });
+        }
         let mode = if color_operation & (1 << 8) != 0 {
             PicaColorOperationMode::Blend
         } else {
@@ -798,14 +812,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unimplemented_fragment_modes_and_reserved_blend_fields() {
-        let mut pica = Pica200::new();
-        pica.write_register(REG_COLOR_OPERATION, 1).unwrap();
-        assert_eq!(
-            pica.fragment_output_state(),
-            Err(PicaFragmentOutputError::UnsupportedFragmentOperation { value: 1 })
-        );
+    fn fragment_operation_selector_table_is_explicit() {
+        let expected = [
+            PicaFragmentOperation::Default,
+            PicaFragmentOperation::Gas,
+            PicaFragmentOperation::Reserved(2),
+            PicaFragmentOperation::Shadow,
+        ];
+        for (selector, mode) in expected.into_iter().enumerate() {
+            assert_eq!(
+                PicaFragmentOperation::from_register(selector as u32),
+                mode
+            );
+        }
 
+        for selector in 1..=3 {
+            let mut pica = Pica200::new();
+            pica.write_register(REG_COLOR_OPERATION, selector).unwrap();
+            assert_eq!(
+                pica.fragment_output_state(),
+                Err(PicaFragmentOutputError::UnsupportedFragmentOperation {
+                    value: selector as u8,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_reserved_blend_fields() {
+        let mut pica = Pica200::new();
         pica.write_register(REG_COLOR_OPERATION, 1 << 8).unwrap();
         pica.write_register(REG_BLEND_FUNC, 15 << 16).unwrap();
         assert_eq!(

@@ -84,3 +84,36 @@ O Aceris já armazenava as 24 LUTs. Esta revisão nomeia os seletores e os inter
 - Configuração de iluminação e matriz de samplers: `crates/aceris-core/src/gpu/lighting.rs`.
 - Testes próprios nos mesmos módulos.
 - Próximas lacunas: cube maps, shadow compare, geometry shader, gas, clipping, depth offset e comparação com console físico.
+
+
+## Modo de operação de fragmento e mesclagem
+
+### GPUREG_COLOR_OPERATION, bits 0–1
+
+| Valor | Modo | Situação no Aceris |
+|---:|---|---|
+| 0 | Default | Implementado |
+| 1 | Gas | Identificado; processamento Gas ainda não integrado ao fragment pipeline |
+| 2 | Reservado | Rejeitado explicitamente |
+| 3 | Shadow | Identificado; processamento Shadow ainda não integrado |
+
+O Aceris expõe `PicaFragmentOperation::from_register` para nomear os quatro resultados, mas só executa `Default`. Isso evita confundir o reconhecimento do seletor com suporte ao algoritmo Gas/Shadow.
+
+### GPUREG_BLEND_FUNC, bits 0–2 e 8–10
+
+| Valor | Equação |
+|---:|---|
+| 0 | Add |
+| 1 | Subtract |
+| 2 | ReverseSubtract |
+| 3 | Minimum |
+| 4 | Maximum |
+| 5–7 | Alias observado de Add |
+
+O enum de referência Azahar lista as cinco equações primárias (0–4). A documentação independente 3dbrew observa que 5–7 parecem produzir o mesmo resultado que Add; por isso o Aceris preserva esses aliases e mantém o teste `observed_blend_equation_aliases_decode_as_add`. Essa evidência de alias é observacional, não uma enumeração formal dos valores.
+
+### GPUREG_COLORBUFFER_FORMAT — ponto em aberto
+
+O enum de referência Azahar inclui RGB8 (formato 1), além de RGBA8, RGB5A1, RGB565 e RGBA4. Entretanto, a descrição independente de registradores PICA interno consultada documenta somente pixel-size 0 (16-bit) e 2 (32-bit), e formatos 0, 2, 3 e 4; RGB8 não aparece nessa tabela interna. A página de registradores externos lista RGB8 para o controlador de display, o que não prova que o framebuffer PICA interno use o mesmo seletor.
+
+O Aceris continua aceitando apenas as combinações internas documentadas. Não foi atribuído um valor especulativo de pixel-size para RGB8. A implementação desse formato deve aguardar uma confirmação independente do layout do registrador ou uma captura em hardware.
