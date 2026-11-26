@@ -2658,3 +2658,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - **Fronteiras:** alteração limitada à biblioteca do core, entrada de texto NativeActivity/App Android, eventos compartilhados de janela, adaptadores X11/Win32/AppKit, loop do launcher desktop e documentação. Nenhum módulo de CPU, MMU, kernel, GPU/PICA, DSP ou CSND foi tocado. Nenhuma dependência, asset ou conteúdo de jogo foi adicionado.
 - **Validação:** Rustfmt, builds, Clippy, testes Linux/Windows/macOS e Android ARM64/APK precisam ser confirmados nos novos workflows. Teste em Android físico e validação visual/teclado em desktops ainda são necessários.
 - **Fronteiras:** somente `main`; nenhuma branch ou PR foi criada.
+
+
+## Biblioteca — base do scanner para várias pastas e recursão opcional (26/11/2026, ChatGPT)
+
+- Adicionada a API Rust `ScanOptions` e `scan_games_from_directories(&[PathBuf], ScanOptions)` em `crates/aceris-core/src/video/library.rs`.
+- A API recebe uma lista de raízes, aceita recursão opcional (desligada por padrão), deduplica diretórios/arquivos quando as raízes se sobrepõem, ordena deterministicamente e ignora raízes ausentes ou ilegíveis sem descartar as demais.
+- Diretórios simbólicos descobertos durante a travessia não são seguidos. A profundidade recursiva é limitada a 64 níveis para evitar percursos patológicos. O scanner continua apenas identificando extensões candidatas (.3ds/.cci/.cia/.3dsx), sem validar conteúdo ou carregar jogos.
+- `scan_games(&Path)` permanece como wrapper de compatibilidade não recursivo, portanto os frontends continuam com o comportamento anterior nesta etapa. A interface ainda não oferece adicionar/remover pastas, alternar recursão ou escolher diretórios via SAF no Android.
+- Testes incluídos: padrão não recursivo, varredura de várias raízes sobrepostas sem duplicatas, raiz ausente não cancela as demais e links simbólicos de diretório não são seguidos (Unix).
+- Documentação atualizada em `docs/FRONTENDS.md` e `docs/USER_EXPERIENCE.md`; removidos bullets duplicados sobre a pesquisa nas mesmas páginas.
+- **Fronteiras:** somente scanner compartilhado de biblioteca e documentação. Nenhuma mudança em frontends Android/desktop ou nos módulos de emulação. Nenhuma dependência, asset, ROM, CIA, firmware ou chave adicionada. Somente `main`; sem branches ou PRs.
+- **Validação:** executar Rustfmt, build, testes e Clippy da CI deste commit antes de marcar esta base como aprovada.

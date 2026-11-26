@@ -97,38 +97,112 @@ fn load_library_ids(path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Options controlling how the library scanner traverses user-selected folders.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanOptions {
+    /// Recursively inspect child directories. Disabled by default.
+    pub recursive: bool,
+}
+
+const MAX_SCAN_DEPTH: usize = 64;
+
 /// Lists candidate executable images (`.3ds`, `.cci`, `.cia`, `.3dsx`) directly
-/// inside `directory`, sorted by title. A missing or unreadable directory
-/// yields an empty list.
+/// inside `directory`, preserving the original non-recursive behavior.
 pub fn scan_games(directory: &Path) -> Vec<Entry> {
-    let Ok(read) = fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    let mut entries: Vec<Entry> = read
-        .filter_map(|item| item.ok())
-        .map(|item| item.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .is_some_and(|ext| {
-                        ext.eq_ignore_ascii_case("3ds")
-                            || ext.eq_ignore_ascii_case("cci")
-                            || ext.eq_ignore_ascii_case("3dsx")
-                            || ext.eq_ignore_ascii_case("cia")
-                    })
-        })
-        .map(|path| Entry {
-            title: path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            path,
-        })
-        .collect();
-    entries.sort_by_key(|entry| entry.title.to_lowercase());
+    scan_games_from_directories(&[directory.to_path_buf()], ScanOptions::default())
+}
+
+/// Scans one or more user-selected directories.
+///
+/// Overlapping roots and repeated paths do not duplicate entries. When
+/// `options.recursive` is enabled, child directories are traversed up to
+/// `MAX_SCAN_DEPTH`; symbolic links encountered below a root are not followed.
+/// Missing, non-directory, or unreadable roots are skipped independently so
+/// one unavailable folder does not hide games in the remaining folders.
+pub fn scan_games_from_directories(
+    directories: &[PathBuf],
+    options: ScanOptions,
+) -> Vec<Entry> {
+    let mut pending = Vec::new();
+    let mut visited_directories = std::collections::HashSet::new();
+    let mut seen_files = std::collections::HashSet::new();
+    let mut entries = Vec::new();
+
+    for directory in directories {
+        let identity = scan_path_identity(directory);
+        if visited_directories.insert(identity) {
+            pending.push((directory.clone(), 0usize));
+        }
+    }
+
+    while let Some((directory, depth)) = pending.pop() {
+        let Ok(read) = fs::read_dir(&directory) else {
+            continue;
+        };
+
+        for item in read {
+            let Ok(item) = item else {
+                continue;
+            };
+            let Ok(file_type) = item.file_type() else {
+                continue;
+            };
+            let path = item.path();
+
+            if file_type.is_dir() {
+                if options.recursive && depth < MAX_SCAN_DEPTH {
+                    let identity = scan_path_identity(&path);
+                    if visited_directories.insert(identity) {
+                        pending.push((path, depth + 1));
+                    }
+                }
+                continue;
+            }
+
+            if !file_type.is_file() || !is_supported_game_image(&path) {
+                continue;
+            }
+
+            let identity = scan_path_identity(&path);
+            if !seen_files.insert(identity) {
+                continue;
+            }
+
+            entries.push(Entry {
+                title: path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                path,
+            });
+        }
+    }
+
+    entries.sort_by(|left, right| {
+        left.title
+            .to_lowercase()
+            .cmp(&right.title.to_lowercase())
+            .then_with(|| {
+                left.path
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .cmp(&right.path.to_string_lossy().to_lowercase())
+            })
+    });
     entries
+}
+
+fn is_supported_game_image(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("3ds")
+            || ext.eq_ignore_ascii_case("cci")
+            || ext.eq_ignore_ascii_case("3dsx")
+            || ext.eq_ignore_ascii_case("cia")
+    })
+}
+
+fn scan_path_identity(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 impl Library {
@@ -3329,5 +3403,96 @@ mod tests {
         assert_eq!(titles, ["A", "b", "C", "homebrew"]);
         fs::remove_dir_all(&dir).unwrap();
         assert!(scan_games(&dir).is_empty());
+    }
+
+    #[test]
+    fn scan_recursion_is_opt_in() {
+        let dir = std::env::temp_dir().join(format!("aceris-lib-recursive-{}", std::process::id()));
+        let nested = dir.join("updates").join("demos");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(dir.join("base.3ds"), b"x").unwrap();
+        fs::write(nested.join("nested.CCI"), b"x").unwrap();
+
+        let direct = scan_games(&dir);
+        assert_eq!(direct.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(), ["base"]);
+
+        let recursive = scan_games_from_directories(
+            std::slice::from_ref(&dir),
+            ScanOptions { recursive: true },
+        );
+        assert_eq!(
+            recursive.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(),
+            ["base", "nested"]
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn scan_multiple_directories_deduplicates_overlapping_roots() {
+        let dir = std::env::temp_dir().join(format!("aceris-lib-roots-{}", std::process::id()));
+        let first = dir.join("first");
+        let nested = first.join("nested");
+        let second = dir.join("second");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(first.join("alpha.3ds"), b"x").unwrap();
+        fs::write(nested.join("shared.3dsx"), b"x").unwrap();
+        fs::write(second.join("beta.cia"), b"x").unwrap();
+
+        let entries = scan_games_from_directories(
+            &[first.clone(), second.clone(), nested.clone(), first.clone()],
+            ScanOptions { recursive: true },
+        );
+        assert_eq!(
+            entries.iter().map(|entry| entry.title.as_str()).collect::<Vec<_>>(),
+            ["alpha", "beta", "shared"]
+        );
+        assert_eq!(
+            entries.iter().filter(|entry| entry.path == nested.join("shared.3dsx")).count(),
+            1
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn scan_skips_missing_roots_without_discarding_available_folders() {
+        let dir = std::env::temp_dir().join(format!("aceris-lib-missing-{}", std::process::id()));
+        let available = dir.join("available");
+        let missing = dir.join("missing");
+        fs::create_dir_all(&available).unwrap();
+        fs::write(available.join("working.3ds"), b"x").unwrap();
+
+        let entries = scan_games_from_directories(
+            &[missing, available],
+            ScanOptions::default(),
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "working");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_scan_does_not_follow_symbolic_directory_links() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("aceris-lib-symlink-{}", std::process::id()));
+        let root = dir.join("root");
+        let external = dir.join("external");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&external).unwrap();
+        fs::write(external.join("outside.3ds"), b"x").unwrap();
+        symlink(&external, root.join("linked")).unwrap();
+
+        let entries = scan_games_from_directories(
+            std::slice::from_ref(&root),
+            ScanOptions { recursive: true },
+        );
+        assert!(entries.is_empty());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

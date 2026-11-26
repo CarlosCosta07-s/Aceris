@@ -23,7 +23,7 @@ O core compartilha `System::load_executable_file` entre os hosts. O scanner da b
 - `.cia` como contêiner de título, carregável somente nas condições já suportadas pelo núcleo (conteúdo de boot em claro e NCCH NoCrypto);
 - `.3dsx` para homebrew.
 
-A presença de um CIA na biblioteca **não significa instalação persistente, gerenciamento de atualizações ou suporte a conteúdo criptografado**. O carregador continua validando o arquivo ao iniciar e apresenta um diagnóstico quando o conteúdo não é compatível. A biblioteca procura os arquivos na pasta `games` do diretório externo privado da aplicação e ainda não oferece, nesta revisão, seleção SAF nem pesquisa recursiva.
+A presença de um CIA na biblioteca **não significa instalação persistente, gerenciamento de atualizações ou suporte a conteúdo criptografado**. O carregador continua validando o arquivo ao iniciar e apresenta um diagnóstico quando o conteúdo não é compatível. Os frontends ainda procuram os arquivos em uma única pasta e não oferecem seleção SAF nem controles de recursão. O core agora expõe `scan_games_from_directories`, que aceita múltiplas raízes e recursão opcional; a interface ainda não está conectada a essa API.
 
 Para carregar NCCH/CIA com criptografia, a C ABI permite que o host forneça material de chave temporário. O Aceris não descobre chaves, não as persiste no handle do emulador e não valida as assinaturas RSA/ECDSA do ticket/TMD. O host deve obter qualquer material por meio legítimo e seguro.
 
@@ -50,7 +50,6 @@ O ciclo de vida de NativeActivity, pause/resume, destruição e recriação de s
 - A UI e a biblioteca são desenhadas em Rust e usam a mesma identidade visual no desktop e Android.
 - Nas páginas Jogos, Favoritos, Recentes e Homebrew, a biblioteca horizontal oferece alternância funcional entre Grade e Lista. A navegação vertical acompanha o modo escolhido e, na Lista, os alvos de toque/clique correspondem às linhas renderizadas. A escolha permanece em memória durante a sessão e ainda não é persistida entre reinicializações.
 - A pesquisa filtra o catálogo em memória por título, nome do arquivo e caminho, com comparação sem distinção de caixa/acentos. Android recebe Unicode do NDK para teclados físicos e oferece teclado virtual Rust básico para toque. Desktop usa os eventos de texto nativos de X11, Win32 e AppKit. O teclado virtual tem letras latinas, espaço, apagar, limpar e OK; não é um IME completo.
-- A pesquisa filtra o catálogo em memória por título, nome de arquivo e caminho, com comparação sem distinção de caixa/acentos. Android usa o Unicode fornecido pelo NDK para teclados físicos e um teclado virtual Rust para toque. O teclado virtual contém letras latinas básicas, espaço, apagar, limpar e OK; não é um editor IME completo.
 - Fundos personalizados podem ser fornecidos ao renderer como quadros RGBA8 400×480. A ABI não decodifica vídeos nem retém ponteiros do host após a chamada.
 - A ABI preserva helpers de orientação/geometria e de controles virtuais para hosts que optem por usá-los. O aplicativo Android atual é horizontal; não se deve inferir que todos os modos de orientação oferecidos pela ABI estejam expostos na interface.
 - Favoritos e Recentes são persistidos em arquivos da pasta de dados do Aceris. Metadados/capas reais, seleção SAF, perfis por jogo, editor de controles e temas alternativos permanecem como trabalho futuro.

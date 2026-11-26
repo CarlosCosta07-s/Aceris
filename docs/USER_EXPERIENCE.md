@@ -43,16 +43,16 @@ A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/s
 - Tela inicial, início da biblioteca e páginas de Jogos, Favoritos, Recentes, Homebrew e Configurações.
 - Biblioteca com visualização de grade e lista selecionável no modo paisagem; o fallback em retrato continua usando lista adaptável.
 - Pesquisa funcional por título, nome do arquivo e caminho, sem diferenciar maiúsculas/minúsculas ou acentos. Desktop usa texto do teclado do sistema; Android oferece teclado virtual desenhado em Rust e aceita caracteres Unicode de teclados físicos.
-- Pesquisa funcional por título, nome do arquivo e caminho, sem diferenciar maiúsculas/minúsculas ou acentos; no desktop aceita texto do teclado do sistema e no Android oferece teclado virtual desenhado em Rust, além de teclado físico.
 - Favoritos e Recentes persistidos localmente; ordenação A–Z/Z–A e atualização manual da biblioteca.
 - Plano de fundo personalizado na biblioteca, com suporte a quadros animados fornecidos pelo host.
+- O scanner compartilhado em Rust agora tem API para uma lista de pastas e varredura recursiva opcional, sem seguir links simbólicos e deduplicando diretórios/arquivos sobrepostos; os frontends ainda não expõem esses controles ao usuário.
 - Apresentação das duas telas do 3DS com ajuste proporcional ao espaço disponível.
 - Camada básica de controle virtual e identificação de toque na tela inferior.
 - Entrada básica por teclado, toque e alguns eventos de controle físico encaminhados pelo host.
 - Pastas de dados de usuário por jogo para arquivos de save/extdata nos caminhos HLE atualmente implementados.
 - Diagnósticos de carregamento/execução em evolução.
 
-**Limites atuais que a nova experiência precisa resolver:** o scanner da biblioteca lista `.3ds`, `.cci`, `.cia` e `.3dsx` no diretório configurado; CIA só pode ser carregado nas condições suportadas pelo núcleo (conteúdo de boot em claro e NCCH NoCrypto), sem instalação persistente ou gerenciamento de atualizações. A pesquisa atua somente nos arquivos já encontrados diretamente na pasta configurada: não percorre subpastas nem consulta Title ID/metadados externos. A página de configurações da biblioteca ainda é básica. Não há editor completo de controles, perfis por jogo, painel de propriedades por jogo ou menu de pausa completo. Não há sistema de save states/rewind disponível ao usuário. O armazenamento de save data do jogo não deve ser confundido com save state do emulador.
+**Limites atuais que a nova experiência precisa resolver:** os frontends ainda chamam o scanner de uma única pasta e mantêm a recursão desativada, embora o core já ofereça uma API de varredura para múltiplas raízes e recursão opcional. Ainda não existe interface para adicionar/remover pastas nem seleção SAF no Android. O scanner lista `.3ds`, `.cci`, `.cia` e `.3dsx`; CIA só pode ser carregado nas condições suportadas pelo núcleo (conteúdo de boot em claro e NCCH NoCrypto), sem instalação persistente ou gerenciamento de atualizações. A pesquisa atua somente nos arquivos já encontrados: não consulta Title ID/metadados externos. A página de configurações da biblioteca ainda é básica. Não há editor completo de controles, perfis por jogo, painel de propriedades por jogo ou menu de pausa completo. Não há sistema de save states/rewind disponível ao usuário. O armazenamento de save data do jogo não deve ser confundido com save state do emulador.
 
 O layout do jogo atualmente compõe as telas conforme a orientação disponível, mas ainda não oferece todas as opções avançadas de disposição descritas abaixo.
 
