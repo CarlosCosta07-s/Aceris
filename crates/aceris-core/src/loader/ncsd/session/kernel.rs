@@ -454,11 +454,10 @@ impl Arm11KernelObjectTable {
     ///
     /// The service-manager reply returns the client endpoint. The server accepts
     /// the queued endpoint through SVC AcceptSession (0x4A).
-    pub fn create_session_to_port(
-        &mut self,
-        port_handle: u32,
-    ) -> Result<u32, KernelHandleError> {
-        let port_key = self.object_key(port_handle).ok_or(KernelHandleError::InvalidHandle)?;
+    pub fn create_session_to_port(&mut self, port_handle: u32) -> Result<u32, KernelHandleError> {
+        let port_key = self
+            .object_key(port_handle)
+            .ok_or(KernelHandleError::InvalidHandle)?;
         let (active_sessions, max_sessions) = match self.object_by_key(port_key) {
             Some(KernelObject::Port(port)) => (port.active_sessions, port.max_sessions),
             Some(_) => return Err(KernelHandleError::WrongType),
@@ -473,22 +472,24 @@ impl Arm11KernelObjectTable {
             Ok(handle) => handle,
             Err(error) => return Err(error),
         };
-        self.objects.insert(client_handle, KernelObject::SessionEndpoint(
-            KernelSessionEndpoint {
+        self.objects.insert(
+            client_handle,
+            KernelObject::SessionEndpoint(KernelSessionEndpoint {
                 peer_key: server_handle,
                 port_key,
                 role: SessionRole::Client,
                 remote_closed: false,
-            },
-        ));
-        self.objects.insert(server_handle, KernelObject::SessionEndpoint(
-            KernelSessionEndpoint {
+            }),
+        );
+        self.objects.insert(
+            server_handle,
+            KernelObject::SessionEndpoint(KernelSessionEndpoint {
                 peer_key: client_handle,
                 port_key,
                 role: SessionRole::Server,
                 remote_closed: false,
-            },
-        ));
+            }),
+        );
         let Some(KernelObject::Port(port)) = self.object_mut_by_key(port_key) else {
             self.objects.remove(&client_handle);
             self.objects.remove(&server_handle);
@@ -502,7 +503,9 @@ impl Arm11KernelObjectTable {
 
     /// Accepts the oldest incoming server endpoint from a registered port.
     pub fn accept_session(&mut self, port_handle: u32) -> Result<u32, KernelHandleError> {
-        let port_key = self.object_key(port_handle).ok_or(KernelHandleError::InvalidHandle)?;
+        let port_key = self
+            .object_key(port_handle)
+            .ok_or(KernelHandleError::InvalidHandle)?;
         let Some(KernelObject::Port(port)) = self.object_mut_by_key(port_key) else {
             return match self.object_by_key(port_key) {
                 Some(_) => Err(KernelHandleError::WrongType),
@@ -1048,6 +1051,8 @@ impl Arm11KernelObjectTable {
             Some(KernelObject::Thread(thread)) => Ok(thread.terminated),
             Some(KernelObject::MemoryBlock(_))
             | Some(KernelObject::ResourceLimit)
+            | Some(KernelObject::Port(_))
+            | Some(KernelObject::SessionEndpoint(_))
             | Some(KernelObject::ServiceSession(_))
             | Some(KernelObject::AddressArbiter) => Err(KernelHandleError::WrongType),
             None => Err(KernelHandleError::InvalidHandle),
@@ -1087,6 +1092,8 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Thread(thread)) => thread.terminated,
                 Some(KernelObject::MemoryBlock(_))
                 | Some(KernelObject::ResourceLimit)
+                | Some(KernelObject::Port(_))
+                | Some(KernelObject::SessionEndpoint(_))
                 | Some(KernelObject::ServiceSession(_))
                 | Some(KernelObject::AddressArbiter) => {
                     return Err(KernelHandleError::WrongType);
@@ -1132,6 +1139,8 @@ impl Arm11KernelObjectTable {
                 KernelObject::Thread(_) => {}
                 KernelObject::MemoryBlock(_)
                 | KernelObject::ResourceLimit
+                | KernelObject::Port(_)
+                | KernelObject::SessionEndpoint(_)
                 | KernelObject::ServiceSession(_)
                 | KernelObject::AddressArbiter => {
                     unreachable!("wait-all preflight rejected non-waitable objects")
@@ -1160,6 +1169,8 @@ impl Arm11KernelObjectTable {
                 Some(KernelObject::Thread(thread)) => &mut thread.waiters,
                 Some(KernelObject::MemoryBlock(_))
                 | Some(KernelObject::ResourceLimit)
+                | Some(KernelObject::Port(_))
+                | Some(KernelObject::SessionEndpoint(_))
                 | Some(KernelObject::ServiceSession(_))
                 | Some(KernelObject::AddressArbiter) => {
                     return Err(KernelHandleError::WrongType);
@@ -1448,7 +1459,8 @@ impl Arm11KernelObjectTable {
         if matches!(&object, KernelObject::Port(_)) {
             // Closing the server's final port handle stops new connections,
             // even when existing sessions keep the port object retired.
-            self.service_registry.retain(|_, registered| *registered != handle);
+            self.service_registry
+                .retain(|_, registered| *registered != handle);
         }
         if !has_aliases {
             self.close_session_endpoint_object(handle, &object);

@@ -26,7 +26,7 @@ use crate::loader::ncsd::session::gsp_service::{
     GspRenderingRightHandoff, GspServiceError, GspServiceRegistry, decode_gsp_ipc_request,
 };
 use crate::loader::ncsd::session::ipc::{IpcCommandHeader, IpcMessage};
-use crate::loader::ncsd::session::kernel::ServiceSessionKind;
+use crate::loader::ncsd::session::kernel::{KernelHandleError, ServiceSessionKind};
 use crate::loader::ncsd::session::{Arm11RunStopReason, ThreadId};
 use crate::loader::ncsd::session::{
     RESULT_INVALID_ADDRESS, RESULT_INVALID_ENUM, RESULT_INVALID_HANDLE, RESULT_OUT_OF_MEMORY,
@@ -1414,7 +1414,7 @@ impl System {
                     .create_session_to_port(port_handle);
                 match created {
                     Ok(client_session) => vec![0x0005_0042, 0, 0, client_session],
-                    Err(crate::loader::ncsd::session::KernelHandleError::SessionLimitReached) => {
+                    Err(KernelHandleError::SessionLimitReached) => {
                         // Preserve FIFO ordering for this service. A later run
                         // retries when a session endpoint is closed.
                         break;
@@ -1540,7 +1540,8 @@ impl System {
                 }
                 let parameters = message.normal_parameters();
                 if parameters.len() != 4 || !message.translation_words().is_empty() {
-                    self.unhandled.insert("srv:RegisterService malformed request".to_string());
+                    self.unhandled
+                        .insert("srv:RegisterService malformed request".to_string());
                     return Ok(vec![0x0003_0040, RESULT_INVALID_ENUM]);
                 }
                 let mut requested_name = [0u8; 8];
@@ -1568,7 +1569,7 @@ impl System {
                     .register_service_port(requested_name, max_sessions)
                 {
                     Ok(handle) => handle,
-                    Err(crate::loader::ncsd::session::KernelHandleError::AlreadyRegistered) => {
+                    Err(KernelHandleError::AlreadyRegistered) => {
                         return Ok(vec![0x0003_0040, RESULT_INVALID_ENUM]);
                     }
                     Err(_) => return Ok(vec![0x0003_0040, RESULT_OUT_OF_MEMORY]),
@@ -1611,7 +1612,10 @@ impl System {
                     .ok_or(Error::Unimplemented("ARM11 process session is unavailable"))?
                     .unregister_service_port(&requested_name)
                     .is_some();
-                Ok(vec![0x0004_0040, if removed { 0 } else { RESULT_INVALID_HANDLE }])
+                Ok(vec![
+                    0x0004_0040,
+                    if removed { 0 } else { RESULT_INVALID_HANDLE },
+                ])
             }
             SRV_GET_SERVICE_HANDLE_HEADER => {
                 let registered = self
@@ -1717,7 +1721,9 @@ impl System {
                         Ok(client_session) => {
                             return Ok(vec![0x0005_0042, 0, 0, client_session]);
                         }
-                        Err(crate::loader::ncsd::session::KernelHandleError::SessionLimitReached) => {
+                        Err(
+                            KernelHandleError::SessionLimitReached,
+                        ) => {
                             // The name is registered, but its port is currently
                             // full. This is still a pending GetServiceHandle.
                         }
@@ -1772,7 +1778,10 @@ impl System {
                 }
                 requested_name[name_length..].fill(0);
                 let service_name = &requested_name[..name_length];
-                if service_name.iter().any(|byte| !(0x21..=0x7E).contains(byte)) {
+                if service_name
+                    .iter()
+                    .any(|byte| !(0x21..=0x7E).contains(byte))
+                {
                     return Ok(vec![0x000E_0040, RESULT_SRV_STRING_SIZE_MISMATCH]);
                 }
 
@@ -6007,12 +6016,19 @@ mod tests {
             .current_thread_id()
             .unwrap();
         let second_request = IpcMessage::decode(&words).unwrap();
-        assert!(system
-            .dispatch_service_manager_request(second_thread, service_manager, second_request)
-            .unwrap()
-            .is_empty());
+        assert!(
+            system
+                .dispatch_service_manager_request(second_thread, service_manager, second_request)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(system.pending_service_lookups.len(), 1);
-        system.ncsd_session.as_mut().unwrap().close_handle(first_client).unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .close_handle(first_client)
+            .unwrap();
         assert!(system.wake_registered_service_lookups().unwrap());
         assert!(system.pending_service_lookups.is_empty());
         let second_response = read_tls_ipc_response(&mut system, second_buffer, 4);
@@ -6027,9 +6043,24 @@ mod tests {
 
         // The old server endpoint observes the peer close; both ends can then
         // be closed without consuming a second session slot.
-        system.ncsd_session.as_mut().unwrap().close_handle(first_server).unwrap();
-        system.ncsd_session.as_mut().unwrap().close_handle(second_response[3]).unwrap();
-        system.ncsd_session.as_mut().unwrap().close_handle(second_server).unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .close_handle(first_server)
+            .unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .close_handle(second_response[3])
+            .unwrap();
+        system
+            .ncsd_session
+            .as_mut()
+            .unwrap()
+            .close_handle(second_server)
+            .unwrap();
     }
 
     #[test]
@@ -6067,7 +6098,13 @@ mod tests {
             .unwrap();
         assert_eq!(&reply[..3], &[0x0003_0042, 0, 0x10]);
         let port = reply[3];
-        assert!(system.ncsd_session.as_ref().unwrap().service_port_is_registered(&name));
+        assert!(
+            system
+                .ncsd_session
+                .as_ref()
+                .unwrap()
+                .service_port_is_registered(&name)
+        );
 
         let query_words = [0x000E_00C0, word0, word1, 6];
         let query = IpcMessage::decode(&query_words).unwrap();
@@ -6086,11 +6123,21 @@ mod tests {
                 .unwrap(),
             [0x0004_0040, 0]
         );
-        assert!(!system.ncsd_session.as_ref().unwrap().service_port_is_registered(&name));
+        assert!(
+            !system
+                .ncsd_session
+                .as_ref()
+                .unwrap()
+                .service_port_is_registered(&name)
+        );
         // Unregister removes the name, not the already-issued server endpoint.
         assert_eq!(
-            system.ncsd_session.as_mut().unwrap().accept_service_session(port),
-            Err(crate::loader::ncsd::session::KernelHandleError::NoPendingSessions)
+            system
+                .ncsd_session
+                .as_mut()
+                .unwrap()
+                .accept_service_session(port),
+            Err(KernelHandleError::NoPendingSessions)
         );
     }
 

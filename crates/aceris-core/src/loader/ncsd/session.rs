@@ -43,16 +43,14 @@ use kernel::{
     IpcHandleTranslationError, KernelHandleError, ServiceSessionKind,
 };
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_BIND_INTERRUPT, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT,
-    SVC_CLEAR_TIMER, SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CONTROL_MEMORY, SVC_CREATE_EVENT,
-    SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX, SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD,
-    SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE, SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO,
-    SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD, SVC_GET_PROCESS_INFO,
-    SVC_GET_RESOURCE_LIMIT, SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_ACCEPT_SESSION, SVC_BIND_INTERRUPT, SVC_BREAK,
+    SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER, SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT,
+    SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX,
+    SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE,
+    SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO, SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD,
+    SVC_GET_PROCESS_INFO, SVC_GET_RESOURCE_LIMIT, SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES,
     SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID,
-    SVC_GET_THREAD_INFO,
-    SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY, SVC_BREAK,
-    SVC_ACCEPT_SESSION,
+    SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY,
     SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY,
     SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT,
     SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
@@ -241,7 +239,10 @@ enum SvcRunDisposition {
     ProcessExited,
     Unhandled(u32),
     NoRunnableThread,
-    KernelServiceError { number: u32, result: u32 },
+    KernelServiceError {
+        number: u32,
+        result: u32,
+    },
     IpcRequest,
     /// A guest explicitly invoked SVC Break; stop without pretending it returned.
     GuestBreak(u16),
@@ -544,7 +545,8 @@ impl Arm11ProcessSession {
         name: [u8; 8],
         max_sessions: u16,
     ) -> std::result::Result<u32, KernelHandleError> {
-        self.kernel_objects.register_service_port(name, max_sessions)
+        self.kernel_objects
+            .register_service_port(name, max_sessions)
     }
 
     /// Removes the name-to-port association while existing sessions remain alive.
@@ -2272,9 +2274,7 @@ impl Arm11ProcessSession {
             SVC_GET_PROCESS_ID_OF_THREAD => self.svc_get_process_id_of_thread(caller),
             SVC_GET_THREAD_ID => self.svc_get_thread_id(caller),
             SVC_GET_RESOURCE_LIMIT => self.svc_get_resource_limit(caller),
-            SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES => {
-                self.svc_get_resource_limit_values(caller, true)
-            }
+            SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES => self.svc_get_resource_limit_values(caller, true),
             SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES => {
                 self.svc_get_resource_limit_values(caller, false)
             }
@@ -2496,7 +2496,11 @@ impl Arm11ProcessSession {
 
     /// Handles AcceptSession: r0 = output handle pointer, r1 = server port handle.
     fn svc_accept_session(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let registers = self.scheduler.core(caller).expect("caller context exists").regs;
+        let registers = self
+            .scheduler
+            .core(caller)
+            .expect("caller context exists")
+            .regs;
         let output_address = registers[0];
         let port_handle = registers[1];
         if !self.address_space.is_writable_range(output_address, 4) {
@@ -2506,7 +2510,11 @@ impl Arm11ProcessSession {
             Ok(handle) => handle,
             Err(error) => return self.write_svc_result(caller, kernel_handle_result_code(error)),
         };
-        if self.address_space.write32(output_address, server_session).is_err() {
+        if self
+            .address_space
+            .write32(output_address, server_session)
+            .is_err()
+        {
             let _ = self.close_handle(server_session);
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
@@ -3696,8 +3704,10 @@ impl Arm11ProcessSession {
         .into_iter()
         .map(u64::from)
         .fold(0u64, u64::saturating_add);
-        let dynamic_bytes =
-            self.address_space.memory_usage_report().dynamic_region_virtual_bytes as u64;
+        let dynamic_bytes = self
+            .address_space
+            .memory_usage_report()
+            .dynamic_region_virtual_bytes as u64;
         static_bytes.saturating_add(dynamic_bytes)
     }
 
@@ -3763,7 +3773,10 @@ impl Arm11ProcessSession {
 
         let type_bytes_len = count as usize * std::mem::size_of::<u32>();
         let mut type_bytes = vec![0; type_bytes_len];
-        if self.read_memory_bytes(types_address, &mut type_bytes).is_err() {
+        if self
+            .read_memory_bytes(types_address, &mut type_bytes)
+            .is_err()
+        {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
 
@@ -3824,7 +3837,11 @@ impl Arm11ProcessSession {
         let Some(thread) = self.thread_id_for_handle(registers[1]) else {
             return self.write_svc_result(caller, RESULT_INVALID_HANDLE);
         };
-        if self.address_space.write32(registers[0], thread.raw()).is_err() {
+        if self
+            .address_space
+            .write32(registers[0], thread.raw())
+            .is_err()
+        {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
         self.write_svc_result(caller, 0)
@@ -3946,8 +3963,9 @@ fn kernel_handle_result_code(error: KernelHandleError) -> u32 {
         | KernelHandleError::CountLimitExceeded
         | KernelHandleError::InvalidMemoryPermission
         | KernelHandleError::AlreadyRegistered => RESULT_INVALID_ENUM,
-        KernelHandleError::SessionLimitReached
-        | KernelHandleError::NoPendingSessions => RESULT_INVALID_HANDLE,
+        KernelHandleError::SessionLimitReached | KernelHandleError::NoPendingSessions => {
+            RESULT_INVALID_HANDLE
+        }
         KernelHandleError::InvalidMemoryBlockSize => RESULT_MISALIGNED_ADDRESS,
         KernelHandleError::OutOfMemory => RESULT_OUT_OF_MEMORY,
         KernelHandleError::InvalidMemoryBlockMapping => RESULT_INVALID_ADDRESS,
@@ -4159,7 +4177,9 @@ mod tests {
         session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
         assert_eq!(session.current_registers().unwrap()[0], 0);
         let mut current_bytes = [0; 8];
-        session.read_memory_bytes(VALUES, &mut current_bytes).unwrap();
+        session
+            .read_memory_bytes(VALUES, &mut current_bytes)
+            .unwrap();
         let current = u64::from_le_bytes(current_bytes);
         assert!(current > 0);
         assert!(current < Arm11ProcessSession::RESOURCE_LIMIT_COMMIT_MAX_BYTES);
@@ -4173,10 +4193,7 @@ mod tests {
         session.set_current_register(2, TYPES);
         session.set_current_register(3, 1);
         session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES);
-        assert_eq!(
-            session.current_registers().unwrap()[0],
-            RESULT_INVALID_ENUM
-        );
+        assert_eq!(session.current_registers().unwrap()[0], RESULT_INVALID_ENUM);
         let mut unchanged = [0; 8];
         session.read_memory_bytes(VALUES, &mut unchanged).unwrap();
         assert_eq!(u64::from_le_bytes(unchanged), 0xA5A5_A5A5_A5A5_A5A5);
@@ -4215,7 +4232,9 @@ mod tests {
         session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
         assert_eq!(session.current_registers().unwrap()[0], 0);
         let mut current_bytes = [0; 8];
-        session.read_memory_bytes(CURRENT, &mut current_bytes).unwrap();
+        session
+            .read_memory_bytes(CURRENT, &mut current_bytes)
+            .unwrap();
         let current = u64::from_le_bytes(current_bytes);
 
         // Exercise the same page-aligned remaining-budget calculation used by
@@ -4232,7 +4251,11 @@ mod tests {
         session.dispatch_svc(SVC_CONTROL_MEMORY);
         assert_eq!(session.current_registers().unwrap()[0], 0);
         assert_eq!(session.current_registers().unwrap()[1], PROBE_HEAP_BASE);
-        assert!(session.address_space.is_writable_range(PROBE_HEAP_BASE, heap_size));
+        assert!(
+            session
+                .address_space
+                .is_writable_range(PROBE_HEAP_BASE, heap_size)
+        );
 
         session.set_current_register(0, CURRENT);
         session.set_current_register(1, resource_limit);
@@ -4241,8 +4264,13 @@ mod tests {
         session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
         assert_eq!(session.current_registers().unwrap()[0], 0);
         let mut after_bytes = [0; 8];
-        session.read_memory_bytes(CURRENT, &mut after_bytes).unwrap();
-        assert_eq!(u64::from_le_bytes(after_bytes), current + u64::from(heap_size));
+        session
+            .read_memory_bytes(CURRENT, &mut after_bytes)
+            .unwrap();
+        assert_eq!(
+            u64::from_le_bytes(after_bytes),
+            current + u64::from(heap_size)
+        );
     }
 
     #[test]
@@ -7837,7 +7865,10 @@ mod tests {
         session.set_current_register(1, port);
         let report = session.run_instructions(1).unwrap();
 
-        assert_eq!(report.stop_reason, Arm11RunStopReason::InstructionBudgetExhausted);
+        assert_eq!(
+            report.stop_reason,
+            Arm11RunStopReason::InstructionBudgetExhausted
+        );
         assert_eq!(report.instructions_executed, 1);
         let server = session.read_memory_u32(OUTPUT).unwrap();
         assert_ne!(server, 0);
@@ -7851,7 +7882,6 @@ mod tests {
         session.close_handle(client).unwrap();
         session.close_handle(server).unwrap();
     }
-
 
     #[test]
     fn send_sync_request_svc_yields_to_the_system_ipc_dispatcher() {
