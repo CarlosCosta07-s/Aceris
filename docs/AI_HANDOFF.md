@@ -2717,3 +2717,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Limite restante: ainda não há controles visuais para adicionar/remover pastas ou alterar a recursão; Android segue sem seleção SAF e URIs SAF não são tratadas como caminhos de arquivo. A mudança conecta a configuração já persistente, mas não cria o fluxo de seleção de pastas.
 - Validação: aguardar CI do commit. Nenhum teste/build local foi executado nesta sessão; não declarar sucesso antes dos workflows.
 - Fronteiras: somente main; sem branches ou PRs. Nenhum módulo de emulação, dependência, asset, ROM, CIA, firmware ou chave foi alterado/adicionado.
+
+
+## Biblioteca — controles para gerenciar pastas na página Configurações (26/11/2026, ChatGPT)
+
+- A página Configurações lista as raízes de varredura (até três linhas visíveis, com indicação de raízes adicionais), permite remover uma raiz existente e alternar a busca recursiva.
+- O fluxo Adicionar pasta abre um campo de caminho que aceita texto do teclado físico ou teclado virtual. A confirmação verifica que o caminho aponta para um diretório existente antes de persistir a nova raiz; caminhos duplicados e falhas de gravação geram diagnóstico sem trocar o catálogo ativo.
+- O teclado virtual da biblioteca oferece os caracteres barra e ponto na terceira fileira para caminhos comuns no Android. O caminho precisa estar acessível à aplicação.
+- Desktop: Enter confirma o caminho quando o campo está focado, em vez de executar a atualização genérica da biblioteca.
+- Testes novos cobrem inclusão por caminho, busca recursiva, remoção, proteção da última raiz e caracteres de caminho no teclado virtual.
+- Limite restante: não há seletor nativo de pastas para desktop e o Android ainda precisa de integração Storage Access Framework (SAF); digitar um caminho não contorna as restrições de armazenamento do Android moderno.
+- Validação: nenhum teste/build local foi executado nesta sessão; validar Rustfmt, build, testes e Clippy pela CI do commit. Teste físico Android continua pendente.
+- Fronteiras: somente main; sem branches ou PRs. Código do produto permanece Rust, sem dependências, assets, jogos, CIA, firmware ou chaves adicionados.

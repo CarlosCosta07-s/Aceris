@@ -481,7 +481,9 @@ fn browse_library(
                         window::CANVAS_HEIGHT as u32,
                     ),
                 window::WindowEvent::Key(window::Key::Enter) => {
-                    if library.page() == aceris_core::video::library::LibraryPage::Settings {
+                    if library.search_is_focused() {
+                        library.finish_search();
+                    } else if library.page() == aceris_core::video::library::LibraryPage::Settings {
                         library.reload();
                     } else {
                         library.finish_search();

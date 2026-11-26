@@ -76,6 +76,7 @@ pub struct Library {
     view_mode: LibraryViewMode,
     search_query: String,
     search_focused: bool,
+    scan_path_input_focused: bool,
     touch_keyboard_enabled: bool,
     touch_keyboard_open: bool,
     external_media_playing: bool,
@@ -512,6 +513,7 @@ impl Library {
             view_mode: LibraryViewMode::Grid,
             search_query: String::new(),
             search_focused: false,
+            scan_path_input_focused: false,
             touch_keyboard_enabled: false,
             touch_keyboard_open: false,
             external_media_playing: false,
@@ -585,6 +587,24 @@ impl Library {
             "BUSCA RECURSIVA DESATIVADA".to_string()
         });
         Ok(true)
+    }
+
+    fn toggle_recursive_from_settings(&mut self) {
+        match self.set_recursive_scan(!self.scan_config.options.recursive) {
+            Ok(true) | Ok(false) => {}
+            Err(error) => self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}")),
+        }
+    }
+
+    fn remove_scan_directory_from_settings(&mut self, index: usize) {
+        let Some(directory) = self.scan_config.directories.get(index).cloned() else {
+            return;
+        };
+        match self.remove_scan_directory(&directory) {
+            Ok(true) => {}
+            Ok(false) => self.status = Some("MANTENHA AO MENOS UMA PASTA NA BIBLIOTECA".to_string()),
+            Err(error) => self.status = Some(format!("NÃO FOI POSSÍVEL REMOVER A PASTA: {error}")),
+        }
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -714,9 +734,9 @@ impl Library {
         &self.search_query
     }
 
-    /// True while keyboard text should be sent to the library search.
+    /// True while keyboard text should be sent to the search or folder-path field.
     pub fn search_is_focused(&self) -> bool {
-        self.search_focused
+        self.search_focused || self.scan_path_input_focused
     }
 
     /// True while the built-in touch keyboard is visible.
@@ -726,41 +746,87 @@ impl Library {
 
     /// Gives the search field focus; touch hosts also open the built-in keyboard.
     pub fn focus_search(&mut self) {
+        self.scan_path_input_focused = false;
         self.search_focused = true;
         self.touch_keyboard_open = self.touch_keyboard_enabled;
         self.status = None;
     }
 
-    /// Appends printable text from a physical/system keyboard.
+    /// Opens the folder-path field in Settings. Confirming adds the directory if it exists.
+    pub fn focus_scan_path(&mut self) {
+        if self.page != LibraryPage::Settings {
+            return;
+        }
+        self.search_focused = false;
+        self.scan_path_input_focused = true;
+        self.search_query.clear();
+        self.touch_keyboard_open = self.touch_keyboard_enabled;
+        self.status = Some("DIGITE O CAMINHO DA PASTA E CONFIRME".to_string());
+    }
+
+    /// Appends printable text from a physical/system keyboard or folder-path field.
     pub fn input_search_char(&mut self, character: char) -> bool {
-        if !self.search_focused || character.is_control() || self.search_query.chars().count() >= 96
+        let limit = if self.scan_path_input_focused { 1024 } else { 96 };
+        if (!self.search_focused && !self.scan_path_input_focused)
+            || character.is_control()
+            || self.search_query.chars().count() >= limit
         {
             return false;
         }
         self.search_query.push(character);
-        self.reset_search_selection();
+        if !self.scan_path_input_focused {
+            self.reset_search_selection();
+        }
         true
     }
 
     /// Removes one Unicode scalar from the current search.
     pub fn backspace_search(&mut self) -> bool {
-        if !self.search_focused || self.search_query.pop().is_none() {
+        if (!self.search_focused && !self.scan_path_input_focused)
+            || self.search_query.pop().is_none()
+        {
             return false;
         }
-        self.reset_search_selection();
+        if !self.scan_path_input_focused {
+            self.reset_search_selection();
+        }
         true
     }
 
-    /// Clears the query without closing the search field.
+    /// Clears the active search query or folder path without closing text entry.
     pub fn clear_search(&mut self) {
         if !self.search_query.is_empty() {
             self.search_query.clear();
-            self.reset_search_selection();
+            if !self.scan_path_input_focused {
+                self.reset_search_selection();
+            }
         }
     }
 
-    /// Closes text entry and the touch keyboard, preserving the current query.
+    /// Closes text entry. A confirmed folder path is added only when it names an
+    /// existing directory; an invalid path leaves the active library intact.
     pub fn finish_search(&mut self) {
+        if self.scan_path_input_focused {
+            self.scan_path_input_focused = false;
+            self.touch_keyboard_open = false;
+            let value = std::mem::take(&mut self.search_query);
+            let value = value.trim();
+            if value.is_empty() {
+                self.status = Some("NENHUM CAMINHO INFORMADO".to_string());
+                return;
+            }
+            let directory = PathBuf::from(value);
+            if !directory.is_dir() {
+                self.status = Some("PASTA NÃO ENCONTRADA OU SEM ACESSO".to_string());
+                return;
+            }
+            match self.add_scan_directory(directory) {
+                Ok(true) => {}
+                Ok(false) => self.status = Some("ESSA PASTA JÁ ESTÁ NA BIBLIOTECA".to_string()),
+                Err(error) => self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A PASTA: {error}")),
+            }
+            return;
+        }
         self.search_focused = false;
         self.touch_keyboard_open = false;
     }
@@ -1033,7 +1099,20 @@ impl Library {
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
-                if (500.0..552.0).contains(&y) && (38.0..362.0).contains(&x) {
+                for index in 0..self.scan_config.directories.len().min(3) {
+                    let row_top = 300.0 + index as f32 * 32.0;
+                    if (row_top..row_top + 28.0).contains(&y)
+                        && (334.0..374.0).contains(&x)
+                    {
+                        self.remove_scan_directory_from_settings(index);
+                        return ClickResult::Ignored;
+                    }
+                }
+                if (430.0..474.0).contains(&y) && (38.0..362.0).contains(&x) {
+                    self.toggle_recursive_from_settings();
+                } else if (478.0..522.0).contains(&y) && (38.0..362.0).contains(&x) {
+                    self.focus_scan_path();
+                } else if (526.0..570.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.reload();
                 }
                 return ClickResult::Ignored;
@@ -1116,9 +1195,21 @@ impl Library {
                 ClickResult::Ignored
             }
             LibraryPage::Settings => {
-                // Match the visible refresh button in the landscape settings card.
-                if (298.0..350.0).contains(&y) && (158.0..398.0).contains(&x) {
-                    self.reload();
+                for index in 0..self.scan_config.directories.len().min(3) {
+                    let row_top = 164.0 + index as f32 * 28.0;
+                    if (row_top..row_top + 26.0).contains(&y)
+                        && (520.0..566.0).contains(&x)
+                    {
+                        self.remove_scan_directory_from_settings(index);
+                        return ClickResult::Ignored;
+                    }
+                }
+                if (298.0..350.0).contains(&y) {
+                    if (158.0..348.0).contains(&x) {
+                        self.focus_scan_path();
+                    } else if (360.0..570.0).contains(&x) {
+                        self.toggle_recursive_from_settings();
+                    }
                 }
                 ClickResult::Ignored
             }
@@ -1380,90 +1471,45 @@ impl Library {
         );
 
         if self.page == LibraryPage::Settings {
-            responsive_text(
-                frame,
-                width,
-                height,
-                22.0,
-                212.0,
-                small_scale,
-                "Pastas e formatos compatíveis",
-                0xBBAFC7,
-            );
-            responsive_panel(
-                frame, width, height, 20.0, 250.0, 360.0, 300.0, scale, 0x21152F,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                38.0,
-                278.0,
-                small_scale,
-                "Pasta de jogos",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                38.0,
-                310.0,
-                small_scale,
-                &tail(&self.directory_label, 44),
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                38.0,
-                370.0,
-                small_scale,
-                "Formatos reconhecidos",
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                38.0,
-                402.0,
-                small_scale,
-                ".3ds / .cci / .cia / .3dsx",
-                brand::TEXT,
-            );
-            responsive_text(
-                frame,
-                width,
-                height,
-                38.0,
-                458.0,
-                small_scale,
-                "Os arquivos permanecem no seu dispositivo.",
-                0xBBAFC7,
-            );
-            responsive_panel(
-                frame,
-                width,
-                height,
-                38.0,
-                500.0,
-                324.0,
-                52.0,
-                scale,
-                brand::ACCENT_RED,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                200.0,
-                518.0,
-                small_scale,
-                "Atualizar biblioteca",
-                brand::TEXT,
-            );
+            responsive_text(frame, width, height, 22.0, 212.0, small_scale,
+                "Gerencie as pastas da sua biblioteca", 0xBBAFC7);
+            responsive_panel(frame, width, height, 20.0, 250.0, 360.0, 360.0, scale, 0x21152F);
+            responsive_text(frame, width, height, 38.0, 278.0, small_scale,
+                &format!("Pastas monitoradas ({})", self.scan_config.directories.len()),
+                brand::ACCENT_GREEN_LIGHT);
+            for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
+                let row_y = 300.0 + index as f32 * 32.0;
+                responsive_panel(frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x33223F);
+                responsive_text(frame, width, height, 42.0, row_y + 8.0, small_scale,
+                    &tail(&directory.to_string_lossy(), 34), brand::TEXT);
+                responsive_panel(frame, width, height, 334.0, row_y + 2.0, 36.0, 24.0, scale, 0x422038);
+                responsive_text_centered(frame, width, height, 352.0, row_y + 7.0,
+                    small_scale, "X", brand::TEXT);
+            }
+            if self.scan_config.directories.len() > 3 {
+                responsive_text(frame, width, height, 42.0, 400.0, small_scale,
+                    &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 3),
+                    0xBBAFC7);
+            }
+            responsive_panel(frame, width, height, 38.0, 430.0, 324.0, 44.0, scale,
+                if self.scan_config.options.recursive { 0x28543F } else { 0x2D1A3B });
+            responsive_text_centered(frame, width, height, 200.0, 444.0, small_scale,
+                if self.scan_config.options.recursive {
+                    "BUSCA EM SUBPASTAS: ATIVADA"
+                } else {
+                    "BUSCA EM SUBPASTAS: DESATIVADA"
+                }, brand::TEXT);
+            responsive_panel(frame, width, height, 38.0, 478.0, 324.0, 44.0, scale,
+                if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x2D1A3B });
+            responsive_text_centered(frame, width, height, 200.0, 492.0, small_scale,
+                "ADICIONAR PASTA POR CAMINHO", brand::TEXT);
+            if self.scan_path_input_focused {
+                responsive_text(frame, width, height, 38.0, 532.0, small_scale,
+                    &truncate(&self.search_query, 42), brand::ACCENT_GREEN_LIGHT);
+            }
+            responsive_panel(frame, width, height, 38.0, 546.0, 324.0, 40.0, scale, brand::ACCENT_RED);
+            responsive_text_centered(frame, width, height, 200.0, 559.0, small_scale,
+                "ATUALIZAR BIBLIOTECA", brand::TEXT);
         } else {
             let count = self.visible_entry_count();
             let count_text = match (self.page, count) {
@@ -1756,7 +1802,10 @@ impl Library {
         let rows = [
             ("qwertyuiop", 222.0),
             ("asdfghjkl", 255.0),
-            ("zxcvbnm", 324.0),
+            (
+                if self.scan_path_input_focused { "zxcvbnm/." } else { "zxcvbnm" },
+                324.0,
+            ),
         ];
         for (row, (keys, start_x)) in rows.iter().enumerate() {
             let row_top = top + 8.0 + row as f32 * 40.0;
@@ -2401,126 +2450,59 @@ impl Library {
                 );
             }
             LibraryPage::Settings => {
-                responsive_panel(
-                    frame, width, height, 128.0, 112.0, 842.0, 318.0, scale, 0x21152F,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    158.0,
-                    143.0,
-                    text_scale,
-                    "PASTA DE JOGOS",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    158.0,
-                    176.0,
-                    text_scale,
-                    &tail(&self.directory_label, 78),
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    158.0,
-                    222.0,
-                    text_scale,
-                    "FORMATOS RECONHECIDOS",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    158.0,
-                    254.0,
-                    text_scale,
-                    ".3ds / .cci / .cia / .3dsx",
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    143.0,
-                    text_scale,
-                    "ÁUDIO EM SEGUNDO PLANO",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    176.0,
-                    text_scale,
+                responsive_panel(frame, width, height, 128.0, 112.0, 842.0, 318.0, scale, 0x21152F);
+                responsive_text(frame, width, height, 158.0, 143.0, text_scale,
+                    &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
+                    brand::ACCENT_GREEN_LIGHT);
+                for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
+                    let row_y = 164.0 + index as f32 * 28.0;
+                    responsive_panel(frame, width, height, 150.0, row_y, 412.0, 26.0, scale, 0x33223F);
+                    responsive_text(frame, width, height, 160.0, row_y + 7.0, text_scale,
+                        &tail(&directory.to_string_lossy(), 48), brand::TEXT);
+                    responsive_panel(frame, width, height, 520.0, row_y + 1.0, 42.0, 24.0, scale, 0x422038);
+                    responsive_text_centered(frame, width, height, 541.0, row_y + 6.0,
+                        text_scale, "X", brand::TEXT);
+                }
+                if self.scan_config.directories.len() > 3 {
+                    responsive_text(frame, width, height, 160.0, 250.0, text_scale,
+                        &format!("+ {} OUTRA(S) PASTA(S)", self.scan_config.directories.len() - 3),
+                        0xBBAFC7);
+                }
+                responsive_panel(frame, width, height, 150.0, 260.0, 412.0, 28.0, scale,
+                    if self.scan_path_input_focused { 0x422038 } else { 0x2D1A3B });
+                responsive_text(frame, width, height, 160.0, 268.0, text_scale,
+                    if self.scan_path_input_focused {
+                        &truncate(&self.search_query, 54)
+                    } else {
+                        "Caminho da nova pasta aparece aqui ao adicionar"
+                    },
+                    if self.scan_path_input_focused { brand::ACCENT_GREEN_LIGHT } else { 0xBBAFC7 });
+                responsive_panel(frame, width, height, 158.0, 298.0, 190.0, 52.0, scale,
+                    if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x2D1A3B });
+                responsive_text_centered(frame, width, height, 253.0, 315.0, text_scale,
+                    "ADICIONAR PASTA", brand::TEXT);
+                responsive_panel(frame, width, height, 360.0, 298.0, 212.0, 52.0, scale,
+                    if self.scan_config.options.recursive { 0x28543F } else { 0x2D1A3B });
+                responsive_text_centered(frame, width, height, 466.0, 315.0, text_scale,
+                    if self.scan_config.options.recursive { "SUBPASTAS: SIM" } else { "SUBPASTAS: NÃO" },
+                    brand::TEXT);
+                responsive_text(frame, width, height, 590.0, 143.0, text_scale,
+                    "ÁUDIO EM SEGUNDO PLANO", brand::ACCENT_GREEN_LIGHT);
+                responsive_text(frame, width, height, 590.0, 176.0, text_scale,
                     if self.external_media_detection_available {
                         "Detecção de mídia externa: automática"
                     } else {
                         "Detecção indisponível nesta plataforma"
-                    },
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    205.0,
-                    text_scale,
+                    }, brand::TEXT);
+                responsive_text(frame, width, height, 590.0, 205.0, text_scale,
                     if self.external_media_detection_available {
                         "Jogos são silenciados durante música externa."
                     } else {
                         "Recurso disponível apenas em plataformas compatíveis."
-                    },
-                    0xBBAFC7,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    254.0,
-                    text_scale,
-                    if self.external_media_playing {
-                        "Status: mídia tocando"
-                    } else {
-                        "Status: sem mídia ativa"
-                    },
-                    if self.external_media_playing {
-                        brand::ACCENT_RED_LIGHT
-                    } else {
-                        0xBBAFC7
-                    },
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    158.0,
-                    298.0,
-                    240.0,
-                    52.0,
-                    scale,
-                    brand::ACCENT_RED,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    278.0,
-                    315.0,
-                    text_scale,
-                    "ATUALIZAR BIBLIOTECA",
-                    brand::TEXT,
-                );
+                    }, 0xBBAFC7);
+                responsive_text(frame, width, height, 590.0, 254.0, text_scale,
+                    if self.external_media_playing { "Status: mídia tocando" } else { "Status: sem mídia ativa" },
+                    if self.external_media_playing { brand::ACCENT_RED_LIGHT } else { 0xBBAFC7 });
             }
             LibraryPage::Games
             | LibraryPage::Favorites
@@ -4094,6 +4076,86 @@ mod tests {
         assert_eq!(entries[0].title, "working");
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn settings_page_adds_removes_and_toggles_persisted_scan_roots() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-settings-scan-ui-{}",
+            std::process::id()
+        ));
+        let primary = dir.join("primary");
+        let secondary = dir.join("secondary");
+        let nested = secondary.join("nested");
+        let settings = dir.join("settings");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(primary.join("base.3ds"), b"x").unwrap();
+        fs::write(nested.join("extra.cci"), b"x").unwrap();
+
+        let config = LibraryScanConfig::single_directory(primary.clone());
+        save_library_scan_config(&settings, &config).unwrap();
+        let mut library = Library::from_scan_settings(&settings, &primary);
+        library.select_page(LibraryPage::Settings);
+        assert_eq!(library.entries().len(), 1);
+
+        library.click_responsive(466, 324, 1000, 600);
+        assert!(library.scan_config().options.recursive);
+
+        library.click_responsive(253, 324, 1000, 600);
+        assert!(library.search_is_focused());
+        for character in secondary.to_string_lossy().chars() {
+            assert!(library.input_search_char(character));
+        }
+        library.finish_search();
+
+        assert_eq!(library.scan_config().directories.len(), 2);
+        assert_eq!(library.entries().len(), 2);
+        assert!(!library.search_is_focused());
+
+        library.click_responsive(541, 205, 1000, 600);
+        assert_eq!(library.scan_config().directories.len(), 1);
+        assert_eq!(library.entries().len(), 1);
+
+        library.click_responsive(541, 177, 1000, 600);
+        assert_eq!(library.scan_config().directories.len(), 1);
+        assert_eq!(
+            library.status_message(),
+            Some("MANTENHA AO MENOS UMA PASTA NA BIBLIOTECA")
+        );
+
+        let reopened = Library::from_scan_settings(&settings, &primary);
+        assert_eq!(reopened.scan_config().directories.len(), 1);
+        assert!(!reopened.scan_config().options.recursive);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_path_touch_keyboard_inserts_slash_and_dot() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-settings-touch-path-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.select_page(LibraryPage::Settings);
+        library.set_touch_keyboard_enabled(true);
+
+        library.click_responsive(253, 324, 1000, 600);
+        assert!(library.touch_keyboard_is_open());
+
+        let keyboard_top = search_keyboard_top(600.0);
+        library.click_responsive(815, (keyboard_top + 105.0) as i32, 1000, 600);
+        library.click_responsive(881, (keyboard_top + 105.0) as i32, 1000, 600);
+        assert_eq!(library.search_query(), "/.");
+
+        library.clear_search();
+        assert_eq!(library.search_query(), "");
+        library.finish_search();
+        assert_eq!(library.scan_config().directories.len(), 1);
+        assert_eq!(library.status_message(), Some("NENHUM CAMINHO INFORMADO"));
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(unix)]
