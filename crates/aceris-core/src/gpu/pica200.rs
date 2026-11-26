@@ -2567,12 +2567,7 @@ mod tests {
     fn clip_plane_state_decodes_enable_and_four_float1_7_16_coefficients() {
         let mut gpu = Pica200::new();
         gpu.write_register(REG_FRAGOP_CLIP, 0xA5A5_0001).unwrap();
-        let raw_coefficients = [
-            0xFFA1_2345,
-            0xFFB2_3456,
-            0xFFC3_4567,
-            0xFFD4_5678,
-        ];
+        let raw_coefficients = [0xFFA1_2345, 0xFFB2_3456, 0xFFC3_4567, 0xFFD4_5678];
         for (index, value) in raw_coefficients.into_iter().enumerate() {
             gpu.write_register(REG_FRAGOP_CLIP_DATA0 + index as u16, value)
                 .unwrap();
@@ -2582,12 +2577,7 @@ mod tests {
             gpu.clip_plane_state(),
             PicaClipPlaneState {
                 enabled: true,
-                coefficients_float1_7_16_raw: [
-                    0x00A1_2345,
-                    0x00B2_3456,
-                    0x00C3_4567,
-                    0x00D4_5678,
-                ],
+                coefficients_float1_7_16_raw: [0x00A1_2345, 0x00B2_3456, 0x00C3_4567, 0x00D4_5678,],
             }
         );
 
