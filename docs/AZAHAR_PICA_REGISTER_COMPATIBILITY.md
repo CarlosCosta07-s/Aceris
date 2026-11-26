@@ -146,3 +146,30 @@ O código software de referência do Azahar também contém uma observação TOD
 | 0x54 | FlushProcessDataCache | Handler integrado |
 
 Esses handlers já existiam no session dispatcher; esta revisão remove literais numéricos do caminho de dispatch, concentra os IDs em `session/svc.rs` e adiciona regressão para a tabela. O fato de um ID estar nomeado e encaminhado não significa que todas as variantes, tipos de informação ou semânticas de cache estejam verificadas em hardware.
+
+
+## Fog/Gas mode selector — GPUREG_TEXENV_UPDATE_BUFFER bits 0–2
+
+| Valor | Modo | Estado no Aceris |
+|---:|---|---|
+| 0 | Disabled | Implementado |
+| 1 | Linear fog | Implementado |
+| 2–4 | Reservado | Rejeitado explicitamente |
+| 5 | Fog por LUT | Implementado |
+| 6 | Reservado | Rejeitado explicitamente |
+| 7 | Gas | Reconhecido; estágio Gas ainda não executado no fragment pipeline |
+
+PicaFogMode agora nomeia os oito valores possíveis do campo de três bits. A decodificação do modo 7 não implica rasterização Gas. O snapshot PicaGasState já lê os registradores Gas e os seletores de densidade/entrada da LUT, mas a operação de fragmento Gas permanece desativada.
+
+## Formato de framebuffer — tabela de seletores de três bits
+
+| Seletor | Formato nomeado | Estado |
+|---:|---|---|
+| 0 | RGBA8 | Suportado com pixel-size 2 |
+| 1 | RGB8 | Nomeado; combinação interna de pixel-size não confirmada |
+| 2 | RGB5A1 | Suportado com pixel-size 0 |
+| 3 | RGB565 | Suportado com pixel-size 0 |
+| 4 | RGBA4 | Suportado com pixel-size 0 |
+| 5–7 | Reservado | Rejeitado explicitamente |
+
+PicaColorBufferFormatSelector representa o campo de formato independentemente do campo pixel-size. Isso permite preservar o código RGB8 observado no enum do Azahar sem habilitar uma combinação que a tabela independente de registradores PICA interno não confirma. PicaColorBufferFormat continua representando somente os formatos que o backend consegue codificar e armazenar corretamente.

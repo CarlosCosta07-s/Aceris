@@ -518,3 +518,12 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - A tabela ARM11 do Aceris agora nomeia `CreateAddressArbiter` (0x21), `ArbitrateAddress` (0x22), `GetSystemInfo` (0x2A) e os três serviços de data cache (0x52–0x54), que antes apareciam como literais no dispatcher.
 - Os handlers já existiam e foram mantidos; os testes confirmam os valores numéricos e que esses serviços são encaminhados ao dispatcher de sessão, não tratados pelo dispatcher sem estado.
 - A tabela pública 3dbrew lista os mesmos IDs e ABI de alto nível. Valores `GetSystemInfo` não modelados, tipos de address-arbiter não suportados e detalhes físicos de manutenção de cache continuam sendo limites; não responder com valores inventados.
+
+
+## PICA200 — tabelas restantes de fog e framebuffer (26/11/2026)
+
+- A revisão da tabela GPUREG_TEXENV_UPDATE_BUFFER confirmou os seletores 0 (disabled), 1 (linear fog), 5 (fog via LUT) e 7 (Gas), além dos demais valores reservados. A referência Azahar regs_texturing.h nessa revisão nomeia explicitamente 0, 5 e 7; 3dbrew também documenta o modo 1 e as duas registradoras de fog linear. O Aceris preserva os modos 0/1/5 já implementados e agora expõe PicaFogMode para todos os oito valores do campo. Gas (7) é reconhecido, mas continua fail-closed na avaliação de fragmentos.
+- O Azahar regs_framebuffer.h inclui RGB8 como seletor 1 do enum de formato. A descrição independente de GPUREG_COLORBUFFER_FORMAT, porém, lista pixel-size 0/2 e formatos 0, 2, 3 e 4, sem uma combinação interna para RGB8. O Aceris agora tem PicaColorBufferFormatSelector para nomear 0–4 e reservar 5–7; RGB8 é reportado como conhecido, mas continua sem suporte de framebuffer até haver evidência do par pixel-size/formato.
+- Testes novos cobrem todos os oito seletores de fog e todos os oito seletores do formato do framebuffer, incluindo rejeição explícita de RGB8 nas combinações atuais.
+- Fontes: Azahar src/video_core/pica/regs_texturing.h e regs_framebuffer.h, revisão c621eafbf316699c55f4c9c0c689d4e49498d360 (cabeçalhos individuais GPLv2-or-later); 3dbrew, GPU/Internal Registers, consulta de 26/11/2026. Foram usados valores de campos documentados, sem copiar implementação, testes ou estrutura do código GPL.
+- Limite: completar a tabela de seletores não implementa o processamento Gas nem habilita RGB8. Esses comportamentos continuam tarefas separadas, com contratos independentes e validação própria.

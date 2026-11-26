@@ -61,8 +61,9 @@ pub use fragment_output::{
 };
 pub use fragment_pipeline::{
     PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentInterpolationError, PicaFragmentPipeline,
-    PicaFragmentPipelineError, PicaFragmentSampleError, PicaFragmentVaryings, PicaFragmentVertex,
-    REG_FOG_COLOR, REG_FOG_LINEAR_OFFSET, REG_FOG_LINEAR_SLOPE, REG_TEXENV_UPDATE_BUFFER,
+    PicaFogMode, PicaFragmentPipelineError, PicaFragmentSampleError, PicaFragmentVaryings,
+    PicaFragmentVertex, REG_FOG_COLOR, REG_FOG_LINEAR_OFFSET, REG_FOG_LINEAR_SLOPE,
+    REG_TEXENV_UPDATE_BUFFER,
 };
 pub use fragment_rasterizer::{
     PicaFragmentRasterError, PicaFragmentRasterReport, PicaFragmentRasterState,
@@ -140,7 +141,8 @@ pub use render::{
     PicaRenderSettings, PicaRenderingRunError,
 };
 pub use render_target::{
-    PicaColorBufferFormat, PicaRenderBlockMode, PicaRenderTargetConfig, PicaRenderTargetError,
+    PicaColorBufferFormat, PicaColorBufferFormatSelector, PicaRenderBlockMode,
+    PicaRenderTargetConfig, PicaRenderTargetError,
     PicaRenderTargetWriteReport, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
     REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
 };

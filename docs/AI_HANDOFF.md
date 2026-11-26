@@ -2548,3 +2548,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Centralizados os IDs de SVC já encaminhados para address arbiter (0x21/0x22), GetSystemInfo (0x2A) e manutenção de data-cache (0x52/0x53/0x54) em `session/svc.rs`. O dispatcher deixou de usar literais para esses serviços.
 - Teste novo valida os seis IDs e a delegação para o dispatcher que tem acesso a thread/endereço/estado de kernel.
 - Referência independente: 3dbrew, tabela SVC (consulta 26/11/2026). A implementação de cada handler continua parcial onde a tabela pública não determina os valores exatos ou a semântica física.
+
+
+## PICA200 — tabelas complementares de fog e framebuffer — 26/11/2026
+
+- PicaFogMode agora classifica o campo de fog do GPUREG_TEXENV_UPDATE_BUFFER: 0 Disabled, 1 Linear, 5 Fog LUT, 7 Gas e os demais valores reservados. O caminho continua executando somente Disabled/Linear/Fog LUT; Gas é reconhecido e rejeitado explicitamente até existir rasterização validada.
+- PicaColorBufferFormatSelector nomeia os códigos de formato 0–4 e reserva 5–7. RGB8 (1) é conhecido pelo enum de Azahar, mas permanece fora do render target por falta de confirmação do pixel-size/formato interno.
+- Testes adicionados para os campos completos de três bits, incluindo os casos fail-closed. As novas tabelas não devem ser descritas como implementação de Gas ou RGB8.
+- Referências consultadas: Azahar regs_texturing.h e regs_framebuffer.h, revisão c621eafbf316699c55f4c9c0c689d4e49498d360; 3dbrew GPU/Internal Registers. Nenhum código GPL ou teste do Azahar foi incorporado.

@@ -29,6 +29,48 @@ const COLOR_LOCATION_MASK: u32 = 0x0FFF_FFFF;
 const DIMENSION_WIDTH_MASK: u32 = 0x7FF;
 const DIMENSION_HEIGHT_MASK: u32 = 0x3FF;
 
+/// Raw three-bit GPUREG_COLORBUFFER_FORMAT format selector.
+///
+/// RGB8 is named because it appears in the Azahar framebuffer enum, but the
+/// independently documented pixel-size/format pairing is not established.
+/// It is therefore identified for diagnostics without enabling framebuffer
+/// writes or inventing a pixel-size combination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaColorBufferFormatSelector {
+    Rgba8,
+    Rgb8,
+    Rgb5A1,
+    Rgb565,
+    Rgba4,
+    Reserved(u8),
+}
+
+impl PicaColorBufferFormatSelector {
+    /// Decodes bits 16..18 of GPUREG_COLORBUFFER_FORMAT.
+    pub const fn from_register(value: u32) -> Self {
+        match value & 0x7 {
+            0 => Self::Rgba8,
+            1 => Self::Rgb8,
+            2 => Self::Rgb5A1,
+            3 => Self::Rgb565,
+            4 => Self::Rgba4,
+            other => Self::Reserved(other as u8),
+        }
+    }
+
+    /// Returns the raw format selector.
+    pub const fn raw_value(self) -> u8 {
+        match self {
+            Self::Rgba8 => 0,
+            Self::Rgb8 => 1,
+            Self::Rgb5A1 => 2,
+            Self::Rgb565 => 3,
+            Self::Rgba4 => 4,
+            Self::Reserved(value) => value,
+        }
+    }
+}
+
 /// Color format selected by GPUREG_COLORBUFFER_FORMAT.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaColorBufferFormat {
@@ -61,12 +103,13 @@ impl PicaColorBufferFormat {
 
     fn decode_register(value: u32) -> Result<Self, PicaRenderTargetError> {
         let pixel_size = (value & 0x3) as u8;
-        let format = ((value >> 16) & 0x7) as u8;
-        match (pixel_size, format) {
-            (2, 0) => Ok(Self::Rgba8),
-            (0, 2) => Ok(Self::Rgb5A1),
-            (0, 3) => Ok(Self::Rgb565),
-            (0, 4) => Ok(Self::Rgba4),
+        let selector = PicaColorBufferFormatSelector::from_register(value >> 16);
+        let format = selector.raw_value();
+        match (pixel_size, selector) {
+            (2, PicaColorBufferFormatSelector::Rgba8) => Ok(Self::Rgba8),
+            (0, PicaColorBufferFormatSelector::Rgb5A1) => Ok(Self::Rgb5A1),
+            (0, PicaColorBufferFormatSelector::Rgb565) => Ok(Self::Rgb565),
+            (0, PicaColorBufferFormatSelector::Rgba4) => Ok(Self::Rgba4),
             _ => Err(PicaRenderTargetError::UnsupportedColorFormat { pixel_size, format }),
         }
     }
@@ -584,6 +627,44 @@ mod tests {
         assert_eq!(target.format, PicaColorBufferFormat::Rgba8);
         assert_eq!(target.block_mode, PicaRenderBlockMode::Blocks8x8);
         assert!(target.vertical_flip_enabled);
+    }
+
+    #[test]
+    fn color_buffer_format_selector_table_names_all_three_bit_values() {
+        let expected = [
+            PicaColorBufferFormatSelector::Rgba8,
+            PicaColorBufferFormatSelector::Rgb8,
+            PicaColorBufferFormatSelector::Rgb5A1,
+            PicaColorBufferFormatSelector::Rgb565,
+            PicaColorBufferFormatSelector::Rgba4,
+            PicaColorBufferFormatSelector::Reserved(5),
+            PicaColorBufferFormatSelector::Reserved(6),
+            PicaColorBufferFormatSelector::Reserved(7),
+        ];
+
+        for (selector, expected_format) in expected.into_iter().enumerate() {
+            assert_eq!(
+                PicaColorBufferFormatSelector::from_register(selector as u32),
+                expected_format
+            );
+        }
+
+        // RGB8 is a known format name, but its PICA internal pixel-size
+        // combination is unresolved and must remain fail-closed.
+        for pixel_size in [0u8, 2u8] {
+            assert_eq!(
+                PicaRenderTargetConfig::from_registers(
+                    0,
+                    u32::from(pixel_size) | (1 << 16),
+                    0,
+                    8,
+                ),
+                Err(PicaRenderTargetError::UnsupportedColorFormat {
+                    pixel_size,
+                    format: 1,
+                })
+            );
+        }
     }
 
     #[test]

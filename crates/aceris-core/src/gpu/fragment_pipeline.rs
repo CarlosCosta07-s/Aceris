@@ -34,6 +34,43 @@ const TEXTURE0_PARAM_REGISTER: u16 = 0x083;
 const TEXTURE0_PROJECTION_TYPE: u32 = 3;
 const TEXTURE0_W_EPSILON: f32 = 1.0e-8;
 
+/// Fog/gas selector stored in GPUREG_TEXENV_UPDATE_BUFFER bits 0..2.
+///
+/// This enum names the complete documented three-bit selector table. Gas is
+/// recognized here but is not evaluated by the fragment pipeline yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PicaFogMode {
+    Disabled,
+    Linear,
+    FogLut,
+    Gas,
+    Reserved(u8),
+}
+
+impl PicaFogMode {
+    /// Decodes the fog-mode field, ignoring unrelated update-buffer bits.
+    pub const fn from_register(value: u32) -> Self {
+        match value & FOG_MODE_MASK {
+            FOG_MODE_DISABLED => Self::Disabled,
+            FOG_MODE_LINEAR => Self::Linear,
+            FOG_MODE_LUT => Self::FogLut,
+            7 => Self::Gas,
+            other => Self::Reserved(other as u8),
+        }
+    }
+
+    /// Returns the raw three-bit selector represented by this value.
+    pub const fn raw_value(self) -> u8 {
+        match self {
+            Self::Disabled => 0,
+            Self::Linear => 1,
+            Self::FogLut => 5,
+            Self::Gas => 7,
+            Self::Reserved(value) => value,
+        }
+    }
+}
+
 /// Captured linear-fog state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PicaLinearFog {
@@ -63,9 +100,9 @@ fn decode_fog_state(
     ];
     let z_flip = update & FOG_Z_FLIP != 0;
 
-    match update & FOG_MODE_MASK {
-        FOG_MODE_DISABLED => Ok((None, None)),
-        FOG_MODE_LINEAR => {
+    match PicaFogMode::from_register(update) {
+        PicaFogMode::Disabled => Ok((None, None)),
+        PicaFogMode::Linear => {
             let decode_fixed = |value: u32| (value as u16 as i16) as f32 / 2048.0;
             Ok((
                 Some(PicaLinearFog {
@@ -77,7 +114,7 @@ fn decode_fog_state(
                 None,
             ))
         }
-        FOG_MODE_LUT => Ok((
+        PicaFogMode::FogLut => Ok((
             None,
             Some(PicaFogLut {
                 entries: std::array::from_fn(|index| pica.fog_lut_entry(index).unwrap_or(0)),
@@ -85,7 +122,9 @@ fn decode_fog_state(
                 z_flip,
             }),
         )),
-        mode => Err(PicaFragmentPipelineError::UnsupportedFogMode { mode: mode as u8 }),
+        mode => Err(PicaFragmentPipelineError::UnsupportedFogMode {
+            mode: mode.raw_value(),
+        }),
     }
 }
 
@@ -1087,6 +1126,26 @@ mod tests {
         let pipeline = pica.fragment_pipeline().unwrap();
         let color = pipeline.apply_fog([1.0; 4], 0.0);
         assert_eq!(color, [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn fog_mode_selector_table_covers_all_three_bit_values() {
+        let expected = [
+            PicaFogMode::Disabled,
+            PicaFogMode::Linear,
+            PicaFogMode::Reserved(2),
+            PicaFogMode::Reserved(3),
+            PicaFogMode::Reserved(4),
+            PicaFogMode::FogLut,
+            PicaFogMode::Reserved(6),
+            PicaFogMode::Gas,
+        ];
+
+        for (selector, expected_mode) in expected.into_iter().enumerate() {
+            assert_eq!(PicaFogMode::from_register(selector as u32), expected_mode);
+        }
+        // Other GPUREG_TEXENV_UPDATE_BUFFER fields must not affect this selector.
+        assert_eq!(PicaFogMode::from_register(0x0001_0001), PicaFogMode::Linear);
     }
 
     #[test]
