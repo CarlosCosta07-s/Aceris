@@ -406,7 +406,7 @@ impl ThreeDsxPreparedProcess {
         if layout.stack.initialized_size_bytes != 0
             || stack_end > u64::from(u32::MAX)
             || u64::from(layout.initial_stack_pointer) != stack_end
-            || layout.initial_stack_pointer % 8 != 0
+            || !layout.initial_stack_pointer.is_multiple_of(8)
         {
             return Err(invalid_data(
                 "3DSX initial stack pointer does not match the aligned stack top",

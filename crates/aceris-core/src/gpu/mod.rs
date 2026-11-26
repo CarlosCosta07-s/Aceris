@@ -90,6 +90,7 @@ pub use gsp_queue::{
     GspGxCommandQueue, GspGxCommandQueueError, GspMemoryFill, GspMemoryFillBuffer,
     GspProcessCommandList, GspTextureCopy, MAX_GSP_DMA_BYTES,
 };
+pub use lighting::{PicaLightingConfiguration, PicaLightingSampler};
 pub use index::{
     IndexBufferError, IndexBufferLayout, IndexElementWidth, MAX_INDICES_PER_READ,
     PicaIndexInputState, REG_INDEXBUFFER_CONFIG, REG_NUMVERTICES, REG_VERTEX_OFFSET,
@@ -156,7 +157,7 @@ pub use shader_input::{
 };
 pub use texture::{
     PICA_TEXTURE_UNIT_COUNT, PicaTextureAxis, PicaTextureError, PicaTextureFilter,
-    PicaTextureFormat, PicaTextureUnit, PicaTextureWrap, REG_TEXUNIT_CONFIG,
+    PicaTextureFormat, PicaTextureType, PicaTextureUnit, PicaTextureWrap, REG_TEXUNIT_CONFIG,
 };
 pub use texture_copy::{
     MAX_TEXTURE_COPY_BYTES, TextureCopyError, TextureCopyReport, TextureCopyRequest,

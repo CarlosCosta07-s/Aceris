@@ -1606,13 +1606,13 @@ impl Arm11Core {
         }
 
         let address = self.regs[rn];
-        if address as usize % size != 0 {
+        if !(address as usize).is_multiple_of(size) {
             return Err(Error::InvalidAccess { addr: address });
         }
 
         if load {
             let rt = bits(word, 15, 12) as usize;
-            if rt == PC || (size == 8 && (rt % 2 != 0 || rt == LR || rt + 1 >= PC)) {
+            if rt == PC || (size == 8 && (!rt.is_multiple_of(2) || rt == LR || rt + 1 >= PC)) {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
                     word,
@@ -1668,7 +1668,7 @@ impl Arm11Core {
                 || rt == PC
                 || rd == rn
                 || rd == rt
-                || (size == 8 && (rt % 2 != 0 || rt == LR || second_rt >= PC || rd == second_rt))
+                || (size == 8 && (!rt.is_multiple_of(2) || rt == LR || second_rt >= PC || rd == second_rt))
             {
                 return Err(Error::UndefinedInstruction {
                     pc: self.pc(),
@@ -2323,7 +2323,7 @@ impl Arm11Core {
         // P=0,W=1 is CONSTRAINED UNPREDICTABLE for LDRD/STRD in ARMv6.
         // This core selects the deterministic UndefinedInstruction outcome.
         let invalid_pair = pair_transfer
-            && (rd % 2 != 0
+            && (!rd.is_multiple_of(2)
                 || rd >= 14
                 || (!pre_index && bit(word, 21))
                 || (writeback && rn == pair_second)
@@ -2380,7 +2380,7 @@ impl Arm11Core {
             }
             // LDRD: bit 20 clear, S=1, H=0.
             (false, 0b10) => {
-                if rd % 2 != 0 || rd >= 14 {
+                if !rd.is_multiple_of(2) || rd >= 14 {
                     return Err(undefined);
                 }
                 let first = self.read_data_u32(bus, addr)?;
@@ -2393,7 +2393,7 @@ impl Arm11Core {
             }
             // STRD: bit 20 clear, S=1, H=1.
             (false, 0b11) => {
-                if rd % 2 != 0 || rd >= 14 {
+                if !rd.is_multiple_of(2) || rd >= 14 {
                     return Err(undefined);
                 }
                 let (first, second) = (self.reg(rd, 8), self.reg(rd + 1, 8));

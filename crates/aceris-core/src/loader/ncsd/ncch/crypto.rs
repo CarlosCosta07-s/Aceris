@@ -155,7 +155,7 @@ impl Aes128 {
 
         while generated < EXPANDED_KEY_SIZE {
             temp.copy_from_slice(&expanded[generated - 4..generated]);
-            if generated % AES_BLOCK_SIZE == 0 {
+            if generated.is_multiple_of(AES_BLOCK_SIZE) {
                 temp.rotate_left(1);
                 for byte in &mut temp {
                     *byte = SBOX[*byte as usize];

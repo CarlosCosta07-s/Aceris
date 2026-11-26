@@ -55,6 +55,85 @@ const SLOT_RG: usize = 5;
 const SLOT_RR: usize = 6;
 const SLOT_COUNT: usize = 7;
 
+/// Values accepted by GPUREG_LIGHTING_CONFIG0's lighting configuration field.
+/// Configuration 7 is encoded as 8; selector 7 is reserved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PicaLightingConfiguration {
+    ReflectD0Spot = 0,
+    ReflectFresnelSpot = 1,
+    ReflectD0D1 = 2,
+    D0D1Fresnel = 3,
+    RgbD0D1Spot = 4,
+    RgbD0FresnelSpot = 5,
+    ReflectD0D1FresnelSpot = 6,
+    RgbD0D1FresnelSpot = 8,
+}
+
+impl PicaLightingConfiguration {
+    pub const fn from_register(value: u32) -> Option<Self> {
+        match value & 0xF {
+            0 => Some(Self::ReflectD0Spot),
+            1 => Some(Self::ReflectFresnelSpot),
+            2 => Some(Self::ReflectD0D1),
+            3 => Some(Self::D0D1Fresnel),
+            4 => Some(Self::RgbD0D1Spot),
+            5 => Some(Self::RgbD0FresnelSpot),
+            6 => Some(Self::ReflectD0D1FresnelSpot),
+            8 => Some(Self::RgbD0D1FresnelSpot),
+            _ => None,
+        }
+    }
+
+    /// Reports whether this fixed hardware configuration uses the given LUT sampler.
+    pub const fn supports_sampler(self, sampler: PicaLightingSampler) -> bool {
+        match sampler {
+            PicaLightingSampler::Distribution0 => !matches!(self, Self::ReflectFresnelSpot),
+            PicaLightingSampler::Distribution1 => !matches!(
+                self,
+                Self::ReflectD0Spot | Self::ReflectFresnelSpot | Self::RgbD0FresnelSpot
+            ),
+            PicaLightingSampler::SpotlightAttenuation => {
+                !matches!(self, Self::ReflectD0D1 | Self::D0D1Fresnel)
+            }
+            PicaLightingSampler::Fresnel => !matches!(
+                self,
+                Self::ReflectD0Spot | Self::ReflectD0D1 | Self::RgbD0D1Spot
+            ),
+            PicaLightingSampler::ReflectRed => !matches!(self, Self::D0D1Fresnel),
+            PicaLightingSampler::ReflectGreen | PicaLightingSampler::ReflectBlue => matches!(
+                self,
+                Self::RgbD0D1Spot | Self::RgbD0FresnelSpot | Self::RgbD0D1FresnelSpot
+            ),
+        }
+    }
+}
+
+/// Non-contiguous lighting LUT selectors in the PICA register table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PicaLightingSampler {
+    Distribution0 = 0,
+    Distribution1 = 1,
+    Fresnel = 3,
+    ReflectBlue = 4,
+    ReflectGreen = 5,
+    ReflectRed = 6,
+    SpotlightAttenuation = 8,
+}
+
+impl PicaLightingSampler {
+    /// LUT index for one of the eight per-light spotlight attenuation curves.
+    pub const fn spotlight_attenuation_table(light_index: usize) -> Option<usize> {
+        if light_index < 8 { Some(8 + light_index) } else { None }
+    }
+
+    /// LUT index for one of the eight per-light distance attenuation curves.
+    pub const fn distance_attenuation_table(light_index: usize) -> Option<usize> {
+        if light_index < 8 { Some(16 + light_index) } else { None }
+    }
+}
+
 /// Failure while decoding the light environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PicaLightingError {
@@ -186,7 +265,7 @@ pub struct PicaLightingState {
     global_ambient: [f32; 3],
     /// Enabled lights in permutation order.
     lights: Vec<(usize, PicaLight)>,
-    config: u32,
+    config: PicaLightingConfiguration,
     enable_primary_alpha: bool,
     enable_secondary_alpha: bool,
     clamp_highlights: bool,
@@ -212,10 +291,9 @@ impl PicaLightingState {
 
         let config0 = register(REG_LIGHTING_CONFIG0);
         let config1 = register(REG_LIGHTING_CONFIG1);
-        let config = (config0 >> 4) & 0xF;
-        if !matches!(config, 0..=6 | 8) {
-            return Err(PicaLightingError::Configuration { value: config });
-        }
+        let config_value = (config0 >> 4) & 0xF;
+        let config = PicaLightingConfiguration::from_register(config_value)
+            .ok_or(PicaLightingError::Configuration { value: config_value })?;
         let bump_selector = ((config0 >> 22) & 3) as usize;
         if bump_selector > 2 {
             return Err(PicaLightingError::BumpSelector {
@@ -308,17 +386,17 @@ impl PicaLightingState {
     }
 
     fn sampler_supported(&self, sampler: usize) -> bool {
-        let config = self.config;
-        match sampler {
-            LUT_D0 => config != 1,
-            LUT_D1 => !matches!(config, 0 | 1 | 5),
-            LUT_FR => !matches!(config, 0 | 2 | 4),
-            LUT_RR => config != 3,
-            LUT_RG | LUT_RB => matches!(config, 4 | 5 | 8),
-            // Spotlight attenuation.
-            LUT_SP_BASE => !matches!(config, 2 | 3),
-            _ => true,
-        }
+        let selector = match sampler {
+            LUT_D0 => PicaLightingSampler::Distribution0,
+            LUT_D1 => PicaLightingSampler::Distribution1,
+            LUT_FR => PicaLightingSampler::Fresnel,
+            LUT_RR => PicaLightingSampler::ReflectRed,
+            LUT_RG => PicaLightingSampler::ReflectGreen,
+            LUT_RB => PicaLightingSampler::ReflectBlue,
+            LUT_SP_BASE => PicaLightingSampler::SpotlightAttenuation,
+            _ => return true,
+        };
+        self.config.supports_sampler(selector)
     }
 
     fn lookup(&self, table: usize, value: f32, absolute: bool) -> f32 {
@@ -642,6 +720,79 @@ mod tests {
         let mut pica = single_light_gpu();
         write(&mut pica, REG_LIGHTING_DISABLE, 1);
         assert_eq!(PicaLightingState::from_pica(&pica).unwrap(), None);
+    }
+
+    #[test]
+    fn lighting_configuration_and_lut_selector_tables_are_complete() {
+        let sampler_order = [
+            PicaLightingSampler::Distribution0,
+            PicaLightingSampler::Distribution1,
+            PicaLightingSampler::SpotlightAttenuation,
+            PicaLightingSampler::Fresnel,
+            PicaLightingSampler::ReflectRed,
+            PicaLightingSampler::ReflectGreen,
+            PicaLightingSampler::ReflectBlue,
+        ];
+        let configurations = [
+            (
+                0,
+                PicaLightingConfiguration::ReflectD0Spot,
+                [true, false, true, false, true, false, false],
+            ),
+            (
+                1,
+                PicaLightingConfiguration::ReflectFresnelSpot,
+                [false, false, true, true, true, false, false],
+            ),
+            (
+                2,
+                PicaLightingConfiguration::ReflectD0D1,
+                [true, true, false, false, true, false, false],
+            ),
+            (
+                3,
+                PicaLightingConfiguration::D0D1Fresnel,
+                [true, true, false, true, false, false, false],
+            ),
+            (
+                4,
+                PicaLightingConfiguration::RgbD0D1Spot,
+                [true, true, true, false, true, true, true],
+            ),
+            (
+                5,
+                PicaLightingConfiguration::RgbD0FresnelSpot,
+                [true, false, true, true, true, true, true],
+            ),
+            (
+                6,
+                PicaLightingConfiguration::ReflectD0D1FresnelSpot,
+                [true, true, true, true, true, false, false],
+            ),
+            (
+                8,
+                PicaLightingConfiguration::RgbD0D1FresnelSpot,
+                [true, true, true, true, true, true, true],
+            ),
+        ];
+
+        for (raw, configuration, expected) in configurations {
+            assert_eq!(PicaLightingConfiguration::from_register(raw), Some(configuration));
+            for (sampler, supported) in sampler_order.into_iter().zip(expected) {
+                assert_eq!(
+                    configuration.supports_sampler(sampler),
+                    supported,
+                    "config={raw} sampler={sampler:?}"
+                );
+            }
+        }
+        assert_eq!(PicaLightingConfiguration::from_register(7), None);
+        assert_eq!(PicaLightingSampler::spotlight_attenuation_table(0), Some(8));
+        assert_eq!(PicaLightingSampler::spotlight_attenuation_table(7), Some(15));
+        assert_eq!(PicaLightingSampler::spotlight_attenuation_table(8), None);
+        assert_eq!(PicaLightingSampler::distance_attenuation_table(0), Some(16));
+        assert_eq!(PicaLightingSampler::distance_attenuation_table(7), Some(23));
+        assert_eq!(PicaLightingSampler::distance_attenuation_table(8), None);
     }
 
     #[test]

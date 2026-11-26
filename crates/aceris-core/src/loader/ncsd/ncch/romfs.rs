@@ -1148,7 +1148,7 @@ fn append_path_component(parent: &str, component: &str) -> String {
 }
 
 fn validate_entry_offset(offset: u64, table_size: u64) -> Result<(), &'static str> {
-    if offset % 4 != 0 {
+    if !offset.is_multiple_of(4) {
         return Err("metadata record offset is not 4-byte aligned");
     }
     if offset >= table_size {
@@ -1161,7 +1161,7 @@ fn validate_optional_reference(value: u32, table_size: u64) -> Result<(), &'stat
     if value == u32::MAX {
         return Ok(());
     }
-    if value % 4 != 0 {
+    if !value.is_multiple_of(4) {
         return Err("metadata reference is not 4-byte aligned");
     }
     if u64::from(value) >= table_size {
@@ -1203,7 +1203,7 @@ fn read_metadata_name<R: Read + Seek>(
     fixed_size: u64,
     name_size_bytes: u32,
 ) -> Result<String, &'static str> {
-    if name_size_bytes % 2 != 0 {
+    if !name_size_bytes.is_multiple_of(2) {
         return Err("UTF-16LE name length is not even");
     }
 
@@ -1261,7 +1261,7 @@ fn verify_ivfc_hash_table<R: Read + Seek>(
     }
 
     let block_count = data_region.size_bytes / block_size_bytes
-        + u64::from(data_region.size_bytes % block_size_bytes != 0);
+        + u64::from(!data_region.size_bytes.is_multiple_of(block_size_bytes));
     let expected_hash_size =
         block_count
             .checked_mul(SHA256_SIZE)

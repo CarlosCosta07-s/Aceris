@@ -1589,7 +1589,7 @@ impl Arm11CodeAddressSpace {
         address: u32,
         size: u32,
     ) -> std::result::Result<SharedMemoryBacking, Arm11DynamicMemoryError> {
-        if address % PAGE_SIZE as u32 != 0 {
+        if !address.is_multiple_of(PAGE_SIZE as u32) {
             return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
         }
         if size == 0 || u64::from(size) % PAGE_SIZE != 0 {
@@ -1658,9 +1658,9 @@ impl Arm11CodeAddressSpace {
         size: u32,
     ) -> std::result::Result<(), Arm11DynamicMemoryError> {
         if size == 0
-            || virtual_base % PAGE_SIZE as u32 != 0
-            || physical_base % PAGE_SIZE as u32 != 0
-            || size % PAGE_SIZE as u32 != 0
+            || !virtual_base.is_multiple_of(PAGE_SIZE as u32)
+            || !physical_base.is_multiple_of(PAGE_SIZE as u32)
+            || !size.is_multiple_of(PAGE_SIZE as u32)
         {
             return Err(Arm11DynamicMemoryError::InvalidSize(size));
         }
@@ -1859,7 +1859,7 @@ impl Arm11CodeAddressSpace {
                         "thread-local-storage window exhausted".to_string(),
                     ));
                 }
-                if slot as u32 % THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE == 0 {
+                if (slot as u32).is_multiple_of(THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE) {
                     let address = THREAD_LOCAL_STORAGE_BASE + page * PAGE_SIZE as u32;
                     self.dynamic_regions.try_reserve(1).map_err(|error| {
                         Arm11DynamicMemoryError::AllocationFailure(error.to_string())
@@ -3507,7 +3507,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn validate_exclusive_access(address: u32, size: usize) -> BusResult<()> {
-        if !matches!(size, 1 | 2 | 4 | 8) || address as usize % size != 0 {
+        if !matches!(size, 1 | 2 | 4 | 8) || !(address as usize).is_multiple_of(size) {
             return Err(Error::InvalidAccess { addr: address });
         }
         Ok(())

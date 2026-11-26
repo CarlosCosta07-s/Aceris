@@ -141,7 +141,7 @@ impl Aes128Decryptor {
                 expanded[previous + 3],
             ];
 
-            if word % 4 == 0 {
+            if word.is_multiple_of(4) {
                 temporary.rotate_left(1);
                 for byte in &mut temporary {
                     *byte = SBOX[*byte as usize];
@@ -254,7 +254,7 @@ impl<R: Read> Aes128CbcReader<R> {
         iv: [u8; BLOCK_SIZE],
         ciphertext_size_bytes: u64,
     ) -> io::Result<Self> {
-        if ciphertext_size_bytes % BLOCK_SIZE as u64 != 0 {
+        if !ciphertext_size_bytes.is_multiple_of(BLOCK_SIZE as u64) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "AES-CBC input size is not a multiple of 16 bytes",

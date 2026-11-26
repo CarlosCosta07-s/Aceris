@@ -542,8 +542,8 @@ fn validate_request(request: DisplayTransferRequest) -> Result<(), DisplayTransf
         // 2x2; those effective rows carry the alignment requirement.
         if request.input_width != request.output_width
             || request.input_height != request.output_height
-            || request.input_width % 2 != 0
-            || (scale == 2 && request.input_height % 2 != 0)
+            || !request.input_width.is_multiple_of(2)
+            || (scale == 2 && !request.input_height.is_multiple_of(2))
         {
             return Err(DisplayTransferError::UnsupportedScaling(scale as u8));
         }

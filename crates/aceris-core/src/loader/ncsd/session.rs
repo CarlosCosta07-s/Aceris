@@ -2677,7 +2677,7 @@ impl Arm11ProcessSession {
         address_hint: u32,
         size: u32,
     ) -> std::result::Result<u32, u32> {
-        if size == 0 || size % 0x1000 != 0 {
+        if size == 0 || !size.is_multiple_of(0x1000) {
             return Err(RESULT_MISALIGNED_ADDRESS);
         }
         let mut memory = self.gpu_memory.clone().ok_or(RESULT_OUT_OF_MEMORY)?;
@@ -2745,7 +2745,7 @@ impl Arm11ProcessSession {
         virtual_base: u32,
         size: u32,
     ) -> std::result::Result<u32, u32> {
-        if size == 0 || size % 0x1000 != 0 {
+        if size == 0 || !size.is_multiple_of(0x1000) {
             return Err(RESULT_MISALIGNED_ADDRESS);
         }
         let mut memory = self.gpu_memory.clone().ok_or(RESULT_INVALID_ADDRESS)?;

@@ -427,3 +427,70 @@ A última CI verificada é o workflow 2244 (run 44968347424): jobs Linux, Window
 - Mipmap e bias não nulo continuam explicitamente não suportados; seletores reservados e parâmetros não finitos retornam erro. F(g) triangular não está conectado ao sampler. A unidade 3 está integrada à entrada Texture3 do TEV, mas isso não equivale a suporte completo a PROCTEX.
 - Os workflows `45530579072` e `45531640771` passaram em Linux, Windows, macOS e Android ARM64, incluindo formatação, build, Clippy, testes e benchmarks. Esses resultados validam a compilação/testes sintéticos, não a equivalência com console real nem a compatibilidade de um jogo específico.
 - Próxima validação necessária: coletar uma captura de um jogo/homebrew que use PROCTEX, comparar o comportamento do sampler no contexto do draw real e medir o impacto com benchmark de rasterização representativo.
+
+
+## Azahar PICA200 — tabelas de seleção e wrapping (26/11/2026)
+
+### Auditoria de licença e revisão consultada
+
+- Repositório consultado: [azahar-emu/azahar](https://github.com/azahar-emu/azahar), branch `master`, commit `c621eafbf316699c55f4c9c0c689d4e49498d360` (25/11/2026). A licença geral do repositório nesse commit é GPL-3.0.
+- Arquivos PICA consultados e cabeçalhos individuais:
+  - `src/video_core/pica/regs_texturing.h` — GPLv2-or-later.
+  - `src/video_core/renderer_software/sw_texturing.cpp` — GPLv2-or-later.
+  - `src/video_core/renderer_software/sw_rasterizer.cpp` — GPLv2-or-later.
+  - `src/video_core/pica/regs_lighting.h` — GPLv2-or-later.
+- Os arquivos foram lidos para identificar seletores, valores reservados e efeitos observáveis dos registradores. Nenhuma implementação, tabela de código, teste, shader, fixture ou asset foi copiado, traduzido, portado ou reproduzido estruturalmente. Os tipos Rust, as funções de consulta, o tratamento de erros e os testes de Aceris foram escritos de forma independente.
+- A página pública 3dbrew para registradores internos documenta os modos de wrap 0–3; os modos 4–7 são tratados aqui como evidência de referência de software (E2), não como confirmação física de hardware. Não inferir suporte de hardware apenas porque Azahar os implementa.
+
+### Seletores de tipo de textura
+
+| Valor | Tipo | Estado no Aceris |
+|---:|---|---|
+| 0 | 2D | Aceito |
+| 1 | Cube | Explicitamente não suportado |
+| 2 | Shadow 2D | Explicitamente não suportado |
+| 3 | Projection 2D | Aceito pelo decoder atual |
+| 4 | Shadow Cube | Explicitamente não suportado |
+| 5 | Disabled | Rejeitado se a unidade estiver marcada como habilitada |
+| 6–7 | Reservado | Preservado como seletor reservado |
+
+O tipo é interpretado apenas para a unidade 0; as unidades 1 e 2 não reutilizam esse campo.
+
+### Seletores de wrapping S/T
+
+| Valor | Modo | Comportamento modelado |
+|---:|---|---|
+| 0 | ClampToEdge | Limita coordenadas ao intervalo e aos texels da borda |
+| 1 | ClampToBorder | Coordenadas negativas ou além da dimensão usam a cor de borda |
+| 2 | Repeat | Repetição periódica |
+| 3 | MirroredRepeat | Repetição com espelhamento |
+| 4 | ClampToEdge2 | Coordenada negativa repete; coordenada não negativa limita à borda |
+| 5 | ClampToBorder2 | Coordenada negativa repete; coordenada positiva fora da textura usa a cor de borda |
+| 6 | Repeat2 | Alias de repetição |
+| 7 | Repeat3 | Alias de repetição |
+
+Amostragem bilinear preserva os taps externos nos modos de borda para que contribuam com a border color. O valor exatamente igual a 1.0 é tratado como borda nos modos 1/5 e como último texel nos modos clamp-to-edge.
+
+### Configurações de iluminação
+
+O campo de configuração aceita os códigos 0–6 e 8; o código 7 não é usado. A tabela abaixo descreve quais samplers podem participar de cada configuração, sem afirmar que as fórmulas de iluminação estejam integralmente validadas em hardware.
+
+| Configuração | D0 | D1 | SP | FR | RR | RG | RB |
+|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 0 | Sim | Não | Sim | Não | Sim | Não | Não |
+| 1 | Não | Não | Sim | Sim | Sim | Não | Não |
+| 2 | Sim | Sim | Não | Não | Sim | Não | Não |
+| 3 | Sim | Sim | Não | Sim | Não | Não | Não |
+| 4 | Sim | Sim | Sim | Não | Sim | Sim | Sim |
+| 5 | Sim | Não | Sim | Sim | Sim | Sim | Sim |
+| 6 | Sim | Sim | Sim | Sim | Sim | Não | Não |
+| 8 | Sim | Sim | Sim | Sim | Sim | Sim | Sim |
+
+O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito tabelas de spotlight (8–15) e oito de distance attenuation (16–23). Os seletores 2 e 7 não são atribuídos a esses samplers. O Aceris já armazena as 24 tabelas; esta etapa torna os códigos de configuração e a matriz de disponibilidade explícitos e testáveis.
+
+### Implementação e limites
+
+- Aceris: `crates/aceris-core/src/gpu/texture.rs` e `crates/aceris-core/src/gpu/lighting.rs`.
+- Testes novos verificam seletores de tipo e wrapping, modos assimétricos, aliases 6/7, borda superior e matriz de configuração de iluminação.
+- Cube maps, shadow maps completos, geometry shader, gas, clipping e depth offset continuam com limites explícitos. Reconhecer um seletor não significa simular a funcionalidade inteira.
+- Confiança: os modos 0–3 também aparecem na documentação independente consultada; 4–7 têm correspondência com a referência de software, mas ainda precisam de comparação com hardware físico.

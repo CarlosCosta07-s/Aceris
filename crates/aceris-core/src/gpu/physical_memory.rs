@@ -120,7 +120,7 @@ impl GpuPhysicalMemory {
     /// all outstanding linear reservations. The returned range reads as zero
     /// until the process or a device writes to it.
     pub fn allocate_linear_fcram(&mut self, size: u32) -> Result<u32, GpuPhysicalMemoryError> {
-        if size == 0 || size as usize % PHYSICAL_PAGE_SIZE != 0 {
+        if size == 0 || !(size as usize).is_multiple_of(PHYSICAL_PAGE_SIZE) {
             return Err(GpuPhysicalMemoryError::InvalidLinearAllocationSize { size });
         }
         if size > FCRAM_SIZE {
@@ -186,7 +186,7 @@ impl GpuPhysicalMemory {
         address: u32,
         size: u32,
     ) -> Result<u32, GpuPhysicalMemoryError> {
-        if size == 0 || size as usize % PHYSICAL_PAGE_SIZE != 0 {
+        if size == 0 || !(size as usize).is_multiple_of(PHYSICAL_PAGE_SIZE) {
             return Err(GpuPhysicalMemoryError::InvalidLinearAllocationSize { size });
         }
         if size > FCRAM_SIZE {

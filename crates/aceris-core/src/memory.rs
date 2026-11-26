@@ -301,7 +301,7 @@ impl FlatMemory {
     }
 
     fn validate_exclusive_access(addr: u32, size: usize) -> Result<()> {
-        if !matches!(size, 1 | 2 | 4 | 8) || addr as usize % size != 0 {
+        if !matches!(size, 1 | 2 | 4 | 8) || !(addr as usize).is_multiple_of(size) {
             return Err(Error::InvalidAccess { addr });
         }
         Ok(())

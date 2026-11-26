@@ -370,7 +370,7 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 
 - [x] Entrada por toque validada em headless com homebrew real (Cookie Clicker: 8 toques → 8 cookies). Android, áudio audível e desempenho em tempo real seguem não validados.
 
-- PICA200 (2026-11-25): iluminação por fragmento implementada (`gpu/lighting.rs`, LUTs 0x1C5/0x1C8–0x1CF, quaternion/view no output map); fórmulas parcialmente não verificadas e sombras não aplicadas. Pendentes: geometry shader, gas, planos de clip, depth offset, sombras.
+- PICA200 (2026-11-26): as tabelas de tipos de textura, oito seletores de wrapping S/T e configurações/samplers de iluminação estão tipadas e cobertas por testes. Os modos 4–7 de wrapping seguem como evidência de referência de software, sem confirmação física; cube/shadow maps, geometry shader, gas, planos de clip, depth offset e aplicação de sombras continuam pendentes.
 
 ## Kernel/SVC/IPC — progresso de bootstrap — 25/11/2026
 
@@ -384,3 +384,9 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [ ] Confirmar Rustfmt, Clippy, testes Linux/Windows/macOS e builds Android ARM64 no HEAD atual. O estado local não foi compilado nesta sessão.
 
 - Fronteiras preservadas: alterações de kernel/SVC em `session.rs`, `session/kernel.rs`, `session/svc.rs`; IPC/registry em `system.rs`; documentação em `AI_HANDOFF.md` e `ROADMAP.md`. Somente `main`; sem branches.
+
+## CI e loader dinâmico — correções em validação (26/11/2026)
+
+- Foram substituídas 30 expressões sinalizadas por Clippy em 12 arquivos do núcleo, usando `is_multiple_of`, estável no MSRV declarado (Rust 1.87).
+- O loader dinâmico OpenGL agora usa APIs nativas distintas para Unix e Windows; o teste Windows verifica a resolução de um símbolo de `kernel32.dll`.
+- O workflow disparado por estas alterações precisa confirmar todas as plataformas. Não marcar a CI como verde até os jobs concluírem.
