@@ -98,7 +98,7 @@ fn library_path_id(path: &Path) -> Option<String> {
 fn is_valid_library_id(value: &str) -> bool {
     if let Some(encoded) = value.strip_prefix(LIBRARY_PATH_ID_PREFIX) {
         return !encoded.is_empty()
-            && encoded.len() % 2 == 0
+            && encoded.len().is_multiple_of(2)
             && encoded.bytes().all(|byte| byte.is_ascii_hexdigit());
     }
 
@@ -267,7 +267,7 @@ fn encode_scan_directory(directory: &Path) -> std::io::Result<String> {
 }
 
 fn decode_scan_directory(encoded: &str) -> Option<PathBuf> {
-    if encoded.is_empty() || encoded.len() % 2 != 0 {
+    if encoded.is_empty() || !encoded.len().is_multiple_of(2) {
         return None;
     }
     let bytes = encoded.as_bytes();
