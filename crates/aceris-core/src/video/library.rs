@@ -3842,7 +3842,6 @@ mod tests {
         assert!(scan_games(&dir).is_empty());
     }
 
-
     #[test]
     fn library_model_loads_and_manages_persisted_scan_roots() {
         let root =
@@ -3900,8 +3899,10 @@ mod tests {
 
     #[test]
     fn failed_library_scan_config_write_does_not_change_live_library_state() {
-        let root =
-            std::env::temp_dir().join(format!("aceris-library-scan-write-fail-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "aceris-library-scan-write-fail-{}",
+            std::process::id()
+        ));
         let games = root.join("games");
         let blocked_settings = root.join("not-a-directory");
         fs::create_dir_all(&games).unwrap();
