@@ -592,7 +592,9 @@ impl Library {
     fn toggle_recursive_from_settings(&mut self) {
         match self.set_recursive_scan(!self.scan_config.options.recursive) {
             Ok(true) | Ok(false) => {}
-            Err(error) => self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}")),
+            Err(error) => {
+                self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"))
+            },
         }
     }
 
@@ -602,8 +604,12 @@ impl Library {
         };
         match self.remove_scan_directory(&directory) {
             Ok(true) => {}
-            Ok(false) => self.status = Some("MANTENHA AO MENOS UMA PASTA NA BIBLIOTECA".to_string()),
-            Err(error) => self.status = Some(format!("NÃO FOI POSSÍVEL REMOVER A PASTA: {error}")),
+            Ok(false) => {
+                self.status = Some("MANTENHA AO MENOS UMA PASTA NA BIBLIOTECA".to_string())
+            }
+            Err(error) => {
+                self.status = Some(format!("NÃO FOI POSSÍVEL REMOVER A PASTA: {error}"))
+            }
         }
     }
 
@@ -766,7 +772,11 @@ impl Library {
 
     /// Appends printable text from a physical/system keyboard or folder-path field.
     pub fn input_search_char(&mut self, character: char) -> bool {
-        let limit = if self.scan_path_input_focused { 1024 } else { 96 };
+        let limit = if self.scan_path_input_focused {
+            1024
+        } else {
+            96
+        };
         if (!self.search_focused && !self.scan_path_input_focused)
             || character.is_control()
             || self.search_query.chars().count() >= limit
@@ -834,8 +844,12 @@ impl Library {
             }
             match self.add_scan_directory(directory) {
                 Ok(true) => {}
-                Ok(false) => self.status = Some("ESSA PASTA JÁ ESTÁ NA BIBLIOTECA".to_string()),
-                Err(error) => self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A PASTA: {error}")),
+                Ok(false) => {
+                    self.status = Some("ESSA PASTA JÁ ESTÁ NA BIBLIOTECA".to_string())
+                }
+                Err(error) => {
+                    self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A PASTA: {error}"))
+                },
             }
             return;
         }
@@ -1116,9 +1130,7 @@ impl Library {
             if self.page == LibraryPage::Settings {
                 for index in 0..self.scan_config.directories.len().min(3) {
                     let row_top = 300.0 + index as f32 * 32.0;
-                    if (row_top..row_top + 28.0).contains(&y)
-                        && (334.0..374.0).contains(&x)
-                    {
+                    if (row_top..row_top + 28.0).contains(&y) && (334.0..374.0).contains(&x) {
                         self.remove_scan_directory_from_settings(index);
                         return ClickResult::Ignored;
                     }
@@ -1212,9 +1224,7 @@ impl Library {
             LibraryPage::Settings => {
                 for index in 0..self.scan_config.directories.len().min(3) {
                     let row_top = 164.0 + index as f32 * 28.0;
-                    if (row_top..row_top + 26.0).contains(&y)
-                        && (520.0..566.0).contains(&x)
-                    {
+                    if (row_top..row_top + 26.0).contains(&y) && (520.0..566.0).contains(&x) {
                         self.remove_scan_directory_from_settings(index);
                         return ClickResult::Ignored;
                     }
@@ -1486,46 +1496,172 @@ impl Library {
         );
 
         if self.page == LibraryPage::Settings {
-            responsive_text(frame, width, height, 22.0, 212.0, small_scale,
-                "Gerencie as pastas da sua biblioteca", 0xBBAFC7);
-            responsive_panel(frame, width, height, 20.0, 250.0, 360.0, 360.0, scale, 0x21152F);
-            responsive_text(frame, width, height, 38.0, 278.0, small_scale,
-                &format!("Pastas monitoradas ({})", self.scan_config.directories.len()),
-                brand::ACCENT_GREEN_LIGHT);
+            responsive_text(
+                frame,
+                width,
+                height,
+                22.0,
+                212.0,
+                small_scale,
+                "Gerencie as pastas da sua biblioteca",
+                0xBBAFC7,
+            );
+            responsive_panel(
+                frame, width, height, 20.0, 250.0, 360.0, 360.0, scale, 0x21152F,
+            );
+            responsive_text(
+                frame,
+                width,
+                height,
+                38.0,
+                278.0,
+                small_scale,
+                &format!(
+                    "Pastas monitoradas ({})",
+                    self.scan_config.directories.len()
+                ),
+                brand::ACCENT_GREEN_LIGHT,
+            );
             for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
                 let row_y = 300.0 + index as f32 * 32.0;
-                responsive_panel(frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x33223F);
-                responsive_text(frame, width, height, 42.0, row_y + 8.0, small_scale,
-                    &tail(&directory.to_string_lossy(), 34), brand::TEXT);
-                responsive_panel(frame, width, height, 334.0, row_y + 2.0, 36.0, 24.0, scale, 0x422038);
-                responsive_text_centered(frame, width, height, 352.0, row_y + 7.0,
-                    small_scale, "X", brand::TEXT);
+                responsive_panel(
+                    frame, width, height, 34.0, row_y, 340.0, 28.0, scale, 0x33223F,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    42.0,
+                    row_y + 8.0,
+                    small_scale,
+                    &tail(&directory.to_string_lossy(), 34),
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    334.0,
+                    row_y + 2.0,
+                    36.0,
+                    24.0,
+                    scale,
+                    0x422038,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    352.0,
+                    row_y + 7.0,
+                    small_scale,
+                    "X",
+                    brand::TEXT,
+                );
             }
             if self.scan_config.directories.len() > 3 {
-                responsive_text(frame, width, height, 42.0, 400.0, small_scale,
-                    &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 3),
-                    0xBBAFC7);
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    42.0,
+                    400.0,
+                    small_scale,
+                    &format!(
+                        "+ {} outra(s) pasta(s)",
+                        self.scan_config.directories.len() - 3
+                    ),
+                    0xBBAFC7,
+                );
             }
-            responsive_panel(frame, width, height, 38.0, 430.0, 324.0, 44.0, scale,
-                if self.scan_config.options.recursive { 0x28543F } else { 0x2D1A3B });
-            responsive_text_centered(frame, width, height, 200.0, 444.0, small_scale,
+            responsive_panel(
+                frame,
+                width,
+                height,
+                38.0,
+                430.0,
+                324.0,
+                44.0,
+                scale,
+                if self.scan_config.options.recursive {
+                    0x28543F
+                } else {
+                    0x2D1A3B
+                },
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                200.0,
+                444.0,
+                small_scale,
                 if self.scan_config.options.recursive {
                     "BUSCA EM SUBPASTAS: ATIVADA"
                 } else {
                     "BUSCA EM SUBPASTAS: DESATIVADA"
-                }, brand::TEXT);
-            responsive_panel(frame, width, height, 38.0, 478.0, 324.0, 44.0, scale,
-                if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x2D1A3B });
-            responsive_text_centered(frame, width, height, 200.0, 492.0, small_scale,
-                "ADICIONAR PASTA POR CAMINHO", brand::TEXT);
+                },
+                brand::TEXT,
+            );
+            responsive_panel(
+                frame,
+                width,
+                height,
+                38.0,
+                478.0,
+                324.0,
+                44.0,
+                scale,
+                if self.scan_path_input_focused {
+                    brand::ACCENT_RED
+                } else {
+                    0x2D1A3B
+                },
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                200.0,
+                492.0,
+                small_scale,
+                "ADICIONAR PASTA POR CAMINHO",
+                brand::TEXT,
+            );
             if self.scan_path_input_focused {
-                responsive_text(frame, width, height, 38.0, 532.0, small_scale,
-                    &truncate(&self.search_query, 42), brand::ACCENT_GREEN_LIGHT);
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    532.0,
+                    small_scale,
+                    &truncate(&self.search_query, 42),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
             }
-            responsive_panel(frame, width, height, 38.0, 546.0, 324.0, 40.0, scale, brand::ACCENT_RED);
-            responsive_text_centered(frame, width, height, 200.0, 559.0, small_scale,
-                "ATUALIZAR BIBLIOTECA", brand::TEXT);
-        } else {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                38.0,
+                546.0,
+                324.0,
+                40.0,
+                scale,
+                brand::ACCENT_RED,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                200.0,
+                559.0,
+                small_scale,
+                "ATUALIZAR BIBLIOTECA",
+                brand::TEXT,
+            );
+        }
             let count = self.visible_entry_count();
             let count_text = match (self.page, count) {
                 (LibraryPage::Homebrew, 1) => "1 homebrew disponível".to_string(),
@@ -1818,7 +1954,11 @@ impl Library {
             ("qwertyuiop", 222.0),
             ("asdfghjkl", 255.0),
             (
-                if self.scan_path_input_focused { "zxcvbnm/." } else { "zxcvbnm" },
+                if self.scan_path_input_focused {
+                    "zxcvbnm/."
+                } else {
+                    "zxcvbnm"
+                },
                 324.0,
             ),
         ];
@@ -2480,59 +2620,218 @@ impl Library {
                 );
             }
             LibraryPage::Settings => {
-                responsive_panel(frame, width, height, 128.0, 112.0, 842.0, 318.0, scale, 0x21152F);
-                responsive_text(frame, width, height, 158.0, 143.0, text_scale,
-                    &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
-                    brand::ACCENT_GREEN_LIGHT);
+                responsive_panel(
+                    frame, width, height, 128.0, 112.0, 842.0, 318.0, scale, 0x21152F,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    158.0,
+                    143.0,
+                    text_scale,
+                    &format!(
+                        "PASTAS MONITORADAS ({})",
+                        self.scan_config.directories.len()
+                    ),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
                 for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
                     let row_y = 164.0 + index as f32 * 28.0;
-                    responsive_panel(frame, width, height, 150.0, row_y, 412.0, 26.0, scale, 0x33223F);
-                    responsive_text(frame, width, height, 160.0, row_y + 7.0, text_scale,
-                        &tail(&directory.to_string_lossy(), 48), brand::TEXT);
-                    responsive_panel(frame, width, height, 520.0, row_y + 1.0, 42.0, 24.0, scale, 0x422038);
-                    responsive_text_centered(frame, width, height, 541.0, row_y + 6.0,
-                        text_scale, "X", brand::TEXT);
+                    responsive_panel(
+                        frame, width, height, 150.0, row_y, 412.0, 26.0, scale, 0x33223F,
+                    );
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        160.0,
+                        row_y + 7.0,
+                        text_scale,
+                        &tail(&directory.to_string_lossy(), 48),
+                        brand::TEXT,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        520.0,
+                        row_y + 1.0,
+                        42.0,
+                        24.0,
+                        scale,
+                        0x422038,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        541.0,
+                        row_y + 6.0,
+                        text_scale,
+                        "X",
+                        brand::TEXT,
+                    );
                 }
                 if self.scan_config.directories.len() > 3 {
-                    responsive_text(frame, width, height, 160.0, 250.0, text_scale,
-                        &format!("+ {} OUTRA(S) PASTA(S)", self.scan_config.directories.len() - 3),
-                        0xBBAFC7);
+                    responsive_text(
+                        frame,
+                        width,
+                        height,
+                        160.0,
+                        250.0,
+                        text_scale,
+                        &format!(
+                            "+ {} OUTRA(S) PASTA(S)",
+                            self.scan_config.directories.len() - 3
+                        ),
+                        0xBBAFC7,
+                    );
                 }
-                responsive_panel(frame, width, height, 150.0, 260.0, 412.0, 28.0, scale,
-                    if self.scan_path_input_focused { 0x422038 } else { 0x2D1A3B });
-                responsive_text(frame, width, height, 160.0, 268.0, text_scale,
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    150.0,
+                    260.0,
+                    412.0,
+                    28.0,
+                    scale,
                     if self.scan_path_input_focused {
-                        &truncate(&self.search_query, 54)
+                        0x422038
                     } else {
-                        "Caminho da nova pasta aparece aqui ao adicionar"
+                        0x2D1A3B
                     },
-                    if self.scan_path_input_focused { brand::ACCENT_GREEN_LIGHT } else { 0xBBAFC7 });
-                responsive_panel(frame, width, height, 158.0, 298.0, 190.0, 52.0, scale,
-                    if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x2D1A3B });
-                responsive_text_centered(frame, width, height, 253.0, 315.0, text_scale,
-                    "ADICIONAR PASTA", brand::TEXT);
-                responsive_panel(frame, width, height, 360.0, 298.0, 212.0, 52.0, scale,
-                    if self.scan_config.options.recursive { 0x28543F } else { 0x2D1A3B });
-                responsive_text_centered(frame, width, height, 466.0, 315.0, text_scale,
-                    if self.scan_config.options.recursive { "SUBPASTAS: SIM" } else { "SUBPASTAS: NÃO" },
-                    brand::TEXT);
-                responsive_text(frame, width, height, 590.0, 143.0, text_scale,
-                    "ÁUDIO EM SEGUNDO PLANO", brand::ACCENT_GREEN_LIGHT);
-                responsive_text(frame, width, height, 590.0, 176.0, text_scale,
+                );
+                let path_label = if self.scan_path_input_focused {
+                    truncate(&self.search_query, 54)
+                } else {
+                    "Caminho da nova pasta aparece aqui ao adicionar".to_string()
+                };
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    160.0,
+                    268.0,
+                    text_scale,
+                    &path_label,
+                    if self.scan_path_input_focused {
+                        brand::ACCENT_GREEN_LIGHT
+                    } else {
+                        0xBBAFC7
+                    },
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    158.0,
+                    298.0,
+                    190.0,
+                    52.0,
+                    scale,
+                    if self.scan_path_input_focused {
+                        brand::ACCENT_RED
+                    } else {
+                        0x2D1A3B
+                    },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    253.0,
+                    315.0,
+                    text_scale,
+                    "ADICIONAR PASTA",
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    360.0,
+                    298.0,
+                    212.0,
+                    52.0,
+                    scale,
+                    if self.scan_config.options.recursive {
+                        0x28543F
+                    } else {
+                        0x2D1A3B
+                    },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    466.0,
+                    315.0,
+                    text_scale,
+                    if self.scan_config.options.recursive {
+                        "SUBPASTAS: SIM"
+                    } else {
+                        "SUBPASTAS: NÃO"
+                    },
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    590.0,
+                    143.0,
+                    text_scale,
+                    "ÁUDIO EM SEGUNDO PLANO",
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    590.0,
+                    176.0,
+                    text_scale,
                     if self.external_media_detection_available {
                         "Detecção de mídia externa: automática"
                     } else {
                         "Detecção indisponível nesta plataforma"
-                    }, brand::TEXT);
-                responsive_text(frame, width, height, 590.0, 205.0, text_scale,
+                    },
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    590.0,
+                    205.0,
+                    text_scale,
                     if self.external_media_detection_available {
                         "Jogos são silenciados durante música externa."
                     } else {
                         "Recurso disponível apenas em plataformas compatíveis."
-                    }, 0xBBAFC7);
-                responsive_text(frame, width, height, 590.0, 254.0, text_scale,
-                    if self.external_media_playing { "Status: mídia tocando" } else { "Status: sem mídia ativa" },
-                    if self.external_media_playing { brand::ACCENT_RED_LIGHT } else { 0xBBAFC7 });
+                    },
+                    0xBBAFC7,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    590.0,
+                    254.0,
+                    text_scale,
+                    if self.external_media_playing {
+                        "Status: mídia tocando"
+                    } else {
+                        "Status: sem mídia ativa"
+                    },
+                    if self.external_media_playing {
+                        brand::ACCENT_RED_LIGHT
+                    } else {
+                        0xBBAFC7
+                    },
+                );
             }
             LibraryPage::Games
             | LibraryPage::Favorites
@@ -4110,10 +4409,8 @@ mod tests {
 
     #[test]
     fn settings_page_adds_removes_and_toggles_persisted_scan_roots() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-settings-scan-ui-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-settings-scan-ui-{}", std::process::id()));
         let primary = dir.join("primary");
         let secondary = dir.join("secondary");
         let nested = secondary.join("nested");
@@ -4185,10 +4482,8 @@ mod tests {
 
     #[test]
     fn settings_path_touch_keyboard_inserts_slash_and_dot() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-settings-touch-path-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-settings-touch-path-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
         library.select_page(LibraryPage::Settings);
