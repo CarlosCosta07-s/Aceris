@@ -2748,3 +2748,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 ## Ajuste de expectativa do teste da biblioteca (26/11/2026, ChatGPT)
 
 - O teste da interface alterna explicitamente a varredura recursiva para ligada antes de adicionar/remover uma raiz. A remoção mantém a opção global, portanto o teste agora verifica que ela permanece ligada depois de reabrir a configuração.
+
+
+## Rustfmt — alinhamento final do fluxo de pastas (26/11/2026, ChatGPT)
+
+- Os quatro trechos apontados pelo verificador de formatação foram ajustados ao estilo exato do workspace: braços de `match` e as duas tabelas do teclado virtual.
+- Aguardando nova CI para confirmar formatação, compilação multiplataforma e APK Android.

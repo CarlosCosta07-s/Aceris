@@ -594,7 +594,7 @@ impl Library {
             Ok(true) | Ok(false) => {}
             Err(error) => {
                 self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"))
-            },
+            }
         }
     }
 
@@ -607,9 +607,7 @@ impl Library {
             Ok(false) => {
                 self.status = Some("MANTENHA AO MENOS UMA PASTA NA BIBLIOTECA".to_string())
             }
-            Err(error) => {
-                self.status = Some(format!("NÃO FOI POSSÍVEL REMOVER A PASTA: {error}"))
-            }
+            Err(error) => self.status = Some(format!("NÃO FOI POSSÍVEL REMOVER A PASTA: {error}")),
         }
     }
 
@@ -844,12 +842,10 @@ impl Library {
             }
             match self.add_scan_directory(directory) {
                 Ok(true) => {}
-                Ok(false) => {
-                    self.status = Some("ESSA PASTA JÁ ESTÁ NA BIBLIOTECA".to_string())
-                }
+                Ok(false) => self.status = Some("ESSA PASTA JÁ ESTÁ NA BIBLIOTECA".to_string()),
                 Err(error) => {
                     self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A PASTA: {error}"))
-                },
+                }
             }
             return;
         }
@@ -2020,7 +2016,11 @@ impl Library {
             ("qwertyuiop", 222.0),
             ("asdfghjkl", 255.0),
             (
-                if self.scan_path_input_focused { "zxcvbnm/." } else { "zxcvbnm" },
+                if self.scan_path_input_focused {
+                    "zxcvbnm/."
+                } else {
+                    "zxcvbnm"
+                },
                 324.0,
             ),
         ];
