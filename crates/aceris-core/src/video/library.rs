@@ -415,7 +415,7 @@ impl Library {
 
     fn filtered_entries(&self) -> Vec<&Entry> {
         if self.page == LibraryPage::Recent {
-            let mut entries: Vec<&Entry> = self
+            let entries: Vec<&Entry> = self
                 .recent
                 .iter()
                 .filter_map(|name| {
