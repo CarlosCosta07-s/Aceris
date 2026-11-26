@@ -60,8 +60,8 @@ pub use fragment_output::{
     REG_STENCIL_OP, REG_STENCIL_TEST,
 };
 pub use fragment_pipeline::{
-    PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentInterpolationError, PicaFragmentPipeline,
-    PicaFogMode, PicaFragmentPipelineError, PicaFragmentSampleError, PicaFragmentVaryings,
+    PicaFogMode, PicaFragmentDraw, PicaFragmentDrawError, PicaFragmentInterpolationError,
+    PicaFragmentPipeline, PicaFragmentPipelineError, PicaFragmentSampleError, PicaFragmentVaryings,
     PicaFragmentVertex, REG_FOG_COLOR, REG_FOG_LINEAR_OFFSET, REG_FOG_LINEAR_SLOPE,
     REG_TEXENV_UPDATE_BUFFER,
 };
@@ -142,9 +142,8 @@ pub use render::{
 };
 pub use render_target::{
     PicaColorBufferFormat, PicaColorBufferFormatSelector, PicaRenderBlockMode,
-    PicaRenderTargetConfig, PicaRenderTargetError,
-    PicaRenderTargetWriteReport, REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC,
-    REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
+    PicaRenderTargetConfig, PicaRenderTargetError, PicaRenderTargetWriteReport,
+    REG_COLORBUFFER_FORMAT, REG_COLORBUFFER_LOC, REG_FRAMEBUFFER_BLOCK32, REG_FRAMEBUFFER_DIM,
 };
 pub use shader_exec::{
     MAX_SHADER_EXECUTION_INSTRUCTIONS, PicaShaderExecError, PicaShaderOpcode,

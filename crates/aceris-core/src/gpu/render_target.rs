@@ -653,12 +653,7 @@ mod tests {
         // combination is unresolved and must remain fail-closed.
         for pixel_size in [0u8, 2u8] {
             assert_eq!(
-                PicaRenderTargetConfig::from_registers(
-                    0,
-                    u32::from(pixel_size) | (1 << 16),
-                    0,
-                    8,
-                ),
+                PicaRenderTargetConfig::from_registers(0, u32::from(pixel_size) | (1 << 16), 0, 8,),
                 Err(PicaRenderTargetError::UnsupportedColorFormat {
                     pixel_size,
                     format: 1,
