@@ -56,10 +56,12 @@ impl App {
     pub fn new(games_dir: &Path) -> Self {
         let entries = library::scan_games(games_dir);
         let games_dir_owned = games_dir.to_path_buf();
+        let mut library = Library::new(entries, games_dir.display().to_string());
+        library.set_touch_keyboard_enabled(true);
         Self {
             games_dir: games_dir_owned,
             screen: Screen::Intro { frame: 0 },
-            library: Library::new(entries, games_dir.display().to_string()),
+            library,
             system: None,
             width: 0,
             height: 0,
@@ -131,10 +133,28 @@ impl App {
     /// Handles a hardware key; returns true when the key was consumed.
     pub fn key(&mut self, android_keycode: i32, pressed: bool) -> bool {
         if android_keycode == AKEYCODE_BACK {
+            if pressed && matches!(self.screen, Screen::Library) && self.library.search_is_focused()
+            {
+                self.library.finish_search();
+                return true;
+            }
             if pressed && matches!(self.screen, Screen::Game) {
                 self.leave_game();
             }
             return matches!(self.screen, Screen::Game | Screen::Library);
+        }
+        if pressed && matches!(self.screen, Screen::Library) && self.library.search_is_focused() {
+            match android_keycode {
+                AKEYCODE_DEL => {
+                    self.library.backspace_search();
+                    return true;
+                }
+                AKEYCODE_ENTER => {
+                    self.library.finish_search();
+                    return true;
+                }
+                _ => {}
+            }
         }
         let Some(bit) = pad_from_android_keycode(android_keycode) else {
             return false;
@@ -170,6 +190,11 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// Sends a printable character from a physical/system keyboard to the focused search.
+    pub fn text_input(&mut self, character: char) -> bool {
+        matches!(self.screen, Screen::Library) && self.library.input_search_char(character)
     }
 
     /// Advances one 60 Hz tick and returns an owned RGBA8 frame.
@@ -408,6 +433,8 @@ impl App {
 }
 
 pub const AKEYCODE_BACK: i32 = 4;
+const AKEYCODE_ENTER: i32 = 66;
+const AKEYCODE_DEL: i32 = 67;
 
 /// Maps an Android key code to a front-end button bit (`frontend::buttons`).
 ///
@@ -804,6 +831,24 @@ mod tests {
         assert!(app.key(AKEYCODE_BACK, true));
         assert!(matches!(app.screen(), Screen::Library));
         assert!(app.system.is_none());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn focused_library_accepts_android_text_backspace_and_enter() {
+        let (mut app, dir) = app_with_games(0);
+        app.screen = Screen::Library;
+        app.library.select_page(library::LibraryPage::Games);
+        app.library.focus_search();
+
+        assert!(app.text_input('P'));
+        assert!(app.text_input('o'));
+        assert_eq!(app.library.search_query(), "Po");
+        assert!(app.key(AKEYCODE_DEL, true));
+        assert_eq!(app.library.search_query(), "P");
+        assert!(app.key(AKEYCODE_ENTER, true));
+        assert!(!app.library.search_is_focused());
+        assert_eq!(app.library.search_query(), "P");
         fs::remove_dir_all(dir).ok();
     }
 

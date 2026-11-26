@@ -112,6 +112,7 @@ unsafe extern "C" {
     fn AInputEvent_getType(event: *const c_void) -> i32;
     fn AKeyEvent_getAction(event: *const c_void) -> i32;
     fn AKeyEvent_getKeyCode(event: *const c_void) -> i32;
+    fn AKeyEvent_getUnicodeChar(event: *const c_void) -> i32;
     fn AMotionEvent_getAction(event: *const c_void) -> i32;
     fn AMotionEvent_getPointerCount(event: *const c_void) -> usize;
     fn AMotionEvent_getPointerId(event: *const c_void, index: usize) -> i32;
@@ -901,9 +902,24 @@ fn drain_input(queue: Raw, app: &mut App) {
 /// `event` must be a live key event.
 unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
     // SAFETY: caller guarantees a key event.
-    let (action, code) = unsafe { (AKeyEvent_getAction(event), AKeyEvent_getKeyCode(event)) };
+    let (action, code, unicode) = unsafe {
+        (
+            AKeyEvent_getAction(event),
+            AKeyEvent_getKeyCode(event),
+            AKeyEvent_getUnicodeChar(event),
+        )
+    };
     match action {
-        KEY_ACTION_DOWN => app.key(code, true),
+        KEY_ACTION_DOWN => {
+            let mut handled = app.key(code, true);
+            if unicode > 0
+                && let Some(character) = char::from_u32(unicode as u32)
+                && !character.is_control()
+            {
+                handled |= app.text_input(character);
+            }
+            handled
+        }
         KEY_ACTION_UP => app.key(code, false),
         _ => false,
     }
