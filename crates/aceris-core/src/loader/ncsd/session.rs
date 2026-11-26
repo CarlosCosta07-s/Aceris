@@ -4254,7 +4254,7 @@ mod tests {
         assert!(
             session
                 .address_space
-                .is_writable_range(PROBE_HEAP_BASE, heap_size)
+                .is_writable_range(PROBE_HEAP_BASE, usize::try_from(heap_size).unwrap())
         );
 
         session.set_current_register(0, CURRENT);
