@@ -186,6 +186,7 @@ pub struct System {
     unhandled: std::collections::BTreeSet<String>,
     dsp: DspService,
     csnd: CsndService,
+    csnd_audio: CsndAudio,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -411,16 +412,29 @@ struct DspService {
     engine: Option<crate::dsp::Dsp>,
 }
 
-/// State of the `csnd:SND` HLE service. Sound commands are accepted and
-/// acknowledged but not mixed yet: no audio is produced through this service.
+/// Session state of the `csnd:SND` HLE service: the shared command block and
+/// the offsets the client registered. Channels live in [`CsndAudio`] because
+/// they keep playing after Shutdown, as on hardware.
 #[derive(Debug, Default)]
 struct CsndService {
     memory_handle: Option<u32>,
     mutex_handle: Option<u32>,
     backing: Option<crate::loader::ncsd::process::SharedMemoryBacking>,
-    channels_acquired: bool,
-    cap_units_acquired: u32,
+    layout: crate::csnd::CsndClientLayout,
+    capture_units_in_use: [bool; crate::csnd::CAPTURE_UNIT_COUNT],
 }
+
+/// CSND sound unit and its output queue (interleaved stereo at the DSP rate).
+#[derive(Debug, Default)]
+struct CsndAudio {
+    unit: crate::csnd::SoundUnit,
+    /// Virtual time not yet converted into whole output samples.
+    pending_ns: u64,
+    output: std::collections::VecDeque<i16>,
+}
+
+/// Longest CSND backlog kept when no frontend drains audio (about 0.5 s).
+const CSND_MAX_QUEUED_SAMPLES: usize = 32_768;
 
 /// `APT` signal value asking the application to start running (libctru `APTCMD_WAKEUP`).
 const APT_COMMAND_WAKEUP: u32 = 1;
@@ -877,6 +891,8 @@ impl System {
         self.hid = None;
         self.apt = None;
         self.dsp = DspService::default();
+        self.csnd = CsndService::default();
+        self.csnd_audio = CsndAudio::default();
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
@@ -2566,8 +2582,34 @@ impl System {
     ///
     /// Frontends call this after each frame and feed their audio device.
     pub fn take_audio_samples(&mut self, out: &mut Vec<i16>) {
+        let start = out.len();
+        let dsp_running = self
+            .dsp
+            .engine
+            .as_ref()
+            .is_some_and(crate::dsp::Dsp::is_running);
         if let Some(engine) = self.dsp.engine.as_mut() {
             engine.take_samples(out);
+        }
+        // CSND and the DSP feed the codec on separate lines that are summed.
+        let csnd = &mut self.csnd_audio.output;
+        let dsp_len = out.len() - start;
+        if dsp_running {
+            let overlap = dsp_len.min(csnd.len());
+            for (slot, extra) in out[start..start + overlap]
+                .iter_mut()
+                .zip(csnd.drain(..overlap))
+            {
+                *slot = slot.saturating_add(extra);
+            }
+        } else {
+            for (slot, extra) in out[start..]
+                .iter_mut()
+                .zip(csnd.drain(..dsp_len.min(csnd.len())))
+            {
+                *slot = slot.saturating_add(extra);
+            }
+            out.extend(csnd.drain(..));
         }
     }
 
@@ -2947,10 +2989,17 @@ impl System {
         }
     }
 
-    /// Handles `csnd:SND` requests (3dbrew "CSND Services" IDs, recalled from
-    /// memory; NOT hardware-verified). Commands are acknowledged only: the
-    /// shared command block is not interpreted and no sound is mixed.
+    /// Handles `csnd:SND` requests.
+    ///
+    /// Command IDs and word layouts follow 3dbrew "CSND Services" and libctru's
+    /// `csnd.c`; the command block itself is interpreted by [`crate::csnd`].
+    /// Not verified on hardware.
     fn dispatch_csnd_request(&mut self, message: IpcMessage<'_>) -> Result<Vec<u32>> {
+        /// 0xC8A0B7FF: CSND, invalid state.
+        const RESULT_CSND_INVALID_STATE: u32 = 0xC8A0_B7FF;
+        /// 0xE0E3FFF6: common, invalid pointer.
+        const RESULT_CSND_INVALID_ADDRESS: u32 = 0xE0E3_FFF6;
+
         let raw_header = message.header().raw();
         let command = raw_header & 0xFFFF_0000;
         let ok = vec![command | 0x40, 0];
@@ -2958,7 +3007,7 @@ impl System {
         let param = |index: usize| parameters.get(index).copied().unwrap_or(0);
         match command {
             0x0001_0000 => {
-                // Initialize(block size, four offsets).
+                // Initialize(size, master, channel, capture, direct-sound offsets).
                 if self.csnd.memory_handle.is_none() {
                     let size = (param(0).max(0x1000) + 0xFFF) & !0xFFF;
                     let session = self
@@ -2975,6 +3024,11 @@ impl System {
                     self.csnd.memory_handle = Some(memory);
                     self.csnd.mutex_handle = Some(mutex);
                 }
+                let layout = &mut self.csnd.layout;
+                layout.master_state_offset = param(1);
+                layout.channel_state_offset = param(2);
+                layout.capture_state_offset = param(3);
+                layout.direct_sound_offset = param(4);
                 let (mutex, memory) = (
                     self.csnd.mutex_handle.unwrap_or(0),
                     self.csnd.memory_handle.unwrap_or(0),
@@ -2983,37 +3037,126 @@ impl System {
             }
             0x0002_0000 => {
                 // Shutdown: the guest closes the handles it was given, so the
-                // next Initialize must create fresh ones.
+                // next Initialize must create fresh ones. Channels keep playing
+                // and stay acquired.
+                let layout = self.csnd.layout;
+                let captures = self.csnd.capture_units_in_use;
                 self.csnd = CsndService::default();
+                self.csnd.layout.channel_mask = layout.channel_mask;
+                self.csnd.layout.capture_mask = layout.capture_mask;
+                self.csnd.capture_units_in_use = captures;
                 Ok(ok)
             }
             0x0003_0000 => {
-                // ExecuteCommands(offset): mark the command block as processed.
-                if let Some(backing) = &self.csnd.backing {
-                    backing.write_bytes(param(0) as usize + 4, &1u32.to_le_bytes());
-                }
+                let Some(backing) = self.csnd.backing.clone() else {
+                    return Ok(vec![0x0003_0040, RESULT_CSND_INVALID_STATE]);
+                };
+                self.execute_csnd_commands(&backing, param(0))?;
                 Ok(ok)
             }
             0x0005_0000 => {
-                self.csnd.channels_acquired = true;
-                Ok(vec![0x0005_0080, 0, 0xFFFF_FF00])
+                self.csnd.layout.channel_mask = crate::csnd::APPLICATION_CHANNEL_MASK;
+                Ok(vec![0x0005_0080, 0, crate::csnd::APPLICATION_CHANNEL_MASK])
             }
             0x0006_0000 => {
-                self.csnd.channels_acquired = false;
+                self.csnd.layout.channel_mask = 0;
                 Ok(ok)
             }
             0x0007_0000 => {
-                let unit = self.csnd.cap_units_acquired.min(1);
-                self.csnd.cap_units_acquired += 1;
-                Ok(vec![0x0007_0080, 0, unit])
+                let Some(unit) = self.csnd.capture_units_in_use.iter().position(|used| !used)
+                else {
+                    return Ok(vec![0x0007_0080, RESULT_CSND_INVALID_STATE, u32::MAX]);
+                };
+                self.csnd.capture_units_in_use[unit] = true;
+                self.csnd.layout.capture_mask |= 1 << unit;
+                Ok(vec![0x0007_0080, 0, unit as u32])
             }
             0x0008_0000 => {
-                self.csnd.cap_units_acquired = self.csnd.cap_units_acquired.saturating_sub(1);
+                let unit = param(0) as usize;
+                if unit >= crate::csnd::CAPTURE_UNIT_COUNT
+                    || self.csnd.layout.capture_mask & (1 << unit) == 0
+                {
+                    return Ok(vec![0x0008_0040, RESULT_CSND_INVALID_STATE]);
+                }
+                self.csnd.capture_units_in_use[unit] = false;
+                self.csnd.layout.capture_mask &= !(1 << unit);
                 Ok(ok)
             }
-            0x0009_0000..=0x000C_0000 => Ok(ok), // cache maintenance, Reset
+            0x0009_0000..=0x000B_0000 => {
+                // Flush / Store / Invalidate data cache over a sample buffer.
+                let (address, size) = (param(0), param(1));
+                let end = u64::from(address) + u64::from(size);
+                let within = |low: u64, high: u64| low <= u64::from(address) && end <= high;
+                if !(within(0x1400_0000, 0x1C00_0000) || within(0x3000_0000, 0x4000_0000)) {
+                    return Ok(vec![command | 0x40, RESULT_CSND_INVALID_ADDRESS]);
+                }
+                if let Some(session) = self.ncsd_session.as_mut() {
+                    let _ = match command {
+                        0x0009_0000 => session.flush_process_data_cache(address, size),
+                        0x000A_0000 => session.store_process_data_cache(address, size),
+                        _ => session.invalidate_process_data_cache(address, size),
+                    };
+                    let _ = session.drain_write_buffer();
+                }
+                Ok(ok)
+            }
+            0x000C_0000 => {
+                self.csnd_audio.unit.reset_channels();
+                Ok(ok)
+            }
             _ => Ok(vec![command | 0x40, RESULT_INVALID_COMMAND]),
         }
+    }
+
+    /// Runs one CSND command list from the shared block: commits the guest's
+    /// cached writes, interprets the list and publishes the results back.
+    fn execute_csnd_commands(
+        &mut self,
+        backing: &crate::loader::ncsd::process::SharedMemoryBacking,
+        first_offset: u32,
+    ) -> Result<()> {
+        let Some(length) = backing.len() else {
+            return Ok(());
+        };
+        if let Some(session) = self.ncsd_session.as_mut() {
+            let _ = session.flush_shared_backing_cache(backing);
+            let _ = session.drain_write_buffer();
+        }
+        let mut block = vec![0u8; length];
+        if !backing.read_bytes(0, &mut block) {
+            return Ok(());
+        }
+        // Sample data written just before the commands must be visible to the
+        // channels' DMA; libctru expects the application to flush it, but the
+        // write buffer is drained here as the hardware DMA would observe it.
+        self.csnd_audio
+            .unit
+            .execute_command_list(&mut block, first_offset, &self.csnd.layout);
+        backing.write_bytes(0, &block);
+        if let Some(session) = self.ncsd_session.as_mut() {
+            let _ = session.invalidate_shared_backing_cache(backing);
+        }
+        Ok(())
+    }
+
+    /// Renders CSND output for `elapsed_ns` of virtual time.
+    fn run_csnd(&mut self, elapsed_ns: u64) {
+        let audio = &mut self.csnd_audio;
+        if !audio.unit.is_active() {
+            audio.pending_ns = 0;
+            return;
+        }
+        audio.pending_ns = audio.pending_ns.saturating_add(elapsed_ns);
+        let frames = (audio.pending_ns as f64 * crate::dsp::SAMPLE_RATE_HZ / 1e9) as u64;
+        if frames == 0 {
+            return;
+        }
+        audio.pending_ns -= (frames as f64 * 1e9 / crate::dsp::SAMPLE_RATE_HZ) as u64;
+        let mut samples = vec![0i16; frames as usize * 2];
+        audio.unit.render(&self.physical_memory, &mut samples);
+        audio.output.extend(samples);
+        let excess = audio.output.len().saturating_sub(CSND_MAX_QUEUED_SAMPLES);
+        audio.output.drain(..excess & !1);
     }
 
     /// Handles `hid:USER` requests (public 3dbrew command IDs; not hardware-verified).
@@ -5100,6 +5243,14 @@ impl System {
             if dsp_frames > 0 {
                 self.run_dsp_frame()?;
             }
+            self.run_csnd(
+                NOMINAL_FRAME_DURATION_NS / slices
+                    + if slice + 1 == slices {
+                        NOMINAL_FRAME_DURATION_NS % slices
+                    } else {
+                        0
+                    },
+            );
         }
         let cpu_report = Arm11RunReport {
             instructions_executed,
@@ -12252,6 +12403,99 @@ mod tests {
             .read_memory_bytes(0x1FF5_0000 + 0xD00, &mut status)
             .unwrap();
         assert_eq!(status[0], 0, "voice finished after its 480 samples");
+    }
+
+    #[test]
+    fn csnd_executes_guest_command_lists_and_mixes_audio() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(8)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let csnd = open_hle_service(&mut system, b"csnd:SND");
+
+        // libctru-style layout: commands at 0, master/channel/capture state after.
+        let (master, channel_state, capture) = (0x2000u32, 0x2008u32, 0x2188u32);
+        let reply = write_tls_ipc_request(
+            &mut system,
+            csnd,
+            &[0x0001_0140, 0x3000, master, channel_state, capture, 0x2198],
+        );
+        run_one_ipc_svc(&mut system);
+        let init = read_tls_ipc_response(&mut system, reply, 5);
+        assert_eq!(&init[..3], &[0x0001_0042, 0, 0x0400_0000]);
+        let memory = init[4];
+
+        let reply = write_tls_ipc_request(&mut system, csnd, &[0x0005_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0005_0080, 0, 0xFFFF_FF00]
+        );
+
+        let block = 0x1000_2000u32;
+        let session = system.ncsd_session.as_mut().unwrap();
+        session
+            .map_memory_block(memory, block, 3, 0x1000_0000)
+            .unwrap();
+
+        // A PCM16 tone in linear FCRAM, played one-shot at the output rate.
+        let pcm: Vec<u8> = std::iter::repeat_n(1200i16, 400)
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        let sound = system
+            .physical_memory_mut()
+            .allocate_linear_fcram(0x1000)
+            .unwrap();
+        system.physical_memory_mut().write(sound, &pcm).unwrap();
+
+        // ConfigureChannel(ch 8, PCM16, one-shot, play, period 2048) followed by
+        // UpdateState, written through the guest's data cache.
+        let flags: u32 = 8 | (2 << 10) | (1 << 12) | (1 << 14) | (2048 << 16);
+        let mut commands = vec![0u8; 0x40];
+        commands[0..2].copy_from_slice(&0x20u16.to_le_bytes());
+        commands[2..4].copy_from_slice(&0x00Eu16.to_le_bytes());
+        for (index, word) in [flags, 0x8000_8000, 0, sound, sound, 800]
+            .iter()
+            .enumerate()
+        {
+            commands[8 + index * 4..12 + index * 4].copy_from_slice(&word.to_le_bytes());
+        }
+        commands[0x20..0x22].copy_from_slice(&0xFFFFu16.to_le_bytes());
+        commands[0x22..0x24].copy_from_slice(&0x300u16.to_le_bytes());
+        let session = system.ncsd_session.as_mut().unwrap();
+        session.write_memory_bytes(block, &commands).unwrap();
+
+        let reply = write_tls_ipc_request(&mut system, csnd, &[0x0003_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0003_0040, 0]
+        );
+
+        // The guest observes completion and the channel state through its cache.
+        let session = system.ncsd_session.as_mut().unwrap();
+        let mut byte = [0u8; 1];
+        session.read_memory_bytes(block + 4, &mut byte).unwrap();
+        assert_eq!(byte[0], 1, "finished flag");
+        session
+            .read_memory_bytes(block + channel_state, &mut byte)
+            .unwrap();
+        assert_eq!(byte[0], 1, "channel 8 reports playing");
+
+        system.run_frame_with_budget(0).unwrap();
+        let mut samples = Vec::new();
+        system.take_audio_samples(&mut samples);
+        assert!(
+            samples.len() >= 2 * 400,
+            "one frame covers the 400-sample tone"
+        );
+        assert!(samples[..800].iter().all(|s| *s == 1200), "tone is audible");
+        assert!(samples[800..].iter().all(|s| *s == 0), "one-shot ends");
+        assert!(!system.csnd_audio.unit.channel(8).unwrap().is_playing());
     }
 
     #[test]

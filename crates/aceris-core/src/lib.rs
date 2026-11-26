@@ -4,6 +4,7 @@
 //! UI code, so it can be shared by the desktop and Android front-ends.
 
 pub mod cpu;
+pub mod csnd;
 pub mod dsp;
 pub mod fs;
 pub mod gpu;

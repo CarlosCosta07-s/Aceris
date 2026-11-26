@@ -2613,3 +2613,14 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - GetResourceLimitCurrentValues agora retorna THREAD=2 via scheduler (thread_count) e contadores 3–6 via tabela de objetos. GetResourceLimitLimitValues continua suportando apenas COMMIT=1; limites por classe dependem das categorias/limites do exheader e não foram estimados.
 - Shared memory (7), address arbiter (8) e CPU time (9) permanecem pendentes por lacunas de lifetime/accounting. Ainda não alegar ResourceLimit completo.
 - Testes novos em kernel table e sessão verificam contagens e aliases. Referências externas: libctru svc.h e 3dbrew KResourceLimit.
+
+
+## CSND — mixer de canais e interpretação da lista de comandos (26/11/2026, Claude)
+
+- Novo módulo `crates/aceris-core/src/csnd.rs` (Rust original): 32 canais com PCM8, PCM16 e IMA-ADPCM lidos da memória física, timer de 16 bits (clock = 2048× a taxa de saída de ~32728 Hz), interpolação linear, modos de loop (manual, repetição, one-shot, repetição com tamanho travado), hold, recarga de estado ADPCM no loop, volume por lado, volume mestre e fades de volume para SetPlayState/SetPlayStateRaw.
+- `csnd:SND` agora interpreta de fato `ExecuteCommands`: percorre a lista encadeada de comandos de 0x20 bytes no bloco compartilhado (com limite contra listas cíclicas), executa comandos de canal (0x000–0x010), de captura (0x100–0x106, só registradores), ApplyMasks (0x200) e UpdateState (0x300), marca `finished` e publica o estado por canal. Antes da leitura, o cache de dados do guest sobre o bloco é escrito de volta (`flush_shared_backing_cache`, novo); depois, as linhas são invalidadas.
+- Initialize guarda os quatro offsets; AcquireCapUnit/ReleaseCapUnit alocam de verdade as duas unidades; Flush/Store/InvalidateDataCache validam a faixa e operam o cache do processo; Reset para todos os canais; Shutdown preserva canais e máscaras, como no hardware.
+- Saída: `System::run_csnd` renderiza ao fim de cada fatia de frame; `take_audio_samples` soma CSND à saída do DSP (ou entrega só CSND quando o DSP não está rodando). Fila limitada a ~0,5 s.
+- Testes: 10 unitários em `csnd.rs` e 1 ponta a ponta em `system.rs` (comando escrito pelo guest via cache → IPC → flag `finished` e estado visíveis ao guest → amostras audíveis em `take_audio_samples`).
+- Limites: PSG/ruído produzem silêncio; captura não grava amostras; a renderização acontece no fim da fatia, então um som iniciado e parado dentro da mesma fatia pode não soar; cadência do fade é aproximada. Ainda não validado com o Cookie Clicker nem com áudio audível em hardware.
+- Referências: 3dbrew "CSND Services"/"CSND Registers"; libctru `csnd.h`; Azahar (GPLv3) `src/audio_core/csnd.{h,cpp}` e `src/core/hle/service/csnd/csnd_snd.cpp`, revisão `6d6e846afa7b02f3dd85183a968b40cd1561f700`, consulta somente leitura em 26/11/2026. Nenhum código foi copiado ou portado; a estrutura do Aceris é própria.

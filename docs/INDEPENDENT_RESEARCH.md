@@ -602,3 +602,12 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Os máximos dessas classes continuam sem suporte, pois categorias/limites do exheader ainda não são representados. Também não há contador confiável de memória compartilhada após desanexar o handle, de arbiters com waiters fora do objeto, nem de CPU time; tipos 7–9 continuam rejeitados. Não inventar defaults nem confundir handles duplicados com novos objetos.
 - Testes cobrem objetos, alias duplicado, objeto aposentado retido e SVC que retorna [2 threads, 1 event, 1 mutex, 1 semaphore, 1 timer].
 - Referências: libctru svc.h (https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/svc.h), 3dbrew KResourceLimit (https://3dbrew.org/wiki/KResourceLimit). Nenhum código do Azahar foi copiado.
+
+
+## CSND — protocolo e modelo de canais (26/11/2026)
+
+- **Pergunta técnica:** formato da lista de comandos do `csnd:SND`, layout do estado compartilhado e semântica de timer/formatos/loop dos canais.
+- **Fontes:** 3dbrew "CSND Services" e "CSND Registers"; libctru `csnd.h` (macros de timer e volume); Azahar, GPLv3, revisão `6d6e846afa7b02f3dd85183a968b40cd1561f700`, arquivos `src/audio_core/csnd.h`, `src/audio_core/csnd.cpp`, `src/core/hle/service/csnd/csnd_snd.cpp`, consulta somente leitura em 26/11/2026.
+- **Entendimento:** comando de 0x20 bytes (`next` u16, `id` u16, `finished` u8, seis parâmetros u32 a partir de +8); fim de lista 0xFFFF; estado por canal de 0xC bytes na ordem dos canais adquiridos; período = 0x10000 − registrador de 16 bits, com 2048 ticks por amostra de saída; PCM8 é escalado por 256; IMA-ADPCM decodifica nibble baixo primeiro.
+- **Implementado independentemente:** `crates/aceris-core/src/csnd.rs` e o despachante em `system.rs`, com testes próprios.
+- **Confiança:** média. Concorda entre 3dbrew, libctru e Azahar; não verificado em hardware.

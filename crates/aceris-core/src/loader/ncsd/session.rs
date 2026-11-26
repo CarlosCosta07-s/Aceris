@@ -456,6 +456,12 @@ impl Arm11ProcessSession {
             .invalidate_data_cache_range(address, size_bytes)
     }
 
+    /// Commits the guest's cached writes to every mapping of a backing before an
+    /// HLE service reads it.
+    pub fn flush_shared_backing_cache(&mut self, backing: &SharedMemoryBacking) -> Result<usize> {
+        self.address_space.flush_shared_backing_data_cache(backing)
+    }
+
     /// Drops cached lines of every guest mapping of a backing an HLE service just wrote.
     pub fn invalidate_shared_backing_cache(
         &mut self,

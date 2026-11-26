@@ -3345,6 +3345,25 @@ impl Arm11CodeAddressSpace {
         Ok(evicted)
     }
 
+    /// Writes back and invalidates cached lines of every mapping of one shared
+    /// backing, so an HLE service reads what the guest stored through its cache.
+    pub fn flush_shared_backing_data_cache(
+        &mut self,
+        backing: &SharedMemoryBacking,
+    ) -> BusResult<usize> {
+        let ranges: Vec<(u32, u32)> = self
+            .shared_regions
+            .iter()
+            .filter(|region| region.backing.shares_backing_with(backing))
+            .filter_map(|region| Some((region.address, region.size()?)))
+            .collect();
+        let mut flushed = 0;
+        for (address, size) in ranges {
+            flushed += self.flush_data_cache_range(address, size)?;
+        }
+        Ok(flushed)
+    }
+
     /// Invalidates cached lines of every mapping of one shared backing.
     ///
     /// An HLE service that publishes into shared memory is not an emulated
