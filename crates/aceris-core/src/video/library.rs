@@ -2805,8 +2805,19 @@ mod tests {
 
     #[test]
     fn list_mode_clicks_rows_and_favorite_control_independently() {
-        let mut library = library(8);
+        let dir =
+            std::env::temp_dir().join(format!("aceris-list-view-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let entries = (0..8)
+            .map(|index| Entry {
+                title: format!("Game {index}"),
+                path: PathBuf::from(format!("g{index}.3ds")),
+            })
+            .collect();
+        let mut library = Library::new(entries, dir.display().to_string());
+        library.select_page(LibraryPage::Games);
         library.toggle_view_mode();
+
         assert_eq!(
             library.click_responsive(420, 204, 1000, 600),
             ClickResult::Selected
@@ -2823,6 +2834,7 @@ mod tests {
         );
         assert_eq!(library.favorite_count(), 1);
         assert_eq!(library.selected_entry().unwrap().title, "Game 0");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
