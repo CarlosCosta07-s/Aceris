@@ -164,6 +164,7 @@ const WM_CLOSE: u32 = 0x0010;
 const WM_QUIT: u32 = 0x0012;
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
+const WM_CHAR: u32 = 0x0102;
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
 const WM_LBUTTONUP: u32 = 0x0202;
@@ -432,6 +433,14 @@ unsafe extern "system" fn window_procedure(
                     key,
                     pressed: false,
                 });
+            }
+            0
+        }
+        WM_CHAR => {
+            if let Some(character) = char::from_u32(wparam as u32)
+                && !character.is_control()
+            {
+                push_event(WindowEvent::Text(character));
             }
             0
         }

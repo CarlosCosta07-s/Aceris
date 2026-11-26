@@ -347,6 +347,17 @@ impl Window {
                     if !repeat && let Some(key) = game_key_from_mac_keycode(code) {
                         events.push(WindowEvent::Game { key, pressed });
                     }
+                    if pressed {
+                        let characters = send!(Id; event, sel(c"characters"));
+                        let utf8 = send!(*const c_char; characters, sel(c"UTF8String"));
+                        if !utf8.is_null()
+                            && let Ok(text) = CStr::from_ptr(utf8).to_str()
+                        {
+                            for character in text.chars().filter(|character| !character.is_control()) {
+                                events.push(WindowEvent::Text(character));
+                            }
+                        }
+                    }
                     // Swallowed: forwarding unhandled keys makes AppKit beep.
                     false
                 }

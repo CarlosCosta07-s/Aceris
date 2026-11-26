@@ -101,8 +101,10 @@ pub enum WindowEvent {
     CloseRequested,
     /// Part of the window was exposed and should be redrawn.
     Redraw,
-    /// A navigation key was pressed.
+    /// A navigation or editing key was pressed.
     Key(Key),
+    /// A printable Unicode character supplied by the platform text-input path.
+    Text(char),
     /// The primary mouse button was pressed at window pixel coordinates.
     Click { x: i32, y: i32 },
     /// The mouse wheel moved: negative is up (towards the list start).
@@ -222,6 +224,7 @@ pub enum Key {
     PageUp,
     PageDown,
     Enter,
+    Backspace,
     Escape,
 }
 

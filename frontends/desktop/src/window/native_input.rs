@@ -19,6 +19,7 @@ pub fn key_from_virtual_key(vk: u32) -> Option<Key> {
         0x21 => Some(Key::PageUp),
         0x22 => Some(Key::PageDown),
         0x0D => Some(Key::Enter),
+        0x08 => Some(Key::Backspace),
         0x1B => Some(Key::Escape),
         _ => None,
     }
@@ -94,6 +95,7 @@ pub fn key_from_mac_keycode(code: u16) -> Option<Key> {
         0x74 => Some(Key::PageUp),
         0x79 => Some(Key::PageDown),
         0x24 | 0x4C => Some(Key::Enter),
+        0x33 => Some(Key::Backspace),
         0x35 => Some(Key::Escape),
         _ => None,
     }

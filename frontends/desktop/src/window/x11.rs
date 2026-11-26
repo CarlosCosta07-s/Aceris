@@ -101,6 +101,13 @@ struct Xlib {
     next_event: unsafe extern "C" fn(*mut Display, *mut u64) -> c_int,
     flush: unsafe extern "C" fn(*mut Display) -> c_int,
     keycode_to_keysym: unsafe extern "C" fn(*mut Display, u8, c_int) -> c_ulong,
+    lookup_string: unsafe extern "C" fn(
+        *mut c_void,
+        *mut c_char,
+        c_int,
+        *mut c_ulong,
+        *mut c_void,
+    ) -> c_int,
 }
 
 fn load(library: *mut c_void, name: &str) -> Result<*mut c_void, WindowError> {
@@ -166,6 +173,7 @@ impl Xlib {
             next_event: symbol!("XNextEvent"),
             flush: symbol!("XFlush"),
             keycode_to_keysym: symbol!("XKeycodeToKeysym"),
+            lookup_string: symbol!("XLookupString"),
         })
     }
 }
@@ -431,6 +439,29 @@ impl Window {
                         if let Some(key) = game_key_from_keysym(keysym) {
                             events.push(WindowEvent::Game { key, pressed: true });
                         }
+
+                        let mut text_buffer = [0 as c_char; 32];
+                        let mut text_keysym = 0 as c_ulong;
+                        let byte_count = (self.xlib.lookup_string)(
+                            buffer.as_mut_ptr().cast(),
+                            text_buffer.as_mut_ptr(),
+                            text_buffer.len() as c_int,
+                            &mut text_keysym,
+                            ptr::null_mut(),
+                        );
+                        if byte_count > 0 {
+                            let bytes = std::slice::from_raw_parts(
+                                text_buffer.as_ptr().cast::<u8>(),
+                                byte_count as usize,
+                            );
+                            if let Ok(decoded) = std::str::from_utf8(bytes) {
+                                for character in
+                                    decoded.chars().filter(|character| !character.is_control())
+                                {
+                                    events.push(WindowEvent::Text(character));
+                                }
+                            }
+                        }
                     }
                     EVENT_KEY_RELEASE => {
                         let keycode = (buffer[10] >> 32) as u8;
@@ -490,6 +521,7 @@ fn key_from_keysym(keysym: c_ulong) -> Option<Key> {
         0xFF55 => Some(Key::PageUp),
         0xFF56 => Some(Key::PageDown),
         0xFF0D | 0xFF8D => Some(Key::Enter),
+        0xFF08 => Some(Key::Backspace),
         0xFF1B => Some(Key::Escape),
         _ => None,
     }

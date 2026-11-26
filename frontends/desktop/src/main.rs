@@ -433,7 +433,19 @@ fn browse_library(
             match event {
                 window::WindowEvent::CloseRequested => return Ok(None),
                 window::WindowEvent::Redraw => {}
-                window::WindowEvent::Key(window::Key::Escape) => return Ok(None),
+                window::WindowEvent::Key(window::Key::Escape) => {
+                    if library.search_is_focused() {
+                        library.finish_search();
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Backspace) => {
+                    library.backspace_search();
+                }
+                window::WindowEvent::Text(character) => {
+                    library.input_search_char(character);
+                }
                 window::WindowEvent::Key(window::Key::Up) => library.move_selection_responsive(
                     -1,
                     window::CANVAS_WIDTH as u32,
@@ -471,6 +483,7 @@ fn browse_library(
                     if library.page() == aceris_core::video::library::LibraryPage::Settings {
                         library.reload();
                     } else {
+                        library.finish_search();
                         activate = true;
                     }
                 }
@@ -489,9 +502,8 @@ fn browse_library(
                     ) == ClickResult::Activated;
                 }
                 // Controller input only matters while a game is running.
-                window::WindowEvent::Game { .. }
-                | window::WindowEvent::Pointer { .. }
-                | window::WindowEvent::FocusLost => {}
+                window::WindowEvent::FocusLost => library.finish_search(),
+                window::WindowEvent::Game { .. } | window::WindowEvent::Pointer { .. } => {}
             }
             if activate {
                 if let Some(path) = library.selected_entry().map(|entry| entry.path.clone()) {
