@@ -43,6 +43,7 @@ A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/s
 - Tela inicial, início da biblioteca e páginas de Jogos, Favoritos, Recentes, Homebrew e Configurações.
 - Biblioteca com visualização de grade e lista selecionável no modo paisagem; o fallback em retrato continua usando lista adaptável.
 - Pesquisa funcional por título, nome do arquivo e caminho, sem diferenciar maiúsculas/minúsculas ou acentos. Desktop usa texto do teclado do sistema; Android oferece teclado virtual desenhado em Rust e aceita caracteres Unicode de teclados físicos.
+- As páginas de coleção também permitem filtrar por extensão (.3DS, .CCI, .CIA ou .3DSX), com comparação sem diferenciar maiúsculas/minúsculas. O filtro é somente classificatório e não implica validação de conteúdo nem instalação de CIA.
 - Favoritos e Recentes persistidos localmente com identidade por caminho completo (inclui migração dos antigos registros por nome); ordenação A–Z/Z–A e atualização manual da biblioteca.
 - Plano de fundo personalizado na biblioteca, com suporte a quadros animados fornecidos pelo host.
 - O scanner compartilhado em Rust aceita múltiplas raízes e recursão opcional, sem seguir links simbólicos e deduplicando diretórios/arquivos sobrepostos. O modelo `Library` e os frontends desktop/Android carregam a configuração salva em `.aceris/library_scan_v1.txt`; a página Configurações permite adicionar uma pasta por caminho existente, remover raízes e alternar a busca recursiva.

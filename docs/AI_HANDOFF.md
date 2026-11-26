@@ -2760,3 +2760,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 
 - A suíte apontou que o teste antigo usava o retângulo do botão local de atualização removido do painel paisagem. A atualização agora é a ação compartilhada do cabeçalho, no canto superior direito; o teste foi movido para esse alvo visível.
 - A atualização continua acessível em Configurações nos dois layouts: botão local no painel vertical e ação global no cabeçalho paisagem.
+
+
+
+## Biblioteca — filtro por formato de arquivo (26/11/2026, ChatGPT)
+
+- Adicionado ao modelo Rust compartilhado `LibraryFormatFilter`, com os estados Todos, .3DS, .CCI, .CIA e .3DSX. A filtragem compara a extensão do nome do arquivo sem diferenciar maiúsculas/minúsculas e funciona em Jogos, Favoritos, Recentes e Homebrew.
+- O filtro aparece como controle compacto nas interfaces responsivas em retrato e paisagem; a troca redefine a seleção para evitar índice inválido ou seleção inesperada.
+- Estados vazios explicam quando não existem arquivos para a extensão escolhida.
+- O filtro só classifica extensões já reconhecidas pelo scanner. Não valida o conteúdo dos contêineres, não altera o loader e não transforma a presença de .CIA em instalação persistente ou gerenciável.
+- Testes adicionados para ciclo de filtros, comparação case-insensitive, interação nos dois layouts e manutenção do filtro na página Homebrew.
+- Fronteiras: somente `crates/aceris-core/src/video/library.rs` e documentação da experiência/frontends. Nenhum subsistema de emulação, dependência, asset ou conteúdo de jogo foi alterado/adicionado. Trabalho restrito à branch `main`.
+- Validação: os testes novos e os workflows multiplataforma aguardam a CI deste commit; nenhum build ou teste local foi executado nesta revisão.

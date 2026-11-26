@@ -54,6 +54,8 @@ O ciclo de vida de NativeActivity, pause/resume, destruição e recriação de s
 - A ABI preserva helpers de orientação/geometria e de controles virtuais para hosts que optem por usá-los. O aplicativo Android atual é horizontal; não se deve inferir que todos os modos de orientação oferecidos pela ABI estejam expostos na interface.
 - Favoritos e Recentes são persistidos em arquivos da pasta de dados do Aceris usando identificadores derivados do caminho completo, evitando colisões entre arquivos com o mesmo nome em pastas diferentes. Registros antigos, baseados somente no nome, são migrados para a pasta de jogos original. Metadados/capas reais, seleção SAF, perfis por jogo, editor de controles e temas alternativos permanecem como trabalho futuro.
 
+- As páginas Jogos, Favoritos, Recentes e Homebrew oferecem filtro por extensão (.3DS, .CCI, .CIA, .3DSX), além da opção Todos. O filtro é compartilhado pela biblioteca Rust e funciona nos layouts responsivos em retrato e paisagem. Ele classifica pelo nome do arquivo, não valida conteúdo; em particular, filtrar .CIA não significa que o Aceris ofereça instalação persistente de títulos.
+
 ## Estado de validação
 
 | Área | Evidência atual | O que falta |

@@ -48,6 +48,53 @@ enum LibraryViewMode {
     List,
 }
 
+/// File-name extension filter for the game collection.
+///
+/// This describes the container extension only; it does not imply that every
+/// file can be installed or that its contents are supported by the loader.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LibraryFormatFilter {
+    #[default]
+    All,
+    ThreeDs,
+    Cci,
+    Cia,
+    ThreeDsX,
+}
+
+impl LibraryFormatFilter {
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::ThreeDs,
+            Self::ThreeDs => Self::Cci,
+            Self::Cci => Self::Cia,
+            Self::Cia => Self::ThreeDsX,
+            Self::ThreeDsX => Self::All,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::All => "TODOS",
+            Self::ThreeDs => ".3DS",
+            Self::Cci => ".CCI",
+            Self::Cia => ".CIA",
+            Self::ThreeDsX => ".3DSX",
+        }
+    }
+
+    fn matches_path(self, path: &Path) -> bool {
+        let extension = path.extension().and_then(|value| value.to_str());
+        match self {
+            Self::All => true,
+            Self::ThreeDs => extension.is_some_and(|value| value.eq_ignore_ascii_case("3ds")),
+            Self::Cci => extension.is_some_and(|value| value.eq_ignore_ascii_case("cci")),
+            Self::Cia => extension.is_some_and(|value| value.eq_ignore_ascii_case("cia")),
+            Self::ThreeDsX => extension.is_some_and(|value| value.eq_ignore_ascii_case("3dsx")),
+        }
+    }
+}
+
 /// What a click did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClickResult {
@@ -74,6 +121,7 @@ pub struct Library {
     recent: Vec<String>,
     sort_descending: bool,
     view_mode: LibraryViewMode,
+    format_filter: LibraryFormatFilter,
     search_query: String,
     search_focused: bool,
     scan_path_input_focused: bool,
@@ -511,6 +559,7 @@ impl Library {
             recent,
             sort_descending: false,
             view_mode: LibraryViewMode::Grid,
+            format_filter: LibraryFormatFilter::All,
             search_query: String::new(),
             search_focused: false,
             scan_path_input_focused: false,
@@ -701,6 +750,19 @@ impl Library {
             }
             .to_string(),
         );
+    }
+
+    /// Advances the file-extension filter and resets the visible selection.
+    pub fn cycle_format_filter(&mut self) {
+        self.format_filter = self.format_filter.next();
+        self.selected = 0;
+        self.first_visible = 0;
+        self.status = Some(format!("Filtro de formato: {}", self.format_filter.label()));
+    }
+
+    /// Current extension filter applied to collection pages.
+    pub fn format_filter(&self) -> LibraryFormatFilter {
+        self.format_filter
     }
 
     /// Switches the landscape collection between a compact grid and a readable list.
@@ -934,14 +996,21 @@ impl Library {
                         .iter()
                         .find(|entry| library_path_id(&entry.path).as_deref() == Some(id.as_str()))
                 })
-                .filter(|entry| self.entry_matches_search(entry))
+                .filter(|entry| {
+                    self.entry_matches_search(entry)
+                        && self.format_filter.matches_path(&entry.path)
+                })
                 .collect();
             return entries;
         }
         let mut entries: Vec<&Entry> = self
             .entries
             .iter()
-            .filter(|entry| self.entry_matches_page(entry) && self.entry_matches_search(entry))
+            .filter(|entry| {
+                self.entry_matches_page(entry)
+                    && self.entry_matches_search(entry)
+                    && self.format_filter.matches_path(&entry.path)
+            })
             .collect();
         if self.sort_descending {
             entries.reverse();
@@ -1101,7 +1170,9 @@ impl Library {
             && (88.0..124.0).contains(&y)
             && (128.0..970.0).contains(&x)
         {
-            if x >= 916.0 {
+            if x >= 760.0 {
+                self.cycle_format_filter();
+            } else if x >= 710.0 {
                 self.clear_search();
                 self.focus_search();
             } else {
@@ -1144,6 +1215,19 @@ impl Library {
                 || ((490.0..542.0).contains(&y) && (38.0..362.0).contains(&x))
             {
                 self.reload();
+                return ClickResult::Ignored;
+            }
+            if (222.0..248.0).contains(&y)
+                && (20.0..380.0).contains(&x)
+                && matches!(
+                    self.page,
+                    LibraryPage::Games
+                        | LibraryPage::Favorites
+                        | LibraryPage::Recent
+                        | LibraryPage::Homebrew
+                )
+            {
+                self.cycle_format_filter();
                 return ClickResult::Ignored;
             }
             if y < 250.0 {
@@ -1675,6 +1759,35 @@ impl Library {
                 &count_text,
                 0xBBAFC7,
             );
+            if matches!(
+                self.page,
+                LibraryPage::Games
+                    | LibraryPage::Favorites
+                    | LibraryPage::Recent
+                    | LibraryPage::Homebrew
+            ) {
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    20.0,
+                    222.0,
+                    360.0,
+                    26.0,
+                    scale,
+                    0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    230.0,
+                    small_scale,
+                    &format!("FORMATO: {}", self.format_filter.label()),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+            }
             responsive_panel(
                 frame, width, height, 306.0, 170.0, 78.0, 44.0, scale, 0x2D1A3B,
             );
@@ -1728,7 +1841,21 @@ impl Library {
                     };
                 responsive_folder_icon(frame, width, height, 200.0, icon_y, scale);
                 let (empty_title, first_line, second_line, formats) =
-                    if self.page == LibraryPage::Homebrew {
+                    if !self.search_query.is_empty() {
+                        (
+                            "Nenhum resultado encontrado",
+                            "Tente outro termo ou limpe a busca.",
+                            "",
+                            "Pesquisa sem resultados",
+                        )
+                    } else if self.format_filter != LibraryFormatFilter::All {
+                        (
+                            "Nenhum arquivo neste formato",
+                            "Não há arquivos com a extensão escolhida.",
+                            "Troque o filtro para ver outros formatos.",
+                            "Filtro de formato ativo",
+                        )
+                    } else if self.page == LibraryPage::Homebrew {
                         (
                             "Nenhum homebrew encontrado",
                             "Adicione arquivos .3dsx à pasta",
@@ -1739,7 +1866,7 @@ impl Library {
                         (
                             "Sua biblioteca está vazia",
                             "Adicione seus arquivos de jogos à pasta",
-                            "do Aceris para comecar a jogar.",
+                            "do Aceris para começar a jogar.",
                             "Formatos: .3ds / .cci / .cia / .3dsx",
                         )
                     };
@@ -2256,7 +2383,7 @@ impl Library {
                 height,
                 128.0,
                 90.0,
-                842.0,
+                572.0,
                 32.0,
                 scale,
                 if self.search_focused {
@@ -2268,7 +2395,7 @@ impl Library {
             let search_label = if self.search_query.is_empty() {
                 "BUSCAR POR NOME OU CAMINHO".to_string()
             } else {
-                format!("BUSCAR: {}", truncate(&self.search_query, 76))
+                format!("BUSCAR: {}", truncate(&self.search_query, 48))
             };
             responsive_text(
                 frame,
@@ -2285,17 +2412,38 @@ impl Library {
                 },
             );
             responsive_panel(
-                frame, width, height, 920.0, 93.0, 40.0, 26.0, scale, 0x33223F,
+                frame, width, height, 710.0, 93.0, 40.0, 26.0, scale, 0x33223F,
             );
             responsive_text_centered(
                 frame,
                 width,
                 height,
-                940.0,
+                730.0,
                 99.0,
                 text_scale,
                 "X",
                 brand::TEXT,
+            );
+            responsive_panel(
+                frame,
+                width,
+                height,
+                760.0,
+                90.0,
+                210.0,
+                32.0,
+                scale,
+                0x2D1A3B,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                865.0,
+                100.0,
+                text_scale,
+                &format!("FORMATO: {}", self.format_filter.label()),
+                brand::ACCENT_GREEN_LIGHT,
             );
         }
         if matches!(
@@ -2855,6 +3003,11 @@ impl Library {
                         (
                             "Nenhum resultado encontrado",
                             "Tente outro termo ou limpe a busca.",
+                        )
+                    } else if self.format_filter != LibraryFormatFilter::All {
+                        (
+                            "Nenhum arquivo neste formato",
+                            "Troque o filtro de formato para ver outros.",
                         )
                     } else {
                         (
@@ -4503,6 +4656,78 @@ mod tests {
         library.finish_search();
         assert_eq!(library.scan_config().directories.len(), 1);
         assert_eq!(library.status_message(), Some("NENHUM CAMINHO INFORMADO"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+
+    #[test]
+    fn file_format_filter_cycles_and_matches_extensions_case_insensitively() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-format-filter-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        for name in ["alpha.3ds", "beta.CCI", "gamma.cia", "demo.3dsx", "notes.txt"] {
+            fs::write(dir.join(name), b"fixture").unwrap();
+        }
+
+        let mut library = Library::new(scan_games(&dir), dir.display().to_string());
+        library.select_page(LibraryPage::Games);
+        assert_eq!(library.visible_entry_count(), 3);
+
+        for (filter, expected_title) in [
+            (LibraryFormatFilter::ThreeDs, Some("alpha")),
+            (LibraryFormatFilter::Cci, Some("beta")),
+            (LibraryFormatFilter::Cia, Some("gamma")),
+            (LibraryFormatFilter::ThreeDsX, None),
+        ] {
+            library.cycle_format_filter();
+            assert_eq!(library.format_filter(), filter);
+            let expected_count = if expected_title.is_some() { 1 } else { 0 };
+            assert_eq!(library.visible_entry_count(), expected_count);
+            if let Some(title) = expected_title {
+                assert_eq!(library.selected_entry().unwrap().title, title);
+            }
+        }
+
+        library.select_page(LibraryPage::Homebrew);
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(library.selected_entry().unwrap().title, "demo");
+        library.cycle_format_filter();
+        assert_eq!(library.format_filter(), LibraryFormatFilter::All);
+        assert_eq!(library.visible_entry_count(), 1);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn responsive_format_filter_control_works_in_portrait_and_landscape() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-format-filter-ui-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("alpha.3ds"), b"fixture").unwrap();
+        fs::write(dir.join("beta.cci"), b"fixture").unwrap();
+
+        let mut library = Library::new(scan_games(&dir), dir.display().to_string());
+        library.select_page(LibraryPage::Games);
+
+        assert_eq!(
+            library.click_responsive(200, 234, 400, 800),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.format_filter(), LibraryFormatFilter::ThreeDs);
+        assert_eq!(library.visible_entry_count(), 1);
+
+        assert_eq!(
+            library.click_responsive(865, 100, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.format_filter(), LibraryFormatFilter::Cci);
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(library.selected_entry().unwrap().title, "beta");
 
         fs::remove_dir_all(dir).unwrap();
     }
