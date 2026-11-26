@@ -5880,7 +5880,7 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(2)),
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(3)),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
