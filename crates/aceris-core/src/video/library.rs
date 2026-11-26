@@ -72,6 +72,10 @@ pub struct Library {
     recent: Vec<String>,
     sort_descending: bool,
     view_mode: LibraryViewMode,
+    search_query: String,
+    search_focused: bool,
+    touch_keyboard_enabled: bool,
+    touch_keyboard_open: bool,
     external_media_playing: bool,
     external_media_detection_available: bool,
 }
@@ -145,6 +149,10 @@ impl Library {
             recent,
             sort_descending: false,
             view_mode: LibraryViewMode::Grid,
+            search_query: String::new(),
+            search_focused: false,
+            touch_keyboard_enabled: false,
+            touch_keyboard_open: false,
             external_media_playing: false,
             external_media_detection_available: false,
         }
@@ -270,6 +278,76 @@ impl Library {
         self.view_mode == LibraryViewMode::List
     }
 
+    /// Enables a touch-operated on-screen keyboard for hosts without a system text field.
+    pub fn set_touch_keyboard_enabled(&mut self, enabled: bool) {
+        self.touch_keyboard_enabled = enabled;
+        if !enabled {
+            self.touch_keyboard_open = false;
+        }
+    }
+
+    /// Current search text, shared by the desktop and Android library.
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    /// True while keyboard text should be sent to the library search.
+    pub fn search_is_focused(&self) -> bool {
+        self.search_focused
+    }
+
+    /// True while the built-in touch keyboard is visible.
+    pub fn touch_keyboard_is_open(&self) -> bool {
+        self.touch_keyboard_open
+    }
+
+    /// Gives the search field focus; touch hosts also open the built-in keyboard.
+    pub fn focus_search(&mut self) {
+        self.search_focused = true;
+        self.touch_keyboard_open = self.touch_keyboard_enabled;
+        self.status = None;
+    }
+
+    /// Appends printable text from a physical/system keyboard.
+    pub fn input_search_char(&mut self, character: char) -> bool {
+        if !self.search_focused || character.is_control() || self.search_query.chars().count() >= 96
+        {
+            return false;
+        }
+        self.search_query.push(character);
+        self.reset_search_selection();
+        true
+    }
+
+    /// Removes one Unicode scalar from the current search.
+    pub fn backspace_search(&mut self) -> bool {
+        if !self.search_focused || self.search_query.pop().is_none() {
+            return false;
+        }
+        self.reset_search_selection();
+        true
+    }
+
+    /// Clears the query without closing the search field.
+    pub fn clear_search(&mut self) {
+        if !self.search_query.is_empty() {
+            self.search_query.clear();
+            self.reset_search_selection();
+        }
+    }
+
+    /// Closes text entry and the touch keyboard, preserving the current query.
+    pub fn finish_search(&mut self) {
+        self.search_focused = false;
+        self.touch_keyboard_open = false;
+    }
+
+    fn reset_search_selection(&mut self) {
+        self.selected = 0;
+        self.first_visible = 0;
+        self.status = None;
+    }
+
     /// Updates the external-media indicator shown on the home screen.
     pub fn set_external_media_playing(&mut self, playing: bool) {
         self.external_media_playing = playing;
@@ -310,6 +388,13 @@ impl Library {
         }
     }
 
+    fn entry_matches_search(&self, entry: &Entry) -> bool {
+        let query = fold_search_text(&self.search_query);
+        query.is_empty()
+            || fold_search_text(&entry.title).contains(&query)
+            || fold_search_text(&entry.path.to_string_lossy()).contains(&query)
+    }
+
     fn entry_matches_page(&self, entry: &Entry) -> bool {
         let is_homebrew = entry
             .path
@@ -330,7 +415,7 @@ impl Library {
 
     fn filtered_entries(&self) -> Vec<&Entry> {
         if self.page == LibraryPage::Recent {
-            return self
+            let mut entries: Vec<&Entry> = self
                 .recent
                 .iter()
                 .filter_map(|name| {
@@ -339,12 +424,17 @@ impl Library {
                             == Some(name.as_str())
                     })
                 })
+                .filter(|entry| self.entry_matches_search(entry))
                 .collect();
+            if self.sort_descending {
+                entries.reverse();
+            }
+            return entries;
         }
         let mut entries: Vec<&Entry> = self
             .entries
             .iter()
-            .filter(|entry| self.entry_matches_page(entry))
+            .filter(|entry| self.entry_matches_page(entry) && self.entry_matches_search(entry))
             .collect();
         if self.sort_descending {
             entries.reverse();
@@ -485,6 +575,33 @@ impl Library {
             return ClickResult::Ignored;
         };
         let (x, y) = (x as f32 / scale, y as f32 / scale);
+
+        if self.touch_keyboard_open {
+            if self.handle_touch_keyboard_tap(x, y, logical_height) {
+                return ClickResult::Ignored;
+            }
+            self.finish_search();
+        }
+
+        if !portrait
+            && matches!(
+                self.page,
+                LibraryPage::Games
+                    | LibraryPage::Favorites
+                    | LibraryPage::Recent
+                    | LibraryPage::Homebrew
+            )
+            && (88.0..124.0).contains(&y)
+            && (128.0..970.0).contains(&x)
+        {
+            if x >= 916.0 {
+                self.clear_search();
+                self.focus_search();
+            } else {
+                self.focus_search();
+            }
+            return ClickResult::Ignored;
+        }
 
         if portrait {
             // Portrait rendering remains a fallback for non-Android hosts.
@@ -1214,6 +1331,96 @@ impl Library {
         );
     }
 
+    fn handle_touch_keyboard_tap(&mut self, x: f32, y: f32, logical_height: f32) -> bool {
+        let top = search_keyboard_top(logical_height);
+        if !(128.0..970.0).contains(&x) || y < top || y >= top + 174.0 {
+            return false;
+        }
+
+        let rows = [("qwertyuiop", 222.0), ("asdfghjkl", 255.0), ("zxcvbnm", 324.0)];
+        for (row, (keys, start_x)) in rows.iter().enumerate() {
+            let row_top = top + 8.0 + row as f32 * 40.0;
+            if (row_top..row_top + 34.0).contains(&y) && x >= *start_x {
+                let offset = x - *start_x;
+                let column = (offset / 66.0).floor() as usize;
+                if offset - column as f32 * 66.0 < 58.0 {
+                    if let Some(character) = keys.chars().nth(column) {
+                        self.input_search_char(character);
+                    }
+                    return true;
+                }
+            }
+        }
+
+        let action_top = top + 128.0;
+        if (action_top..action_top + 34.0).contains(&y) {
+            if (152.0..332.0).contains(&x) {
+                self.input_search_char(' ');
+            } else if (340.0..480.0).contains(&x) {
+                self.backspace_search();
+            } else if (488.0..628.0).contains(&x) {
+                self.clear_search();
+            } else if (636.0..776.0).contains(&x) {
+                self.finish_search();
+            }
+        }
+        true
+    }
+
+    fn render_touch_keyboard(
+        &self,
+        frame: &mut [u8],
+        width: u32,
+        height: u32,
+        scale: f32,
+        logical_height: f32,
+        text_scale: usize,
+    ) {
+        let top = search_keyboard_top(logical_height);
+        responsive_panel(
+            frame, width, height, 128.0, top, 842.0, 174.0, scale, 0x21152F,
+        );
+        let rows = [("qwertyuiop", 222.0), ("asdfghjkl", 255.0), ("zxcvbnm", 324.0)];
+        for (row, (keys, start_x)) in rows.iter().enumerate() {
+            let y = top + 8.0 + row as f32 * 40.0;
+            for (column, character) in keys.chars().enumerate() {
+                let x = *start_x + column as f32 * 66.0;
+                responsive_panel(frame, width, height, x, y, 58.0, 34.0, scale, 0x33223F);
+                let label = character.to_ascii_uppercase().to_string();
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    x + 29.0,
+                    y + 9.0,
+                    text_scale,
+                    &label,
+                    brand::TEXT,
+                );
+            }
+        }
+        for (x, width, label) in [
+            (152.0, 180.0, "ESPAÇO"),
+            (340.0, 140.0, "APAGAR"),
+            (488.0, 140.0, "LIMPAR"),
+            (636.0, 140.0, "OK"),
+        ] {
+            responsive_panel(
+                frame, width, height, x, top + 128.0, width, 34.0, scale, 0x422038,
+            );
+            responsive_text_centered(
+                frame,
+                width as u32,
+                height,
+                x + width * 0.5,
+                top + 137.0,
+                text_scale,
+                label,
+                brand::TEXT,
+            );
+        }
+    }
+
     fn render_landscape(
         &self,
         frame: &mut [u8],
@@ -1385,6 +1592,69 @@ impl Library {
         responsive_text(
             frame, width, height, 132.0, 56.0, text_scale, subtitle, 0xBBAFC7,
         );
+        if matches!(
+            self.page,
+            LibraryPage::Games
+                | LibraryPage::Favorites
+                | LibraryPage::Recent
+                | LibraryPage::Homebrew
+        ) {
+            responsive_panel(
+                frame,
+                width,
+                height,
+                128.0,
+                90.0,
+                842.0,
+                32.0,
+                scale,
+                if self.search_focused {
+                    0x422038
+                } else {
+                    0x21152F
+                },
+            );
+            let search_label = if self.search_query.is_empty() {
+                "BUSCAR POR NOME OU CAMINHO".to_string()
+            } else {
+                format!("BUSCAR: {}", truncate(&self.search_query, 76))
+            };
+            responsive_text(
+                frame,
+                width,
+                height,
+                145.0,
+                100.0,
+                text_scale,
+                &search_label,
+                if self.search_focused {
+                    brand::ACCENT_GREEN_LIGHT
+                } else {
+                    0xBBAFC7
+                },
+            );
+            responsive_panel(
+                frame,
+                width,
+                height,
+                920.0,
+                93.0,
+                40.0,
+                26.0,
+                scale,
+                0x33223F,
+            );
+            responsive_text_centered(
+                frame,
+                width,
+                height,
+                940.0,
+                99.0,
+                text_scale,
+                "X",
+                brand::TEXT,
+            );
+        }
         if matches!(
             self.page,
             LibraryPage::Games
@@ -1846,11 +2116,21 @@ impl Library {
                         0x21152F,
                     );
                     responsive_folder_icon(frame, width, height, 550.0, 218.0, scale);
-                    let empty = match self.page {
-                        LibraryPage::Favorites => "Nenhum favorito ainda",
-                        LibraryPage::Recent => "Nenhum jogo recente",
-                        LibraryPage::Homebrew => "Nenhum homebrew encontrado",
-                        _ => "Sua biblioteca está vazia",
+                    let (empty, empty_hint) = if !self.search_query.is_empty() {
+                        (
+                            "Nenhum resultado encontrado",
+                            "Tente outro termo ou limpe a busca.",
+                        )
+                    } else {
+                        (
+                            match self.page {
+                                LibraryPage::Favorites => "Nenhum favorito ainda",
+                                LibraryPage::Recent => "Nenhum jogo recente",
+                                LibraryPage::Homebrew => "Nenhum homebrew encontrado",
+                                _ => "Sua biblioteca está vazia",
+                            },
+                            "Adicione jogos à pasta do Aceris e atualize.",
+                        )
                     };
                     responsive_text_centered(
                         frame,
@@ -1869,7 +2149,7 @@ impl Library {
                         550.0,
                         326.0,
                         text_scale,
-                        "Adicione jogos à pasta do Aceris e atualize.",
+                        empty_hint,
                         0xBBAFC7,
                     );
                     responsive_panel(
@@ -2105,6 +2385,9 @@ impl Library {
                 }
             }
         }
+        if self.touch_keyboard_open {
+            self.render_touch_keyboard(frame, width, height, scale, logical_height, text_scale);
+        }
         if let Some(status) = &self.status {
             responsive_text(
                 frame,
@@ -2314,6 +2597,25 @@ impl Library {
             rgb(brand::ACCENT_GREEN_LIGHT),
         );
     }
+}
+
+fn search_keyboard_top(logical_height: f32) -> f32 {
+    (logical_height - 210.0).max(150.0)
+}
+
+fn fold_search_text(text: &str) -> String {
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(|character| match character {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'ç' => 'c',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            other => other,
+        })
+        .collect()
 }
 
 fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> {
@@ -2773,6 +3075,74 @@ mod tests {
             ClickResult::Activated
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn search_matches_titles_paths_and_ignores_case_and_accents() {
+        let entries = vec![
+            Entry {
+                title: "Pokémon Alpha".into(),
+                path: PathBuf::from("/games/Pokémon Alpha.3ds"),
+            },
+            Entry {
+                title: "Beta Adventure".into(),
+                path: PathBuf::from("/games/beta.cia"),
+            },
+            Entry {
+                title: "Demo".into(),
+                path: PathBuf::from("/games/homebrew/demo.3dsx"),
+            },
+        ];
+        let mut library = Library::new(entries, "/games".into());
+        library.select_page(LibraryPage::Games);
+        library.focus_search();
+        for character in "POKEMON".chars() {
+            assert!(library.input_search_char(character));
+        }
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(library.selected_entry().unwrap().title, "Pokémon Alpha");
+
+        library.clear_search();
+        for character in "BETA.CIA".chars() {
+            library.input_search_char(character);
+        }
+        assert_eq!(library.visible_entry_count(), 1);
+        assert_eq!(library.selected_entry().unwrap().title, "Beta Adventure");
+        library.finish_search();
+        assert!(!library.input_search_char('x'));
+    }
+
+    #[test]
+    fn touch_keyboard_opens_types_clears_and_finishes_search() {
+        let mut library = library(12);
+        library.set_touch_keyboard_enabled(true);
+        assert_eq!(
+            library.click_responsive(200, 106, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(library.search_is_focused());
+        assert!(library.touch_keyboard_is_open());
+
+        let keyboard_top = search_keyboard_top(600.0);
+        assert_eq!(
+            library.click_responsive(248, (keyboard_top + 25.0) as i32, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.search_query(), "q");
+
+        assert_eq!(
+            library.click_responsive(550, (keyboard_top + 145.0) as i32, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(library.search_query().is_empty());
+        assert!(library.touch_keyboard_is_open());
+
+        assert_eq!(
+            library.click_responsive(706, (keyboard_top + 145.0) as i32, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert!(!library.touch_keyboard_is_open());
+        assert!(!library.search_is_focused());
     }
 
     #[test]
