@@ -426,9 +426,6 @@ impl Library {
                 })
                 .filter(|entry| self.entry_matches_search(entry))
                 .collect();
-            if self.sort_descending {
-                entries.reverse();
-            }
             return entries;
         }
         let mut entries: Vec<&Entry> = self
@@ -1337,7 +1334,11 @@ impl Library {
             return false;
         }
 
-        let rows = [("qwertyuiop", 222.0), ("asdfghjkl", 255.0), ("zxcvbnm", 324.0)];
+        let rows = [
+            ("qwertyuiop", 222.0),
+            ("asdfghjkl", 255.0),
+            ("zxcvbnm", 324.0),
+        ];
         for (row, (keys, start_x)) in rows.iter().enumerate() {
             let row_top = top + 8.0 + row as f32 * 40.0;
             if (row_top..row_top + 34.0).contains(&y) && x >= *start_x {
@@ -1380,7 +1381,11 @@ impl Library {
         responsive_panel(
             frame, width, height, 128.0, top, 842.0, 174.0, scale, 0x21152F,
         );
-        let rows = [("qwertyuiop", 222.0), ("asdfghjkl", 255.0), ("zxcvbnm", 324.0)];
+        let rows = [
+            ("qwertyuiop", 222.0),
+            ("asdfghjkl", 255.0),
+            ("zxcvbnm", 324.0),
+        ];
         for (row, (keys, start_x)) in rows.iter().enumerate() {
             let y = top + 8.0 + row as f32 * 40.0;
             for (column, character) in keys.chars().enumerate() {
@@ -1399,20 +1404,20 @@ impl Library {
                 );
             }
         }
-        for (x, width, label) in [
+        for (x, key_width, label) in [
             (152.0, 180.0, "ESPAÇO"),
             (340.0, 140.0, "APAGAR"),
             (488.0, 140.0, "LIMPAR"),
             (636.0, 140.0, "OK"),
         ] {
             responsive_panel(
-                frame, width, height, x, top + 128.0, width, 34.0, scale, 0x422038,
+                frame, width, height, x, top + 128.0, key_width, 34.0, scale, 0x422038,
             );
             responsive_text_centered(
                 frame,
-                width as u32,
+                width,
                 height,
-                x + width * 0.5,
+                x + key_width * 0.5,
                 top + 137.0,
                 text_scale,
                 label,
