@@ -71,6 +71,21 @@ impl App {
         }
     }
 
+    /// Updates the system-level indicator for external media playback.
+    ///
+    /// The Android native activity calls this when media-session state changes.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn set_external_media_playing(&mut self, playing: bool) {
+        self.library.set_external_media_playing(playing);
+    }
+
+    /// Updates the Android host capability shown in the media settings.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn set_external_media_detection_available(&mut self, available: bool) {
+        self.library
+            .set_external_media_detection_available(available);
+    }
+
     /// Takes the audio the DSP mixed since the previous call (interleaved stereo
     /// `i16` at `System::audio_sample_rate()`).
     pub fn take_audio(&mut self) -> Vec<i16> {
