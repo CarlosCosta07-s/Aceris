@@ -155,6 +155,222 @@ pub struct ScanOptions {
     pub recursive: bool,
 }
 
+/// Persistent configuration for the library scanner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LibraryScanConfig {
+    /// User-selected filesystem roots, kept in their configured order.
+    pub directories: Vec<PathBuf>,
+    /// Scanner traversal options.
+    pub options: ScanOptions,
+}
+
+impl LibraryScanConfig {
+    /// Creates a configuration containing one folder and the safe defaults.
+    pub fn single_directory(directory: impl Into<PathBuf>) -> Self {
+        Self {
+            directories: vec![normalize_scan_directory(&directory.into())],
+            options: ScanOptions::default(),
+        }
+    }
+
+    /// Adds a folder unless the same directory is already configured.
+    ///
+    /// Paths are normalized to absolute paths; existing folders are
+    /// canonicalized so aliases do not create duplicate roots.
+    pub fn add_directory(&mut self, directory: impl Into<PathBuf>) -> bool {
+        let directory = directory.into();
+        if directory.as_os_str().is_empty() {
+            return false;
+        }
+        let directory = normalize_scan_directory(&directory);
+        let identity = scan_path_identity(&directory);
+        if self
+            .directories
+            .iter()
+            .any(|existing| scan_path_identity(existing) == identity)
+        {
+            return false;
+        }
+        self.directories.push(directory);
+        true
+    }
+
+    /// Removes a configured folder, but never permits an empty root list.
+    pub fn remove_directory(&mut self, directory: &Path) -> bool {
+        if self.directories.len() <= 1 {
+            return false;
+        }
+        let identity = scan_path_identity(&normalize_scan_directory(directory));
+        let Some(index) = self
+            .directories
+            .iter()
+            .position(|existing| scan_path_identity(existing) == identity)
+        else {
+            return false;
+        };
+        self.directories.remove(index);
+        true
+    }
+}
+
+const LIBRARY_SCAN_CONFIG_FILE: &str = "library_scan_v1.txt";
+const LIBRARY_SCAN_CONFIG_MAGIC: &str = "ACERIS_LIBRARY_SCAN_V1";
+
+fn normalize_scan_directory(directory: &Path) -> PathBuf {
+    let absolute = if directory.is_absolute() {
+        directory.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(directory))
+            .unwrap_or_else(|_| directory.to_path_buf())
+    };
+    fs::canonicalize(&absolute).unwrap_or(absolute)
+}
+
+fn deduplicate_scan_directories(directories: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    let mut unique = Vec::new();
+    for directory in directories {
+        if directory.as_os_str().is_empty() {
+            continue;
+        }
+        let directory = normalize_scan_directory(directory);
+        let identity = scan_path_identity(&directory);
+        if seen.insert(identity) {
+            unique.push(directory);
+        }
+    }
+    unique
+}
+
+fn encode_scan_directory(directory: &Path) -> std::io::Result<String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let directory = normalize_scan_directory(directory);
+    let value = directory.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "library folder path is not valid UTF-8",
+        )
+    })?;
+    if !directory.is_absolute() || value.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "library folder path must be absolute",
+        ));
+    }
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.as_bytes() {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(encoded)
+}
+
+fn decode_scan_directory(encoded: &str) -> Option<PathBuf> {
+    if encoded.is_empty() || encoded.len() % 2 != 0 {
+        return None;
+    }
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        let high = (pair[0] as char).to_digit(16)?;
+        let low = (pair[1] as char).to_digit(16)?;
+        decoded.push(((high << 4) | low) as u8);
+    }
+    let value = String::from_utf8(decoded).ok()?;
+    let directory = PathBuf::from(value);
+    (directory.is_absolute() && !directory.as_os_str().is_empty()).then_some(directory)
+}
+
+/// Loads a saved multi-folder configuration.
+///
+/// Invalid or missing configuration falls back to the original game folder
+/// with recursion disabled. Callers choose the settings directory so desktop
+/// and mobile hosts can keep this file in their own writable app-data area.
+pub fn load_library_scan_config(
+    settings_directory: &Path,
+    fallback_directory: &Path,
+) -> LibraryScanConfig {
+    let fallback = LibraryScanConfig::single_directory(fallback_directory.to_path_buf());
+    let Ok(contents) = fs::read_to_string(settings_directory.join(LIBRARY_SCAN_CONFIG_FILE)) else {
+        return fallback;
+    };
+    let mut lines = contents.lines();
+    if lines.next() != Some(LIBRARY_SCAN_CONFIG_MAGIC) {
+        return fallback;
+    }
+
+    let mut recursive = None;
+    let mut directories = Vec::new();
+    for line in lines {
+        if let Some(value) = line.strip_prefix("recursive=") {
+            if recursive.is_some() {
+                return fallback;
+            }
+            recursive = match value {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => return fallback,
+            };
+        } else if let Some(value) = line.strip_prefix("folder=") {
+            let Some(directory) = decode_scan_directory(value) else {
+                return fallback;
+            };
+            directories.push(directory);
+        } else {
+            return fallback;
+        }
+    }
+
+    let Some(recursive) = recursive else {
+        return fallback;
+    };
+    let directories = deduplicate_scan_directories(&directories);
+    if directories.is_empty() {
+        return fallback;
+    }
+
+    LibraryScanConfig {
+        directories,
+        options: ScanOptions { recursive },
+    }
+}
+
+/// Persists a scanner configuration using a versioned, line-safe text format.
+///
+/// Paths are stored as UTF-8 bytes encoded in hexadecimal. A non-UTF-8 path
+/// returns InvalidInput instead of being truncated or stored ambiguously.
+pub fn save_library_scan_config(
+    settings_directory: &Path,
+    config: &LibraryScanConfig,
+) -> std::io::Result<()> {
+    let directories = deduplicate_scan_directories(&config.directories);
+    if directories.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "at least one library folder must be configured",
+        ));
+    }
+
+    let mut contents = String::from(LIBRARY_SCAN_CONFIG_MAGIC);
+    contents.push_str("\nrecursive=");
+    contents.push_str(if config.options.recursive { "true" } else { "false" });
+    contents.push('\n');
+    for directory in directories {
+        contents.push_str("folder=");
+        contents.push_str(&encode_scan_directory(&directory)?);
+        contents.push('\n');
+    }
+
+    fs::create_dir_all(settings_directory)?;
+    fs::write(settings_directory.join(LIBRARY_SCAN_CONFIG_FILE), contents)
+}
+
+/// Scans every configured folder using the saved traversal options.
+pub fn scan_games_from_config(config: &LibraryScanConfig) -> Vec<Entry> {
+    scan_games_from_directories(&config.directories, config.options)
+}
+
 const MAX_SCAN_DEPTH: usize = 64;
 
 /// Lists candidate executable images (`.3ds`, `.cci`, `.cia`, `.3dsx`) directly
@@ -3547,6 +3763,96 @@ mod tests {
         assert_eq!(titles, ["A", "b", "C", "homebrew"]);
         fs::remove_dir_all(&dir).unwrap();
         assert!(scan_games(&dir).is_empty());
+    }
+
+
+    #[test]
+    fn library_scan_config_round_trips_multiple_folders_and_recursion() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-scan-config-roundtrip-{}", std::process::id()));
+        let primary = root.join("primary");
+        let secondary = root.join("external").join("games");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(secondary.join("nested")).unwrap();
+        fs::write(primary.join("base.3ds"), b"x").unwrap();
+        fs::write(secondary.join("nested").join("nested.CCI"), b"x").unwrap();
+        let settings = root.join("settings");
+
+        let mut config = LibraryScanConfig::single_directory(primary.clone());
+        assert!(config.add_directory(secondary.clone()));
+        config.options.recursive = true;
+        save_library_scan_config(&settings, &config).unwrap();
+
+        let loaded = load_library_scan_config(&settings, &primary);
+        assert!(loaded.options.recursive);
+        assert_eq!(
+            loaded.directories,
+            vec![
+                fs::canonicalize(&primary).unwrap(),
+                fs::canonicalize(&secondary).unwrap()
+            ]
+        );
+        let titles = scan_games_from_config(&loaded)
+            .into_iter()
+            .map(|entry| entry.title)
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["base", "nested"]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn library_scan_config_deduplicates_aliases_and_keeps_one_root() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-scan-config-dedup-{}", std::process::id()));
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+
+        let mut config = LibraryScanConfig::single_directory(first.clone());
+        assert!(!config.add_directory(first.clone()));
+        assert!(config.add_directory(second.clone()));
+        assert_eq!(config.directories.len(), 2);
+        assert!(config.remove_directory(&first));
+        assert_eq!(config.directories, vec![fs::canonicalize(&second).unwrap()]);
+        assert!(!config.remove_directory(&second));
+        assert_eq!(config.directories.len(), 1);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_library_scan_config_falls_back_to_the_original_folder() {
+        let root = std::env::temp_dir()
+            .join(format!("aceris-scan-config-invalid-{}", std::process::id()));
+        let settings = root.join("settings");
+        let fallback = root.join("original-games");
+        fs::create_dir_all(&settings).unwrap();
+        fs::write(
+            settings.join(LIBRARY_SCAN_CONFIG_FILE),
+            "ACERIS_LIBRARY_SCAN_V1\nrecursive=not-a-boolean\nfolder=zz",
+        )
+        .unwrap();
+
+        let config = load_library_scan_config(&settings, &fallback);
+        assert_eq!(config.directories, vec![normalize_scan_directory(&fallback)]);
+        assert!(!config.options.recursive);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn saving_library_scan_config_rejects_an_empty_folder_list() {
+        let root =
+            std::env::temp_dir().join(format!("aceris-scan-config-empty-{}", std::process::id()));
+        let config = LibraryScanConfig {
+            directories: Vec::new(),
+            options: ScanOptions::default(),
+        };
+        let error = save_library_scan_config(&root, &config).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!root.exists());
     }
 
     #[test]

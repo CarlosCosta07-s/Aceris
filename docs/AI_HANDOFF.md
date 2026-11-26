@@ -2682,3 +2682,15 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Limite explícito: caminhos não UTF-8 não recebem identidade persistente nesta versão, seguindo a limitação já existente da antiga lógica que exigia nome de arquivo UTF-8. Os frontends ainda usam uma única pasta; o trabalho prepara a identidade para múltiplas raízes, mas não habilita essa UI.
 - **Fronteiras:** somente `crates/aceris-core/src/video/library.rs` e documentação. Sem mudanças nos frontends, módulos de emulação ou dependências. Sem assets/conteúdo de jogos, firmware ou chaves. Somente `main`, sem branch ou PR.
 - **Validação:** confirmar Rustfmt, build, testes e Clippy nos workflows gerados para este commit; teste físico Android/desktop permanece necessário.
+
+
+## Biblioteca — persistência da configuração do scanner (26/11/2026, ChatGPT)
+
+- Adicionada `LibraryScanConfig`, contendo lista ordenada de pastas e `ScanOptions`. Inclui operações de adicionar/remover raiz, bloqueia duplicações (incluindo caminhos já canonicalizáveis) e impede remover a última pasta.
+- Adicionadas `load_library_scan_config` e `save_library_scan_config`. O arquivo versionado `.aceris/library_scan_v1.txt` é gravado no diretório de configurações explicitamente fornecido pelo host; assim desktop/Android poderão escolher uma área de dados gravável apropriada. Cada caminho absoluto UTF-8 é codificado em hexadecimal, tornando a representação segura para linhas e nomes contendo espaços, acentos ou sinais de igual.
+- Configuração ausente, versão desconhecida ou conteúdo inválido retorna à pasta original informada pelo host com recursão desativada. Salvar lista vazia é erro `InvalidInput`; caminhos não UTF-8 também são rejeitados explicitamente em vez de sofrer truncamento.
+- Adicionado `scan_games_from_config`, que aplica a configuração persistida à API multi-raiz já existente.
+- Testes cobrem round-trip de duas pastas + recursão, deduplicação/remoção com proteção da última raiz, fallback após arquivo inválido e rejeição de lista vazia.
+- **Importante:** esta etapa é infraestrutura do core, não habilita ainda a configuração na interface. Desktop e Android continuam chamando o scanner de uma única pasta; SAF/content URIs não são convertidos em `PathBuf` e exigem integração Android separada. A gravação recebe um diretório de configurações do host para não pressupor que todas as raízes sejam graváveis.
+- **Fronteiras:** somente `crates/aceris-core/src/video/library.rs` e documentação. Sem mudanças nos frontends, módulos de emulação ou dependências. Sem assets/conteúdo de jogos, firmware ou chaves. Somente `main`, sem branch ou PR.
+- **Validação:** executar Rustfmt, build, testes e Clippy na CI deste commit; nenhum teste físico de seletor de pastas foi feito.
