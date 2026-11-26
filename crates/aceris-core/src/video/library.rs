@@ -3881,17 +3881,18 @@ mod tests {
         assert!(!library.remove_scan_directory(&secondary).unwrap());
         assert!(library.remove_scan_directory(&primary).unwrap());
         assert_eq!(library.scan_config().directories.len(), 1);
+        assert!(!library.remove_scan_directory(&third).unwrap());
 
         let reopened = Library::from_scan_settings(&settings, &primary);
-        assert_eq!(reopened.entries().len(), 2);
-        assert_eq!(reopened.scan_config().directories.len(), 2);
+        assert_eq!(reopened.entries().len(), 1);
+        assert_eq!(reopened.scan_config().directories.len(), 1);
         assert_eq!(
             reopened
                 .entries()
                 .iter()
                 .map(|entry| entry.title.as_str())
                 .collect::<Vec<_>>(),
-            ["base", "third"]
+            ["third"]
         );
 
         fs::remove_dir_all(root).unwrap();
