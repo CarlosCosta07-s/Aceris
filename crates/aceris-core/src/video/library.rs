@@ -85,7 +85,7 @@ fn load_library_ids(path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Lists supported executable images (`.3ds`, `.cci`, `.3dsx`) directly
+/// Lists candidate executable images (`.3ds`, `.cci`, `.cia`, `.3dsx`) directly
 /// inside `directory`, sorted by title. A missing or unreadable directory
 /// yields an empty list.
 pub fn scan_games(directory: &Path) -> Vec<Entry> {
@@ -104,6 +104,7 @@ pub fn scan_games(directory: &Path) -> Vec<Entry> {
                         ext.eq_ignore_ascii_case("3ds")
                             || ext.eq_ignore_ascii_case("cci")
                             || ext.eq_ignore_ascii_case("3dsx")
+                            || ext.eq_ignore_ascii_case("cia")
                     })
         })
         .map(|path| Entry {
@@ -824,7 +825,7 @@ impl Library {
                 38.0,
                 402.0,
                 small_scale,
-                ".3ds  /  .cci  /  .3dsx",
+                ".3ds / .cci / .cia / .3dsx",
                 brand::TEXT,
             );
             responsive_text(
@@ -941,7 +942,7 @@ impl Library {
                             "Sua biblioteca está vazia",
                             "Adicione seus arquivos de jogos à pasta",
                             "do Aceris para comecar a jogar.",
-                            "Formatos: .3ds  /  .cci  /  .3dsx",
+                            "Formatos: .3ds / .cci / .cia / .3dsx",
                         )
                     };
                 responsive_text_centered(
@@ -1637,7 +1638,7 @@ impl Library {
                     158.0,
                     254.0,
                     text_scale,
-                    ".3ds  /  .cci  /  .3dsx",
+                    ".3ds / .cci / .cia / .3dsx",
                     brand::TEXT,
                 );
                 responsive_text(
@@ -2674,14 +2675,14 @@ mod tests {
     }
 
     #[test]
-    fn scan_lists_only_cartridge_images_sorted() {
+    fn scan_lists_supported_image_containers_sorted() {
         let dir = std::env::temp_dir().join(format!("aceris-lib-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        for name in ["b.3ds", "A.CCI", "homebrew.3dsx", "notes.txt", "c.cia"] {
+        for name in ["b.3ds", "A.CCI", "homebrew.3dsx", "notes.txt", "C.CIA"] {
             fs::write(dir.join(name), b"x").unwrap();
         }
         let titles: Vec<String> = scan_games(&dir).into_iter().map(|e| e.title).collect();
-        assert_eq!(titles, ["A", "b", "homebrew"]);
+        assert_eq!(titles, ["A", "b", "C", "homebrew"]);
         fs::remove_dir_all(&dir).unwrap();
         assert!(scan_games(&dir).is_empty());
     }

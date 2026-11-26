@@ -17,12 +17,13 @@ O workflow **Build Android APK** compila e empacota um APK debug ARM64. Isso con
 
 ### Biblioteca e arquivos aceitos
 
-O core compartilha `System::load_executable_file` entre os hosts. O loader reconhece 3DSX, NCSD/CCI e CIA nos formatos/condições suportados pelo core. O scanner visual Android lista atualmente:
+O core compartilha `System::load_executable_file` entre os hosts. O scanner da biblioteca lista:
 
 - `.3ds` e `.cci` para imagens NCSD;
+- `.cia` como contêiner de título, carregável somente nas condições já suportadas pelo núcleo (conteúdo de boot em claro e NCCH NoCrypto);
 - `.3dsx` para homebrew.
 
-O scanner ainda não lista `.cia`, embora o core aceite CIA NoCrypto pelo caminho de carregamento. Portanto, um CIA usado em ensaio headless não deve ser apresentado como selecionável pela biblioteca Android atual. A biblioteca procura os arquivos na pasta `games` do diretório externo privado da aplicação e não oferece, nesta revisão, seleção SAF nem pesquisa recursiva.
+A presença de um CIA na biblioteca **não significa instalação persistente, gerenciamento de atualizações ou suporte a conteúdo criptografado**. O carregador continua validando o arquivo ao iniciar e apresenta um diagnóstico quando o conteúdo não é compatível. A biblioteca procura os arquivos na pasta `games` do diretório externo privado da aplicação e ainda não oferece, nesta revisão, seleção SAF nem pesquisa recursiva.
 
 Para carregar NCCH/CIA com criptografia, a C ABI permite que o host forneça material de chave temporário. O Aceris não descobre chaves, não as persiste no handle do emulador e não valida as assinaturas RSA/ECDSA do ticket/TMD. O host deve obter qualquer material por meio legítimo e seguro.
 

@@ -2624,3 +2624,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Testes: 10 unitários em `csnd.rs` e 1 ponta a ponta em `system.rs` (comando escrito pelo guest via cache → IPC → flag `finished` e estado visíveis ao guest → amostras audíveis em `take_audio_samples`).
 - Limites: PSG/ruído produzem silêncio; captura não grava amostras; a renderização acontece no fim da fatia, então um som iniciado e parado dentro da mesma fatia pode não soar; cadência do fade é aproximada. Ainda não validado com o Cookie Clicker nem com áudio audível em hardware.
 - Referências: 3dbrew "CSND Services"/"CSND Registers"; libctru `csnd.h`; Azahar (GPLv3) `src/audio_core/csnd.{h,cpp}` e `src/core/hle/service/csnd/csnd_snd.cpp`, revisão `6d6e846afa7b02f3dd85183a968b40cd1561f700`, consulta somente leitura em 26/11/2026. Nenhum código foi copiado ou portado; a estrutura do Aceris é própria.
+
+
+## Início da implementação da experiência do usuário — biblioteca CIA (26/11/2026, ChatGPT)
+
+- Carlos Costa pediu o início da implementação do plano `docs/USER_EXPERIENCE.md`. A primeira entrega é deliberadamente pequena e focada na Etapa A: expor na biblioteca os contêineres `.cia` que o carregador já aceita nas condições documentadas.
+- `crates/aceris-core/src/video/library.rs` agora inclui a extensão `.cia` na varredura compartilhada por desktop e Android. Os rótulos de formatos da biblioteca foram atualizados, e o teste de varredura verifica a extensão sem distinção entre maiúsculas/minúsculas.
+- `docs/FRONTENDS.md` e `docs/USER_EXPERIENCE.md` esclarecem que listar um CIA não implementa instalação persistente, gerenciamento de atualização nem descriptografia: o carregamento continua limitado a conteúdo de boot em claro e NCCH NoCrypto nas condições já suportadas.
+- Nenhum jogo/CIA, firmware, chave ou dado extraído foi incluído no repositório. Nenhuma dependência foi adicionada.
+- **Validação:** a mudança precisa passar pelo CI do novo commit. Não declarar Rustfmt, build, Clippy ou testes aprovados até consultar os workflows correspondentes.
+- **Fronteiras:** alteração limitada à varredura/renderização de formatos da biblioteca e documentação de experiência; não altera `app.rs`, `native_activity.rs`, CPU, MMU, kernel, serviços, GPU/PICA, DSP ou CSND.
