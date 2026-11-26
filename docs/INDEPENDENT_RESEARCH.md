@@ -503,3 +503,11 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Blend equation 0–4 permanece mapeada para Add/Subtract/ReverseSubtract/Minimum/Maximum. Os seletores 5–7 foram mantidos como aliases observados de Add conforme a descrição independente 3dbrew; o enum de referência Azahar lista só 0–4, portanto a diferença está registrada como evidência observacional.
 - RGB8 aparece no enum e na implementação de framebuffer do Azahar, mas a descrição independente de GPUREG_COLORBUFFER_FORMAT consultada não atribui RGB8 a um valor válido de pixel-size/formato interno. O Aceris mantém rejeição de combinações não confirmadas em vez de inventar o valor de pixel-size. O RGB8 do controlador externo de display é um contrato separado.
 - Nenhum código ou tabela de implementação do Azahar foi copiado; foram criados enum e testes Rust originais para o seletor de modo de fragmento.
+
+
+### Filtros da unidade procedural e limite de mipmapping (26/11/2026)
+
+- Azahar `src/video_core/pica/regs_texturing.h` define seis seletores PROCTEX4 (nearest, linear e quatro combinações com mipmap). O arquivo de implementação `src/video_core/renderer_software/sw_proctex.cpp` (GPLv2-or-later) contém comentário TODO para mipmapping e agrupa esses modos pelas variantes nearest/linear na LUT de cor do nível base.
+- Aceris agora expõe `PicaProceduralTextureFilter::from_register`, com cobertura dos seis valores válidos e dos seletores reservados 6–7. A amostragem aplica nearest/linear intranível para todos os filtros reconhecidos, compatível com o fallback observado no renderer software.
+- Limite explícito: a seleção de mip level, o cálculo de LOD, `min_lod/max_lod`, offsets 1–3 e bias superior continuam pendentes. Não anunciar suporte de mipmapping procedural completo. Essa etapa não implementa um comportamento que a referência consultada também marca como TODO.
+- Nenhum código-fonte, tabela de implementação ou teste foi copiado; os seletores foram modelados em Rust e cobertos com fixtures próprios.

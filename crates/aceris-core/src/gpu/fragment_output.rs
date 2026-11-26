@@ -820,10 +820,7 @@ mod tests {
             PicaFragmentOperation::Shadow,
         ];
         for (selector, mode) in expected.into_iter().enumerate() {
-            assert_eq!(
-                PicaFragmentOperation::from_register(selector as u32),
-                mode
-            );
+            assert_eq!(PicaFragmentOperation::from_register(selector as u32), mode);
         }
 
         for selector in 1..=3 {

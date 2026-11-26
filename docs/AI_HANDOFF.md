@@ -2532,3 +2532,12 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O blend equation selector 5–7 permanece alias de Add por evidência independente 3dbrew, apesar de o enum do Azahar listar as cinco equações principais 0–4. Não remover essa compatibilidade sem evidência adicional.
 - RGB8 foi identificado no enum de framebuffer de Azahar, mas não possui combinação de pixel-size validada na descrição dos registradores PICA internos. Não habilitar por suposição; consultar a especificação/hardware antes.
 - Referências e distinções de evidência foram adicionadas a `docs/AZAHAR_PICA_REGISTER_COMPATIBILITY.md` e `docs/INDEPENDENT_RESEARCH.md`.
+
+
+## PICA200 — tabela de filtros procedurais e fallback de nível base (26/11/2026)
+
+- `PicaProceduralTextureFilter::from_register` nomeia os seletores válidos 0–5 e preserva 6–7 como reservados; teste novo percorre a tabela inteira.
+- Os quatro modos com mipmap deixam de ser rejeitados imediatamente: nearest mipmap modes usam nearest na LUT de cor do nível 0; linear mipmap modes usam a interpolação linear na LUT do nível 0.
+- A mudança acompanha o fallback presente em `azahar/src/video_core/renderer_software/sw_proctex.cpp`, que declara TODO para mipmapping e agrupa os quatro modos por nearest/linear. É reconhecimento do modo e comportamento base-level, não implementação de mip LOD.
+- Continuam pendentes seleção de nível via LOD, min/max LOD, offsets de mip 1–3 e bias superior. Seletores reservados 6–7 seguem fail-closed.
+- A CI anterior mostrou testes/builds passando até Clippy nos três desktops; as falhas remanescentes eram import `c_char` não usado e Rustfmt em um `assert_eq!`. Ambos foram corrigidos nesta revisão; aguardar a nova CI antes de declarar sucesso.

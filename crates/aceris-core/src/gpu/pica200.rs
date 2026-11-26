@@ -258,6 +258,21 @@ pub enum PicaProceduralTextureFilter {
     Reserved(u8),
 }
 
+impl PicaProceduralTextureFilter {
+    /// Decodes the three-bit procedural-texture filter selector.
+    pub const fn from_register(value: u8) -> Self {
+        match value {
+            0 => Self::Nearest,
+            1 => Self::Linear,
+            2 => Self::NearestMipmapNearest,
+            3 => Self::LinearMipmapNearest,
+            4 => Self::NearestMipmapLinear,
+            5 => Self::LinearMipmapLinear,
+            other => Self::Reserved(other),
+        }
+    }
+}
+
 /// Register snapshot for PICA's procedural texture unit.
 ///
 /// Noise fields and texture bias remain in their documented raw register
@@ -861,15 +876,6 @@ impl Pica200 {
             2 => PicaProceduralTextureShift::Even,
             other => PicaProceduralTextureShift::Reserved(other),
         };
-        let decode_filter = |value: u8| match value {
-            0 => PicaProceduralTextureFilter::Nearest,
-            1 => PicaProceduralTextureFilter::Linear,
-            2 => PicaProceduralTextureFilter::NearestMipmapNearest,
-            3 => PicaProceduralTextureFilter::LinearMipmapNearest,
-            4 => PicaProceduralTextureFilter::NearestMipmapLinear,
-            5 => PicaProceduralTextureFilter::LinearMipmapLinear,
-            other => PicaProceduralTextureFilter::Reserved(other),
-        };
 
         PicaProceduralTextureConfig {
             coordinate_source: decode_coordinate_source(((texture_config >> 8) & 0x3) as u8),
@@ -888,7 +894,7 @@ impl Pica200 {
             v_noise_phase_float1_5_10: (proctex2 >> 16) as u16,
             u_noise_frequency_float1_5_10: proctex3 as u16,
             v_noise_frequency_float1_5_10: (proctex3 >> 16) as u16,
-            minification_filter: decode_filter((proctex4 & 0x7) as u8),
+            minification_filter: PicaProceduralTextureFilter::from_register((proctex4 & 0x7) as u8),
             min_lod: ((proctex4 >> 3) & 0xF) as u8,
             max_lod: ((proctex4 >> 7) & 0xF) as u8,
             texture_width: ((proctex4 >> 11) & 0xFF) as u8,
@@ -2114,6 +2120,30 @@ mod tests {
         assert_eq!(config.texture_width, 200);
         assert_eq!(config.texture_bias_upper, 0x5A);
         assert_eq!(config.mip_offsets, [0x40, 0x80, 0xC0, 0xE0]);
+    }
+
+    #[test]
+    fn procedural_texture_filter_selector_table_decodes_all_values() {
+        let expected = [
+            PicaProceduralTextureFilter::Nearest,
+            PicaProceduralTextureFilter::Linear,
+            PicaProceduralTextureFilter::NearestMipmapNearest,
+            PicaProceduralTextureFilter::LinearMipmapNearest,
+            PicaProceduralTextureFilter::NearestMipmapLinear,
+            PicaProceduralTextureFilter::LinearMipmapLinear,
+            PicaProceduralTextureFilter::Reserved(6),
+            PicaProceduralTextureFilter::Reserved(7),
+        ];
+        let mut gpu = Pica200::new();
+        for (selector, filter) in expected.into_iter().enumerate() {
+            gpu.write_register(REG_TEXUNIT3_PROCTEX4, selector as u32)
+                .unwrap();
+            assert_eq!(
+                gpu.procedural_texture_config().minification_filter,
+                filter,
+                "procedural filter selector {selector}"
+            );
+        }
     }
 
     #[test]

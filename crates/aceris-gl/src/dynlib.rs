@@ -1,6 +1,6 @@
 //! Minimal platform dynamic-library loader used by the EGL/OpenGL backend.
 
-use std::ffi::{CString, c_char, c_void};
+use std::ffi::{CString, c_void};
 
 #[cfg(unix)]
 mod platform {

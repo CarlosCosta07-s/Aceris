@@ -117,3 +117,18 @@ O enum de referência Azahar lista as cinco equações primárias (0–4). A doc
 O enum de referência Azahar inclui RGB8 (formato 1), além de RGBA8, RGB5A1, RGB565 e RGBA4. Entretanto, a descrição independente de registradores PICA interno consultada documenta somente pixel-size 0 (16-bit) e 2 (32-bit), e formatos 0, 2, 3 e 4; RGB8 não aparece nessa tabela interna. A página de registradores externos lista RGB8 para o controlador de display, o que não prova que o framebuffer PICA interno use o mesmo seletor.
 
 O Aceris continua aceitando apenas as combinações internas documentadas. Não foi atribuído um valor especulativo de pixel-size para RGB8. A implementação desse formato deve aguardar uma confirmação independente do layout do registrador ou uma captura em hardware.
+
+
+## Filtros da unidade procedural — GPUREG_TEXUNIT3_PROCTEX4
+
+| Valor | Seletor | Aceris |
+|---:|---|---|
+| 0 | Nearest | Nearest na LUT do nível 0 |
+| 1 | Linear | Linear na LUT do nível 0 |
+| 2 | NearestMipmapNearest | Filtro nearest do nível 0; seleção de mip pendente |
+| 3 | LinearMipmapNearest | Filtro linear do nível 0; seleção de mip pendente |
+| 4 | NearestMipmapLinear | Filtro nearest do nível 0; seleção de mip pendente |
+| 5 | LinearMipmapLinear | Filtro linear do nível 0; seleção de mip pendente |
+| 6–7 | Reservado | Rejeitado explicitamente |
+
+O código software de referência do Azahar também contém uma observação TODO para implementar mipmapping nessa unidade; no caminho presente, ele agrupa os quatro seletores mipmap pela filtragem nearest/linear da LUT de cor. O Aceris reconhece e executa essa mesma filtragem intranível no nível 0, mas ainda não escolhe níveis por LOD, não aplica os offsets 1–3 e não considera min/max LOD ou bias superior para selecionar mip levels. Portanto, não se deve anunciar mipmapping procedural completo.

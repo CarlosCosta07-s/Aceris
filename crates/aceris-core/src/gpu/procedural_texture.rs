@@ -2,9 +2,10 @@
 //!
 //! This backend snapshots the guest LUTs at draw setup, transforms the
 //! selected interpolated coordinate pair, evaluates the configured base-shape
-//! functions, and samples the RGB and optional alpha maps. Noise uses the
-//! publicly inspectable Citra/Azahar software-reference algorithm; its exact
-//! equivalence to the physical PICA noise generator is not established.
+//! functions, and samples the RGB and optional alpha maps. Mipmap filter modes
+//! use the software-reference level-zero nearest/linear fallback; actual LOD
+//! selection is not implemented. Noise uses the public Citra/Azahar reference
+//! algorithm; exact equivalence to the physical PICA noise generator is unknown.
 
 use std::fmt;
 
@@ -22,7 +23,7 @@ const COLOR_LUT_SIZE: usize = 256;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PicaProceduralTextureError {
     InvalidNoiseParameters,
-    MipmapFilterUnsupported(PicaProceduralTextureFilter),
+    FilterUnsupported(PicaProceduralTextureFilter),
     TextureBiasUnsupported,
     CoordinateSourceUnsupported,
     ClampModeUnsupported(PicaProceduralTextureClamp),
@@ -41,11 +42,8 @@ impl fmt::Display for PicaProceduralTextureError {
             Self::InvalidNoiseParameters => {
                 formatter.write_str("procedural noise parameters are invalid or out of range")
             }
-            Self::MipmapFilterUnsupported(filter) => {
-                write!(
-                    formatter,
-                    "procedural mipmap filter {filter:?} is not implemented"
-                )
+            Self::FilterUnsupported(filter) => {
+                write!(formatter, "procedural texture filter {filter:?} is reserved")
             }
             Self::TextureBiasUnsupported => {
                 formatter.write_str("non-zero procedural texture bias is not implemented")
@@ -160,15 +158,18 @@ pub struct PicaProceduralTextureSampler {
 }
 
 impl PicaProceduralTextureSampler {
-    /// Captures a supported level-zero procedural texture setup.
+    /// Captures a procedural texture setup using the level-zero filter fallback.
+    ///
+    /// Mipmap selectors retain their within-level nearest/linear behavior, but
+    /// choosing mip levels and applying offsets 1–3 remain unimplemented.
     pub fn from_pica(pica: &Pica200) -> Result<Self, PicaProceduralTextureError> {
         let config = pica.procedural_texture_config();
 
-        if !matches!(
+        if matches!(
             config.minification_filter,
-            PicaProceduralTextureFilter::Nearest | PicaProceduralTextureFilter::Linear
+            PicaProceduralTextureFilter::Reserved(_)
         ) {
-            return Err(PicaProceduralTextureError::MipmapFilterUnsupported(
+            return Err(PicaProceduralTextureError::FilterUnsupported(
                 config.minification_filter,
             ));
         }
@@ -301,13 +302,19 @@ impl PicaProceduralTextureSampler {
         }
 
         let (index, fraction) = match self.config.minification_filter {
-            PicaProceduralTextureFilter::Nearest => (position.round() as usize, 0.0),
-            PicaProceduralTextureFilter::Linear => {
+            PicaProceduralTextureFilter::Nearest
+            | PicaProceduralTextureFilter::NearestMipmapNearest
+            | PicaProceduralTextureFilter::NearestMipmapLinear => {
+                (position.round() as usize, 0.0)
+            }
+            PicaProceduralTextureFilter::Linear
+            | PicaProceduralTextureFilter::LinearMipmapNearest
+            | PicaProceduralTextureFilter::LinearMipmapLinear => {
                 let lower = position.floor();
                 (lower as usize, position - lower)
             }
-            filter => {
-                return Err(PicaProceduralTextureError::MipmapFilterUnsupported(filter));
+            filter @ PicaProceduralTextureFilter::Reserved(_) => {
+                return Err(PicaProceduralTextureError::FilterUnsupported(filter));
             }
         };
 
@@ -554,7 +561,11 @@ mod tests {
         let filter_value = match filter {
             PicaProceduralTextureFilter::Nearest => 0,
             PicaProceduralTextureFilter::Linear => 1,
-            _ => 0,
+            PicaProceduralTextureFilter::NearestMipmapNearest => 2,
+            PicaProceduralTextureFilter::LinearMipmapNearest => 3,
+            PicaProceduralTextureFilter::NearestMipmapLinear => 4,
+            PicaProceduralTextureFilter::LinearMipmapLinear => 5,
+            PicaProceduralTextureFilter::Reserved(value) => u32::from(value),
         };
         write(&mut pica, REG_TEXUNIT3_PROCTEX4, (4 << 11) | filter_value);
         write(&mut pica, REG_TEXUNIT3_PROCTEX5, 0);
@@ -809,14 +820,42 @@ mod tests {
     }
 
     #[test]
-    fn mipmap_modes_fail_closed() {
-        let mut mipmapped = fixture(false, PicaProceduralTextureFilter::Nearest);
-        write(&mut mipmapped, REG_TEXUNIT3_PROCTEX4, (4 << 11) | 2);
+    fn mipmap_filter_modes_use_the_software_reference_level_zero_fallback() {
+        let samples = [
+            (
+                PicaProceduralTextureFilter::NearestMipmapNearest,
+                [100, 110, 120, 200],
+            ),
+            (
+                PicaProceduralTextureFilter::NearestMipmapLinear,
+                [100, 110, 120, 200],
+            ),
+            (
+                PicaProceduralTextureFilter::LinearMipmapNearest,
+                [10, 20, 30, 255],
+            ),
+            (
+                PicaProceduralTextureFilter::LinearMipmapLinear,
+                [10, 20, 30, 255],
+            ),
+        ];
+
+        for (filter, expected) in samples {
+            let pica = fixture(false, filter);
+            let sampler = PicaProceduralTextureSampler::from_pica(&pica).unwrap();
+            let color = sampler.sample(&[[0.5, 0.25], [0.0; 2], [0.0; 2]]).unwrap();
+            assert_color(color, expected);
+        }
+    }
+
+    #[test]
+    fn reserved_procedural_filter_values_fail_explicitly() {
+        let pica = fixture(false, PicaProceduralTextureFilter::Reserved(6));
         assert_eq!(
-            PicaProceduralTextureSampler::from_pica(&mipmapped),
-            Err(PicaProceduralTextureError::MipmapFilterUnsupported(
-                PicaProceduralTextureFilter::NearestMipmapNearest
-            ))
+            PicaProceduralTextureSampler::from_pica(&pica).unwrap_err(),
+            PicaProceduralTextureError::FilterUnsupported(
+                PicaProceduralTextureFilter::Reserved(6)
+            )
         );
     }
 
