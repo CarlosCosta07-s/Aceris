@@ -597,9 +597,8 @@ impl Library {
                     let list_top = 150.0;
                     let row_step = 54.0;
                     let row_height = 48.0;
-                    let visible_rows = ((logical_height - 174.0) / row_step)
-                        .floor()
-                        .max(1.0) as usize;
+                    let visible_rows =
+                        ((logical_height - 174.0) / row_step).floor().max(1.0) as usize;
                     if !(128.0..970.0).contains(&x) || y < list_top {
                         return ClickResult::Ignored;
                     }
@@ -612,9 +611,7 @@ impl Library {
                     {
                         return ClickResult::Ignored;
                     }
-                    if (910.0..958.0).contains(&x)
-                        && (row_y + 8.0..row_y + 40.0).contains(&y)
-                    {
+                    if (910.0..958.0).contains(&x) && (row_y + 8.0..row_y + 40.0).contains(&y) {
                         self.selected = index;
                         self.toggle_selected_favorite();
                         return ClickResult::Ignored;
@@ -1900,28 +1897,12 @@ impl Library {
                     let list_top = 150.0;
                     let row_step = 54.0;
                     let row_height = 48.0;
-                    let visible_rows = ((bottom - list_top) / row_step)
-                        .floor()
-                        .max(1.0) as usize;
+                    let visible_rows = ((bottom - list_top) / row_step).floor().max(1.0) as usize;
                     responsive_text(
-                        frame,
-                        width,
-                        height,
-                        146.0,
-                        128.0,
-                        text_scale,
-                        "TÍTULO",
-                        0xBBAFC7,
+                        frame, width, height, 146.0, 128.0, text_scale, "TÍTULO", 0xBBAFC7,
                     );
                     responsive_text(
-                        frame,
-                        width,
-                        height,
-                        790.0,
-                        128.0,
-                        text_scale,
-                        "FORMATO",
-                        0xBBAFC7,
+                        frame, width, height, 790.0, 128.0, text_scale, "FORMATO", 0xBBAFC7,
                     );
                     for (index, entry) in entries
                         .into_iter()
