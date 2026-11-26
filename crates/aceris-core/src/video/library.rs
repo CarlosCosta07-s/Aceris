@@ -260,8 +260,8 @@ fn encode_scan_directory(directory: &Path) -> std::io::Result<String> {
     }
     let mut encoded = String::with_capacity(value.len() * 2);
     for byte in value.as_bytes() {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        encoded.push(HEX[(*byte >> 4) as usize] as char);
+        encoded.push(HEX[(*byte & 0x0f) as usize] as char);
     }
     Ok(encoded)
 }
@@ -354,7 +354,11 @@ pub fn save_library_scan_config(
 
     let mut contents = String::from(LIBRARY_SCAN_CONFIG_MAGIC);
     contents.push_str("\nrecursive=");
-    contents.push_str(if config.options.recursive { "true" } else { "false" });
+    contents.push_str(if config.options.recursive {
+        "true"
+    } else {
+        "false"
+    });
     contents.push('\n');
     for directory in directories {
         contents.push_str("folder=");
@@ -3765,11 +3769,12 @@ mod tests {
         assert!(scan_games(&dir).is_empty());
     }
 
-
     #[test]
     fn library_scan_config_round_trips_multiple_folders_and_recursion() {
-        let root =
-            std::env::temp_dir().join(format!("aceris-scan-config-roundtrip-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "aceris-scan-config-roundtrip-{}",
+            std::process::id()
+        ));
         let primary = root.join("primary");
         let secondary = root.join("external").join("games");
         fs::create_dir_all(&primary).unwrap();
@@ -3824,8 +3829,8 @@ mod tests {
 
     #[test]
     fn invalid_library_scan_config_falls_back_to_the_original_folder() {
-        let root = std::env::temp_dir()
-            .join(format!("aceris-scan-config-invalid-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("aceris-scan-config-invalid-{}", std::process::id()));
         let settings = root.join("settings");
         let fallback = root.join("original-games");
         fs::create_dir_all(&settings).unwrap();
@@ -3836,7 +3841,10 @@ mod tests {
         .unwrap();
 
         let config = load_library_scan_config(&settings, &fallback);
-        assert_eq!(config.directories, vec![normalize_scan_directory(&fallback)]);
+        assert_eq!(
+            config.directories,
+            vec![normalize_scan_directory(&fallback)]
+        );
         assert!(!config.options.recursive);
 
         fs::remove_dir_all(root).unwrap();
