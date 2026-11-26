@@ -414,3 +414,11 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [x] SVC GetProcessInfo type 7 informa quantidade de threads não encerradas no processo atual. O teste verifica main + worker = 2 e, após término do worker, 1.
 - [x] Types 6 e 8 retornam zero conforme os campos documentados.
 - [ ] Types 0–3 continuam pendentes: exigem memória privada/compartilhada e contabilidade de stack supervisor e tabela externa de handles; não estimar.
+
+
+## Kernel — contabilidade parcial de ResourceLimit (26/11/2026)
+
+- [x] CurrentValues: THREAD=2 pelo scheduler; EVENT=3, MUTEX=4, SEMAPHORE=5, TIMER=6 pela quantidade de objetos únicos (handles duplicados não contam duas vezes).
+- [~] Objetos na retired table permanecem contados enquanto owner/waiter/alias retém o objeto.
+- [ ] Max values para THREAD/EVENT/MUTEX/SEMAPHORE/TIMER ainda dependem das categorias/limites do exheader.
+- [ ] SHAREDMEMORY=7, ADDRESSARBITER=8 e CPUTIME=9 pendentes por accounting de lifetime/uso.

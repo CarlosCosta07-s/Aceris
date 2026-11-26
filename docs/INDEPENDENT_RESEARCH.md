@@ -593,3 +593,12 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Tipos 6 e 8 retornam zero conforme o contrato documentado; tipos 0–3 e 9–18 continuam falhando com InvalidEnum até existir accounting ou semântica suficiente.
 - Teste executa a consulta com a thread principal e uma thread secundária, espera 2; após terminar a secundária, espera 1. Não é ainda um teste de múltiplos processos simultâneos.
 - Fonte: 3dbrew, `SVC — GetProcessInfo` (https://www.3dbrew.org/wiki/SVC). Nenhum código do Azahar foi copiado ou adaptado.
+
+
+## GetResourceLimitCurrentValues — threads e objetos de sincronização (26/11/2026)
+
+- A enumeração pública ResourceLimitType define COMMIT=1, THREAD=2, EVENT=3, MUTEX=4, SEMAPHORE=5, TIMER=6, SHAREDMEMORY=7, ADDRESSARBITER=8 e CPUTIME=9. A estrutura KResourceLimit confirma contadores Current e Max por classe.
+- Aceris amplia GetResourceLimitCurrentValues para THREAD e EVENT/MUTEX/SEMAPHORE/TIMER. THREAD usa os contextos ainda mantidos pelo scheduler; objetos de sincronização contam objetos únicos no mapa ativo + aposentado, não handles duplicados.
+- Os máximos dessas classes continuam sem suporte, pois categorias/limites do exheader ainda não são representados. Também não há contador confiável de memória compartilhada após desanexar o handle, de arbiters com waiters fora do objeto, nem de CPU time; tipos 7–9 continuam rejeitados. Não inventar defaults nem confundir handles duplicados com novos objetos.
+- Testes cobrem objetos, alias duplicado, objeto aposentado retido e SVC que retorna [2 threads, 1 event, 1 mutex, 1 semaphore, 1 timer].
+- Referências: libctru svc.h (https://github.com/devkitPro/libctru/blob/master/libctru/include/3ds/svc.h), 3dbrew KResourceLimit (https://3dbrew.org/wiki/KResourceLimit). Nenhum código do Azahar foi copiado.

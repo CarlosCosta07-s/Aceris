@@ -2601,3 +2601,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - `SVC GetProcessInfo` agora suporta type 7 com a contagem viva; types 6 e 8 devolvem zero, conforme os campos documentados do kernel 3DS. Types 0–3 e 9–18 permanecem rejeitados até existir contabilidade/semântica real.
 - Teste verifica transição de 2 threads vivas (main + worker) para 1 após o worker ser terminado.
 - Referência pública: https://www.3dbrew.org/wiki/SVC. Implementação independente; sem cópia/port de Azahar.
+
+
+## Kernel — GetResourceLimitCurrentValues para objetos de sincronização (26/11/2026, ChatGPT)
+
+- Adicionado Arm11KernelObjectTable::synchronization_resource_count para EVENT=3, MUTEX=4, SEMAPHORE=5 e TIMER=6. Conta objetos únicos no conjunto ativo + aposentado; aliases de handle não aumentam o contador e objetos retidos por owner/waiter continuam contabilizados.
+- GetResourceLimitCurrentValues agora retorna THREAD=2 via scheduler (thread_count) e contadores 3–6 via tabela de objetos. GetResourceLimitLimitValues continua suportando apenas COMMIT=1; limites por classe dependem das categorias/limites do exheader e não foram estimados.
+- Shared memory (7), address arbiter (8) e CPU time (9) permanecem pendentes por lacunas de lifetime/accounting. Ainda não alegar ResourceLimit completo.
+- Testes novos em kernel table e sessão verificam contagens e aliases. Referências externas: libctru svc.h e 3dbrew KResourceLimit.

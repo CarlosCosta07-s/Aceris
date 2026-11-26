@@ -702,6 +702,30 @@ impl Arm11KernelObjectTable {
         self.objects.len() + self.retired_objects.len()
     }
 
+    /// Returns current counts for synchronization resources understood by the table.
+    ///
+    /// Resource IDs follow the 3DS LimitableResource ABI: event=3, mutex=4,
+    /// semaphore=5 and timer=6. Duplicate handles are aliases, not new objects;
+    /// objects retained only by waiters/owners remain counted until reclaimed.
+    pub fn synchronization_resource_count(&self, resource_type: u32) -> Option<u64> {
+        if !(3..=6).contains(&resource_type) {
+            return None;
+        }
+        let count = self
+            .objects
+            .values()
+            .chain(self.retired_objects.values())
+            .filter(|object| match resource_type {
+                3 => matches!(object, KernelObject::Event(_)),
+                4 => matches!(object, KernelObject::Mutex(_)),
+                5 => matches!(object, KernelObject::Semaphore(_)),
+                6 => matches!(object, KernelObject::Timer(_)),
+                _ => false,
+            })
+            .count();
+        Some(count as u64)
+    }
+
     /// Reports the reference count that this process-local table currently models.
     ///
     /// The count includes open primary/duplicate handles, registered synchronization
@@ -1710,6 +1734,28 @@ mod tests {
         assert_eq!(table.thread_handle_count(target), 1);
         table.close_handle(handle).unwrap();
         assert_eq!(table.thread_handle_count(target), 0);
+    }
+
+    #[test]
+    fn resource_limit_counts_unique_synchronization_objects() {
+        let mut table = Arm11KernelObjectTable::default();
+        let current = thread_id(1);
+        let event = table.insert_event(EventResetType::Sticky).unwrap();
+        let event_alias = table.duplicate_handle(event).unwrap();
+        table.insert_mutex(false, current).unwrap();
+        table.insert_semaphore(0, 2).unwrap();
+        table.insert_timer(EventResetType::OneShot).unwrap();
+
+        assert_eq!(table.synchronization_resource_count(3), Some(1));
+        assert_eq!(table.synchronization_resource_count(4), Some(1));
+        assert_eq!(table.synchronization_resource_count(5), Some(1));
+        assert_eq!(table.synchronization_resource_count(6), Some(1));
+        assert_eq!(table.synchronization_resource_count(2), None);
+
+        table.close_handle(event).unwrap();
+        assert_eq!(table.synchronization_resource_count(3), Some(1));
+        table.close_handle(event_alias).unwrap();
+        assert_eq!(table.synchronization_resource_count(3), Some(0));
     }
 
     #[test]

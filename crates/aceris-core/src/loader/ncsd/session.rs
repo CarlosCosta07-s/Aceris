@@ -3797,14 +3797,16 @@ impl Arm11ProcessSession {
     ///
     /// r0 = writable s64 output array, r1 = ResourceLimit handle,
     /// r2 = readable u32 resource-type array, r3 = signed element count.
-    /// COMMIT (type 1) is modelled; other resource counters fail closed until
-    /// their kernel accounting is implemented.
+    /// COMMIT, live THREAD and synchronization-object current counters are modelled.
+    /// Limit values beyond COMMIT remain unavailable until exheader/category limits
+    /// are represented rather than replaced with guessed constants.
     fn svc_get_resource_limit_values(
         &mut self,
         caller: ThreadId,
         return_limit: bool,
     ) -> SvcRunDisposition {
         const RESOURCE_LIMIT_COMMIT: u32 = 1;
+        const RESOURCE_LIMIT_THREAD: u32 = 2;
         const MAX_RESOURCE_TYPES: i32 = 10;
 
         let registers = self
@@ -3839,17 +3841,23 @@ impl Arm11ProcessSession {
             return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
 
-        let commit_value = if return_limit {
-            Self::RESOURCE_LIMIT_COMMIT_MAX_BYTES
-        } else {
-            self.process_committed_memory_bytes()
-        };
         let mut output = Vec::with_capacity(count as usize * std::mem::size_of::<u64>());
         for resource_type_bytes in type_bytes.chunks_exact(4) {
             let resource_type =
                 u32::from_le_bytes(resource_type_bytes.try_into().expect("four-byte chunk"));
-            let value = match resource_type {
-                RESOURCE_LIMIT_COMMIT => commit_value,
+            let value = match (return_limit, resource_type) {
+                (true, RESOURCE_LIMIT_COMMIT) => Self::RESOURCE_LIMIT_COMMIT_MAX_BYTES,
+                (false, RESOURCE_LIMIT_COMMIT) => self.process_committed_memory_bytes(),
+                (false, RESOURCE_LIMIT_THREAD) => self.scheduler.thread_count() as u64,
+                (false, 3..=6) => {
+                    let Some(count) = self
+                        .kernel_objects
+                        .synchronization_resource_count(resource_type)
+                    else {
+                        return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+                    };
+                    count
+                }
                 _ => return self.write_svc_result(caller, RESULT_INVALID_ENUM),
             };
             output.extend_from_slice(&value.to_le_bytes());
@@ -4243,7 +4251,41 @@ mod tests {
         assert!(current > 0);
         assert!(current < Arm11ProcessSession::RESOURCE_LIMIT_COMMIT_MAX_BYTES);
 
-        session.write_memory_u32(TYPES, 2).unwrap(); // THREAD is not yet accounted.
+        let worker = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x0020_1000, 0x20, 0)
+            .unwrap();
+        session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
+        session.kernel_objects.insert_mutex(false, MAIN_THREAD_ID).unwrap();
+        session.kernel_objects.insert_semaphore(0, 2).unwrap();
+        session
+            .kernel_objects
+            .insert_timer(EventResetType::OneShot)
+            .unwrap();
+        let current_types = [2u32, 3, 4, 5, 6];
+        let mut current_type_bytes = Vec::new();
+        for resource_type in current_types {
+            current_type_bytes.extend_from_slice(&resource_type.to_le_bytes());
+        }
+        session.write_memory_bytes(TYPES, &current_type_bytes).unwrap();
+        session.set_current_register(0, VALUES);
+        session.set_current_register(1, handle);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, current_types.len() as u32);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut current_counts = [0u8; 40];
+        session
+            .read_memory_bytes(VALUES, &mut current_counts)
+            .unwrap();
+        let decoded_counts = current_counts
+            .chunks_exact(8)
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(decoded_counts, [2, 1, 1, 1, 1]);
+        session.scheduler.terminate_thread(worker).unwrap();
+
+        session.write_memory_u32(TYPES, 2).unwrap(); // THREAD max is not yet modelled.
         session
             .write_memory_bytes(VALUES, &0xA5A5_A5A5_A5A5_A5A5u64.to_le_bytes())
             .unwrap();
