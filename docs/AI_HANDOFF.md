@@ -2706,3 +2706,14 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - **Importante:** desktop e Android ainda usam o construtor legado, logo o comportamento visível permanece em uma única pasta até a próxima integração dos frontends e dos seletores de pasta. SAF/content URIs continuam fora desta implementação.
 - **Fronteiras:** somente `crates/aceris-core/src/video/library.rs` e documentação. Sem alterações no código dos frontends, módulos de emulação, dependências ou assets. Sem dados de jogos, firmware ou chaves. Somente `main`, sem branch/PR.
 - **Validação:** executar Rustfmt, build, testes e Clippy na CI gerada pelo commit.
+
+
+## Frontends — carregar configuração persistente da biblioteca (26/11/2026, ChatGPT)
+
+- Desktop e Android deixaram de inicializar a lista exclusivamente com scan_games(games_dir)/Library::new; ambos usam Library::from_scan_settings com o diretório de configurações <games_dir>/.aceris.
+- A configuração .aceris/library_scan_v1.txt passa a ser respeitada pelos dois hosts: múltiplas raízes já salvas e recursão opcional são aplicadas na abertura; configuração ausente/inválida retorna à pasta original com recursão desativada.
+- Adicionado teste do App Android que grava duas raízes, ativa recursão e verifica que a inicialização recupera os dois títulos.
+- A alteração em frontends/android/src/app.rs ficou limitada ao construtor App::new e a um teste novo. Os métodos de estado de mídia existentes foram preservados sem alteração. O desktop teve somente o import e o inicializador da biblioteca ajustados.
+- Limite restante: ainda não há controles visuais para adicionar/remover pastas ou alterar a recursão; Android segue sem seleção SAF e URIs SAF não são tratadas como caminhos de arquivo. A mudança conecta a configuração já persistente, mas não cria o fluxo de seleção de pastas.
+- Validação: aguardar CI do commit. Nenhum teste/build local foi executado nesta sessão; não declarar sucesso antes dos workflows.
+- Fronteiras: somente main; sem branches ou PRs. Nenhum módulo de emulação, dependência, asset, ROM, CIA, firmware ou chave foi alterado/adicionado.

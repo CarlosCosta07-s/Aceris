@@ -54,9 +54,9 @@ pub struct App {
 impl App {
     /// Creates the app showing the intro, with games listed from `games_dir`.
     pub fn new(games_dir: &Path) -> Self {
-        let entries = library::scan_games(games_dir);
         let games_dir_owned = games_dir.to_path_buf();
-        let mut library = Library::new(entries, games_dir.display().to_string());
+        let settings_directory = games_dir.join(".aceris");
+        let mut library = Library::from_scan_settings(&settings_directory, games_dir);
         library.set_touch_keyboard_enabled(true);
         Self {
             games_dir: games_dir_owned,
@@ -578,6 +578,27 @@ mod tests {
         assert_eq!(app.take_audio(), vec![1, 2, 3, 4]);
         assert!(app.take_audio().is_empty());
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn app_loads_persisted_multi_folder_recursive_scan_config() {
+        let (_initial_app, root) = app_with_games(1);
+        let secondary = root.join("secondary");
+        let nested = secondary.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("extra.cci"), b"not a valid image").unwrap();
+
+        let mut config = library::LibraryScanConfig::single_directory(root.clone());
+        assert!(config.add_directory(secondary));
+        config.options.recursive = true;
+        library::save_library_scan_config(&root.join(".aceris"), &config).unwrap();
+
+        let app = App::new(&root);
+        assert_eq!(app.library.entries().len(), 2);
+        assert_eq!(app.library.scan_config().directories.len(), 2);
+        assert!(app.library.scan_config().options.recursive);
+
+        fs::remove_dir_all(root).ok();
     }
 
     fn app_with_games(count: usize) -> (App, std::path::PathBuf) {

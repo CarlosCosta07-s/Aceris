@@ -13,7 +13,7 @@ use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     video::{
         DualScreenDisplay, intro,
-        library::{ClickResult, Library, VISIBLE_ROWS, scan_games},
+        library::{ClickResult, Library, VISIBLE_ROWS},
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
@@ -355,7 +355,8 @@ fn run_windowed(
     if !skip_intro && !play_intro(&mut window, &mut presenter, scale)? {
         return Ok(());
     }
-    let mut library = Library::new(scan_games(games_dir), games_dir.display().to_string());
+    let settings_directory = games_dir.join(".aceris");
+    let mut library = Library::from_scan_settings(&settings_directory, games_dir);
     let background = background_dir
         .map(|directory| background::Sequence::load(directory, background_fps))
         .transpose()?;
