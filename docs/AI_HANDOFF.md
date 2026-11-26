@@ -2583,3 +2583,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Arquivos de código: `crates/aceris-core/src/loader/ncsd/session.rs` e `crates/aceris-core/src/loader/ncsd/session/thread.rs`. Arquivos de pesquisa/registro: `docs/INDEPENDENT_RESEARCH.md`, `docs/AI_HANDOFF.md` e `docs/ROADMAP.md`.
 - **Validação pendente:** não declarar fmt/build/Clippy/testes aprovados até a nova CI deste commit terminar. O HEAD anterior `889126b361504a64cf09771a019ebfeb82a167b8` tinha CI aprovada em Linux, Windows, macOS e Android ARM64.
 - Pendências não cobertas nesta etapa: RESERVE/MAP/UNMAP/PROTECT completos no ControlMemory; accounting de todos os tipos de ResourceLimit; OpenProcess/OpenThread e múltiplos processos com namespaces separados; ReplyAndReceive 0x4F e transferência genérica de mensagens/handles/buffers; serviço HLE somente deve ser ampliado a partir de traces de inicialização reproduzíveis.
+
+
+## Kernel — ABI GetSystemInfo e contabilidade FCRAM linear (26/11/2026, ChatGPT)
+
+- Corrigido o contrato de SVC 0x2A: r0 recebe o ponteiro de saída s64, r1 o tipo, r2 o parâmetro; o resultado da syscall é escrito em r0. Antes, o Aceris retornava zero nos registradores r1:r2 sem preencher o buffer, o que podia fazer libctru/jogos enxergarem a memória APP como totalmente livre.
+- Suporte intencionalmente limitado a `SystemInfoType=0,param=1` (uso da região APPLICATION), que é o contador necessário para sizing do heap. Queries agregadas, SYSTEM/BASE e memória exclusiva do kernel retornam InvalidEnum até existir accounting real para esses pools; não retornar zero fictício.
+- Valor da APP: segmentos estáticos mapeados + regiões dinâmicas (heap/TLS) + ranges físicos lineares únicos. Adicionado `linear_physical_allocated_bytes` ao `Arm11MemoryUsageReport`, unindo intervalos físicos sobrepostos para impedir dupla contagem dos aliases linear antigos/novos. Mapeamentos shared continuam fora deste contador para evitar somar views/ownership sem contabilidade física.
+- Testes adicionados para ponteiro de saída, bytes calculados, endereço inválido, enum ainda não modelado e deduplicação de aliases físicos.
+- Mudanças de código: `crates/aceris-core/src/loader/ncsd/session.rs` e `crates/aceris-core/src/loader/ncsd/process.rs`. CI da revisão anterior `16510ddba6e05a9597e14adb820fa1b51edf8032` estava sendo executada ao registrar este handoff; confirmar todos os jobs antes de declarar validação final.
+- Limites mantidos: sem accounting completo de SYSTEM/BASE, FCRAM do kernel, KSharedMemory externo, nem todas as classes de ResourceLimit. Isso não completa todo o gerenciador de memória.

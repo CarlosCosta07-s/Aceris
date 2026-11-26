@@ -573,3 +573,14 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 
 - Prioridade técnica: concluir resource accounting e operações de memória antes de anunciar memória completa; estabelecer um gerenciador de processos/namespace independente antes de afirmar IPC entre processos; implementar ReplyAndReceive e transporte de descritores como uma única cadeia testável; só então completar os serviços observados no bootstrap de jogos.
 - A consulta de Azahar não concede licença para reutilizar sua implementação. O Aceris mantém código próprio em Rust e a política de repositório prevalece sobre qualquer conveniência de desenvolvimento.
+
+
+## GetSystemInfo e accounting de memória linear (26/11/2026)
+
+- A referência pública 3dbrew, página `SVC`, documenta `GetSystemInfo(s64* out, SystemInfoType type, s32 param)`: tipo 0/parâmetro 1 retorna o uso da região APPLICATION. O parâmetro 0 agrega APPLICATION/SYSTEM/BASE; 2 e 3 isolam SYSTEM e BASE. A página `Kernel ABI` confirma a convenção AAPCS e a necessidade de usar os registradores de argumento corretos.
+- O Aceris estava tratando `r1:r2` como resultado de 64 bits e devolvendo zero sem escrever o buffer de saída. Isso contrariava o contrato da syscall e podia fazer o jogo interpretar a região de aplicação como completamente livre.
+- Implementação original Rust: SVC 0x2A agora lê `r0` como ponteiro gravável para `s64`, `r1` como tipo e `r2` como parâmetro, grava o uso de memória APPLICATION em little-endian e retorna o Result em `r0`. Neste momento apenas tipo 0/parâmetro 1 é declarado suportado; parâmetros de SYSTEM/BASE e contadores exclusivos do kernel retornam InvalidEnum, pois esses pools ainda não são contabilizados pelo modelo.
+- O valor APP é a soma dos segmentos estáticos mapeados (text/ro/data/BSS/stack), regiões dinâmicas (heap e TLS) e FCRAM linear mapeada. A contabilização linear deduplica intervalos físicos sobrepostos, pois o mesmo bloco pode aparecer nos aliases virtuais antigo e novo. Mapeamentos shared não são somados aqui para evitar dupla contagem de aliases/ownership externo; a contabilidade completa de shared memory e dos três pools continua pendente.
+- Testes de regressão: escrita do valor de 64 bits no ponteiro de saída; resposta de erro para parâmetros/regiões ainda não modelados; ponteiro de saída inválido; contagem linear sem duplicar uma região física mapeada por dois aliases.
+- Referências: https://3dbrew.org/wiki/SVC ; https://3dbrew.org/wiki/Kernel_ABI ; https://3dbrew.org/wiki/Memory_Management ; https://3dbrew.org/wiki/Memory_Allocation .
+- Nenhum código, teste, pseudocódigo ou estrutura interna de Azahar foi copiado ou adaptado para esta correção.

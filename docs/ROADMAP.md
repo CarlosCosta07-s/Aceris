@@ -399,3 +399,11 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [ ] Memória completa: implementar as operações RESERVE/MAP/UNMAP/PROTECT com estados de QueryMemory coerentes, accounting completo por região e classes de ResourceLimit; conservar o caminho COMMIT/heap atual e a compatibilidade já testada.
 - [ ] IPC genérico entre processos: implementar ReplyAndReceive (SVC 0x4F), fila de requests/replies por SessionEndpoint, transferência de handles e descritores de buffers entre espaços de processo, fechamento remoto e wakeups/timeout. As portas e pares client/server existentes são apenas fundação, não IPC completo.
 - [ ] Fechar a ABI SVC por contrato público e traces de jogos, sem implementar valores estimados ou transformar stubs documentados em falsos sucessos.
+
+
+## Kernel — GetSystemInfo e uso da região APPLICATION (26/11/2026)
+
+- [x] Corrigir ABI de GetSystemInfo (0x2A): r0 ponteiro de saída s64, r1 tipo, r2 parâmetro; resultado em r0. Agora grava uso APP para type=0/param=1.
+- [~] O uso APP considera segmentos estáticos, heap/TLS e FCRAM linear; aliases virtuais antigo/novo da mesma região linear são deduplicados pela faixa física. Mapeamentos shared e accounting físico completo ainda não entram neste valor.
+- [ ] Implementar accounting de SYSTEM, BASE e alocações do kernel antes de suportar parâmetros 0, 2, 3 e type 2 sem valores estimados.
+- [ ] Expandir ResourceLimit além de COMMIT: thread, event, mutex, semaphore, timer, shared memory, address arbiter e CPU time, com current/limit corretos.

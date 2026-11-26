@@ -976,6 +976,9 @@ pub struct Arm11MemoryUsageReport {
     pub dynamic_region_virtual_bytes: usize,
     /// Guest virtual size of mapped shared-memory views; aliases are not deduplicated.
     pub shared_mapping_virtual_bytes: usize,
+    /// Unique physical FCRAM bytes visible through linear aliases.
+    /// Overlapping old/new virtual aliases are counted only once.
+    pub linear_physical_allocated_bytes: usize,
     /// Number of distinct sparse backing roots referenced by this address space.
     pub unique_sparse_backing_count: usize,
     /// Materialized 4 KiB payload pages across distinct backing roots.
@@ -3395,6 +3398,28 @@ impl Arm11CodeAddressSpace {
                 total.saturating_add(region.backing.length)
             });
 
+        let mut linear_physical_ranges = self
+            .linear_regions
+            .iter()
+            .map(|region| {
+                let start = u64::from(region.physical_base);
+                let end = start.saturating_add(u64::from(region.size));
+                (start, end)
+            })
+            .collect::<Vec<_>>();
+        linear_physical_ranges.sort_unstable_by_key(|(start, _)| *start);
+        let mut linear_physical_allocated_bytes = 0usize;
+        let mut previous_physical_end = 0u64;
+        for (start, end) in linear_physical_ranges {
+            if end <= previous_physical_end {
+                continue;
+            }
+            let unique_start = start.max(previous_physical_end);
+            linear_physical_allocated_bytes = linear_physical_allocated_bytes
+                .saturating_add((end - unique_start) as usize);
+            previous_physical_end = end;
+        }
+
         let mut unique_backings = BTreeMap::<u64, &SharedMemoryBacking>::new();
         for region in &self.dynamic_regions {
             let backing = region.backing.backing_ref();
@@ -3435,6 +3460,7 @@ impl Arm11CodeAddressSpace {
             application_heap_virtual_bytes,
             dynamic_region_virtual_bytes,
             shared_mapping_virtual_bytes,
+            linear_physical_allocated_bytes,
             unique_sparse_backing_count: unique_backings.len(),
             sparse_backing_pages,
             sparse_backing_allocated_bytes,
@@ -5842,6 +5868,13 @@ mod tests {
         address_space
             .map_linear_memory_region(old_virtual_base, physical_base, 0x2000)
             .unwrap();
+
+        assert_eq!(
+            address_space
+                .memory_usage_report()
+                .linear_physical_allocated_bytes,
+            0x2000
+        );
 
         assert!(matches!(
             address_space.locate(old_virtual_base),

@@ -3635,26 +3635,38 @@ impl Arm11ProcessSession {
         }
     }
 
-    /// GetSystemInfo (0x2A): r1 = type, r2 = parameter, result in r1:r2.
+    /// Handles GetSystemInfo (SVC 0x2A).
     ///
-    /// Only type 0 (memory usage, 3dbrew "GetSystemInfo") is answered, which is
-    /// what libctru uses to size its heap. Usage is reported as zero: the
-    /// emulator does not track per-region usage yet, so a game sees the whole
-    /// configured region as free. Other types return InvalidEnum.
+    /// r0 is the writable s64 output pointer, r1 the information type and r2
+    /// the type-specific parameter. The current single-process model can report
+    /// committed APPLICATION memory; SYSTEM/BASE and kernel-only counters are
+    /// rejected until those physical memory pools are tracked independently.
     fn svc_get_system_info(&mut self, caller: ThreadId) -> SvcRunDisposition {
-        let core = self
+        let registers = self
             .scheduler
-            .core_mut(caller)
-            .expect("current thread context exists");
-        let (kind, param) = (core.regs[1], core.regs[2]);
-        if kind == 0 && param <= 3 {
-            core.regs[0] = 0;
-            core.regs[1] = 0;
-            core.regs[2] = 0;
-        } else {
-            core.regs[0] = RESULT_INVALID_ENUM;
+            .core(caller)
+            .expect("current thread context exists")
+            .regs;
+        let (output_address, kind, param) = (registers[0], registers[1], registers[2] as i32);
+
+        let value = match (kind, param) {
+            (0, 1) => Some(self.process_committed_memory_bytes()),
+            _ => None,
+        };
+        let Some(value) = value else {
+            return self.write_svc_result(caller, RESULT_INVALID_ENUM);
+        };
+        if output_address & 3 != 0 {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
         }
-        SvcRunDisposition::Resume
+        if self
+            .write_memory_bytes(output_address, &value.to_le_bytes())
+            .is_err()
+        {
+            return self.write_svc_result(caller, RESULT_INVALID_ADDRESS);
+        }
+
+        self.write_svc_result(caller, 0)
     }
 
     fn svc_get_system_tick(&mut self, caller: ThreadId) -> SvcRunDisposition {
@@ -3729,9 +3741,10 @@ impl Arm11ProcessSession {
     /// every 3DS memory type or New 3DS allocation profile.
     const RESOURCE_LIMIT_COMMIT_MAX_BYTES: u64 = 0x0400_0000;
 
-    /// Returns the process's currently committed image, stack, TLS and dynamic mappings.
+    /// Returns the committed application image, stack, TLS, heap and linear FCRAM.
     ///
-    /// The value is derived from guest-visible mapping sizes, not host Vec capacity.
+    /// Physical ranges exposed through multiple linear aliases are counted once;
+    /// this remains the accounting for the single application process model.
     fn process_committed_memory_bytes(&self) -> u64 {
         let layout = self.address_space.layout();
         let static_bytes = [
@@ -3744,11 +3757,12 @@ impl Arm11ProcessSession {
         .into_iter()
         .map(u64::from)
         .fold(0u64, u64::saturating_add);
-        let dynamic_bytes = self
-            .address_space
-            .memory_usage_report()
-            .dynamic_region_virtual_bytes as u64;
-        static_bytes.saturating_add(dynamic_bytes)
+        let memory_usage = self.address_space.memory_usage_report();
+        let dynamic_bytes = memory_usage.dynamic_region_virtual_bytes as u64;
+        let linear_bytes = memory_usage.linear_physical_allocated_bytes as u64;
+        static_bytes
+            .saturating_add(dynamic_bytes)
+            .saturating_add(linear_bytes)
     }
 
     /// Handles GetResourceLimit: r0 = writable handle output, r1 = process handle.
@@ -6720,6 +6734,55 @@ mod tests {
                 RESULT_INVALID_HANDLE
             );
         }
+    }
+
+    #[test]
+    fn get_system_info_writes_committed_application_memory_to_guest_pointer() {
+        let mut session = test_session();
+        const OUTPUT: u32 = 0x0020_0000;
+
+        session
+            .address_space
+            .allocate_application_heap_region(0x0800_0000, 0x3000)
+            .unwrap();
+        let expected = session.process_committed_memory_bytes();
+
+        session.set_current_register(0, OUTPUT);
+        session.set_current_register(1, 0);
+        session.set_current_register(2, 1);
+        assert!(matches!(
+            session.dispatch_svc(SVC_GET_SYSTEM_INFO),
+            SvcRunDisposition::Resume
+        ));
+
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut output = [0u8; 8];
+        session.read_memory_bytes(OUTPUT, &mut output).unwrap();
+        assert_eq!(u64::from_le_bytes(output), expected);
+    }
+
+    #[test]
+    fn get_system_info_rejects_unmodelled_regions_and_invalid_output() {
+        let mut session = test_session();
+        const OUTPUT: u32 = 0x0020_0000;
+
+        session.set_current_register(0, OUTPUT);
+        session.set_current_register(1, 0);
+        session.set_current_register(2, 0);
+        session.dispatch_svc(SVC_GET_SYSTEM_INFO);
+        assert_eq!(
+            session.current_registers().unwrap()[0],
+            RESULT_INVALID_ENUM
+        );
+
+        session.set_current_register(0, 0x0800_0000);
+        session.set_current_register(1, 0);
+        session.set_current_register(2, 1);
+        session.dispatch_svc(SVC_GET_SYSTEM_INFO);
+        assert_eq!(
+            session.current_registers().unwrap()[0],
+            RESULT_INVALID_ADDRESS
+        );
     }
 
     #[test]
