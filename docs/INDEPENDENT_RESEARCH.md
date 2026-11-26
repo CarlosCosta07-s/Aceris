@@ -584,3 +584,12 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Testes de regressão: escrita do valor de 64 bits no ponteiro de saída; resposta de erro para parâmetros/regiões ainda não modelados; ponteiro de saída inválido; contagem linear sem duplicar uma região física mapeada por dois aliases.
 - Referências: https://3dbrew.org/wiki/SVC ; https://3dbrew.org/wiki/Kernel_ABI ; https://3dbrew.org/wiki/Memory_Management ; https://3dbrew.org/wiki/Memory_Allocation .
 - Nenhum código, teste, pseudocódigo ou estrutura interna de Azahar foi copiado ou adaptado para esta correção.
+
+
+## GetProcessInfo — campos de thread count e reserved (26/11/2026)
+
+- A tabela pública de SVC confirma que `GetProcessInfo` usa r1=handle de processo, r2=tipo; retorna Result em r0 e valor de 64 bits em r1:r2. Tipo 7 retorna o número de threads do processo; tipos 6 e 8 são campos documentados como sempre zero. Tipos antigos de accounting físico não são fabricados.
+- Aceris agora responde ao tipo 7 a partir do scheduler: conta somente slots ainda alocados cujo estado não é Exited. Threads encerradas continuam retidas quando o ABI exige handles de thread/sinalização de saída, mas deixam de contar como vivas.
+- Tipos 6 e 8 retornam zero conforme o contrato documentado; tipos 0–3 e 9–18 continuam falhando com InvalidEnum até existir accounting ou semântica suficiente.
+- Teste executa a consulta com a thread principal e uma thread secundária, espera 2; após terminar a secundária, espera 1. Não é ainda um teste de múltiplos processos simultâneos.
+- Fonte: 3dbrew, `SVC — GetProcessInfo` (https://www.3dbrew.org/wiki/SVC). Nenhum código do Azahar foi copiado ou adaptado.

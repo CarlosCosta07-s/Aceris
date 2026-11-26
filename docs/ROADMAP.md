@@ -407,3 +407,10 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [~] O uso APP considera segmentos estáticos, heap/TLS e FCRAM linear; aliases virtuais antigo/novo da mesma região linear são deduplicados pela faixa física. Mapeamentos shared e accounting físico completo ainda não entram neste valor.
 - [ ] Implementar accounting de SYSTEM, BASE e alocações do kernel antes de suportar parâmetros 0, 2, 3 e type 2 sem valores estimados.
 - [ ] Expandir ResourceLimit além de COMMIT: thread, event, mutex, semaphore, timer, shared memory, address arbiter e CPU time, com current/limit corretos.
+
+
+## Kernel — GetProcessInfo: contagem de threads (26/11/2026)
+
+- [x] SVC GetProcessInfo type 7 informa quantidade de threads não encerradas no processo atual. O teste verifica main + worker = 2 e, após término do worker, 1.
+- [x] Types 6 e 8 retornam zero conforme os campos documentados.
+- [ ] Types 0–3 continuam pendentes: exigem memória privada/compartilhada e contabilidade de stack supervisor e tabela externa de handles; não estimar.

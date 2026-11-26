@@ -490,6 +490,17 @@ impl Arm11ThreadScheduler {
         self.threads.iter().filter(|slot| slot.is_some()).count()
     }
 
+    /// Returns the number of threads which have not completed or been terminated.
+    pub fn live_thread_count(&self) -> usize {
+        self.threads
+            .iter()
+            .filter(|slot| {
+                slot.as_ref()
+                    .is_some_and(|thread| thread.info.state != ThreadState::Exited)
+            })
+            .count()
+    }
+
     /// Iterates the stable identifiers of every context still owned by this process.
     ///
     /// Exited contexts remain visible until their final kernel handle is closed.

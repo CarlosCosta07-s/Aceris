@@ -3723,6 +3723,11 @@ impl Arm11ProcessSession {
             match info_type {
                 4 => (0, self.kernel_objects.handle_count() as u64),
                 5 => (0, self.kernel_objects.handle_high_water_mark() as u64),
+                // The current 3DS kernel reports zero for this reserved field.
+                6 => (0, 0),
+                7 => (0, self.scheduler.live_thread_count() as u64),
+                // The documented maximum-thread field is currently always zero.
+                8 => (0, 0),
                 _ => (RESULT_INVALID_ENUM, 0),
             }
         };
@@ -6873,6 +6878,30 @@ mod tests {
             session.scheduler.core(MAIN_THREAD_ID).unwrap().regs[0],
             RESULT_INVALID_ENUM
         );
+    }
+
+    #[test]
+    fn get_process_info_svc_reports_live_thread_count() {
+        let mut session = test_session();
+        let worker = session
+            .scheduler
+            .create_thread(0x0010_0000, 0, 0x0020_0000, 0x20, 0)
+            .unwrap();
+
+        session.set_current_register(1, CURRENT_PROCESS_HANDLE);
+        session.set_current_register(2, 7);
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
+        let registers = session.current_registers().unwrap();
+        assert_eq!(registers[0], 0);
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 2);
+
+        session.scheduler.terminate_thread(worker).unwrap();
+        session.set_current_register(1, CURRENT_PROCESS_HANDLE);
+        session.set_current_register(2, 7);
+        session.dispatch_svc(SVC_GET_PROCESS_INFO);
+        let registers = session.current_registers().unwrap();
+        assert_eq!(registers[0], 0);
+        assert_eq!(u64::from(registers[1]) | (u64::from(registers[2]) << 32), 1);
     }
 
     #[test]
