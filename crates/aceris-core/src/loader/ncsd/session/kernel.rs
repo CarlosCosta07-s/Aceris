@@ -1559,9 +1559,7 @@ impl Arm11KernelObjectTable {
             self.object_by_key(port_key),
             Some(KernelObject::Port(port)) if port.pending_sessions.contains(&peer_key)
         );
-        if server_is_pending
-            && !self.handle_aliases.values().any(|key| *key == peer_key)
-        {
+        if server_is_pending && !self.handle_aliases.values().any(|key| *key == peer_key) {
             self.objects.remove(&peer_key);
             self.retired_objects.remove(&peer_key);
         }
