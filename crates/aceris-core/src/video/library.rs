@@ -305,9 +305,9 @@ impl Library {
     pub fn selected_entry(&self) -> Option<&Entry> {
         if self.page == LibraryPage::Home {
             return self.recent.iter().find_map(|id| {
-                self.entries.iter().find(|entry| {
-                    library_path_id(&entry.path).as_deref() == Some(id.as_str())
-                })
+                self.entries
+                    .iter()
+                    .find(|entry| library_path_id(&entry.path).as_deref() == Some(id.as_str()))
             });
         }
         self.filtered_entries().get(self.selected).copied()
@@ -364,9 +364,9 @@ impl Library {
         self.recent
             .iter()
             .filter(|id| {
-                self.entries.iter().any(|entry| {
-                    library_path_id(&entry.path).as_deref() == Some(id.as_str())
-                })
+                self.entries
+                    .iter()
+                    .any(|entry| library_path_id(&entry.path).as_deref() == Some(id.as_str()))
             })
             .count()
     }
@@ -531,9 +531,10 @@ impl Library {
             LibraryPage::Home => false,
             LibraryPage::Games => !is_homebrew,
             LibraryPage::Favorites => self.is_favorite(entry),
-            LibraryPage::Recent => self.recent.iter().any(|id| {
-                library_path_id(&entry.path).as_deref() == Some(id.as_str())
-            }),
+            LibraryPage::Recent => self
+                .recent
+                .iter()
+                .any(|id| library_path_id(&entry.path).as_deref() == Some(id.as_str())),
             LibraryPage::Homebrew => is_homebrew,
             LibraryPage::Settings => false,
         }
@@ -545,9 +546,9 @@ impl Library {
                 .recent
                 .iter()
                 .filter_map(|id| {
-                    self.entries.iter().find(|entry| {
-                        library_path_id(&entry.path).as_deref() == Some(id.as_str())
-                    })
+                    self.entries
+                        .iter()
+                        .find(|entry| library_path_id(&entry.path).as_deref() == Some(id.as_str()))
                 })
                 .filter(|entry| self.entry_matches_search(entry))
                 .collect();
@@ -3187,8 +3188,8 @@ mod tests {
 
     #[test]
     fn legacy_filename_ids_migrate_to_the_original_games_folder() {
-        let root = std::env::temp_dir()
-            .join(format!("aceris-legacy-library-ids-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("aceris-legacy-library-ids-{}", std::process::id()));
         let secondary = root.join("secondary");
         let settings = root.join(".aceris");
         fs::create_dir_all(&secondary).unwrap();
