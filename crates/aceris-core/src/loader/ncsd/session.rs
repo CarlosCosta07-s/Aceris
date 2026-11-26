@@ -2254,9 +2254,7 @@ impl Arm11ProcessSession {
             SVC_MAP_MEMORY_BLOCK => self.svc_map_memory_block(caller),
             SVC_UNMAP_MEMORY_BLOCK => self.svc_unmap_memory_block(caller),
             SVC_QUERY_MEMORY => self.svc_query_memory(caller),
-            SVC_INVALIDATE_PROCESS_DATA_CACHE => {
-                self.svc_invalidate_process_data_cache(caller)
-            }
+            SVC_INVALIDATE_PROCESS_DATA_CACHE => self.svc_invalidate_process_data_cache(caller),
             SVC_STORE_PROCESS_DATA_CACHE => self.svc_store_process_data_cache(caller),
             SVC_FLUSH_PROCESS_DATA_CACHE => self.svc_flush_process_data_cache(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
