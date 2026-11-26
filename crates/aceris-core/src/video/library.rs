@@ -1646,7 +1646,9 @@ impl Library {
                     0xBBAFC7
                 },
             );
-            responsive_panel(frame, width, height, 920.0, 93.0, 40.0, 26.0, scale, 0x33223F);
+            responsive_panel(
+                frame, width, height, 920.0, 93.0, 40.0, 26.0, scale, 0x33223F,
+            );
             responsive_text_centered(
                 frame,
                 width,
