@@ -6,10 +6,10 @@ Antes de qualquer contribuição, leia [REGRAS_PARA_IA.md](docs/REGRAS_PARA_IA.m
 
 ### Política de implementação original e referências técnicas
 
-- Não consultar código-fonte interno de outros emuladores, incluindo Azahar, Citra, Lime3DS ou semelhantes. A referência permitida limita-se à superfície observável do produto e à documentação pública independente de hardware, formatos e protocolos.
+- É permitido consultar código-fonte de emuladores efetivamente open source (Azahar, Citra, Lime3DS e semelhantes) como referência técnica, nos limites da [seção 5 das regras](docs/REGRAS_PARA_IA.md#5-referências-de-código-aberto-de-outros-emuladores): verificar antes a licença do projeto e do arquivo, e nunca incorporar o código consultado.
 - Não copiar, adaptar, traduzir, portar ou reproduzir código, interfaces, estruturas, testes, fixtures, shaders, patches, assets ou organização interna de terceiros.
 - Não faça tradução linha a linha nem reproduza estrutura expressiva de qualquer material de terceiros. Toda implementação do Aceris deve ser concebida independentemente e escrita em Rust, com arquitetura, interfaces, nomes e testes próprios.
-- Registre somente documentação pública independente e observações externas permitidas: título, URL, autoria, data, pergunta técnica, nível de confiança e testes próprios que sustentam a conclusão.
+- Registre cada fonte consultada (documentação pública, observação externa ou código open source): título ou projeto, URL, arquivo/área, revisão, licença, data, pergunta técnica, nível de confiança e testes próprios que sustentam a conclusão.
 - Se houver dúvida sobre a independência/procedência de uma fonte ou risco de obra derivada, interrompa a pesquisa e peça orientação a Carlos Costa.
 - Assets e recursos visuais/sonoros de terceiros continuam proibidos. Não adicione dependências que forneçam implementação ou recursos do produto sem autorização explícita do mantenedor.
 - Todo o produto, inclusive núcleo, interface e frontends, deve ser implementado em Rust.
@@ -38,8 +38,6 @@ Cada IA deve respeitar os arquivos e tarefas atribuídos às demais. É proibido
 - Evite `unsafe`; quando necessário, documente o invariante com `// SAFETY:`.
 
 
-## Estado de referência — 22/11/2026
+## Estado do projeto
 
-> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
-
-Esta revisão altera somente documentação; não autoriza editar arquivos atribuídos a outro agente. Somente main, sem branches ou PRs, permanece obrigatório.
+Este arquivo não registra estado de desenvolvimento, para não ficar desatualizado. Consulte o [README](README.md), o [roadmap](docs/ROADMAP.md) e as [notas de transferência](docs/AI_HANDOFF.md).

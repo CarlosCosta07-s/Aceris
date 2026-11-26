@@ -22,6 +22,10 @@ Carlos Costa flexibilizou somente a política de referências técnicas: agora �
 As anotações abaixo que dizem “não foi consultado código-fonte” registram o que ocorreu sob a política vigente na data de cada trabalho; não constituem uma proibição atual. Para as regras atuais, consulte também `docs/REGRAS_PARA_IA.md`, `CONTRIBUTING.md` e `docs/INDEPENDENT_RESEARCH.md`.
 
 
+## Autorização total ao Claude — 26/11/2026
+
+Carlos Costa autorizou Claude a desenvolver qualquer parte do código, independentemente da IA autora, para executar a lista: regras, kernel ARM11, PICA200, CSND/áudio, desempenho, Android físico e outros homebrews. Detalhes em `docs/REGRAS_PARA_IA.md`, seção 7.1. As demais regras continuam valendo.
+
 ## Aviso direto para Claude
 
 Claude: ao retomar o desenvolvimento do Aceris, leia esta nota antes de editar qualquer arquivo. Carlos Costa autorizou explicitamente uma intervenção limitada nas dependências que você introduziu no scaffolding inicial (`thiserror`, `tracing` e `tracing-subscriber`). Essa intervenção foi concluída no commit que contém esta nota.
@@ -68,7 +72,7 @@ Não considere os testes aprovados até conferir o resultado do workflow associa
 - Todo trabalho é feito exclusivamente em `main`; não criar branches.
 - Uma IA não altera o trabalho de outra sem autorização explícita de Carlos Costa.
 - O produto é implementado em Rust.
-- Não abrir, ler ou usar código-fonte interno de outros emuladores.
+- ~~Não abrir, ler ou usar código-fonte interno de outros emuladores.~~ *(Substituída em 17/11/2026: a consulta a código open source é permitida nos limites de `docs/REGRAS_PARA_IA.md`, seção 5.)*
 - Não incorporar código ou assets de terceiros.
 - Em dúvida sobre autoria ou sobreposição, interromper a edição e consultar o mantenedor.
 
@@ -2085,7 +2089,7 @@ Esta entrada foi acrescentada por solicitação explícita do mantenedor para al
 - Commit 0dc68f9a: HLE inicial csnd:SND; csndInit passa, mas Sound.init ainda falha dentro do LPP. IDs/protocolo CSND continuam não verificados em hardware. O alias HLE de memória GSP foi movido para fora da janela mapeável do guest; trace opcional registra retorno de SVC.
 - O último workflow observado é CI #2244 / run 44968347424, com jobs Linux, Windows, macOS e Android ARM64 concluídos com sucesso.
 - O teste Cookie Clicker não é gameplay, não prova áudio e não é jogável em tempo real; 300 quadros com orçamento 4M levaram aproximadamente 100 s de CPU host.
-- A regra vigente proíbe consultar código-fonte interno de outros emuladores. A pesquisa permitida é a superfície observável e documentação pública independente; esta regra substitui instruções históricas divergentes.
+- *(Registro histórico incorreto em 22/11/2026: a regra já havia sido flexibilizada em 17/11/2026. A consulta a código open source é permitida nos limites de `docs/REGRAS_PARA_IA.md`, seção 5.)*
 - NativeActivity Android e backends desktop Windows/macOS existem; compilação CI não prova execução em aparelho nem funcionamento de áudio/entrada.
 
 ### Próxima investigação recomendada

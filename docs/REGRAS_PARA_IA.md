@@ -60,8 +60,12 @@ Estas regras são obrigatórias para qualquer IA, agente automatizado ou colabor
 Carlos Costa é o mantenedor e a autoridade final sobre escopo, prioridades e exceções. Somente uma autorização explícita dele pode abrir uma exceção a estas regras. Nenhuma IA pode conceder essa autorização por conta própria.
 
 
-## 8. Estado verificado — 22/11/2026
+### 7.1 Autorizações vigentes
 
-> **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+- **26/11/2026 — autorização total ao Claude.** Carlos Costa autorizou Claude a desenvolver qualquer parte do código do Aceris, independentemente da IA que a tenha produzido, para executar a lista de trabalho: (1) consistência das regras, (2) kernel ARM11, (3) estágios pendentes da PICA200, (4) CSND e áudio, (5) desempenho, (6) validação em Android físico e (7) testes com outros homebrews. É uma exceção explícita à seção 1 dentro desse escopo. Todas as demais regras continuam valendo: somente `main`, produto em Rust, autoria própria, consulta a código open source apenas como referência (seção 5) e proteção de conteúdo.
 
-Esta atualização foi autorizada pelo mantenedor e limita-se aos arquivos Markdown. Nenhum arquivo de implementação foi alterado.
+## 8. Precedência e estado do projeto
+
+- Este arquivo é a fonte normativa. `CONTRIBUTING.md`, `docs/INDEPENDENT_RESEARCH.md` e `docs/AI_HANDOFF.md` devem apenas repeti-lo ou detalhá-lo; em caso de divergência, vale este arquivo.
+- Registros datados em `docs/AI_HANDOFF.md` que digam “não consultar código-fonte de outros emuladores” descrevem a política da época (anterior a 17/11/2026) e não estão mais em vigor.
+- Este arquivo não guarda estado de desenvolvimento. O estado atual fica no [README](../README.md), no [roadmap](ROADMAP.md) e nas [notas de transferência](AI_HANDOFF.md).
