@@ -3415,8 +3415,8 @@ impl Arm11CodeAddressSpace {
                 continue;
             }
             let unique_start = start.max(previous_physical_end);
-            linear_physical_allocated_bytes = linear_physical_allocated_bytes
-                .saturating_add((end - unique_start) as usize);
+            linear_physical_allocated_bytes =
+                linear_physical_allocated_bytes.saturating_add((end - unique_start) as usize);
             previous_physical_end = end;
         }
 

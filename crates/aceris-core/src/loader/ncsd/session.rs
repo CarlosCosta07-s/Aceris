@@ -6770,10 +6770,7 @@ mod tests {
         session.set_current_register(1, 0);
         session.set_current_register(2, 0);
         session.dispatch_svc(SVC_GET_SYSTEM_INFO);
-        assert_eq!(
-            session.current_registers().unwrap()[0],
-            RESULT_INVALID_ENUM
-        );
+        assert_eq!(session.current_registers().unwrap()[0], RESULT_INVALID_ENUM);
 
         session.set_current_register(0, 0x0800_0000);
         session.set_current_register(1, 0);
