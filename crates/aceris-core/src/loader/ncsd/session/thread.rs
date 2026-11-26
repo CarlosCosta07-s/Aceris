@@ -496,9 +496,10 @@ impl Arm11ThreadScheduler {
     /// Process teardown uses this snapshot to terminate and then reap every
     /// remaining non-main context without relying on contiguous live IDs.
     pub fn thread_ids(&self) -> impl Iterator<Item = ThreadId> + '_ {
-        self.threads.iter().enumerate().filter_map(|(index, slot)| {
-            slot.as_ref().map(|_| ThreadId(index as u32))
-        })
+        self.threads
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| slot.as_ref().map(|_| ThreadId(index as u32)))
     }
 
     #[inline]

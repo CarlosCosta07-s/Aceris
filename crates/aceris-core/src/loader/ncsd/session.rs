@@ -5719,7 +5719,10 @@ mod tests {
             .address_space
             .allocate_application_heap_region(0x0800_0000, 0x1000)
             .unwrap();
-        let tls = session.address_space.allocate_thread_local_storage().unwrap();
+        let tls = session
+            .address_space
+            .allocate_thread_local_storage()
+            .unwrap();
         let worker = session
             .scheduler
             .create_thread(0x0010_0000, 0, 0x0800_1000, 0x3F, 0)
