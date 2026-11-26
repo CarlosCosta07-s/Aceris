@@ -265,7 +265,7 @@ A ordem abaixo é uma proposta de produto. O desempenho, a fidelidade da PICA200
 4. Corrigir a exibição de formatos suportados e distinguir carregar de instalar CIA.
 5. Página de configurações gerais com idioma, tema, armazenamento e diretórios.
 
-**Critério de conclusão:** usuário adiciona uma pasta, vê progresso, encontra seu jogo, filtra/ordena, favor it a entrada e abre os detalhes sem precisar navegar pelo gerenciador de arquivos a cada execução.
+**Critério de conclusão:** usuário adiciona uma pasta, vê progresso, encontra seu jogo, filtra/ordena, favoritar uma entrada e abre os detalhes sem precisar navegar pelo gerenciador de arquivos a cada execução.
 
 ### Etapa B — Controles e menu rápido
 
