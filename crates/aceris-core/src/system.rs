@@ -1721,9 +1721,7 @@ impl System {
                         Ok(client_session) => {
                             return Ok(vec![0x0005_0042, 0, 0, client_session]);
                         }
-                        Err(
-                            KernelHandleError::SessionLimitReached,
-                        ) => {
+                        Err(KernelHandleError::SessionLimitReached) => {
                             // The name is registered, but its port is currently
                             // full. This is still a pending GetServiceHandle.
                         }
