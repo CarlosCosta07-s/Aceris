@@ -3797,7 +3797,7 @@ impl Arm11ProcessSession {
     ///
     /// r0 = writable s64 output array, r1 = ResourceLimit handle,
     /// r2 = readable u32 resource-type array, r3 = signed element count.
-    /// COMMIT, live THREAD and synchronization-object current counters are modelled.
+    /// COMMIT, THREAD and synchronization-object current counters are modelled.
     /// Limit values beyond COMMIT remain unavailable until exheader/category limits
     /// are represented rather than replaced with guessed constants.
     fn svc_get_resource_limit_values(
@@ -4255,8 +4255,14 @@ mod tests {
             .scheduler
             .create_thread(0x0010_0000, 0, 0x0020_1000, 0x20, 0)
             .unwrap();
-        session.kernel_objects.insert_event(EventResetType::Sticky).unwrap();
-        session.kernel_objects.insert_mutex(false, MAIN_THREAD_ID).unwrap();
+        session
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+        session
+            .kernel_objects
+            .insert_mutex(false, MAIN_THREAD_ID)
+            .unwrap();
         session.kernel_objects.insert_semaphore(0, 2).unwrap();
         session
             .kernel_objects
@@ -4267,7 +4273,9 @@ mod tests {
         for resource_type in current_types {
             current_type_bytes.extend_from_slice(&resource_type.to_le_bytes());
         }
-        session.write_memory_bytes(TYPES, &current_type_bytes).unwrap();
+        session
+            .write_memory_bytes(TYPES, &current_type_bytes)
+            .unwrap();
         session.set_current_register(0, VALUES);
         session.set_current_register(1, handle);
         session.set_current_register(2, TYPES);
