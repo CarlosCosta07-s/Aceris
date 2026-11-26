@@ -612,10 +612,10 @@ impl Library {
                     {
                         return ClickResult::Ignored;
                     }
-                    self.selected = index;
                     if (910.0..958.0).contains(&x)
                         && (row_y + 8.0..row_y + 40.0).contains(&y)
                     {
+                        self.selected = index;
                         self.toggle_selected_favorite();
                         return ClickResult::Ignored;
                     }
