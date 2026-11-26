@@ -803,6 +803,18 @@ impl Library {
         }
     }
 
+    /// Cancels the active text field without adding a pending folder path.
+    pub fn cancel_text_entry(&mut self) {
+        if self.scan_path_input_focused {
+            self.scan_path_input_focused = false;
+            self.search_query.clear();
+            self.status = Some("ADIÇÃO DE PASTA CANCELADA".to_string());
+        } else {
+            self.search_focused = false;
+        }
+        self.touch_keyboard_open = false;
+    }
+
     /// Closes text entry. A confirmed folder path is added only when it names an
     /// existing directory; an invalid path leaves the active library intact.
     pub fn finish_search(&mut self) {
@@ -866,6 +878,9 @@ impl Library {
     /// Changes the library section and resets its independent selection.
     pub fn select_page(&mut self, page: LibraryPage) {
         if self.page != page {
+            if self.scan_path_input_focused {
+                self.cancel_text_entry();
+            }
             self.page = page;
             self.selected = 0;
             self.first_visible = 0;
@@ -1849,10 +1864,25 @@ impl Library {
         responsive_panel(
             frame, width, height, 128.0, top, 842.0, 174.0, scale, 0x21152F,
         );
+        if self.scan_path_input_focused {
+            responsive_text(
+                frame,
+                width,
+                height,
+                145.0,
+                top - 22.0,
+                text_scale,
+                &truncate(&self.search_query, 90),
+                brand::ACCENT_GREEN_LIGHT,
+            );
+        }
         let rows = [
             ("qwertyuiop", 222.0),
             ("asdfghjkl", 255.0),
-            ("zxcvbnm", 324.0),
+            (
+                if self.scan_path_input_focused { "zxcvbnm/." } else { "zxcvbnm" },
+                324.0,
+            ),
         ];
         for (row, (keys, start_x)) in rows.iter().enumerate() {
             let y = top + 8.0 + row as f32 * 40.0;
@@ -4127,6 +4157,29 @@ mod tests {
         let reopened = Library::from_scan_settings(&settings, &primary);
         assert_eq!(reopened.scan_config().directories.len(), 1);
         assert!(!reopened.scan_config().options.recursive);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cancelling_folder_path_input_does_not_add_a_root() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-settings-cancel-path-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.select_page(LibraryPage::Settings);
+        library.click_responsive(253, 324, 1000, 600);
+        for character in "/path/that/does/not/exist".chars() {
+            library.input_search_char(character);
+        }
+        library.cancel_text_entry();
+
+        assert_eq!(library.scan_config().directories.len(), 1);
+        assert_eq!(library.search_query(), "");
+        assert!(!library.search_is_focused());
+        assert_eq!(library.status_message(), Some("ADIÇÃO DE PASTA CANCELADA"));
+
         fs::remove_dir_all(dir).unwrap();
     }
 

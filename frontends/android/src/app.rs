@@ -135,7 +135,7 @@ impl App {
         if android_keycode == AKEYCODE_BACK {
             if pressed && matches!(self.screen, Screen::Library) && self.library.search_is_focused()
             {
-                self.library.finish_search();
+                self.library.cancel_text_entry();
                 return true;
             }
             if pressed && matches!(self.screen, Screen::Game) {

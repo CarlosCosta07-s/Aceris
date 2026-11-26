@@ -436,7 +436,7 @@ fn browse_library(
                 window::WindowEvent::Redraw => {}
                 window::WindowEvent::Key(window::Key::Escape) => {
                     if library.search_is_focused() {
-                        library.finish_search();
+                        library.cancel_text_entry();
                     } else {
                         return Ok(None);
                     }
@@ -481,10 +481,12 @@ fn browse_library(
                         window::CANVAS_HEIGHT as u32,
                     ),
                 window::WindowEvent::Key(window::Key::Enter) => {
-                    if library.search_is_focused() {
-                        library.finish_search();
-                    } else if library.page() == aceris_core::video::library::LibraryPage::Settings {
-                        library.reload();
+                    if library.page() == aceris_core::video::library::LibraryPage::Settings {
+                        if library.search_is_focused() {
+                            library.finish_search();
+                        } else {
+                            library.reload();
+                        }
                     } else {
                         library.finish_search();
                         activate = true;
