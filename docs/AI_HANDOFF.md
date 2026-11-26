@@ -2541,3 +2541,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A mudança acompanha o fallback presente em `azahar/src/video_core/renderer_software/sw_proctex.cpp`, que declara TODO para mipmapping e agrupa os quatro modos por nearest/linear. É reconhecimento do modo e comportamento base-level, não implementação de mip LOD.
 - Continuam pendentes seleção de nível via LOD, min/max LOD, offsets de mip 1–3 e bias superior. Seletores reservados 6–7 seguem fail-closed.
 - A CI anterior mostrou testes/builds passando até Clippy nos três desktops; as falhas remanescentes eram import `c_char` não usado e Rustfmt em um `assert_eq!`. Ambos foram corrigidos nesta revisão; aguardar a nova CI antes de declarar sucesso.
+
+
+## Kernel SVC — IDs nomeados e rastreabilidade (26/11/2026)
+
+- Centralizados os IDs de SVC já encaminhados para address arbiter (0x21/0x22), GetSystemInfo (0x2A) e manutenção de data-cache (0x52/0x53/0x54) em `session/svc.rs`. O dispatcher deixou de usar literais para esses serviços.
+- Teste novo valida os seis IDs e a delegação para o dispatcher que tem acesso a thread/endereço/estado de kernel.
+- Referência independente: 3dbrew, tabela SVC (consulta 26/11/2026). A implementação de cada handler continua parcial onde a tabela pública não determina os valores exatos ou a semântica física.

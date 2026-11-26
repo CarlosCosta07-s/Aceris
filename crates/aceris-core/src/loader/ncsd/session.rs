@@ -43,16 +43,20 @@ use kernel::{
     IpcHandleTranslationError, KernelHandleError, ServiceSessionKind,
 };
 use svc::{
-    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_ACCEPT_SESSION, SVC_BIND_INTERRUPT, SVC_BREAK,
-    SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER, SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT,
+    Arm11SvcDispatcher, Arm11SvcDisposition, SVC_ACCEPT_SESSION, SVC_ARBITRATE_ADDRESS,
+    SVC_BIND_INTERRUPT, SVC_BREAK, SVC_CANCEL_TIMER, SVC_CLEAR_EVENT, SVC_CLEAR_TIMER,
+    SVC_CLOSE_HANDLE, SVC_CONNECT_TO_PORT, SVC_CREATE_ADDRESS_ARBITER,
     SVC_CONTROL_MEMORY, SVC_CREATE_EVENT, SVC_CREATE_MEMORY_BLOCK, SVC_CREATE_MUTEX,
     SVC_CREATE_SEMAPHORE, SVC_CREATE_THREAD, SVC_CREATE_TIMER, SVC_DUPLICATE_HANDLE,
-    SVC_EXIT_THREAD, SVC_GET_HANDLE_INFO, SVC_GET_PROCESS_ID, SVC_GET_PROCESS_ID_OF_THREAD,
-    SVC_GET_PROCESS_INFO, SVC_GET_RESOURCE_LIMIT, SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES,
+    SVC_EXIT_THREAD, SVC_FLUSH_PROCESS_DATA_CACHE, SVC_GET_HANDLE_INFO, SVC_GET_PROCESS_ID,
+    SVC_GET_PROCESS_ID_OF_THREAD, SVC_GET_PROCESS_INFO, SVC_GET_RESOURCE_LIMIT,
+    SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES, SVC_GET_SYSTEM_INFO,
     SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES, SVC_GET_SYSTEM_TICK, SVC_GET_THREAD_ID,
-    SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY, SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY,
-    SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST, SVC_SET_THREAD_PRIORITY,
-    SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD, SVC_UNBIND_INTERRUPT,
+    SVC_GET_THREAD_INFO, SVC_GET_THREAD_PRIORITY, SVC_INVALIDATE_PROCESS_DATA_CACHE,
+    SVC_MAP_MEMORY_BLOCK, SVC_QUERY_MEMORY,
+    SVC_RELEASE_MUTEX, SVC_RELEASE_SEMAPHORE, SVC_SEND_SYNC_REQUEST,
+    SVC_SET_THREAD_PRIORITY, SVC_SET_TIMER, SVC_SIGNAL_EVENT, SVC_SLEEP_THREAD,
+    SVC_STORE_PROCESS_DATA_CACHE, SVC_UNBIND_INTERRUPT,
     SVC_UNMAP_MEMORY_BLOCK, SVC_WAIT_SYNCHRONIZATION_N, SVC_WAIT_SYNCHRONIZATION1,
 };
 
@@ -2250,9 +2254,11 @@ impl Arm11ProcessSession {
             SVC_MAP_MEMORY_BLOCK => self.svc_map_memory_block(caller),
             SVC_UNMAP_MEMORY_BLOCK => self.svc_unmap_memory_block(caller),
             SVC_QUERY_MEMORY => self.svc_query_memory(caller),
-            0x52 => self.svc_invalidate_process_data_cache(caller),
-            0x53 => self.svc_store_process_data_cache(caller),
-            0x54 => self.svc_flush_process_data_cache(caller),
+            SVC_INVALIDATE_PROCESS_DATA_CACHE => {
+                self.svc_invalidate_process_data_cache(caller)
+            }
+            SVC_STORE_PROCESS_DATA_CACHE => self.svc_store_process_data_cache(caller),
+            SVC_FLUSH_PROCESS_DATA_CACHE => self.svc_flush_process_data_cache(caller),
             SVC_CREATE_THREAD => self.svc_create_thread(caller),
             SVC_CREATE_MUTEX => self.svc_create_mutex(caller),
             SVC_RELEASE_MUTEX => self.svc_release_mutex(caller),
@@ -2287,11 +2293,11 @@ impl Arm11ProcessSession {
                 SvcRunDisposition::GuestBreak(reason)
             }
             SVC_GET_PROCESS_INFO => self.svc_get_process_info(caller),
-            0x2A => self.svc_get_system_info(caller),
+            SVC_GET_SYSTEM_INFO => self.svc_get_system_info(caller),
             SVC_GET_SYSTEM_TICK => self.svc_get_system_tick(caller),
             SVC_GET_THREAD_INFO => self.svc_get_thread_info(caller),
-            0x21 => self.svc_create_address_arbiter(caller),
-            0x22 => self.svc_arbitrate_address(caller),
+            SVC_CREATE_ADDRESS_ARBITER => self.svc_create_address_arbiter(caller),
+            SVC_ARBITRATE_ADDRESS => self.svc_arbitrate_address(caller),
 
             SVC_EXIT_THREAD => match self.exit_current_thread(caller) {
                 Ok(Some(_)) => SvcRunDisposition::Resume,

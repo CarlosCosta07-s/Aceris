@@ -511,3 +511,10 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - Aceris agora expõe `PicaProceduralTextureFilter::from_register`, com cobertura dos seis valores válidos e dos seletores reservados 6–7. A amostragem aplica nearest/linear intranível para todos os filtros reconhecidos, compatível com o fallback observado no renderer software.
 - Limite explícito: a seleção de mip level, o cálculo de LOD, `min_lod/max_lod`, offsets 1–3 e bias superior continuam pendentes. Não anunciar suporte de mipmapping procedural completo. Essa etapa não implementa um comportamento que a referência consultada também marca como TODO.
 - Nenhum código-fonte, tabela de implementação ou teste foi copiado; os seletores foram modelados em Rust e cobertos com fixtures próprios.
+
+
+### SVC — identificadores de sessão auditados (26/11/2026)
+
+- A tabela ARM11 do Aceris agora nomeia `CreateAddressArbiter` (0x21), `ArbitrateAddress` (0x22), `GetSystemInfo` (0x2A) e os três serviços de data cache (0x52–0x54), que antes apareciam como literais no dispatcher.
+- Os handlers já existiam e foram mantidos; os testes confirmam os valores numéricos e que esses serviços são encaminhados ao dispatcher de sessão, não tratados pelo dispatcher sem estado.
+- A tabela pública 3dbrew lista os mesmos IDs e ABI de alto nível. Valores `GetSystemInfo` não modelados, tipos de address-arbiter não suportados e detalhes físicos de manutenção de cache continuam sendo limites; não responder com valores inventados.

@@ -9,6 +9,15 @@ pub const SVC_CONNECT_TO_PORT: u32 = 0x2D;
 /// Accepts the oldest pending client connection from a server port.
 pub const SVC_ACCEPT_SESSION: u32 = 0x4A;
 
+/// Invalidates a process data-cache range.
+pub const SVC_INVALIDATE_PROCESS_DATA_CACHE: u32 = 0x52;
+
+/// Writes back a process data-cache range to its backing memory.
+pub const SVC_STORE_PROCESS_DATA_CACHE: u32 = 0x53;
+
+/// Writes back and invalidates a process data-cache range.
+pub const SVC_FLUSH_PROCESS_DATA_CACHE: u32 = 0x54;
+
 /// Binds an event or semaphore handle to an ARM11 interrupt.
 pub const SVC_BIND_INTERRUPT: u32 = 0x50;
 
@@ -87,6 +96,12 @@ pub const SVC_SIGNAL_EVENT: u32 = 0x18;
 /// Clear an event synchronization object's signaled state.
 pub const SVC_CLEAR_EVENT: u32 = 0x19;
 
+/// Create a process-local address-arbiter synchronization object.
+pub const SVC_CREATE_ADDRESS_ARBITER: u32 = 0x21;
+
+/// Arbitrate on an address using a process-local address arbiter.
+pub const SVC_ARBITRATE_ADDRESS: u32 = 0x22;
+
 /// Close a process-local kernel object handle.
 pub const SVC_CLOSE_HANDLE: u32 = 0x23;
 
@@ -98,6 +113,9 @@ pub const SVC_GET_SYSTEM_TICK: u32 = 0x28;
 
 /// Query information about a process-local kernel object handle.
 pub const SVC_GET_HANDLE_INFO: u32 = 0x29;
+
+/// Query a documented kernel/system information value.
+pub const SVC_GET_SYSTEM_INFO: u32 = 0x2A;
 
 /// Query resource information about a process.
 pub const SVC_GET_PROCESS_INFO: u32 = 0x2B;
@@ -236,6 +254,12 @@ mod tests {
             SVC_CLEAR_EVENT,
             SVC_CLOSE_HANDLE,
             SVC_DUPLICATE_HANDLE,
+            SVC_CREATE_ADDRESS_ARBITER,
+            SVC_ARBITRATE_ADDRESS,
+            SVC_GET_SYSTEM_INFO,
+            SVC_INVALIDATE_PROCESS_DATA_CACHE,
+            SVC_STORE_PROCESS_DATA_CACHE,
+            SVC_FLUSH_PROCESS_DATA_CACHE,
             SVC_BIND_INTERRUPT,
             SVC_UNBIND_INTERRUPT,
             SVC_GET_SYSTEM_TICK,
@@ -255,6 +279,16 @@ mod tests {
                 Arm11SvcDisposition::Unhandled { number }
             );
         }
+    }
+
+    #[test]
+    fn additional_session_svc_identifiers_match_the_public_3ds_table() {
+        assert_eq!(SVC_CREATE_ADDRESS_ARBITER, 0x21);
+        assert_eq!(SVC_ARBITRATE_ADDRESS, 0x22);
+        assert_eq!(SVC_GET_SYSTEM_INFO, 0x2A);
+        assert_eq!(SVC_INVALIDATE_PROCESS_DATA_CACHE, 0x52);
+        assert_eq!(SVC_STORE_PROCESS_DATA_CACHE, 0x53);
+        assert_eq!(SVC_FLUSH_PROCESS_DATA_CACHE, 0x54);
     }
 
     #[test]

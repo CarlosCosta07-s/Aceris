@@ -132,3 +132,17 @@ O Aceris continua aceitando apenas as combinações internas documentadas. Não 
 | 6–7 | Reservado | Rejeitado explicitamente |
 
 O código software de referência do Azahar também contém uma observação TODO para implementar mipmapping nessa unidade; no caminho presente, ele agrupa os quatro seletores mipmap pela filtragem nearest/linear da LUT de cor. O Aceris reconhece e executa essa mesma filtragem intranível no nível 0, mas ainda não escolhe níveis por LOD, não aplica os offsets 1–3 e não considera min/max LOD ou bias superior para selecionar mip levels. Portanto, não se deve anunciar mipmapping procedural completo.
+
+
+## SVCs ARM11 já implementados — identificadores nomeados (26/11/2026)
+
+| ID | SVC | Aceris |
+|---:|---|---|
+| 0x21 | CreateAddressArbiter | Handler integrado |
+| 0x22 | ArbitrateAddress | Handler integrado |
+| 0x2A | GetSystemInfo | Handler integrado; valores suportados são limitados ao perfil modelado |
+| 0x52 | InvalidateProcessDataCache | Handler integrado |
+| 0x53 | StoreProcessDataCache | Handler integrado |
+| 0x54 | FlushProcessDataCache | Handler integrado |
+
+Esses handlers já existiam no session dispatcher; esta revisão remove literais numéricos do caminho de dispatch, concentra os IDs em `session/svc.rs` e adiciona regressão para a tabela. O fato de um ID estar nomeado e encaminhado não significa que todas as variantes, tipos de informação ou semânticas de cache estejam verificadas em hardware.
