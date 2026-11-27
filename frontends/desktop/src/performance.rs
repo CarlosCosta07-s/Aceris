@@ -90,6 +90,14 @@ impl DesktopPerformanceMonitor {
         }
     }
 
+    /// Starts a fresh timing window after a deliberate host-side pause.
+    ///
+    /// Time spent showing the quick menu must not be counted as a slow guest frame.
+    pub(crate) fn reset_after_pause(&mut self) {
+        let kind = self.kind.unwrap_or(DesktopFrameKind::Game);
+        self.reset(kind);
+    }
+
     /// Records one successfully presented host frame. The render-loop mode is
     /// tracked separately so intro, library, and gameplay results are not mixed.
     pub(crate) fn record(&mut self, kind: DesktopFrameKind, timings: DesktopFrameTimings) {
@@ -366,6 +374,28 @@ mod tests {
         assert_eq!(report.presentation_interval_p50_ms, 16.0);
         assert_eq!(report.presentation_interval_p95_ms, 18.0);
         assert_eq!(report.gpu_presentation_percent, 60.0);
+    }
+
+    #[test]
+    fn monitor_resets_its_timing_window_after_a_quick_menu_pause() {
+        let mut monitor = DesktopPerformanceMonitor::new();
+        monitor.record(
+            DesktopFrameKind::Game,
+            DesktopFrameTimings {
+                frame_time: Duration::from_millis(16),
+                emulation_time: Duration::from_millis(8),
+                composition_time: Duration::from_millis(2),
+                audio_time: Duration::from_millis(1),
+                presentation_time: Duration::from_millis(2),
+                gpu_presented: true,
+            },
+        );
+        assert_eq!(monitor.sample_count, 1);
+        monitor.reset_after_pause();
+        assert_eq!(monitor.kind, Some(DesktopFrameKind::Game));
+        assert_eq!(monitor.sample_count, 0);
+        assert_eq!(monitor.presented_frames, 0);
+        assert!(monitor.last_presentation.is_none());
     }
 
     #[test]
