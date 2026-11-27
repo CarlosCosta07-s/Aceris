@@ -2825,3 +2825,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Ao trocar intro/biblioteca/jogo, o monitor zera a janela para não misturar cargas diferentes. Lacunas entre apresentações acima de dois segundos são descartadas. A coleta não muda relógio guest, timers, orçamento de instruções, sincronização, áudio, frame pacing ou dimensões dos buffers LCD.
 - Nenhuma dependência ou recurso externo foi adicionado. Arquivos de produto nesta etapa: `frontends/desktop/src/performance.rs` e `frontends/desktop/src/main.rs`; arquivos de documentação: `docs/PERFORMANCE_TESTING.md`, `docs/PERFORMANCE_LOW_END_PLAN.md`, `docs/ROADMAP.md` e esta nota.
 - Pendências: CI do commit final deve confirmar Rustfmt, testes do módulo, builds de Linux/Windows/macOS e Clippy. Nenhum PC físico foi medido; não afirmar ganho de FPS. O Clippy Ubuntu do commit anterior `0f34b83` permanece bloqueado por `needless_range_loop` em `crates/aceris-core/src/cpu/decode_cache.rs`, arquivo do trabalho de Claude; não modificar sem autorização.
+
+## Desempenho — especialização da composição host PC/Android (27/11/2026, ChatGPT)
+
+- Desktop: `frontends/desktop/src/window.rs` ganhou um caminho especializado para escala host `1×`, com conversão RGBA→BGRX por linha. O caminho escalonado genérico permanece para escalas maiores; testes atuais validam posição, cores, gutter e replicação.
+- Android: `frontends/android/src/native_activity.rs` usa cópia contígua única quando `ANativeWindow` tem dimensões e stride exatamente iguais ao frame; o fallback linha a linha continua para buffers com padding/recorte.
+- A telemetria desktop foi ajustada para agrupar tempos em `DesktopFrameTimings`, removendo o aviso Clippy `too_many_arguments` da função `record`.
+- Nenhuma mudança foi feita em `crates/aceris-core/src/cpu/decode_cache.rs`, que pertence à implementação de outro agente. A CI de 27/11/2026 ainda reportava `needless_range_loop` nesse arquivo.
+- Estes caminhos não alteram estado guest nem frame pacing. Nenhum ganho foi medido em PC ou Android físico; a próxima validação deve comparar release com telemetria desligada/ligada e confirmar pixels idênticos, backend e stride reais. A compilação Android ARM64 e os testes da janela de composição ainda precisam ser confirmados pela CI do HEAD final.
