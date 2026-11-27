@@ -3061,3 +3061,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - CI do commit `e60f177`: Rustfmt e build do workspace passaram no Ubuntu; `cargo test --workspace` e o benchmark de testes do core passaram no Ubuntu. O build Android ARM64 concluiu. Na última consulta, macOS e Windows ainda executavam `cargo test --workspace`, e Ubuntu continuava no benchmark release/Clippy audit. Não registrar a matriz completa como aprovada até todos os jobs terminarem.
 - O SHA-256 foi implementado sem dependência adicional e continua sujeito aos testes de referência; nunca remover ou enfraquecer esses testes para ocultar falhas.
 - A camada de identidade e armazenamento permanece independente do snapshot integral de `System`. Save/Load na interface continua bloqueado até captura/restauração completa, safe point e validação cruzada de todos os subsistemas.
+
+## Identidade da imagem ativa nos frontends — 27/11/2026 (ChatGPT)
+
+- Criado `crates/aceris-core/src/loaded_image.rs` com `load_executable_file_with_identity`: executa o carregador comum existente e, após a carga ser aceita, calcula SHA-256 em fluxo sobre o arquivo completo.
+- O resultado `LoadedImageIdentity` mantém separados o formato, o `GameIdentity` validado (quando existe) e o `SaveStateIdentity` baseado nos bytes exatos. 3DSX recebe identidade de conteúdo sem inventar um Title ID. O arquivo selecionado deve permanecer inalterado durante a carga.
+- O frontend desktop agora usa a API e mantém o metadado durante a sessão de jogo; o app Android usa a mesma API, mantém `active_image_identity` durante o jogo e limpa o valor ao retornar à biblioteca.
+- Os testes sintéticos verificam homebrew sem Title ID, título com Title ID, alteração dos bytes com Title ID constante e falha explícita ao tentar identificar um arquivo ausente.
+- Limite: isso somente identifica a imagem que os fluxos principais desktop/Android carregaram. Não implementa captura/restauração de `System`, não ativa Save/Load na UI e não torna os save states jogáveis. As entradas C ABI especializadas do Android que chamam loaders com chaves explícitas ainda não usam esse wrapper; não afirmar cobertura desses caminhos.
+- Nenhum loader interno de CPU/Thumb, PICA200, DSP/CSND, SVC ou rotina de snapshot foi modificado. Nenhuma ROM, firmware, chave ou dado derivado foi usado. Somente `main`.
+- Commits: `54eba1c` export do módulo; `2687c19` API; `d4b38b5` desktop; `4f892bc` app Android; `098decde` testes sintéticos. A CI e o APK do HEAD `098decde` ainda precisam concluir antes de validar esta etapa.
