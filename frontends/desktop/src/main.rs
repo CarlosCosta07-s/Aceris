@@ -762,18 +762,20 @@ fn emulate(
         let presentation_elapsed = presentation_started
             .map(|presentation_started| presentation_started.elapsed())
             .unwrap_or_default();
-        if let Some(performance) = performance.as_mut() {
-            performance.record(
-                DesktopFrameKind::Game,
-                DesktopFrameTimings {
-                    frame_time: started.elapsed(),
-                    emulation_time: emulation_elapsed,
-                    composition_time: composition_elapsed,
-                    audio_time: audio_elapsed,
-                    presentation_time: presentation_elapsed,
-                    gpu_presented: had_gpu_presenter && presenter.is_some(),
-                },
-            );
+        if !menu_open {
+            if let Some(performance) = performance.as_mut() {
+                performance.record(
+                    DesktopFrameKind::Game,
+                    DesktopFrameTimings {
+                        frame_time: started.elapsed(),
+                        emulation_time: emulation_elapsed,
+                        composition_time: composition_elapsed,
+                        audio_time: audio_elapsed,
+                        presentation_time: presentation_elapsed,
+                        gpu_presented: had_gpu_presenter && presenter.is_some(),
+                    },
+                );
+            }
         }
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);
