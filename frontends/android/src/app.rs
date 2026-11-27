@@ -1248,6 +1248,54 @@ mod tests {
     }
 
     #[test]
+    fn restart_requires_confirmation_and_back_cancels_without_leaving_the_game() {
+        let (mut app, dir) = app_with_games(0);
+        app.screen = Screen::GameMenu;
+        app.system = Some(System::new());
+        app.quick_menu_selected = 1;
+
+        app.activate_game_menu_action();
+        assert!(matches!(
+            app.screen(),
+            Screen::GameMenuConfirm {
+                action: quick_menu::ConfirmationAction::Restart
+            }
+        ));
+        assert!(app.is_game_menu_open());
+        assert!(app.system.is_some());
+
+        assert!(app.key(AKEYCODE_BACK, true));
+        assert!(matches!(app.screen(), Screen::GameMenu));
+        assert!(app.is_game_menu_open());
+        assert!(app.system.is_some());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn return_to_library_occurs_only_after_confirmation() {
+        let (mut app, dir) = app_with_games(0);
+        app.screen = Screen::GameMenu;
+        app.system = Some(System::new());
+        app.quick_menu_selected = 2;
+
+        app.activate_game_menu_action();
+        assert!(matches!(
+            app.screen(),
+            Screen::GameMenuConfirm {
+                action: quick_menu::ConfirmationAction::BackToLibrary
+            }
+        ));
+        assert!(app.system.is_some());
+
+        app.confirmation_selected = 1;
+        app.activate_game_menu_confirmation(quick_menu::ConfirmationAction::BackToLibrary);
+        assert!(matches!(app.screen(), Screen::Library));
+        assert!(app.system.is_none());
+        assert!(!app.is_game_menu_open());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn focused_library_accepts_android_text_backspace_and_enter() {
         let (mut app, dir) = app_with_games(0);
         app.screen = Screen::Library;
