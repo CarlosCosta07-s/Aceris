@@ -110,7 +110,24 @@ impl BlockCache {
         if let Some(block) = self.entries[slot]
             && block.matches(pc, mode, first_location)
         {
-            return Some(block);
+            let mut valid = true;
+            for index in 0..block.len() {
+                let byte_offset = u32::try_from(index.checked_mul(4)?).ok()?;
+                let address = pc.checked_add(byte_offset)?;
+                let Some(location) = bus.immutable_instruction_location(address, 4) else {
+                    valid = false;
+                    break;
+                };
+                if location.backing_id != block.backing_id
+                    || location.offset != block.backing_offset.checked_add(u64::from(byte_offset))?
+                {
+                    valid = false;
+                    break;
+                }
+            }
+            if valid {
+                return Some(block);
+            }
         }
 
         let mut instructions = [EMPTY_INSTRUCTION; BLOCK_MAX_INSTRUCTIONS];
@@ -176,6 +193,7 @@ mod tests {
         size: u32,
         backing_id: u64,
         expose_immutable_text: bool,
+        split_address: Option<u32>,
     }
 
     impl Bus for ImmutableTextBus {
@@ -203,8 +221,13 @@ mod tests {
             if offset.checked_add(size)? > self.size {
                 return None;
             }
+            let backing_id = if self.split_address.is_some_and(|split| address >= split) {
+                self.backing_id + 1
+            } else {
+                self.backing_id
+            };
             Some(ImmutableCodeLocation {
-                backing_id: self.backing_id,
+                backing_id,
                 offset: u64::from(offset),
             })
         }
@@ -225,6 +248,7 @@ mod tests {
             size: 0x100,
             backing_id: 7,
             expose_immutable_text: true,
+            split_address: None,
         }
     }
 
@@ -256,6 +280,27 @@ mod tests {
 
         bus.expose_immutable_text = false;
         assert!(cache.block_for(0x100, 0x13, &mut bus, &mut decode).is_none());
+    }
+
+    #[test]
+    fn validates_every_cached_instruction_after_a_later_mapping_changes() {
+        let mut bus = bus();
+        let mut cache = BlockCache::default();
+        let mut decode = DecodeCache::default();
+
+        let original = cache
+            .block_for(0x100, 0x13, &mut bus, &mut decode)
+            .unwrap();
+        assert_eq!(original.len(), 4);
+
+        // The first two instructions still map to the original backing, but
+        // the following instruction now belongs to another code allocation.
+        bus.split_address = Some(0x108);
+        let remapped = cache
+            .block_for(0x100, 0x13, &mut bus, &mut decode)
+            .unwrap();
+        assert_eq!(remapped.len(), 2);
+        assert_ne!(remapped.backing_id, 0);
     }
 
     #[test]
