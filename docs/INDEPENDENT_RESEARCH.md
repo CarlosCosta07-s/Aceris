@@ -611,3 +611,25 @@ O banco contém 24 LUTs: D0 (0), D1 (1), FR (3), RB (4), RG (5), RR (6), oito ta
 - **Entendimento:** comando de 0x20 bytes (`next` u16, `id` u16, `finished` u8, seis parâmetros u32 a partir de +8); fim de lista 0xFFFF; estado por canal de 0xC bytes na ordem dos canais adquiridos; período = 0x10000 − registrador de 16 bits, com 2048 ticks por amostra de saída; PCM8 é escalado por 256; IMA-ADPCM decodifica nibble baixo primeiro.
 - **Implementado independentemente:** `crates/aceris-core/src/csnd.rs` e o despachante em `system.rs`, com testes próprios.
 - **Confiança:** média. Concorda entre 3dbrew, libctru e Azahar; não verificado em hardware.
+
+
+## Referências de otimização: Black-Android e PPSSPP (27/11/2026)
+
+- **Pergunta técnica:** quais técnicas de projetos de alto desempenho em PC e celular se aplicam ao Aceris em aparelhos fracos.
+- **Black-Android** (https://github.com/RanggaCasper/Black-Android/releases, consultado em 27/11/2026). Só a página de releases foi lida; nenhum código foi lido. Nenhuma licença declarada, então vale como referência conceitual apenas.
+  - É uma recompilação estática (XboxXBE-Recomp) do jogo Black de Xbox, não um emulador.
+  - Técnicas citadas: renderer Vulkan 1.1 com timeline semaphores, cache de shaders em disco, escala de resolução interna de 20–200%, FPS desbloqueado e V-Sync configurável.
+  - **Lição para o Aceris:** traduzir o código do convidado uma vez e reutilizar. Isso equivale ao nosso cache de decodificação, depois cache de blocos, IR e JIT. Também confirma: backend de GPU acelerado, cache de shaders persistente e escala de resolução como opção do usuário. Recompilação estática não se aplica a homebrews arbitrários.
+- **PPSSPP** (https://github.com/hrydgard/ppsspp, GPLv2+). Conceitos públicos, sem copiar código:
+  - "decodificar uma vez, despachar muitas", base do `cpu/decode_cache.rs`;
+  - interpretador IR antes do JIT;
+  - cache de texturas e de decodificadores de vértice;
+  - frameskip e velocidade apenas como opções, nunca padrão.
+- **Aplicado até agora** (implementação própria, medida por callgrind):
+  - cache de decodificação;
+  - memória rápida opcional ("Modo Desempenho");
+  - D-cache indexado por conjunto;
+  - monitores exclusivos só para grânulos observados;
+  - rejeição rápida do MPCore.
+  - Frame-sonda no modo preciso: 1,865G → 0,807G instruções de host.
+- **Confiança:** alta para os conceitos; nenhum detalhe interno de terceiros foi usado.
