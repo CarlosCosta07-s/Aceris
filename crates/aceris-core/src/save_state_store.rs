@@ -11,10 +11,13 @@ use std::{
     ffi::OsStr,
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
+use crate::save_state_identity::{
+    identity_from_image_path, identity_from_image_reader, SaveStateIdentityError,
+};
 use crate::save_state::{
     MAX_SAVE_STATE_PAYLOAD_BYTES, SAVE_STATE_HEADER_SIZE, SaveStateError, SaveStateFile,
     SaveStateIdentity,
@@ -109,6 +112,64 @@ impl SaveStateStore {
             prune_old_generations(&directory, slot);
             return Ok(generation);
         }
+    }
+
+    /// Saves only when the supplied state belongs to the exact image at `path`.
+    pub fn save_for_image_path(
+        &self,
+        slot: u8,
+        path: &Path,
+        title_id: Option<u64>,
+        state: &SaveStateFile,
+    ) -> Result<u64, SaveStateStoreError> {
+        let identity =
+            identity_from_image_path(path, title_id).map_err(SaveStateStoreError::Identity)?;
+        if identity != state.metadata().identity {
+            return Err(SaveStateStoreError::ImageIdentityMismatch);
+        }
+        self.save(slot, state)
+    }
+
+    /// Saves only when the supplied state belongs to the exact bytes in `reader`.
+    ///
+    /// The reader position is restored by the identity calculation.
+    pub fn save_for_image_reader<R: Read + Seek>(
+        &self,
+        slot: u8,
+        reader: &mut R,
+        title_id: Option<u64>,
+        state: &SaveStateFile,
+    ) -> Result<u64, SaveStateStoreError> {
+        let identity =
+            identity_from_image_reader(reader, title_id).map_err(SaveStateStoreError::Identity)?;
+        if identity != state.metadata().identity {
+            return Err(SaveStateStoreError::ImageIdentityMismatch);
+        }
+        self.save(slot, state)
+    }
+
+    /// Loads a slot only for the exact image currently selected by `path`.
+    pub fn load_for_image_path(
+        &self,
+        slot: u8,
+        path: &Path,
+        title_id: Option<u64>,
+    ) -> Result<SaveStateFile, SaveStateStoreError> {
+        let identity =
+            identity_from_image_path(path, title_id).map_err(SaveStateStoreError::Identity)?;
+        self.load(slot, identity)
+    }
+
+    /// Loads a slot only for the exact bytes in `reader`, restoring its cursor.
+    pub fn load_for_image_reader<R: Read + Seek>(
+        &self,
+        slot: u8,
+        reader: &mut R,
+        title_id: Option<u64>,
+    ) -> Result<SaveStateFile, SaveStateStoreError> {
+        let identity =
+            identity_from_image_reader(reader, title_id).map_err(SaveStateStoreError::Identity)?;
+        self.load(slot, identity)
     }
 
     /// Loads the newest valid generation matching the exact title identity.
@@ -276,6 +337,8 @@ pub enum SaveStateStoreError {
     EmptySlot(u8),
     GenerationExhausted,
     Io(io::ErrorKind),
+    Identity(SaveStateIdentityError),
+    ImageIdentityMismatch,
     InvalidSaveState(SaveStateError),
 }
 
@@ -291,6 +354,10 @@ impl fmt::Display for SaveStateStoreError {
                 formatter.write_str("save-state generation counter is exhausted")
             }
             Self::Io(kind) => write!(formatter, "save-state storage I/O error: {kind:?}"),
+            Self::Identity(error) => write!(formatter, "could not identify boot image: {error}"),
+            Self::ImageIdentityMismatch => {
+                formatter.write_str("save state identity does not match the selected image")
+            }
             Self::InvalidSaveState(error) => write!(formatter, "invalid save state: {error}"),
         }
     }
@@ -442,6 +509,93 @@ mod tests {
             store.save(11, &state(identity, 0)),
             Err(SaveStateStoreError::InvalidSlot(11))
         );
+    }
+
+    #[test]
+    fn image_bound_store_uses_exact_bytes_and_ignores_file_name() {
+        let root = temporary_directory();
+        let image_root = root.join("images");
+        fs::create_dir_all(&image_root).unwrap();
+        let first_path = image_root.join("first.3dsx");
+        let renamed_path = image_root.join("renamed.3dsx");
+        fs::write(&first_path, b"synthetic image bytes").unwrap();
+        fs::write(&renamed_path, b"synthetic image bytes").unwrap();
+
+        let identity = crate::save_state_identity::identity_from_image_path(&first_path, None)
+            .expect("synthetic image should have a stable identity");
+        let saved = state(identity, 12);
+        let store = SaveStateStore::new(root.join("states"));
+        store
+            .save_for_image_path(1, &first_path, None, &saved)
+            .expect("matching image should be allowed to save");
+
+        assert_eq!(
+            store
+                .load_for_image_path(1, &renamed_path, None)
+                .unwrap(),
+            saved
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn image_bound_store_rejects_a_different_image_and_mismatched_state() {
+        let root = temporary_directory();
+        let first_path = root.join("first.3dsx");
+        let second_path = root.join("second.3dsx");
+        fs::write(&first_path, b"synthetic image one").unwrap();
+        fs::write(&second_path, b"synthetic image two").unwrap();
+
+        let first_identity = crate::save_state_identity::identity_from_image_path(&first_path, None)
+            .unwrap();
+        let second_identity =
+            crate::save_state_identity::identity_from_image_path(&second_path, None).unwrap();
+        let store = SaveStateStore::new(root.join("states"));
+        let state = state(first_identity, 1);
+
+        assert_eq!(
+            store.save_for_image_path(1, &second_path, None, &state),
+            Err(SaveStateStoreError::ImageIdentityMismatch)
+        );
+        store
+            .save_for_image_path(1, &first_path, None, &state)
+            .unwrap();
+        assert_eq!(
+            store.load_for_image_path(1, &second_path, None),
+            Err(SaveStateStoreError::EmptySlot(1))
+        );
+        assert_eq!(
+            store.load_for_image_path(1, &first_path, None).unwrap(),
+            state
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reader_bound_store_restores_cursor_for_save_and_load() {
+        use std::io::Cursor;
+
+        let root = temporary_directory();
+        let bytes = b"synthetic image bytes".to_vec();
+        let mut reader = Cursor::new(bytes);
+        reader.set_position(5);
+        let identity = crate::save_state_identity::identity_from_image_reader(&mut reader, None)
+            .unwrap();
+        let saved = state(identity, 42);
+        let store = SaveStateStore::new(&root);
+
+        store
+            .save_for_image_reader(1, &mut reader, None, &saved)
+            .unwrap();
+        assert_eq!(reader.position(), 5);
+        assert_eq!(
+            store
+                .load_for_image_reader(1, &mut reader, None)
+                .unwrap(),
+            saved
+        );
+        assert_eq!(reader.position(), 5);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
