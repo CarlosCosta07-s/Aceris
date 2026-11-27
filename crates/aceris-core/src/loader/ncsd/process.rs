@@ -3577,16 +3577,88 @@ impl Arm11CodeAddressSpace {
     /// The supported virtual heap window is 0x08000000..0x0E000000, matching
     /// libctru's default application-heap range. Backing bytes are allocated
     /// lazily by the host and are not a model of physical FCRAM allocation.
+    /// Finds the first page-aligned gap large enough for a regular application-heap allocation.
+    ///
+    /// The search accounts for static executable segments and every dynamic,
+    /// shared and linear mapping already visible to this process.
+    fn first_fit_application_heap_address(
+        &self,
+        size: u32,
+    ) -> std::result::Result<u32, Arm11DynamicMemoryError> {
+        if size == 0 || u64::from(size) % PAGE_SIZE != 0 {
+            return Err(Arm11DynamicMemoryError::InvalidSize(size));
+        }
+
+        let mut candidate = u64::from(APPLICATION_HEAP_BASE);
+        loop {
+            let end = candidate + u64::from(size);
+            if end > APPLICATION_HEAP_END {
+                return Err(Arm11DynamicMemoryError::OutsideApplicationHeap {
+                    address: candidate as u32,
+                    size,
+                });
+            }
+
+            let mut next_candidate = candidate;
+            let mut consider_overlap = |region_start: u64, region_end: u64| {
+                if candidate < region_end && end > region_start {
+                    let aligned_end =
+                        region_end.saturating_add(PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
+                    next_candidate = next_candidate.max(aligned_end);
+                }
+            };
+
+            for segment in [
+                self.layout.text,
+                self.layout.read_only,
+                self.layout.data,
+                self.layout.bss,
+                self.layout.stack,
+            ] {
+                if !segment.is_empty() {
+                    consider_overlap(
+                        u64::from(segment.address),
+                        segment.end_address(),
+                    );
+                }
+            }
+            for region in &self.dynamic_regions {
+                consider_overlap(u64::from(region.address), region.end_address());
+            }
+            for region in &self.shared_regions {
+                if let Some(region_end) = region.end_address() {
+                    consider_overlap(u64::from(region.address), region_end);
+                }
+            }
+            for region in &self.linear_regions {
+                consider_overlap(u64::from(region.virtual_base), region.virtual_end());
+            }
+            drop(consider_overlap);
+
+            if next_candidate == candidate {
+                return Ok(candidate as u32);
+            }
+            candidate = next_candidate;
+        }
+    }
+
     pub fn allocate_application_heap_region(
         &mut self,
         address: u32,
         size: u32,
     ) -> std::result::Result<u32, Arm11DynamicMemoryError> {
-        if u64::from(address) % PAGE_SIZE != 0 {
-            return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
-        }
         if size == 0 || u64::from(size) % PAGE_SIZE != 0 {
             return Err(Arm11DynamicMemoryError::InvalidSize(size));
+        }
+        // An addr0 of zero is a kernel placement hint: choose the first free
+        // page-aligned range instead of treating it as an invalid heap address.
+        let address = if address == 0 {
+            self.first_fit_application_heap_address(size)?
+        } else {
+            address
+        };
+        if u64::from(address) % PAGE_SIZE != 0 {
+            return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
         }
 
         let end = u64::from(address)
@@ -7792,6 +7864,32 @@ mod tests {
             .unwrap();
         assert!(!address_space.is_writable_range(base, 1));
         assert!(address_space.read8(base).is_err());
+    }
+
+    #[test]
+    fn application_heap_zero_address_uses_first_fit_without_overlapping_existing_mappings() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        address_space
+            .allocate_application_heap_region(0x0800_0000, 0x2000)
+            .unwrap();
+        address_space
+            .allocate_application_heap_region(0x0800_4000, 0x1000)
+            .unwrap();
+
+        // The 12 KiB request overlaps the first allocation, then the second
+        // allocation after the first gap; first-fit must advance past both.
+        let automatic = address_space
+            .allocate_application_heap_region(0, 0x3000)
+            .unwrap();
+        assert_eq!(automatic, 0x0800_5000);
+        assert!(address_space.is_writable_range(automatic, 0x3000));
+
+        // A subsequent allocation uses the next available page-aligned gap.
+        let next = address_space
+            .allocate_application_heap_region(0, 0x1000)
+            .unwrap();
+        assert_eq!(next, 0x0800_8000);
+        assert!(address_space.is_writable_range(next, 0x1000));
     }
 
     #[test]

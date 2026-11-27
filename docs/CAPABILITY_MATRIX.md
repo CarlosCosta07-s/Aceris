@@ -112,7 +112,7 @@
 | Capacidade | Estado | Comportamento observado e limite |
 |---|---|---|
 | SVC GetResourceLimit (0x38–0x3A) | Disponível para os 10 tipos ABI | Consulta limites do perfil APPLICATION 64 MiB e uso atual de COMMIT, threads, eventos, mutexes, semáforos, timers, shared memory e address arbiters. Priority e CPUTime têm valores de perfil explícitos. Isso não significa que todas as quotas já sejam impostas por cada caminho de alocação. |
-| ControlMemory MAP/UNMAP | Parcial, heap regular | Cria e remove aliases page-aligned de uma faixa de heap comum, valida o par origem/destino e mantém a alocação original viva enquanto houver aliases. `MEMOP_PROTECT`, regiões especiais e validação em hardware continuam pendentes. |
+| ControlMemory ALLOC/MAP/UNMAP | Parcial, heap regular | ALLOC aceita endereço fixo ou `addr0 = 0` com busca first-fit page-aligned, considerando segmentos e mapeamentos existentes. MAP/UNMAP cria e remove aliases da heap comum e valida o par origem/destino. `MEMOP_RESERVE`, `MEMOP_PROTECT`, regiões especiais e validação em hardware continuam pendentes. |
 
 | Capacidade | Estado | Comportamento observado e limite |
 |---|---|---|
