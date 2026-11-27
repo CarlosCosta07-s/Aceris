@@ -611,20 +611,24 @@ mod tests {
     fn outer_file_round_trips_the_inner_section_table() {
         let mut sections = SaveStatePayload::new();
         sections
-            .insert(SaveStateSection::new(
-                super::section_id::ARM11_CPU,
-                1,
-                b"synthetic-cpu-state".to_vec(),
+            .insert(
+                SaveStateSection::new(
+                    super::section_id::ARM11_CPU,
+                    1,
+                    b"synthetic-cpu-state".to_vec(),
+                )
+                .unwrap(),
             )
-            .unwrap())
             .unwrap();
         sections
-            .insert(SaveStateSection::new(
-                super::section_id::PROCESS_MEMORY,
-                1,
-                b"synthetic-memory-state".to_vec(),
+            .insert(
+                SaveStateSection::new(
+                    super::section_id::PROCESS_MEMORY,
+                    1,
+                    b"synthetic-memory-state".to_vec(),
+                )
+                .unwrap(),
             )
-            .unwrap())
             .unwrap();
         let metadata = SaveStateMetadata {
             identity: identity(),
