@@ -33,6 +33,7 @@ A primeira camada do menu está conectada aos dois frontends:
 - Reiniciar e Voltar à biblioteca mostram uma confirmação com aviso de possível perda de progresso não salvo; o aviso é preventivo e não depende de uma detecção automática de estado sujo. O atalho PC ainda não é configurável, e a validação física dos fluxos permanece pendente.
 - As ações **Alterar layout**, **Trocar telas** e **Padrão global** estão conectadas nos dois hosts. Modos disponíveis: Lado a lado, Vertical, Superior ampliada, Inferior ampliada, Somente superior e Somente inferior. O desktop ajusta o tamanho da janela ao canvas do modo; Android usa rotação do sensor e encaixe proporcional. O toque continua mapeado à tela inferior física após a troca. Perfis globais separados para retrato/paisagem e overrides por Title ID são persistidos em `.aceris/screen_layout_preferences_v2.txt`; o formato v1 é migrado ao carregar. 3DSX sem identidade validada herda o perfil global.
 - O menu rápido agora mostra **PERFIL GLOBAL** ou **PERFIL DESTE JOGO**, consultando somente o override da orientação ativa. Assim, uma personalização salva para paisagem não é apresentada incorretamente como ativa no modo retrato.
+- No Android, as Configurações da biblioteca permitem mostrar/ocultar os controles virtuais. A preferência global é persistida em `.aceris/virtual_controls_v1.txt`; quando ocultos, os botões deixam de ser desenhados e deixam de capturar toques, enquanto entradas físicas continuam funcionando. O padrão continua visível para instalações existentes.
 
 ### Pausa real
 
@@ -157,7 +158,7 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 | Pastas da biblioteca e busca recursiva | Configuração básica disponível por caminho digitado |
 | Modo Desempenho | Disponível como opção global; efeito aplicado no próximo jogo e com ressalvas de compatibilidade |
 | Fundo personalizado | Suporte de renderer; não confundir com seletor completo de tema |
-| Overlay de controles virtuais | Básico e fixo; ainda sem editor |
+| Overlay de controles virtuais | Parcial | Visibilidade global persistida e alternável nas Configurações Android; ocultar remove renderização e hit testing. Posição, tamanho, opacidade, presets e perfis por orientação ainda não estão implementados. |
 | Menu rápido com pausa | Parcial | Continuar, Reiniciar, Voltar à biblioteca, Alterar layout, Trocar telas e Padrão global funcionam no PC e Android; pausa entre quadros, limpeza explícita das filas host de áudio, confirmação preventiva das ações destrutivas e botão Android MENU. Atalho editável e validação física pendentes. |
 | Layouts básicos/troca de telas | Parcial | Seis modos, troca física de LCD, perfis globais por orientação, overrides por Title ID com herança/reset e indicador de escopo no menu rápido disponíveis nos dois hosts. Ajuste fino, layouts personalizados e validação física pendentes. |
 | Perfis de controles | Planejados |
@@ -170,7 +171,7 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 2. **Pausa e menu mínimo:** primeira versão implementada no desktop e Android — estado pausado no limite de quadro, janela responsiva, scanout mantido, ações Continuar/Reiniciar/Voltar à biblioteca, limpeza explícita das filas host de áudio e confirmação preventiva das ações destrutivas. Próximo: atalho PC configurável e validação física dos backends; a detecção automática de progresso não salvo ainda não existe.
 3. **Atalhos e navegação:** unificar ações de teclado, controle e toque, com detecção de conflitos e acessibilidade.
 4. **Layouts de telas:** geometria compartilhada, seis modos básicos, troca física, mapeamento do stylus, perfis globais e overrides por Title ID com restauração do padrão global implementados; indicador visual de herança/override adicionado ao menu rápido; próximo: ajuste fino de posição/espaçamento e validação física.
-5. **Editor de controles:** separar dispositivo físico, mapeamento lógico e perfil por jogo.
+5. **Editor de controles:** primeira etapa concluída parcialmente — visibilidade global do overlay no Android, com persistência e sem capturas invisíveis; próximos: posição, tamanho, opacidade, presets retrato/paisagem e detecção de controle físico. Depois, separar dispositivo físico, mapeamento lógico e perfil por jogo.
 6. **Configurações versionadas:** categorias globais, overrides por jogo, migrações e restauração seletiva.
 7. **Aparência e acessibilidade:** temas, contraste, tamanho de UI e fundos selecionáveis, sempre com fallback seguro.
 
