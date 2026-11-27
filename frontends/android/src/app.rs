@@ -1626,7 +1626,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn android_keycodes_map_dpad_and_gamepad_buttons() {
         assert_eq!(pad_from_android_keycode(19), Some(frontend::buttons::UP));
         assert_eq!(
