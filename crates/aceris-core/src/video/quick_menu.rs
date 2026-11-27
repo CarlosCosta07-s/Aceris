@@ -27,10 +27,11 @@ struct Rect {
     height: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct Geometry {
     panel: Rect,
-    rows: Vec<Rect>,
+    rows: [Rect; ACTION_COUNT],
+    action_count: usize,
     scale: usize,
 }
 
@@ -69,15 +70,28 @@ fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
         .checked_div(action_count)?
         .min(32 * scale);
     let row_width = panel.width.saturating_sub(horizontal_padding * 2);
-    let rows = (0..action_count)
-        .map(|index| Rect {
+    let rows = std::array::from_fn(|index| {
+        if index >= action_count {
+            return Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            };
+        }
+        Rect {
             x: panel.x + horizontal_padding,
             y: row_top + index * (row_height + row_gap),
             width: row_width,
             height: row_height,
-        })
-        .collect();
-    Some(Geometry { panel, rows, scale })
+        }
+    });
+    Some(Geometry {
+        panel,
+        rows,
+        action_count,
+        scale,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -189,7 +203,7 @@ fn hit_test_with_action_count(
     if x < 0 || y < 0 {
         return None;
     }
-    geometry.rows.iter().position(|row| {
+    geometry.rows.iter().take(action_count).position(|row| {
         let x = x as usize;
         let y = y as usize;
         x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height
@@ -421,7 +435,7 @@ pub fn render_confirmation_overlay(
     );
 
     let labels = ["CANCELAR", "CONFIRMAR"];
-    for (index, row) in geometry.rows.iter().enumerate() {
+    for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
         let is_selected = index == selected.min(1);
         blend_rect(
             frame,
@@ -577,7 +591,7 @@ fn render_overlay_with_action_count(
         "RESTAURAR CONTROLES",
         "EDITAR CONTROLES",
     ];
-    for (index, row) in geometry.rows.iter().enumerate() {
+    for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
         let is_selected = index == selected.min(action_count - 1);
         blend_rect(
             frame,
@@ -725,7 +739,7 @@ mod tests {
     fn hit_testing_matches_the_drawn_action_rows_on_phone_and_desktop() {
         for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800), (320, 240)] {
             let geometry = geometry(width, height, ACTION_COUNT).unwrap();
-            for (index, row) in geometry.rows.iter().enumerate() {
+            for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
                 let x = (row.x + row.width / 2) as i32;
                 let y = (row.y + row.height / 2) as i32;
                 assert_eq!(hit_test(width, height, x, y), Some(index));
@@ -763,7 +777,7 @@ mod tests {
             ACTION_COUNT - 1,
         ));
         let geometry = geometry(width, height, ACTION_COUNT).unwrap();
-        let last = geometry.rows.last().unwrap();
+        let last = &geometry.rows[ACTION_COUNT - 1];
         assert!(last.y + last.height <= height as usize);
         assert_eq!(
             hit_test(
@@ -789,8 +803,8 @@ mod tests {
             "PADRÃO GLOBAL",
         ));
         let desktop_geometry = geometry(width, height, DESKTOP_ACTION_COUNT).unwrap();
-        assert_eq!(desktop_geometry.rows.len(), DESKTOP_ACTION_COUNT);
-        let last = desktop_geometry.rows.last().unwrap();
+        assert_eq!(desktop_geometry.action_count, DESKTOP_ACTION_COUNT);
+        let last = &desktop_geometry.rows[DESKTOP_ACTION_COUNT - 1];
         assert_eq!(
             hit_test_desktop(
                 width,
@@ -882,7 +896,7 @@ mod tests {
     fn confirmation_hit_testing_matches_cancel_and_confirm_rows() {
         for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800), (320, 240)] {
             let geometry = confirmation_geometry(width, height).unwrap();
-            for (index, row) in geometry.rows.iter().enumerate() {
+            for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
                 let x = (row.x + row.width / 2) as i32;
                 let y = (row.y + row.height / 2) as i32;
                 assert_eq!(hit_test_confirmation(width, height, x, y), Some(index));
