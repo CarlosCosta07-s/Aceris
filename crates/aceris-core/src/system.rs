@@ -21,7 +21,6 @@ use crate::input::InputState;
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore, tmd::CONTENT_TYPE_ENCRYPTED};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
 use crate::loader::ncsd::process::{SharedMemoryBackingCatalog, SharedMemoryStateError};
-use crate::save_state::SaveStateSection;
 use crate::loader::ncsd::session::gsp_service::{
     GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE, GspClientUnregistration,
     GspInterruptDispatchReport, GspIpcRequest, GspIpcResultResponse,
@@ -37,6 +36,7 @@ use crate::loader::ncsd::session::{
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::threedsx::ThreeDsxImage;
 use crate::loader::{self, ImageFormat};
+use crate::save_state::SaveStateSection;
 use crate::video::{
     DualScreenDisplay, LcdController, LcdPanel, PDC_CONTROL, PDC_CONTROL_ENABLED,
     PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
