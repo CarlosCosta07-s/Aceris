@@ -96,9 +96,12 @@ pub const RESULT_MEMORY_BLOCK_NOT_ALLOWED: u32 = 0xD920_07EA;
 
 const MEMOP_FREE: u32 = 1;
 const MEMOP_ALLOC: u32 = 3;
+const MEMOP_MAP: u32 = 4;
+const MEMOP_UNMAP: u32 = 5;
 const MEMOP_LINEAR: u32 = 0x0001_0000;
 const OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET: u32 = 0x0C00_0000;
 const MEMPERM_NONE: u32 = 0;
+const MEMPERM_READ_ONLY: u32 = 1;
 const MEMPERM_READ_WRITE: u32 = 3;
 
 /// Nintendo 3DS result: no more free kernel synchronization/thread objects.
@@ -2818,6 +2821,48 @@ impl Arm11ProcessSession {
                 .free_application_heap_region(address, size)
                 .map(|()| address)
                 .map_err(dynamic_memory_result_code),
+            (
+                MEMOP_MAP,
+                source_address,
+                permissions @ (MEMPERM_READ_ONLY | MEMPERM_READ_WRITE),
+            ) => {
+                // ControlMemory maps an alias of an existing regular-heap range.
+                // Publish source writes before exposing the second virtual view.
+                let backing = self
+                    .address_space
+                    .shared_memory_backing_for_heap_range(source_address, size)
+                    .map_err(dynamic_memory_result_code)?;
+                self.flush_process_data_cache(source_address, size)
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                self.drain_write_buffer()
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                self.address_space
+                    .map_shared_memory_region(address, backing, permissions)
+                    .map(|()| address)
+                    .map_err(dynamic_memory_result_code)
+            }
+            (MEMOP_UNMAP, source_address, MEMPERM_NONE) => {
+                // Require the exact source/destination pair created by MAP.
+                let backing = self
+                    .address_space
+                    .shared_memory_backing_for_heap_range(source_address, size)
+                    .map_err(dynamic_memory_result_code)?;
+                if !self.address_space.shared_mapping_matches(address, &backing) {
+                    Err(RESULT_INVALID_ADDRESS)
+                } else {
+                    // Commit both views and invalidate the source's possibly stale lines.
+                    self.flush_process_data_cache(source_address, size)
+                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                    self.drain_write_buffer()
+                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                    self.address_space
+                        .unmap_shared_memory_region(address, size)
+                        .map_err(dynamic_memory_result_code)?;
+                    self.invalidate_process_data_cache(source_address, size)
+                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                    Ok(address)
+                }
+            }
             _ => Err(RESULT_INVALID_ENUM),
         };
 
@@ -4444,7 +4489,7 @@ mod tests {
         let mut session = test_session();
         const HANDLE_OUTPUT: u32 = 0x0020_0000;
         const TYPES: u32 = 0x0020_0020;
-        const VALUES: u32 = 0x0020_0040;
+        const VALUES: u32 = 0x0020_0080;
 
         session.write_memory_u32(TYPES, 1).unwrap(); // RESLIMIT_COMMIT
         session.set_current_register(0, HANDLE_OUTPUT);
@@ -6187,6 +6232,105 @@ mod tests {
         assert_eq!(session.core().regs[0], 0);
         assert_eq!(session.core().regs[1], 0x0800_0000);
         assert!(!session.address_space.is_writable_range(0x0800_0000, 1));
+    }
+
+    #[test]
+    fn control_memory_maps_and_unmaps_regular_heap_aliases() {
+        let mut session = test_session_with_program(&[
+            0xEF00_0001, // SVC ControlMemory: allocate regular heap
+            0xEF00_0001, // SVC ControlMemory: map heap alias
+            0xEF00_0001, // SVC ControlMemory: reject mismatched unmap source
+            0xEF00_0001, // SVC ControlMemory: reject free while alias is live
+            0xEF00_0001, // SVC ControlMemory: unmap exact alias
+            0xEF00_0001, // SVC ControlMemory: free original heap
+        ]);
+        const SOURCE: u32 = 0x0800_0000;
+        const ALIAS: u32 = 0x0900_0000;
+        const SIZE: u32 = 0x2000;
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_ALLOC;
+            core.regs[1] = SOURCE;
+            core.regs[2] = 0;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert!(session.address_space.is_writable_range(SOURCE, SIZE as usize));
+        session.write_memory_u32(SOURCE + 0x100, 0xCAFE_BABE).unwrap();
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_MAP;
+            core.regs[1] = ALIAS;
+            core.regs[2] = SOURCE;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.core().regs[1], ALIAS);
+        assert_eq!(session.read_memory_u32(ALIAS + 0x100).unwrap(), 0xCAFE_BABE);
+
+        // A wrong source range cannot unmap the alias.
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_UNMAP;
+            core.regs[1] = ALIAS;
+            core.regs[2] = SOURCE + 0x1000;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
+        assert!(session.address_space.is_writable_range(ALIAS, SIZE as usize));
+
+        // The original allocation remains alive until every alias is removed.
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_FREE;
+            core.regs[1] = SOURCE;
+            core.regs[2] = 0;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
+        assert!(session.address_space.is_writable_range(SOURCE, SIZE as usize));
+
+        session
+            .write_memory_u32(ALIAS + 0x104, 0x1234_5678)
+            .unwrap();
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_UNMAP;
+            core.regs[1] = ALIAS;
+            core.regs[2] = SOURCE;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.core().regs[1], ALIAS);
+        assert!(!session.address_space.is_writable_range(ALIAS, 1));
+        assert_eq!(
+            session.read_memory_u32(SOURCE + 0x104).unwrap(),
+            0x1234_5678
+        );
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_FREE;
+            core.regs[1] = SOURCE;
+            core.regs[2] = 0;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert!(!session.address_space.is_writable_range(SOURCE, 1));
     }
 
     #[test]

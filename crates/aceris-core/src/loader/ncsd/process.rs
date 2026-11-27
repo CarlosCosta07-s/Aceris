@@ -3751,6 +3751,14 @@ impl Arm11CodeAddressSpace {
         else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
+        let backing = self.dynamic_regions[index].backing.backing_ref();
+        if self
+            .shared_regions
+            .iter()
+            .any(|mapping| mapping.backing.shares_backing_with(backing))
+        {
+            return Err(Arm11DynamicMemoryError::OverlappingMapping);
+        }
         self.flush_data_cache_range(address, size)
             .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.drain_arm11_write_buffer()
