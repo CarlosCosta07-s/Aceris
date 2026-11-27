@@ -31,22 +31,123 @@ pub struct ScreenLayout {
     pub bottom: ScreenRect,
 }
 
-/// Computes an aspect-preserving layout for the two 3DS screens.
-///
-/// Portrait stacks the 400x240 top LCD over the centred 320x240 bottom LCD.
-/// Landscape places the top and bottom LCDs side by side. The result is
-/// centred and fitted without cropping either screen.
+/// User-facing arrangement for the two physical LCDs.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScreenLayoutMode {
+    /// Select stacked or side-by-side using the available surface aspect ratio.
+    #[default]
+    Auto = 0,
+    /// Both screens horizontally, top first.
+    SideBySide = 1,
+    /// Both screens vertically, top first.
+    Vertical = 2,
+    /// Both screens vertically, with the top LCD enlarged.
+    TopEnlarged = 3,
+    /// Both screens vertically, with the touch LCD enlarged.
+    BottomEnlarged = 4,
+    /// Show only the top LCD.
+    TopOnly = 5,
+    /// Show only the touch LCD.
+    BottomOnly = 6,
+}
+
+impl ScreenLayoutMode {
+    /// Cycles through the concrete layouts exposed by the in-game menu.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Auto | Self::SideBySide => Self::Vertical,
+            Self::Vertical => Self::TopEnlarged,
+            Self::TopEnlarged => Self::BottomEnlarged,
+            Self::BottomEnlarged => Self::TopOnly,
+            Self::TopOnly => Self::BottomOnly,
+            Self::BottomOnly => Self::SideBySide,
+        }
+    }
+}
+
+/// Computes the legacy orientation-selected layout.
 pub fn compute_screen_layout(
     view_width: u32,
     view_height: u32,
     requested_orientation: u32,
 ) -> ScreenLayout {
-    let orientation = match requested_orientation {
-        ORIENTATION_PORTRAIT => ORIENTATION_PORTRAIT,
-        ORIENTATION_LANDSCAPE => ORIENTATION_LANDSCAPE,
-        _ if view_width >= view_height => ORIENTATION_LANDSCAPE,
-        _ => ORIENTATION_PORTRAIT,
+    let mode = match requested_orientation {
+        ORIENTATION_PORTRAIT => ScreenLayoutMode::Vertical,
+        ORIENTATION_LANDSCAPE => ScreenLayoutMode::SideBySide,
+        _ => ScreenLayoutMode::Auto,
     };
+    compute_screen_layout_for_mode(view_width, view_height, mode, false)
+}
+
+/// Computes the placement of each physical screen for a user-selected mode.
+///
+/// All modes preserve the 3DS LCD aspect ratios. The swap option exchanges
+/// positions without changing screen identity, so touch follows the bottom LCD.
+pub fn compute_screen_layout_for_mode(
+    view_width: u32,
+    view_height: u32,
+    mode: ScreenLayoutMode,
+    swap_screens: bool,
+) -> ScreenLayout {
+    const TOP_W: f32 = 400.0;
+    const TOP_H: f32 = 240.0;
+    const BOTTOM_W: f32 = 320.0;
+    const BOTTOM_H: f32 = 240.0;
+    const GAP: f32 = 16.0;
+
+    let resolved = match mode {
+        ScreenLayoutMode::Auto if view_width >= view_height => ScreenLayoutMode::SideBySide,
+        ScreenLayoutMode::Auto => ScreenLayoutMode::Vertical,
+        concrete => concrete,
+    };
+
+    let (orientation, logical_width, logical_height, top, bottom) = match resolved {
+        ScreenLayoutMode::Auto => unreachable!("Auto is resolved above"),
+        ScreenLayoutMode::SideBySide => (
+            ORIENTATION_LANDSCAPE,
+            TOP_W + GAP + BOTTOM_W,
+            TOP_H,
+            (0.0, 0.0, TOP_W, TOP_H),
+            (TOP_W + GAP, 0.0, BOTTOM_W, BOTTOM_H),
+        ),
+        ScreenLayoutMode::Vertical => (
+            ORIENTATION_PORTRAIT,
+            TOP_W,
+            TOP_H + GAP + BOTTOM_H,
+            (0.0, 0.0, TOP_W, TOP_H),
+            ((TOP_W - BOTTOM_W) * 0.5, TOP_H + GAP, BOTTOM_W, BOTTOM_H),
+        ),
+        ScreenLayoutMode::TopEnlarged => (
+            ORIENTATION_PORTRAIT,
+            480.0,
+            288.0 + GAP + BOTTOM_H,
+            (0.0, 0.0, 480.0, 288.0),
+            (80.0, 288.0 + GAP, BOTTOM_W, BOTTOM_H),
+        ),
+        ScreenLayoutMode::BottomEnlarged => (
+            ORIENTATION_PORTRAIT,
+            400.0,
+            TOP_H + GAP + 300.0,
+            (0.0, 0.0, TOP_W, TOP_H),
+            (0.0, TOP_H + GAP, 400.0, 300.0),
+        ),
+        ScreenLayoutMode::TopOnly => (
+            ORIENTATION_LANDSCAPE,
+            TOP_W,
+            TOP_H,
+            (0.0, 0.0, TOP_W, TOP_H),
+            (0.0, 0.0, 0.0, 0.0),
+        ),
+        ScreenLayoutMode::BottomOnly => (
+            ORIENTATION_LANDSCAPE,
+            BOTTOM_W,
+            BOTTOM_H,
+            (0.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, BOTTOM_W, BOTTOM_H),
+        ),
+    };
+
     if view_width == 0 || view_height == 0 {
         return ScreenLayout {
             orientation,
@@ -54,33 +155,16 @@ pub fn compute_screen_layout(
         };
     }
 
-    const TOP_W: f32 = 400.0;
-    const TOP_H: f32 = 240.0;
-    const BOTTOM_W: f32 = 320.0;
-    const BOTTOM_H: f32 = 240.0;
-    const GAP: f32 = 16.0;
-
-    let (logical_width, logical_height, top_x, top_y, bottom_x, bottom_y) =
-        if orientation == ORIENTATION_PORTRAIT {
-            (
-                TOP_W,
-                TOP_H + GAP + BOTTOM_H,
-                0.0,
-                0.0,
-                (TOP_W - BOTTOM_W) / 2.0,
-                TOP_H + GAP,
-            )
-        } else {
-            (TOP_W + GAP + BOTTOM_W, TOP_H, 0.0, 0.0, TOP_W + GAP, 0.0)
-        };
-
     let scale = (view_width as f32 / logical_width).min(view_height as f32 / logical_height);
     let fitted_width = logical_width * scale;
     let fitted_height = logical_height * scale;
     let origin_x = (view_width as f32 - fitted_width) * 0.5;
     let origin_y = (view_height as f32 - fitted_height) * 0.5;
 
-    let rect = |x: f32, y: f32, width: f32, height: f32| {
+    let rect = |(x, y, width, height): (f32, f32, f32, f32)| {
+        if width == 0.0 || height == 0.0 {
+            return ScreenRect::default();
+        }
         let left = (origin_x + x * scale).round() as i32;
         let top = (origin_y + y * scale).round() as i32;
         let right = (origin_x + (x + width) * scale).round() as i32;
@@ -93,10 +177,15 @@ pub fn compute_screen_layout(
         }
     };
 
+    let mut top = rect(top);
+    let mut bottom = rect(bottom);
+    if swap_screens {
+        std::mem::swap(&mut top, &mut bottom);
+    }
     ScreenLayout {
         orientation,
-        top: rect(top_x, top_y, TOP_W, TOP_H),
-        bottom: rect(bottom_x, bottom_y, BOTTOM_W, BOTTOM_H),
+        top,
+        bottom,
     }
 }
 
@@ -577,6 +666,87 @@ fn draw_glyph(pixels: &mut [u8], width: usize, height: usize, cx: i32, cy: i32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concrete_layout_modes_preserve_aspect_and_fit_the_surface() {
+        let modes = [
+            ScreenLayoutMode::SideBySide,
+            ScreenLayoutMode::Vertical,
+            ScreenLayoutMode::TopEnlarged,
+            ScreenLayoutMode::BottomEnlarged,
+            ScreenLayoutMode::TopOnly,
+            ScreenLayoutMode::BottomOnly,
+        ];
+        for mode in modes {
+            for (width, height) in [(1080, 2400), (2400, 1080), (720, 1280)] {
+                let layout = compute_screen_layout_for_mode(width, height, mode, false);
+                for rect in [layout.top, layout.bottom] {
+                    if rect.width == 0 || rect.height == 0 {
+                        continue;
+                    }
+                    assert!(rect.x >= 0 && rect.y >= 0, "{mode:?}: {rect:?}");
+                    assert!(rect.x as u32 + rect.width <= width, "{mode:?}: {rect:?}");
+                    assert!(rect.y as u32 + rect.height <= height, "{mode:?}: {rect:?}");
+                }
+                if layout.top.width != 0 {
+                    let ratio = layout.top.width as f32 / layout.top.height as f32;
+                    assert!((ratio - (400.0 / 240.0)).abs() < 0.02, "{mode:?}: {ratio}");
+                }
+                if layout.bottom.width != 0 {
+                    let ratio = layout.bottom.width as f32 / layout.bottom.height as f32;
+                    assert!((ratio - (320.0 / 240.0)).abs() < 0.02, "{mode:?}: {ratio}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn single_screen_modes_hide_the_other_physical_lcd() {
+        let top = compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::TopOnly, false);
+        assert!(top.top.width > 0);
+        assert_eq!(top.bottom, ScreenRect::default());
+
+        let bottom =
+            compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::BottomOnly, false);
+        assert_eq!(bottom.top, ScreenRect::default());
+        assert!(bottom.bottom.width > 0);
+    }
+
+    #[test]
+    fn swapping_screens_changes_positions_but_preserves_bottom_touch_mapping() {
+        let normal =
+            compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::Vertical, false);
+        let swapped =
+            compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::Vertical, true);
+        assert_eq!(normal.top, swapped.bottom);
+        assert_eq!(normal.bottom, swapped.top);
+        assert_eq!(
+            crate::input::touch_from_surface_point(&swapped, swapped.bottom.x, swapped.bottom.y),
+            Some((0, 0))
+        );
+    }
+
+    #[test]
+    fn layout_mode_cycles_through_all_six_user_selectable_modes() {
+        let mut mode = ScreenLayoutMode::SideBySide;
+        let mut seen = vec![mode];
+        for _ in 0..5 {
+            mode = mode.next();
+            seen.push(mode);
+        }
+        assert_eq!(
+            seen,
+            vec![
+                ScreenLayoutMode::SideBySide,
+                ScreenLayoutMode::Vertical,
+                ScreenLayoutMode::TopEnlarged,
+                ScreenLayoutMode::BottomEnlarged,
+                ScreenLayoutMode::TopOnly,
+                ScreenLayoutMode::BottomOnly,
+            ]
+        );
+        assert_eq!(mode.next(), ScreenLayoutMode::SideBySide);
+    }
 
     #[test]
     fn auto_orientation_follows_surface_and_explicit_mode_wins() {
