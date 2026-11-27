@@ -10,6 +10,8 @@ A implementação do produto continua integralmente em Rust, compartilhando o me
 
 A pesquisa é qualitativa: documentação oficial, recursos publicados pelos projetos, discussões comunitárias e pedidos recorrentes. Não é uma pesquisa estatística representativa de todos os usuários.
 
+A ordem de execução, dependências, entregáveis e critérios de aceite estão em [`docs/PRODUCT_IMPLEMENTATION_PLAN.md`](PRODUCT_IMPLEMENTATION_PLAN.md). A especificação define o que o produto deve oferecer; o plano define em que ordem isso será implementado.
+
 ## 2. O que as referências ensinam
 
 ### PPSSPP
@@ -50,6 +52,7 @@ A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/s
 - Apresentação das duas telas do 3DS com ajuste proporcional ao espaço disponível.
 - Camada básica de controle virtual e identificação de toque na tela inferior.
 - Entrada básica por teclado, toque e alguns eventos de controle físico encaminhados pelo host.
+- Modo Desempenho opcional, que ativa Fast Memory antes de carregar o próximo jogo; pode melhorar a velocidade, mas pode quebrar títulos que dependem da incoerência do cache. Deve permanecer claramente identificado como opção avançada/experimental, não como ganho garantido.
 - Pastas de dados de usuário por jogo para arquivos de save/extdata nos caminhos HLE atualmente implementados.
 - Diagnósticos de carregamento/execução em evolução.
 
