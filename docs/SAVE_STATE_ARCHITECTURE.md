@@ -105,9 +105,17 @@ O módulo `aceris_core::save_state_store` implementa armazenamento em disco inde
 
 A sincronização do arquivo é obrigatória; a sincronização do diretório é best-effort por diferenças entre sistemas de arquivos/plataformas. O armazenamento ainda não está conectado ao menu nem captura estado da máquina. A API só aceita um `SaveStateFile` já construído, e o agregador de snapshot de `System` continua pendente. O armazenamento por gerações também não substitui validação de identidade nem checksum do formato.
 
+### Cálculo e vínculo da identidade da imagem
+
+O módulo `aceris_core::save_state_identity` calcula SHA-256 de byte zero até EOF em blocos de 64 KiB, sem carregar o arquivo inteiro. O leitor `Read + Seek` volta à posição original mesmo após a leitura bem-sucedida; Title ID zero é rejeitado e ausência de Title ID é válida para imagens sem essa metadata.
+
+`SaveStateStore` oferece `save_for_image_path`, `save_for_image_reader`, `load_for_image_path` e `load_for_image_reader`. Esses métodos calculam a identidade da imagem selecionada e a comparam ao estado antes de salvar ou carregar. Uma imagem renomeada com bytes idênticos continua usando o mesmo slot; qualquer diferença de bytes cria uma identidade distinta.
+
+A identidade é exata para o arquivo inteiro, não para um conteúdo normalizado. A API está disponível e ligada ao armazenamento, mas os loaders e o agregador de snapshot de `System` ainda não a chamam automaticamente.
+
 ## Próximas etapas obrigatórias
 
-1. Calcular e persistir a identidade canônica do conteúdo de boot em todos os loaders suportados, inclusive 3DSX. Recusar estados quando a identidade não puder ser confirmada.
+1. Integrar o cálculo SHA-256 do arquivo de imagem completo aos loaders suportados, inclusive 3DSX, preservando o leitor e recusando estados quando a identidade não puder ser confirmada.
 2. Definir seções de payload com ID, versão, tamanho e checksum próprios. Implementar serializers pequenos por componente e testes de round-trip.
 3. Implementar captura apenas em fronteira segura de quadro, com DSP/CSND, GPU, IPC e scheduler pausados em um ponto consistente.
 4. Restaurar em estado temporário: validar todas as seções e referências primeiro; só substituir a máquina ativa depois que a reconstrução completa for bem-sucedida. Uma falha não pode deixar metade do estado antigo e metade do novo.
