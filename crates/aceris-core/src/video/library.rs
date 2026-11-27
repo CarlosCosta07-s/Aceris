@@ -6051,6 +6051,7 @@ mod tests {
         assert!(!reopened.virtual_controls_visible());
 
         let mut library = reopened;
+        library.select_page(LibraryPage::Settings);
         library.set_touch_keyboard_enabled(true);
         library.set_virtual_controls_visible(true).unwrap();
         library.click_responsive(780, 446, 1000, 600);
@@ -6087,6 +6088,7 @@ mod tests {
 
         // Portrait exposes all three controls with the same independent persistence.
         let mut portrait = reopened;
+        portrait.select_page(LibraryPage::Settings);
         portrait.set_touch_keyboard_enabled(true);
         portrait.click_responsive(90, 616, 400, 800);
         assert_eq!(portrait.virtual_controls_opacity(), 153);
