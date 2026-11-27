@@ -1537,7 +1537,7 @@ impl Arm11Core {
                             }
                             self.branch_taken = false;
                             let mut event =
-                                match self.execute_arm_decoded(&mut mmu, cached.word, cached.entry)
+                                match self.execute_ir(&mut mmu, cached.ir)
                                 {
                                     Ok(event) => event,
                                     Err(error) => {
