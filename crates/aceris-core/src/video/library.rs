@@ -1866,7 +1866,19 @@ impl Library {
                 0xBBAFC7,
             );
             responsive_panel(
-                frame, width, height, 20.0, 250.0, 360.0, 360.0, scale, 0x21152F,
+                frame,
+                width,
+                height,
+                20.0,
+                250.0,
+                360.0,
+                if self.touch_keyboard_enabled {
+                    408.0
+                } else {
+                    360.0
+                },
+                scale,
+                0x21152F,
             );
             responsive_text(
                 frame,
@@ -5419,8 +5431,20 @@ mod tests {
         library.click_responsive(780, 446, 1000, 600);
         assert!(!library.virtual_controls_visible());
 
+        // The opacity control is available in landscape and persists independently.
+        library.click_responsive(780, 495, 1000, 600);
+        assert_eq!(library.virtual_controls_opacity(), 204);
         let reopened = Library::new(Vec::new(), dir.display().to_string());
         assert!(!reopened.virtual_controls_visible());
+        assert_eq!(reopened.virtual_controls_opacity(), 204);
+
+        // Portrait exposes the same cycle control without moving desktop settings.
+        let mut portrait = reopened;
+        portrait.set_touch_keyboard_enabled(true);
+        portrait.click_responsive(200, 616, 400, 800);
+        assert_eq!(portrait.virtual_controls_opacity(), 153);
+        let reopened = Library::new(Vec::new(), dir.display().to_string());
+        assert_eq!(reopened.virtual_controls_opacity(), 153);
 
         fs::remove_dir_all(dir).unwrap();
     }
