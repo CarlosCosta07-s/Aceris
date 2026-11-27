@@ -4305,6 +4305,66 @@ mod tests {
     }
 
     #[test]
+    fn process_runtime_save_state_round_trips_waits_and_interrupt_bindings() {
+        let mut original = test_session();
+        let thread = original.current_thread_id().unwrap();
+        let event = original
+            .kernel_objects
+            .insert_event(EventResetType::Sticky)
+            .unwrap();
+
+        original.process_id = 23;
+        original.external_irq_asserted = true;
+        original.wait_deadlines.insert(thread, (event, 9_876_543));
+        original.arbiter_waiters.push((0x0020_1000, thread));
+        original.multi_waits.insert(thread, vec![event]);
+        original.wait_all_waits.insert(thread, vec![event, event + 1]);
+        original
+            .interrupts
+            .bind(0x20, event, 3, false, InterruptTargetKind::Event)
+            .unwrap();
+
+        let encoded = original.encode_runtime_state_section().unwrap();
+        let mut restored = test_session();
+        restored.restore_runtime_state_section(&encoded).unwrap();
+
+        assert_eq!(restored.process_id, 23);
+        assert!(restored.external_irq_asserted);
+        assert_eq!(restored.wait_deadlines, original.wait_deadlines);
+        assert_eq!(restored.arbiter_waiters, original.arbiter_waiters);
+        assert_eq!(restored.multi_waits, original.multi_waits);
+        assert_eq!(restored.wait_all_waits, original.wait_all_waits);
+        assert_eq!(
+            restored.interrupts.binding(0x20),
+            original.interrupts.binding(0x20)
+        );
+    }
+
+    #[test]
+    fn malformed_process_runtime_section_does_not_change_the_active_session() {
+        let mut session = test_session();
+        let thread = session.current_thread_id().unwrap();
+        session.wait_deadlines.insert(thread, (0x100, 1234));
+        session.arbiter_waiters.push((0x0020_2000, thread));
+        session.external_irq_asserted = true;
+
+        let before = session.encode_runtime_state_section().unwrap();
+        let malformed = SaveStateSection::new(
+            crate::save_state::section_id::ARM11_PROCESS_RUNTIME,
+            1,
+            b"invalid process runtime".to_vec(),
+        )
+        .unwrap();
+
+        assert!(session.restore_runtime_state_section(&malformed).is_err());
+        assert_eq!(
+            session.encode_runtime_state_section().unwrap(),
+            before
+        );
+        assert!(session.external_irq_asserted);
+    }
+
+    #[test]
     fn get_thread_id_svc_resolves_current_and_regular_thread_handles() {
         let mut session = test_session();
         const OUTPUT: u32 = 0x0020_0000;
