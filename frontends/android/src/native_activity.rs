@@ -13,12 +13,13 @@
 
 use crate::aaudio::AAudioOutput;
 use crate::app::{App, Pointer};
+use crate::performance::FramePerformanceMonitor;
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use raw_window_handle::{
     AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
 use std::ffi::{CStr, c_char, c_int, c_void};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
@@ -598,6 +599,18 @@ unsafe fn games_directory(activity: &NativeActivity) -> PathBuf {
     games
 }
 
+/// Enables Android host timing logs when
+/// `.aceris/android_performance_log_v1.txt` contains exactly `1`.
+/// This is opt-in to avoid timing overhead in normal gameplay.
+fn performance_logging_enabled(games_dir: &Path) -> bool {
+    std::fs::read_to_string(
+        games_dir
+            .join(".aceris")
+            .join("android_performance_log_v1.txt"),
+    )
+    .is_ok_and(|value| value.trim() == "1")
+}
+
 unsafe extern "C" fn on_resume(_activity: *mut NativeActivity) {
     update_shared(|shared| shared.resumed = true);
 }
@@ -731,6 +744,11 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
 
     let mut app = App::new(&games_dir);
     let mut frame = Vec::new();
+    let mut performance_monitor = performance_logging_enabled(&games_dir)
+        .then(FramePerformanceMonitor::new);
+    if performance_monitor.is_some() {
+        eprintln!("Aceris Android performance logging enabled (5-second reports)");
+    }
     let mut audio = AAudioOutput::open();
     let media_monitor =
         AttachedMediaMonitor::attach(host.java_vm, host.activity_global, host.sdk_version);
@@ -829,6 +847,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 &mut gpu_window,
                 &mut attempted_gpu_window,
                 &mut cpu_geometry_size,
+                &mut performance_monitor,
             );
             let samples = app.take_audio();
             if let Some(audio) = audio.as_mut() {
@@ -969,7 +988,9 @@ fn render(
     gpu_window: &mut Raw,
     attempted_gpu_window: &mut Raw,
     cpu_geometry_size: &mut (u32, u32),
+    performance_monitor: &mut Option<FramePerformanceMonitor>,
 ) {
+    let frame_started = performance_monitor.as_ref().map(|_| Instant::now());
     // Holding the lock keeps the window alive: `on_window_destroyed` takes it
     // before releasing the reference.
     let shared = lock(&host.shared);
@@ -1003,11 +1024,24 @@ fn render(
             app.resize(width, height);
             *size = (width, height);
         }
+        let emulation_started = performance_monitor.as_ref().map(|_| Instant::now());
         app.step_into(frame);
+        let emulation_elapsed = emulation_started
+            .map(|started| started.elapsed())
+            .unwrap_or_default();
         if frame.is_empty() {
+            record_performance_sample(
+                performance_monitor,
+                frame_started,
+                emulation_elapsed,
+                None,
+                false,
+                false,
+            );
             return;
         }
 
+        let presentation_started = performance_monitor.as_ref().map(|_| Instant::now());
         if gpu_presenter.is_none() && *attempted_gpu_window != window {
             *attempted_gpu_window = window;
             *gpu_presenter = create_android_gpu_presenter(window.get(), width, height);
@@ -1020,7 +1054,17 @@ fn render(
                 .present_rgba(frame, width, height)
         });
         match gpu_result {
-            Some(Ok(())) => return,
+            Some(Ok(())) => {
+                record_performance_sample(
+                    performance_monitor,
+                    frame_started,
+                    emulation_elapsed,
+                    presentation_started,
+                    true,
+                    true,
+                );
+                return;
+            }
             Some(Err(error)) => {
                 eprintln!("Android GPU surface lost; switching to CPU presentation: {error}");
                 gpu_presenter.take();
@@ -1032,6 +1076,14 @@ fn render(
         if *cpu_geometry_size != (width, height) {
             if ANativeWindow_setBuffersGeometry(window.get(), 0, 0, WINDOW_FORMAT_RGBA_8888) != 0 {
                 eprintln!("ANativeWindow could not select RGBA_8888 fallback buffers");
+                record_performance_sample(
+                    performance_monitor,
+                    frame_started,
+                    emulation_elapsed,
+                    presentation_started,
+                    false,
+                    false,
+                );
                 return;
             }
             *cpu_geometry_size = (width, height);
@@ -1045,10 +1097,52 @@ fn render(
             reserved: [0; 6],
         };
         if ANativeWindow_lock(window.get(), &mut buffer, ptr::null_mut()) != 0 {
+            record_performance_sample(
+                performance_monitor,
+                frame_started,
+                emulation_elapsed,
+                presentation_started,
+                false,
+                false,
+            );
             return;
         }
         copy_frame(frame, width, height, &buffer);
-        ANativeWindow_unlockAndPost(window.get());
+        let presented = ANativeWindow_unlockAndPost(window.get()) == 0;
+        record_performance_sample(
+            performance_monitor,
+            frame_started,
+            emulation_elapsed,
+            presentation_started,
+            presented,
+            false,
+        );
+    }
+}
+
+/// Records timing only when the optional Android diagnostics switch is enabled.
+fn record_performance_sample(
+    monitor: &mut Option<FramePerformanceMonitor>,
+    frame_started: Option<Instant>,
+    emulation_elapsed: Duration,
+    presentation_started: Option<Instant>,
+    presented: bool,
+    gpu_presented: bool,
+) {
+    let (Some(monitor), Some(frame_started)) = (monitor.as_mut(), frame_started) else {
+        return;
+    };
+    let presentation_elapsed = presentation_started
+        .map(|started| started.elapsed())
+        .unwrap_or_default();
+    if let Some(report) = monitor.record(
+        frame_started.elapsed(),
+        emulation_elapsed,
+        presentation_elapsed,
+        presented,
+        gpu_presented,
+    ) {
+        eprintln!("Aceris Android performance: {report}");
     }
 }
 
