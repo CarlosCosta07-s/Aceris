@@ -420,7 +420,8 @@ impl Arm11Core {
 
     /// True when no per-instruction check of [`Self::step`] can have an
     /// effect: no pending IRQ/FIQ line, no WFI/WFE sleep, no pending TLB
-    /// maintenance, MMU off and fault-exception entry off.
+    /// maintenance and fault-exception entry off. MMU execution has its own
+    /// batched path in `mmu.rs`.
     #[inline]
     fn fast_path_eligible(&self) -> bool {
         !(self.fault_exception_entry_enabled
@@ -428,7 +429,6 @@ impl Arm11Core {
             || self.fiq_line_asserted
             || self.waiting_for_event
             || self.waiting_for_interrupt
-            || self.cp15.mmu_enabled()
             || self.cp15.has_pending_tlb_maintenance())
     }
 
@@ -459,6 +459,9 @@ impl Arm11Core {
         }
         if !self.fast_path_eligible() {
             return Ok((0, FastRunExit::NeedsPreciseStep));
+        }
+        if self.cp15.mmu_enabled() {
+            return self.run_fast_translated(bus, budget);
         }
         // ACTLR cannot change inside the loop (CP15 writes take the precise
         // step), so one publication covers the whole run.
