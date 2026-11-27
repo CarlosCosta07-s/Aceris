@@ -695,6 +695,120 @@ mod tests {
         );
     }
 
+    fn assert_cached_matches_generic(word: u32, mut generic: Arm11Core, template: &FlatMemory) {
+        assert_ne!(decode(word), FastOp::Generic, "instruction should be cached: {word:#010X}");
+        let mut cached = generic.clone();
+        let mut generic_memory = template.clone();
+        let mut cached_memory = template.clone();
+        generic.branch_taken = false;
+        cached.branch_taken = false;
+
+        let expected = generic.execute_arm(&mut generic_memory, word);
+        let actual = cached.execute_arm_cached(&mut cached_memory, word);
+        assert_eq!(
+            format!("{expected:?}"),
+            format!("{actual:?}"),
+            "execution result for {word:#010X}",
+        );
+        assert_eq!(generic.regs, cached.regs, "registers for {word:#010X}");
+        assert_eq!(generic.cpsr, cached.cpsr, "CPSR for {word:#010X}");
+        assert_eq!(
+            generic.branch_taken, cached.branch_taken,
+            "branch state for {word:#010X}",
+        );
+        assert_eq!(
+            generic.take_exception_return_wakeup(),
+            cached.take_exception_return_wakeup(),
+            "exception-return wakeup for {word:#010X}",
+        );
+        for address in (0..MEMORY_SIZE).step_by(4) {
+            assert_eq!(
+                generic_memory.read32(address).unwrap(),
+                cached_memory.read32(address).unwrap(),
+                "memory at {address:#X} for {word:#010X}",
+            );
+        }
+    }
+
+    #[test]
+    fn cached_block_transfers_match_the_generic_interpreter() {
+        let mut memory = FlatMemory::new(0, MEMORY_SIZE as usize);
+        for address in (0..MEMORY_SIZE).step_by(4) {
+            memory
+                .write32(address, address.wrapping_mul(0x1020_4081) ^ 0xA55A_3CC3)
+                .unwrap();
+        }
+
+        let mut core = Arm11Core::default();
+        core.regs[PC] = 0x100;
+        core.regs[0] = 0x800;
+        core.regs[1] = 0x1122_3344;
+        core.regs[2] = 0x5566_7788;
+        core.regs[3] = 0x99AA_BBCC;
+        core.regs[4] = 0x850;
+
+        for word in [
+            0xE8B0_000E, // LDMIA r0!, {r1-r3}
+            0xE8A0_000E, // STMIA r0!, {r1-r3}
+            0xE934_0006, // LDMDB r4!, {r1-r2}
+        ] {
+            assert_cached_matches_generic(word, core.clone(), &memory);
+        }
+    }
+
+    #[test]
+    fn cached_immediate_halfword_transfers_match_the_generic_interpreter() {
+        let mut memory = FlatMemory::new(0, MEMORY_SIZE as usize);
+        for address in (0..MEMORY_SIZE).step_by(4) {
+            memory
+                .write32(address, address.wrapping_mul(0x0101_0101) ^ 0x89AB_CDEF)
+                .unwrap();
+        }
+
+        let mut core = Arm11Core::default();
+        core.regs[PC] = 0x100;
+        core.regs[0] = 0x800;
+        core.regs[1] = 0x1234_5678;
+        core.regs[2] = 0x8765_4321;
+
+        for word in [
+            0xE1D0_10B4, // LDRH r1, [r0, #4]
+            0xE1C0_10B4, // STRH r1, [r0, #4]
+            0xE1D0_20D1, // LDRSB r2, [r0, #1]
+            0xE1D0_20F4, // LDRSH r2, [r0, #4]
+        ] {
+            assert_cached_matches_generic(word, core.clone(), &memory);
+        }
+    }
+
+    #[test]
+    fn cached_multiply_families_match_the_generic_interpreter() {
+        let memory = FlatMemory::new(0, MEMORY_SIZE as usize);
+        let mut core = Arm11Core::default();
+        core.regs[PC] = 0x100;
+        core.regs[1] = 0x1234_5678;
+        core.regs[2] = 0x8765_4321;
+        core.regs[3] = 0x0102_0304;
+        core.regs[4] = 0xF123_4567;
+        core.regs[5] = 0xFEDC_BA98;
+        core.regs[6] = 0x7654_3210;
+
+        for word in [
+            0xE003_0291, // MUL r3, r1, r2
+            0xE023_4291, // MLA r3, r1, r2, r4
+            0xE086_5291, // UMULL r5, r6, r1, r2
+            0xE0C6_5291, // SMULL r5, r6, r1, r2
+            0xE0A6_5291, // UMLAL r5, r6, r1, r2
+            0xE105_42A1, // SMLAxy r5, r1, r2, r4
+            0xE125_42C1, // SMLAWy r5, r1, r2, r4
+            0xE125_02E1, // SMULWy r5, r1, r2
+            0xE145_62C1, // SMLALxy r5, r6, r1, r2
+            0xE165_02E1, // SMULxy r5, r1, r2
+        ] {
+            assert_cached_matches_generic(word, core.clone(), &memory);
+        }
+    }
+
     #[test]
     fn cache_hits_reuse_the_decoded_entry_and_never_alias_empty_slots() {
         let mut cache = DecodeCache::default();
