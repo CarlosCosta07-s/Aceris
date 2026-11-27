@@ -424,6 +424,29 @@ impl Arm11ProcessSession {
         self.scheduler.restore_save_state(section.payload())
     }
 
+    /// Encodes the process-local kernel objects, aliases and synchronization queues.
+    ///
+    /// The supplied catalog must already contain every shared-memory backing
+    /// reachable from this process, as collected by System before serialization.
+    pub(crate) fn encode_kernel_section(
+        &self,
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> std::result::Result<SaveStateSection, kernel::save_state::KernelStateError> {
+        self.kernel_objects.encode_save_state_section(catalog)
+    }
+
+    /// Restores the kernel section after its shared-backing catalog has been decoded.
+    ///
+    /// The kernel table is replaced only after the complete section and all its
+    /// cross-references have passed validation.
+    pub(crate) fn restore_kernel_section(
+        &mut self,
+        section: &SaveStateSection,
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> std::result::Result<(), kernel::save_state::KernelStateError> {
+        self.kernel_objects.restore_save_state_section(section, catalog)
+    }
+
     /// Returns the current core context when a thread is runnable.
     pub fn current_core(&self) -> Option<&Arm11Core> {
         self.scheduler.current_core()
