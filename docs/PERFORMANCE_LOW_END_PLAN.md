@@ -1,6 +1,6 @@
 # Plano de desempenho para PCs e dispositivos de entrada
 
-**Revisão:** 26/11/2026  
+**Revisão:** 27/11/2026  
 **Escopo:** execução ARM11, memória, recompilação, PICA200, apresentação, Android e builds desktop.  
 **Objetivo:** fazer o Aceris alcançar velocidade de emulação sustentável em hardware modesto, mantendo uma experiência de maior qualidade em máquinas mais fortes.
 
@@ -22,7 +22,7 @@ Não será prometido que todo jogo 3DS funcionará em todo celular. A carga vari
 
 | Referência | Técnica observada | Aplicação ao Aceris | Limite |
 |---|---|---|---|
-| [Black for Android](https://github.com/RanggaCasper/Black-Android) / [Black-2006-Recomp](https://github.com/portingpete/Black-2006-Recomp) | Recompilação estática do código x86 específico de BLACK para C++ e build ARM64; Vulkan no desenho Android; SDL3 para janela, entrada e áudio | Separação clara entre código traduzido, runtime e host; geração nativa por arquitetura; cache de shaders; opções de resolução e limite de quadros | É um port de um título conhecido, não um emulador geral. O README Android declara ARM64, Vulkan 1.1 e 4 GB de RAM; não é prova de que rode em aparelhos abaixo dessa classe |
+| [Black for Android v1.8.1](https://github.com/RanggaCasper/Black-Android/releases) / [Black-2006-Recomp](https://github.com/portingpete/Black-2006-Recomp) | Recompilação estática antecipada do XBE x86 de BLACK para C++/ARM64; Vulkan; SDL3; escala de resolução configurável (20–200%, 67% padrão no port), V-Sync/FPS cap, contador de FPS, filtragem e cache de shaders persistente | Separação entre runtime guest e host; opções visuais independentes da execução; perfil por dispositivo; apresentação limitada e cache persistente para shaders/pipelines quando houver renderer PICA em GPU | É recompilação específica de um jogo, não um emulador geral. O README declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM; não é prova de suporte a celulares abaixo dessa classe. Os valores de escala/FPS não devem ser copiados sem benchmark Aceris |
 | [PPSSPP — desenvolvimento](https://www.ppsspp.org/docs/development/getting-started/) | JIT/dynarec traduz instruções guest diretamente para x86/x64, ARM/ARM64 e outras arquiteturas | Principal referência para um tradutor dinâmico ARM11/Thumb, cache de blocos e execução nativa | PSP e 3DS têm arquiteturas e periféricos diferentes; não copiar o desenho interno nem assumir ganhos idênticos |
 | [PPSSPP — configurações de baixo desempenho](https://www.ppsspp.org/docs/settings/recommended/) | Reduz resolução de saída, desliga pós-processamento e deixa frameskip/readback hacks como último recurso | Preset econômico, sem melhorias visuais caras por padrão; pular somente a apresentação quando for seguro | As opções de skinning e readback do PSP não podem ser transplantadas como regras para PICA200 |
 | [Azahar/Citra](https://github.com/azahar-emu/azahar) e [Dynarmic](https://github.com/azahar-emu/dynarmic) | JIT ARM, fast interpreter, shader JIT, shaders de hardware e cache em disco | Referência mais próxima do alvo ARM11; arquitetura de fallback, invalidação e aceleração de shaders | O Aceris implementará seu próprio tradutor, memória, HLE e renderizador |
@@ -34,7 +34,7 @@ Não será prometido que todo jogo 3DS funcionará em todo celular. A carga vari
 
 O port Android de BLACK recompila antecipadamente o XBE x86 conhecido para código C++ e o compila para ARM64. É uma referência forte de **recompilação estática por título**. O Aceris, porém, precisa executar vários executáveis ARM11 desconhecidos, lidar com memória virtual, auto-modificação de código, exceções, SVC, interrupções, cache e periféricos. Portanto, a técnica aplicável ao nosso emulador é a **recompilação dinâmica de blocos ARM11**, não criar ports estáticos separados de cada jogo.
 
-O mesmo README lista Vulkan 1.1 e 4 GB de memória como requisitos do port Android. Isso é uma pista de viabilidade de port nativo, não uma meta suficiente para o Aceris, cujo objetivo inclui dispositivos mais fracos.
+O mesmo README lista Android 10+, ARM64, driver Vulkan 1.1, 4 GB de RAM e 2 GB de armazenamento como requisitos do port. Isso é uma pista de viabilidade de um port nativo específico, não uma meta suficiente para o Aceris, cujo objetivo inclui dispositivos mais fracos. A release mais recente visível nesta revisão é a v1.8.1, publicada em 1/11/2026; as notas dessa release corrigem uma falha da página de opções gerais, não anunciam um novo ganho de desempenho.
 
 ## 3. Diagnóstico do Aceris hoje
 
@@ -150,3 +150,32 @@ O workspace já usa `opt-level = 3`, Thin LTO e um codegen unit no perfil releas
 A primeira mudança de código orientada por este plano deve ser **um cache de blocos ARM/Thumb decodificados, alimentado pelo perfil atual**, acompanhado de um fast path seguro para páginas de memória comuns. Não começar pelo JIT completo nem por micro-otimizações aleatórias. O novo caminho será comparado com o interpretador atual em testes diferenciais e no benchmark de sessão.
 
 Depois dessa etapa, o projeto poderá avançar para IR/JIT. Paralelamente, a renderização PICA200 acelerada deve ser planejada como uma fase própria: a GPU host atual ainda é presenter de LCD, não substituto do rasterizador PICA200.
+
+## 9. Referência Android aplicada: Black for Android v1.8.1 (27/11/2026)
+
+Fontes de leitura: [releases do Black for Android](https://github.com/RanggaCasper/Black-Android/releases) e [README](https://github.com/RanggaCasper/Black-Android). A v1.8.1 descreve um port nativo do jogo BLACK de Xbox: recompila antecipadamente o XBE x86 conhecido para C++/ARM64, desenha por Vulkan e usa SDL3 para janela, entrada e áudio. O app mantém configurações, saves, logs e shader cache no armazenamento privado. As opções documentadas incluem escala de renderização de 20% a 200% (67% padrão), V-Sync, limite de FPS, contador, filtragem anisotrópica e draw distance 2×/4×/8×. Os requisitos declarados são Android 10+, ARM64, Vulkan 1.1, 4 GB de RAM e 2 GB de armazenamento.
+
+### O que será aproveitado no Aceris
+
+1. **Perfis Android realmente separados:** persistir as opções host em configuração estruturada e versionada (perfil, backend, apresentação, escala host, filtros e limites de cache), sem misturar isso com estado guest, saves ou memória do jogo. A atual opção `performance_mode.txt` permanece opt-in e controla apenas a memória rápida; não deve virar um interruptor genérico para todas as opções.
+2. **Qualidade host escalável:** estudar um controle de escala da composição/apresentação Android. Ele deve redimensionar apenas a imagem final exibida no telefone; jamais alterar as dimensões, stride, formatos, endereços, sincronização ou resolução dos framebuffers guest 3DS. A escala de 67% do Black não será adotada como padrão: as duas telas pequenas do 3DS e o presenter do Aceris têm características diferentes. Só implementar depois de medir 100%, 75% e 50% no aparelho.
+3. **Apresentação com pacing estável:** manter o relógio, timers, áudio, IRQs e instruções guest no tempo correto. O Black deixa V-Sync desligado e FPS ilimitado por padrão para um único jogo; o Aceris não deve copiar esse comportamento. O host pode limitar a apresentação à taxa suportada pelo display, evitar apresentar quadros repetidos e expor FPS/frametime, mas não pode acelerar ou desacelerar o console guest para alcançar um número de FPS.
+4. **Cache persistente de pipeline/shader:** quando o renderer PICA200 host existir, usar cache limitado, versionado e invalidado por versão do Aceris, GPU, driver, backend e chave de pipeline. Guardar o cache no armazenamento privado do app Android, separar cache frio/quente e permitir limpeza. O presenter atual possui apenas shaders simples de composição de LCD e não justifica um subsistema de cache de shaders PICA antes de existir um rasterizador PICA em GPU.
+5. **Seleção Vulkan com fallback real:** continuar testando Vulkan e OpenGL ES por device/driver, registrando adapter e backend escolhidos e mantendo fallback. O README do Black exige Vulkan 1.1; isso não autoriza tornar Vulkan requisito absoluto para todos os telefones Aceris.
+6. **Ajuste térmico gradual:** inspirar-se na ideia de controlar qualidade visual e trabalho host, mas validar ADPF/thermal headroom em aparelhos reais. Pode reduzir escala da composição, filtragem opcional, efeitos host e workers não essenciais; não pode alterar temporização guest nem desligar passos de emulação necessários.
+7. **Diagnóstico integrado:** oferecer FPS apresentado, frametime p50/p95, resolução host, backend/adapter, estado de cache e perfil ativo. As métricas de apresentação devem ser separadas das instruções guest/s e dos quadros guest processados.
+
+### Limites do port e estado do Aceris
+
+- A recompilação estática do Black só é possível porque o código executável de um jogo específico é conhecido no build. O Aceris carrega executáveis ARM11/Thumb diferentes fornecidos pelo usuário; a direção correta continua sendo interpreter rápido, cache de decodificação, IR e JIT dinâmico genérico, com fallback preciso.
+- O Aceris já possui um presenter host `wgpu` para Vulkan/GL (Metal em macOS), fallback CPU e upload direto RGBA/BGRX. A configuração atual solicita `PowerPreference::HighPerformance` e usa `FIFO` quando disponível; isso precisa ser medido em Android físico antes de mudar para `LowPower`, outro present mode ou limite fixo.
+- O presenter recebe LCD já composto. Ele não reduz o custo do rasterizador PICA200 em CPU. Reduzir apenas a escala host pode diminuir tráfego/composição, mas não deve ser anunciado como aceleração do CPU guest.
+- O renderer PICA em GPU e seu cache de pipelines são um marco futuro. O cache de shader do Black não é um atalho que possa ser ligado ao presenter LCD atual para acelerar o guest.
+- O Black declara mínimo de 4 GB de RAM e Vulkan 1.1. O Aceris continuará buscando compatibilidade abaixo dessa referência, com fallback OpenGL ES/CPU e medição real; cross-compilation ARM64 não comprova desempenho em telefone.
+
+### Experimentos e aceite específicos para Android
+
+- Medir no mesmo aparelho e na mesma sequência: Vulkan versus OpenGL ES; perfil `Compatibilidade` versus `Baixo consumo`; apresentação em escala 100%, 75% e 50% quando suportada; FIFO versus qualquer alternativa só se o driver apresentar modo seguro.
+- Três ou mais amostras release por configuração; registrar instruções guest/s, quadros guest, FPS apresentado, frametime p50/p95, upload CPU→GPU, memória, temperaturas/estado térmico e bateria.
+- Fazer ensaio sustentado de pelo menos 15 minutos, separando cache frio e quente. Nenhum modo será promovido a padrão por um benchmark curto ou por resultado de runner em nuvem.
+- Aceite exige imagens LCD guest idênticas no mesmo estado de execução, temporização guest preservada, nenhuma perda de áudio/entrada e melhora mensurável no consumo, frametime ou estabilidade.
