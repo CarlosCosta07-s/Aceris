@@ -327,6 +327,10 @@ Atualização verificada em 25/11/2026:
 - [~] Perfilamento/otimização: o perfil atual aponta `Arm11Core::step_instruction` como principal custo; loads/stores pelo modelo de D-cache também têm custo elevado. Cache de instruções por bloco e fast path de memória são próximos experimentos; JIT, GPU, memória e renderização ainda precisam de medição específica. Não usar o resultado sintético como FPS de jogo.
 - [ ] Matriz pública de compatibilidade baseada somente em testes realmente executados
 
+## Referências de experiência do usuário
+
+O estudo de adoção do PPSSPP está em [`PPSSPP_REFERENCE_STUDY.md`](PPSSPP_REFERENCE_STUDY.md). Ele organiza controles configuráveis, perfis por jogo, diagnóstico, captura de tela, desempenho, save states/Rewind, gráficos e integrações por dependência. Este estudo não altera a prioridade de compatibilidade: recursos de produto só serão expostos quando houver implementação real e testes aplicáveis.
+
 ## 8. Marcos de entrega
 
 1. **M0 — Base estável:** CI verde no HEAD, documentação coerente e testes reproduzíveis.
