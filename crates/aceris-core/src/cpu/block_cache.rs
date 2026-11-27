@@ -288,11 +288,7 @@ mod tests {
         assert_eq!(block.len(), 4);
         assert!(matches!(
             block.instruction(0).unwrap().ir.operation,
-            IrOperation::AluImmediate {
-                opcode: 0xD,
-                immediate: 1,
-                ..
-            }
+            IrOperation::LoadImmediate { rd: 0, value: 1 }
         ));
         assert!(matches!(
             block.instruction(3).unwrap().ir.operation,
@@ -322,7 +318,7 @@ mod tests {
         assert_eq!((cpu.regs[0], cpu.regs[1], cpu.regs[2]), (1, 3, 6));
         assert!(cpu.block_cache.entries.iter().any(Option::is_some));
 
-        let first_interval = cpu.block_cache_stats();
+        let first_interval = cpu.take_block_cache_stats();
         assert_eq!(first_interval.lookups, 1);
         assert_eq!(first_interval.hits, 0);
         assert_eq!(first_interval.misses, 1);
@@ -402,7 +398,7 @@ mod tests {
             0xE086_5291, // UMULL r5, r6, r1, r2
             0xE145_62C1, // SMLALxy r5, r6, r1, r2
             0xE105_42A1, // SMLAxy r5, r1, r2, r4
-            0xE704_5201, // SMLAD r4, r1, r2, r5
+            0xE704_5211, // SMLAD r4, r1, r2, r5 (bit 4 selects the DSP encoding)
             0xE8A0_000E, // STMIA r0!, {r1-r3}; ends the block
         ];
         let mut fast_bus = bus();
