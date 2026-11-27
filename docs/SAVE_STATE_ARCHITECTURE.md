@@ -98,7 +98,7 @@ O caminho de API também está conectado: SaveStateFile::from_sections cria o en
 O módulo `aceris_core::save_state_store` implementa armazenamento em disco independente da interface:
 
 - Dez slots numerados por título, em diretórios derivados do Title ID (quando disponível) e do SHA-256 obrigatório do conteúdo de boot. O caminho não depende do nome nem do local original do arquivo carregado.
-- Cada gravação cria uma geração imutável com `create_new`; arquivos anteriores nunca são abertos para sobrescrita. Os bytes são escritos integralmente e sincronizados antes do retorno de sucesso.
+- Cada gravação cria um temporário exclusivo com `create_new`; após escrita integral e `sync_all`, faz `rename` no mesmo diretório para publicar a geração final. Temporários de processos interrompidos não são listados nem carregados. Arquivos finais anteriores nunca são abertos para sobrescrita.
 - A leitura percorre as gerações da mais recente para a mais antiga e valida o envelope/checksum e a identidade exata antes de devolver o estado. Uma geração parcial ou corrompida é ignorada, permitindo fallback para uma gravação anterior.
 - Após uma gravação bem-sucedida, o armazenamento mantém as três gerações mais recentes do slot. Arquivos de outros títulos e slots não são afetados.
 - O módulo possui testes sintéticos para slots independentes, separação por identidade, recuperação de geração corrompida/interrompida, retenção, slots inválidos e slots vazios.
