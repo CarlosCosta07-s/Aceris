@@ -4570,6 +4570,7 @@ fn tail(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::frontend::{self, VirtualControlOffset, ORIENTATION_PORTRAIT};
 
     fn library(count: usize) -> Library {
         let entries = (0..count)
