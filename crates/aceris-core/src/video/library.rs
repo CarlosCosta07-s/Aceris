@@ -5245,6 +5245,38 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn virtual_touch_control_visibility_persists_and_settings_toggle_works_on_both_orientations() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-touch-controls-settings-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.select_page(LibraryPage::Settings);
+        library.set_touch_keyboard_enabled(true);
+        assert!(library.virtual_controls_visible());
+
+        // The portrait control replaces the duplicated refresh action on touch hosts.
+        library.click_responsive(200, 560, 400, 800);
+        assert!(!library.virtual_controls_visible());
+
+        let reopened = Library::new(Vec::new(), dir.display().to_string());
+        assert!(!reopened.virtual_controls_visible());
+
+        let mut library = reopened;
+        library.set_touch_keyboard_enabled(true);
+        library.set_virtual_controls_visible(true).unwrap();
+        library.click_responsive(780, 446, 1000, 600);
+        assert!(!library.virtual_controls_visible());
+
+        let reopened = Library::new(Vec::new(), dir.display().to_string());
+        assert!(!reopened.virtual_controls_visible());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn recursive_scan_does_not_follow_symbolic_directory_links() {
