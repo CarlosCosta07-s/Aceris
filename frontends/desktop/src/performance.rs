@@ -378,12 +378,14 @@ mod tests {
 
         monitor.record(
             DesktopFrameKind::Library,
-            Duration::from_millis(5),
-            Duration::ZERO,
-            Duration::from_millis(2),
-            Duration::ZERO,
-            Duration::from_millis(1),
-            false,
+            DesktopFrameTimings {
+                frame_time: Duration::from_millis(5),
+                emulation_time: Duration::ZERO,
+                composition_time: Duration::from_millis(2),
+                audio_time: Duration::ZERO,
+                presentation_time: Duration::from_millis(1),
+                gpu_presented: false,
+            },
         );
         assert_eq!(monitor.kind, Some(DesktopFrameKind::Library));
         assert_eq!(monitor.sample_count, 1);
