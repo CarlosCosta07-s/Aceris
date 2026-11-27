@@ -2947,4 +2947,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O aviso é deliberadamente preventivo: informa que o progresso que o próprio jogo ainda não salvou pode ser perdido, mas Aceris não detecta estado dirty nem implementa save states/auto-save.
 - Testes adicionados não foram executados nesta sessão. Não declarar build, Rustfmt, Clippy, testes ou CI aprovados sem evidência do workflow. Testes físicos/visuais continuam pendentes.
 - Alterações restritas a `quick_menu.rs`, frontend Android/desktop e documentação de UX/capacidade/plano. Sem mudança em CPU/Thumb, GPU/PICA, DSP/CSND, SVC, áreas reservadas de Claude, dependências, assets, ROMs, firmware ou chaves. Somente `main`; sem branches/PRs.
-- Commits: `e08707f` overlay compartilhado; `b6ab305` centralização tipográfica; `8c07efa` fluxo Android; `7f1ec06` testes Android; `c177090` fluxo desktop.
+- Commits: `e08707f` overlay compartilhado; `b6ab305` centralização tipográfica; `8c07efa` fluxo Android; `7f1ec06` testes Android; `c177090` fluxo desktop. O commit `535989b` ajusta o teste Android para confirmar a saída com D-pad Down + A.
+
+
+## Preparação de M4.2 — layouts de tela (27/11/2026, inspeção)
+
+- O core já possui `video::frontend::ScreenLayout`, `compute_screen_layout` e `touch_from_surface_point`, com encaixe proporcional e orientação automática retrato/paisagem. O frontend Android usa `ORIENTATION_AUTO` tanto na composição como no mapeamento do stylus; o manifest atual ainda restringe a atividade a landscape, de modo que o caminho retrato não é normalmente exercitado no aparelho.
+- O desktop compõe hoje um canvas side-by-side fixo e usa `ORIENTATION_LANDSCAPE` na apresentação e no hit-test da tela inferior. A etapa de layouts configuráveis deve estender o modelo compartilhado e a dimensão da janela em conjunto, sem criar uma segunda transformação de coordenadas que desalinhe stylus.
+- Nenhuma alteração foi feita em `frontend.rs`, `window.rs` ou geometria de apresentação nesta inspeção. Ficam pendentes modos manuais, troca de telas, tela única/ampliada e persistência de perfis; não anunciar esses recursos como disponíveis.
