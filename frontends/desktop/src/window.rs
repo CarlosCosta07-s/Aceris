@@ -6,8 +6,9 @@
 //! Cocoa (written but never run: see their module docs); other platforms report
 //! [`WindowError::Unsupported`].
 //!
-//! Layout: the top LCD (400x240) is always left of the bottom LCD (320x240).
-//! The two screens share a 736x240 gameplay canvas and are scaled together.
+//! The default layout places the 400x240 top LCD left of the 320x240 bottom LCD.
+//! Gameplay can also use stacked/enlarged/single-screen layouts through the
+//! shared core geometry; touch mapping always follows the physical bottom LCD.
 
 use aceris_core::input::{CIRCLE_PAD_LIMIT, InputState, pad, touch_from_surface_point};
 use aceris_core::video::{
@@ -245,12 +246,8 @@ pub enum Key {
     Escape,
 }
 
-/// Composes both LCDs side by side into a BGRX canvas, scaled by `scale`.
-///
-/// The top LCD is always on the left; the bottom LCD is always on the right.
-/// The returned buffer is `GAME_CANVAS_WIDTH * scale` by
-/// `GAME_CANVAS_HEIGHT * scale`, in little-endian BGRX byte order.
 /// Composes the requested screen layout into a reusable BGRX output buffer.
+
 pub fn compose_bgrx_layout_into(
     display: &DualScreenDisplay,
     scale: usize,
