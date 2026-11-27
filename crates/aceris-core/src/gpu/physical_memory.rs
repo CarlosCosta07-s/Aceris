@@ -750,10 +750,6 @@ fn decode_snapshot(
 
     let mut cursor = SAVE_STATE_HEADER_SIZE;
     let mut pages = BTreeMap::new();
-    let mut page_storage = Vec::new();
-    page_storage
-        .try_reserve_exact(PHYSICAL_PAGE_SIZE)
-        .map_err(|_| GpuPhysicalMemoryStateError::AllocationFailed)?;
     let mut previous_page = None;
     for _ in 0..page_count {
         let page_number = read_u32(encoded, cursor)?;
@@ -875,10 +871,12 @@ mod tests {
         assert_eq!(restored.allocated_page_count(), 2);
         assert_eq!(restored.encode_save_state().unwrap(), encoded);
 
-        // Restore mutates the shared inner backing rather than replacing its Arc.
+        // A clone made before restore sees the new contents through the same Arc.
         let mut alias_read = [0u8; 1];
-        alias.read(fcram_address + 0x20, &mut alias_read).unwrap();
-        assert_ne!(alias_read, [1]);
+        restored_alias
+            .read(fcram_address + 0x20, &mut alias_read)
+            .unwrap();
+        assert_eq!(alias_read, [1]);
     }
 
     #[test]
