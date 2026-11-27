@@ -4031,8 +4031,8 @@ pub(super) mod tests {
 
 #[cfg(test)]
 mod save_state_tests {
+    use super::tests::{SECTION, SECTION_AP_RW_ALL, SECTION_XN, domain, machine, params, set_l1};
     use super::*;
-    use super::tests::{domain, machine, params, set_l1, SECTION, SECTION_AP_RW_ALL, SECTION_XN};
     use crate::cpu::state::{StateReader, StateWriter};
 
     #[test]
