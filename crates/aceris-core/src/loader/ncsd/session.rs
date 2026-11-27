@@ -2821,26 +2821,24 @@ impl Arm11ProcessSession {
                 .free_application_heap_region(address, size)
                 .map(|()| address)
                 .map_err(dynamic_memory_result_code),
-            (
-                MEMOP_MAP,
-                source_address,
-                permissions @ (MEMPERM_READ_ONLY | MEMPERM_READ_WRITE),
-            ) => (|| {
-                // ControlMemory maps an alias of an existing regular-heap range.
-                // Publish source writes before exposing the second virtual view.
-                let backing = self
-                    .address_space
-                    .shared_memory_backing_for_heap_range(source_address, size)
-                    .map_err(dynamic_memory_result_code)?;
-                self.flush_process_data_cache(source_address, size)
-                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
-                self.drain_write_buffer()
-                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
-                self.address_space
-                    .map_shared_memory_region(address, backing, permissions)
-                    .map(|()| address)
-                    .map_err(dynamic_memory_result_code)
-            })(),
+            (MEMOP_MAP, source_address, permissions @ (MEMPERM_READ_ONLY | MEMPERM_READ_WRITE)) => {
+                (|| {
+                    // ControlMemory maps an alias of an existing regular-heap range.
+                    // Publish source writes before exposing the second virtual view.
+                    let backing = self
+                        .address_space
+                        .shared_memory_backing_for_heap_range(source_address, size)
+                        .map_err(dynamic_memory_result_code)?;
+                    self.flush_process_data_cache(source_address, size)
+                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                    self.drain_write_buffer()
+                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                    self.address_space
+                        .map_shared_memory_region(address, backing, permissions)
+                        .map(|()| address)
+                        .map_err(dynamic_memory_result_code)
+                })()
+            },
             (MEMOP_UNMAP, source_address, MEMPERM_NONE) => (|| {
                 // Require the exact source/destination pair created by MAP.
                 let backing = self
@@ -6257,8 +6255,14 @@ mod tests {
         }
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
-        assert!(session.address_space.is_writable_range(SOURCE, SIZE as usize));
-        session.write_memory_u32(SOURCE + 0x100, 0xCAFE_BABE).unwrap();
+        assert!(
+            session
+                .address_space
+                .is_writable_range(SOURCE, SIZE as usize)
+        );
+        session
+            .write_memory_u32(SOURCE + 0x100, 0xCAFE_BABE)
+            .unwrap();
 
         {
             let core = session.scheduler.current_core_mut().unwrap();
@@ -6284,7 +6288,11 @@ mod tests {
         }
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
-        assert!(session.address_space.is_writable_range(ALIAS, SIZE as usize));
+        assert!(
+            session
+                .address_space
+                .is_writable_range(ALIAS, SIZE as usize)
+        );
 
         // The original allocation remains alive until every alias is removed.
         {
@@ -6297,7 +6305,11 @@ mod tests {
         }
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], RESULT_INVALID_ADDRESS);
-        assert!(session.address_space.is_writable_range(SOURCE, SIZE as usize));
+        assert!(
+            session
+                .address_space
+                .is_writable_range(SOURCE, SIZE as usize)
+        );
 
         session
             .write_memory_u32(ALIAS + 0x104, 0x1234_5678)
