@@ -1157,7 +1157,26 @@ unsafe fn copy_frame(frame: &[u8], width: u32, height: u32, buffer: &NativeWindo
     }
     let rows = height.min(buffer.height.max(0) as u32) as usize;
     let columns = width.min(buffer.width.max(0) as u32) as usize;
-    let stride_bytes = buffer.stride as usize * 4;
+    let stride = buffer.stride as usize;
+    let stride_bytes = stride * 4;
+
+    // A tightly packed native buffer can be copied with one bulk operation.
+    // Keep the row-wise path below for padded or clipped buffers.
+    if buffer.width == width as i32
+        && buffer.height == height as i32
+        && stride == width as usize
+        && let Some(byte_len) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+        && frame.len() >= byte_len
+    {
+        // SAFETY: the exact-size check guarantees both slices cover byte_len bytes.
+        unsafe {
+            ptr::copy_nonoverlapping(frame.as_ptr(), buffer.bits.cast::<u8>(), byte_len);
+        }
+        return;
+    }
+
     for row in 0..rows {
         let source = &frame[row * width as usize * 4..][..columns * 4];
         // SAFETY: each destination row lies inside the locked buffer.
