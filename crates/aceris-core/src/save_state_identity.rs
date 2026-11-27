@@ -50,7 +50,7 @@ const SHA256_ROUND_CONSTANTS: [u32; 64] = [
     0x4a74_84aa,
     0x5cb0_a9dc,
     0x76f9_88da,
-    0x983e_51a2,
+    0x983e_5152,
     0xa831_c66d,
     0xb003_27c8,
     0xbf59_7fc7,
