@@ -190,8 +190,8 @@ pub fn render_control_editor_hint(
     let scale = (width.min(height) / 240).clamp(1, 4) as usize;
     let panel = Rect {
         x: 8 * scale,
-        y: height as usize - 42 * scale,
-        width: width as usize - 16 * scale,
+        y: 8 * scale,
+        width: (width as usize - 116 * scale).min(230 * scale),
         height: 34 * scale,
     };
     blend_rect(frame, width as usize, panel, [31, 19, 48], 232, format);
