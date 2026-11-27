@@ -19,7 +19,7 @@ const FORMAT_VERSION: u16 = 1;
 const MAX_PENDING_THREADS: usize = 512;
 const MAX_WAIT_HANDLES: usize = 1024;
 const MAX_ARBITER_WAITERS: usize = 4096;
-const MAX_INTERRUPT_BINDINGS: usize = 96;
+const MAX_INTERRUPT_BINDINGS: usize = 97;
 const MAX_SECTION_BYTES: usize = 4 * 1024 * 1024;
 
 impl Arm11ProcessSession {
