@@ -751,7 +751,9 @@ mod tests {
 
         let oversized_path = directory.join("oversized.bin");
         let file = fs::File::create(&oversized_path).unwrap();
-        file.set_len(MAX_PERSISTED_PIPELINE_CACHE_BYTES + PIPELINE_CACHE_FILE_MAGIC.len() as u64 + 1)
+        file.set_len(
+            MAX_PERSISTED_PIPELINE_CACHE_BYTES + PIPELINE_CACHE_FILE_MAGIC.len() as u64 + 1,
+        )
         .unwrap();
         assert!(load_pipeline_cache(&oversized_path).is_none());
 
