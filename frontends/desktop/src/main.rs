@@ -863,7 +863,7 @@ fn emulate(
                                         format!("could not resize the gameplay layout: {error}")
                                     })?;
                                 layout_preferences.set_profile_for_game(
-                            system.game_identity(),
+                                    system.game_identity(),
                                     window::GAME_CANVAS_WIDTH as u32,
                                     window::GAME_CANVAS_HEIGHT as u32,
                                     layout_profile,
