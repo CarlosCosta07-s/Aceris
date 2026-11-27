@@ -74,6 +74,12 @@ JIT não será habilitado por padrão enquanto não passar por testes diferencia
 
 ## GPU e renderer
 
+### Pré-decodificação do vertex shader PICA
+
+**Primeira otimização implementada:** cada snapshot de programa PICA identifica uma vez o opcode, o formato da instrução, o índice do descritor e a configuração decodificada do descritor. A execução por vértice reutiliza os metadados em vez de repetir o decode do mesmo word e descritor. As pilhas de CALL/IF/LOOP também começam sem capacidade reservada e só alocam quando o programa realmente usa controle de fluxo.
+
+O snapshot continua sendo reconstruído a partir dos registradores PICA quando o estado do programa é capturado; portanto, mudanças no código ou nos descritores geram uma nova visão coerente. Isso é uma cache de pré-decodificação no interpretador, não ainda um shader JIT, uma tradução para WGSL/SPIR-V ou uma cache persistente de shaders de hardware. Os testes de semântica existentes continuam sendo a referência e precisam passar em CI antes de considerar esta etapa validada.
+
 ### Backend acelerado existente
 
 O crate `aceris-graphics` usa `wgpu` para criar uma surface host, enviar a imagem RGBA/BGRX já composta e apresentá-la por um pipeline de triângulo em tela cheia. Isso acelera a apresentação host e evita conversão extra de canais BGRX, mas **não substitui o rasterizador PICA**: comandos e renderização guest ainda dependem do caminho de software do núcleo.
