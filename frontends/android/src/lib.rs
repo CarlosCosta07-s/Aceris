@@ -9,6 +9,7 @@ mod aaudio;
 mod app;
 #[cfg(any(target_os = "android", aceris_typecheck_native))]
 mod native_activity;
+#[cfg(any(target_os = "android", aceris_typecheck_native, test))]
 mod performance;
 mod ui;
 
