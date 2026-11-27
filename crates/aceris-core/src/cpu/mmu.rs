@@ -1729,7 +1729,7 @@ impl Arm11Core {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::cpu::{Psr, SP};
     use crate::memory::FlatMemory;
@@ -1738,22 +1738,22 @@ mod tests {
     const L2: u32 = 0x8000;
     const MEM_SIZE: usize = 0x4_0000;
 
-    const SECTION: u32 = 0b10;
-    const SECTION_AP_RW_ALL: u32 = 0b11 << 10;
+    pub(super) const SECTION: u32 = 0b10;
+    pub(super) const SECTION_AP_RW_ALL: u32 = 0b11 << 10;
     const SECTION_AP_PRIV_RW: u32 = 0b01 << 10;
     const SECTION_APX: u32 = 1 << 15;
-    const SECTION_XN: u32 = 1 << 4;
+    pub(super) const SECTION_XN: u32 = 1 << 4;
     const COARSE: u32 = 0b01;
     const SMALL: u32 = 0b10;
     const SMALL_AP_RW_ALL: u32 = 0b11 << 4;
     const SMALL_APX: u32 = 1 << 9;
 
-    fn domain(d: u32) -> u32 {
+    pub(super) fn domain(d: u32) -> u32 {
         d << 5
     }
 
     /// Memory with an empty L1 table and a CPU with the MMU enabled (XP=1).
-    fn machine() -> (Arm11Core, FlatMemory) {
+    pub(super) fn machine() -> (Arm11Core, FlatMemory) {
         let mem = FlatMemory::new(0, MEM_SIZE);
         let mut cpu = Arm11Core::new();
         cpu.switch_mode(Psr::SUPERVISOR_MODE).unwrap();
@@ -1766,11 +1766,11 @@ mod tests {
         (cpu, mem)
     }
 
-    fn set_l1(mem: &mut FlatMemory, index: u32, descriptor: u32) {
+    pub(super) fn set_l1(mem: &mut FlatMemory, index: u32, descriptor: u32) {
         mem.write32(L1 + index * 4, descriptor).unwrap();
     }
 
-    fn params(cpu: &Arm11Core) -> Params {
+    pub(super) fn params(cpu: &Arm11Core) -> Params {
         Params {
             ttbr0: cpu.cp15.ttbr0(),
             ttbr1: cpu.cp15.ttbr1(),
@@ -4032,6 +4032,7 @@ mod tests {
 #[cfg(test)]
 mod save_state_tests {
     use super::*;
+    use super::tests::{domain, machine, params, set_l1, SECTION, SECTION_AP_RW_ALL, SECTION_XN};
     use crate::cpu::state::{StateReader, StateWriter};
 
     #[test]
