@@ -5,29 +5,22 @@
 //! buses without this guarantee stay on the existing per-instruction path.
 
 use super::Arm11Core;
-use super::decode_cache::{DecodeCache, Entry, FastOp};
+use super::decode_cache::DecodeCache;
+use super::ir::{IrInstruction, IrOperation};
 use crate::memory::{Bus, ImmutableCodeLocation};
 use aceris_common::Result;
 
 const CACHE_ENTRIES: usize = 256;
 const BLOCK_MAX_INSTRUCTIONS: usize = 16;
 
-const EMPTY_ENTRY: Entry = Entry {
-    word: u32::MAX,
-    condition: 0xF,
-    op: FastOp::Generic,
-};
-
 #[derive(Clone, Copy, Debug)]
 pub(super) struct CachedInstruction {
-    pub(super) word: u32,
-    pub(super) entry: Entry,
+    pub(super) ir: IrInstruction,
     pub(super) ends_block: bool,
 }
 
 const EMPTY_INSTRUCTION: CachedInstruction = CachedInstruction {
-    word: u32::MAX,
-    entry: EMPTY_ENTRY,
+    ir: IrInstruction::EMPTY,
     ends_block: true,
 };
 
@@ -170,8 +163,7 @@ impl BlockCache {
             }
             let ends_block = entry.ends_block();
             instructions[len] = CachedInstruction {
-                word,
-                entry,
+                ir: IrInstruction::lower(entry),
                 ends_block,
             };
             len += 1;
@@ -292,7 +284,21 @@ mod tests {
             .block_for(0x100, 0x13, &mut bus, &mut decode)
             .expect("immutable text should compile");
         assert_eq!(block.len(), 4);
-        assert_eq!(block.instruction(0).unwrap().word, 0xE3A0_0001);
+        assert!(matches!(
+            block.instruction(0).unwrap().ir.operation,
+            IrOperation::AluImmediate {
+                opcode: 0xD,
+                immediate: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            block.instruction(3).unwrap().ir.operation,
+            IrOperation::Branch {
+                displacement: 0,
+                link: false
+            }
+        ));
         assert!(block.instruction(3).unwrap().ends_block);
 
         let reused = cache
