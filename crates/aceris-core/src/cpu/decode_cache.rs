@@ -9,12 +9,11 @@
 //! read-only, GPLv2+) without its block structure; the design and code are
 //! Aceris's own.
 //!
-//! Only forms whose architectural behaviour is fully reproduced here are
-//! decoded. Everything else, including every encoding the generic path would
-//! reject as UNDEFINED/UNPREDICTABLE and every use of R15, falls back to
-//! [`Arm11Core::execute_arm`], so results are identical to the precise
-//! interpreter by construction. The differential test at the end of this file
-//! checks that claim instruction by instruction.
+//! Only forms whose architectural behaviour is shared with the precise
+//! interpreter are decoded. Unsupported encodings and register combinations
+//! still fall back to [`Arm11Core::execute_arm`]. Complex memory operations
+//! share their architectural helper with the generic path; the cache removes
+//! repeated opcode/operand extraction without changing memory semantics.
 
 use super::shifter::{ShiftKind, add_with_carry, shift_imm};
 use super::{Arm11Core, Condition, PC, StepEvent};
@@ -59,6 +58,56 @@ enum FastOp {
         rd: u8,
         /// Signed byte offset (already negated for U=0).
         offset: i32,
+    },
+    /// LDRH/STRH/LDRSB/LDRSH with an immediate offset.
+    HalfwordTransfer {
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        rn: u8,
+        rd: u8,
+        offset: u8,
+        transfer_kind: u8,
+    },
+    /// LDM/STM register lists.
+    BlockTransfer {
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        s_bit: bool,
+        rn: u8,
+        list: u16,
+    },
+    /// MUL / MLA.
+    Multiply {
+        rd: u8,
+        rn: u8,
+        rs: u8,
+        rm: u8,
+        accumulate: bool,
+        set_flags: bool,
+    },
+    /// UMULL / UMLAL / SMULL / SMLAL.
+    MultiplyLong {
+        rd_hi: u8,
+        rd_lo: u8,
+        rs: u8,
+        rm: u8,
+        signed: bool,
+        accumulate: bool,
+        set_flags: bool,
+    },
+    /// SMLAxy / SMLAWy / SMULWy / SMLALxy / SMULxy.
+    HalfwordMultiply {
+        class: u32,
+        rd: u8,
+        rn: u8,
+        rs: u8,
+        rm: u8,
+        x: bool,
+        y: bool,
     },
     /// B / BL.
     Branch,
@@ -142,9 +191,78 @@ fn decode(word: u32) -> FastOp {
     match field(word, 27, 25) {
         0b000 | 0b001 => {
             let immediate = bit(word, 25);
-            // Register forms with bit 4 set are register-shifted operands,
-            // multiplies or extra load/stores.
+            // Register forms with bit 4 set share this encoding space with
+            // multiply and halfword-transfer instructions.
             if !immediate && bit(word, 4) {
+                if field(word, 7, 4) == 0b1001 {
+                    let class = word & 0x0FF0_0090;
+                    if matches!(
+                        class,
+                        0x0100_0080 | 0x0120_0080 | 0x0140_0080 | 0x0160_0080
+                    ) {
+                        return FastOp::HalfwordMultiply {
+                            class,
+                            rd: field(word, 19, 16) as u8,
+                            rn: field(word, 15, 12) as u8,
+                            rs: field(word, 11, 8) as u8,
+                            rm: field(word, 3, 0) as u8,
+                            x: bit(word, 5),
+                            y: bit(word, 6),
+                        };
+                    }
+                    if field(word, 27, 22) == 0 {
+                        return FastOp::Multiply {
+                            rd: field(word, 19, 16) as u8,
+                            rn: field(word, 15, 12) as u8,
+                            rs: field(word, 11, 8) as u8,
+                            rm: field(word, 3, 0) as u8,
+                            accumulate: bit(word, 21),
+                            set_flags: bit(word, 20),
+                        };
+                    }
+                    if field(word, 27, 23) == 0b00001 {
+                        return FastOp::MultiplyLong {
+                            rd_hi: field(word, 19, 16) as u8,
+                            rd_lo: field(word, 15, 12) as u8,
+                            rs: field(word, 11, 8) as u8,
+                            rm: field(word, 3, 0) as u8,
+                            signed: bit(word, 22),
+                            accumulate: bit(word, 21),
+                            set_flags: bit(word, 20),
+                        };
+                    }
+                    return FastOp::Generic;
+                }
+
+                // The immediate-offset single-halfword forms use bits 11:8
+                // and 3:0 as one unsigned 8-bit offset. Register-offset
+                // variants and LDRD/STRD retain the generic path for now.
+                if bit(word, 7) && bit(word, 22) {
+                    let load = bit(word, 20);
+                    let transfer_kind = field(word, 6, 5) as u8;
+                    let single_transfer = (load && matches!(transfer_kind, 1..=3))
+                        || (!load && transfer_kind == 1);
+                    let pre_index = bit(word, 24);
+                    let writeback = !pre_index || bit(word, 21);
+                    let rn = field(word, 19, 16);
+                    let rd = field(word, 15, 12);
+                    if single_transfer
+                        && rn != pc
+                        && rd != pc
+                        && !(writeback && rn == rd)
+                    {
+                        return FastOp::HalfwordTransfer {
+                            pre_index,
+                            up: bit(word, 23),
+                            writeback,
+                            load,
+                            rn: rn as u8,
+                            rd: rd as u8,
+                            offset: ((field(word, 11, 8) << 4) | field(word, 3, 0)) as u8,
+                            transfer_kind,
+                        };
+                    }
+                }
                 return FastOp::Generic;
             }
             let opcode = field(word, 24, 21);
@@ -212,6 +330,23 @@ fn decode(word: u32) -> FastOp {
                 rn: rn as u8,
                 rd: rd as u8,
                 offset: if bit(word, 23) { magnitude } else { -magnitude },
+            }
+        }
+        0b100 => {
+            let rn = field(word, 19, 16);
+            let list = field(word, 15, 0);
+            if rn == pc || list == 0 {
+                FastOp::Generic
+            } else {
+                FastOp::BlockTransfer {
+                    pre_index: bit(word, 24),
+                    up: bit(word, 23),
+                    writeback: bit(word, 21),
+                    load: bit(word, 20),
+                    s_bit: bit(word, 22),
+                    rn: rn as u8,
+                    list: list as u16,
+                }
             }
         }
         0b101 => FastOp::Branch,
@@ -297,6 +432,104 @@ impl Arm11Core {
                         self.regs[usize::from(rn)] = offset_address;
                     }
                 }
+            }
+            FastOp::HalfwordTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                offset,
+                transfer_kind,
+            } => {
+                return self.execute_cached_halfword_transfer(
+                    bus,
+                    word,
+                    pre_index,
+                    up,
+                    writeback,
+                    load,
+                    rn,
+                    rd,
+                    offset,
+                    transfer_kind,
+                );
+            }
+            FastOp::BlockTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                s_bit,
+                rn,
+                list,
+            } => {
+                return self.execute_block_transfer_decoded(
+                    bus,
+                    word,
+                    pre_index,
+                    up,
+                    writeback,
+                    load,
+                    s_bit,
+                    u32::from(rn),
+                    u32::from(list),
+                );
+            }
+            FastOp::Multiply {
+                rd,
+                rn,
+                rs,
+                rm,
+                accumulate,
+                set_flags,
+            } => self.execute_cached_multiply(
+                word,
+                rd,
+                rn,
+                rs,
+                rm,
+                accumulate,
+                set_flags,
+            )?,
+            FastOp::MultiplyLong {
+                rd_hi,
+                rd_lo,
+                rs,
+                rm,
+                signed,
+                accumulate,
+                set_flags,
+            } => self.execute_cached_multiply_long(
+                word,
+                signed,
+                accumulate,
+                set_flags,
+                rd_hi,
+                rd_lo,
+                rs,
+                rm,
+            )?,
+            FastOp::HalfwordMultiply {
+                class,
+                rd,
+                rn,
+                rs,
+                rm,
+                x,
+                y,
+            } => {
+                return self.execute_cached_halfword_multiply(
+                    word,
+                    class,
+                    rd,
+                    rn,
+                    rs,
+                    rm,
+                    x,
+                    y,
+                );
             }
             FastOp::Branch => self.branch_with_link(word),
             FastOp::Generic => unreachable!("handled above"),
