@@ -474,3 +474,11 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [ ] Confirmar CI ARM64 e os testes do módulo de estatísticas.
 - [ ] Coletar em aparelho Android físico por 15+ minutos, registrar SoC/GPU/driver/temperatura/bateria e comparar Vulkan com OpenGL ES.
 - [ ] Com os dados do aparelho, decidir a implementação dos perfis `Baixo consumo` e `Desempenho`, sem copiar valores padrão do Black Android por suposição.
+### Telemetria de desempenho desktop (27/11/2026)
+
+- [x] Instrumentar o loop desktop com coleta opt-in de FPS apresentado, frametime p50/p95, execução do frame guest no host, composição/escala, processamento de áudio, apresentação e intervalo entre apresentações.
+- [x] Separar relatórios `intro`, `library` e `game`; incluir a participação do presenter GPU em relação ao fallback CPU.
+- [x] Desativar a coleta por padrão e manter inalterados o pacing host existente, relógio guest, timers, orçamento de instruções, áudio e buffers LCD.
+- [ ] Confirmar Rustfmt, testes e builds do frontend nos alvos Linux, Windows e macOS.
+- [ ] Comparar Vulkan, OpenGL e fallback CPU em PC físico release; registrar CPU, GPU, driver, escala e modo de energia.
+- [ ] Usar as medições para orientar futuros perfis `Baixo consumo` e `Desempenho`; não alterar V-Sync, power preference ou limite de FPS sem A/B em hardware.
