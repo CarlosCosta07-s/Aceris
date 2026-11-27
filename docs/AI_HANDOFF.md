@@ -2882,3 +2882,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O estado de toque entregue a `App::set_pointers` permanece o mesmo e a ordem dos demais ponteiros é preservada. A App ainda atualiza sua estrutura interna de ponteiros; esta mudança elimina apenas as alocações intermediárias do adaptador Android.
 - Commit da reutilização: `1dc201763e5286bfa5fc615693c1f8e28f66122c`; cancelamento antecipado: `cdd4cda2f2591475b7dd1b09b177c3fe1bd12ad6`.
 - Sem teste em dispositivo físico ou medição de latência de toque nesta revisão. A compilação Android ARM64/CI ainda precisa confirmar o estado final.
+
+## Presenter host — evitar upload quando a surface não apresenta (27/11/2026, ChatGPT)
+
+- `crates/aceris-graphics/src/lib.rs`: `GraphicsPresenter::present_pixels` agora adquire o `SurfaceTexture` antes de criar/atualizar a textura de frame e chamar `queue.write_texture`.
+- Em `Timeout` ou `Occluded`, a função retorna sem enviar o framebuffer inteiro à GPU nem criar a textura de upload naquela iteração. `Outdated`/`Lost` ainda reconfigura a surface e tenta adquirir novamente antes do upload; `Suboptimal` preserva o comportamento de reconfiguração após apresentar.
+- A mudança vale para os dois formatos de upload (RGBA Android e BGRX desktop), sem alterar bytes, shader, ordem da apresentação ou estado guest. O presenter `wgpu` foi atribuído ao trabalho do ChatGPT nesta etapa; nenhuma área PICA/CPU/Thumb foi editada.
+- Commit `764806637a647e98f9ecb416cf35ffb0809bff5e`. CI, teste em janela minimizada/oculta e medição de tráfego GPU ainda pendentes; não quantificar ganho até medir.
