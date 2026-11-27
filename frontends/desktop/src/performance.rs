@@ -91,7 +91,7 @@ impl DesktopPerformanceMonitor {
         audio_time: Duration,
         presentation_time: Duration,
         gpu_presented: bool,
-    ) -> Option<DesktopPerformanceReport> {
+    ) {
         if self.kind != Some(kind) {
             self.reset(kind);
         }
@@ -121,7 +121,7 @@ impl DesktopPerformanceMonitor {
 
         let elapsed = self.interval_started.elapsed();
         if elapsed < REPORT_INTERVAL {
-            return None;
+            return;
         }
 
         let report = summarize(
@@ -136,7 +136,6 @@ impl DesktopPerformanceMonitor {
             kind.label()
         );
         self.reset(kind);
-        Some(report)
     }
 
     fn reset(&mut self, kind: DesktopFrameKind) {
@@ -357,18 +356,14 @@ mod tests {
         monitor.presented_frames = 5;
         monitor.gpu_presented_frames = 5;
 
-        assert!(
-            monitor
-                .record(
-                    DesktopFrameKind::Library,
-                    Duration::from_millis(5),
-                    Duration::ZERO,
-                    Duration::from_millis(2),
-                    Duration::ZERO,
-                    Duration::from_millis(1),
-                    false,
-                )
-                .is_none()
+        monitor.record(
+            DesktopFrameKind::Library,
+            Duration::from_millis(5),
+            Duration::ZERO,
+            Duration::from_millis(2),
+            Duration::ZERO,
+            Duration::from_millis(1),
+            false,
         );
         assert_eq!(monitor.kind, Some(DesktopFrameKind::Library));
         assert_eq!(monitor.sample_count, 1);
