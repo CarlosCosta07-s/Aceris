@@ -53,7 +53,7 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 **Prioridade:** bloqueador de produto.  
 **Objetivo:** garantir que os próximos marcos não dupliquem funções nem dependam de pressupostos falsos.
 
-- [ ] Criar um inventário de opções reais do core e dos hosts, com origem da configuração, efeito e disponibilidade por plataforma.
+- [x] Criar um inventário de opções reais do core e dos hosts, com origem da configuração, efeito e disponibilidade por plataforma — ver [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md), revisão de 27/11/2026.
 - [ ] Separar visualmente estados: Disponível, Experimental, Indisponível e Planejado. O estado deve vir de uma capacidade real, não de um texto fixo que possa ficar desatualizado.
 - [ ] Definir contratos compartilhados para identificador de jogo, origem de arquivo, configuração e ações de menu.
 - [ ] Registrar quais arquivos/módulos pertencem a cada agente antes de editar áreas compartilhadas.
@@ -324,6 +324,7 @@ Não iniciar save states, Rewind, filtros gráficos fictícios, instalação per
 
 ## 8. Relação com os demais documentos
 
+- Inventário auditado do que existe no código e do que chega à interface: [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md).
 - Requisitos funcionais, experiência e referência de produto: [USER_EXPERIENCE.md](USER_EXPERIENCE.md).
 - Estado técnico real do núcleo e marcos de emulação: [ROADMAP.md](ROADMAP.md).
 - Diferenças e validação dos hosts PC/Android: [FRONTENDS.md](FRONTENDS.md).
