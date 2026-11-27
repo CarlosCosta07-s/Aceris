@@ -16,7 +16,7 @@ use std::{
 };
 
 use crate::save_state_identity::{
-    identity_from_image_path, identity_from_image_reader, SaveStateIdentityError,
+    SaveStateIdentityError, identity_from_image_path, identity_from_image_reader,
 };
 use crate::save_state::{
     MAX_SAVE_STATE_PAYLOAD_BYTES, SAVE_STATE_HEADER_SIZE, SaveStateError, SaveStateFile,
@@ -530,9 +530,7 @@ mod tests {
             .expect("matching image should be allowed to save");
 
         assert_eq!(
-            store
-                .load_for_image_path(1, &renamed_path, None)
-                .unwrap(),
+            store.load_for_image_path(1, &renamed_path, None).unwrap(),
             saved
         );
         let _ = fs::remove_dir_all(root);
@@ -546,8 +544,8 @@ mod tests {
         fs::write(&first_path, b"synthetic image one").unwrap();
         fs::write(&second_path, b"synthetic image two").unwrap();
 
-        let first_identity = crate::save_state_identity::identity_from_image_path(&first_path, None)
-            .unwrap();
+        let first_identity =
+            crate::save_state_identity::identity_from_image_path(&first_path, None).unwrap();
         let second_identity =
             crate::save_state_identity::identity_from_image_path(&second_path, None).unwrap();
         let store = SaveStateStore::new(root.join("states"));
@@ -579,8 +577,8 @@ mod tests {
         let bytes = b"synthetic image bytes".to_vec();
         let mut reader = Cursor::new(bytes);
         reader.set_position(5);
-        let identity = crate::save_state_identity::identity_from_image_reader(&mut reader, None)
-            .unwrap();
+        let identity =
+            crate::save_state_identity::identity_from_image_reader(&mut reader, None).unwrap();
         let saved = state(identity, 42);
         let store = SaveStateStore::new(&root);
 
@@ -589,9 +587,7 @@ mod tests {
             .unwrap();
         assert_eq!(reader.position(), 5);
         assert_eq!(
-            store
-                .load_for_image_reader(1, &mut reader, None)
-                .unwrap(),
+            store.load_for_image_reader(1, &mut reader, None).unwrap(),
             saved
         );
         assert_eq!(reader.position(), 5);
