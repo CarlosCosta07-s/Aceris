@@ -12642,7 +12642,6 @@ mod tests {
         );
         assert!(!system.ndm.daemon_lock_enabled);
 
-
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0001_0042, 3]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
