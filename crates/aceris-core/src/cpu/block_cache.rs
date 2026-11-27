@@ -368,14 +368,19 @@ mod tests {
                 super::super::StepEvent::Executed
             );
         }
-        let (executed, exit) = fast_cpu.run_fast(&mut fast_bus, program.len() as u64).unwrap();
+        let (executed, exit) = fast_cpu
+            .run_fast(&mut fast_bus, program.len() as u64)
+            .unwrap();
 
         assert_eq!(executed, program.len() as u64);
         assert_eq!(exit, super::super::FastRunExit::Budget);
         assert_eq!(fast_cpu.regs, precise_cpu.regs);
         assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
         assert_eq!(fast_cpu.pc(), precise_cpu.pc());
-        assert_eq!((fast_cpu.regs[0], fast_cpu.regs[1], fast_cpu.regs[2]), (3, 6, 0));
+        assert_eq!(
+            (fast_cpu.regs[0], fast_cpu.regs[1], fast_cpu.regs[2]),
+            (3, 6, 0)
+        );
     }
 
     #[test]
