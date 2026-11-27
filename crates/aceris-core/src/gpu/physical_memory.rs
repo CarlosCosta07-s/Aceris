@@ -257,8 +257,9 @@ impl GpuPhysicalMemory {
         let granule_size = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
         let mut granule = address & !(granule_size - 1);
         while u64::from(granule) < end {
-            let exclusive = inner.exclusive_versions.entry(granule).or_insert(0);
-            *exclusive = exclusive.wrapping_add(1);
+            if let Some(exclusive) = inner.exclusive_versions.get_mut(&granule) {
+                *exclusive = exclusive.wrapping_add(1);
+            }
             granule = granule.saturating_add(granule_size);
         }
         inner.linear_allocations.remove(&address);
@@ -340,8 +341,11 @@ impl GpuPhysicalMemory {
             let granule = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
             let mut current = u64::from(address & !(granule - 1));
             while current < end {
-                let version = inner.exclusive_versions.entry(current as u32).or_insert(0);
-                *version = version.wrapping_add(1);
+                // Only granules some monitor has observed carry a generation;
+                // bumping an unobserved granule could never be compared.
+                if let Some(version) = inner.exclusive_versions.get_mut(&(current as u32)) {
+                    *version = version.wrapping_add(1);
+                }
                 current += u64::from(granule);
             }
         }
@@ -352,15 +356,28 @@ impl GpuPhysicalMemory {
     ///
     /// It changes whenever any agent writes to that granule through this
     /// shared backing, which is how a CPU local monitor loses its reservation.
+    ///
+    /// Reading a generation registers the granule as observed; writes only
+    /// advance observed granules, which keeps ordinary stores off the map.
     pub fn exclusive_version(&self, address: u32) -> u64 {
         let granule = crate::memory::EXCLUSIVE_RESERVATION_GRANULE;
-        self.inner
+        let key = address & !(granule - 1);
+        if let Some(version) = self
+            .inner
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .exclusive_versions
-            .get(&(address & !(granule - 1)))
-            .copied()
-            .unwrap_or(0)
+            .get(&key)
+        {
+            return *version;
+        }
+        *self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .exclusive_versions
+            .entry(key)
+            .or_insert(0)
     }
 
     pub fn read_u32(&self, address: u32) -> Result<u32, GpuPhysicalMemoryError> {
@@ -382,7 +399,10 @@ mod tests {
     fn writes_bump_the_exclusive_version_of_every_touched_granule() {
         let mut memory = GpuPhysicalMemory::new();
         let base = FCRAM_BASE + 0x1000;
+        // Observing a granule (as LDREX does) registers it with generation 0.
         assert_eq!(memory.exclusive_version(base), 0);
+        assert_eq!(memory.exclusive_version(base + 8), 0);
+        assert_eq!(memory.exclusive_version(base + 16), 0);
 
         memory.write(base + 6, &[1, 2, 3, 4]).unwrap(); // spans two 8-byte granules
         assert_eq!(memory.exclusive_version(base), 1);

@@ -44,6 +44,97 @@ struct DataCacheKey {
     line_offset: u64,
 }
 
+/// Resident D-cache lines grouped by set. Each set holds at most
+/// `ARM11_DATA_CACHE_WAYS` lines (LRU eviction keeps that bound), so a lookup
+/// is a short linear scan instead of an ordered-tree search.
+#[derive(Debug)]
+struct DataCacheLines {
+    sets: Vec<Vec<(DataCacheKey, Arm11DataCacheLine)>>,
+    len: usize,
+}
+
+impl DataCacheLines {
+    fn new() -> Self {
+        Self {
+            sets: (0..ARM11_DATA_CACHE_SET_COUNT)
+                .map(|_| Vec::with_capacity(ARM11_DATA_CACHE_WAYS))
+                .collect(),
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn set(&self, key: &DataCacheKey) -> &[(DataCacheKey, Arm11DataCacheLine)] {
+        &self.sets[Arm11CodeAddressSpace::cache_set_index(*key)]
+    }
+
+    #[inline]
+    fn get(&self, key: &DataCacheKey) -> Option<&Arm11DataCacheLine> {
+        self.set(key)
+            .iter()
+            .find(|(resident, _)| resident == key)
+            .map(|(_, line)| line)
+    }
+
+    #[inline]
+    fn get_mut(&mut self, key: &DataCacheKey) -> Option<&mut Arm11DataCacheLine> {
+        self.sets[Arm11CodeAddressSpace::cache_set_index(*key)]
+            .iter_mut()
+            .find(|(resident, _)| resident == key)
+            .map(|(_, line)| line)
+    }
+
+    #[cfg(test)]
+    fn contains_key(&self, key: &DataCacheKey) -> bool {
+        self.get(key).is_some()
+    }
+
+    fn insert(
+        &mut self,
+        key: DataCacheKey,
+        line: Arm11DataCacheLine,
+    ) -> Option<Arm11DataCacheLine> {
+        if let Some(existing) = self.get_mut(&key) {
+            return Some(std::mem::replace(existing, line));
+        }
+        self.sets[Arm11CodeAddressSpace::cache_set_index(key)].push((key, line));
+        self.len += 1;
+        None
+    }
+
+    fn remove(&mut self, key: &DataCacheKey) -> Option<Arm11DataCacheLine> {
+        let set = &mut self.sets[Arm11CodeAddressSpace::cache_set_index(*key)];
+        let position = set.iter().position(|(resident, _)| resident == key)?;
+        self.len -= 1;
+        Some(set.swap_remove(position).1)
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &DataCacheKey> {
+        self.sets.iter().flatten().map(|(key, _)| key)
+    }
+
+    /// Resident keys within an inclusive (backing, line offset) span, unordered.
+    fn keys_in(
+        &self,
+        range: std::ops::RangeInclusive<DataCacheKey>,
+    ) -> impl Iterator<Item = &DataCacheKey> {
+        self.keys().filter(move |key| range.contains(key))
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Index<&DataCacheKey> for DataCacheLines {
+    type Output = Arm11DataCacheLine;
+
+    fn index(&self, key: &DataCacheKey) -> &Arm11DataCacheLine {
+        self.get(key).expect("resident D-cache line")
+    }
+}
+
 #[derive(Clone, Debug)]
 enum DataCacheTarget {
     Static {
@@ -327,10 +418,11 @@ impl SharedMemoryBacking {
             return 0;
         };
         let granule = (root_offset as u32) & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1);
+        // Observing a granule registers it; writes advance only observed ones.
         self.exclusive_versions
             .lock()
             .ok()
-            .and_then(|versions| versions.get(&granule).copied())
+            .map(|mut versions| *versions.entry(granule).or_insert(0))
             .unwrap_or(0)
     }
 
@@ -448,8 +540,9 @@ impl SharedMemoryBacking {
                 let granule_size = crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize;
                 let mut granule = start & !(granule_size - 1);
                 while granule < absolute_end {
-                    let version = versions.entry(granule as u32).or_insert(0);
-                    *version = version.wrapping_add(1);
+                    if let Some(version) = versions.get_mut(&(granule as u32)) {
+                        *version = version.wrapping_add(1);
+                    }
                     granule += granule_size;
                 }
             }
@@ -945,7 +1038,7 @@ pub struct Arm11CodeAddressSpace {
     /// Stable identities for the process' private static segments.
     static_backing_ids: [u64; 5],
     /// Write-back ARM11 data-cache lines, keyed by backing identity and offset.
-    data_cache: BTreeMap<DataCacheKey, Arm11DataCacheLine>,
+    data_cache: DataCacheLines,
     /// Last ACTLR.SMP value published to the SCU per core; the CPU reports it
     /// after every instruction, so repeats must not take the SCU lock.
     published_smp_mode: [Option<bool>; 2],
@@ -1062,7 +1155,7 @@ impl Arm11CodeAddressSpace {
             mpcore_private_timer: MpcorePrivateTimer::default(),
             mpcore_interrupt_controller: MpcoreInterruptController::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
-            data_cache: BTreeMap::new(),
+            data_cache: DataCacheLines::new(),
             published_smp_mode: [None; 2],
             fast_memory: false,
             interrupt_state_touched: std::cell::Cell::new(false),
@@ -1164,7 +1257,7 @@ impl Arm11CodeAddressSpace {
             mpcore_private_timer: MpcorePrivateTimer::default(),
             mpcore_interrupt_controller: MpcoreInterruptController::default(),
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
-            data_cache: BTreeMap::new(),
+            data_cache: DataCacheLines::new(),
             published_smp_mode: [None; 2],
             fast_memory: false,
             interrupt_state_touched: std::cell::Cell::new(false),
@@ -1246,8 +1339,12 @@ impl Arm11CodeAddressSpace {
             .set_private_timer_irq_level(self.mpcore_private_timer.irq_asserted());
     }
 
+    /// Offset inside the 8 KiB MPCore private window. Every register window
+    /// lies inside it, so one compare rejects ordinary memory accesses.
+    #[inline]
     fn mpcore_private_offset(&self, address: u32) -> Option<u32> {
-        address.checked_sub(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE)
+        let offset = address.wrapping_sub(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE);
+        (offset < crate::cpu::MPCORE_PRIVATE_MEMORY_SIZE).then_some(offset)
     }
 
     fn mpcore_private_timer_register_offset(&self, address: u32) -> Option<u32> {
@@ -1388,7 +1485,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn mpcore_scu_register_offset(&self, address: u32) -> Option<u32> {
-        let offset = address.checked_sub(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE)?;
+        let offset = self.mpcore_private_offset(address)?;
         (offset < crate::cpu::SCU_REGISTER_WINDOW_SIZE).then_some(offset & !3)
     }
 
@@ -2667,6 +2764,13 @@ impl Arm11CodeAddressSpace {
     /// Returns true if any byte in a small scalar access targets an MPCore
     /// register window. Such accesses retain the byte/device-specific path.
     fn range_touches_mpcore_registers(&self, address: u32, length: usize) -> bool {
+        let start = u64::from(address);
+        let window = u64::from(crate::cpu::MPCORE_PRIVATE_MEMORY_BASE);
+        if start + length as u64 <= window
+            || start >= window + u64::from(crate::cpu::MPCORE_PRIVATE_MEMORY_SIZE)
+        {
+            return false;
+        }
         (0..length).any(|index| {
             let Some(current) = address.checked_add(index as u32) else {
                 return true;
@@ -3432,15 +3536,15 @@ impl Arm11CodeAddressSpace {
                 self.cache_location(location).ok_or(Error::InvalidAccess {
                     addr: current_address,
                 })?;
-            // Only resident lines matter to every caller, and the cache is
-            // ordered by (backing, line offset): query the span instead of
-            // enumerating each possible line of a large range.
+            // Only resident lines matter to every caller: filter the (at most
+            // 512) resident lines by span instead of enumerating each
+            // possible line of a large range.
             let remaining = region_end - current;
             let line_size = ARM11_DATA_CACHE_LINE_SIZE as u64;
             let line_count = (offset as u64 + remaining).div_ceil(line_size);
             let first = key;
             key.line_offset += line_size * (line_count - 1);
-            for (resident, _) in self.data_cache.range(first..=key) {
+            for resident in self.data_cache.keys_in(first..=key) {
                 lines.insert(*resident);
             }
 
@@ -3714,8 +3818,9 @@ impl Arm11CodeAddressSpace {
         let mut granule = u64::from(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1));
         while granule < end {
             let key = granule as u32;
-            let version = self.exclusive_versions.entry(key).or_insert(0);
-            *version = version.wrapping_add(1);
+            if let Some(version) = self.exclusive_versions.get_mut(&key) {
+                *version = version.wrapping_add(1);
+            }
             granule += u64::from(crate::memory::EXCLUSIVE_RESERVATION_GRANULE);
         }
     }
@@ -4065,6 +4170,10 @@ impl Bus for Arm11CodeAddressSpace {
                 .ok_or(Error::InvalidAccess { addr: address })?;
             value |= u64::from(self.read8(current)?) << (offset * 8);
         }
+        // Register the granule so later stores advance its generation.
+        self.exclusive_versions
+            .entry(address & !(crate::memory::EXCLUSIVE_RESERVATION_GRANULE - 1))
+            .or_insert(0);
         Ok((value, self.exclusive_version(address)))
     }
 
@@ -5840,7 +5949,12 @@ mod tests {
         let mut written = [0; 4];
         assert!(backing.read_bytes(0x0FFE, &mut written));
         assert_eq!(written, [1, 2, 3, 4]);
-        assert_eq!(backing.exclusive_monitor_entry_count(), 2);
+        // Plain stores never grow the monitor map; only observed granules count.
+        assert_eq!(backing.exclusive_monitor_entry_count(), 0);
+        assert_eq!(backing.exclusive_version(0x0FFE), 0);
+        assert!(backing.write_bytes(0x0FFE, &[5]));
+        assert_eq!(backing.exclusive_version(0x0FFE), 1);
+        assert_eq!(backing.exclusive_monitor_entry_count(), 1);
         assert!(!backing.write_bytes(0x2FFF, &[0xAA, 0xBB]));
         assert_eq!(backing.allocated_page_count(), 2);
     }
