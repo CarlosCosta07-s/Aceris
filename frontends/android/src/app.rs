@@ -398,13 +398,6 @@ impl App {
     }
 
     fn step_game_into(&mut self, output: &mut Vec<u8>) {
-        let Some(system) = self.system.as_mut() else {
-            self.screen = Screen::Library;
-            let _ = self
-                .library
-                .render_responsive_into(self.width, self.height, output);
-            return;
-        };
         if self.controls_editor {
             let Some(system) = self.system.as_ref() else {
                 self.screen = Screen::Library;
@@ -428,6 +421,13 @@ impl App {
             }
             return;
         }
+        let Some(system) = self.system.as_mut() else {
+            self.screen = Screen::Library;
+            let _ = self
+                .library
+                .render_responsive_into(self.width, self.height, output);
+            return;
+        };
         if let Err(error) = system.run_frame() {
             let message = format!("Execução interrompida: {error}");
             let diagnostic = self.game_diagnostic();
