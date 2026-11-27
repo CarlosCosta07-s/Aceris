@@ -3048,3 +3048,7 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Testes sintéticos cobrem vetores SHA-256 conhecidos, arquivo de 1 MB em múltiplos blocos, preservação da posição do leitor, igualdade para bytes idênticos, diferença entre imagens distintas e Title ID inválido. O CI ainda precisa executar esta nova etapa.
 - Limite: a função está disponível no core, mas ainda não foi chamada automaticamente pelos loaders nem conectada ao agregador de snapshot/SaveStateStore; portanto, a identidade real do jogo ainda deve ser passada pelo chamador. Nenhuma ROM/homebrew foi usada.
 - Commits: `a603837` implementação e `8ef6e2a` export. Nenhuma área de CPU/Thumb, PICA200, DSP/CSND, SVC ou reservada a outro agente foi alterada.
+
+
+- Follow-up de vínculo: `SaveStateStore` agora expõe wrappers por caminho e leitor que calculam SHA-256 da imagem e comparam a identidade ao estado antes de salvar/carregar. Adicionados testes de renomeação com bytes idênticos, recusa de imagem diferente e preservação do cursor. Commit: `3d280ef`. Os testes desse último commit aguardam o CI.
+- Correção de estado: a identidade por SHA-256 agora está ligada à API do armazenamento; ainda não está integrada automaticamente aos loaders nem à rotina de snapshot `System`. Evitar afirmar que o frontend já usa essa identidade até existir integração explícita.
