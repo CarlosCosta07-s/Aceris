@@ -2842,15 +2842,18 @@ impl Arm11ProcessSession {
                 })()
             }
             (MEMOP_PROTECT, _, permissions @ 0..=3) => (|| {
-                // Publish writes before changing the guest-visible R/W contract.
-                self.flush_process_data_cache(address, size)
+                // Kernel-side maintenance also works when the current mapping is
+                // write-only or no-access, which is required for valid reprotection.
+                self.address_space
+                    .flush_data_cache_range_for_kernel(address, size)
                     .map_err(|_| RESULT_INVALID_ADDRESS)?;
                 self.drain_write_buffer()
                     .map_err(|_| RESULT_INVALID_ADDRESS)?;
                 self.address_space
                     .protect_memory_region(address, size, permissions)
                     .map_err(dynamic_memory_result_code)?;
-                self.invalidate_process_data_cache(address, size)
+                self.address_space
+                    .invalidate_data_cache_range_for_kernel(address, size)
                     .map_err(|_| RESULT_INVALID_ADDRESS)?;
                 Ok(address)
             })(),

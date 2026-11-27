@@ -3317,7 +3317,7 @@ impl Arm11CodeAddressSpace {
         if let Some(region) = self
             .shared_regions
             .iter_mut()
-            .find(|region| region.address == address && region.backing.length == size as usize)
+            .find(|region| region.address == address && region.size() == Some(size))
         {
             region.permissions = permissions;
             return Ok(());
@@ -3500,7 +3500,7 @@ impl Arm11CodeAddressSpace {
         else {
             return Err(Arm11DynamicMemoryError::MappingNotFound { address, size });
         };
-        self.flush_data_cache_range(address, size)
+        self.flush_data_cache_range_for_kernel(address, size)
             .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.drain_arm11_write_buffer()
             .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
@@ -3902,7 +3902,7 @@ impl Arm11CodeAddressSpace {
         {
             return Err(Arm11DynamicMemoryError::OverlappingMapping);
         }
-        self.flush_data_cache_range(address, size)
+        self.flush_data_cache_range_for_kernel(address, size)
             .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
         self.drain_arm11_write_buffer()
             .map_err(|error| Arm11DynamicMemoryError::WritebackFailure(error.to_string()))?;
@@ -5333,6 +5333,23 @@ impl Arm11CodeAddressSpace {
         address: u32,
         size_bytes: u32,
     ) -> BusResult<std::collections::BTreeSet<DataCacheKey>> {
+        self.cache_lines_for_range_with_access(address, size_bytes, true)
+    }
+
+    fn cache_lines_for_kernel_maintenance(
+        &self,
+        address: u32,
+        size_bytes: u32,
+    ) -> BusResult<std::collections::BTreeSet<DataCacheKey>> {
+        self.cache_lines_for_range_with_access(address, size_bytes, false)
+    }
+
+    fn cache_lines_for_range_with_access(
+        &self,
+        address: u32,
+        size_bytes: u32,
+        require_read_permission: bool,
+    ) -> BusResult<std::collections::BTreeSet<DataCacheKey>> {
         let mut lines = std::collections::BTreeSet::new();
         if size_bytes == 0 {
             return Ok(lines);
@@ -5350,7 +5367,7 @@ impl Arm11CodeAddressSpace {
             let location = self.locate(current_address).ok_or(Error::InvalidAccess {
                 addr: current_address,
             })?;
-            if !self.location_is_readable(location) {
+            if require_read_permission && !self.location_is_readable(location) {
                 return Err(Error::InvalidAccess {
                     addr: current_address,
                 });
@@ -5388,7 +5405,30 @@ impl Arm11CodeAddressSpace {
     /// Cleans and invalidates every cache line intersecting a process virtual range.
     /// The complete range is checked before any line is written back or evicted.
     pub fn flush_data_cache_range(&mut self, address: u32, size_bytes: u32) -> BusResult<usize> {
-        let lines = self.cache_lines_for_range(address, size_bytes)?;
+        self.flush_data_cache_range_with_access(address, size_bytes, true)
+    }
+
+    /// Kernel-side writeback for unmap/free/protect operations. Unlike a guest cache
+    /// operation, VM maintenance must work on write-only and no-access mappings.
+    pub fn flush_data_cache_range_for_kernel(
+        &mut self,
+        address: u32,
+        size_bytes: u32,
+    ) -> BusResult<usize> {
+        self.flush_data_cache_range_with_access(address, size_bytes, false)
+    }
+
+    fn flush_data_cache_range_with_access(
+        &mut self,
+        address: u32,
+        size_bytes: u32,
+        require_read_permission: bool,
+    ) -> BusResult<usize> {
+        let lines = self.cache_lines_for_range_with_access(
+            address,
+            size_bytes,
+            require_read_permission,
+        )?;
         let mut written_back = 0usize;
 
         for key in lines {
@@ -5437,7 +5477,29 @@ impl Arm11CodeAddressSpace {
         address: u32,
         size_bytes: u32,
     ) -> BusResult<usize> {
-        let lines = self.cache_lines_for_range(address, size_bytes)?;
+        self.invalidate_data_cache_range_with_access(address, size_bytes, true)
+    }
+
+    /// Kernel-side invalidation after a mapping loses read permission.
+    pub fn invalidate_data_cache_range_for_kernel(
+        &mut self,
+        address: u32,
+        size_bytes: u32,
+    ) -> BusResult<usize> {
+        self.invalidate_data_cache_range_with_access(address, size_bytes, false)
+    }
+
+    fn invalidate_data_cache_range_with_access(
+        &mut self,
+        address: u32,
+        size_bytes: u32,
+        require_read_permission: bool,
+    ) -> BusResult<usize> {
+        let lines = self.cache_lines_for_range_with_access(
+            address,
+            size_bytes,
+            require_read_permission,
+        )?;
         let mut evicted = 0usize;
 
         for key in lines {
@@ -8004,6 +8066,10 @@ mod tests {
                 .protect_memory_region(heap, 0x1000, 3)
                 .is_err()
         );
+        address_space.protect_memory_region(heap, 0x2000, 0).unwrap();
+        address_space.free_application_heap_region(heap, 0x2000).unwrap();
+        assert!(!address_space.is_readable_range(heap, 1));
+        assert!(!address_space.is_writable_range(heap, 1));
     }
 
     #[test]
