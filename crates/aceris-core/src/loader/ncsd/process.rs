@@ -313,6 +313,8 @@ pub struct SharedMemoryBacking {
     bytes: Arc<Mutex<SparseSharedMemoryStore>>,
     offset: usize,
     length: usize,
+    /// Logical size of the root allocation; views retain this value.
+    root_length: usize,
     backing_id: u64,
     exclusive_versions: Arc<Mutex<BTreeMap<u32, u64>>>,
 }
@@ -324,9 +326,92 @@ impl SharedMemoryBacking {
             bytes: Arc::new(Mutex::new(SparseSharedMemoryStore::default())),
             offset: 0,
             length: size,
+            root_length: size,
             backing_id: crate::memory::next_memory_backing_id(),
             exclusive_versions: Arc::new(Mutex::new(BTreeMap::new())),
         })
+    }
+
+    /// Stable identity shared by aliases and clones of this backing root.
+    pub(crate) fn backing_id(&self) -> u64 {
+        self.backing_id
+    }
+
+    /// Root-relative offset represented by this bounded view.
+    pub(crate) fn root_base_offset(&self) -> usize {
+        self.offset
+    }
+
+    /// Full logical length of the root allocation, including unmaterialized pages.
+    pub(crate) fn root_length(&self) -> usize {
+        self.root_length
+    }
+
+    /// Creates another view from the root allocation, not from this view's range.
+    pub(crate) fn view_from_root(&self, offset: usize, length: usize) -> Option<Self> {
+        let end = offset.checked_add(length)?;
+        if end > self.root_length {
+            return None;
+        }
+        Some(Self {
+            bytes: self.bytes.clone(),
+            offset,
+            length,
+            root_length: self.root_length,
+            backing_id: self.backing_id,
+            exclusive_versions: self.exclusive_versions.clone(),
+        })
+    }
+
+    /// Encodes the complete sparse backing root. Views must be deduplicated by
+    /// backing ID by the outer memory catalog and are never serialized alone.
+    pub fn encode_root_save_state(&self) -> Result<Vec<u8>, SharedMemoryStateError> {
+        if self.offset != 0 || self.length != self.root_length {
+            return Err(SharedMemoryStateError::NotRootView);
+        }
+        encode_shared_memory_root(self)
+    }
+
+    /// Creates a new root backing from a previously validated root snapshot.
+    pub fn from_root_save_state(encoded: &[u8]) -> Result<Self, SharedMemoryStateError> {
+        let (root_length, store, versions) = decode_shared_memory_root(encoded)?;
+        Ok(Self {
+            bytes: Arc::new(Mutex::new(store)),
+            offset: 0,
+            length: root_length,
+            root_length,
+            backing_id: crate::memory::next_memory_backing_id(),
+            exclusive_versions: Arc::new(Mutex::new(versions)),
+        })
+    }
+
+    /// Restores this complete root in place, keeping every existing alias alive.
+    pub fn restore_root_save_state(
+        &mut self,
+        encoded: &[u8],
+    ) -> Result<(), SharedMemoryStateError> {
+        if self.offset != 0 || self.length != self.root_length {
+            return Err(SharedMemoryStateError::NotRootView);
+        }
+        let (root_length, store, versions) = decode_shared_memory_root(encoded)?;
+        if root_length != self.root_length {
+            return Err(SharedMemoryStateError::RootLengthMismatch {
+                expected: self.root_length,
+                actual: root_length,
+            });
+        }
+
+        let mut current_store = self
+            .bytes
+            .lock()
+            .map_err(|_| SharedMemoryStateError::LockPoisoned)?;
+        let mut current_versions = self
+            .exclusive_versions
+            .lock()
+            .map_err(|_| SharedMemoryStateError::LockPoisoned)?;
+        *current_store = store;
+        *current_versions = versions;
+        Ok(())
     }
 
     /// Number of 4 KiB pages that have actually been written.
@@ -369,6 +454,7 @@ impl SharedMemoryBacking {
             bytes: self.bytes.clone(),
             offset: root_offset,
             length,
+            root_length: self.root_length,
             backing_id: self.backing_id,
             exclusive_versions: self.exclusive_versions.clone(),
         })
@@ -551,6 +637,354 @@ impl SharedMemoryBacking {
     }
 }
 
+/// Errors while encoding or restoring a sparse shared-memory backing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SharedMemoryStateError {
+    AllocationFailed,
+    LockPoisoned,
+    NotRootView,
+    Truncated,
+    InvalidMagic,
+    UnsupportedVersion(u16),
+    UnsupportedFlags(u16),
+    InvalidRootLength(u64),
+    RootLengthMismatch { expected: usize, actual: usize },
+    TooManyPages(u32),
+    TooManyExclusiveMonitors(u32),
+    InvalidPageIndex(u64),
+    DuplicatePage(u64),
+    InvalidExclusiveGranule(u32),
+    DuplicateExclusiveGranule(u32),
+    TrailingData,
+}
+
+impl fmt::Display for SharedMemoryStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AllocationFailed => formatter.write_str("could not allocate shared-memory snapshot"),
+            Self::LockPoisoned => formatter.write_str("shared-memory backing lock is poisoned"),
+            Self::NotRootView => formatter.write_str("only a complete shared-memory root can be serialized"),
+            Self::Truncated => formatter.write_str("shared-memory snapshot is truncated"),
+            Self::InvalidMagic => formatter.write_str("shared-memory snapshot signature is invalid"),
+            Self::UnsupportedVersion(version) => {
+                write!(formatter, "shared-memory snapshot version {version} is unsupported")
+            }
+            Self::UnsupportedFlags(flags) => {
+                write!(formatter, "shared-memory snapshot flags {flags:#06X} are invalid")
+            }
+            Self::InvalidRootLength(length) => {
+                write!(formatter, "shared-memory root length {length} is invalid")
+            }
+            Self::RootLengthMismatch { expected, actual } => {
+                write!(formatter, "shared-memory root length mismatch: expected {expected}, got {actual}")
+            }
+            Self::TooManyPages(count) => {
+                write!(formatter, "shared-memory snapshot contains too many pages: {count}")
+            }
+            Self::TooManyExclusiveMonitors(count) => {
+                write!(formatter, "shared-memory snapshot contains too many exclusive monitors: {count}")
+            }
+            Self::InvalidPageIndex(page) => {
+                write!(formatter, "shared-memory page index {page} is outside its root")
+            }
+            Self::DuplicatePage(page) => {
+                write!(formatter, "shared-memory page index {page} is duplicated or unordered")
+            }
+            Self::InvalidExclusiveGranule(address) => {
+                write!(formatter, "shared-memory exclusive granule {address:#010X} is invalid")
+            }
+            Self::DuplicateExclusiveGranule(address) => {
+                write!(formatter, "shared-memory exclusive granule {address:#010X} is duplicated or unordered")
+            }
+            Self::TrailingData => formatter.write_str("shared-memory snapshot contains trailing bytes"),
+        }
+    }
+}
+
+impl std::error::Error for SharedMemoryStateError {}
+
+const SHARED_MEMORY_STATE_MAGIC: &[u8; 8] = b"ACSHARED";
+const SHARED_MEMORY_STATE_VERSION: u16 = 1;
+const SHARED_MEMORY_STATE_HEADER_SIZE: usize = 28;
+const MAX_SHARED_MEMORY_ROOT_BYTES: usize = 512 * 1024 * 1024;
+
+fn encode_shared_memory_root(
+    backing: &SharedMemoryBacking,
+) -> Result<Vec<u8>, SharedMemoryStateError> {
+    let store = backing
+        .bytes
+        .lock()
+        .map_err(|_| SharedMemoryStateError::LockPoisoned)?;
+    let versions = backing
+        .exclusive_versions
+        .lock()
+        .map_err(|_| SharedMemoryStateError::LockPoisoned)?;
+    let max_pages = backing.root_length.div_ceil(SHARED_BACKING_PAGE_SIZE);
+    let max_monitors = backing
+        .root_length
+        .div_ceil(crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize);
+    if backing.root_length == 0 || backing.root_length > MAX_SHARED_MEMORY_ROOT_BYTES {
+        return Err(SharedMemoryStateError::InvalidRootLength(
+            backing.root_length as u64,
+        ));
+    }
+    if store.pages.len() > max_pages {
+        return Err(SharedMemoryStateError::TooManyPages(
+            u32::try_from(store.pages.len()).unwrap_or(u32::MAX),
+        ));
+    }
+    if versions.len() > max_monitors {
+        return Err(SharedMemoryStateError::TooManyExclusiveMonitors(
+            u32::try_from(versions.len()).unwrap_or(u32::MAX),
+        ));
+    }
+
+    let page_count = u32::try_from(store.pages.len())
+        .map_err(|_| SharedMemoryStateError::TooManyPages(u32::MAX))?;
+    let monitor_count = u32::try_from(versions.len())
+        .map_err(|_| SharedMemoryStateError::TooManyExclusiveMonitors(u32::MAX))?;
+    let page_bytes = store
+        .pages
+        .len()
+        .checked_mul(8 + SHARED_BACKING_PAGE_SIZE)
+        .ok_or(SharedMemoryStateError::AllocationFailed)?;
+    let monitor_bytes = versions
+        .len()
+        .checked_mul(12)
+        .ok_or(SharedMemoryStateError::AllocationFailed)?;
+    let capacity = SHARED_MEMORY_STATE_HEADER_SIZE
+        .checked_add(page_bytes)
+        .and_then(|size| size.checked_add(monitor_bytes))
+        .ok_or(SharedMemoryStateError::AllocationFailed)?;
+    let mut encoded = Vec::new();
+    encoded
+        .try_reserve_exact(capacity)
+        .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+    encoded.extend_from_slice(SHARED_MEMORY_STATE_MAGIC);
+    encoded.extend_from_slice(&SHARED_MEMORY_STATE_VERSION.to_le_bytes());
+    encoded.extend_from_slice(&0u16.to_le_bytes());
+    encoded.extend_from_slice(&(backing.root_length as u64).to_le_bytes());
+    encoded.extend_from_slice(&page_count.to_le_bytes());
+    encoded.extend_from_slice(&monitor_count.to_le_bytes());
+
+    for (page_number, page) in &store.pages {
+        if page.len() != SHARED_BACKING_PAGE_SIZE
+            || page_number
+                .checked_mul(SHARED_BACKING_PAGE_SIZE)
+                .is_none_or(|start| start >= backing.root_length)
+        {
+            return Err(SharedMemoryStateError::InvalidPageIndex(
+                *page_number as u64,
+            ));
+        }
+        encoded.extend_from_slice(&(*page_number as u64).to_le_bytes());
+        encoded.extend_from_slice(page);
+    }
+    for (address, generation) in versions.iter() {
+        if address % crate::memory::EXCLUSIVE_RESERVATION_GRANULE != 0
+            || *address as usize >= backing.root_length
+        {
+            return Err(SharedMemoryStateError::InvalidExclusiveGranule(*address));
+        }
+        encoded.extend_from_slice(&address.to_le_bytes());
+        encoded.extend_from_slice(&generation.to_le_bytes());
+    }
+    Ok(encoded)
+}
+
+fn decode_shared_memory_root(
+    encoded: &[u8],
+) -> Result<(usize, SparseSharedMemoryStore, BTreeMap<u32, u64>), SharedMemoryStateError> {
+    if encoded.len() < SHARED_MEMORY_STATE_HEADER_SIZE {
+        return Err(SharedMemoryStateError::Truncated);
+    }
+    if encoded.get(..8) != Some(SHARED_MEMORY_STATE_MAGIC.as_slice()) {
+        return Err(SharedMemoryStateError::InvalidMagic);
+    }
+    let version = read_state_u16(encoded, 8)?;
+    if version != SHARED_MEMORY_STATE_VERSION {
+        return Err(SharedMemoryStateError::UnsupportedVersion(version));
+    }
+    let flags = read_state_u16(encoded, 10)?;
+    if flags != 0 {
+        return Err(SharedMemoryStateError::UnsupportedFlags(flags));
+    }
+    let root_length_u64 = read_state_u64(encoded, 12)?;
+    if root_length_u64 == 0 || root_length_u64 > MAX_SHARED_MEMORY_ROOT_BYTES as u64 {
+        return Err(SharedMemoryStateError::InvalidRootLength(root_length_u64));
+    }
+    let root_length = usize::try_from(root_length_u64)
+        .map_err(|_| SharedMemoryStateError::InvalidRootLength(root_length_u64))?;
+    let page_count = read_state_u32(encoded, 20)?;
+    let monitor_count = read_state_u32(encoded, 24)?;
+    let max_pages = root_length.div_ceil(SHARED_BACKING_PAGE_SIZE);
+    let max_monitors = root_length.div_ceil(crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize);
+    if page_count as usize > max_pages {
+        return Err(SharedMemoryStateError::TooManyPages(page_count));
+    }
+    if monitor_count as usize > max_monitors {
+        return Err(SharedMemoryStateError::TooManyExclusiveMonitors(monitor_count));
+    }
+
+    let page_bytes = (page_count as usize)
+        .checked_mul(8 + SHARED_BACKING_PAGE_SIZE)
+        .ok_or(SharedMemoryStateError::Truncated)?;
+    let monitor_bytes = (monitor_count as usize)
+        .checked_mul(12)
+        .ok_or(SharedMemoryStateError::Truncated)?;
+    let expected_length = SHARED_MEMORY_STATE_HEADER_SIZE
+        .checked_add(page_bytes)
+        .and_then(|size| size.checked_add(monitor_bytes))
+        .ok_or(SharedMemoryStateError::Truncated)?;
+    if encoded.len() < expected_length {
+        return Err(SharedMemoryStateError::Truncated);
+    }
+    if encoded.len() > expected_length {
+        return Err(SharedMemoryStateError::TrailingData);
+    }
+
+    let mut store = SparseSharedMemoryStore::default();
+    let mut cursor = SHARED_MEMORY_STATE_HEADER_SIZE;
+    let mut previous_page = None;
+    for _ in 0..page_count {
+        let page_number = read_state_u64(encoded, cursor)?;
+        cursor += 8;
+        let page_start = usize::try_from(page_number)
+            .ok()
+            .and_then(|number| number.checked_mul(SHARED_BACKING_PAGE_SIZE))
+            .ok_or(SharedMemoryStateError::InvalidPageIndex(page_number))?;
+        if page_start >= root_length {
+            return Err(SharedMemoryStateError::InvalidPageIndex(page_number));
+        }
+        if previous_page.is_some_and(|previous| page_number <= previous) {
+            return Err(SharedMemoryStateError::DuplicatePage(page_number));
+        }
+        previous_page = Some(page_number);
+        let page_bytes = encoded
+            .get(cursor..cursor + SHARED_BACKING_PAGE_SIZE)
+            .ok_or(SharedMemoryStateError::Truncated)?;
+        cursor += SHARED_BACKING_PAGE_SIZE;
+        let mut page = Vec::new();
+        page.try_reserve_exact(SHARED_BACKING_PAGE_SIZE)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        page.extend_from_slice(page_bytes);
+        store.pages.insert(page_number as usize, page);
+    }
+
+    let mut versions = BTreeMap::new();
+    let mut previous_granule = None;
+    for _ in 0..monitor_count {
+        let address = read_state_u32(encoded, cursor)?;
+        let generation = read_state_u64(encoded, cursor + 4)?;
+        cursor += 12;
+        if address % crate::memory::EXCLUSIVE_RESERVATION_GRANULE != 0
+            || address as usize >= root_length
+        {
+            return Err(SharedMemoryStateError::InvalidExclusiveGranule(address));
+        }
+        if previous_granule.is_some_and(|previous| address <= previous) {
+            return Err(SharedMemoryStateError::DuplicateExclusiveGranule(address));
+        }
+        previous_granule = Some(address);
+        versions.insert(address, generation);
+    }
+    if cursor != encoded.len() {
+        return Err(SharedMemoryStateError::TrailingData);
+    }
+    Ok((root_length, store, versions))
+}
+
+fn read_state_u16(bytes: &[u8], offset: usize) -> Result<u16, SharedMemoryStateError> {
+    let value = bytes
+        .get(offset..offset + 2)
+        .ok_or(SharedMemoryStateError::Truncated)?;
+    Ok(u16::from_le_bytes([value[0], value[1]]))
+}
+
+fn read_state_u32(bytes: &[u8], offset: usize) -> Result<u32, SharedMemoryStateError> {
+    let value = bytes
+        .get(offset..offset + 4)
+        .ok_or(SharedMemoryStateError::Truncated)?;
+    Ok(u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
+}
+
+fn read_state_u64(bytes: &[u8], offset: usize) -> Result<u64, SharedMemoryStateError> {
+    let value = bytes
+        .get(offset..offset + 8)
+        .ok_or(SharedMemoryStateError::Truncated)?;
+    Ok(u64::from_le_bytes([
+        value[0], value[1], value[2], value[3], value[4], value[5], value[6], value[7],
+    ]))
+}
+
+#[cfg(test)]
+mod shared_memory_state_tests {
+    use super::*;
+
+    #[test]
+    fn shared_backing_snapshot_restores_sparse_bytes_and_view_aliases() {
+        let root = SharedMemoryBacking::zeroed(0x8000).unwrap();
+        let mut view = root.view_from_root(0x2000, 0x1000).unwrap();
+        root.write_bytes(0x2010, &[1, 2, 3, 4]);
+        view.write_bytes(0x11, &[0xAA]);
+
+        let encoded = root.encode_root_save_state().unwrap();
+        let restored_root = SharedMemoryBacking::from_root_save_state(&encoded).unwrap();
+        let restored_view = restored_root.view_from_root(0x2000, 0x1000).unwrap();
+        let mut bytes = [0u8; 4];
+        restored_root.read_bytes(0x2010, &mut bytes);
+        assert_eq!(bytes, [1, 0xAA, 3, 4]);
+        assert_eq!(restored_root.allocated_page_count(), 1);
+        assert_eq!(restored_root.root_length(), 0x8000);
+        assert_eq!(restored_view.root_base_offset(), 0x2000);
+        assert!(restored_root.shares_backing_with(&restored_view));
+    }
+
+    #[test]
+    fn shared_backing_restore_updates_existing_aliases_only_after_validation() {
+        let mut root = SharedMemoryBacking::zeroed(0x4000).unwrap();
+        let alias = root.view_from_root(0x1000, 0x1000).unwrap();
+        root.write_bytes(0x1004, &[1, 2, 3]);
+        let before = root.encode_root_save_state().unwrap();
+
+        let replacement = SharedMemoryBacking::zeroed(0x4000).unwrap();
+        replacement.write_bytes(0x1004, &[7, 8, 9]);
+        let replacement_bytes = replacement.encode_root_save_state().unwrap();
+
+        let mut truncated = replacement_bytes.clone();
+        truncated.pop();
+        assert!(root.restore_root_save_state(&truncated).is_err());
+        let mut unchanged = [0u8; 3];
+        alias.read_bytes(4, &mut unchanged);
+        assert_eq!(unchanged, [1, 2, 3]);
+
+        root.restore_root_save_state(&replacement_bytes).unwrap();
+        let mut updated = [0u8; 3];
+        alias.read_bytes(4, &mut updated);
+        assert_eq!(updated, [7, 8, 9]);
+        assert_eq!(root.encode_root_save_state().unwrap(), replacement_bytes);
+        assert_ne!(before, replacement_bytes);
+    }
+
+    #[test]
+    fn shared_backing_snapshot_rejects_views_and_out_of_range_records() {
+        let root = SharedMemoryBacking::zeroed(0x2000).unwrap();
+        let view = root.view_from_root(0x1000, 0x1000).unwrap();
+        assert!(matches!(
+            view.encode_root_save_state(),
+            Err(SharedMemoryStateError::NotRootView)
+        ));
+
+        let encoded = root.encode_root_save_state().unwrap();
+        let mut malformed = encoded.clone();
+        malformed[SHARED_MEMORY_STATE_HEADER_SIZE..SHARED_MEMORY_STATE_HEADER_SIZE + 8]
+            .copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(matches!(
+            SharedMemoryBacking::from_root_save_state(&malformed),
+            Err(SharedMemoryStateError::InvalidPageIndex(_))
+        ));
+    }
+}
 impl PartialEq for SharedMemoryBacking {
     fn eq(&self, other: &Self) -> bool {
         self.is_same_view_as(other)
