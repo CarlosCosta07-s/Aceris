@@ -3600,40 +3600,38 @@ impl Arm11CodeAddressSpace {
             }
 
             let mut next_candidate = candidate;
-            let mut consider_overlap = |region_start: u64, region_end: u64| {
-                if candidate < region_end && end > region_start {
-                    let aligned_end =
-                        region_end.saturating_add(PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
-                    next_candidate = next_candidate.max(aligned_end);
-                }
-            };
+            {
+                let mut consider_overlap = |region_start: u64, region_end: u64| {
+                    if candidate < region_end && end > region_start {
+                        let aligned_end =
+                            region_end.saturating_add(PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
+                        next_candidate = next_candidate.max(aligned_end);
+                    }
+                };
 
-            for segment in [
-                self.layout.text,
-                self.layout.read_only,
-                self.layout.data,
-                self.layout.bss,
-                self.layout.stack,
-            ] {
-                if !segment.is_empty() {
-                    consider_overlap(
-                        u64::from(segment.address),
-                        segment.end_address(),
-                    );
+                for segment in [
+                    self.layout.text,
+                    self.layout.read_only,
+                    self.layout.data,
+                    self.layout.bss,
+                    self.layout.stack,
+                ] {
+                    if !segment.is_empty() {
+                        consider_overlap(u64::from(segment.address), segment.end_address());
+                    }
+                }
+                for region in &self.dynamic_regions {
+                    consider_overlap(u64::from(region.address), region.end_address());
+                }
+                for region in &self.shared_regions {
+                    if let Some(region_end) = region.end_address() {
+                        consider_overlap(u64::from(region.address), region_end);
+                    }
+                }
+                for region in &self.linear_regions {
+                    consider_overlap(u64::from(region.virtual_base), region.virtual_end());
                 }
             }
-            for region in &self.dynamic_regions {
-                consider_overlap(u64::from(region.address), region.end_address());
-            }
-            for region in &self.shared_regions {
-                if let Some(region_end) = region.end_address() {
-                    consider_overlap(u64::from(region.address), region_end);
-                }
-            }
-            for region in &self.linear_regions {
-                consider_overlap(u64::from(region.virtual_base), region.virtual_end());
-            }
-            drop(consider_overlap);
 
             if next_candidate == candidate {
                 return Ok(candidate as u32);
