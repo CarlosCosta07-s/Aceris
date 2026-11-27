@@ -235,8 +235,7 @@ fn load_virtual_controls_preset(settings_directory: &Path) -> VirtualControlPres
 }
 
 fn load_virtual_control_positions(settings_directory: &Path) -> VirtualControlPositions {
-    let Ok(contents) =
-        fs::read_to_string(settings_directory.join(VIRTUAL_CONTROL_POSITIONS_FILE))
+    let Ok(contents) = fs::read_to_string(settings_directory.join(VIRTUAL_CONTROL_POSITIONS_FILE))
     else {
         return VirtualControlPositions::default();
     };
@@ -981,7 +980,8 @@ impl Library {
 
     /// Restores only the selected orientation to its preset's default positions.
     pub fn reset_virtual_control_positions(&mut self, orientation: u32) -> std::io::Result<()> {
-        self.virtual_control_positions.reset_orientation(orientation);
+        self.virtual_control_positions
+            .reset_orientation(orientation);
         self.save_virtual_control_positions()
     }
 
