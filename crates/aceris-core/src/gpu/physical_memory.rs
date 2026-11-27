@@ -842,7 +842,6 @@ mod tests {
     #[test]
     fn physical_memory_snapshot_round_trips_sparse_pages_allocations_and_exclusives() {
         let mut original = GpuPhysicalMemory::new();
-        let alias = original.clone();
         let fcram_address = FCRAM_BASE + 0x8000;
         let vram_address = VRAM_BASE + 0x3000;
         original.allocate_linear_fcram_at(fcram_address, 0x3000).unwrap();
