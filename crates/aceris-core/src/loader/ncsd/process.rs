@@ -24,7 +24,7 @@ use crate::gpu::{
     OLD_LINEAR_END,
 };
 use crate::loader::threedsx::process::{ThreeDsxPreparedProcess, ThreeDsxProcessMemorySegment};
-use crate::memory::{Bus, CachePolicy};
+use crate::memory::{Bus, CachePolicy, ImmutableCodeLocation};
 use aceris_common::{Error, Result as BusResult};
 
 const PAGE_SIZE: u64 = 0x1000;
@@ -3935,6 +3935,26 @@ impl Bus for Arm11CodeAddressSpace {
             return Ok(u32::from_le_bytes(value));
         }
         self.read32(address)
+    }
+
+    fn immutable_instruction_location(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> Option<ImmutableCodeLocation> {
+        let text = self.layout.text;
+        if size == 0 || !text.executable || text.writable {
+            return None;
+        }
+        let offset = usize::try_from(address.checked_sub(text.address)?).ok()?;
+        let end = offset.checked_add(usize::try_from(size).ok()?)?;
+        if end > text.mapped_size_bytes as usize || end > self.text.len() {
+            return None;
+        }
+        Some(ImmutableCodeLocation {
+            backing_id: self.static_backing_ids[0],
+            offset: offset as u64,
+        })
     }
 
     fn read32(&mut self, address: u32) -> BusResult<u32> {
