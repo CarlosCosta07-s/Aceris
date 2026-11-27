@@ -4006,19 +4006,21 @@ impl Arm11ProcessSession {
                 // The application category defaults used by the current 64 MiB
                 // Old-3DS production profile. CPU-time preemption is disabled
                 // in this single-core bootstrap, represented by zero.
-                (true, 0) => 0x18,                                  // PRIORITY
+                (true, 0) => 0x18, // PRIORITY
                 (true, RESOURCE_LIMIT_COMMIT) => Self::RESOURCE_LIMIT_COMMIT_MAX_BYTES,
-                (true, RESOURCE_LIMIT_THREAD) => 0x20,             // THREAD
-                (true, 3 | 4) => 0x20,                             // EVENT / MUTEX
-                (true, 5 | 6) => 0x08,                             // SEMAPHORE / TIMER
-                (true, 7) => 0x10,                                 // SHAREDMEMORY
-                (true, 8) => 0x02,                                 // ADDRESSARBITER
-                (true, 9) => 0,                                    // CPUTIME
+                (true, RESOURCE_LIMIT_THREAD) => 0x20, // THREAD
+                (true, 3 | 4) => 0x20,                 // EVENT / MUTEX
+                (true, 5 | 6) => 0x08,                 // SEMAPHORE / TIMER
+                (true, 7) => 0x10,                     // SHAREDMEMORY
+                (true, 8) => 0x02,                     // ADDRESSARBITER
+                (true, 9) => 0,                        // CPUTIME
                 (false, 0 | 9) => 0,
                 (false, RESOURCE_LIMIT_COMMIT) => self.process_committed_memory_bytes(),
                 (false, RESOURCE_LIMIT_THREAD) => self.scheduler.thread_count() as u64,
                 (false, 3..=8) => {
-                    let Some(count) = self.kernel_objects.resource_limit_object_count(resource_type)
+                    let Some(count) = self
+                        .kernel_objects
+                        .resource_limit_object_count(resource_type)
                     else {
                         return self.write_svc_result(caller, RESULT_INVALID_ENUM);
                     };
