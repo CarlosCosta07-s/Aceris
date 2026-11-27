@@ -45,7 +45,7 @@
 | Carregar .3DSX | Parcial | Caminho de homebrew existe no loader. A presença no catálogo não garante que toda aplicação homebrew funcione. |
 | Carregar .CIA | Parcial | Só nas condições suportadas pelo núcleo: conteúdo de boot em claro e NCCH NoCrypto. Não existe instalação persistente ou gestão de títulos/atualizações pela biblioteca. |
 | Conteúdo criptografado | Parcial | Há pontos de entrada onde o host fornece material de chave temporário. Aceris não descobre nem persiste chaves e não oferece gestor de chaves ao usuário. |
-| Identidade estável por Title ID/região/revisão | Não disponível | Favoritos/Recentes usam caminho de arquivo. Não existe identidade de título validada para perfis por jogo. |
+| Identidade de título por Title ID | Parcial | System::game_identity expõe o program ID de NCCH em NCSD/CCI e o Title ID do TMD em CIA após conferir o NCCH. 3DSX permanece sem identidade; região, produto, versão/revisão e metadados na biblioteca ainda faltam. SourceId da biblioteca continua baseado no caminho. |
 | Relatório de compatibilidade por título | Não disponível | Há mensagens de erro e diagnóstico de execução, mas não há classificação de compatibilidade ou histórico por jogo. |
 
 **Evidência principal:** crates/aceris-core/src/video/library.rs, crates/aceris-core/src/loader.rs, frontends/android/src/lib.rs, frontends/desktop/src/main.rs e docs/FRONTENDS.md.
@@ -65,7 +65,7 @@
 | Deadzone/sensibilidade/inversão | Não disponível | Não existem controles de ajuste expostos. |
 | Controles virtuais Android | Parcial | Há overlay/hit-test e envio de botões; posição, escala, opacidade, presets e perfis não são editáveis. |
 | Multi-touch | Parcial | NativeActivity coleta ponteiros e o app mantém estado multitoque; falta validar em aparelho e todas as combinações de stylus + botões. |
-| Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar têm confirmação preventiva; as filas host de áudio são limpas ao pausar. O menu permite seis layouts e troca de telas. Atalho configurável, perfis e ajuste fino ainda não disponíveis. CI e hardware físico pendentes. |
+| Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar têm confirmação preventiva; as filas host de áudio são limpas ao pausar. O menu oferece seis ações, seis layouts, troca de telas e restauração do padrão global. Atalho configurável, ajuste fino e validação física pendentes. |
 | Atalhos configuráveis | Não disponível | Existem teclas/eventos específicos do host, mas não há editor de atalhos. |
 | Screenshot durante a partida | Não disponível | Existem saídas de diagnóstico/PNG e dump de LCD no desktop; não existe ação de captura pela interface durante o jogo. |
 
@@ -81,7 +81,7 @@
 | FPS/velocidade guest em overlay | Não disponível | Métricas host de apresentação não devem ser rotuladas como velocidade da emulação nem FPS guest. |
 | Mídia externa | Parcial | O host Android pode detectar mídia externa e informar estado à biblioteca; não é oferecido por todas as plataformas e não identifica o conteúdo tocado. |
 | Preferências globais completas | Não disponível | Ainda não há painel de idioma, tema, escala de interface, alto contraste ou conjunto amplo de preferências. |
-| Configurações por jogo | Não disponível | Não há esquema global + overrides por identidade de título. |
+| Configurações por jogo | Parcial | Overrides de layout por Title ID, com herança global, orientação independente e restauração por título. Categorias gerais de configurações por jogo ainda não existem; 3DSX sem identidade herda o perfil global. |
 | Backup/exportação de configurações | Não disponível | Não há fluxo de exportação/importação. |
 | Save data/extdata do jogo | Parcial | Diretórios de armazenamento por jogo existem nos caminhos HLE atuais. Isso não equivale a suporte completo a todos os serviços de armazenamento do console. |
 | Save states | Não disponível | Não há snapshot/restauração completa do emulador, slots nem rewind. |
