@@ -66,8 +66,12 @@ impl ScreenLayoutPreferences {
     /// A malformed v2 file falls back to safe defaults rather than reviving stale v1 data.
     pub fn load(settings_directory: &Path) -> Self {
         let current_path = settings_directory.join(FILE_NAME);
-        if let Ok(contents) = fs::read_to_string(&current_path) {
-            return Self::parse(&contents).unwrap_or_default();
+        match fs::read_to_string(&current_path) {
+            Ok(contents) => return Self::parse(&contents).unwrap_or_default(),
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Self::default();
+            }
+            Err(_) => {}
         }
 
         let Ok(legacy_contents) = fs::read_to_string(settings_directory.join(LEGACY_FILE_NAME)) else {
