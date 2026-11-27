@@ -2789,3 +2789,10 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - **Desempenho ainda não medido para SCTLR.M ativo.** A sonda `session_loop_throughput` usa `Arm11Core` com `SCTLR.M` no valor de reset desligado; os antigos resultados de −32%/−39% são do caminho sintético sem MMU e não podem ser atribuídos a esta otimização.
 - Validação da revisão `731e7e9`: Linux/Ubuntu passou `cargo fmt`, build workspace, testes completos, benchmark example, Clippy e benchmarks auxiliares; o job Android ARM64 compilou o app, benchmark e `memory_profile`. macOS e Windows estavam terminando as últimas etapas quando esta nota foi escrita; confirmar os jobs no Actions antes de marcar a revisão como multiplataforma aprovada.
 - Próximo passo medido: criar sonda release com MMU ativa, tabelas de página válidas e bloco ARM/Thumb de load/store/ALU, comparar passo preciso versus lote com contagem idêntica e então avançar para cache de blocos pré-decodificados.
+
+## Sonda de desempenho isolada — MMU ativa (27/11/2026, ChatGPT)
+
+- Adicionado o teste ignorado `cpu::mmu::tests::translated_fast_dispatch_throughput` em `crates/aceris-core/src/cpu/mmu.rs`. Ele compara `step` versus `run_fast` com `SCTLR.M=1`, uma seção traduzida e laço ARM load/store/ALU, validando estado final e memória.
+- Comando release: `cargo test --release -p aceris-core --lib translated_fast_dispatch_throughput -- --ignored --nocapture`. Padrão: 1M instruções × 3 rodadas; ajustar com `ACERIS_MMU_PROBE_INSTRUCTIONS` e `ACERIS_MMU_PROBE_ROUNDS`.
+- A sonda é deliberadamente isolada em `FlatMemory`: mede o núcleo CPU/MMU, não o caminho completo de `Arm11ProcessSession`, D-cache do processo, periféricos nem GPU. A suíte CI compila o teste, mas não o executa automaticamente. Ainda não há resultado de desempenho publicado.
+- Próximo passo: executar em release numa máquina Linux x86-64 e, quando houver ferramenta/dispositivo físico, Android ARM64; comparar médias/medianas e então avaliar cache de blocos pré-decodificados.
