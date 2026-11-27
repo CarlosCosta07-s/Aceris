@@ -44,9 +44,11 @@ A API `Arm11Core::block_cache_stats()` expõe consultas, hits, misses, blocos/in
 
 ### 2. Interpretador intermediário (IR)
 
-**Estado parcial:** o enum FastOp já contém operações A32 tipadas e operandos pré-extraídos, e cada bloco armazena essas operações decodificadas. Isso reduz trabalho repetido de decode, mas ainda não é um IR independente com passes de otimização; a execução despacha para helpers semânticos compartilhados com o interpretador.
+**Primeira camada implementada:** os blocos agora são baixados para um IR próprio (IrInstruction/IrOperation) antes da execução. O interpretador IR já executa diretamente operações de dados com imediato, operações com registrador e shift imediato, além de branches com displacement/link pré-decodificados. Nessas operações, a palavra A32 original não é consultada durante a execução. O restante usa um nó explícito de compatibilidade que encaminha para o dispatcher antigo, preservando a semântica enquanto mais famílias são convertidas.
 
-A próxima etapa deve transformar os blocos em um IR próprio e compacto, sem depender da codificação A32 original durante a execução.
+A execução pelo IR está integrada tanto ao caminho normal quanto ao caminho com MMU. Testes cobrem o lowering de ALU/branch, fallback explícito e comparação diferencial de MOV, shift de registrador, condição EQ e BL contra o interpretador preciso. A etapa ainda não tem passes de otimização nem mede ganho; isso permanece pendente até a cobertura e correção do IR amadurecerem.
+
+**Próxima etapa:** converter transferências de memória, halfword, block transfer e multiplicações para operações IR nativas, removendo gradualmente os nós A32 de compatibilidade. Depois, adicionar passes conservadores (propagação de constantes e eliminação de operações redundantes locais) com testes diferenciais.
 
 O IR deverá representar explicitamente:
 
