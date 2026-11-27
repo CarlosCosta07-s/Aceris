@@ -497,7 +497,8 @@ impl SharedMemoryBacking {
         self.offset.checked_add(offset)
     }
 
-    fn root_base_offset(&self) -> usize {
+    /// Absolute byte offset of this view within the shared root.
+    pub(crate) fn root_base_offset(&self) -> usize {
         self.offset
     }
 
