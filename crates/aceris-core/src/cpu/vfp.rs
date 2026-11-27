@@ -120,7 +120,6 @@ impl Vfp {
         Self::default()
     }
 
-
     pub(super) fn write_save_state(
         &self,
         writer: &mut super::state::StateWriter,
