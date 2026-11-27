@@ -262,17 +262,13 @@ fn decode(word: u32) -> FastOp {
                 if bit(word, 7) {
                     let load = bit(word, 20);
                     let transfer_kind = field(word, 6, 5) as u8;
-                    let single_transfer = (load && matches!(transfer_kind, 1..=3))
-                        || (!load && transfer_kind == 1);
+                    let single_transfer =
+                        (load && matches!(transfer_kind, 1..=3)) || (!load && transfer_kind == 1);
                     let pre_index = bit(word, 24);
                     let writeback = !pre_index || bit(word, 21);
                     let rn = field(word, 19, 16);
                     let rd = field(word, 15, 12);
-                    if single_transfer
-                        && rn != pc
-                        && rd != pc
-                        && !(writeback && rn == rd)
-                    {
+                    if single_transfer && rn != pc && rd != pc && !(writeback && rn == rd) {
                         if bit(word, 22) {
                             return FastOp::HalfwordTransfer {
                                 pre_index,
@@ -281,8 +277,7 @@ fn decode(word: u32) -> FastOp {
                                 load,
                                 rn: rn as u8,
                                 rd: rd as u8,
-                                offset: ((field(word, 11, 8) << 4)
-                                    | field(word, 3, 0)) as u8,
+                                offset: ((field(word, 11, 8) << 4) | field(word, 3, 0)) as u8,
                                 transfer_kind,
                             };
                         }
@@ -587,15 +582,7 @@ impl Arm11Core {
                 rm,
                 accumulate,
                 set_flags,
-            } => self.execute_cached_multiply(
-                word,
-                rd,
-                rn,
-                rs,
-                rm,
-                accumulate,
-                set_flags,
-            )?,
+            } => self.execute_cached_multiply(word, rd, rn, rs, rm, accumulate, set_flags)?,
             FastOp::MultiplyLong {
                 rd_hi,
                 rd_lo,
@@ -605,14 +592,7 @@ impl Arm11Core {
                 accumulate,
                 set_flags,
             } => self.execute_cached_multiply_long(
-                word,
-                signed,
-                accumulate,
-                set_flags,
-                rd_hi,
-                rd_lo,
-                rs,
-                rm,
+                word, signed, accumulate, set_flags, rd_hi, rd_lo, rs, rm,
             )?,
             FastOp::HalfwordMultiply {
                 class,
@@ -623,16 +603,7 @@ impl Arm11Core {
                 x,
                 y,
             } => {
-                return self.execute_cached_halfword_multiply(
-                    word,
-                    class,
-                    rd,
-                    rn,
-                    rs,
-                    rm,
-                    x,
-                    y,
-                );
+                return self.execute_cached_halfword_multiply(word, class, rd, rn, rs, rm, x, y);
             }
             FastOp::DspMultiply {
                 class,
@@ -821,7 +792,11 @@ mod tests {
     }
 
     fn assert_cached_matches_generic(word: u32, mut generic: Arm11Core, template: &FlatMemory) {
-        assert_ne!(decode(word), FastOp::Generic, "instruction should be cached: {word:#010X}");
+        assert_ne!(
+            decode(word),
+            FastOp::Generic,
+            "instruction should be cached: {word:#010X}"
+        );
         let mut cached = generic.clone();
         let mut generic_memory = template.clone();
         let mut cached_memory = template.clone();
