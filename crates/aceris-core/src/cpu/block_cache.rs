@@ -5,8 +5,10 @@
 //! buses without this guarantee stay on the existing per-instruction path.
 
 use super::Arm11Core;
-use super::decode_cache::DecodeCache;
-use super::ir::{IrInstruction, IrOperation};
+use super::decode_cache::{DecodeCache, FastOp};
+use super::ir::IrInstruction;
+#[cfg(test)]
+use super::ir::IrOperation;
 use crate::memory::{Bus, ImmutableCodeLocation};
 use aceris_common::Result;
 
