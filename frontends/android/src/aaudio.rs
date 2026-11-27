@@ -237,10 +237,22 @@ impl AAudioOutput {
             if state == STREAM_STATE_STARTING {
                 state = self.wait_for_transition(STREAM_STATE_STARTING, "start")?;
             }
-            if state == STREAM_STATE_FLUSHED
-                || state == STREAM_STATE_PAUSED
-                || state == STREAM_STATE_STOPPED
-            {
+            if state == STREAM_STATE_PAUSING {
+                state = self.wait_for_transition(STREAM_STATE_PAUSING, "pause")?;
+            }
+            if state == STREAM_STATE_PAUSED {
+                // A previous pause may have reached PAUSED but failed before
+                // its flush completed. Discard those samples before restarting.
+                // SAFETY: requestFlush is valid from PAUSED.
+                let status = unsafe { (self.flush)(self.stream) };
+                if status != AAUDIO_OK {
+                    return Err(format!("AAudio requestFlush before resume failed (error {status})"));
+                }
+                state = self.wait_for_transition(STREAM_STATE_FLUSHING, "flush before resume")?;
+            } else if state == STREAM_STATE_FLUSHING {
+                state = self.wait_for_transition(STREAM_STATE_FLUSHING, "flush")?;
+            }
+            if state == STREAM_STATE_FLUSHED || state == STREAM_STATE_STOPPED {
                 // SAFETY: requestStart resumes a paused/flushed output stream.
                 let status = unsafe { (self.start)(self.stream) };
                 if status != AAUDIO_OK {
