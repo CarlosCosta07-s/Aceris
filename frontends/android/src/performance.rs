@@ -12,9 +12,10 @@ const NANOSECONDS_PER_MILLISECOND: f64 = 1_000_000.0;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct FrameSample {
-    frame_ns: u64,
-    emulation_ns: u64,
+    render_ns: u64,
+    app_step_ns: u64,
     presentation_ns: u64,
+    presentation_interval_ns: u64,
 }
 
 /// Rolling host-side performance window for Android's render thread.
@@ -23,6 +24,7 @@ pub(crate) struct FramePerformanceMonitor {
     sample_count: usize,
     next_sample: usize,
     interval_started: Instant,
+    last_presentation: Option<Instant>,
     frame_attempts: u64,
     frames_presented: u64,
     frames_presented_by_gpu: u64,
@@ -32,11 +34,13 @@ pub(crate) struct FramePerformanceMonitor {
 struct FramePerformanceReport {
     presented_fps: f64,
     sample_count: usize,
-    frame_average_ms: f64,
-    frame_p50_ms: f64,
-    frame_p95_ms: f64,
-    emulation_p95_ms: f64,
+    render_average_ms: f64,
+    render_p50_ms: f64,
+    render_p95_ms: f64,
+    app_step_p95_ms: f64,
     presentation_p95_ms: f64,
+    presentation_interval_p50_ms: f64,
+    presentation_interval_p95_ms: f64,
     gpu_presentation_percent: f64,
     presentation_failures: u64,
 }
@@ -48,6 +52,7 @@ impl FramePerformanceMonitor {
             sample_count: 0,
             next_sample: 0,
             interval_started: Instant::now(),
+            last_presentation: None,
             frame_attempts: 0,
             frames_presented: 0,
             frames_presented_by_gpu: 0,
@@ -64,10 +69,23 @@ impl FramePerformanceMonitor {
         presented: bool,
         gpu_presented: bool,
     ) -> Option<FramePerformanceReport> {
+        let presentation_interval = if presented {
+            let now = Instant::now();
+            let interval = self
+                .last_presentation
+                .map(|last| now.duration_since(last))
+                .filter(|interval| *interval <= Duration::from_secs(2))
+                .unwrap_or_default();
+            self.last_presentation = Some(now);
+            interval
+        } else {
+            Duration::ZERO
+        };
         self.samples[self.next_sample] = FrameSample {
-            frame_ns: duration_ns(frame_time),
-            emulation_ns: duration_ns(emulation_time),
+            render_ns: duration_ns(frame_time),
+            app_step_ns: duration_ns(emulation_time),
             presentation_ns: duration_ns(presentation_time),
+            presentation_interval_ns: duration_ns(presentation_interval),
         };
         self.next_sample = (self.next_sample + 1) % SAMPLE_CAPACITY;
         self.sample_count = (self.sample_count + 1).min(SAMPLE_CAPACITY);
@@ -108,13 +126,15 @@ impl fmt::Display for FramePerformanceReport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "presented_fps={:.1}, frame_ms_avg/p50/p95={:.2}/{:.2}/{:.2}, emulation_ms_p95={:.2}, presentation_ms_p95={:.2}, gpu_present={:.0}%, samples={}, presentation_failures={}",
+            "presented_fps={:.1}, render_ms_avg/p50/p95={:.2}/{:.2}/{:.2}, app_step_ms_p95={:.2}, present_ms_p95={:.2}, present_interval_ms_p50/p95={:.2}/{:.2}, gpu_present={:.0}%, samples={}, presentation_failures={}",
             self.presented_fps,
-            self.frame_average_ms,
-            self.frame_p50_ms,
-            self.frame_p95_ms,
-            self.emulation_p95_ms,
+            self.render_average_ms,
+            self.render_p50_ms,
+            self.render_p95_ms,
+            self.app_step_p95_ms,
             self.presentation_p95_ms,
+            self.presentation_interval_p50_ms,
+            self.presentation_interval_p95_ms,
             self.gpu_presentation_percent,
             self.sample_count,
             self.presentation_failures,
@@ -124,6 +144,29 @@ impl fmt::Display for FramePerformanceReport {
 
 fn duration_ns(duration: Duration) -> u64 {
     duration.as_nanos().min(u128::from(u64::MAX)) as u64
+}
+
+fn percentile_nonzero_ns(
+    samples: &[FrameSample; SAMPLE_CAPACITY],
+    sample_count: usize,
+    select: fn(FrameSample) -> u64,
+    percentile: usize,
+) -> f64 {
+    let mut values = [0u64; SAMPLE_CAPACITY];
+    let mut count = 0usize;
+    for sample in samples.iter().take(sample_count.min(SAMPLE_CAPACITY)) {
+        let value = select(*sample);
+        if value != 0 {
+            values[count] = value;
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return 0.0;
+    }
+    values[..count].sort_unstable();
+    let rank = (count * percentile).div_ceil(100).saturating_sub(1);
+    values[rank.min(count - 1)] as f64
 }
 
 fn summarize(
@@ -165,14 +208,25 @@ fn summarize(
     let elapsed_seconds = interval.as_secs_f64().max(f64::EPSILON);
 
     FramePerformanceReport {
-        interval_seconds: interval.as_secs_f64(),
         presented_fps: frames_presented as f64 / elapsed_seconds,
         sample_count: count,
-        frame_average_ms: to_ms(average_ns(|sample| sample.frame_ns)),
-        frame_p50_ms: to_ms(percentile_ns(|sample| sample.frame_ns, 50)),
-        frame_p95_ms: to_ms(percentile_ns(|sample| sample.frame_ns, 95)),
-        emulation_p95_ms: to_ms(percentile_ns(|sample| sample.emulation_ns, 95)),
+        render_average_ms: to_ms(average_ns(|sample| sample.render_ns)),
+        render_p50_ms: to_ms(percentile_ns(|sample| sample.render_ns, 50)),
+        render_p95_ms: to_ms(percentile_ns(|sample| sample.render_ns, 95)),
+        app_step_p95_ms: to_ms(percentile_ns(|sample| sample.app_step_ns, 95)),
         presentation_p95_ms: to_ms(percentile_ns(|sample| sample.presentation_ns, 95)),
+        presentation_interval_p50_ms: to_ms(percentile_nonzero_ns(
+            samples,
+            count,
+            |sample| sample.presentation_interval_ns,
+            50,
+        )),
+        presentation_interval_p95_ms: to_ms(percentile_nonzero_ns(
+            samples,
+            count,
+            |sample| sample.presentation_interval_ns,
+            95,
+        )),
         gpu_presentation_percent: if frames_presented == 0 {
             0.0
         } else {
@@ -186,22 +240,28 @@ fn summarize(
 mod tests {
     use super::*;
 
-    fn sample(frame_ms: u64, emulation_ms: u64, presentation_ms: u64) -> FrameSample {
+    fn sample(
+        render_ms: u64,
+        app_step_ms: u64,
+        presentation_ms: u64,
+        presentation_interval_ms: u64,
+    ) -> FrameSample {
         FrameSample {
-            frame_ns: frame_ms * 1_000_000,
-            emulation_ns: emulation_ms * 1_000_000,
+            render_ns: render_ms * 1_000_000,
+            app_step_ns: app_step_ms * 1_000_000,
             presentation_ns: presentation_ms * 1_000_000,
+            presentation_interval_ns: presentation_interval_ms * 1_000_000,
         }
     }
 
     #[test]
     fn report_separates_emulation_presentation_and_frame_percentiles() {
         let samples = [
-            sample(1, 1, 0),
-            sample(2, 1, 1),
-            sample(3, 2, 1),
-            sample(4, 2, 2),
-            sample(5, 3, 2),
+            sample(1, 1, 0, 0),
+            sample(2, 1, 1, 15),
+            sample(3, 2, 1, 16),
+            sample(4, 2, 2, 17),
+            sample(5, 3, 2, 18),
         ];
         let mut storage = [FrameSample::default(); SAMPLE_CAPACITY];
         storage[..samples.len()].copy_from_slice(&samples);
@@ -216,11 +276,13 @@ mod tests {
         );
 
         assert_eq!(report.presented_fps, 0.8);
-        assert_eq!(report.frame_average_ms, 3.0);
-        assert_eq!(report.frame_p50_ms, 3.0);
-        assert_eq!(report.frame_p95_ms, 5.0);
-        assert_eq!(report.emulation_p95_ms, 3.0);
+        assert_eq!(report.render_average_ms, 3.0);
+        assert_eq!(report.render_p50_ms, 3.0);
+        assert_eq!(report.render_p95_ms, 5.0);
+        assert_eq!(report.app_step_p95_ms, 3.0);
         assert_eq!(report.presentation_p95_ms, 2.0);
+        assert_eq!(report.presentation_interval_p50_ms, 16.0);
+        assert_eq!(report.presentation_interval_p95_ms, 18.0);
         assert_eq!(report.gpu_presentation_percent, 75.0);
         assert_eq!(report.presentation_failures, 1);
     }
@@ -228,8 +290,8 @@ mod tests {
     #[test]
     fn report_uses_only_the_latest_fixed_capacity_samples() {
         let mut storage = [FrameSample::default(); SAMPLE_CAPACITY];
-        storage.fill(sample(1, 1, 1));
-        storage[0] = sample(900, 900, 900);
+        storage.fill(sample(1, 1, 1, 16));
+        storage[0] = sample(900, 900, 900, 900);
 
         let report = summarize(
             &storage,
@@ -240,9 +302,10 @@ mod tests {
             SAMPLE_CAPACITY as u64,
         );
 
-        assert_eq!(report.frame_p95_ms, 1.0);
-        assert_eq!(report.emulation_p95_ms, 1.0);
+        assert_eq!(report.render_p95_ms, 1.0);
+        assert_eq!(report.app_step_p95_ms, 1.0);
         assert_eq!(report.presentation_p95_ms, 1.0);
+        assert_eq!(report.presentation_interval_p95_ms, 16.0);
     }
 
     #[test]
