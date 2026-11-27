@@ -1076,8 +1076,8 @@ mod tests {
     fn arm11_save_state_round_trips_architectural_cpu_context() {
         let mut cpu = Arm11Core::new();
         cpu.regs = [
-            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-            0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
+            0x1E, 0x1F,
         ];
         cpu.cpsr = Psr(Psr::SUPERVISOR_MODE | Psr::N | Psr::I | Psr::Q);
         cpu.switch_mode(Psr::FIQ_MODE).unwrap();
@@ -1104,9 +1104,7 @@ mod tests {
 
         cpu.cp15.write(true, 0, 1, 0, 0, 0x00C5_0079).unwrap();
         cpu.cp15.write(true, 0, 2, 0, 2, 3).unwrap();
-        cpu.cp15
-            .write(true, 0, 8, 5, 1, 0x1234_5678)
-            .unwrap();
+        cpu.cp15.write(true, 0, 8, 5, 1, 0x1234_5678).unwrap();
         cpu.vfp.set_s(7, 0x7FC0_1234);
         cpu.vfp.set_enabled(true);
         cpu.vfp.set_fpinst(0xEE00_0A10);
@@ -1122,10 +1120,7 @@ mod tests {
         assert_eq!(restored.banked.fiq_r8_r14, cpu.banked.fiq_r8_r14);
         assert_eq!(restored.saved_status.fiq, cpu.saved_status.fiq);
         assert_eq!(restored.saved_status.irq, cpu.saved_status.irq);
-        assert_eq!(
-            restored.exclusive_reservation,
-            cpu.exclusive_reservation
-        );
+        assert_eq!(restored.exclusive_reservation, cpu.exclusive_reservation);
         assert_eq!(restored.cp15.sctlr(), cpu.cp15.sctlr());
         assert_eq!(restored.cp15.ttbr0(), cpu.cp15.ttbr0());
         assert_eq!(restored.vfp.s(7), cpu.vfp.s(7));
