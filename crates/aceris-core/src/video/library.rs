@@ -1134,8 +1134,11 @@ impl Library {
         match self.virtual_control_edit_scope {
             VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
                 if self.active_game_control_override {
-                    self.virtual_control_positions
-                        .set_size_percent(orientation, button, size_percent)
+                    self.virtual_control_positions.set_size_percent(
+                        orientation,
+                        button,
+                        size_percent,
+                    )
                 } else {
                     let mut positions = self.global_virtual_control_positions;
                     let previous = positions.size_percent(orientation, button);
@@ -1167,9 +1170,7 @@ impl Library {
             && self.active_game_identity.is_some()
             && !self.active_game_control_override
         {
-            self.status = Some(
-                "PERFIL DO JOGO CONTINUA HERDANDO O PADRÃO GLOBAL".to_string(),
-            );
+            self.status = Some("PERFIL DO JOGO CONTINUA HERDANDO O PADRÃO GLOBAL".to_string());
             return Ok(());
         }
 
@@ -1209,7 +1210,8 @@ impl Library {
         match self.virtual_control_edit_scope {
             VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
                 if self.active_game_control_override {
-                    self.virtual_control_positions.reset_orientation(orientation);
+                    self.virtual_control_positions
+                        .reset_orientation(orientation);
                 } else {
                     let mut positions = self.global_virtual_control_positions;
                     positions.reset_orientation(orientation);
@@ -6132,8 +6134,8 @@ mod tests {
 #[cfg(test)]
 mod virtual_control_profile_tests {
     use super::super::frontend::{
-        ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT, VirtualControlOffset,
-        VirtualControlPositions, buttons,
+        ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT, VirtualControlOffset, VirtualControlPositions,
+        buttons,
     };
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -6417,10 +6419,7 @@ mod virtual_control_profile_tests {
         library.save_virtual_control_positions().unwrap();
 
         assert!(!library.game_has_control_override());
-        assert!(
-            !game_virtual_control_layout_path(&directory.join(".aceris"), title).exists()
-        );
+        assert!(!game_virtual_control_layout_path(&directory.join(".aceris"), title).exists());
         fs::remove_dir_all(directory).ok();
     }
-
 }
