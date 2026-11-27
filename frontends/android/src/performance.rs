@@ -31,7 +31,7 @@ pub(crate) struct FramePerformanceMonitor {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct FramePerformanceReport {
+pub(crate) struct FramePerformanceReport {
     presented_fps: f64,
     sample_count: usize,
     render_average_ms: f64,
