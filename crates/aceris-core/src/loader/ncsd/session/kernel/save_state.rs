@@ -10,7 +10,7 @@ use std::fmt;
 use super::*;
 use crate::cpu::state::{CpuStateError, StateReader, StateWriter};
 use crate::loader::ncsd::process::{SharedMemoryBackingCatalog, SharedMemoryStateError};
-use crate::save_state::{section_id, SaveStateSection};
+use crate::save_state::{SaveStateSection, section_id};
 
 const MAGIC: &[u8; 8] = b"ACKERNEL";
 const FORMAT_VERSION: u16 = 1;
@@ -57,10 +57,16 @@ impl fmt::Display for KernelStateError {
                 write!(formatter, "ARM11 kernel save-state is invalid: {reason}")
             }
             Self::TooManyEntries { kind, count } => {
-                write!(formatter, "ARM11 kernel save-state contains too many {kind}: {count}")
+                write!(
+                    formatter,
+                    "ARM11 kernel save-state contains too many {kind}: {count}"
+                )
             }
             Self::PayloadTooLarge(size) => {
-                write!(formatter, "ARM11 kernel save-state payload is too large: {size}")
+                write!(
+                    formatter,
+                    "ARM11 kernel save-state payload is too large: {size}"
+                )
             }
         }
     }
@@ -101,7 +107,12 @@ impl Arm11KernelObjectTable {
         write_object_map(&mut writer, &self.objects, catalog)?;
         write_object_map(&mut writer, &self.retired_objects, catalog)?;
 
-        write_count(&mut writer, self.handle_aliases.len(), MAX_KERNEL_HANDLES, "handles")?;
+        write_count(
+            &mut writer,
+            self.handle_aliases.len(),
+            MAX_KERNEL_HANDLES,
+            "handles",
+        )?;
         for (handle, object_key) in &self.handle_aliases {
             writer.write_u32(*handle)?;
             writer.write_u32(*object_key)?;
@@ -150,7 +161,10 @@ impl Arm11KernelObjectTable {
             }
         }
 
-        writer.write_u32(to_u32(self.high_water_handle_count, "handle high-water mark")?)?;
+        writer.write_u32(to_u32(
+            self.high_water_handle_count,
+            "handle high-water mark",
+        )?)?;
         writer.write_u32(self.next_handle)?;
 
         write_count(
@@ -335,7 +349,9 @@ fn decode_table(
     }
     let version = reader.read_u16()?;
     if version != FORMAT_VERSION {
-        return Err(KernelStateError::InvalidData("unsupported kernel-state version"));
+        return Err(KernelStateError::InvalidData(
+            "unsupported kernel-state version",
+        ));
     }
 
     let objects = read_object_map(&mut reader, catalog)?;
@@ -368,7 +384,10 @@ fn decode_table(
         let thread = read_thread_id(&mut reader)?;
         let object_key = reader.read_u32()?;
         let handle = reader.read_u32()?;
-        if waiter_handles.insert((thread, object_key), handle).is_some() {
+        if waiter_handles
+            .insert((thread, object_key), handle)
+            .is_some()
+        {
             return Err(KernelStateError::InvalidData("duplicate waiter reference"));
         }
     }
@@ -490,7 +509,9 @@ fn read_object(
                 || length & 0xFFF != 0
                 || offset & 0xFFF != 0
             {
-                return Err(KernelStateError::InvalidData("invalid memory-block metadata"));
+                return Err(KernelStateError::InvalidData(
+                    "invalid memory-block metadata",
+                ));
             }
             let backing = catalog.view(slot, offset, length)?;
             Ok(KernelObject::MemoryBlock(KernelMemoryBlock {
@@ -504,7 +525,9 @@ fn read_object(
             let max_sessions = reader.read_u16()?;
             let active_sessions = reader.read_u16()?;
             if max_sessions == 0 || active_sessions > max_sessions {
-                return Err(KernelStateError::InvalidData("invalid service-port session count"));
+                return Err(KernelStateError::InvalidData(
+                    "invalid service-port session count",
+                ));
             }
             Ok(KernelObject::Port(KernelPort {
                 max_sessions,
@@ -518,7 +541,11 @@ fn read_object(
             let role = match reader.read_u8()? {
                 0 => SessionRole::Client,
                 1 => SessionRole::Server,
-                _ => return Err(KernelStateError::InvalidData("invalid session endpoint role")),
+                _ => {
+                    return Err(KernelStateError::InvalidData(
+                        "invalid session endpoint role",
+                    ));
+                }
             };
             Ok(KernelObject::SessionEndpoint(KernelSessionEndpoint {
                 peer_key,
@@ -557,12 +584,15 @@ fn read_service_session(
         10 => Ok(ServiceSessionKind::FsHostFile),
         11 => Ok(ServiceSessionKind::FsDirectory),
         12 => Ok(ServiceSessionKind::Stub(reader.read_u8()?)),
-        _ => Err(KernelStateError::InvalidData("unknown service-session kind")),
+        _ => Err(KernelStateError::InvalidData(
+            "unknown service-session kind",
+        )),
     }
 }
 
 fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError> {
-    if table.objects.len() > MAX_KERNEL_OBJECTS || table.retired_objects.len() > MAX_KERNEL_OBJECTS {
+    if table.objects.len() > MAX_KERNEL_OBJECTS || table.retired_objects.len() > MAX_KERNEL_OBJECTS
+    {
         return Err(KernelStateError::TooManyEntries {
             kind: "kernel objects",
             count: u32::try_from(table.objects.len() + table.retired_objects.len())
@@ -574,7 +604,9 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
         || table.wait_all_refs.len() > MAX_KERNEL_WAITERS
         || table.handoffs.len() > MAX_KERNEL_WAITERS
     {
-        return Err(KernelStateError::InvalidData("kernel table entry limit exceeded"));
+        return Err(KernelStateError::InvalidData(
+            "kernel table entry limit exceeded",
+        ));
     }
 
     let mut all_keys = BTreeSet::new();
@@ -584,7 +616,9 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
             || *key == CURRENT_PROCESS_HANDLE
             || !all_keys.insert(*key)
         {
-            return Err(KernelStateError::InvalidData("kernel object keys overlap or are reserved"));
+            return Err(KernelStateError::InvalidData(
+                "kernel object keys overlap or are reserved",
+            ));
         }
     }
 
@@ -595,7 +629,9 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
             || all_keys.contains(handle)
             || !all_keys.contains(object_key)
         {
-            return Err(KernelStateError::InvalidData("duplicate or dangling handle alias"));
+            return Err(KernelStateError::InvalidData(
+                "duplicate or dangling handle alias",
+            ));
         }
     }
 
@@ -603,7 +639,9 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
     if table.high_water_handle_count < open_handle_count
         || table.high_water_handle_count > MAX_KERNEL_HANDLES
     {
-        return Err(KernelStateError::InvalidData("invalid handle high-water mark"));
+        return Err(KernelStateError::InvalidData(
+            "invalid handle high-water mark",
+        ));
     }
     let largest_handle = all_keys
         .iter()
@@ -616,40 +654,50 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
         || table.next_handle == CURRENT_THREAD_HANDLE
         || table.next_handle == CURRENT_PROCESS_HANDLE
     {
-        return Err(KernelStateError::InvalidData("next handle would recycle an existing handle"));
+        return Err(KernelStateError::InvalidData(
+            "next handle would recycle an existing handle",
+        ));
     }
 
     for handle in table.service_registry.values() {
-        if !matches!(
-            object_by_key(table, *handle),
-            Some(KernelObject::Port(_))
-        ) {
-            return Err(KernelStateError::InvalidData("service registry points to a non-port"));
+        if !matches!(object_by_key(table, *handle), Some(KernelObject::Port(_))) {
+            return Err(KernelStateError::InvalidData(
+                "service registry points to a non-port",
+            ));
         }
     }
 
     for ((thread, object_key), _) in &table.waiter_handles {
         validate_thread_id(*thread)?;
         if object_by_key(table, *object_key).is_none() {
-            return Err(KernelStateError::InvalidData("waiter references a missing object"));
+            return Err(KernelStateError::InvalidData(
+                "waiter references a missing object",
+            ));
         }
     }
 
     for (thread, handles) in &table.wait_all_refs {
         validate_thread_id(*thread)?;
         if handles.len() > MAX_WAIT_ALL_HANDLES {
-            return Err(KernelStateError::InvalidData("wait-all handle list is too large"));
+            return Err(KernelStateError::InvalidData(
+                "wait-all handle list is too large",
+            ));
         }
         for (_, object_key) in handles {
             if object_by_key(table, *object_key).is_none() {
-                return Err(KernelStateError::InvalidData("wait-all references a missing object"));
+                return Err(KernelStateError::InvalidData(
+                    "wait-all references a missing object",
+                ));
             }
         }
     }
 
     for (thread, handle) in &table.handoffs {
         validate_thread_id(*thread)?;
-        if *handle < FIRST_HANDLE || *handle == CURRENT_THREAD_HANDLE || *handle == CURRENT_PROCESS_HANDLE {
+        if *handle < FIRST_HANDLE
+            || *handle == CURRENT_THREAD_HANDLE
+            || *handle == CURRENT_PROCESS_HANDLE
+        {
             return Err(KernelStateError::InvalidData("invalid handoff handle"));
         }
     }
@@ -695,18 +743,29 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
                 }
             }
             KernelObject::SessionEndpoint(endpoint) => {
-                if !matches!(object_by_key(table, endpoint.port_key), Some(KernelObject::Port(_))) {
-                    return Err(KernelStateError::InvalidData("session endpoint refers to a missing port"));
+                if !matches!(
+                    object_by_key(table, endpoint.port_key),
+                    Some(KernelObject::Port(_))
+                ) {
+                    return Err(KernelStateError::InvalidData(
+                        "session endpoint refers to a missing port",
+                    ));
                 }
-                if let Some(KernelObject::SessionEndpoint(peer)) = object_by_key(table, endpoint.peer_key) {
+                if let Some(KernelObject::SessionEndpoint(peer)) =
+                    object_by_key(table, endpoint.peer_key)
+                {
                     if peer.peer_key != *object_key
                         || peer.port_key != endpoint.port_key
                         || peer.role == endpoint.role
                     {
-                        return Err(KernelStateError::InvalidData("session endpoint peer linkage is invalid"));
+                        return Err(KernelStateError::InvalidData(
+                            "session endpoint peer linkage is invalid",
+                        ));
                     }
                 } else {
-                    return Err(KernelStateError::InvalidData("session endpoint peer is missing"));
+                    return Err(KernelStateError::InvalidData(
+                        "session endpoint peer is missing",
+                    ));
                 }
             }
             KernelObject::ResourceLimit
@@ -737,7 +796,9 @@ fn validate_port_links(table: &Arm11KernelObjectTable) -> Result<(), KernelState
                     })) if endpoint_port == port_key
                 )
             {
-                return Err(KernelStateError::InvalidData("pending endpoint is not queued on its port"));
+                return Err(KernelStateError::InvalidData(
+                    "pending endpoint is not queued on its port",
+                ));
             }
         }
         let endpoint_count = table
@@ -753,25 +814,34 @@ fn validate_port_links(table: &Arm11KernelObjectTable) -> Result<(), KernelState
             })
             .count();
         if endpoint_count / 2 != usize::from(port.active_sessions) {
-            return Err(KernelStateError::InvalidData("port active-session count does not match endpoints"));
+            return Err(KernelStateError::InvalidData(
+                "port active-session count does not match endpoints",
+            ));
         }
     }
     Ok(())
 }
 
 fn object_by_key(table: &Arm11KernelObjectTable, key: u32) -> Option<&KernelObject> {
-    table.objects.get(&key).or_else(|| table.retired_objects.get(&key))
+    table
+        .objects
+        .get(&key)
+        .or_else(|| table.retired_objects.get(&key))
 }
 
 fn validate_queue(queue: &VecDeque<ThreadId>) -> Result<(), KernelStateError> {
     if queue.len() > MAX_KERNEL_WAITERS {
-        return Err(KernelStateError::InvalidData("kernel wait queue is too large"));
+        return Err(KernelStateError::InvalidData(
+            "kernel wait queue is too large",
+        ));
     }
     let mut seen = BTreeSet::new();
     for thread in queue {
         validate_thread_id(*thread)?;
         if !seen.insert(*thread) {
-            return Err(KernelStateError::InvalidData("kernel wait queue contains a duplicate thread"));
+            return Err(KernelStateError::InvalidData(
+                "kernel wait queue contains a duplicate thread",
+            ));
         }
     }
     Ok(())
@@ -837,7 +907,9 @@ fn write_thread_queue(
 fn read_thread_queue(reader: &mut StateReader<'_>) -> Result<VecDeque<ThreadId>, KernelStateError> {
     let count = read_count(reader, MAX_KERNEL_WAITERS, "wait queue")?;
     let mut queue = VecDeque::new();
-    queue.try_reserve(count).map_err(|_| KernelStateError::InvalidData("could not allocate wait queue"))?;
+    queue
+        .try_reserve(count)
+        .map_err(|_| KernelStateError::InvalidData("could not allocate wait queue"))?;
     for _ in 0..count {
         queue.push_back(read_thread_id(reader)?);
     }
@@ -859,7 +931,9 @@ fn write_u32_queue(
 fn read_u32_queue(reader: &mut StateReader<'_>) -> Result<VecDeque<u32>, KernelStateError> {
     let count = read_count(reader, MAX_KERNEL_WAITERS, "handle queue")?;
     let mut queue = VecDeque::new();
-    queue.try_reserve(count).map_err(|_| KernelStateError::InvalidData("could not allocate handle queue"))?;
+    queue
+        .try_reserve(count)
+        .map_err(|_| KernelStateError::InvalidData("could not allocate handle queue"))?;
     for _ in 0..count {
         queue.push_back(reader.read_u32()?);
     }
@@ -956,10 +1030,7 @@ fn read_optional_u32(reader: &mut StateReader<'_>) -> Result<Option<u32>, Kernel
     }
 }
 
-fn write_optional_u8(
-    writer: &mut StateWriter,
-    value: Option<u8>,
-) -> Result<(), KernelStateError> {
+fn write_optional_u8(writer: &mut StateWriter, value: Option<u8>) -> Result<(), KernelStateError> {
     writer.write_bool(value.is_some())?;
     if let Some(value) = value {
         writer.write_u8(value)?;
@@ -974,7 +1045,6 @@ fn read_optional_u8(reader: &mut StateReader<'_>) -> Result<Option<u8>, KernelSt
         Ok(None)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1013,15 +1083,22 @@ mod tests {
         let catalog_section = catalog.encode_section().unwrap();
         let kernel_section = table.encode_save_state_section(&catalog).unwrap();
 
-        let restored_catalog = SharedMemoryBackingCatalog::decode_section(&catalog_section).unwrap();
+        let restored_catalog =
+            SharedMemoryBackingCatalog::decode_section(&catalog_section).unwrap();
         let mut restored = Arm11KernelObjectTable::default();
         restored
             .restore_save_state_section(&kernel_section, &restored_catalog)
             .unwrap();
 
         assert_eq!(restored.handle_count(), table.handle_count());
-        assert_eq!(restored.handle_high_water_mark(), table.handle_high_water_mark());
-        assert_eq!(restored.event_reset_type(event_alias), Some(EventResetType::OneShot));
+        assert_eq!(
+            restored.handle_high_water_mark(),
+            table.handle_high_water_mark()
+        );
+        assert_eq!(
+            restored.event_reset_type(event_alias),
+            Some(EventResetType::OneShot)
+        );
         assert_eq!(restored.mutex_owner(mutex_alias), Some(MAIN_THREAD_ID));
         assert_eq!(restored.handle_reference_count(event_alias), Ok(3));
 
@@ -1029,13 +1106,17 @@ mod tests {
         let mut bytes = [0u8; 4];
         assert!(restored_backing.read_bytes(0x1010, &mut bytes));
         assert_eq!(bytes, [0xA5, 0x5A, 0xC3, 0x3C]);
-        assert!(restored_backing.shares_backing_with(
-            &restored_catalog.view(
-                restored_catalog.slot_for(&restored_backing).unwrap(),
-                restored_backing.root_base_offset(),
-                restored_backing.len().unwrap(),
-            ).unwrap()
-        ));
+        assert!(
+            restored_backing.shares_backing_with(
+                &restored_catalog
+                    .view(
+                        restored_catalog.slot_for(&restored_backing).unwrap(),
+                        restored_backing.root_base_offset(),
+                        restored_backing.len().unwrap(),
+                    )
+                    .unwrap()
+            )
+        );
     }
 
     #[test]
@@ -1054,7 +1135,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(table.restore_save_state_section(&malformed, &catalog).is_err());
+        assert!(
+            table
+                .restore_save_state_section(&malformed, &catalog)
+                .is_err()
+        );
         let after = table.encode_save_state_section(&catalog).unwrap();
         assert_eq!(before, after);
         assert_eq!(table.event_reset_type(event), Some(EventResetType::Sticky));
@@ -1079,7 +1164,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(table.restore_save_state_section(&corrupt, &catalog).is_err());
+        assert!(
+            table
+                .restore_save_state_section(&corrupt, &catalog)
+                .is_err()
+        );
         assert_eq!(table.event_reset_type(event), Some(EventResetType::Sticky));
     }
 }
