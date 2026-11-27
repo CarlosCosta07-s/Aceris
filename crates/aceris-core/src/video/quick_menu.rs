@@ -2,9 +2,9 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 9;
+pub const ACTION_COUNT: usize = 10;
 /// Desktop exposes the six actions that do not depend on Android touch controls.
-pub const DESKTOP_ACTION_COUNT: usize = 6;
+pub const DESKTOP_ACTION_COUNT: usize = 7;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -500,7 +500,7 @@ pub fn render_desktop_overlay_with_profile(
         selected,
         profile_label,
         DESKTOP_ACTION_COUNT,
-        "RESTAURAR CONTROLES",
+        "CAPTURAR TELA",
         "PERFIL GLOBAL",
     )
 }
@@ -584,6 +584,7 @@ fn render_overlay_with_action_count(
         "RESTAURAR CONTROLES",
         "ESCOPO DOS CONTROLES",
         "EDITAR CONTROLES",
+        "CAPTURAR TELA",
     ];
     let row_text_scale = menu_row_text_scale(
         &geometry,
