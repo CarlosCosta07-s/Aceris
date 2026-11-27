@@ -64,7 +64,7 @@ fn print_usage() {
     println!("                     Folder of 400x480 .rgba frames for an animated home background");
     println!("        --background-fps <N>");
     println!("                     Source rate for background frames, 1-60 (default 24)");
-    println!("                     Folder with .3ds/.cci/.3dsx executables (default:");
+    println!("                     Folder with .3ds/.cci/.cia/.3dsx images (default:");
     println!("                     $ACERIS_GAMES or ~/Aceris/Games)");
     println!("        --skip-intro Do not play the start-up animation when the emulator opens");
     println!("        --dump-intro <DIR>");
