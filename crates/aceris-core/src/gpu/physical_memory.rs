@@ -83,30 +83,52 @@ pub enum GpuPhysicalMemoryStateError {
 impl fmt::Display for GpuPhysicalMemoryStateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AllocationFailed => formatter.write_str("could not allocate physical-memory snapshot"),
+            Self::AllocationFailed => {
+                formatter.write_str("could not allocate physical-memory snapshot")
+            },
             Self::Truncated => formatter.write_str("physical-memory snapshot is truncated"),
-            Self::InvalidMagic => formatter.write_str("physical-memory snapshot signature is invalid"),
+            Self::InvalidMagic => {
+                formatter.write_str("physical-memory snapshot signature is invalid")
+            },
             Self::UnsupportedVersion(version) => {
-                write!(formatter, "physical-memory snapshot version {version} is unsupported")
+                write!(
+                    formatter,
+                    "physical-memory snapshot version {version} is unsupported"
+                )
             }
             Self::UnsupportedFlags(flags) => {
-                write!(formatter, "physical-memory snapshot flags {flags:#06X} are invalid")
+                write!(
+                    formatter,
+                    "physical-memory snapshot flags {flags:#06X} are invalid"
+                )
             }
             Self::TooManyPages(count) => {
-                write!(formatter, "physical-memory snapshot contains too many pages: {count}")
+                write!(
+                    formatter,
+                    "physical-memory snapshot contains too many pages: {count}"
+                )
             }
             Self::TooManyAllocations(count) => {
-                write!(formatter, "physical-memory snapshot contains too many linear allocations: {count}")
+                write!(
+                    formatter,
+                    "physical-memory snapshot contains too many linear allocations: {count}"
+                )
             }
             Self::TooManyExclusiveMonitors(count) => write!(
                 formatter,
                 "physical-memory snapshot contains too many exclusive monitors: {count}"
             ),
             Self::InvalidPhysicalPage(page) => {
-                write!(formatter, "physical-memory page {page:#010X} is outside VRAM/FCRAM")
+                write!(
+                    formatter,
+                    "physical-memory page {page:#010X} is outside VRAM/FCRAM"
+                )
             }
             Self::DuplicatePhysicalPage(page) => {
-                write!(formatter, "physical-memory page {page:#010X} is duplicated or unordered")
+                write!(
+                    formatter,
+                    "physical-memory page {page:#010X} is duplicated or unordered"
+                )
             }
             Self::InvalidLinearAllocation { address, size } => write!(
                 formatter,
@@ -117,16 +139,29 @@ impl fmt::Display for GpuPhysicalMemoryStateError {
                 "linear FCRAM allocation at {address:#010X} overlaps a previous allocation"
             ),
             Self::DuplicateLinearAllocation(address) => {
-                write!(formatter, "linear FCRAM allocation at {address:#010X} is duplicated")
+                write!(
+                    formatter,
+                    "linear FCRAM allocation at {address:#010X} is duplicated"
+                )
             }
             Self::InvalidExclusiveGranule(address) => {
-                write!(formatter, "exclusive-monitor granule {address:#010X} is invalid")
+                write!(
+                    formatter,
+                    "exclusive-monitor granule {address:#010X} is invalid"
+                )
             }
             Self::DuplicateExclusiveGranule(address) => {
-                write!(formatter, "exclusive-monitor granule {address:#010X} is duplicated or unordered")
+                write!(
+                    formatter,
+                    "exclusive-monitor granule {address:#010X} is duplicated or unordered"
+                )
             }
-            Self::InvalidSection => formatter.write_str("save-state section is not GPU physical memory v1"),
-            Self::TrailingData => formatter.write_str("physical-memory snapshot contains trailing bytes"),
+            Self::InvalidSection => {
+                formatter.write_str("save-state section is not GPU physical memory v1")
+            }
+            Self::TrailingData => {
+                formatter.write_str("physical-memory snapshot contains trailing bytes")
+            }
         }
     }
 }
@@ -139,9 +174,8 @@ const SAVE_STATE_HEADER_SIZE: usize = 24;
 const MAX_PHYSICAL_PAGE_COUNT: usize =
     (VRAM_SIZE as usize + FCRAM_SIZE as usize) / PHYSICAL_PAGE_SIZE;
 const MAX_LINEAR_ALLOCATION_COUNT: usize = FCRAM_SIZE as usize / PHYSICAL_PAGE_SIZE;
-const MAX_EXCLUSIVE_MONITOR_COUNT: usize =
-    (VRAM_SIZE as usize + FCRAM_SIZE as usize)
-        / crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize;
+const MAX_EXCLUSIVE_MONITOR_COUNT: usize = (VRAM_SIZE as usize + FCRAM_SIZE as usize)
+    / crate::memory::EXCLUSIVE_RESERVATION_GRANULE as usize;
 
 /// Sparse physical backing visible to the GPU and display controllers.
 ///
@@ -594,8 +628,7 @@ fn physical_page_is_valid(page_number: u32) -> bool {
     let end = u64::from(address) + PHYSICAL_PAGE_SIZE as u64;
     let vram_end = u64::from(VRAM_BASE) + u64::from(VRAM_SIZE);
     let fcram_end = u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE);
-    (address >= VRAM_BASE && end <= vram_end)
-        || (address >= FCRAM_BASE && end <= fcram_end)
+    (address >= VRAM_BASE && end <= vram_end) || (address >= FCRAM_BASE && end <= fcram_end)
 }
 
 fn linear_allocation_is_valid(address: u32, size: u32) -> bool {
@@ -603,8 +636,7 @@ fn linear_allocation_is_valid(address: u32, size: u32) -> bool {
         && address.is_multiple_of(PHYSICAL_PAGE_SIZE as u32)
         && size.is_multiple_of(PHYSICAL_PAGE_SIZE as u32)
         && address >= FCRAM_BASE
-        && u64::from(address) + u64::from(size)
-            <= u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE)
+        && u64::from(address) + u64::from(size) <= u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE)
 }
 
 fn exclusive_granule_is_valid(address: u32) -> bool {
@@ -613,8 +645,7 @@ fn exclusive_granule_is_valid(address: u32) -> bool {
             && u64::from(address) + u64::from(crate::memory::EXCLUSIVE_RESERVATION_GRANULE)
                 <= u64::from(VRAM_BASE) + u64::from(VRAM_SIZE))
             || (address >= FCRAM_BASE
-                && u64::from(address)
-                    + u64::from(crate::memory::EXCLUSIVE_RESERVATION_GRANULE)
+                && u64::from(address) + u64::from(crate::memory::EXCLUSIVE_RESERVATION_GRANULE)
                     <= u64::from(FCRAM_BASE) + u64::from(FCRAM_SIZE)))
 }
 
@@ -623,7 +654,7 @@ fn validate_snapshot_contents(
 ) -> Result<(), GpuPhysicalMemoryStateError> {
     if inner.pages.len() > MAX_PHYSICAL_PAGE_COUNT {
         return Err(GpuPhysicalMemoryStateError::TooManyPages(
-            inner.pages.len() as u32,
+            inner.pages.len() as u32
         ));
     }
     if inner.linear_allocations.len() > MAX_LINEAR_ALLOCATION_COUNT {
@@ -788,15 +819,10 @@ fn decode_snapshot(
         let size = read_u32(encoded, cursor + 4)?;
         cursor += 8;
         if !linear_allocation_is_valid(address, size) {
-            return Err(GpuPhysicalMemoryStateError::InvalidLinearAllocation {
-                address,
-                size,
-            });
+            return Err(GpuPhysicalMemoryStateError::InvalidLinearAllocation { address, size });
         }
         if previous_end.is_some_and(|end| address < end) {
-            return Err(GpuPhysicalMemoryStateError::OverlappingLinearAllocation {
-                address,
-            });
+            return Err(GpuPhysicalMemoryStateError::OverlappingLinearAllocation { address });
         }
         previous_end = address.checked_add(size);
         if linear_allocations.insert(address, size).is_some() {
@@ -844,8 +870,12 @@ mod tests {
         let mut original = GpuPhysicalMemory::new();
         let fcram_address = FCRAM_BASE + 0x8000;
         let vram_address = VRAM_BASE + 0x3000;
-        original.allocate_linear_fcram_at(fcram_address, 0x3000).unwrap();
-        original.write(fcram_address + 0x20, &[1, 2, 3, 4, 5]).unwrap();
+        original
+            .allocate_linear_fcram_at(fcram_address, 0x3000)
+            .unwrap();
+        original
+            .write(fcram_address + 0x20, &[1, 2, 3, 4, 5])
+            .unwrap();
         original.write(vram_address + 0x10, &[9, 8, 7]).unwrap();
         assert_eq!(original.exclusive_version(fcram_address + 0x20), 0);
         original.write(fcram_address + 0x21, &[0xAA]).unwrap();
@@ -859,7 +889,9 @@ mod tests {
         let mut first = [0u8; 5];
         let mut second = [0u8; 3];
         restored.read(fcram_address + 0x20, &mut first).unwrap();
-        restored_alias.read(vram_address + 0x10, &mut second).unwrap();
+        restored_alias
+            .read(vram_address + 0x10, &mut second)
+            .unwrap();
         assert_eq!(first, [1, 0xAA, 3, 4, 5]);
         assert_eq!(second, [9, 8, 7]);
         assert!(restored.has_linear_fcram_allocation(fcram_address, 0x3000));
@@ -887,9 +919,11 @@ mod tests {
         let before = memory.read_u32(address).unwrap();
         let encoded = memory.encode_save_state().unwrap();
 
-        assert!(memory
-            .restore_save_state(&encoded[..encoded.len() - 1])
-            .is_err());
+        assert!(
+            memory
+                .restore_save_state(&encoded[..encoded.len() - 1])
+                .is_err()
+        );
         assert_eq!(memory.read_u32(address).unwrap(), before);
         assert_eq!(alias.read_u32(address).unwrap(), before);
 
