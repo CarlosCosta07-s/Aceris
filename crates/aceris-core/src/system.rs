@@ -187,8 +187,9 @@ pub struct System {
     dsp: DspService,
     csnd: CsndService,
     csnd_audio: CsndAudio,
-    /// Precise D-cache/write-buffer model instead of fast direct memory.
-    precise_memory: bool,
+    /// Fast direct memory instead of the precise D-cache/write-buffer model.
+    /// Off by default (see `docs/PERFORMANCE_LOW_END_PLAN.md`).
+    fast_memory: bool,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -3146,22 +3147,27 @@ impl System {
         Ok(())
     }
 
-    /// Selects the precise ARM11 cache model (`true`) or fast direct memory
-    /// (`false`, the default). Fast memory is how Citra/Azahar and PPSSPP
-    /// treat guest RAM; the precise model exists for cache-sensitive
-    /// diagnostics and tests.
-    pub fn set_precise_memory(&mut self, precise: bool) -> Result<()> {
-        self.precise_memory = precise;
+    /// Selects fast direct memory (`true`) or the precise ARM11 D-cache and
+    /// write-buffer model (`false`, the default). Fast memory is how
+    /// Citra/Azahar and PPSSPP treat guest RAM; it is an opt-in performance
+    /// option because cache-incoherent behaviour is no longer modelled.
+    pub fn set_fast_memory(&mut self, enabled: bool) -> Result<()> {
+        self.fast_memory = enabled;
         self.apply_memory_mode()
     }
 
-    /// Whether the precise cache model is selected.
-    pub fn precise_memory(&self) -> bool {
-        self.precise_memory
+    /// Whether fast direct memory is selected.
+    pub fn fast_memory(&self) -> bool {
+        self.fast_memory
+    }
+
+    /// Selects the precise cache model; shorthand for `set_fast_memory(!precise)`.
+    pub fn set_precise_memory(&mut self, precise: bool) -> Result<()> {
+        self.set_fast_memory(!precise)
     }
 
     fn apply_memory_mode(&mut self) -> Result<()> {
-        let fast = !self.precise_memory;
+        let fast = self.fast_memory;
         if let Some(session) = self.ncsd_session.as_mut() {
             session.set_fast_memory(fast)?;
         }
@@ -12483,6 +12489,9 @@ mod tests {
                 [0; AES_BLOCK_SIZE],
             )
             .unwrap();
+        if std::env::var_os("ACERIS_PROBE_FAST_MEMORY").is_some() {
+            system.set_fast_memory(true).unwrap();
+        }
         let frames: u32 = std::env::var("ACERIS_PROBE_FRAMES")
             .ok()
             .and_then(|v| v.parse().ok())

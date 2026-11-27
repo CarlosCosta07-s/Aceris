@@ -2775,6 +2775,6 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 
 ## Desempenho — memória rápida e despacho rápido (27/11/2026, Claude)
 
-- A memória rápida é o padrão; o modelo preciso de D-cache fica disponível via `System::set_precise_memory(true)` e `Arm11ProcessSession::set_fast_memory(false)`. Testes de coerência de cache precisam ativar o modo preciso.
+- O modelo preciso de D-cache continua sendo o padrão. A memória rápida é opcional, via `System::set_fast_memory(true)`, destinada ao preset "Desempenho" do `PERFORMANCE_LOW_END_PLAN.md`. O despacho rápido preserva a semântica e fica ligado por padrão.
 - `Arm11Core::run_fast` e `Arm11ProcessSession::run_fast_chunk` implementam o laço rápido; `set_fast_dispatch(false)` força o passo preciso para diagnóstico. A variável `ACERIS_WATCH_PC` também força o passo preciso.
-- Sonda: de ~20 para ~41 M instruções/s. Detalhes e próximos passos em `docs/PERFORMANCE_TESTING.md`.
+- Sonda: de ~20 para ~36 M instruções/s no padrão e ~41 M com memória rápida. Detalhes e próximos passos em `docs/PERFORMANCE_TESTING.md`.
