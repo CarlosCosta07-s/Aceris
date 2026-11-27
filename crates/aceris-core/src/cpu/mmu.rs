@@ -3663,6 +3663,9 @@ mod tests {
             .unwrap();
         assert_eq!(executed, program.len() as u64);
         assert_eq!(exit, FastRunExit::Budget);
+        let block_stats = fast_cpu.block_cache_stats();
+        assert_eq!(block_stats.compiled_blocks, 1);
+        assert_eq!(block_stats.compiled_instructions, program.len() as u64);
 
         for _ in 0..program.len() {
             assert_eq!(precise_cpu.step(&mut precise_memory).unwrap(), StepEvent::Executed);
