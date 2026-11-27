@@ -46,9 +46,11 @@ A API `Arm11Core::block_cache_stats()` expõe consultas, hits, misses, blocos/in
 
 **Primeira camada implementada:** os blocos são baixados para um IR próprio (IrInstruction/IrOperation) antes da execução. O IR representa diretamente todas as famílias que o decode cache reconhece atualmente: ALU imediato e registrador com shift imediato, transferências LDR/STR byte/word, halfword imediato e por registrador, LDM/STM, MUL/MLA, multiplicações longas, halfword/DSP multiplies e branches com displacement/link pré-decodificados. A palavra A32 original fica apenas como metadado para diagnósticos de falhas; a operação já tipada não a redescodifica na execução. Somente encodings genéricos permanecem no nó explícito de compatibilidade.
 
-A execução pelo IR está integrada tanto ao caminho normal quanto ao caminho com MMU. Os testes cobrem lowering de cada família e comparação diferencial entre o interpretador IR e o interpretador preciso, incluindo ALU, shift, condições, BL, acessos à memória e multiplicações. O teste de bloco também compara registradores, CPSR, PC e conteúdo da memória. **Validação pendente:** a CI está em execução; ainda não há resultado verde confirmado em todas as plataformas. A etapa não tem passes de otimização nem ganho de desempenho medido.
+A execução pelo IR está integrada tanto ao caminho normal quanto ao caminho com MMU. As condições ARM são convertidas para enum durante o lowering, em vez de serem decodificadas a cada execução. Como primeira simplificação conservadora, MOV/MVN imediatos sem atualização de flags são reduzidos a uma operação direta de carga de constante; formas com S-bit continuam no caminho ALU para preservar CPSR.
 
-**Próxima etapa:** executar integralmente os testes diferenciais em CI e corrigir divergências antes de adicionar passes conservadores, como propagação local de constantes e simplificação de operações. Depois medir o IR no PC e Android; só então iniciar o JIT.
+Os testes cobrem lowering de cada família e comparação diferencial entre o interpretador IR e o interpretador preciso, incluindo ALU, shift, condições, MOV/MVN, BL, acessos à memória e multiplicações. O teste de bloco também compara registradores, CPSR, PC e conteúdo da memória. **Validação pendente:** a CI desta ampliação está em execução; ainda não há resultado verde confirmado em todas as plataformas. Não há benchmark que comprove ganho de desempenho.
+
+**Próxima etapa:** concluir os testes diferenciais em CI e corrigir divergências antes de ampliar as otimizações locais (propagação de constantes e simplificação de operações) para instruções aritméticas. Depois medir o IR no PC e Android; só então iniciar o JIT.
 
 O IR deverá representar explicitamente:
 
