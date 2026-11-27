@@ -654,7 +654,7 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
         }
     }
 
-    for object in table.objects.values().chain(table.retired_objects.values()) {
+    for (object_key, object) in table.objects.iter().chain(table.retired_objects.iter()) {
         match object {
             KernelObject::Thread(thread) => {
                 validate_thread_id(thread.id)?;
@@ -687,25 +687,11 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
                 }
             }
             KernelObject::Port(port) => {
-                if port.max_sessions == 0 || port.active_sessions > port.max_sessions {
+                if port.max_sessions == 0
+                    || port.active_sessions > port.max_sessions
+                    || port.pending_sessions.len() > MAX_KERNEL_WAITERS
+                {
                     return Err(KernelStateError::InvalidData("invalid port state"));
-                }
-                let mut pending = BTreeSet::new();
-                for pending_key in &port.pending_sessions {
-                    if !pending.insert(*pending_key)
-                        || !matches!(
-                            object_by_key(table, *pending_key),
-                            Some(KernelObject::SessionEndpoint(KernelSessionEndpoint {
-                                port_key,
-                                role: SessionRole::Server,
-                                remote_closed: false,
-                                ..
-                            })) if *port_key == object_key_for_port(table, port).unwrap_or(u32::MAX)
-                        )
-                    {
-                        // The exact owner key is checked in validate_port_links below.
-                        return Err(KernelStateError::InvalidData("invalid pending session endpoint"));
-                    }
                 }
             }
             KernelObject::SessionEndpoint(endpoint) => {
@@ -713,7 +699,7 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
                     return Err(KernelStateError::InvalidData("session endpoint refers to a missing port"));
                 }
                 if let Some(KernelObject::SessionEndpoint(peer)) = object_by_key(table, endpoint.peer_key) {
-                    if peer.peer_key != *key_for_endpoint(table, endpoint).unwrap_or(&u32::MAX)
+                    if peer.peer_key != *object_key
                         || peer.port_key != endpoint.port_key
                         || peer.role == endpoint.role
                     {
