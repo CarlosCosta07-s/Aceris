@@ -7,8 +7,8 @@
 
 use std::fmt;
 
-use crate::cpu::state::{CpuStateError, StateReader, StateWriter};
 use crate::cpu::Arm11Core;
+use crate::cpu::state::{CpuStateError, StateReader, StateWriter};
 
 const THREAD_STATE_MAGIC: &[u8; 8] = b"ACTHREAD";
 const MAX_SAVE_STATE_THREADS: usize = 512;
@@ -249,10 +249,7 @@ impl Arm11ThreadScheduler {
     ///
     /// Every ARM11 core is decoded into a temporary scheduler. This scheduler is
     /// replaced only after all thread contexts and cross-thread invariants pass.
-    pub fn restore_save_state(
-        &mut self,
-        encoded: &[u8],
-    ) -> std::result::Result<(), CpuStateError> {
+    pub fn restore_save_state(&mut self, encoded: &[u8]) -> std::result::Result<(), CpuStateError> {
         let mut reader = StateReader::new(encoded);
         if reader.read_bytes(8)? != THREAD_STATE_MAGIC {
             return Err(CpuStateError::InvalidMagic);
@@ -880,7 +877,6 @@ mod tests {
             .unwrap()
     }
 
-
     #[test]
     fn scheduler_save_state_round_trips_multiple_thread_contexts_and_wait_states() {
         let mut original = scheduler_with_priority(0x10);
@@ -924,9 +920,11 @@ mod tests {
         scheduler.core_mut(extra).unwrap().regs[7] = 0xDEAD_BEEF;
         let before = scheduler.encode_save_state().unwrap();
 
-        assert!(scheduler
-            .restore_save_state(&before[..before.len() - 1])
-            .is_err());
+        assert!(
+            scheduler
+                .restore_save_state(&before[..before.len() - 1])
+                .is_err()
+        );
         assert_eq!(scheduler.encode_save_state().unwrap(), before);
 
         let mut bad_count = before.clone();
