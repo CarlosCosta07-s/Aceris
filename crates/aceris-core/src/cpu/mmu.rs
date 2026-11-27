@@ -3505,6 +3505,27 @@ mod tests {
         assert!(fast_cpu.cp15.smp_mode_enabled());
     }
 
+    #[test]
+    fn hot_tlb_entry_is_invalidated_after_tlb_maintenance() {
+        let (cpu, mut memory) = machine();
+        set_l1(&mut memory, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        let mapped = entry(&cpu, &mut memory, 0x100);
+
+        let mut tlb = TranslationLookasideBuffer::default();
+        tlb.insert(mapped, false, 0);
+        let mut bus = MmuBus::new(&mut memory, params(&cpu), &mut tlb);
+
+        assert_eq!(bus.lookup_entry(0x100), Some(mapped));
+        assert_eq!(bus.last_entry, Some(mapped));
+        assert_eq!(bus.tlb_generation, bus.tlb.generation);
+
+        bus.tlb.maintain(TlbMaintenance::All);
+
+        assert!(bus.lookup_entry(0x100).is_none());
+        assert!(bus.last_entry.is_none());
+        assert_eq!(bus.tlb_generation, bus.tlb.generation);
+    }
+
     /// Compares precise single-step execution with the translated batch loop.
     /// Run with:
     /// cargo test --release -p aceris-core --lib translated_fast_dispatch_throughput -- --ignored --nocapture
