@@ -66,6 +66,21 @@ impl ScreenLayoutMode {
     }
 }
 
+/// Returns the natural logical canvas size for a concrete presentation mode.
+///
+/// Desktop uses this to resize its client area without fitting a portrait layout
+/// into a short landscape window. Android normally fits the mode to its surface.
+pub const fn screen_layout_canvas_size(mode: ScreenLayoutMode) -> (u32, u32) {
+    match mode {
+        ScreenLayoutMode::Auto | ScreenLayoutMode::SideBySide => (736, 240),
+        ScreenLayoutMode::Vertical => (400, 496),
+        ScreenLayoutMode::TopEnlarged => (480, 544),
+        ScreenLayoutMode::BottomEnlarged => (400, 556),
+        ScreenLayoutMode::TopOnly => (400, 240),
+        ScreenLayoutMode::BottomOnly => (320, 240),
+    }
+}
+
 /// Computes the legacy orientation-selected layout.
 pub fn compute_screen_layout(
     view_width: u32,
@@ -724,6 +739,17 @@ mod tests {
             crate::input::touch_from_surface_point(&swapped, swapped.bottom.x, swapped.bottom.y),
             Some((0, 0))
         );
+    }
+
+    #[test]
+    fn natural_canvas_sizes_match_each_layout_mode() {
+        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::Auto), (736, 240));
+        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::SideBySide), (736, 240));
+        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::Vertical), (400, 496));
+        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::TopEnlarged), (480, 544));
+        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::BottomEnlarged), (400, 556));
+        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::TopOnly), (400, 240));
+        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::BottomOnly), (320, 240));
     }
 
     #[test]
