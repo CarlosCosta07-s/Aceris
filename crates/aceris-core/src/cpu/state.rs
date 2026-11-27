@@ -92,7 +92,7 @@ impl StateWriter {
         Ok(Self { bytes })
     }
 
-    pub(super) fn write_bytes(&mut self, value: &[u8]) -> Result<(), CpuStateError> {
+    pub(crate) fn write_bytes(&mut self, value: &[u8]) -> Result<(), CpuStateError> {
         self.bytes
             .try_reserve(value.len())
             .map_err(|_| CpuStateError::AllocationFailed)?;
@@ -100,27 +100,27 @@ impl StateWriter {
         Ok(())
     }
 
-    pub(super) fn write_u8(&mut self, value: u8) -> Result<(), CpuStateError> {
+    pub(crate) fn write_u8(&mut self, value: u8) -> Result<(), CpuStateError> {
         self.write_bytes(&[value])
     }
 
-    pub(super) fn write_bool(&mut self, value: bool) -> Result<(), CpuStateError> {
+    pub(crate) fn write_bool(&mut self, value: bool) -> Result<(), CpuStateError> {
         self.write_u8(u8::from(value))
     }
 
-    pub(super) fn write_u16(&mut self, value: u16) -> Result<(), CpuStateError> {
+    pub(crate) fn write_u16(&mut self, value: u16) -> Result<(), CpuStateError> {
         self.write_bytes(&value.to_le_bytes())
     }
 
-    pub(super) fn write_u32(&mut self, value: u32) -> Result<(), CpuStateError> {
+    pub(crate) fn write_u32(&mut self, value: u32) -> Result<(), CpuStateError> {
         self.write_bytes(&value.to_le_bytes())
     }
 
-    pub(super) fn write_u64(&mut self, value: u64) -> Result<(), CpuStateError> {
+    pub(crate) fn write_u64(&mut self, value: u64) -> Result<(), CpuStateError> {
         self.write_bytes(&value.to_le_bytes())
     }
 
-    pub(super) fn into_bytes(self) -> Vec<u8> {
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
 }
@@ -131,11 +131,11 @@ pub(crate) struct StateReader<'a> {
 }
 
 impl<'a> StateReader<'a> {
-    pub(super) fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, cursor: 0 }
     }
 
-    pub(super) fn read_bytes(&mut self, length: usize) -> Result<&'a [u8], CpuStateError> {
+    pub(crate) fn read_bytes(&mut self, length: usize) -> Result<&'a [u8], CpuStateError> {
         let end = self
             .cursor
             .checked_add(length)
@@ -148,11 +148,11 @@ impl<'a> StateReader<'a> {
         Ok(bytes)
     }
 
-    pub(super) fn read_u8(&mut self) -> Result<u8, CpuStateError> {
+    pub(crate) fn read_u8(&mut self) -> Result<u8, CpuStateError> {
         Ok(self.read_bytes(1)?[0])
     }
 
-    pub(super) fn read_bool(&mut self) -> Result<bool, CpuStateError> {
+    pub(crate) fn read_bool(&mut self) -> Result<bool, CpuStateError> {
         match self.read_u8()? {
             0 => Ok(false),
             1 => Ok(true),
@@ -160,24 +160,24 @@ impl<'a> StateReader<'a> {
         }
     }
 
-    pub(super) fn read_u16(&mut self) -> Result<u16, CpuStateError> {
+    pub(crate) fn read_u16(&mut self) -> Result<u16, CpuStateError> {
         let bytes = self.read_bytes(2)?;
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
-    pub(super) fn read_u32(&mut self) -> Result<u32, CpuStateError> {
+    pub(crate) fn read_u32(&mut self) -> Result<u32, CpuStateError> {
         let bytes = self.read_bytes(4)?;
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
-    pub(super) fn read_u64(&mut self) -> Result<u64, CpuStateError> {
+    pub(crate) fn read_u64(&mut self) -> Result<u64, CpuStateError> {
         let bytes = self.read_bytes(8)?;
         Ok(u64::from_le_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
-    pub(super) fn finish(self) -> Result<(), CpuStateError> {
+    pub(crate) fn finish(self) -> Result<(), CpuStateError> {
         if self.cursor == self.bytes.len() {
             Ok(())
         } else {
