@@ -476,6 +476,27 @@ pub fn blend_virtual_pad_overlay_into(
     orientation: u32,
     pressed_mask: u32,
 ) -> bool {
+    blend_virtual_pad_overlay_into_with_opacity(
+        frame,
+        width,
+        height,
+        orientation,
+        pressed_mask,
+        255,
+    )
+}
+
+/// Alpha-blends the virtual gamepad overlay using the requested overall opacity.
+///
+/// Opacity 0 leaves the game frame unchanged; 255 preserves the original overlay strength.
+pub fn blend_virtual_pad_overlay_into_with_opacity(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    orientation: u32,
+    pressed_mask: u32,
+    opacity: u8,
+) -> bool {
     use aceris_common::brand;
 
     if width == 0 || height == 0 || width > 4096 || height > 4096 {
@@ -566,6 +587,10 @@ pub fn blend_virtual_pad_overlay_into(
                     )
                 };
 
+                let alpha = alpha * u32::from(opacity) / 255;
+                if alpha == 0 {
+                    continue;
+                }
                 let at = (y as usize * width as usize + x as usize) * 4;
                 let inverse = 255 - alpha;
                 for channel in 0..3 {
@@ -867,6 +892,56 @@ mod tests {
                     / 255) as u8;
             }
         }
+    }
+
+    #[test]
+    fn virtual_overlay_opacity_scales_the_whole_overlay_including_glyphs() {
+        let (width, height) = (480, 800);
+        let make_frame = || vec![40u8, 80, 120, 255].repeat(width as usize * height as usize);
+        let original = make_frame();
+
+        let mut hidden = original.clone();
+        assert!(blend_virtual_pad_overlay_into_with_opacity(
+            &mut hidden,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            buttons::A,
+            0,
+        ));
+        assert_eq!(hidden, original);
+
+        let mut half = original.clone();
+        assert!(blend_virtual_pad_overlay_into_with_opacity(
+            &mut half,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            buttons::A,
+            128,
+        ));
+
+        let mut full = original.clone();
+        assert!(blend_virtual_pad_overlay_into_with_opacity(
+            &mut full,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            buttons::A,
+            255,
+        ));
+        let difference = |left: &[u8], right: &[u8]| {
+            left.iter()
+                .zip(right)
+                .map(|(a, b)| a.abs_diff(*b) as u64)
+                .sum::<u64>()
+        };
+        assert!(difference(&half, &original) > 0);
+        assert!(difference(&half, &original) < difference(&full, &original));
+        assert!(half
+            .chunks_exact(4)
+            .zip(original.chunks_exact(4))
+            .all(|(actual, expected)| actual[3] == expected[3]));
     }
 
     #[test]
