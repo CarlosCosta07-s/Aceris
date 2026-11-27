@@ -263,10 +263,20 @@ pub struct PicaVertexShaderOutput {
     pub loop_counter: i32,
 }
 
+/// Predecoded metadata shared by every vertex executed by a program snapshot.
+#[derive(Clone, Copy, Debug)]
+struct DecodedShaderInstruction {
+    opcode: PicaShaderOpcode,
+    instruction: Option<PicaVertexShaderInstruction>,
+    descriptor_index: Option<usize>,
+    descriptor: Option<PicaShaderOperandDescriptor>,
+}
+
 /// Snapshot of an uploaded vertex shader program, ready to run per vertex.
 #[derive(Clone, Debug)]
 pub struct PicaVertexShaderProgram {
     code: Vec<Option<u32>>,
+    decoded: Vec<Option<DecodedShaderInstruction>>,
     descriptors: Vec<Option<u32>>,
     uniforms: Vec<[f32; 4]>,
     boolean_uniforms: u16,
@@ -280,8 +290,34 @@ impl PicaVertexShaderProgram {
         descriptors: Vec<Option<u32>>,
         uniforms: Vec<[f32; 4]>,
     ) -> Self {
+        let decoded = code
+            .iter()
+            .map(|uploaded| {
+                let word = (*uploaded)?;
+                let opcode = PicaShaderOpcode::from_word(word)?;
+                let instruction = opcode
+                    .format()
+                    .map(|format| PicaVertexShaderInstruction::decode(word, format));
+                let descriptor_index =
+                    instruction.and_then(PicaVertexShaderInstruction::operand_descriptor_index);
+                let descriptor = descriptor_index.and_then(|index| {
+                    descriptors
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .map(PicaShaderOperandDescriptor::decode)
+                });
+                Some(DecodedShaderInstruction {
+                    opcode,
+                    instruction,
+                    descriptor_index,
+                    descriptor,
+                })
+            })
+            .collect();
         Self {
             code,
+            decoded,
             descriptors,
             uniforms,
             boolean_uniforms: 0,
@@ -336,9 +372,9 @@ impl PicaVertexShaderProgram {
             comparison_flags: [false; 2],
             address_registers: [0; 2],
             loop_counter: 0,
-            call_stack: Vec::with_capacity(CALL_STACK_LIMIT),
-            if_stack: Vec::with_capacity(IF_STACK_LIMIT),
-            loop_stack: Vec::with_capacity(LOOP_STACK_LIMIT),
+            call_stack: Vec::new(),
+            if_stack: Vec::new(),
+            loop_stack: Vec::new(),
         };
         let mut index = entry;
         let mut executed_instructions = 0usize;
@@ -354,8 +390,13 @@ impl PicaVertexShaderProgram {
                 .copied()
                 .flatten()
                 .ok_or(PicaShaderExecError::InstructionNotUploaded { index })?;
-            let opcode = PicaShaderOpcode::from_word(word)
+            let decoded = self
+                .decoded
+                .get(index)
+                .copied()
+                .flatten()
                 .ok_or(PicaShaderExecError::UnsupportedOpcode { index, word })?;
+            let opcode = decoded.opcode;
             executed_instructions += 1;
             let mut next_index =
                 index
@@ -386,7 +427,7 @@ impl PicaVertexShaderProgram {
                 | PicaShaderOpcode::Loop
                 | PicaShaderOpcode::JmpC
                 | PicaShaderOpcode::JmpU => {
-                    machine.execute_flow(index, word, opcode, &mut next_index, &mut jump_target)?;
+                    machine.execute_flow(index, decoded, &mut next_index, &mut jump_target)?;
                 }
                 PicaShaderOpcode::Emit | PicaShaderOpcode::SetEmit => {
                     return Err(PicaShaderExecError::UnsupportedGeometryInstruction {
@@ -394,7 +435,7 @@ impl PicaVertexShaderProgram {
                         opcode: (word >> 26) as u8,
                     });
                 }
-                _ => machine.execute(index, word, opcode)?,
+                _ => machine.execute(index, decoded)?,
             }
             machine.resolve_control_flow(&mut next_index, jump_target);
             index = next_index;
@@ -481,32 +522,26 @@ impl Machine<'_> {
     fn execute(
         &mut self,
         index: usize,
-        word: u32,
-        opcode: PicaShaderOpcode,
+        decoded: DecodedShaderInstruction,
     ) -> Result<(), PicaShaderExecError> {
-        if opcode == PicaShaderOpcode::Cmp {
-            return self.execute_compare(index, word);
+        if decoded.opcode == PicaShaderOpcode::Cmp {
+            return self.execute_compare(index, decoded);
         }
-        if opcode == PicaShaderOpcode::Mova {
-            return self.execute_mova(index, word);
+        if decoded.opcode == PicaShaderOpcode::Mova {
+            return self.execute_mova(index, decoded);
         }
-        let format = opcode
-            .format()
-            .expect("Nop/End are handled before operand decoding");
-        let instruction = PicaVertexShaderInstruction::decode(word, format);
+        let instruction = decoded
+            .instruction
+            .expect("arithmetic shader opcodes have a decoded instruction format");
         let (destination, descriptor_index, sources) = operands(instruction);
-
-        let descriptor_word = self
-            .program
-            .descriptors
-            .get(descriptor_index)
-            .copied()
-            .flatten()
-            .ok_or(PicaShaderExecError::DescriptorNotUploaded {
+        let descriptor = decoded.descriptor.ok_or(
+            PicaShaderExecError::DescriptorNotUploaded {
                 index,
-                descriptor: descriptor_index,
-            })?;
-        let descriptor = PicaShaderOperandDescriptor::decode(descriptor_word);
+                descriptor: decoded
+                    .descriptor_index
+                    .unwrap_or(descriptor_index),
+            },
+        )?;
 
         let selectors = [
             (descriptor.source1_selector, descriptor.source1_negate),
@@ -625,13 +660,23 @@ impl Machine<'_> {
         }
     }
 
-    fn execute_mova(&mut self, index: usize, word: u32) -> Result<(), PicaShaderExecError> {
-        let instruction = PicaVertexShaderInstruction::decode(
-            word,
-            PicaVertexShaderInstructionFormat::Format1Unary,
-        );
+    fn execute_mova(
+        &mut self,
+        index: usize,
+        decoded: DecodedShaderInstruction,
+    ) -> Result<(), PicaShaderExecError> {
+        let instruction = decoded
+            .instruction
+            .expect("MOVA predecodes as Format1Unary");
         let (destination, descriptor_index, sources) = operands(instruction);
-        let descriptor = self.read_descriptor(index, descriptor_index)?;
+        let descriptor = decoded.descriptor.ok_or(
+            PicaShaderExecError::DescriptorNotUploaded {
+                index,
+                descriptor: decoded
+                    .descriptor_index
+                    .unwrap_or(descriptor_index),
+            },
+        )?;
         let source = sources[0].expect("MOVA has one source");
         let value = swizzle(
             self.read_register(source),
@@ -648,15 +693,24 @@ impl Machine<'_> {
         Ok(())
     }
 
-    fn execute_compare(&mut self, index: usize, word: u32) -> Result<(), PicaShaderExecError> {
-        let instruction = PicaVertexShaderInstruction::decode(
-            word,
-            PicaVertexShaderInstructionFormat::Format1Compare,
-        );
-        let PicaVertexShaderInstruction::Format1Compare(decoded) = instruction else {
-            unreachable!("Format 1c decoder returns Format1Compare");
+    fn execute_compare(
+        &mut self,
+        index: usize,
+        decoded_instruction: DecodedShaderInstruction,
+    ) -> Result<(), PicaShaderExecError> {
+        let Some(PicaVertexShaderInstruction::Format1Compare(decoded)) =
+            decoded_instruction.instruction
+        else {
+            unreachable!("CMP predecodes as Format1Compare");
         };
-        let descriptor = self.read_descriptor(index, usize::from(decoded.descriptor))?;
+        let descriptor = decoded_instruction.descriptor.ok_or(
+            PicaShaderExecError::DescriptorNotUploaded {
+                index,
+                descriptor: decoded_instruction
+                    .descriptor_index
+                    .unwrap_or(usize::from(decoded.descriptor)),
+            },
+        )?;
         let a = swizzle(
             self.read_register(Source {
                 register: decoded.source1,
@@ -703,23 +757,21 @@ impl Machine<'_> {
     fn execute_flow(
         &mut self,
         index: usize,
-        word: u32,
-        opcode: PicaShaderOpcode,
+        decoded: DecodedShaderInstruction,
         next_pc: &mut usize,
         jump_target: &mut Option<usize>,
     ) -> Result<(), PicaShaderExecError> {
+        let opcode = decoded.opcode;
         match opcode {
             PicaShaderOpcode::BreakC
             | PicaShaderOpcode::Call
             | PicaShaderOpcode::CallC
             | PicaShaderOpcode::IfC
             | PicaShaderOpcode::JmpC => {
-                let instruction = PicaVertexShaderInstruction::decode(
-                    word,
-                    PicaVertexShaderInstructionFormat::Format2Flow,
-                );
-                let PicaVertexShaderInstruction::Format2Flow(flow) = instruction else {
-                    unreachable!("Format 2 decoder returns Format2Flow");
+                let Some(PicaVertexShaderInstruction::Format2Flow(flow)) =
+                    decoded.instruction
+                else {
+                    unreachable!("conditional flow opcodes predecode as Format2Flow");
                 };
                 let condition = self.flow_condition(
                     flow.condition_operator,
@@ -764,12 +816,10 @@ impl Machine<'_> {
             | PicaShaderOpcode::IfU
             | PicaShaderOpcode::Loop
             | PicaShaderOpcode::JmpU => {
-                let instruction = PicaVertexShaderInstruction::decode(
-                    word,
-                    PicaVertexShaderInstructionFormat::Format3BooleanFlow,
-                );
-                let PicaVertexShaderInstruction::Format3BooleanFlow(flow) = instruction else {
-                    unreachable!("Format 3 decoder returns Format3BooleanFlow");
+                let Some(PicaVertexShaderInstruction::Format3BooleanFlow(flow)) =
+                    decoded.instruction
+                else {
+                    unreachable!("boolean flow opcodes predecode as Format3BooleanFlow");
                 };
                 let constant_id = usize::from(flow.constant_id);
                 match opcode {
@@ -1016,20 +1066,6 @@ impl Machine<'_> {
         }
     }
 
-    fn read_descriptor(
-        &self,
-        index: usize,
-        descriptor: usize,
-    ) -> Result<PicaShaderOperandDescriptor, PicaShaderExecError> {
-        let descriptor_word = self
-            .program
-            .descriptors
-            .get(descriptor)
-            .copied()
-            .flatten()
-            .ok_or(PicaShaderExecError::DescriptorNotUploaded { index, descriptor })?;
-        Ok(PicaShaderOperandDescriptor::decode(descriptor_word))
-    }
 }
 
 /// Extracts destination, descriptor index and up to three sources.
@@ -1708,6 +1744,49 @@ mod tests {
             assert_eq!(PicaShaderOpcode::from_word(opcode << 26), Some(expected));
         }
         assert_eq!(PicaShaderOpcode::from_word(0x10 << 26), None);
+    }
+
+    #[test]
+    fn program_snapshot_predecodes_opcode_instruction_and_operand_descriptor() {
+        let instruction = format1(0x00, O0, V0, V1);
+        let descriptor = plain_descriptor(0b1011);
+        let program = PicaVertexShaderProgram::from_words(
+            &[instruction, END],
+            &[descriptor],
+            &[],
+        );
+        let decoded = program.decoded[0].expect("uploaded instruction should be predecoded");
+        assert_eq!(decoded.opcode, PicaShaderOpcode::Add);
+        assert!(matches!(
+            decoded.instruction,
+            Some(PicaVertexShaderInstruction::Format1(_))
+        ));
+        assert_eq!(decoded.descriptor_index, Some(0));
+        assert_eq!(
+            decoded.descriptor,
+            Some(PicaShaderOperandDescriptor::decode(descriptor))
+        );
+        assert_eq!(
+            program.decoded[1].expect("END opcode should be identified").opcode,
+            PicaShaderOpcode::End
+        );
+    }
+
+    #[test]
+    fn program_snapshot_keeps_unsupported_and_unuploaded_errors_distinct() {
+        let unsupported = PicaVertexShaderProgram::from_words(&[0x10 << 26], &[], &[]);
+        assert_eq!(
+            unsupported.run(0, &inputs([0.0; 4], [0.0; 4])),
+            Err(PicaShaderExecError::UnsupportedOpcode {
+                index: 0,
+                word: 0x10 << 26,
+            })
+        );
+        let missing = PicaVertexShaderProgram::new(vec![None], vec![], vec![]);
+        assert_eq!(
+            missing.run(0, &inputs([0.0; 4], [0.0; 4])),
+            Err(PicaShaderExecError::InstructionNotUploaded { index: 0 })
+        );
     }
 
     #[test]
