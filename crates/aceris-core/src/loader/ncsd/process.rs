@@ -765,23 +765,34 @@ impl fmt::Display for SharedMemoryStateError {
                 "shared-memory view {offset:#X}+{length:#X} is outside backing slot {slot}"
             ),
             Self::InvalidAddressSpaceState(reason) => {
-                write!(formatter, "ARM11 address-space snapshot is invalid: {reason}")
+                write!(
+                    formatter,
+                    "ARM11 address-space snapshot is invalid: {reason}"
+                )
             }
             Self::TooManyAddressSpaceEntries(count) => {
-                write!(formatter, "ARM11 address-space snapshot contains too many regions: {count}")
+                write!(
+                    formatter,
+                    "ARM11 address-space snapshot contains too many regions: {count}"
+                )
             }
             Self::TooManyCacheLines(count) => {
-                write!(formatter, "ARM11 address-space snapshot contains too many D-cache lines: {count}")
+                write!(
+                    formatter,
+                    "ARM11 address-space snapshot contains too many D-cache lines: {count}"
+                )
             }
             Self::TooManyWriteBufferEntries(count) => {
-                write!(formatter, "ARM11 address-space snapshot contains too many write-buffer entries: {count}")
+                write!(
+                    formatter,
+                    "ARM11 address-space snapshot contains too many write-buffer entries: {count}"
+                )
             }
             Self::InvalidCacheTarget => {
                 formatter.write_str("ARM11 D-cache entry refers to an invalid backing or offset")
             }
-            Self::MissingPhysicalMemory => {
-                formatter.write_str("ARM11 address-space snapshot requires attached physical memory")
-            }
+            Self::MissingPhysicalMemory => formatter
+                .write_str("ARM11 address-space snapshot requires attached physical memory"),
             Self::TrailingData => {
                 formatter.write_str("shared-memory snapshot contains trailing bytes")
             }
@@ -1895,8 +1906,8 @@ const ADDRESS_SPACE_STATE_MAGIC: &[u8; 8] = b"ACADDRSP";
 const ADDRESS_SPACE_STATE_VERSION: u16 = 1;
 const ADDRESS_SPACE_STATE_MAX_BYTES: usize = 512 * 1024 * 1024;
 const ADDRESS_SPACE_STATE_MAX_REGIONS: usize = 4096;
-const ADDRESS_SPACE_STATE_MAX_TLS_SLOTS: usize = THREAD_LOCAL_STORAGE_MAX_PAGES as usize
-    * THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE as usize;
+const ADDRESS_SPACE_STATE_MAX_TLS_SLOTS: usize =
+    THREAD_LOCAL_STORAGE_MAX_PAGES as usize * THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE as usize;
 
 fn address_state_write<T>(
     result: std::result::Result<T, crate::cpu::state::CpuStateError>,
@@ -2107,7 +2118,9 @@ impl Arm11CodeAddressSpace {
                     .map_err(|_| SharedMemoryStateError::InvalidCacheTarget)?;
                 let bytes = self.bytes_for(kind);
                 if !offset.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE)
-                    || offset.checked_add(ARM11_DATA_CACHE_LINE_SIZE).is_none_or(|end| end > bytes.len())
+                    || offset
+                        .checked_add(ARM11_DATA_CACHE_LINE_SIZE)
+                        .is_none_or(|end| end > bytes.len())
                 {
                     return Err(SharedMemoryStateError::InvalidCacheTarget);
                 }
@@ -2189,10 +2202,11 @@ impl Arm11CodeAddressSpace {
             self.bss.as_slice(),
             self.stack.as_slice(),
         ] {
-            let length = u32::try_from(bytes.len())
-                .map_err(|_| SharedMemoryStateError::InvalidAddressSpaceState(
+            let length = u32::try_from(bytes.len()).map_err(|_| {
+                SharedMemoryStateError::InvalidAddressSpaceState(
                     "static segment exceeds the format limit",
-                ))?;
+                )
+            })?;
             address_state_write(writer.write_u32(length))?;
             address_state_write(writer.write_bytes(bytes))?;
         }
@@ -2319,8 +2333,7 @@ impl Arm11CodeAddressSpace {
             let key = self.cache_key_for_snapshot_target(&entry.target)?;
             if key != entry.key
                 || entry.length == 0
-                || usize::from(entry.start) + usize::from(entry.length)
-                    > ARM11_DATA_CACHE_LINE_SIZE
+                || usize::from(entry.start) + usize::from(entry.length) > ARM11_DATA_CACHE_LINE_SIZE
             {
                 return Err(SharedMemoryStateError::InvalidCacheTarget);
             }
@@ -2485,9 +2498,11 @@ impl Arm11CodeAddressSpace {
                 .ok_or(SharedMemoryStateError::MissingPhysicalMemory)?;
             memory
                 .validate_range(physical_base, size as usize)
-                .map_err(|_| SharedMemoryStateError::InvalidAddressSpaceState(
-                    "linear mapping physical range is invalid",
-                ))?;
+                .map_err(|_| {
+                    SharedMemoryStateError::InvalidAddressSpaceState(
+                        "linear mapping physical range is invalid",
+                    )
+                })?;
             if !memory.has_linear_fcram_allocation(physical_base, size) {
                 return Err(SharedMemoryStateError::InvalidAddressSpaceState(
                     "linear mapping has no matching FCRAM allocation",
@@ -2526,8 +2541,10 @@ impl Arm11CodeAddressSpace {
             &linear_regions,
         )?;
 
-        let declared_cache_lines =
-            address_state_read_count(&mut reader, ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE)?;
+        let declared_cache_lines = address_state_read_count(
+            &mut reader,
+            ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE,
+        )?;
         let mut data_cache = DataCacheLines::new();
         let mut data_cache_lru = (0..ARM11_DATA_CACHE_SET_COUNT)
             .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
@@ -2547,7 +2564,14 @@ impl Arm11CodeAddressSpace {
                 let source = address_state_read(reader.read_bytes(ARM11_DATA_CACHE_LINE_SIZE))?;
                 let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
                 bytes.copy_from_slice(source);
-                data_cache.insert(key, Arm11DataCacheLine { bytes, dirty, target });
+                data_cache.insert(
+                    key,
+                    Arm11DataCacheLine {
+                        bytes,
+                        dirty,
+                        target,
+                    },
+                );
                 data_cache_lru[set_index].push_back(key);
                 restored_cache_lines += 1;
             }
@@ -2565,8 +2589,7 @@ impl Arm11CodeAddressSpace {
             let (key, target) = self.save_state_read_cache_target(catalog, &mut reader)?;
             let start = address_state_read(reader.read_u8())?;
             let length = address_state_read(reader.read_u8())?;
-            if length == 0
-                || usize::from(start) + usize::from(length) > ARM11_DATA_CACHE_LINE_SIZE
+            if length == 0 || usize::from(start) + usize::from(length) > ARM11_DATA_CACHE_LINE_SIZE
             {
                 return Err(SharedMemoryStateError::InvalidCacheTarget);
             }
@@ -2582,7 +2605,8 @@ impl Arm11CodeAddressSpace {
             });
         }
 
-        let exclusive_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS * 1024)?;
+        let exclusive_count =
+            address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS * 1024)?;
         let mut exclusive_versions = BTreeMap::new();
         for _ in 0..exclusive_count {
             let address = address_state_read(reader.read_u32())?;
@@ -2629,7 +2653,8 @@ impl Arm11CodeAddressSpace {
                 || region.reservation_size
                     != region.mapping_size.checked_add(2 * PAGE_SIZE as u32).unwrap_or(0)
                 || region.alias_address < region.mapping_base
-                || u64::from(region.alias_address) >= u64::from(region.mapping_base) + u64::from(region.mapping_size)
+                || u64::from(region.alias_address)
+                    >= u64::from(region.mapping_base) + u64::from(region.mapping_size)
                 || reservation_end > IPC_TEMPORARY_BUFFER_END
                 || !shared_regions.iter().any(|shared| {
                     shared.address == region.mapping_base
@@ -2643,7 +2668,9 @@ impl Arm11CodeAddressSpace {
             }
             ipc_temporary_regions.push(region);
         }
-        reader.finish().map_err(|_| SharedMemoryStateError::TrailingData)?;
+        reader
+            .finish()
+            .map_err(|_| SharedMemoryStateError::TrailingData)?;
 
         // All data above is staged; the live address space is changed only here.
         self.text = text;
@@ -2676,9 +2703,11 @@ impl Arm11CodeAddressSpace {
             ADDRESS_SPACE_STATE_VERSION,
             self.encode_memory_state(catalog)?,
         )
-        .map_err(|_| SharedMemoryStateError::InvalidAddressSpaceState(
-            "could not wrap process memory section",
-        ))
+        .map_err(|_| {
+            SharedMemoryStateError::InvalidAddressSpaceState(
+                "could not wrap process memory section",
+            )
+        })
     }
 
     pub(crate) fn restore_save_state_section(
@@ -2703,7 +2732,8 @@ impl Arm11CodeAddressSpace {
         match target {
             DataCacheTarget::Static { kind, offset } => {
                 if !offset.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE)
-                    || offset.checked_add(ARM11_DATA_CACHE_LINE_SIZE)
+                    || offset
+                        .checked_add(ARM11_DATA_CACHE_LINE_SIZE)
                         .is_none_or(|end| end > self.bytes_for(*kind).len())
                 {
                     return Err(SharedMemoryStateError::InvalidCacheTarget);
@@ -2718,7 +2748,8 @@ impl Arm11CodeAddressSpace {
                     .root_offset(*offset)
                     .filter(|root| root.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE))
                     .ok_or(SharedMemoryStateError::InvalidCacheTarget)?;
-                if offset.checked_add(ARM11_DATA_CACHE_LINE_SIZE)
+                if offset
+                    .checked_add(ARM11_DATA_CACHE_LINE_SIZE)
                     .is_none_or(|end| end > backing.length)
                 {
                     return Err(SharedMemoryStateError::InvalidCacheTarget);
@@ -2730,7 +2761,9 @@ impl Arm11CodeAddressSpace {
             }
             DataCacheTarget::Physical { memory, address } => {
                 if !address.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE as u32)
-                    || memory.validate_range(*address, ARM11_DATA_CACHE_LINE_SIZE).is_err()
+                    || memory
+                        .validate_range(*address, ARM11_DATA_CACHE_LINE_SIZE)
+                        .is_err()
                     || self.gpu_memory_backing_id.is_none()
                 {
                     return Err(SharedMemoryStateError::InvalidCacheTarget);
@@ -6139,7 +6172,9 @@ mod tests {
     fn process_memory_snapshot_round_trips_static_heap_and_shared_aliases() {
         let mut original = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
         let heap = APPLICATION_HEAP_BASE;
-        original.allocate_application_heap_region(heap, 0x2000).unwrap();
+        original
+            .allocate_application_heap_region(heap, 0x2000)
+            .unwrap();
         let mut heap_view = original
             .shared_memory_backing_for_heap_range(heap, 0x2000)
             .unwrap();
@@ -6161,7 +6196,9 @@ mod tests {
         let encoded = original.encode_memory_state(&catalog).unwrap();
 
         let mut restored = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
-        restored.restore_memory_state(&encoded, &restored_catalog).unwrap();
+        restored
+            .restore_memory_state(&encoded, &restored_catalog)
+            .unwrap();
         assert_eq!(restored.dynamic_regions.len(), 1);
         assert_eq!(restored.shared_regions.len(), 2);
 
