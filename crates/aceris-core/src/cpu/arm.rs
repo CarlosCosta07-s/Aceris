@@ -353,11 +353,35 @@ impl Arm11Core {
 
     /// Executes signed halfword and word-by-halfword multiply instructions.
     fn execute_halfword_multiply_instruction(&mut self, word: u32) -> Result<StepEvent> {
-        let class = word & 0x0FF0_0090;
-        let rd = bits(word, 19, 16) as usize;
-        let rn = bits(word, 15, 12) as usize;
-        let rs = bits(word, 11, 8) as usize;
-        let rm = bits(word, 3, 0) as usize;
+        self.execute_cached_halfword_multiply(
+            word,
+            word & 0x0FF0_0090,
+            bits(word, 19, 16) as u8,
+            bits(word, 15, 12) as u8,
+            bits(word, 11, 8) as u8,
+            bits(word, 3, 0) as u8,
+            bit(word, 5),
+            bit(word, 6),
+        )
+    }
+
+    /// Executes a multiply form whose class and register fields were decoded
+    /// once by the A32 instruction cache.
+    pub(super) fn execute_cached_halfword_multiply(
+        &mut self,
+        word: u32,
+        class: u32,
+        rd: u8,
+        rn: u8,
+        rs: u8,
+        rm: u8,
+        x: bool,
+        y: bool,
+    ) -> Result<StepEvent> {
+        let rd = usize::from(rd);
+        let rn = usize::from(rn);
+        let rs = usize::from(rs);
+        let rm = usize::from(rm);
         let pc = self.pc();
         let undefined = || Error::UndefinedInstruction { pc, word };
 
@@ -367,8 +391,8 @@ impl Arm11Core {
                 if rd == PC || rn == PC || rs == PC || rm == PC {
                     return Err(undefined());
                 }
-                let first = signed_halfword(self.regs[rm], bit(word, 5));
-                let second = signed_halfword(self.regs[rs], bit(word, 6));
+                let first = signed_halfword(self.regs[rm], x);
+                let second = signed_halfword(self.regs[rs], y);
                 let result = first * second + i64::from(self.regs[rn] as i32);
                 if result < i64::from(i32::MIN) || result > i64::from(i32::MAX) {
                     self.cpsr.set_q();
@@ -382,9 +406,9 @@ impl Arm11Core {
                     return Err(undefined());
                 }
                 let word_operand = i64::from(self.regs[rm] as i32);
-                let halfword_operand = signed_halfword(self.regs[rs], bit(word, 6));
+                let halfword_operand = signed_halfword(self.regs[rs], y);
                 let product_high = (word_operand * halfword_operand) >> 16;
-                if bit(word, 5) {
+                if x {
                     // SMULWy reserves bits[15:12] as zero.
                     if rn != 0 {
                         return Err(undefined());
@@ -1471,11 +1495,34 @@ impl Arm11Core {
     }
 
     fn multiply(&mut self, word: u32) -> Result<()> {
-        let rd = bits(word, 19, 16);
-        let rn = bits(word, 15, 12);
-        let rs = bits(word, 11, 8);
-        let rm = bits(word, 3, 0);
-        let accumulate = bit(word, 21);
+        self.execute_cached_multiply(
+            word,
+            bits(word, 19, 16) as u8,
+            bits(word, 15, 12) as u8,
+            bits(word, 11, 8) as u8,
+            bits(word, 3, 0) as u8,
+            bit(word, 21),
+            bit(word, 20),
+        )
+    }
+
+    /// Executes a pre-decoded MUL/MLA without re-extracting its register fields.
+    pub(super) fn execute_cached_multiply(
+        &mut self,
+        word: u32,
+        rd: u8,
+        rn: u8,
+        rs: u8,
+        rm: u8,
+        accumulate: bool,
+        set_flags: bool,
+    ) -> Result<()> {
+        let (rd, rn, rs, rm) = (
+            u32::from(rd),
+            u32::from(rn),
+            u32::from(rs),
+            u32::from(rm),
+        );
 
         // MUL reserves Rn as SBZ. MLA uses Rn as its accumulator.
         // Both forms prohibit R15 in every architecturally used register.
@@ -1492,24 +1539,48 @@ impl Arm11Core {
         }
 
         // Read every source before writeback; ARMv6 permits Rd == Rm.
-        let mut result = self.reg(rm, 8).wrapping_mul(self.reg(rs, 8));
+        let mut result = self.regs[rm as usize].wrapping_mul(self.regs[rs as usize]);
         if accumulate {
-            result = result.wrapping_add(self.reg(rn, 8));
+            result = result.wrapping_add(self.regs[rn as usize]);
         }
-        self.write_reg(rd, result);
-        if bit(word, 20) {
+        self.regs[rd as usize] = result;
+        if set_flags {
             self.set_nz(result);
         }
         Ok(())
     }
 
     fn multiply_long(&mut self, word: u32) -> Result<()> {
-        let signed = bit(word, 22);
-        let accumulate = bit(word, 21);
-        let rd_hi = bits(word, 19, 16);
-        let rd_lo = bits(word, 15, 12);
-        let rs = bits(word, 11, 8);
-        let rm = bits(word, 3, 0);
+        self.execute_cached_multiply_long(
+            word,
+            bit(word, 22),
+            bit(word, 21),
+            bit(word, 20),
+            bits(word, 19, 16) as u8,
+            bits(word, 15, 12) as u8,
+            bits(word, 11, 8) as u8,
+            bits(word, 3, 0) as u8,
+        )
+    }
+
+    /// Executes a pre-decoded 64-bit multiply form without re-extracting fields.
+    pub(super) fn execute_cached_multiply_long(
+        &mut self,
+        word: u32,
+        signed: bool,
+        accumulate: bool,
+        set_flags: bool,
+        rd_hi: u8,
+        rd_lo: u8,
+        rs: u8,
+        rm: u8,
+    ) -> Result<()> {
+        let (rd_hi, rd_lo, rs, rm) = (
+            u32::from(rd_hi),
+            u32::from(rd_lo),
+            u32::from(rs),
+            u32::from(rm),
+        );
 
         // R15 is not valid in any long-multiply register, and the two
         // destination registers must be distinct. Source/destination
@@ -1526,20 +1597,21 @@ impl Arm11Core {
             });
         }
 
-        let (a, b) = (self.reg(rm, 8), self.reg(rs, 8));
+        let (a, b) = (self.regs[rm as usize], self.regs[rs as usize]);
         let mut result = if signed {
             (i64::from(a as i32) * i64::from(b as i32)) as u64
         } else {
             u64::from(a) * u64::from(b)
         };
         if accumulate {
-            let current = (u64::from(self.reg(rd_hi, 8)) << 32) | u64::from(self.reg(rd_lo, 8));
+            let current = (u64::from(self.regs[rd_hi as usize]) << 32)
+                | u64::from(self.regs[rd_lo as usize]);
             result = result.wrapping_add(current);
         }
 
-        self.write_reg(rd_lo, result as u32);
-        self.write_reg(rd_hi, (result >> 32) as u32);
-        if bit(word, 20) {
+        self.regs[rd_lo as usize] = result as u32;
+        self.regs[rd_hi as usize] = (result >> 32) as u32;
+        if set_flags {
             let (c, v) = (self.cpsr.c(), self.cpsr.v());
             self.cpsr.set_flags(result >> 63 != 0, result == 0, c, v);
         }
@@ -2286,6 +2358,60 @@ impl Arm11Core {
         Ok(StepEvent::Executed)
     }
 
+    /// Executes a pre-decoded immediate LDRH/STRH/LDRSB/LDRSH form.
+    ///
+    /// The decoder only emits this helper for non-PC single-register forms;
+    /// the architectural alignment and memory-attribute checks remain shared
+    /// with the generic interpreter.
+    pub(super) fn execute_cached_halfword_transfer<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        rn: u8,
+        rd: u8,
+        offset: u8,
+        transfer_kind: u8,
+    ) -> Result<StepEvent> {
+        let base = self.regs[usize::from(rn)];
+        let offset_address = if up {
+            base.wrapping_add(u32::from(offset))
+        } else {
+            base.wrapping_sub(u32::from(offset))
+        };
+        let address = if pre_index { offset_address } else { base };
+        let rn = u32::from(rn);
+        let rd = u32::from(rd);
+
+        match (load, transfer_kind) {
+            (true, 0b01) => {
+                let value = u32::from(self.read_armv6_halfword(bus, address, word)?);
+                self.finish_load(rn, rd, writeback, offset_address, value);
+            }
+            (true, 0b10) => {
+                let value = i32::from(bus.read8(address)? as i8) as u32;
+                self.finish_load(rn, rd, writeback, offset_address, value);
+            }
+            (true, 0b11) => {
+                let value =
+                    i32::from(self.read_armv6_halfword(bus, address, word)? as i16) as u32;
+                self.finish_load(rn, rd, writeback, offset_address, value);
+            }
+            (false, 0b01) => {
+                let value = self.regs[rd as usize] as u16;
+                self.write_armv6_halfword(bus, address, value, word)?;
+                if writeback {
+                    self.set_base(rn, offset_address);
+                }
+            }
+            _ => unreachable!("decoder only caches single-halfword transfer forms"),
+        }
+        Ok(StepEvent::Executed)
+    }
+
     /// LDRH/STRH/LDRSB/LDRSH and LDRD/STRD.
     fn halfword_transfer<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
         let pre_index = bit(word, 24);
@@ -2439,12 +2565,32 @@ impl Arm11Core {
     }
 
     fn block_transfer<B: Bus + ?Sized>(&mut self, bus: &mut B, word: u32) -> Result<StepEvent> {
-        let pre_index = bit(word, 24);
-        let up = bit(word, 23);
-        let writeback = bit(word, 21);
-        let load = bit(word, 20);
-        let rn = bits(word, 19, 16);
-        let list = bits(word, 15, 0);
+        self.execute_block_transfer_decoded(
+            bus,
+            word,
+            bit(word, 24),
+            bit(word, 23),
+            bit(word, 21),
+            bit(word, 20),
+            bit(word, 22),
+            bits(word, 19, 16),
+            bits(word, 15, 0),
+        )
+    }
+
+    /// Executes an A32 LDM/STM using fields already extracted by the decode cache.
+    pub(super) fn execute_block_transfer_decoded<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        s_bit: bool,
+        rn: u32,
+        list: u32,
+    ) -> Result<StepEvent> {
 
         // ARMv6 does not permit PC as the A32 multiple-transfer base.
         // A writeback load may not include its base in the destination list.
@@ -2460,7 +2606,6 @@ impl Arm11Core {
             });
         }
 
-        let s_bit = bit(word, 22);
         let pc_in_list = list & (1 << PC) != 0;
         // S without a loaded PC transfers the User-mode registers; with a loaded
         // PC (LDM only) it is an exception return that also restores the SPSR.
