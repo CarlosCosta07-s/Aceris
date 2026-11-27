@@ -4103,6 +4103,4 @@ mod save_state_tests {
         assert!(bus.fetch32(0).is_err());
         assert!(bus.fault.is_some());
     }
-
-
 }
