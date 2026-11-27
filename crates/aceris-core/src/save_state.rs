@@ -205,6 +205,8 @@ pub mod section_id {
     pub const INPUT_APT: u32 = 9;
     /// Guest filesystem sessions and pending filesystem operations.
     pub const FILESYSTEM: u32 = 10;
+    /// Sparse VRAM/FCRAM pages, linear reservations and physical exclusive monitors.
+    pub const GPU_PHYSICAL_MEMORY: u32 = 11;
 }
 
 /// Signature for the section table inside a save-state payload.
