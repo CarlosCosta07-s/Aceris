@@ -61,13 +61,13 @@
 | Touchscreen da tela inferior | Parcial | O mapeamento usa o retângulo atual do LCD inferior nos seis modos e após a troca; ainda falta validar toque físico em aparelho e gestos complexos. |
 | Botões digitais | Parcial | O core define bits para D-pad, A/B/X/Y, L/R, Start/Select e ZL/ZR; hosts encaminham um subconjunto pelos caminhos atuais. |
 | Circle Pad analógico | Parcial | InputState possui eixo X/Y limitado a ±156, mas isso não equivale a mapeamento completo de eixos do gamepad no desktop/Android. |
-| Perfis de controle/remapeamento | Não disponível | Não há editor, persistência de perfil por dispositivo ou override por jogo. |
-| Deadzone/sensibilidade/inversão | Não disponível | Não existem controles de ajuste expostos. |
-| Controles virtuais Android | Parcial | Há overlay/hit-test e envio de botões; posição, escala, opacidade, presets e perfis não são editáveis. |
+| Perfis de controle/remapeamento | Parcial | Controles virtuais Android têm layout global e override por Title ID; o remapeamento de teclado/gamepad físico e perfis por dispositivo ainda não estão disponíveis. |
+| Deadzone/sensibilidade/inversão | Não disponível | Não existem controles de ajuste expostos para dispositivos físicos; a escala/posição dos controles virtuais é uma função separada. |
+| Controles virtuais Android | Parcial | Editor funcional para visibilidade, opacidade em níveis, escala, presets, posições por arraste, tamanho por pinça, layouts por orientação e herança/overrides por Title ID. Falta validação em aparelho físico e melhor integração com controles físicos. |
 | Multi-touch | Parcial | NativeActivity coleta ponteiros e o app mantém estado multitoque; falta validar em aparelho e todas as combinações de stylus + botões. |
 | Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar têm confirmação preventiva; as filas host de áudio são limpas ao pausar. O menu oferece seis ações, seis layouts, troca de telas e restauração do padrão global. Atalho configurável, ajuste fino e validação física pendentes. |
 | Atalhos configuráveis | Não disponível | Existem teclas/eventos específicos do host, mas não há editor de atalhos. |
-| Screenshot durante a partida | Não disponível | Existem saídas de diagnóstico/PNG e dump de LCD no desktop; não existe ação de captura pela interface durante o jogo. |
+| Screenshot durante a partida | Não disponível | Há ferramentas/dumps internos de diagnóstico, mas não existe ação de captura na UI nem escolha de destino durante a partida. |
 
 **Evidência principal:** crates/aceris-core/src/input.rs (InputState, InputSnapshot, pad e touch_from_surface_point), crates/aceris-core/src/video/frontend.rs, frontends/android/src/app.rs (apply_game_input, hit_virtual_button e step_game_into) e frontends/android/src/native_activity.rs.
 
@@ -77,15 +77,17 @@
 |---|---|---|
 | Modo Desempenho/Fast Memory | Disponível, avançado | Opt-in persistido em .aceris/performance_mode.txt e aplicado antes do próximo jogo. Desvia do modelo preciso de D-cache e pode causar incompatibilidade; não é ganho garantido. |
 | Log de desempenho desktop | Parcial | Opt-in por ACERIS_PERFORMANCE_LOG=1 ou arquivo .aceris/desktop_performance_log_v1.txt; imprime relatórios locais de tempo host. |
+| Overlay de diagnóstico em jogo | Não disponível | Os relatórios host são impressos localmente a cada cinco segundos quando ativados; não há overlay persistente nem painel de estado do guest. |
 | Métricas de desempenho Android | Parcial | Monitor registra tentativas, apresentação, percentis e uso do presenter; relatórios são diagnósticos locais, não overlay configurável de usuário. |
-| FPS/velocidade guest em overlay | Não disponível | Métricas host de apresentação não devem ser rotuladas como velocidade da emulação nem FPS guest. |
+| Fast Forward/velocidade alternativa | Não disponível | Não há controle de velocidade de emulação na interface; não confundir FPS host com velocidade guest. |
+| FPS/velocidade guest em overlay | Não disponível | Métricas host de apresentação não devem ser rotuladas como velocidade da emulação nem FPS guest; ainda não há overlay de usuário. |
 | Mídia externa | Parcial | O host Android pode detectar mídia externa e informar estado à biblioteca; não é oferecido por todas as plataformas e não identifica o conteúdo tocado. |
 | Preferências globais completas | Não disponível | Ainda não há painel de idioma, tema, escala de interface, alto contraste ou conjunto amplo de preferências. |
 | Configurações por jogo | Parcial | Overrides de layout por Title ID, com herança global, orientação independente e restauração por título. Categorias gerais de configurações por jogo ainda não existem; 3DSX sem identidade herda o perfil global. |
 | Backup/exportação de configurações | Não disponível | Não há fluxo de exportação/importação. |
 | Save data/extdata do jogo | Parcial | Diretórios de armazenamento por jogo existem nos caminhos HLE atuais. Isso não equivale a suporte completo a todos os serviços de armazenamento do console. |
-| Save states | Não disponível | Não há snapshot/restauração completa do emulador, slots nem rewind. |
-| Auto-save/rotação de backups | Não disponível | Não há esse mecanismo de usuário. |
+| Save states | Infraestrutura parcial; recurso de jogo indisponível | Core possui envelope e tabela de seções versionados, checksum, identidade por hash exato do jogo e armazenamento de slots por gerações imutáveis com fallback. Ainda não existe captura/restauração completa do `System`, integração nos frontends ou slots utilizáveis durante a partida. |
+| Auto-save/rotação de backups | Infraestrutura parcial | O armazenamento de save states retém gerações anteriores e recupera uma geração válida; ainda não há snapshot completo, auto-save ou Rewind expostos ao usuário. |
 
 **Evidência principal:** crates/aceris-core/src/video/library.rs (performance_mode e set_performance_mode), frontends/desktop/src/performance.rs, frontends/android/src/performance.rs, frontends/desktop/src/main.rs e frontends/android/src/app.rs.
 
@@ -97,9 +99,11 @@
 | Fallback CPU de apresentação | Disponível | O desktop mantém caminho CPU quando o presenter não pode ser usado. |
 | Resolução interna ampliada | Não disponível | Não há opção funcional de resolução interna ampliada para PICA200. |
 | Filtros de textura/AA/shader cache | Não disponível como opção de usuário | Não expor controles que não tenham efeito real e testes de regressão. |
+| Substituição de texturas | Não disponível | Não existe carregamento de pacotes locais, associação por Title ID/hash ou cache de texturas substituídas. |
 | VSync/limitador de quadros configuráveis | Não disponível como opção de usuário | Ritmo de renderização dos hosts não equivale a um painel de configuração de sincronização. |
 | Sink de áudio desktop/Android | Parcial | Existem saídas de host ALSA/WinMM/AudioQueue/AAudio, mas o caminho de áudio guest continua em desenvolvimento; docs/FRONTENDS.md registra falha em Sound.init no homebrew de ensaio e ausência de áudio audível confirmado. |
 | Volume/dispositivo/latência em UI | Não disponível | Não há controle completo na interface. |
+| Relatórios de diagnóstico exportáveis | Não disponível | Há logs locais e mensagens de falha; não há prévia sanitizada e exportação controlada pelo usuário. |
 | Cheats | Não disponível | Sem gerenciador de códigos por título. |
 | Substituição de textura | Não disponível | Sem pipeline de substituição apresentado ao usuário. |
 | Câmera, microfone, sensores, NFC e multiplayer | Não disponível | Requerem HLE, integração da plataforma, permissões e validação específica. |
