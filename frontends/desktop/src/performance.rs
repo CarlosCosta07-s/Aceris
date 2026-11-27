@@ -393,6 +393,7 @@ mod tests {
     #[test]
     fn monitor_emits_and_resets_each_five_second_window() {
         let mut monitor = DesktopPerformanceMonitor::new();
+        monitor.kind = Some(DesktopFrameKind::Game);
         monitor.interval_started = Instant::now() - REPORT_INTERVAL;
 
         monitor.record(
