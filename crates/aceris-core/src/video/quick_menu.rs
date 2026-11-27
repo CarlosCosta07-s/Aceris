@@ -543,14 +543,7 @@ mod tests {
                 ("PERFIL DESTE JOGO", PixelFormat::Bgrx8),
             ] {
                 let mut frame = vec![0u8; width as usize * height as usize * 4];
-                assert!(render_overlay_with_profile(
-                    &mut frame,
-                    width,
-                    height,
-                    format,
-                    0,
-                    label,
-                ));
+                assert!(render_overlay_with_profile(&mut frame, width, height, format, 0, label,));
                 assert_eq!(frame.len(), width as usize * height as usize * 4);
                 assert!(frame.iter().any(|channel| *channel != 0));
             }
