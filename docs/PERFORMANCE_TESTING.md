@@ -261,8 +261,10 @@ O commit 0dc68f9a adicionou tracing opcional de resultados SVC e HLE mínimo csn
 - O lote mantém uma instância de `MmuBus` e a TLB do núcleo durante várias instruções, evitando reconstruir o adaptador e retirar/recolocar a TLB em cada passo. A tradução de endereços virtuais, permissões, atributos de memória e política de cache continuam sendo verificadas para cada fetch e acesso de dados.
 - O estado de privilégio é atualizado após alterações de modo. Instruções CP15 e eventos saem para o despachante preciso; acessos observáveis aos registradores GIC, timer ou SCU fazem o lote ceder ao caminho preciso.
 - Testes diferenciais comparam ARM e Thumb contra `step` preciso; o caso ARM também faz `STR/LDR` através da MMU. Testes separados verificam o retorno em SVC e o handoff de instrução CP15.
-- **Não há ainda um número de desempenho para o caminho MMU ativo.** Os valores Callgrind de 1,865B → 1,270B → 1,139B instruções do host pertencem à sonda sintética anterior, que executa com a MMU guest desligada. Não devem ser atribuídos ao novo lote traduzido.
-- Próxima medição necessária: acrescentar uma sonda release específica com `SCTLR.M` ativo, tabelas de página válidas e ciclos de load/store/ALU; comparar execução precisa e em lote com o mesmo programa e contagem guest idêntica, em Linux x86-64 e Android ARM64 físico.
+- Os valores Callgrind de 1,865B → 1,270B → 1,139B instruções do host pertencem à sonda sintética anterior, que executa com a MMU guest desligada. Não devem ser atribuídos ao novo lote traduzido.
+- A sonda `translated_fast_dispatch_throughput` agora mede o caminho MMU ativo em build release no runner Ubuntu do GitHub Actions. Na execução de 27/11/2026 (1M de instruções por rodada), o passo preciso marcou 6,14 M instruções guest/s nas três rodadas; o lote marcou 16,71, 16,89 e 16,90 M instruções guest/s, com speedup de 2,72×, 2,75× e 2,75×. Mediana observada: 2,75×.
+- **Limite da medição:** o teste usa `FlatMemory` e isola CPU/MMU/dispatch. Não mede `Arm11ProcessSession`, D-cache do processo, scheduler, periféricos, GPU, apresentação, gameplay ou Android físico. É evidência de redução do custo do núcleo neste microcenário, não um ganho de FPS equivalente.
+- Próxima medição necessária: uma sonda de sessão completa com MMU ativa e, separadamente, execução em Android ARM64 físico; manter contagem guest e programa idênticos entre passo preciso e lote.
 
 ## Sonda isolada do despacho com MMU ativa (27/11/2026)
 
@@ -270,4 +272,4 @@ O commit 0dc68f9a adicionou tracing opcional de resultados SVC e HLE mínimo csn
 - Execução release: `cargo test --release -p aceris-core --lib translated_fast_dispatch_throughput -- --ignored --nocapture`.
 - Padrões: 1.000.000 instruções por rodada e 3 rodadas. `ACERIS_MMU_PROBE_INSTRUCTIONS` e `ACERIS_MMU_PROBE_ROUNDS` permitem ajustar duração e amostras.
 - Esta é uma microsonda de CPU/MMU com `FlatMemory`; não inclui scheduler/process session, o D-cache completo do processo, periféricos, GPU ou apresentação. Ela isola o custo da tradução e do despacho e não deve ser descrita como FPS de jogo.
-- A suíte normal compila o teste, mas não o executa porque está marcado `#[ignore]`. Nenhum número de speedup foi registrado ainda; executar a sonda em build release antes de decidir a próxima mudança.
+- A suíte normal compila o teste, mas não o executa porque está marcado `#[ignore]`. O workflow CI tem uma etapa adicional Ubuntu-only que o executa explicitamente em release, com 1M de instruções × 3 rodadas; a saída aparece no log do job. A CI de 27/11/2026 passou em Ubuntu, Windows, macOS e Android arm64-v8a.
