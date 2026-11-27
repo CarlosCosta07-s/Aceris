@@ -196,7 +196,7 @@ impl Arm11Core {
 
     /// Serializes architectural CPU state. Host decode/block caches are omitted
     /// and rebuilt lazily; architectural TLB and CP15 state are preserved.
-    pub fn encode_save_state(&self) -> Result<Vec<u8>, CpuStateError> {
+    pub fn encode_save_state(&self) -> std::result::Result<Vec<u8>, CpuStateError> {
         let mut writer = StateWriter::with_capacity(4096)?;
         writer.write_bytes(b"ACARM11\0")?;
         writer.write_u16(Self::SAVE_STATE_VERSION)?;
@@ -274,7 +274,7 @@ impl Arm11Core {
 
     /// Restores a complete core state transactionally. The active core remains
     /// untouched when the input is malformed or incompatible.
-    pub fn restore_save_state(&mut self, encoded: &[u8]) -> Result<(), CpuStateError> {
+    pub fn restore_save_state(&mut self, encoded: &[u8]) -> std::result::Result<(), CpuStateError> {
         let mut reader = StateReader::new(encoded);
         if reader.read_bytes(8)? != b"ACARM11\0" {
             return Err(CpuStateError::InvalidMagic);
@@ -330,7 +330,7 @@ impl Arm11Core {
             *value = reader.read_u32()?;
         }
 
-        let mut read_saved_status = || -> Result<Option<Psr>, CpuStateError> {
+        let mut read_saved_status = || -> std::result::Result<Option<Psr>, CpuStateError> {
             if !reader.read_bool()? {
                 return Ok(None);
             }
