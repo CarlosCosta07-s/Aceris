@@ -896,7 +896,7 @@ mod tests {
     fn confirmation_hit_testing_matches_cancel_and_confirm_rows() {
         for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800), (320, 240)] {
             let geometry = confirmation_geometry(width, height).unwrap();
-            for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
+            for (index, row) in geometry.rows.iter().enumerate() {
                 let x = (row.x + row.width / 2) as i32;
                 let y = (row.y + row.height / 2) as i32;
                 assert_eq!(hit_test_confirmation(width, height, x, y), Some(index));
