@@ -2889,3 +2889,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Em `Timeout` ou `Occluded`, a função retorna sem enviar o framebuffer inteiro à GPU nem criar a textura de upload naquela iteração. `Outdated`/`Lost` ainda reconfigura a surface e tenta adquirir novamente antes do upload; `Suboptimal` preserva o comportamento de reconfiguração após apresentar.
 - A mudança vale para os dois formatos de upload (RGBA Android e BGRX desktop), sem alterar bytes, shader, ordem da apresentação ou estado guest. O presenter `wgpu` foi atribuído ao trabalho do ChatGPT nesta etapa; nenhuma área PICA/CPU/Thumb foi editada.
 - Commit `764806637a647e98f9ecb416cf35ffb0809bff5e`. CI, teste em janela minimizada/oculta e medição de tráfego GPU ainda pendentes; não quantificar ganho até medir.
+
+## Desktop — cópia de linhas ampliadas sem memmove no caso disjunto (27/11/2026, ChatGPT)
+
+- A replicação de linhas em `frontends/desktop/src/window.rs` agora usa `split_at_mut` + `copy_from_slice` quando a linha de destino começa depois do fim da primeira linha ampliada, permitindo cópia de fatias comprovadamente disjuntas.
+- Mantido `copy_within` como fallback caso uma geometria futura produza regiões sobrepostas em memória. O teste diferencial completo para 2×/3×/4× permanece a referência de pixels.
+- Commits `d6e751602ca4cc9d777a627e9c492ff8e3545f01` e `90f2fc5d3041e404eb783cd4470943dbcfc916bd`. Compilação/CI e benchmark release ainda pendentes.
