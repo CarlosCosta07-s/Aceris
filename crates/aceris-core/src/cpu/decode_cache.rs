@@ -188,6 +188,21 @@ fn decode(word: u32) -> FastOp {
         return FastOp::Generic;
     }
     let pc = PC as u32;
+    let halfword_multiply_class = word & 0x0FF0_0090;
+    if matches!(
+        halfword_multiply_class,
+        0x0100_0080 | 0x0120_0080 | 0x0140_0080 | 0x0160_0080
+    ) {
+        return FastOp::HalfwordMultiply {
+            class: halfword_multiply_class,
+            rd: field(word, 19, 16) as u8,
+            rn: field(word, 15, 12) as u8,
+            rs: field(word, 11, 8) as u8,
+            rm: field(word, 3, 0) as u8,
+            x: bit(word, 5),
+            y: bit(word, 6),
+        };
+    }
     match field(word, 27, 25) {
         0b000 | 0b001 => {
             let immediate = bit(word, 25);
@@ -195,21 +210,6 @@ fn decode(word: u32) -> FastOp {
             // multiply and halfword-transfer instructions.
             if !immediate && bit(word, 4) {
                 if field(word, 7, 4) == 0b1001 {
-                    let class = word & 0x0FF0_0090;
-                    if matches!(
-                        class,
-                        0x0100_0080 | 0x0120_0080 | 0x0140_0080 | 0x0160_0080
-                    ) {
-                        return FastOp::HalfwordMultiply {
-                            class,
-                            rd: field(word, 19, 16) as u8,
-                            rn: field(word, 15, 12) as u8,
-                            rs: field(word, 11, 8) as u8,
-                            rm: field(word, 3, 0) as u8,
-                            x: bit(word, 5),
-                            y: bit(word, 6),
-                        };
-                    }
                     if field(word, 27, 22) == 0 {
                         return FastOp::Multiply {
                             rd: field(word, 19, 16) as u8,
