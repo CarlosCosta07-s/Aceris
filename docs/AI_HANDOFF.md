@@ -2841,3 +2841,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Comandos de referência e critérios de comparação foram registrados em `docs/PERFORMANCE_TESTING.md`. Usar a mesma imagem local, configuração, entrada, orçamento, aquecimento e número de quadros, com pelo menos três rodadas por modo.
 - Nenhuma medição de jogo foi executada nesta atualização. A mudança oferece um método comparável; não declara o despacho rápido vencedor em sessão completa nem prova MMU ativa em um título até executar a sonda.
 - Próximo passo: executar A/B release em PC x86-64 e Android ARM64 físico; comparar throughput, p50/p95/p99, GSP/LCD, estado final e proporção de quadros com `SCTLR.M` ativo. Se a MMU ficar desativada, classificar o resultado como sessão sem MMU.
+
+## Desktop — evitar limpeza duplicada do canvas em escala 1× (27/11/2026, ChatGPT)
+
+- `compose_bgrx_into` calcula o layout antes de inicializar o frame. Em `scale == 1`, inicializa somente o gutter central como preto opaco; os blits por linha das duas LCDs sobrescrevem todos os pixels restantes e forçam alpha `0xFF`.
+- Escalas maiores mantêm a inicialização completa e o caminho de replicação anterior. O teste `native_scale_overwrites_reused_buffer_and_keeps_the_gutter_opaque` usa buffer sentinela para detectar pixels antigos não sobrescritos e verifica o gutter.
+- Alteração somente no canvas host. Não muda pixels LCD guest nem o layout lógico. Ganho ainda não medido em hardware; o CI do HEAD mais recente continua pendente de confirmação.
