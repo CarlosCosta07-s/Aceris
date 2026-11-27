@@ -147,6 +147,41 @@ impl WaveOutSink {
 }
 
 impl Sink for WaveOutSink {
+    fn flush(&mut self) -> Result<(), String> {
+        self.carry.clear();
+        // waveOutReset returns every queued header to the caller and discards playback.
+        // SAFETY: `self.device` is the live waveOut device owned by this sink.
+        let status = unsafe { waveOutReset(self.device) };
+        if status != MMSYSERR_NOERROR {
+            return Err(format!("waveOutReset failed (error {status})"));
+        }
+
+        let mut first_error = None;
+        for slot in &mut self.slots {
+            if !slot.prepared {
+                continue;
+            }
+            // SAFETY: reset has returned each queued header; no buffer is playing.
+            let status = unsafe {
+                waveOutUnprepareHeader(
+                    self.device,
+                    &mut *slot.header,
+                    size_of::<WaveHdr>() as u32,
+                )
+            };
+            if status == MMSYSERR_NOERROR {
+                slot.prepared = false;
+            } else if first_error.is_none() {
+                first_error = Some(status);
+            }
+        }
+        if let Some(status) = first_error {
+            Err(format!("waveOutUnprepareHeader failed after reset (error {status})"))
+        } else {
+            Ok(())
+        }
+    }
+
     fn write(&mut self, samples: &[i16]) {
         self.carry.extend_from_slice(samples);
         let chunk_len = BUFFER_FRAMES * 2;
