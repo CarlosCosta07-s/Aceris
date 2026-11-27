@@ -10202,6 +10202,50 @@ mod tests {
     }
 
     #[test]
+    fn arm11_session_payload_assembles_versioned_sections_in_restore_order() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+
+        let payload = system.encode_arm11_session_sections().unwrap();
+        let section_ids = payload
+            .sections()
+            .iter()
+            .map(SaveStateSection::id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            section_ids,
+            vec![
+                section_id::SYSTEM_METADATA,
+                section_id::SHARED_BACKINGS,
+                section_id::GPU_PHYSICAL_MEMORY,
+                section_id::PROCESS_MEMORY,
+                section_id::ARM11_CPU,
+                section_id::KERNEL,
+                section_id::ARM11_PROCESS_RUNTIME,
+            ]
+        );
+        let metadata = payload.section(section_id::SYSTEM_METADATA).unwrap();
+        assert_eq!(metadata.payload().get(..8), Some(b"ACSYSINF".as_slice()));
+        assert_eq!(payload.encode().unwrap().len() > 16, true);
+    }
+
+    #[test]
+    fn arm11_session_payload_requires_an_active_process() {
+        let system = System::new();
+        assert!(matches!(
+            system.encode_arm11_session_sections(),
+            Err(SystemSaveStateError::ActiveProcessUnavailable)
+        ));
+    }
+
+    #[test]
     fn gsp_gx_queue_consumes_process_command_list_without_rendering_rights() {
         let mut system = System::new();
         system
