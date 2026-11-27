@@ -13,7 +13,7 @@ use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenRect, compute_screen_layout,
 };
 use aceris_core::video::library::{self, ClickResult, Library};
-use aceris_core::video::{DualScreenDisplay, ScreenSurface, intro};
+use aceris_core::video::{DualScreenDisplay, ScreenSurface, intro, quick_menu::{self, PixelFormat as MenuPixelFormat}};
 
 /// Which part of the application is on screen.
 #[derive(Debug)]
@@ -21,6 +21,7 @@ pub enum Screen {
     Intro { frame: u32 },
     Library,
     Game,
+    GameMenu,
 }
 
 /// One active touch pointer in surface pixels.
@@ -38,6 +39,9 @@ pub struct App {
     screen: Screen,
     library: Library,
     system: Option<System>,
+    current_game_path: Option<PathBuf>,
+    quick_menu_selected: usize,
+    menu_tap: Option<(i32, i32)>,
     width: u32,
     height: u32,
     pointers: BTreeMap<i32, (f32, f32)>,
@@ -63,6 +67,9 @@ impl App {
             screen: Screen::Intro { frame: 0 },
             library,
             system: None,
+            current_game_path: None,
+            quick_menu_selected: 0,
+            menu_tap: None,
             width: 0,
             height: 0,
             pointers: BTreeMap::new(),
@@ -127,21 +134,24 @@ impl App {
             }
             Screen::Library => self.update_library_touch(&previous),
             Screen::Game => self.apply_game_input(),
+            Screen::GameMenu => self.update_game_menu_touch(&previous),
         }
     }
 
     /// Handles a hardware key; returns true when the key was consumed.
     pub fn key(&mut self, android_keycode: i32, pressed: bool) -> bool {
         if android_keycode == AKEYCODE_BACK {
-            if pressed && matches!(self.screen, Screen::Library) && self.library.search_is_focused()
-            {
-                self.library.cancel_text_entry();
-                return true;
+            if pressed {
+                match self.screen {
+                    Screen::Library if self.library.search_is_focused() => {
+                        self.library.cancel_text_entry();
+                    }
+                    Screen::Game => self.open_game_menu(),
+                    Screen::GameMenu => self.resume_game(),
+                    _ => {}
+                }
             }
-            if pressed && matches!(self.screen, Screen::Game) {
-                self.leave_game();
-            }
-            return matches!(self.screen, Screen::Game | Screen::Library);
+            return matches!(self.screen, Screen::Game | Screen::GameMenu | Screen::Library);
         }
         if pressed && matches!(self.screen, Screen::Library) && self.library.search_is_focused() {
             match android_keycode {
@@ -168,6 +178,19 @@ impl App {
                 }
                 self.apply_game_input();
             }
+            Screen::GameMenu if pressed => match bit {
+                pad::UP => {
+                    self.quick_menu_selected = self.quick_menu_selected.saturating_sub(1);
+                }
+                pad::DOWN => {
+                    self.quick_menu_selected =
+                        (self.quick_menu_selected + 1).min(quick_menu::ACTION_COUNT - 1);
+                }
+                pad::A | pad::START => self.activate_game_menu_action(),
+                pad::B => self.resume_game(),
+                _ => {}
+            },
+            Screen::GameMenu => {}
             Screen::Library if pressed => match bit {
                 pad::UP => self
                     .library
@@ -262,7 +285,26 @@ impl App {
                     .render_responsive_into(self.width, self.height, output);
             }
             Screen::Game => self.step_game_into(output),
+            Screen::GameMenu => self.step_game_menu_into(output),
         }
+    }
+
+    fn step_game_menu_into(&mut self, output: &mut Vec<u8>) {
+        let Some(system) = self.system.as_ref() else {
+            self.screen = Screen::Library;
+            let _ = self.library.render_responsive_into(self.width, self.height, output);
+            return;
+        };
+        if !compose_game_into(system.display(), self.width, self.height, output) {
+            return;
+        }
+        let _ = quick_menu::render_overlay(
+            output,
+            self.width,
+            self.height,
+            MenuPixelFormat::Rgba8,
+            self.quick_menu_selected,
+        );
     }
 
     fn step_game_into(&mut self, output: &mut Vec<u8>) {
@@ -338,6 +380,99 @@ impl App {
         }
     }
 
+    fn update_game_menu_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
+        if previous.is_empty() {
+            if let Some((&_id, &(x, y))) = self.pointers.iter().next() {
+                self.menu_tap = Some((x.round() as i32, y.round() as i32));
+            }
+            return;
+        }
+        if self.pointers.is_empty() {
+            let last = previous.values().next().copied();
+            if let (Some(_start), Some((x, y))) = (self.menu_tap.take(), last) {
+                if let Some(index) = quick_menu::hit_test(
+                    self.width,
+                    self.height,
+                    x.round() as i32,
+                    y.round() as i32,
+                ) {
+                    self.quick_menu_selected = index;
+                    self.activate_game_menu_action();
+                }
+            }
+        }
+    }
+
+    /// Opens the menu at a frame boundary. The app thread keeps processing input
+    /// and drawing the last LCD scanout while no guest frame is executed.
+    fn open_game_menu(&mut self) {
+        if self.system.is_none() {
+            return;
+        }
+        self.key_mask = 0;
+        self.pointers.clear();
+        self.menu_tap = None;
+        self.audio.clear();
+        if let Some(system) = self.system.as_mut() {
+            system.input_mut().reset();
+        }
+        self.quick_menu_selected = 0;
+        self.screen = Screen::GameMenu;
+    }
+
+    fn resume_game(&mut self) {
+        if self.system.is_none() {
+            self.leave_game();
+            return;
+        }
+        self.key_mask = 0;
+        self.pointers.clear();
+        self.menu_tap = None;
+        if let Some(system) = self.system.as_mut() {
+            system.input_mut().reset();
+        }
+        self.screen = Screen::Game;
+    }
+
+    fn activate_game_menu_action(&mut self) {
+        match self.quick_menu_selected {
+            0 => self.resume_game(),
+            1 => self.restart_current_game(),
+            _ => self.leave_game(),
+        }
+    }
+
+    fn restart_current_game(&mut self) {
+        let Some(path) = self.current_game_path.clone() else {
+            self.leave_game();
+            return;
+        };
+        let mut system = System::new();
+        system.enable_guest_gpu_rendering();
+        if self.library.performance_mode()
+            && let Err(error) = system.set_fast_memory(true)
+        {
+            self.library
+                .set_status(format!("Modo desempenho indisponível: {error}"));
+        }
+        let save_name = path.file_name().unwrap_or_default().to_os_string();
+        system.set_storage_root(self.games_dir.join("saves").join(save_name));
+        match system.load_executable_file(&path) {
+            Ok(_) => {
+                self.system = Some(system);
+                self.key_mask = 0;
+                self.pointers.clear();
+                self.menu_tap = None;
+                self.quick_menu_selected = 0;
+                self.screen = Screen::Game;
+            }
+            Err(error) => {
+                self.leave_game();
+                self.library.set_status(format!("Não foi possível reiniciar: {error}"));
+            }
+        }
+    }
+
     /// Library taps act on release so a scroll gesture does not launch a game.
     fn update_library_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
         if previous.is_empty() {
@@ -405,7 +540,9 @@ impl App {
             Ok(_) => {
                 self.library.mark_launched(&path);
                 self.system = Some(system);
+                self.current_game_path = Some(path);
                 self.key_mask = 0;
+                self.quick_menu_selected = 0;
                 self.screen = Screen::Game;
                 self.apply_game_input();
             }
@@ -429,8 +566,12 @@ impl App {
     fn leave_game(&mut self) {
         let diagnostic = self.game_diagnostic();
         self.system = None;
+        self.current_game_path = None;
         self.audio.clear();
         self.key_mask = 0;
+        self.pointers.clear();
+        self.menu_tap = None;
+        self.quick_menu_selected = 0;
         self.screen = Screen::Library;
         if let Some(diagnostic) = diagnostic {
             self.library
@@ -914,7 +1055,7 @@ mod tests {
     }
 
     #[test]
-    fn hardware_keys_set_pad_bits_and_back_leaves_the_game() {
+    fn hardware_keys_set_pad_bits_and_back_opens_and_closes_the_quick_menu() {
         let (mut app, dir) = app_with_games(0);
         app.screen = Screen::Game;
         app.system = Some({
@@ -930,8 +1071,11 @@ mod tests {
         assert!(app.key(96, false));
         assert_eq!(app.system.as_mut().unwrap().input_mut().snapshot().held, 0);
         assert!(app.key(AKEYCODE_BACK, true));
-        assert!(matches!(app.screen(), Screen::Library));
-        assert!(app.system.is_none());
+        assert!(matches!(app.screen(), Screen::GameMenu));
+        assert!(app.system.is_some());
+        assert!(app.key(AKEYCODE_BACK, true));
+        assert!(matches!(app.screen(), Screen::Game));
+        assert!(app.system.is_some());
         fs::remove_dir_all(dir).ok();
     }
 
@@ -950,6 +1094,32 @@ mod tests {
         assert!(app.key(AKEYCODE_ENTER, true));
         assert!(!app.library.search_is_focused());
         assert_eq!(app.library.search_query(), "P");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn quick_menu_renders_without_advancing_the_guest_frame() {
+        let (mut app, dir) = app_with_games(0);
+        let mut system = System::new();
+        system.enable_guest_gpu_rendering();
+        let frame_before = system.display().frame_number();
+        app.system = Some(system);
+        app.current_game_path = Some(dir.join("placeholder.3dsx"));
+        app.screen = Screen::Game;
+        assert!(app.key(AKEYCODE_BACK, true));
+        assert!(matches!(app.screen(), Screen::GameMenu));
+
+        let mut frame = Vec::new();
+        app.step_into(&mut frame);
+        assert_eq!(frame.len(), app.width as usize * app.height as usize * 4);
+        assert_eq!(
+            app.system.as_ref().unwrap().display().frame_number(),
+            frame_before,
+            "opening and drawing the quick menu must not advance guest emulation"
+        );
+
+        assert!(app.key(AKEYCODE_BACK, true));
+        assert!(matches!(app.screen(), Screen::Game));
         fs::remove_dir_all(dir).ok();
     }
 
