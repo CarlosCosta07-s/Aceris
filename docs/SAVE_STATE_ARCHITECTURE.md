@@ -65,9 +65,13 @@ Cada seção contém um cabeçalho de 24 bytes: ID (u32), versão do componente 
 
 Os IDs devem ser não-zero, versões devem ser não-zero e IDs duplicados são rejeitados. A ordem de inserção é preservada para produzir arquivos reproduzíveis. O limite atual é 32 seções e o tamanho total continua sujeito ao limite de 512 MiB. Flags ainda não definidas são rejeitadas. Seções desconhecidas podem ser preservadas pelo contêiner, mas um futuro restaurador deve rejeitar IDs desconhecidos quando forem obrigatórios para a versão da máquina.
 
-O contêiner não define ainda serializers para CPU, memória ou serviços; ele fornece a estrutura de enquadramento e validação para que esses serializers sejam adicionados individualmente.
+O contêiner é infraestrutura de enquadramento; cada subsistema mantém um codec com sua própria versão.
 
-Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11, 3 memória do processo, 4 kernel, 5 PICA200, 6 GSP/LCD, 7 DSP, 8 CSND, 9 HID/entrada/APT e 10 filesystem. Reservar um ID não significa que seu serializer já esteja implementado.
+Já há serializers para o contexto arquitetural ARM11 (registradores, bancos, SPSRs, CP15, TLB, VFP e monitores exclusivos), para o scheduler/threads (contextos por thread, estados, prioridade, ordem de prontidão e relógio virtual) e para a RAM física GPU/CPU (páginas esparsas, reservas lineares de FCRAM e gerações de monitores exclusivos).
+
+O codec de RAM física usa o magic ACGPUMEM v1: cabeçalho de 24 bytes com contagens de páginas, alocações e monitores; cada página materializada armazena o número da página e seus 4096 bytes; alocações guardam base/tamanho; monitores guardam endereço/geração. A restauração valida todos os registros em estruturas temporárias e atualiza o Arc compartilhado apenas após a validação completa, preservando os clones já mantidos pelos subsistemas.
+
+Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11, 3 memória do processo, 4 kernel, 5 PICA200, 6 GSP/LCD, 7 DSP, 8 CSND, 9 HID/entrada/APT, 10 filesystem e 11 GPU_PHYSICAL_MEMORY. O ID 11 já possui um codec de seção; os IDs 1, 3–10 ainda precisam da integração dos respectivos estados completos.
 
 O caminho de API também está conectado: SaveStateFile::from_sections cria o envelope externo a partir de uma tabela validada, e decode_sections recupera a tabela interna depois que o arquivo externo foi validado para a identidade do jogo.
 
