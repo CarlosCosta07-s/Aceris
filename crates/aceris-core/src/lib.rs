@@ -7,6 +7,7 @@ pub mod cpu;
 pub mod csnd;
 pub mod dsp;
 pub mod fs;
+pub mod game_identity;
 pub mod gpu;
 pub mod hid;
 pub mod input;
@@ -19,4 +20,5 @@ pub mod system;
 pub mod video;
 
 pub use aceris_common::{Error, Result};
+pub use game_identity::GameIdentity;
 pub use system::{DEFAULT_FRAME_INSTRUCTION_BUDGET, System};
