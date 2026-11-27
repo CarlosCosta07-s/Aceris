@@ -36,6 +36,7 @@ struct Options {
     frame_trace: Option<PathBuf>,
     taps: Vec<Tap>,
     profile_components: bool,
+    fast_memory: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +88,7 @@ fn usage() {
          --dump-lcd <DIR>          Save final LCD surfaces as PNG after timing\n\
          --frame-trace <CSV>       Save per-frame timing and guest activity to CSV\n\
          --tap <X,Y@FRAME[+HOLD]>  Script a bottom-screen touch (repeatable; default HOLD=3)\n\
+         --fast-memory             Opt-in \"Desempenho\" mode: bypass the precise D-cache model\n\
          -h, --help                Show this help\n\
          \n\
          Supports 3DSX, NCSD (.3ds/.cci) and CIA files supported by the current loader."
@@ -152,11 +154,16 @@ fn parse_args() -> Result<Option<Options>, String> {
         frame_trace: None,
         taps: Vec::new(),
         profile_components: profile_only,
+        fast_memory: false,
     };
 
     while let Some(argument) = args.next() {
         if argument == "--profile-components" {
             options.profile_components = true;
+            continue;
+        }
+        if argument == "--fast-memory" && options.image.is_some() {
+            options.fast_memory = true;
             continue;
         }
         if options.image.is_none() {
@@ -815,6 +822,12 @@ fn run(options: Options) -> Result<(), String> {
     };
 
     let mut system = System::new();
+    if options.fast_memory {
+        system
+            .set_fast_memory(true)
+            .map_err(|err| format!("could not enable fast memory: {err}"))?;
+        println!("Fast memory:              enabled");
+    }
     let format = load_image(&mut system, image_path)?;
     println!("Loaded {:?}: {}", format, image_path.display());
     println!(

@@ -56,6 +56,16 @@ O ciclo de vida de NativeActivity, pause/resume, destruição e recriação de s
 
 - As páginas Jogos, Favoritos, Recentes e Homebrew oferecem filtro por extensão (.3DS, .CCI, .CIA, .3DSX), além da opção Todos. O filtro é compartilhado pela biblioteca Rust e funciona nos layouts responsivos em retrato e paisagem. Ele classifica pelo nome do arquivo, não valida conteúdo; em particular, filtrar .CIA não significa que o Aceris ofereça instalação persistente de títulos.
 
+## Modo Desempenho (opcional)
+
+Configurações da biblioteca → **MODO DESEMPENHO**. A escolha é salva em
+`<pasta de configurações>/performance_mode.txt` (`1`/`0`) e aplicada com
+`System::set_fast_memory(true)` antes de carregar o próximo jogo, tanto no
+Android quanto no desktop. No desktop, `ACERIS_FAST_MEMORY=1` também ativa o
+modo, e o benchmark aceita `--fast-memory`. O padrão continua sendo o modelo
+preciso de D-cache (docs/PERFORMANCE_LOW_END_PLAN.md). O modo é mais rápido,
+mas pode quebrar jogos que dependem da incoerência do cache.
+
 ## Estado de validação
 
 | Área | Evidência atual | O que falta |

@@ -96,8 +96,21 @@ fn storage_dir_for(game: &Path) -> std::path::PathBuf {
 }
 
 /// Loads the same NoCrypto NCSD execution path exposed by the Android frontend.
-fn load_game(system: &mut System, game: &Path) -> Result<(), String> {
+/// Opt-in "Desempenho" mode: the library setting or `ACERIS_FAST_MEMORY=1`.
+/// It bypasses the precise D-cache model (see docs/PERFORMANCE_LOW_END_PLAN.md)
+/// and is never a default.
+fn env_fast_memory() -> bool {
+    env::var("ACERIS_FAST_MEMORY").is_ok_and(|value| value == "1")
+}
+
+fn load_game(system: &mut System, game: &Path, fast_memory: bool) -> Result<(), String> {
     system.set_storage_root(storage_dir_for(game));
+    system
+        .set_fast_memory(fast_memory)
+        .map_err(|err| format!("could not select the memory mode: {err}"))?;
+    if fast_memory {
+        println!("Performance mode: fast memory enabled");
+    }
     let format = system
         .load_executable_file(game)
         .map_err(|err| format!("could not prepare {}: {err}", game.display()))?;
@@ -385,7 +398,11 @@ fn run_windowed(
             )
             .map_err(|err| format!("could not resize the gameplay window: {err}"))?;
 
-        if let Err(message) = load_game(system, &path) {
+        if let Err(message) = load_game(
+            system,
+            &path,
+            library.performance_mode() || env_fast_memory(),
+        ) {
             window
                 .resize(window::CANVAS_WIDTH * scale, window::CANVAS_HEIGHT * scale)
                 .map_err(|err| format!("could not restore the library window: {err}"))?;
@@ -627,7 +644,7 @@ fn run(options: RunOptions) -> ExitCode {
             return ExitCode::FAILURE;
         }
     } else if let Some(game) = &options.game {
-        if let Err(message) = load_game(&mut system, game) {
+        if let Err(message) = load_game(&mut system, game, env_fast_memory()) {
             eprintln!("error: {message}");
             return ExitCode::FAILURE;
         }

@@ -129,6 +129,15 @@ pub struct Library {
     touch_keyboard_open: bool,
     external_media_playing: bool,
     external_media_detection_available: bool,
+    performance_mode: bool,
+}
+
+/// File in the settings folder that persists the opt-in performance mode.
+const PERFORMANCE_MODE_FILE: &str = "performance_mode.txt";
+
+fn load_performance_mode(settings_directory: &Path) -> bool {
+    fs::read_to_string(settings_directory.join(PERFORMANCE_MODE_FILE))
+        .is_ok_and(|contents| contents.trim() == "1")
 }
 
 /// Versioned prefix for full-path identifiers stored in Favorites and Recent.
@@ -546,6 +555,7 @@ impl Library {
         }
 
         let favorites = favorite_ids.into_iter().collect();
+        let performance_mode = load_performance_mode(&settings_directory);
         Self {
             entries,
             selected: 0,
@@ -567,6 +577,7 @@ impl Library {
             touch_keyboard_open: false,
             external_media_playing: false,
             external_media_detection_available: false,
+            performance_mode,
         }
     }
 
@@ -580,7 +591,37 @@ impl Library {
         let mut library = Self::new(entries, fallback_directory.display().to_string());
         library.scan_config = scan_config;
         library.scan_settings_directory = settings_directory.to_path_buf();
+        library.performance_mode = load_performance_mode(settings_directory);
         library
+    }
+
+    /// Whether the opt-in "Desempenho" mode (fast memory without the precise
+    /// D-cache model) is selected. Hosts apply it with `System::set_fast_memory`
+    /// before loading a game. It is never enabled by default.
+    pub fn performance_mode(&self) -> bool {
+        self.performance_mode
+    }
+
+    /// Selects the performance mode and persists it in the settings folder.
+    pub fn set_performance_mode(&mut self, enabled: bool) -> std::io::Result<()> {
+        fs::create_dir_all(&self.scan_settings_directory)?;
+        fs::write(
+            self.scan_settings_directory.join(PERFORMANCE_MODE_FILE),
+            if enabled { "1\n" } else { "0\n" },
+        )?;
+        self.performance_mode = enabled;
+        self.status = Some(if enabled {
+            "MODO DESEMPENHO ATIVADO (VALE NO PRÓXIMO JOGO)".to_string()
+        } else {
+            "MODO DESEMPENHO DESATIVADO".to_string()
+        });
+        Ok(())
+    }
+
+    fn toggle_performance_mode_from_settings(&mut self) {
+        if let Err(error) = self.set_performance_mode(!self.performance_mode) {
+            self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
+        }
     }
 
     /// Current persisted roots and scanner options.
@@ -1207,6 +1248,8 @@ impl Library {
                     self.focus_scan_path();
                 } else if (526.0..570.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.reload();
+                } else if (594.0..638.0).contains(&y) && (38.0..362.0).contains(&x) {
+                    self.toggle_performance_mode_from_settings();
                 }
                 return ClickResult::Ignored;
             }
@@ -1314,6 +1357,9 @@ impl Library {
                     } else if (360.0..570.0).contains(&x) {
                         self.toggle_recursive_from_settings();
                     }
+                }
+                if (296.0..340.0).contains(&y) && (590.0..970.0).contains(&x) {
+                    self.toggle_performance_mode_from_settings();
                 }
                 ClickResult::Ignored
             }
@@ -1740,6 +1786,37 @@ impl Library {
                 "ATUALIZAR BIBLIOTECA",
                 brand::TEXT,
             );
+            if logical_height >= 640.0 {
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    594.0,
+                    324.0,
+                    44.0,
+                    scale,
+                    if self.performance_mode {
+                        0x28543F
+                    } else {
+                        0x2D1A3B
+                    },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    608.0,
+                    small_scale,
+                    if self.performance_mode {
+                        "MODO DESEMPENHO: ATIVADO"
+                    } else {
+                        "MODO DESEMPENHO: DESATIVADO"
+                    },
+                    brand::TEXT,
+                );
+            }
         } else {
             let count = self.visible_entry_count();
             let count_text = match (self.page, count) {
@@ -2962,6 +3039,45 @@ impl Library {
                     } else {
                         0xBBAFC7
                     },
+                );
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    590.0,
+                    296.0,
+                    380.0,
+                    44.0,
+                    scale,
+                    if self.performance_mode {
+                        0x28543F
+                    } else {
+                        0x2D1A3B
+                    },
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    780.0,
+                    311.0,
+                    text_scale,
+                    if self.performance_mode {
+                        "MODO DESEMPENHO: SIM"
+                    } else {
+                        "MODO DESEMPENHO: NÃO"
+                    },
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    590.0,
+                    350.0,
+                    text_scale,
+                    "Mais rápido; pode quebrar jogos sensíveis a cache.",
+                    0xBBAFC7,
                 );
             }
             LibraryPage::Games
@@ -4268,6 +4384,31 @@ mod tests {
         empty.set_status("COULD NOT LOAD");
         assert_eq!(empty.render().len(), WIDTH * HEIGHT * 4);
         assert_eq!(library(500).render().len(), WIDTH * HEIGHT * 4);
+    }
+
+    #[test]
+    fn performance_mode_is_opt_in_persisted_and_toggled_from_settings() {
+        let root = std::env::temp_dir().join(format!("aceris-lib-perf-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let settings = root.join("settings");
+        fs::create_dir_all(&root).unwrap();
+
+        let mut library = Library::from_scan_settings(&settings, &root);
+        assert!(!library.performance_mode());
+        library.select_page(LibraryPage::Settings);
+
+        // Landscape 1000x600 logical surface: the toggle sits in the right column.
+        library.click_responsive(780, 318, 1000, 600);
+        assert!(library.performance_mode());
+        assert!(Library::from_scan_settings(&settings, &root).performance_mode());
+        assert_eq!(library.render_responsive(1000, 600).len(), 1000 * 600 * 4);
+
+        // Portrait 400x800: the toggle sits below "ATUALIZAR BIBLIOTECA".
+        library.click_responsive(200, 616, 400, 800);
+        assert!(!library.performance_mode());
+        assert!(!Library::from_scan_settings(&settings, &root).performance_mode());
+        assert_eq!(library.render_responsive(400, 800).len(), 400 * 800 * 4);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
