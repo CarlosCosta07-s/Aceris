@@ -1380,7 +1380,7 @@ impl Library {
                     self.toggle_recursive_from_settings();
                 } else if (478.0..522.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.focus_scan_path();
-                } else if (526.0..570.0).contains(&y) && (38.0..362.0).contains(&x) {
+                } else if (546.0..590.0).contains(&y) && (38.0..362.0).contains(&x) {
                     if self.touch_keyboard_enabled {
                         self.toggle_virtual_controls_from_settings();
                     } else {
@@ -5259,7 +5259,7 @@ mod tests {
         assert!(library.virtual_controls_visible());
 
         // The portrait control replaces the duplicated refresh action on touch hosts.
-        library.click_responsive(200, 560, 400, 800);
+        library.click_responsive(200, 580, 400, 800);
         assert!(!library.virtual_controls_visible());
 
         let reopened = Library::new(Vec::new(), dir.display().to_string());
