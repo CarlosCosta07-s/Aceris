@@ -128,7 +128,6 @@ impl Cp15 {
         }
     }
 
-
     pub(super) fn write_save_state(
         &self,
         writer: &mut super::state::StateWriter,
