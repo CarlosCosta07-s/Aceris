@@ -439,9 +439,9 @@ mod tests {
                 "memory at {address:#X}"
             );
         }
-        let block = fast_cpu.block_cache.entries
-            [BlockCache::slot(0x100, fast_cpu.cpsr.mode())]
-            .expect("native IR block should have been retained");
+        let block =
+            fast_cpu.block_cache.entries[BlockCache::slot(0x100, fast_cpu.cpsr.mode())]
+                .expect("native IR block should have been retained");
         assert_eq!(block.len(), program.len());
         for index in 0..block.len() {
             assert!(!matches!(
