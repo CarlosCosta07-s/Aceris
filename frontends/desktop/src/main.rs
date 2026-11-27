@@ -869,10 +869,24 @@ fn emulate(
                     keyboard.apply(key, pressed, system.input_mut());
                 }
                 window::WindowEvent::Click { x, y } if !menu_open => {
-                    touch_at(system, x, y, scale, layout_profile.mode, layout_profile.swap_screens)
+                    touch_at(
+                        system,
+                        x,
+                        y,
+                        scale,
+                        layout_profile.mode,
+                        layout_profile.swap_screens,
+                    )
                 }
                 window::WindowEvent::Pointer { x, y, down: true } if !menu_open => {
-                    touch_at(system, x, y, scale, layout_profile.mode, layout_profile.swap_screens)
+                    touch_at(
+                        system,
+                        x,
+                        y,
+                        scale,
+                        layout_profile.mode,
+                        layout_profile.swap_screens,
+                    )
                 }
                 window::WindowEvent::Pointer { down: false, .. } if !menu_open => {
                     system.input_mut().touch_end()
