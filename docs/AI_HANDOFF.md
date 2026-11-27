@@ -2833,3 +2833,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A telemetria desktop foi ajustada para agrupar tempos em `DesktopFrameTimings`, removendo o aviso Clippy `too_many_arguments` da função `record`.
 - Nenhuma mudança foi feita em `crates/aceris-core/src/cpu/decode_cache.rs`, que pertence à implementação de outro agente. A CI de 27/11/2026 ainda reportava `needless_range_loop` nesse arquivo.
 - Estes caminhos não alteram estado guest nem frame pacing. Nenhum ganho foi medido em PC ou Android físico; a próxima validação deve comparar release com telemetria desligada/ligada e confirmar pixels idênticos, backend e stride reais. A compilação Android ARM64 e os testes da janela de composição ainda precisam ser confirmados pela CI do HEAD final.
+
+## Benchmark A/B da sessão ARM11 — despacho rápido versus preciso (27/11/2026, ChatGPT)
+
+- `crates/aceris-core/examples/benchmark.rs` aceita `--precise-dispatch` para desativar `Arm11ProcessSession::fast_dispatch` e forçar o passo preciso. A ausência da opção mantém o caminho rápido padrão. A comparação deve deixar `--fast-memory` desligado, salvo quando a memória rápida for a variável explicitamente avaliada.
+- Após o aquecimento, o benchmark imprime o estado `CP15.SCTLR.M`; durante a medição conta quantos limites de quadro observam a MMU ligada. A contagem é uma amostra por quadro, não um registro por instrução.
+- Comandos de referência e critérios de comparação foram registrados em `docs/PERFORMANCE_TESTING.md`. Usar a mesma imagem local, configuração, entrada, orçamento, aquecimento e número de quadros, com pelo menos três rodadas por modo.
+- Nenhuma medição de jogo foi executada nesta atualização. A mudança oferece um método comparável; não declara o despacho rápido vencedor em sessão completa nem prova MMU ativa em um título até executar a sonda.
+- Próximo passo: executar A/B release em PC x86-64 e Android ARM64 físico; comparar throughput, p50/p95/p99, GSP/LCD, estado final e proporção de quadros com `SCTLR.M` ativo. Se a MMU ficar desativada, classificar o resultado como sessão sem MMU.
