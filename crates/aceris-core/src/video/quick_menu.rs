@@ -446,7 +446,7 @@ pub fn render_confirmation_overlay(
         );
         let label_width = font::text_width(labels[index].chars().count(), text_scale);
         let text_x = row.x + row.width.saturating_sub(label_width) / 2;
-        let text_y = row.y + (row.height.saturating_sub(7 * row_text_scale)) / 2;
+        let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
         draw_text_for_format(
             frame,
             width as usize,
@@ -641,7 +641,7 @@ fn render_overlay_with_action_count(
             if is_selected { 245 } else { 230 },
             format,
         );
-        let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
+        let text_y = row.y + (row.height.saturating_sub(7 * row_text_scale)) / 2;
         let label = match index {
             6 => control_reset_label,
             7 => control_scope_label,
