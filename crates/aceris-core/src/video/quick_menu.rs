@@ -2,7 +2,7 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 4;
+pub const ACTION_COUNT: usize = 5;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,7 +41,7 @@ fn geometry(width: u32, height: u32) -> Option<Geometry> {
     let scale = (width.min(height) / 240).clamp(1, 8);
     let margin = 8 * scale;
     let panel_width = (420 * scale).min(width.saturating_sub(margin * 2));
-    let panel_height = (220 * scale).min(height.saturating_sub(margin * 2));
+    let panel_height = (224 * scale).min(height.saturating_sub(margin * 2));
     if panel_width < 180 * scale || panel_height < 150 * scale {
         return None;
     }
@@ -54,8 +54,8 @@ fn geometry(width: u32, height: u32) -> Option<Geometry> {
     };
     let horizontal_padding = 12 * scale;
     let row_top = panel.y + 42 * scale;
-    let row_height = 36 * scale;
-    let row_gap = 4 * scale;
+    let row_height = 32 * scale;
+    let row_gap = 2 * scale;
     let row_width = panel.width.saturating_sub(horizontal_padding * 2);
     let rows = std::array::from_fn(|index| Rect {
         x: panel.x + horizontal_padding,
@@ -340,7 +340,7 @@ pub fn render_overlay(
         format,
     );
 
-    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR À BIBLIOTECA", "ALTERAR LAYOUT"];
+    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR À BIBLIOTECA", "ALTERAR LAYOUT", "TROCAR TELAS"];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(ACTION_COUNT - 1);
         blend_rect(
