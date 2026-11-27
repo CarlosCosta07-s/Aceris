@@ -864,7 +864,6 @@ impl Library {
     /// Switches between A–Z and Z–A; the Recent section keeps its time order.
     pub fn toggle_sort_order(&mut self) {
         self.sort_descending = !self.sort_descending;
-        self.persist_view_preferences();
         self.selected = 0;
         self.first_visible = 0;
         self.status = Some(
@@ -875,6 +874,7 @@ impl Library {
             }
             .to_string(),
         );
+        self.persist_view_preferences();
     }
 
     /// Advances the file-extension filter and resets the visible selection.
@@ -896,7 +896,6 @@ impl Library {
             LibraryViewMode::Grid => LibraryViewMode::List,
             LibraryViewMode::List => LibraryViewMode::Grid,
         };
-        self.persist_view_preferences();
         self.selected = 0;
         self.first_visible = 0;
         self.status = Some(
@@ -906,6 +905,7 @@ impl Library {
             }
             .to_string(),
         );
+        self.persist_view_preferences();
     }
 
     /// True when the responsive landscape collection is displayed as a list.
