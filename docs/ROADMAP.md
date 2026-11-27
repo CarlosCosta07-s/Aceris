@@ -516,3 +516,6 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 
 - [x] Android: reutilizar o buffer de ponteiros dos eventos multitouch, retirar o pointer-up in-place e encerrar eventos cancelados antes de consultar coordenadas; reduz alocações intermediárias sem tocar na estrutura de estado da App.
 - [ ] Confirmar compilação Android ARM64 e observar latência/alocações de toque em aparelho físico.
+
+- [x] Presenter `wgpu`: obter a imagem de swapchain antes de enviar a textura completa; ignorar o upload em estados `Timeout`/`Occluded`, e manter retry após reconfiguração `Lost`/`Outdated`.
+- [ ] Confirmar CI do presenter e medir upload/tempo GPU com janela minimizada/oculta em PC e Android; a emulação guest continua executando e não é acelerada por este item.
