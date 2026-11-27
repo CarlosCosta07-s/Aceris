@@ -10,6 +10,7 @@ pub mod interrupt;
 pub mod ipc;
 pub mod ipc_handles;
 pub mod kernel;
+pub(crate) mod save_state;
 pub mod svc;
 /// ARM11 per-thread contexts and cooperative scheduling primitives.
 pub mod thread;
