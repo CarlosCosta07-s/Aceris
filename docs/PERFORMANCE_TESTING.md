@@ -350,3 +350,10 @@ Um resumo é escrito no terminal a cada cinco segundos, com até 300 amostras re
 Para comparar Vulkan com OpenGL (ou CPU fallback), use o mesmo PC, build release, arquivo de jogo, escala de janela, sequência de entrada e modo de energia. Defina o backend pela configuração já suportada em `GraphicsBackend::from_env`; não altere ao mesmo tempo `ACERIS_FAST_MEMORY`, `ACERIS_FRAME_BUDGET` ou a escala. Faça uma execução de aquecimento e pelo menos três janelas medidas de 60 segundos por configuração. Guarde o modelo de CPU, GPU, driver, sistema operacional, resolução da janela e os relatórios.
 
 Os tempos são métricas do host. `emulation_ms_p95` não isola o custo de cada instrução guest; `composition_ms_p95` é a composição final da tela, não o rasterizador PICA200; `presentation_ms_p95` pode incluir espera por V-Sync/FIFO. A telemetria não muda relógio guest, timers, orçamento de instruções, áudio ou frame pacing.
+
+## Otimizações recentes de apresentação host (27/11/2026)
+
+- Desktop: a composição na escala nativa (`scale == 1`) agora usa um caminho dedicado por linha, convertendo RGBA para BGRX sem executar os loops de replicação usados por escalas maiores. Escalas `2×`, `3×` e `4×` preservam o caminho genérico.
+- Android: quando o fallback `ANativeWindow` oferece buffer contíguo com largura, altura e stride exatamente iguais ao frame, a cópia usa uma única operação bulk. Buffers com padding, dimensões diferentes ou recorte continuam usando a cópia linha a linha.
+- Os dois caminhos alteram somente a cópia/composição da imagem host. Não mudam as dimensões ou o conteúdo das LCDs guest, o orçamento ARM11, relógios, timers, áudio ou a frequência de execução do 3DS.
+- Estas são especializações de caminho, ainda sem ganho quantificado em PC físico ou telefone Android. Comparar builds release com o mesmo jogo e perfil; no Android, registrar se a apresentação foi pelo presenter GPU ou pelo fallback CPU.
