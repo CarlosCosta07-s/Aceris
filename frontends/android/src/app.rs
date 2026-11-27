@@ -417,7 +417,9 @@ impl App {
             return;
         }
         let pressed_mask = self.held_mask();
-        overlay_virtual_pad(output, self.width, self.height, pressed_mask);
+        if self.library.virtual_controls_visible() {
+            overlay_virtual_pad(output, self.width, self.height, pressed_mask);
+        }
         let _ = quick_menu::render_menu_button(
             output,
             self.width,
@@ -435,6 +437,9 @@ impl App {
     }
 
     fn hit_virtual_button(&self, x: f32, y: f32) -> u32 {
+        if !self.library.virtual_controls_visible() {
+            return 0;
+        }
         frontend::hit_test_virtual_control(
             self.width,
             self.height,
@@ -1564,6 +1569,24 @@ mod tests {
         let before = frame.clone();
         overlay_virtual_pad(&mut frame, 400, 800, frontend::buttons::A);
         assert_ne!(frame, before);
+    }
+
+    #[test]
+    fn hidden_virtual_controls_stop_rendering_and_touch_capture_but_keep_hardware_input() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+        app.library.set_virtual_controls_visible(false).unwrap();
+
+        // This point is the centre of the default on-screen A button.
+        assert_eq!(app.hit_virtual_button(361.0, 608.0), 0);
+        touch(&mut app, 361.0, 608.0);
+        assert_eq!(app.held_mask(), 0);
+
+        // Physical keys remain available when the touch overlay is hidden.
+        app.key_mask = pad::A;
+        assert_eq!(app.held_mask(), pad::A);
+
+        fs::remove_dir_all(dir).ok();
     }
 
     #[test]
