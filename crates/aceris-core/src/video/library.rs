@@ -4,7 +4,7 @@
 //! keyboard, mouse or touch input and decide what "launch" means.
 
 use super::font::{self, draw_text};
-use super::frontend::VirtualControlPreset;
+use super::frontend::{VirtualControlPositions, VirtualControlPreset};
 use aceris_common::brand;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -138,6 +138,7 @@ pub struct Library {
     virtual_controls_opacity: u8,
     virtual_controls_size_percent: u8,
     virtual_controls_preset: VirtualControlPreset,
+    virtual_control_positions: VirtualControlPositions,
     external_media_playing: bool,
     external_media_detection_available: bool,
     performance_mode: bool,
@@ -155,6 +156,7 @@ const VIRTUAL_CONTROLS_SIZE_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_SIZE_V1";
 const VIRTUAL_CONTROLS_SIZE_STEPS: [u8; 3] = [80, 100, 120];
 const VIRTUAL_CONTROLS_PRESET_FILE: &str = "virtual_controls_preset_v1.txt";
 const VIRTUAL_CONTROLS_PRESET_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_PRESET_V1";
+const VIRTUAL_CONTROL_POSITIONS_FILE: &str = "virtual_control_positions_v1.txt";
 
 /// Missing or malformed settings preserve the default visible-controls state.
 fn load_virtual_controls_visible(settings_directory: &Path) -> bool {
@@ -230,6 +232,15 @@ fn load_virtual_controls_preset(settings_directory: &Path) -> VirtualControlPres
         return VirtualControlPreset::Standard;
     }
     VirtualControlPreset::from_config_value(value).unwrap_or_default()
+}
+
+fn load_virtual_control_positions(settings_directory: &Path) -> VirtualControlPositions {
+    let Ok(contents) =
+        fs::read_to_string(settings_directory.join(VIRTUAL_CONTROL_POSITIONS_FILE))
+    else {
+        return VirtualControlPositions::default();
+    };
+    VirtualControlPositions::from_config_str(&contents).unwrap_or_default()
 }
 
 fn load_performance_mode(settings_directory: &Path) -> bool {
@@ -716,6 +727,7 @@ impl Library {
         let virtual_controls_opacity = load_virtual_controls_opacity(&settings_directory);
         let virtual_controls_size_percent = load_virtual_controls_size_percent(&settings_directory);
         let virtual_controls_preset = load_virtual_controls_preset(&settings_directory);
+        let virtual_control_positions = load_virtual_control_positions(&settings_directory);
         let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
@@ -740,6 +752,7 @@ impl Library {
             virtual_controls_opacity,
             virtual_controls_size_percent,
             virtual_controls_preset,
+            virtual_control_positions,
             external_media_playing: false,
             external_media_detection_available: false,
             performance_mode,
@@ -762,6 +775,7 @@ impl Library {
         library.virtual_controls_size_percent =
             load_virtual_controls_size_percent(settings_directory);
         library.virtual_controls_preset = load_virtual_controls_preset(settings_directory);
+        library.virtual_control_positions = load_virtual_control_positions(settings_directory);
         let preferences = load_library_preferences(settings_directory);
         library.sort_descending = preferences.sort_descending;
         library.view_mode = preferences.view_mode;
@@ -932,6 +946,47 @@ impl Library {
         if let Err(error) = self.set_virtual_controls_preset(next) {
             self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
         }
+    }
+
+    /// Returns the current per-button positions for both surface orientations.
+    pub fn virtual_control_positions(&self) -> &VirtualControlPositions {
+        &self.virtual_control_positions
+    }
+
+    /// Applies a transient drag delta in hundredths of a percent.
+    ///
+    /// Persist once after the drag ends rather than writing for every pointer movement.
+    pub fn move_virtual_control(
+        &mut self,
+        orientation: u32,
+        button: u32,
+        delta_x: i16,
+        delta_y: i16,
+    ) -> bool {
+        self.virtual_control_positions
+            .adjust(orientation, button, delta_x, delta_y)
+    }
+
+    /// Persists all custom button positions as one versioned text file.
+    pub fn save_virtual_control_positions(&mut self) -> std::io::Result<()> {
+        fs::create_dir_all(&self.scan_settings_directory)?;
+        let temporary = self
+            .scan_settings_directory
+            .join(format!("{VIRTUAL_CONTROL_POSITIONS_FILE}.tmp"));
+        fs::write(&temporary, self.virtual_control_positions.to_config_string())?;
+        fs::rename(
+            temporary,
+            self.scan_settings_directory
+                .join(VIRTUAL_CONTROL_POSITIONS_FILE),
+        )?;
+        self.status = Some("POSIÇÕES DOS CONTROLES SALVAS".to_string());
+        Ok(())
+    }
+
+    /// Restores only the selected orientation to its preset's default positions.
+    pub fn reset_virtual_control_positions(&mut self, orientation: u32) -> std::io::Result<()> {
+        self.virtual_control_positions.reset_orientation(orientation);
+        self.save_virtual_control_positions()
     }
 
     /// Current persisted roots and scanner options.
