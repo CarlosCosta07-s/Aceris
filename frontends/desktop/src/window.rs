@@ -309,17 +309,36 @@ pub fn compose_bgrx_layout_into(
         };
         let origin_x = rect.x.max(0) as usize * scale;
         let origin_y = rect.y.max(0) as usize * scale;
+        let source_y_step = surface.height() / destination_height;
+        let source_y_remainder = surface.height() % destination_height;
+        let mut source_y = 0usize;
+        let mut source_y_error = 0usize;
+        let source_x_step = surface.width() / destination_width;
+        let source_x_remainder = surface.width() % destination_width;
         for destination_y in 0..destination_height {
-            let source_y = destination_y * surface.height() / destination_height;
-            let source_row = source_y * surface.stride_bytes();
+            let source_row = source_y.min(surface.height() - 1) * surface.stride_bytes();
             let output_row = ((origin_y + destination_y) * width + origin_x) * 4;
+            let mut source_x = 0usize;
+            let mut source_x_error = 0usize;
             for destination_x in 0..destination_width {
-                let source_x = destination_x * surface.width() / destination_width;
-                let source_at = source_row + source_x * 4;
+                let source_at = source_row + source_x.min(surface.width() - 1) * 4;
                 let output_at = output_row + destination_x * 4;
                 let pixel = &surface.pixels()[source_at..source_at + 4];
                 output[output_at..output_at + 4]
                     .copy_from_slice(&[pixel[2], pixel[1], pixel[0], 0xFF]);
+
+                source_x += source_x_step;
+                source_x_error += source_x_remainder;
+                if source_x_error >= destination_width {
+                    source_x += 1;
+                    source_x_error -= destination_width;
+                }
+            }
+            source_y += source_y_step;
+            source_y_error += source_y_remainder;
+            if source_y_error >= destination_height {
+                source_y += 1;
+                source_y_error -= destination_height;
             }
         }
     };
