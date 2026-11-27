@@ -454,3 +454,16 @@ O plano detalhado está em [`docs/PERFORMANCE_LOW_END_PLAN.md`](PERFORMANCE_LOW_
 - Black for Android é referência de recompilação estática de um único jogo Xbox para ARM64, não um substituto para a emulação geral do 3DS. O README declara Vulkan 1.1 e 4 GB de RAM; usar como lição de arquitetura/portabilidade, não como comprovação de suporte a celulares muito fracos.
 - Vulkan, SIMD, caches e multithreading precisam de benchmark por plataforma/driver. A interpretação precisa permanecer como fallback e oráculo diferencial; mudanças de temporização guest e hacks de precisão não podem ser ativados globalmente.
 - Próxima alteração de código proposta: cache de blocos decodificados e caminho rápido de memória comum, com testes diferenciais contra o interpretador e benchmark release repetível. O plano ainda é especificação; nenhum ganho de desempenho foi declarado por sua criação.
+
+### Aplicação do Black for Android como referência mobile (27/11/2026)
+
+- [x] Revisar a release Android v1.8.1 e mapear as opções públicas de apresentação, resolução configurável, V-Sync/FPS, contador, configurações persistidas e shader cache.
+- [x] Registrar adaptação em `docs/PERFORMANCE_LOW_END_PLAN.md` e `docs/GRAPHICS_BACKENDS.md`, separando presenter host de framebuffer/resolução guest.
+- [ ] Criar perfis Android estruturados e persistentes (`Compatibilidade`, `Baixo consumo`, `Desempenho` e `Personalizado`) sem ampliar o alcance do atual `performance_mode.txt` de memória rápida.
+- [ ] Expor métricas de apresentação (FPS, frametime p50/p95, backend, adapter, escala host e estado do cache) separadas das métricas guest.
+- [ ] Implementar escala de composição host 100/75/50% apenas após medir em Android físico; preservar exatamente as dimensões e pixels dos buffers LCD guest.
+- [ ] Medir Vulkan versus OpenGL ES, FIFO/pacing e preferência de energia em aparelhos reais antes de mudar `HighPerformance` ou o present mode atual.
+- [ ] Adicionar cache persistente e limitado de pipelines/shaders quando o renderer PICA200 em GPU estiver implementado; não confundir cache dos dois shaders do presenter LCD com cache de shader PICA.
+- [ ] Ensaios térmicos Android de 15+ minutos, com memória, bateria, temperatura/headroom e frametime, preservando o tempo guest.
+
+O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM. Isso é requisito daquele port, não o mínimo desejado do Aceris. Manter fallback OpenGL ES/CPU e avançar com evidências de dispositivos abaixo desse nível, sem prometer compatibilidade ainda não medida.
