@@ -446,7 +446,7 @@ pub fn render_confirmation_overlay(
         );
         let label_width = font::text_width(labels[index].chars().count(), text_scale);
         let text_x = row.x + row.width.saturating_sub(label_width) / 2;
-        let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
+        let text_y = row.y + (row.height.saturating_sub(7 * row_text_scale)) / 2;
         draw_text_for_format(
             frame,
             width as usize,
@@ -661,7 +661,6 @@ fn render_overlay_with_action_count(
     }
     true
 }
-
 
 /// Keeps action labels inside their rows on compact or narrow host surfaces.
 fn menu_row_text_scale(
@@ -1057,6 +1056,7 @@ mod tests {
             Some(ACTION_COUNT - 1)
         );
     }
+
     #[test]
     fn android_menu_labels_scale_down_on_short_and_narrow_surfaces() {
         for (width, height) in [(320u32, 180u32), (240u32, 320u32)] {
@@ -1109,5 +1109,4 @@ mod tests {
             }
         }
     }
-
 }
