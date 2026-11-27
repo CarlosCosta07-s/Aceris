@@ -4312,13 +4312,17 @@ mod tests {
             .kernel_objects
             .insert_event(EventResetType::Sticky)
             .unwrap();
+        let second_event = original
+            .kernel_objects
+            .insert_event(EventResetType::OneShot)
+            .unwrap();
 
         original.process_id = 23;
         original.external_irq_asserted = true;
         original.wait_deadlines.insert(thread, (event, 9_876_543));
         original.arbiter_waiters.push((0x0020_1000, thread));
         original.multi_waits.insert(thread, vec![event]);
-        original.wait_all_waits.insert(thread, vec![event, event + 1]);
+        original.wait_all_waits.insert(thread, vec![event, second_event]);
         original
             .interrupts
             .bind(0x20, event, 3, false, InterruptTargetKind::Event)
