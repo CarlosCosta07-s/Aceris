@@ -521,3 +521,12 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [ ] Confirmar CI do presenter e medir upload/tempo GPU com janela minimizada/oculta em PC e Android; a emulação guest continua executando e não é acelerada por este item.
 
 - [x] Desktop: replicar linhas ampliadas por cópia de fatias disjuntas quando seguro; manter fallback overlap-safe para geometrias futuras e teste diferencial do framebuffer.
+
+
+## Experiência do usuário — perfis globais de layout das telas (27/11/2026)
+
+- O core disponibiliza `ScreenLayoutMode` e geometria comum para Auto, lado a lado, vertical, superior ampliada, inferior ampliada, somente superior e somente inferior. A ação Trocar telas inverte a posição dos LCDs sem alterar sua identidade; o stylus continua associado à tela inferior física.
+- `ScreenLayoutPreferences` persiste os perfis globalmente em `.aceris/screen_layout_preferences_v1.txt`, versão `ACERIS_SCREEN_LAYOUT_PREFERENCES_V1`. Portrait e landscape têm valores independentes para modo e troca. Arquivo ausente/inválido/duplicado/contendo campos desconhecidos usa defaults seguros. O desktop aplica o perfil salvo ao abrir a sessão; Android carrega e salva a configuração na pasta .aceris compartilhada com as preferências da biblioteca.
+- Testes adicionados para defaults por orientação, round-trip em disco, isolamento dos perfis, rejeição de conteúdo inválido, geometria e toque nas diferentes disposições. Foram também adicionados testes de reinicialização da App Android para conferir que a configuração global é recuperada.
+- Estado parcial: ajustes personalizados de posição/espaçamento e overrides por jogo ainda não foram implementados. Layout/rotação e redimensionamento precisam de validação física em Android e Linux/Windows/macOS.
+- Esta etapa alterou somente geometria/layout de UI, preferências e frontends; não tocou em CPU/Thumb, GPU/PICA, DSP/CSND, SVC, módulos de Claude, dependências ou conteúdo protegido. Testes ainda não executados nesta sessão; não alegar CI/build aprovados.
