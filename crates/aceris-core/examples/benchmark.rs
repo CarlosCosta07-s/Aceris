@@ -878,7 +878,11 @@ fn run(options: Options) -> Result<(), String> {
         .is_some_and(|session| session.core().cp15().mmu_enabled());
     println!(
         "MMU SCTLR.M after warm-up: {}",
-        if mmu_enabled_after_warmup { "enabled" } else { "disabled" }
+        if mmu_enabled_after_warmup {
+            "enabled"
+        } else {
+            "disabled"
+        }
     );
 
     let mut samples_ns = Vec::with_capacity(options.frames);
@@ -941,7 +945,10 @@ fn run(options: Options) -> Result<(), String> {
         first_report.get_or_insert(report);
     }
 
-    println!("MMU-enabled measured frame boundaries: {mmu_enabled_frames}/{}", options.frames);
+    println!(
+        "MMU-enabled measured frame boundaries: {mmu_enabled_frames}/{}",
+        options.frames
+    );
 
     print_summary(
         &options,
