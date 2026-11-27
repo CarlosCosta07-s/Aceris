@@ -210,7 +210,14 @@ mod tests {
                 return None;
             }
             let offset = address.checked_sub(self.base)?;
-            if offset.checked_add(size)? > self.size {
+            let end = offset.checked_add(size)?;
+            if end > self.size {
+                return None;
+            }
+            if self
+                .split_address
+                .is_some_and(|split| address < split && address.checked_add(size).is_some_and(|end| end > split))
+            {
                 return None;
             }
             let backing_id = if self.split_address.is_some_and(|split| address >= split) {
@@ -262,6 +269,19 @@ mod tests {
             .expect("same identity should hit");
         assert_eq!(reused.start_pc, block.start_pc);
         assert_eq!(reused.len(), block.len());
+    }
+
+    #[test]
+    fn fast_loop_executes_a_cached_block_from_immutable_text() {
+        let mut bus = bus();
+        let mut cpu = Arm11Core::new();
+        cpu.regs[super::super::PC] = 0x100;
+
+        let (executed, exit) = cpu.run_fast(&mut bus, 4).unwrap();
+        assert_eq!(executed, 4);
+        assert_eq!(exit, super::super::FastRunExit::Budget);
+        assert_eq!((cpu.regs[0], cpu.regs[1], cpu.regs[2]), (1, 3, 6));
+        assert!(cpu.block_cache.entries.iter().any(Option::is_some));
     }
 
     #[test]
