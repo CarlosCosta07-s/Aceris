@@ -970,14 +970,10 @@ impl Library {
     /// Persists all custom button positions as one versioned text file.
     pub fn save_virtual_control_positions(&mut self) -> std::io::Result<()> {
         fs::create_dir_all(&self.scan_settings_directory)?;
-        let temporary = self
-            .scan_settings_directory
-            .join(format!("{VIRTUAL_CONTROL_POSITIONS_FILE}.tmp"));
-        fs::write(&temporary, self.virtual_control_positions.to_config_string())?;
-        fs::rename(
-            temporary,
+        fs::write(
             self.scan_settings_directory
                 .join(VIRTUAL_CONTROL_POSITIONS_FILE),
+            self.virtual_control_positions.to_config_string(),
         )?;
         self.status = Some("POSIÇÕES DOS CONTROLES SALVAS".to_string());
         Ok(())
