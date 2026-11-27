@@ -2861,7 +2861,7 @@ impl Arm11ProcessSession {
                 self.invalidate_process_data_cache(source_address, size)
                     .map_err(|_| RESULT_INVALID_ADDRESS)?;
                 Ok(address)
-            })()
+            })(),
             _ => Err(RESULT_INVALID_ENUM),
         };
 
