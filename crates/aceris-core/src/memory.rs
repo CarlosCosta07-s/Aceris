@@ -34,6 +34,18 @@ pub enum CachePolicy {
     WriteBackNoAllocate,
 }
 
+/// Stable identity for a range of executable bytes that a bus guarantees
+/// immutable for the lifetime of its backing allocation.
+///
+/// Writable RAM and executable mappings without an explicit immutability
+/// guarantee must return `None`; the CPU uses this token only for safe block
+/// caching, never as a substitute for normal fetch permission checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ImmutableCodeLocation {
+    pub backing_id: u64,
+    pub offset: u64,
+}
+
 pub trait Bus {
     fn read8(&mut self, addr: u32) -> Result<u8>;
     fn write8(&mut self, addr: u32, value: u8) -> Result<()>;
@@ -138,6 +150,19 @@ pub trait Bus {
     /// to hand control back so the IRQ line is re-sampled.
     fn take_interrupt_state_touched(&mut self) -> bool {
         false
+    }
+
+    /// Identifies an immutable executable range suitable for a bounded block cache.
+    ///
+    /// The default is deliberately conservative. Buses must prove that every
+    /// requested byte is executable, immutable, contiguous and backed by a
+    /// stable identity before returning a location.
+    fn immutable_instruction_location(
+        &mut self,
+        _address: u32,
+        _size: u32,
+    ) -> Option<ImmutableCodeLocation> {
+        None
     }
 
     /// Synchronizes the instruction stream after code or execution-context changes.
