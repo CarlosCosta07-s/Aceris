@@ -26,6 +26,18 @@ O modelo futuro deve distinguir:
 
 Favoritos e Recentes devem migrar do atual path-v1 para um identificador de origem versionado. Não associar jogos diferentes apenas pelo nome. Uma cópia do mesmo título em dois locais pode ter origens diferentes, mas compartilhar a GameIdentity validada quando isso for comprovado. A política de configuração por jogo deve usar GameIdentity; antes dessa validação, não inventar um Title ID.
 
+### 2.1.1 Implementação parcial da identidade de título (27/11/2026)
+
+O core agora expõe o tipo `GameIdentity` e `System::game_identity()`. A identidade atual é deliberadamente restrita ao Title ID de 64 bits:
+
+- NCSD/CCI: leitura do program ID do NCCH primário, após validar a estrutura do container e antes do loader de execução; o leitor é rebobinado para offset zero antes de continuar.
+- CIA: leitura do Title ID do TMD, somente depois de conferir que o NCCH de boot apresenta o mesmo program ID.
+- Um Title ID zero ou um formato sem identificador validado (atualmente 3DSX) produz identidade desconhecida; não é fabricado um identificador baseado no nome do arquivo.
+- A chave persistente é `title-v1:<16 dígitos hexadecimais>`. Ela identifica o título lógico e deliberadamente não separa revisões/versões de lançamento. Região, product code, revisão e identidade formal da origem ainda precisam ser modelados antes da página de metadados.
+- Essa verificação estrutural não equivale a validar assinatura/autenticidade do título. O estado da origem continua separado: Favoritos/Recentes ainda usam IDs derivados do caminho.
+
+A primeira consumidora é a preferência de layout de duas telas. O formato v2 mantém padrões globais por orientação e overrides opcionais por Title ID; configurações para títulos sem identidade validada herdam o padrão global. O arquivo v1 global-only continua sendo lido e é preservado; a próxima gravação cria `.aceris/screen_layout_preferences_v2.txt`. O restante do schema de configurações por jogo e a formalização de SourceId permanecem planejados.
+
 ### 2.2 Manter o core independente de plataforma
 
 O core não deve chamar ContentResolver, DocumentsContract, JNI, Win32, Cocoa ou APIs X11 para localizar arquivos.
