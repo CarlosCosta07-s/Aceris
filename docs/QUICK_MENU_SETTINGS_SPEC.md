@@ -24,6 +24,8 @@ PPSSPP, Azahar, Citra, PCSX2 e outros emuladores são referências de requisitos
 
 ### Estado da primeira implementação (27/11/2026)
 
+O painel do menu e a confirmação usam uma superfície roxo-profundo com sombra em duas camadas, contorno violeta, faixa superior vermelha e marcador luminoso na ação selecionada. O estilo é compartilhado pelos formatos RGBA8 e BGRX8, sem alterar pausa, hit-testing, navegação ou execução guest.
+
 A primeira camada do menu está conectada aos dois frontends:
 - Android: botão MENU visível durante o jogo e tecla/gesto Voltar; toque no botão é excluído do stylus guest.
 - PC: Esc abre/fecha; setas/Enter e mouse navegam. O menu desktop apresenta somente as seis ações disponíveis no PC; ações de edição do overlay de toque aparecem apenas no Android.
