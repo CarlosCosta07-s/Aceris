@@ -66,6 +66,7 @@ unsafe extern "C" {
         descriptions: *const c_void,
     ) -> i32;
     fn AudioQueueStart(queue: *mut c_void, start_time: *const c_void) -> i32;
+    fn AudioQueueStop(queue: *mut c_void, immediate: u8) -> i32;
     fn AudioQueueDispose(queue: *mut c_void, immediate: u8) -> i32;
 }
 
@@ -175,6 +176,27 @@ impl AudioQueueSink {
 }
 
 impl Sink for AudioQueueSink {
+    fn flush(&mut self) -> Result<(), String> {
+        self.carry.clear();
+        // Immediate stop is synchronous and resets the queue, discarding buffers
+        // that have not reached the output device.
+        // SAFETY: `self.queue` is the live output queue owned by this sink.
+        let status = unsafe { AudioQueueStop(self.queue, 1) };
+        if status != 0 {
+            return Err(format!("AudioQueueStop failed (error {status})"));
+        }
+        // Stop has completed and returned queued buffers through their callbacks.
+        for free in self.free.iter() {
+            free.store(true, Ordering::Release);
+        }
+        // SAFETY: a stopped queue can be started again after the reset.
+        let status = unsafe { AudioQueueStart(self.queue, ptr::null()) };
+        if status != 0 {
+            return Err(format!("AudioQueueStart after reset failed (error {status})"));
+        }
+        Ok(())
+    }
+
     fn write(&mut self, samples: &[i16]) {
         self.carry.extend_from_slice(samples);
         let chunk_len = BUFFER_FRAMES * 2;
