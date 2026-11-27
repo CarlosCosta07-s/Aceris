@@ -3014,3 +3014,14 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - crates/aceris-core/src/system.rs: teste service_manager_gets_dsp_handle_and_dispatches_first_request solicita dsp::DSP por srv:GetServiceHandle com ACL autorizada, valida o tipo do handle retornado e envia a primeira requisição ao endpoint DSP.
 - O teste cobre o caminho de aquisição de serviço, não o Sound.init do homebrew, a inicialização do componente DSP completo nem saída audível em hardware. Permanecem necessários trace de execução real e teste físico.
 - Commit: 6fc100f.
+
+
+## Política de testes de jogos — execução manual pelo mantenedor (27/11/2026, ChatGPT)
+
+- Carlos Costa confirmou que todos os testes que envolvem homebrew ou jogos comerciais serão realizados manualmente por ele, executando os títulos diretamente no Aceris.
+- A CI deve permanecer autocontida: Rustfmt, build, Clippy, testes unitários/protocolos com fixtures próprias, benchmarks sintéticos e empacotamento. Não baixar, exigir, executar ou armazenar títulos, firmware, chaves, saves ou conteúdo extraído de jogos.
+- Resultados de execução em jogo não devem ser inferidos a partir de testes unitários ou de uma CI verde. O mantenedor informará o título/versão, ambiente, etapa atingida e diagnóstico observado após o teste local.
+- Criado `docs/MANUAL_COMPATIBILITY_TESTS.md` com níveis distintos (reconhecido, inicializa, primeiro frame, executa, jogável, compatível) e uma ficha de observação que não exige envio do jogo nem de dados protegidos.
+- A CI anterior comprovou builds, suite `cargo test --workspace` e benchmark do núcleo em Linux, macOS e Windows, além do build Android ARM64. A matriz falhou apenas no Clippy global estrito, que expôs dívida de avisos/dead_code em módulos do núcleo; a validação estrita de `aceris-graphics` passou.
+- O workflow foi ajustado para manter Clippy estrito no renderer gráfico e executar Clippy de todo o workspace como auditoria com os avisos visíveis, sem impedir os builds release/artefatos por lints legados. Isso não significa que a dívida de Clippy foi corrigida; ela continua registrada nos logs e precisa ser tratada por área/autoria.
+- Nenhum arquivo de jogo, firmware, chave ou dado derivado foi adicionado. Somente `main`; sem branches ou PRs.
