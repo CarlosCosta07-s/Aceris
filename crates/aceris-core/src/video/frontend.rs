@@ -873,6 +873,31 @@ pub fn blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
     size_percent: u8,
     preset: VirtualControlPreset,
 ) -> bool {
+    blend_virtual_pad_overlay_into_with_positions(
+        frame,
+        width,
+        height,
+        orientation,
+        pressed_mask,
+        opacity,
+        size_percent,
+        preset,
+        &VirtualControlPositions::default(),
+    )
+}
+
+/// Draws the virtual gamepad using the selected preset and persistent custom positions.
+pub fn blend_virtual_pad_overlay_into_with_positions(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    orientation: u32,
+    pressed_mask: u32,
+    opacity: u8,
+    size_percent: u8,
+    preset: VirtualControlPreset,
+    positions: &VirtualControlPositions,
+) -> bool {
     use aceris_common::brand;
 
     if width == 0 || height == 0 || width > 4096 || height > 4096 {
@@ -889,7 +914,7 @@ pub fn blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
     }
 
     let shapes =
-        button_shapes_with_size_and_preset(width, height, orientation, size_percent, preset);
+        button_shapes_with_positions(width, height, orientation, size_percent, preset, positions);
     let later_overlap_masks = later_circle_overlap_masks(&shapes);
     for (index, shape) in shapes.iter().enumerate() {
         let pressed = pressed_mask & shape.bit != 0;
@@ -1421,6 +1446,84 @@ mod tests {
             VirtualControlPreset::LeftHanded,
         ));
         assert_ne!(standard_frame, left_frame);
+    }
+
+    #[test]
+    fn virtual_control_positions_round_trip_per_orientation_and_clamp() {
+        let mut positions = VirtualControlPositions::default();
+        assert!(positions.adjust(ORIENTATION_PORTRAIT, buttons::A, 350, -125));
+        assert!(positions.adjust(ORIENTATION_LANDSCAPE, buttons::A, -200, 500));
+        let encoded = positions.to_config_string();
+        let decoded = VirtualControlPositions::from_config_str(&encoded).unwrap();
+        assert_eq!(decoded, positions);
+        assert_eq!(
+            decoded.offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 350, y: -125 }
+        );
+        assert_eq!(
+            decoded.offset(ORIENTATION_LANDSCAPE, buttons::A),
+            VirtualControlOffset { x: -200, y: 500 }
+        );
+        assert!(!positions.adjust(ORIENTATION_PORTRAIT, 0, 100, 100));
+        assert!(positions.set_offset(
+            ORIENTATION_PORTRAIT,
+            buttons::A,
+            VirtualControlOffset { x: 30_000, y: -30_000 }
+        ));
+        assert_eq!(
+            positions.offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 2_000, y: -2_000 }
+        );
+        assert_eq!(
+            positions.offset(ORIENTATION_LANDSCAPE, buttons::A),
+            VirtualControlOffset { x: -200, y: 500 }
+        );
+    }
+
+    #[test]
+    fn custom_control_positions_are_shared_by_hit_testing_and_renderer() {
+        let (width, height) = (480, 800);
+        let mut positions = VirtualControlPositions::default();
+        let original = button_shapes_with_size_and_preset(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+        );
+        let original_a = original.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        assert!(positions.adjust(ORIENTATION_PORTRAIT, buttons::A, -1_000, 500));
+        let customized =
+            button_shapes_with_positions(width, height, ORIENTATION_PORTRAIT, 100,
+                VirtualControlPreset::Standard, &positions);
+        let customized_a = customized.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        assert_eq!(customized_a.x, original_a.x - 48.0);
+        assert_eq!(customized_a.y, original_a.y + 40.0);
+        assert_eq!(
+            hit_test_virtual_control_with_positions(
+                width,
+                height,
+                customized_a.x.round() as i32,
+                customized_a.y.round() as i32,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::Standard,
+                &positions,
+            ),
+            buttons::A
+        );
+        let base = vec![40u8, 80, 120, 255].repeat(width as usize * height as usize);
+        let mut standard_frame = base.clone();
+        let mut customized_frame = base;
+        assert!(blend_virtual_pad_overlay_into_with_positions(
+            &mut standard_frame, width, height, ORIENTATION_PORTRAIT, 0, 255, 100,
+            VirtualControlPreset::Standard, &VirtualControlPositions::default(),
+        ));
+        assert!(blend_virtual_pad_overlay_into_with_positions(
+            &mut customized_frame, width, height, ORIENTATION_PORTRAIT, 0, 255, 100,
+            VirtualControlPreset::Standard, &positions,
+        ));
+        assert_ne!(standard_frame, customized_frame);
     }
 
     #[test]
