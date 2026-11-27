@@ -34,6 +34,7 @@ use crate::loader::ncsd::ncch::crypto::AES_BLOCK_SIZE;
 use crate::loader::ncsd::ncch::extended_header::Arm11MemoryType;
 use crate::loader::ncsd::process::{
     Arm11CodeAddressSpace, Arm11DynamicMemoryError, Arm11ProcessLayoutError, SharedMemoryBacking,
+    SharedMemoryBackingCatalog, SharedMemoryStateError,
 };
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
@@ -377,6 +378,17 @@ impl Arm11ProcessSession {
             .current_core()
             .or_else(|| self.scheduler.core(MAIN_THREAD_ID))
             .expect("the main thread context is retained for the process lifetime")
+    }
+
+    /// Adds address-space mappings and live/retired kernel memory blocks to
+    /// the machine-wide shared-backing catalog.
+    pub(crate) fn collect_shared_backings(
+        &self,
+        catalog: &mut SharedMemoryBackingCatalog,
+    ) -> std::result::Result<(), SharedMemoryStateError> {
+        self.address_space.collect_shared_backings(catalog)?;
+        self.kernel_objects.collect_shared_backings(catalog)?;
+        Ok(())
     }
 
     /// Encodes the process' CPU contexts and scheduler as the ACRPAYLD ARM11_CPU section.
