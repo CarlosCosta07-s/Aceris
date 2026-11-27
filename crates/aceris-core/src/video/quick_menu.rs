@@ -788,9 +788,9 @@ mod tests {
             DESKTOP_ACTION_COUNT - 1,
             "PADRÃO GLOBAL",
         ));
-        let geometry = geometry(width, height, DESKTOP_ACTION_COUNT).unwrap();
-        assert_eq!(geometry.rows.len(), DESKTOP_ACTION_COUNT);
-        let last = geometry.rows.last().unwrap();
+        let desktop_geometry = geometry(width, height, DESKTOP_ACTION_COUNT).unwrap();
+        assert_eq!(desktop_geometry.rows.len(), DESKTOP_ACTION_COUNT);
+        let last = desktop_geometry.rows.last().unwrap();
         assert_eq!(
             hit_test_desktop(
                 width,
@@ -813,7 +813,7 @@ mod tests {
                 Some(index)
             );
         }
-        for row in &geometry.rows {
+        for row in &desktop_geometry.rows {
             let action = hit_test_desktop(
                 width,
                 height,
