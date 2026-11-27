@@ -513,3 +513,6 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [x] Android: pré-calcular os possíveis círculos posteriores que podem cobrir cada controle virtual, evitando testar todos os controles em cada pixel; preservar a precedência visual em layouts compactos. Teste diferencial inclui sobreposição real em 64×48.
 - [ ] Aguardar CI da `main` para Rustfmt, Clippy, builds, suíte completa e APK ARM64; separar falhas preexistentes de `decode_cache.rs` sem modificar o arquivo de outro agente.
 - [ ] Medir os dois caminhos em PC x86-64 e Android ARM64 físicos em Release, com a mesma escala, resolução e cena; registrar frametime p50/p95/p99. Nenhum ganho de FPS foi medido ou declarado por estas mudanças.
+
+- [x] Android: reutilizar o buffer de ponteiros dos eventos multitouch, retirar o pointer-up in-place e encerrar eventos cancelados antes de consultar coordenadas; reduz alocações intermediárias sem tocar na estrutura de estado da App.
+- [ ] Confirmar compilação Android ARM64 e observar latência/alocações de toque em aparelho físico.
