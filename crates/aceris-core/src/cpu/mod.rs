@@ -477,6 +477,45 @@ impl Arm11Core {
         while executed < budget {
             let pc = self.pc();
             let thumb = self.cpsr.thumb();
+            if !thumb {
+                let mode = self.cpsr.mode();
+                if let Some(block) = self.block_cache.block_for(
+                    pc,
+                    mode,
+                    bus,
+                    &mut self.decode_cache,
+                ) {
+                    for index in 0..block.len().min((budget - executed) as usize) {
+                        let Some(cached) = block.instruction(index) else {
+                            break;
+                        };
+                        let instruction_pc = self.pc();
+                        if instruction_pc != pc.wrapping_add((index as u32) * ARM_INSTRUCTION_SIZE) {
+                            break;
+                        }
+                        self.branch_taken = false;
+                        let mut event =
+                            self.execute_arm_decoded(bus, cached.word, cached.entry)?;
+                        if !self.branch_taken {
+                            self.regs[PC] = instruction_pc.wrapping_add(ARM_INSTRUCTION_SIZE);
+                        }
+                        if std::mem::take(&mut self.exception_return_wakeup) {
+                            event = StepEvent::ExceptionReturn;
+                        }
+                        if event != StepEvent::Executed {
+                            return Ok((executed, FastRunExit::Event(event)));
+                        }
+                        executed += 1;
+                        if bus.take_interrupt_state_touched() {
+                            return Ok((executed, FastRunExit::Yield));
+                        }
+                        if cached.ends_block {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
             let fetched = if thumb {
                 bus.fetch16(pc).map(u32::from)
             } else {
