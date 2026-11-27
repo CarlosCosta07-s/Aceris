@@ -403,34 +403,6 @@ impl GraphicsPresenter {
         if width != self.surface_config.width || height != self.surface_config.height {
             self.resize(width, height)?;
         }
-        self.ensure_frame_texture(width, height, upload_format);
-        let texture = self
-            .frame_texture
-            .as_ref()
-            .ok_or_else(|| "GPU frame texture was not allocated".to_string())?;
-        let bytes_per_row = width
-            .checked_mul(4)
-            .ok_or_else(|| "GPU frame row is too wide".to_string())?;
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-
         let mut configure_after_present = false;
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
@@ -466,6 +438,37 @@ impl GraphicsPresenter {
                 return Err("GPU surface acquisition failed validation".to_string());
             }
         };
+        // Acquire a presentable swapchain image before uploading the full
+        // frame. Timeout/occlusion returns above without allocating or
+        // transferring a texture that cannot be displayed this iteration.
+        self.ensure_frame_texture(width, height, upload_format);
+        let texture = self
+            .frame_texture
+            .as_ref()
+            .ok_or_else(|| "GPU frame texture was not allocated".to_string())?;
+        let bytes_per_row = width
+            .checked_mul(4)
+            .ok_or_else(|| "GPU frame row is too wide".to_string())?;
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
