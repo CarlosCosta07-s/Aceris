@@ -407,3 +407,9 @@ O teste `row_major_scaled_composition_matches_reference_pixel_for_pixel` compara
 O compositor dos controles virtuais calcula uma máscara de círculos posteriores que podem intersectar cada botão. Para cada pixel, a etapa de preservação da ordem visual verifica somente os candidatos; a checagem de distância exata permanece ativa para todos eles. Em layouts normais, a maioria dos pares não precisa ser revisitada em cada pixel; em superfícies compactas, a precedência continua correta.
 
 O teste `direct_virtual_overlay_matches_full_frame_reference` compara pixel a pixel a mistura direta com a composição tradicional de overlay em tela inteira, incluindo uma superfície compacta de 64×48 para cobrir círculos sobrepostos. Não há benchmark de aparelho físico nem ganho quantificado ainda. A alteração não afeta resolução LCD guest, instruções, clock, timers ou frame pacing.
+
+## Android — menos alocações intermediárias nos eventos multitouch (27/11/2026)
+
+A thread de eventos Android reutiliza um vetor de ponteiros entre callbacks de movimento. Ao levantar um dedo, remove o item correspondente no próprio vetor em vez de alocar outro vetor filtrado; em cancelamentos, limpa o estado imediatamente sem decodificar coordenadas descartadas. O buffer cresce se um evento exceder sua capacidade inicial e mantém a alocação para os eventos seguintes.
+
+A `App::set_pointers` ainda atualiza sua própria estrutura de estado, portanto esta alteração reduz somente os vetores temporários do adaptador NativeActivity; não torna todo o processamento multitouch livre de alocações. A ordem dos ponteiros restantes e os estados de cancelamento são mantidos. Medir em aparelho físico com interação multitouch e profiler de alocação antes de quantificar qualquer ganho.
