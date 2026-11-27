@@ -519,3 +519,5 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 
 - [x] Presenter `wgpu`: obter a imagem de swapchain antes de enviar a textura completa; ignorar o upload em estados `Timeout`/`Occluded`, e manter retry após reconfiguração `Lost`/`Outdated`.
 - [ ] Confirmar CI do presenter e medir upload/tempo GPU com janela minimizada/oculta em PC e Android; a emulação guest continua executando e não é acelerada por este item.
+
+- [x] Desktop: replicar linhas ampliadas por cópia de fatias disjuntas quando seguro; manter fallback overlap-safe para geometrias futuras e teste diferencial do framebuffer.
