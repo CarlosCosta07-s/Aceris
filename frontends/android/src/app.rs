@@ -1803,6 +1803,76 @@ mod tests {
     }
 
     #[test]
+    fn custom_virtual_control_drag_persists_independent_orientation_positions() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+        app.system = Some(System::new());
+        app.quick_menu_selected = quick_menu::ACTION_COUNT - 1;
+        app.activate_game_menu_action();
+        assert!(app.controls_editor);
+
+        // Move A 20x40 pixels in portrait; settings use normalized coordinates.
+        touch(&mut app, 361.0, 608.0);
+        touch(&mut app, 381.0, 648.0);
+        assert_eq!(
+            app.hit_virtual_button(381.0, 648.0),
+            frontend::buttons::A
+        );
+        app.set_pointers(&[]);
+        assert_eq!(
+            app.library.virtual_control_positions().offset(
+                frontend::ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            frontend::VirtualControlOffset { x: 500, y: 500 }
+        );
+
+        // The landscape layout starts from its own defaults and stores its own delta.
+        app.resize(800, 400);
+        touch(&mut app, 745.0, 304.0);
+        touch(&mut app, 725.0, 324.0);
+        assert_eq!(
+            app.hit_virtual_button(725.0, 324.0),
+            frontend::buttons::A
+        );
+        app.set_pointers(&[]);
+        assert_eq!(
+            app.library.virtual_control_positions().offset(
+                frontend::ORIENTATION_LANDSCAPE,
+                frontend::buttons::A
+            ),
+            frontend::VirtualControlOffset { x: -250, y: 500 }
+        );
+        assert_eq!(
+            app.library.virtual_control_positions().offset(
+                frontend::ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            frontend::VirtualControlOffset { x: 500, y: 500 }
+        );
+
+        app.key(AKEYCODE_BACK, true);
+        assert!(!app.controls_editor);
+        let reopened = App::new(&dir);
+        assert_eq!(
+            reopened.library.virtual_control_positions().offset(
+                frontend::ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            frontend::VirtualControlOffset { x: 500, y: 500 }
+        );
+        assert_eq!(
+            reopened.library.virtual_control_positions().offset(
+                frontend::ORIENTATION_LANDSCAPE,
+                frontend::buttons::A
+            ),
+            frontend::VirtualControlOffset { x: -250, y: 500 }
+        );
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn android_keycodes_map_dpad_and_gamepad_buttons() {
         assert_eq!(pad_from_android_keycode(19), Some(frontend::buttons::UP));
         assert_eq!(
