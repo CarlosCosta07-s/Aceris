@@ -531,13 +531,7 @@ impl Arm11Core {
                 // SMLALD{X}/SMLSLD{X}; 64-bit accumulator in RdHi:RdLo.
                 let rd_hi = rd;
                 let rd_lo = ra;
-                if bit7
-                    || rd_hi == PC
-                    || rd_lo == PC
-                    || rd_hi == rd_lo
-                    || rm == PC
-                    || rs == PC
-                {
+                if bit7 || rd_hi == PC || rd_lo == PC || rd_hi == rd_lo || rm == PC || rs == PC {
                     return Err(undefined());
                 }
                 let exchange = exchange_or_round;
@@ -1542,12 +1536,7 @@ impl Arm11Core {
         accumulate: bool,
         set_flags: bool,
     ) -> Result<()> {
-        let (rd, rn, rs, rm) = (
-            u32::from(rd),
-            u32::from(rn),
-            u32::from(rs),
-            u32::from(rm),
-        );
+        let (rd, rn, rs, rm) = (u32::from(rd), u32::from(rn), u32::from(rs), u32::from(rm));
 
         // MUL reserves Rn as SBZ. MLA uses Rn as its accumulator.
         // Both forms prohibit R15 in every architecturally used register.
@@ -1629,8 +1618,8 @@ impl Arm11Core {
             u64::from(a) * u64::from(b)
         };
         if accumulate {
-            let current = (u64::from(self.regs[rd_hi as usize]) << 32)
-                | u64::from(self.regs[rd_lo as usize]);
+            let current =
+                (u64::from(self.regs[rd_hi as usize]) << 32) | u64::from(self.regs[rd_lo as usize]);
             result = result.wrapping_add(current);
         }
 
@@ -2421,8 +2410,7 @@ impl Arm11Core {
                 self.finish_load(rn, rd, writeback, offset_address, value);
             }
             (true, 0b11) => {
-                let value =
-                    i32::from(self.read_armv6_halfword(bus, address, word)? as i16) as u32;
+                let value = i32::from(self.read_armv6_halfword(bus, address, word)? as i16) as u32;
                 self.finish_load(rn, rd, writeback, offset_address, value);
             }
             (false, 0b01) => {
@@ -2616,7 +2604,6 @@ impl Arm11Core {
         rn: u32,
         list: u32,
     ) -> Result<StepEvent> {
-
         // ARMv6 does not permit PC as the A32 multiple-transfer base.
         // A writeback load may not include its base in the destination list.
         // For a writeback store, the base may appear only as the lowest
