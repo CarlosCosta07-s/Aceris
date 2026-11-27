@@ -36,7 +36,7 @@ use crate::loader::ncsd::session::{
 use crate::loader::ncsd::{Arm11ProcessSession, Arm11RunReport, NcsdHeader, NcsdImageReader};
 use crate::loader::threedsx::ThreeDsxImage;
 use crate::loader::{self, ImageFormat};
-use crate::save_state::SaveStateSection;
+use crate::save_state::{SaveStateError, SaveStatePayload, SaveStateSection, section_id};
 use crate::video::{
     DualScreenDisplay, LcdController, LcdPanel, PDC_CONTROL, PDC_CONTROL_ENABLED,
     PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND, PDC_FRAMEBUFFER_B_FIRST,
@@ -196,6 +196,66 @@ struct ResolvedGspFramebufferInfo {
     info: PendingGspFramebufferInfo,
     left_physical_address: u32,
     right_physical_address: u32,
+}
+
+/// Failures while assembling the currently supported ARM11 save-state sections.
+#[derive(Debug)]
+pub(crate) enum SystemSaveStateError {
+    ActiveProcessUnavailable,
+    AllocationFailed,
+    Section(SaveStateError),
+    SharedMemory(SharedMemoryStateError),
+    Cpu(crate::cpu::CpuStateError),
+    Kernel(crate::loader::ncsd::session::kernel::save_state::KernelStateError),
+    GpuPhysicalMemory(String),
+}
+
+impl std::fmt::Display for SystemSaveStateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ActiveProcessUnavailable => {
+                formatter.write_str("there is no active ARM11 process to snapshot")
+            }
+            Self::AllocationFailed => {
+                formatter.write_str("could not allocate System save-state metadata")
+            }
+            Self::Section(error) => write!(formatter, "save-state section table failed: {error}"),
+            Self::SharedMemory(error) => write!(formatter, "shared-memory snapshot failed: {error}"),
+            Self::Cpu(error) => write!(formatter, "ARM11 CPU snapshot failed: {error}"),
+            Self::Kernel(error) => write!(formatter, "ARM11 kernel snapshot failed: {error}"),
+            Self::GpuPhysicalMemory(error) => {
+                write!(formatter, "GPU physical-memory snapshot failed: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SystemSaveStateError {}
+
+impl From<SaveStateError> for SystemSaveStateError {
+    fn from(error: SaveStateError) -> Self {
+        Self::Section(error)
+    }
+}
+
+impl From<SharedMemoryStateError> for SystemSaveStateError {
+    fn from(error: SharedMemoryStateError) -> Self {
+        Self::SharedMemory(error)
+    }
+}
+
+impl From<crate::cpu::CpuStateError> for SystemSaveStateError {
+    fn from(error: crate::cpu::CpuStateError) -> Self {
+        Self::Cpu(error)
+    }
+}
+
+impl From<crate::loader::ncsd::session::kernel::save_state::KernelStateError>
+    for SystemSaveStateError
+{
+    fn from(error: crate::loader::ncsd::session::kernel::save_state::KernelStateError) -> Self {
+        Self::Kernel(error)
+    }
 }
 
 /// The emulated console. Front-ends create one of these, load a game and then
@@ -527,6 +587,52 @@ impl System {
         &self,
     ) -> std::result::Result<SaveStateSection, SharedMemoryStateError> {
         self.collect_shared_backing_catalog()?.encode_section()
+    }
+
+    /// Builds the currently supported ARM11/process-memory portion of an ACRPAYLD payload.
+    ///
+    /// The insertion order is intentional: shared roots and physical memory are
+    /// emitted before process mappings and kernel handles that refer to them.
+    /// This is not yet a complete 3DS machine snapshot: PICA200 registers,
+    /// GSP/LCD queues, DSP/CSND state, filesystem state and host-output
+    /// reconstruction still require their own sections and a coordinated
+    /// safe-point protocol.
+    pub(crate) fn encode_arm11_session_sections(
+        &self,
+    ) -> std::result::Result<SaveStatePayload, SystemSaveStateError> {
+        let session = self
+            .ncsd_session
+            .as_ref()
+            .ok_or(SystemSaveStateError::ActiveProcessUnavailable)?;
+        let catalog = self.collect_shared_backing_catalog()?;
+
+        let mut metadata = Vec::new();
+        metadata
+            .try_reserve_exact(28)
+            .map_err(|_| SystemSaveStateError::AllocationFailed)?;
+        metadata.extend_from_slice(b"ACSYSINF");
+        metadata.extend_from_slice(&1u16.to_le_bytes());
+        metadata.extend_from_slice(&0u16.to_le_bytes());
+        metadata.extend_from_slice(&self.display.frame_number().to_le_bytes());
+        metadata.extend_from_slice(&session.virtual_time_ns().to_le_bytes());
+
+        let mut payload = SaveStatePayload::new();
+        payload.insert(SaveStateSection::new(
+            section_id::SYSTEM_METADATA,
+            1,
+            metadata,
+        )?)?;
+        payload.insert(catalog.encode_section()?)?;
+        payload.insert(
+            self.physical_memory
+                .encode_save_state_section()
+                .map_err(|error| SystemSaveStateError::GpuPhysicalMemory(error.to_string()))?,
+        )?;
+        payload.insert(session.encode_process_memory_section(&catalog)?)?;
+        payload.insert(session.encode_cpu_thread_section()?)?;
+        payload.insert(session.encode_kernel_section(&catalog)?)?;
+        payload.insert(session.encode_runtime_state_section()?)?;
+        Ok(payload)
     }
 
     /// Identifies a game image at `path` and records its validated container format.
