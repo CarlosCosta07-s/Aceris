@@ -10402,6 +10402,27 @@ mod tests {
     }
 
     #[test]
+    fn ncsd_identity_inspection_reads_primary_title_id_and_rewinds_reader() {
+        const TITLE_ID: u64 = 0x0004_0000_1234_5600;
+        let mut image = clear_ncsd_cartridge_fixture();
+        image[0x4000 + 0x118..0x4000 + 0x120].copy_from_slice(&TITLE_ID.to_le_bytes());
+        let mut reader = std::io::Cursor::new(image);
+
+        assert_eq!(
+            inspect_ncsd_game_identity(&mut reader).unwrap(),
+            GameIdentity::from_title_id(TITLE_ID)
+        );
+        assert_eq!(reader.position(), 0);
+    }
+
+    #[test]
+    fn ncsd_without_a_title_id_remains_unidentified() {
+        let mut reader = std::io::Cursor::new(clear_ncsd_cartridge_fixture());
+        assert_eq!(inspect_ncsd_game_identity(&mut reader).unwrap(), None);
+        assert_eq!(reader.position(), 0);
+    }
+
+    #[test]
     fn loads_clear_no_crypto_cia_boot_content_into_arm11_session() {
         let path =
             std::env::temp_dir().join(format!("aceris-clear-cia-{}.cia", std::process::id()));
@@ -10413,6 +10434,10 @@ mod tests {
 
         assert_eq!(result.unwrap(), ImageFormat::Cia);
         assert_eq!(system.image(), Some(ImageFormat::Cia));
+        assert_eq!(
+            system.game_identity(),
+            GameIdentity::from_title_id(0x0004_0000_0000_0001)
+        );
         assert_eq!(system.cpu().pc(), 0x0010_0000);
 
         let report = system.run_instructions(2).unwrap();
