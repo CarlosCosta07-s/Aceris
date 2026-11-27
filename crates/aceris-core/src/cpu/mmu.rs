@@ -395,6 +395,9 @@ pub(super) struct TranslationLookasideBuffer {
     sets: [[Option<TlbEntry>; TLB_WAYS]; TLB_SET_COUNT],
     lockdown_entries: [Option<TlbEntry>; 8],
     next_victim: [usize; TLB_SET_COUNT],
+    /// Changes whenever a mapping is inserted or the TLB is maintained.
+    /// MmuBus uses it to invalidate its one-entry hot lookup safely.
+    generation: u64,
 }
 
 impl TranslationLookasideBuffer {
@@ -432,6 +435,7 @@ impl TranslationLookasideBuffer {
     }
 
     fn insert(&mut self, entry: TlbEntry, preserve: bool, victim: usize) {
+        self.generation = self.generation.wrapping_add(1);
         let same_mapping = |existing: &TlbEntry| {
             existing.virtual_base == entry.virtual_base
                 && existing.address_mask == entry.address_mask
@@ -464,6 +468,7 @@ impl TranslationLookasideBuffer {
     }
 
     pub(super) fn maintain(&mut self, operation: TlbMaintenance) {
+        self.generation = self.generation.wrapping_add(1);
         for set in &mut self.sets {
             for entry in set {
                 let Some(cached) = entry else {
@@ -783,6 +788,8 @@ pub(super) struct MmuBus<'a, B: Bus + ?Sized> {
     params: Params,
     fetching: bool,
     fault: Option<Fault>,
+    last_entry: Option<TlbEntry>,
+    tlb_generation: u64,
 }
 
 impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
@@ -797,7 +804,42 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             params,
             fetching: false,
             fault: None,
+            last_entry: None,
+            tlb_generation: tlb.generation,
         }
+    }
+
+    /// Returns the most recently used translation when it is still present in
+    /// the architectural TLB. The generation check prevents using an entry
+    /// after a TLB insertion, replacement, or maintenance operation.
+    #[inline]
+    fn lookup_entry(&mut self, address: u32) -> Option<TlbEntry> {
+        if self.tlb_generation != self.tlb.generation {
+            self.last_entry = None;
+            self.tlb_generation = self.tlb.generation;
+        }
+
+        if let Some(entry) = self
+            .last_entry
+            .filter(|entry| entry.matches_context(&self.params, address))
+        {
+            return Some(entry);
+        }
+
+        let entry = self.tlb.lookup(&self.params, address)?;
+        self.last_entry = Some(entry);
+        Some(entry)
+    }
+
+    #[inline]
+    fn insert_entry(&mut self, entry: TlbEntry) {
+        self.tlb.insert(
+            entry,
+            self.params.tlb_preserve,
+            self.params.tlb_victim,
+        );
+        self.last_entry = Some(entry);
+        self.tlb_generation = self.tlb.generation;
     }
 
     fn map(&mut self, va: u32, access: Access) -> Result<u32> {
@@ -825,7 +867,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             va
         };
 
-        let (page_walk, cached) = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
+        let (page_walk, cached) = if let Some(entry) = self.lookup_entry(mva) {
             (PageWalk::Mapped(entry), true)
         } else {
             (
@@ -838,8 +880,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             PageWalk::Mapped(entry) => {
                 let result = entry.resolve_with_privilege(&self.params, mva, access, privileged);
                 if !cached {
-                    self.tlb
-                        .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
+                    self.insert_entry(entry);
                 }
                 match result {
                     Walk::Mapped(physical) => Ok((physical, entry.memory_attributes)),
@@ -875,7 +916,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             va
         };
 
-        let page_walk = if let Some(entry) = self.tlb.lookup(&self.params, mva) {
+        let page_walk = if let Some(entry) = self.lookup_entry(mva) {
             PageWalk::Mapped(entry)
         } else {
             walk_page_tables(self.inner, &self.params, mva, access)?
@@ -884,8 +925,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
         match page_walk {
             PageWalk::Mapped(entry) => {
                 let result = entry.resolve_with_privilege(&self.params, mva, access, privileged);
-                self.tlb
-                    .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
+                self.insert_entry(entry);
                 match result {
                     Walk::Mapped(physical_address) => Ok(PaTranslation::Mapped {
                         physical_address,
