@@ -3185,7 +3185,7 @@ impl System {
     fn dispatch_ptm_request(message: IpcMessage<'_>) -> Vec<u32> {
         let raw_header = message.header().raw();
         let value = match raw_header {
-            0x0005_0000 => Some(1), // GetAdapterState: plugged in
+            0x0005_0000 => Some(0), // GetAdapterState: not charging
             0x0006_0000 => Some(1), // GetShellState: open
             0x0007_0000 => Some(5), // GetBatteryLevel: full
             0x0008_0000 => Some(0), // GetBatteryChargeState: not charging
@@ -12614,7 +12614,7 @@ mod tests {
         let mut system = System::new();
         system
             .load_ncsd_with_keys(
-                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(12)),
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(32)),
                 [0; AES_BLOCK_SIZE],
                 [0; AES_BLOCK_SIZE],
             )
@@ -12627,6 +12627,15 @@ mod tests {
             read_tls_ipc_response(&mut system, reply, 3),
             [0x0003_0080, 0, 0]
         );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0004_0002]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0004_0040, 0]);
+        assert!(system.ndm.daemon_lock_enabled);
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0005_0002]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0005_0040, 0]);
+        assert!(!system.ndm.daemon_lock_enabled);
+
 
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0001_0042, 3]);
         run_one_ipc_svc(&mut system);
@@ -12835,6 +12844,12 @@ mod tests {
         assert_eq!(bytes, [1, 2, 3, 4]);
 
         let ptm = open_hle_service(&mut system, b"ptm:u");
+        let reply = write_tls_ipc_request(&mut system, ptm, &[0x0005_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0005_0080, 0, 0]
+        );
         let reply = write_tls_ipc_request(&mut system, ptm, &[0x0007_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
