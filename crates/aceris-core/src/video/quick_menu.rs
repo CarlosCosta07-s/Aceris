@@ -2,7 +2,7 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 5;
+pub const ACTION_COUNT: usize = 6;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,8 +54,12 @@ fn geometry(width: u32, height: u32) -> Option<Geometry> {
     };
     let horizontal_padding = 12 * scale;
     let row_top = panel.y + 42 * scale;
-    let row_height = 32 * scale;
     let row_gap = 2 * scale;
+    let row_space = panel.height.saturating_sub(52 * scale);
+    let row_height = row_space
+        .saturating_sub(row_gap * (ACTION_COUNT - 1))
+        .checked_div(ACTION_COUNT)?
+        .min(32 * scale);
     let row_width = panel.width.saturating_sub(horizontal_padding * 2);
     let rows = std::array::from_fn(|index| Rect {
         x: panel.x + horizontal_padding,
@@ -286,7 +290,7 @@ pub fn render_confirmation_overlay(
     true
 }
 
-/// Draws a dimmed, three-action quick menu over an existing RGBA8 or BGRX8 frame.
+/// Draws a dimmed, six-action quick menu over an existing RGBA8 or BGRX8 frame.
 ///
 /// The function does not allocate and leaves the frame unchanged when its
 /// dimensions or byte length are invalid.
@@ -346,6 +350,7 @@ pub fn render_overlay(
         "VOLTAR À BIBLIOTECA",
         "ALTERAR LAYOUT",
         "TROCAR TELAS",
+        "PADRÃO GLOBAL",
     ];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(ACTION_COUNT - 1);
