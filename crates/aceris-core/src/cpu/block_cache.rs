@@ -324,6 +324,24 @@ mod tests {
         assert_eq!(exit, super::super::FastRunExit::Budget);
         assert_eq!((cpu.regs[0], cpu.regs[1], cpu.regs[2]), (1, 3, 6));
         assert!(cpu.block_cache.entries.iter().any(Option::is_some));
+
+        let first_interval = cpu.block_cache_stats();
+        assert_eq!(first_interval.lookups, 1);
+        assert_eq!(first_interval.hits, 0);
+        assert_eq!(first_interval.misses, 1);
+        assert_eq!(first_interval.compiled_blocks, 1);
+        assert_eq!(first_interval.compiled_instructions, 4);
+
+        cpu.regs[super::super::PC] = 0x100;
+        let (executed, exit) = cpu.run_fast(&mut bus, 4).unwrap();
+        assert_eq!(executed, 4);
+        assert_eq!(exit, super::super::FastRunExit::Budget);
+        let second_interval = cpu.take_block_cache_stats();
+        assert_eq!(second_interval.lookups, 1);
+        assert_eq!(second_interval.hits, 1);
+        assert_eq!(second_interval.misses, 0);
+        assert_eq!(second_interval.compiled_blocks, 0);
+        assert_eq!(cpu.block_cache_stats(), super::BlockCacheStats::default());
     }
 
     #[test]
