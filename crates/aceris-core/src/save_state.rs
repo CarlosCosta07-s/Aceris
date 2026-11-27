@@ -209,6 +209,8 @@ pub mod section_id {
     pub const GPU_PHYSICAL_MEMORY: u32 = 11;
     /// Deduplicated roots referenced by process mappings, kernel handles and HLE services.
     pub const SHARED_BACKINGS: u32 = 12;
+    /// ARM11 process-local pending waits, address arbiters and interrupt bindings.
+    pub const ARM11_PROCESS_RUNTIME: u32 = 13;
 }
 
 /// Signature for the section table inside a save-state payload.
