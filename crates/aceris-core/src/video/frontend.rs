@@ -232,10 +232,20 @@ struct ButtonShape {
 }
 
 fn button_shapes(width: u32, height: u32, orientation: u32) -> [ButtonShape; 12] {
+    button_shapes_with_size(width, height, orientation, 100)
+}
+
+fn button_shapes_with_size(
+    width: u32,
+    height: u32,
+    orientation: u32,
+    size_percent: u8,
+) -> [ButtonShape; 12] {
     let w = width as f32;
     let h = height as f32;
     let unit = w.min(h);
-    let radius = (unit * 0.048).clamp(15.0, 38.0);
+    let size_scale = f32::from(size_percent.clamp(80, 120)) / 100.0;
+    let radius = (unit * 0.048).clamp(15.0, 38.0) * size_scale;
     let is_landscape = orientation == ORIENTATION_LANDSCAPE
         || (orientation == ORIENTATION_AUTO && width >= height);
     let (left_x, right_x, control_y) = if is_landscape {
@@ -246,7 +256,7 @@ fn button_shapes(width: u32, height: u32, orientation: u32) -> [ButtonShape; 12]
     let d = radius * 1.65;
     let face_d = radius * 1.5;
     let shoulder_y = (h * 0.13).max(radius + 4.0);
-    let small = (radius * 0.78).max(12.0);
+    let small = (radius * 0.78).max(12.0 * size_scale);
     [
         ButtonShape {
             bit: buttons::UP,
@@ -337,12 +347,24 @@ fn button_shapes(width: u32, height: u32, orientation: u32) -> [ButtonShape; 12]
 
 /// Returns the button bit under a touch point, or zero when no control is hit.
 pub fn hit_test_virtual_control(width: u32, height: u32, x: i32, y: i32, orientation: u32) -> u32 {
+    hit_test_virtual_control_with_size(width, height, x, y, orientation, 100)
+}
+
+/// Hit-tests the same geometry used by the renderer at the selected size.
+pub fn hit_test_virtual_control_with_size(
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    orientation: u32,
+    size_percent: u8,
+) -> u32 {
     if width == 0 || height == 0 || x < 0 || y < 0 {
         return 0;
     }
     let x = x as f32;
     let y = y as f32;
-    button_shapes(width, height, orientation)
+    button_shapes_with_size(width, height, orientation, size_percent)
         .into_iter()
         .find(|shape| {
             let dx = x - shape.x;
@@ -497,6 +519,27 @@ pub fn blend_virtual_pad_overlay_into_with_opacity(
     pressed_mask: u32,
     opacity: u8,
 ) -> bool {
+    blend_virtual_pad_overlay_into_with_opacity_and_size(
+        frame,
+        width,
+        height,
+        orientation,
+        pressed_mask,
+        opacity,
+        100,
+    )
+}
+
+/// Alpha-blends the virtual gamepad at a configurable size and overall opacity.
+pub fn blend_virtual_pad_overlay_into_with_opacity_and_size(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    orientation: u32,
+    pressed_mask: u32,
+    opacity: u8,
+    size_percent: u8,
+) -> bool {
     use aceris_common::brand;
 
     if width == 0 || height == 0 || width > 4096 || height > 4096 {
@@ -512,7 +555,7 @@ pub fn blend_virtual_pad_overlay_into_with_opacity(
         return false;
     }
 
-    let shapes = button_shapes(width, height, orientation);
+    let shapes = button_shapes_with_size(width, height, orientation, size_percent);
     let later_overlap_masks = later_circle_overlap_masks(&shapes);
     for (index, shape) in shapes.iter().enumerate() {
         let pressed = pressed_mask & shape.bit != 0;
@@ -892,6 +935,65 @@ mod tests {
                     / 255) as u8;
             }
         }
+    }
+
+    #[test]
+    fn virtual_control_size_keeps_hit_testing_and_rendering_in_sync() {
+        let (width, height) = (480, 800);
+        let normal = button_shapes_with_size(width, height, ORIENTATION_PORTRAIT, 100);
+        let large = button_shapes_with_size(width, height, ORIENTATION_PORTRAIT, 120);
+        let normal_a = normal.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        let large_a = large.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        assert_eq!((normal_a.x, normal_a.y), (large_a.x, large_a.y));
+        assert!(large_a.radius > normal_a.radius);
+
+        let between_radii =
+            (normal_a.x + (normal_a.radius + large_a.radius) * 0.5).round() as i32;
+        let center_y = normal_a.y.round() as i32;
+        assert_eq!(
+            hit_test_virtual_control_with_size(
+                width,
+                height,
+                between_radii,
+                center_y,
+                ORIENTATION_PORTRAIT,
+                100,
+            ),
+            0
+        );
+        assert_eq!(
+            hit_test_virtual_control_with_size(
+                width,
+                height,
+                between_radii,
+                center_y,
+                ORIENTATION_PORTRAIT,
+                120,
+            ),
+            buttons::A
+        );
+
+        let mut compact_frame = vec![40u8, 80, 120, 255].repeat(width as usize * height as usize);
+        let mut large_frame = compact_frame.clone();
+        assert!(blend_virtual_pad_overlay_into_with_opacity_and_size(
+            &mut compact_frame,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            0,
+            255,
+            80,
+        ));
+        assert!(blend_virtual_pad_overlay_into_with_opacity_and_size(
+            &mut large_frame,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            0,
+            255,
+            120,
+        ));
+        assert_ne!(compact_frame, large_frame);
     }
 
     #[test]
