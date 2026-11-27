@@ -71,7 +71,7 @@ Já há serializers para o contexto arquitetural ARM11 (registradores, bancos, S
 
 O codec de RAM física usa o magic ACGPUMEM v1: cabeçalho de 24 bytes com contagens de páginas, alocações e monitores; cada página materializada armazena o número da página e seus 4096 bytes; alocações guardam base/tamanho; monitores guardam endereço/geração. A restauração valida todos os registros em estruturas temporárias e atualiza o Arc compartilhado apenas após a validação completa, preservando os clones já mantidos pelos subsistemas.
 
-Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11, 3 memória do processo, 4 kernel, 5 PICA200, 6 GSP/LCD, 7 DSP, 8 CSND, 9 HID/entrada/APT, 10 filesystem, 11 GPU_PHYSICAL_MEMORY e 12 SHARED_BACKINGS. Os IDs 11 e 12 já possuem codecs de seção; os IDs 1, 3–10 ainda precisam da integração dos respectivos estados completos.
+Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11, 3 memória do processo, 4 kernel, 5 PICA200, 6 GSP/LCD, 7 DSP, 8 CSND, 9 HID/entrada/APT, 10 filesystem, 11 GPU_PHYSICAL_MEMORY, 12 SHARED_BACKINGS e 13 ARM11_PROCESS_RUNTIME. Os IDs 4, 11, 12 e 13 já possuem codecs de componente, mas ainda não formam uma captura/restauração integral de System; os demais componentes ainda precisam de seus codecs e da integração segura.
 
 O catálogo SHARED_BACKINGS guarda cada root esparso uma vez, atribui slots estáveis durante a montagem do snapshot e recria views por (slot, offset, comprimento). Ao restaurar, as views que pertenciam a um mesmo root voltam a compartilhar a mesma alocação, em vez de receber cópias independentes. O codec do catálogo está pronto, mas a montagem global ainda precisa coletar referências de todos os address spaces, kernel objects e serviços HLE antes de salvar a máquina inteira.
 
@@ -84,6 +84,12 @@ Os memory blocks guardam somente (slot, offset, tamanho, permissões). Os bytes 
 A sessão ARM11 expõe a gravação e restauração desta seção, que deve ocorrer depois da reconstrução do catálogo SHARED_BACKINGS. Testes cobrem round-trip de eventos/mutexes/aliases e shared memory, além da rejeição de payload malformado sem alterar a tabela corrente.
 
 **Limite desta etapa:** o codec cobre a tabela de objetos do kernel, não todos os campos de sincronização mantidos por Arm11ProcessSession (deadlines, arbiters em espera, WaitSynchronizationN pendente e bindings de interrupção), nem os estados de DSP/CSND/GSP/PICA/LCD/filesystem. Portanto, ainda não é um snapshot integral nem pode ser conectado diretamente ao Save/Load da interface.
+
+### Estado pendente da sessão ARM11 — ARM11_PROCESS_RUNTIME v1
+
+A seção 13 preserva o PID do processo, a linha IRQ externa, deadlines de espera, a fila de address arbiters, listas pendentes de WaitSynchronizationN (wait-any e wait-all) e bindings de interrupção SVC. A decodificação limita contagens, verifica IDs de thread, endereços alinhados e tipos de destino de interrupção; a tabela de interrupções é reconstruída temporariamente antes de substituir o estado atual da sessão.
+
+Esta seção complementa, mas não substitui, ARM11_CPU e KERNEL: scheduler/contextos por thread continuam na seção 2; objetos e handles continuam na seção 4. A coerência cruzada entre todos esses dados ainda deve ser validada pelo agregador System durante a restauração completa.
 
 O caminho de API também está conectado: SaveStateFile::from_sections cria o envelope externo a partir de uma tabela validada, e decode_sections recupera a tabela interna depois que o arquivo externo foi validado para a identidade do jogo.
 
