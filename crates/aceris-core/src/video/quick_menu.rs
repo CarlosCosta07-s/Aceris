@@ -190,9 +190,9 @@ pub fn render_control_editor_hint(
     let scale = (width.min(height) / 240).clamp(1, 4) as usize;
     let panel = Rect {
         x: 8 * scale,
-        y: (height as usize * 42 / 100).saturating_sub(17 * scale),
+        y: (height as usize * 42 / 100).saturating_sub(23 * scale),
         width: (width as usize - 116 * scale).min(230 * scale),
-        height: 34 * scale,
+        height: 46 * scale,
     };
     blend_rect(frame, width as usize, panel, [31, 19, 48], 232, format);
     draw_border(frame, width as usize, panel, scale, format);
@@ -201,9 +201,9 @@ pub fn render_control_editor_hint(
         width as usize,
         height as usize,
         panel.x + 10 * scale,
-        panel.y + 6 * scale,
+        panel.y + 5 * scale,
         scale,
-        "ARRASTE PARA MOVER",
+        "ARRASTE: MOVER",
         [245, 238, 248],
         format,
     );
@@ -214,7 +214,18 @@ pub fn render_control_editor_hint(
         panel.x + 10 * scale,
         panel.y + 18 * scale,
         scale,
-        "VOLTAR: SALVAR POSICOES",
+        "PINCA: TAMANHO",
+        [245, 238, 248],
+        format,
+    );
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        panel.x + 10 * scale,
+        panel.y + 31 * scale,
+        scale,
+        "VOLTAR: SALVAR",
         [190, 225, 203],
         format,
     );
