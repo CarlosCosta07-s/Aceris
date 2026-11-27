@@ -156,7 +156,8 @@ const VIRTUAL_CONTROLS_SIZE_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_SIZE_V1";
 const VIRTUAL_CONTROLS_SIZE_STEPS: [u8; 3] = [80, 100, 120];
 const VIRTUAL_CONTROLS_PRESET_FILE: &str = "virtual_controls_preset_v1.txt";
 const VIRTUAL_CONTROLS_PRESET_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_PRESET_V1";
-const VIRTUAL_CONTROL_POSITIONS_FILE: &str = "virtual_control_positions_v1.txt";
+const VIRTUAL_CONTROL_LAYOUT_FILE: &str = "virtual_control_layout_v2.txt";
+const LEGACY_VIRTUAL_CONTROL_POSITIONS_FILE: &str = "virtual_control_positions_v1.txt";
 
 /// Missing or malformed settings preserve the default visible-controls state.
 fn load_virtual_controls_visible(settings_directory: &Path) -> bool {
@@ -235,11 +236,19 @@ fn load_virtual_controls_preset(settings_directory: &Path) -> VirtualControlPres
 }
 
 fn load_virtual_control_positions(settings_directory: &Path) -> VirtualControlPositions {
-    let Ok(contents) = fs::read_to_string(settings_directory.join(VIRTUAL_CONTROL_POSITIONS_FILE))
-    else {
-        return VirtualControlPositions::default();
-    };
-    VirtualControlPositions::from_config_str(&contents).unwrap_or_default()
+    let current = fs::read_to_string(settings_directory.join(VIRTUAL_CONTROL_LAYOUT_FILE))
+        .ok()
+        .and_then(|contents| VirtualControlPositions::from_config_str(&contents));
+    if let Some(positions) = current {
+        return positions;
+    }
+
+    // Read the previous position-only file so existing custom layouts survive
+    // the upgrade. Its V1 encoding defaults each individual button to 100%.
+    fs::read_to_string(settings_directory.join(LEGACY_VIRTUAL_CONTROL_POSITIONS_FILE))
+        .ok()
+        .and_then(|contents| VirtualControlPositions::from_config_str(&contents))
+        .unwrap_or_default()
 }
 
 fn load_performance_mode(settings_directory: &Path) -> bool {
@@ -966,15 +975,26 @@ impl Library {
             .adjust(orientation, button, delta_x, delta_y)
     }
 
-    /// Persists all custom button positions as one versioned text file.
+    /// Updates one button's scale during the editor gesture; the host saves on release.
+    pub fn resize_virtual_control(
+        &mut self,
+        orientation: u32,
+        button: u32,
+        size_percent: u8,
+    ) -> bool {
+        self.virtual_control_positions
+            .set_size_percent(orientation, button, size_percent)
+    }
+
+    /// Persists the complete per-button control layout as one versioned text file.
     pub fn save_virtual_control_positions(&mut self) -> std::io::Result<()> {
         fs::create_dir_all(&self.scan_settings_directory)?;
         fs::write(
             self.scan_settings_directory
-                .join(VIRTUAL_CONTROL_POSITIONS_FILE),
+                .join(VIRTUAL_CONTROL_LAYOUT_FILE),
             self.virtual_control_positions.to_config_string(),
         )?;
-        self.status = Some("POSIÇÕES DOS CONTROLES SALVAS".to_string());
+        self.status = Some("LAYOUT DOS CONTROLES SALVO".to_string());
         Ok(())
     }
 
