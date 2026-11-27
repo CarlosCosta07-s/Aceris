@@ -22,7 +22,7 @@
 
 use super::arm::{bit, bits};
 use super::cp15::TlbMaintenance;
-use super::{ARM_INSTRUCTION_SIZE, Arm11Core, PC, StepEvent, THUMB_INSTRUCTION_SIZE};
+use super::{ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, StepEvent, THUMB_INSTRUCTION_SIZE};
 use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result};
 
@@ -1097,6 +1097,10 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         self.inner.drain_write_buffer()
     }
 
+    fn take_interrupt_state_touched(&mut self) -> bool {
+        self.inner.take_interrupt_state_touched()
+    }
+
     fn data_memory_barrier(&mut self) -> Result<()> {
         self.inner.data_memory_barrier()
     }
@@ -1191,6 +1195,138 @@ impl Arm11Core {
         };
         self.cp15.set_pa_register(pa_register);
         Ok(())
+    }
+
+    /// Runs a translated instruction batch while retaining the software TLB
+    /// and MMU adapter for the duration of the batch. CP15 instructions and
+    /// observable device-state changes return to the precise single-step path.
+    pub(super) fn run_fast_translated<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        budget: u64,
+    ) -> Result<(u64, FastRunExit)> {
+        if budget == 0 {
+            return Ok((0, FastRunExit::Budget));
+        }
+        if !self.cp15.mmu_enabled() || !self.fast_path_eligible() {
+            return Ok((0, FastRunExit::NeedsPreciseStep));
+        }
+
+        let mut tlb = std::mem::take(&mut self.tlb);
+        bus.set_arm11_smp_mode(self.cp15.core_id(), self.cp15.smp_mode_enabled());
+        let scu_enabled = bus.arm11_scu_enabled();
+        let params = Params {
+            ttbr0: self.cp15.ttbr0(),
+            ttbr1: self.cp15.ttbr1(),
+            n: self.cp15.ttbcr_n(),
+            dacr: self.cp15.dacr(),
+            asid: self.cp15.asid(),
+            fcse_pid: self.cp15.fcse_pid(),
+            xp: self.cp15.extended_page_tables(),
+            sctlr_s: self.cp15.legacy_sctlr_s(),
+            sctlr_r: self.cp15.legacy_sctlr_r(),
+            tre: self.cp15.memory_region_remap_enabled(),
+            data_cache_enabled: self.cp15.sctlr() & (1 << 2) != 0,
+            smp_enabled: self.cp15.smp_mode_enabled(),
+            scu_enabled,
+            primary_remap: self.cp15.primary_memory_remap(),
+            normal_remap: self.cp15.normal_memory_remap(),
+            tlb_preserve: self.cp15.tlb_preserve(),
+            tlb_victim: self.cp15.tlb_victim(),
+            privileged: self.cpsr.privileged(),
+        };
+
+        // Keep the TLB even on an instruction or translation error. In
+        // particular, do not use ? while MmuBus owns the temporary TLB.
+        let (executed, exit, fault, execution_error) = {
+            let mut mmu = MmuBus::new(bus, params, &mut tlb);
+            let mut executed = 0u64;
+            let mut exit = FastRunExit::Budget;
+            let mut execution_error = None;
+
+            while executed < budget {
+                // CPSR mode changes (for example, an MSR) affect the
+                // privilege check of the next instruction's fetch/data access.
+                mmu.params.privileged = self.cpsr.privileged();
+
+                let pc = self.pc();
+                let thumb = self.cpsr.thumb();
+                mmu.fetching = true;
+                let fetched = if thumb {
+                    mmu.read16(pc).map(u32::from)
+                } else {
+                    mmu.read32(pc)
+                };
+                mmu.fetching = false;
+
+                let instruction = match fetched {
+                    Ok(instruction) => instruction,
+                    Err(error) => {
+                        self.prefetch_fault = true;
+                        execution_error = Some(error);
+                        break;
+                    }
+                };
+
+                if Self::needs_precise_step(instruction, thumb) {
+                    exit = FastRunExit::NeedsPreciseStep;
+                    break;
+                }
+
+                self.branch_taken = false;
+                let execution = if thumb {
+                    self.execute_thumb(&mut mmu, instruction)
+                        .map(|event| (event, THUMB_INSTRUCTION_SIZE))
+                } else {
+                    self.execute_arm(&mut mmu, instruction)
+                        .map(|event| (event, ARM_INSTRUCTION_SIZE))
+                };
+                let (mut event, size) = match execution {
+                    Ok(result) => result,
+                    Err(error) => {
+                        execution_error = Some(error);
+                        break;
+                    }
+                };
+
+                if !self.branch_taken {
+                    self.regs[PC] = pc.wrapping_add(size);
+                }
+                if std::mem::take(&mut self.exception_return_wakeup) {
+                    event = StepEvent::ExceptionReturn;
+                }
+                if event != StepEvent::Executed {
+                    exit = FastRunExit::Event(event);
+                    break;
+                }
+
+                executed += 1;
+                mmu.params.privileged = self.cpsr.privileged();
+                if mmu.take_interrupt_state_touched() || !self.fast_path_eligible() {
+                    exit = FastRunExit::Yield;
+                    break;
+                }
+            }
+
+            (executed, exit, mmu.fault, execution_error)
+        };
+
+        self.tlb = tlb;
+        if let Some(fault) = fault {
+            self.fault_latched = true;
+            self.prefetch_fault = fault.access == Access::Execute;
+            match fault.access {
+                Access::Execute => self.cp15.latch_prefetch_fault(fault.status, fault.address),
+                access => self
+                    .cp15
+                    .latch_data_fault(fault.status, fault.address, access == Access::Write),
+            }
+        }
+        if let Some(error) = execution_error {
+            return Err(error);
+        }
+
+        Ok((executed, exit))
     }
 
     /// Executes one instruction with address translation enabled.
@@ -3197,4 +3333,93 @@ mod tests {
             0xD
         );
     }
+
+    #[test]
+    fn translated_fast_dispatch_matches_precise_steps_for_an_arm_block() {
+        let program = [0xE3A0_0001, 0xE280_1002, 0xE281_2003];
+
+        let (mut fast_cpu, mut fast_mem) = machine();
+        set_l1(&mut fast_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        let (mut precise_cpu, mut precise_mem) = machine();
+        set_l1(&mut precise_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+
+        for (index, instruction) in program.into_iter().enumerate() {
+            fast_mem
+                .write32(index as u32 * 4, instruction)
+                .unwrap();
+            precise_mem
+                .write32(index as u32 * 4, instruction)
+                .unwrap();
+        }
+
+        for _ in 0..program.len() {
+            assert_eq!(precise_cpu.step(&mut precise_mem).unwrap(), StepEvent::Executed);
+        }
+
+        let (executed, exit) = fast_cpu
+            .run_fast(&mut fast_mem, program.len() as u64)
+            .unwrap();
+
+        assert_eq!(executed, program.len() as u64);
+        assert_eq!(exit, FastRunExit::Budget);
+        assert_eq!(fast_cpu.regs, precise_cpu.regs);
+        assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+        assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+    }
+
+    #[test]
+    fn translated_fast_dispatch_returns_at_svc_for_precise_service_dispatch() {
+        let program = [0xE3A0_0001, 0xEF00_0123];
+
+        let (mut fast_cpu, mut fast_mem) = machine();
+        set_l1(&mut fast_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        let (mut precise_cpu, mut precise_mem) = machine();
+        set_l1(&mut precise_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+
+        for (index, instruction) in program.into_iter().enumerate() {
+            fast_mem
+                .write32(index as u32 * 4, instruction)
+                .unwrap();
+            precise_mem
+                .write32(index as u32 * 4, instruction)
+                .unwrap();
+        }
+
+        assert_eq!(precise_cpu.step(&mut precise_mem).unwrap(), StepEvent::Executed);
+        assert_eq!(
+            precise_cpu.step(&mut precise_mem).unwrap(),
+            StepEvent::Svc(0x123)
+        );
+
+        let (executed, exit) = fast_cpu.run_fast(&mut fast_mem, 8).unwrap();
+
+        assert_eq!(executed, 1);
+        assert_eq!(exit, FastRunExit::Event(StepEvent::Svc(0x123)));
+        assert_eq!(fast_cpu.regs, precise_cpu.regs);
+        assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+        assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+    }
+
+    #[test]
+    fn translated_fast_dispatch_returns_before_cp15_instructions() {
+        let program = [0xE3A0_0001, 0xEE01_1F30]; // MOV r0,#1; MCR p15 ACTLR.
+
+        let (mut fast_cpu, mut fast_mem) = machine();
+        set_l1(&mut fast_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        for (index, instruction) in program.into_iter().enumerate() {
+            fast_mem
+                .write32(index as u32 * 4, instruction)
+                .unwrap();
+        }
+
+        let (executed, exit) = fast_cpu.run_fast(&mut fast_mem, 8).unwrap();
+
+        assert_eq!(executed, 1);
+        assert_eq!(exit, FastRunExit::NeedsPreciseStep);
+        assert_eq!(fast_cpu.pc(), 4);
+        // The caller executes the CP15 instruction on the precise path.
+        assert_eq!(fast_cpu.step(&mut fast_mem).unwrap(), StepEvent::Executed);
+        assert!(fast_cpu.cp15.smp_mode_enabled());
+    }
+
 }
