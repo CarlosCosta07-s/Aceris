@@ -282,3 +282,9 @@ O commit 0dc68f9a adicionou tracing opcional de resultados SVC e HLE mínimo csn
 - Medição (callgrind, sonda, modo padrão): de 1,270 para 1,025 bilhão de instruções do host por quadro (−19%). Acumulado desde a linha de base de 1,865 bilhão: −45%.
 - Ideia inspirada no "decodificar uma vez, despachar muitas" do interpretador IR do PPSSPP (consulta somente leitura, GPLv2+); código próprio.
 - Próximos gargalos: laço/fetch (~44% próprio de `run_instructions`), escrita pelo modelo de D-cache (13%) e `locate` (10%).
+
+### `locate` com dica de segmento e laço sem reavaliar elegibilidade (27/11/2026, Claude)
+
+- `locate` tenta primeiro o segmento estático que resolveu o último endereço (`static_segment_hint`). Os segmentos são disjuntos e o layout não muda depois da construção, então o resultado é idêntico à varredura em ordem. Medição: de 1,025 para 0,957 bilhão de instruções do host por quadro.
+- `run_fast` deixou de reavaliar `fast_path_eligible()` a cada instrução: nenhuma das condições pode mudar dentro do laço sem um evento, um passo preciso ou uma mudança de estado de interrupção já sinalizada pelo barramento. Um `debug_assert!` mantém a verificação nas builds de teste. Medição: de 0,957 para 0,909 bilhão.
+- Acumulado no modo padrão (modelo preciso de D-cache): de 1,865 para 0,909 bilhão de instruções do host por quadro, −51%, ou seja, cerca de 2× a velocidade guest da linha de base.

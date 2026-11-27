@@ -505,7 +505,12 @@ impl Arm11Core {
                 return Ok((executed, FastRunExit::Event(event)));
             }
             executed += 1;
-            if bus.take_interrupt_state_touched() || !self.fast_path_eligible() {
+            // Eligibility cannot change here: IRQ/FIQ lines move only when the
+            // bus reports interrupt state, WFI/WFE are events, CP15 (TLB
+            // maintenance) takes the precise step and fault entry is host
+            // configuration.
+            debug_assert!(self.fast_path_eligible());
+            if bus.take_interrupt_state_touched() {
                 return Ok((executed, FastRunExit::Yield));
             }
         }

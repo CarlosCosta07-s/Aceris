@@ -961,6 +961,9 @@ pub struct Arm11CodeAddressSpace {
     write_buffer: VecDeque<Arm11WriteBufferEntry>,
     /// Per-eight-byte exclusive monitor generations for mapped virtual memory.
     exclusive_versions: BTreeMap<u32, u64>,
+    /// Index of the static segment that resolved the last address (`locate`
+    /// tries it first; the layout never changes after construction).
+    static_segment_hint: std::cell::Cell<u8>,
     /// Occupancy of each 0x200-byte thread-local-storage slot.
     tls_slots_in_use: Vec<bool>,
     /// Temporary IPC aliases and their surrounding unmapped guard pages.
@@ -1068,6 +1071,7 @@ impl Arm11CodeAddressSpace {
                 .collect(),
             write_buffer: VecDeque::with_capacity(ARM11_WRITE_BUFFER_CAPACITY),
             exclusive_versions: BTreeMap::new(),
+            static_segment_hint: std::cell::Cell::new(4),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
         })
@@ -1169,6 +1173,7 @@ impl Arm11CodeAddressSpace {
                 .collect(),
             write_buffer: VecDeque::with_capacity(ARM11_WRITE_BUFFER_CAPACITY),
             exclusive_versions: BTreeMap::new(),
+            static_segment_hint: std::cell::Cell::new(4),
             tls_slots_in_use: Vec::new(),
             ipc_temporary_regions: Vec::new(),
         })
@@ -2311,24 +2316,33 @@ impl Arm11CodeAddressSpace {
         None
     }
 
+    #[inline]
+    fn static_segment_hit(&self, index: u8, address: u32) -> Option<MemoryLocation> {
+        let (kind, segment) = match index {
+            0 => (Arm11SegmentKind::Text, &self.layout.text),
+            1 => (Arm11SegmentKind::ReadOnly, &self.layout.read_only),
+            2 => (Arm11SegmentKind::Data, &self.layout.data),
+            3 => (Arm11SegmentKind::Bss, &self.layout.bss),
+            _ => (Arm11SegmentKind::Stack, &self.layout.stack),
+        };
+        let offset = address.checked_sub(segment.address)?;
+        (offset < segment.mapped_size_bytes).then_some(MemoryLocation::Static {
+            kind,
+            offset: offset as usize,
+        })
+    }
+
     fn locate(&self, address: u32) -> Option<MemoryLocation> {
-        let segments = [
-            (Arm11SegmentKind::Text, self.layout.text),
-            (Arm11SegmentKind::ReadOnly, self.layout.read_only),
-            (Arm11SegmentKind::Data, self.layout.data),
-            (Arm11SegmentKind::Bss, self.layout.bss),
-            (Arm11SegmentKind::Stack, self.layout.stack),
-        ];
-
-        for (kind, segment) in segments {
-            if segment.is_empty() || address < segment.address {
-                continue;
-            }
-
-            let offset = u64::from(address) - u64::from(segment.address);
-            if offset < u64::from(segment.mapped_size_bytes) {
-                let offset = usize::try_from(offset).ok()?;
-                return Some(MemoryLocation::Static { kind, offset });
+        // Static segments are disjoint, so trying the last hit first returns
+        // the same location the in-order scan would.
+        let hint = self.static_segment_hint.get();
+        if let Some(location) = self.static_segment_hit(hint, address) {
+            return Some(location);
+        }
+        for index in (0..5u8).filter(|index| *index != hint) {
+            if let Some(location) = self.static_segment_hit(index, address) {
+                self.static_segment_hint.set(index);
+                return Some(location);
             }
         }
 
