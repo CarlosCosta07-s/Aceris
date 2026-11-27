@@ -135,6 +135,7 @@ pub struct Library {
     touch_keyboard_open: bool,
     virtual_controls_visible: bool,
     virtual_controls_opacity: u8,
+    virtual_controls_size_percent: u8,
     external_media_playing: bool,
     external_media_detection_available: bool,
     performance_mode: bool,
@@ -147,6 +148,9 @@ const VIRTUAL_CONTROLS_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_V1";
 const VIRTUAL_CONTROLS_OPACITY_FILE: &str = "virtual_controls_opacity_v1.txt";
 const VIRTUAL_CONTROLS_OPACITY_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_OPACITY_V1";
 const VIRTUAL_CONTROLS_OPACITY_STEPS: [u8; 4] = [255, 204, 153, 102];
+const VIRTUAL_CONTROLS_SIZE_FILE: &str = "virtual_controls_size_v1.txt";
+const VIRTUAL_CONTROLS_SIZE_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_SIZE_V1";
+const VIRTUAL_CONTROLS_SIZE_STEPS: [u8; 3] = [80, 100, 120];
 
 /// Missing or malformed settings preserve the default visible-controls state.
 fn load_virtual_controls_visible(settings_directory: &Path) -> bool {
@@ -180,6 +184,27 @@ fn load_virtual_controls_opacity(settings_directory: &Path) -> u8 {
         return 255;
     }
     value.parse::<u8>().unwrap_or(255)
+}
+
+fn load_virtual_controls_size_percent(settings_directory: &Path) -> u8 {
+    let Ok(contents) = fs::read_to_string(settings_directory.join(VIRTUAL_CONTROLS_SIZE_FILE))
+    else {
+        return 100;
+    };
+    let mut lines = contents.lines();
+    if lines.next() != Some(VIRTUAL_CONTROLS_SIZE_MAGIC) {
+        return 100;
+    }
+    let Some(value) = lines.next().and_then(|line| line.strip_prefix("size_percent=")) else {
+        return 100;
+    };
+    if lines.next().is_some() {
+        return 100;
+    }
+    match value.parse::<u8>() {
+        Ok(size) if VIRTUAL_CONTROLS_SIZE_STEPS.contains(&size) => size,
+        _ => 100,
+    }
 }
 
 fn load_performance_mode(settings_directory: &Path) -> bool {
@@ -664,6 +689,8 @@ impl Library {
         let performance_mode = load_performance_mode(&settings_directory);
         let virtual_controls_visible = load_virtual_controls_visible(&settings_directory);
         let virtual_controls_opacity = load_virtual_controls_opacity(&settings_directory);
+        let virtual_controls_size_percent =
+            load_virtual_controls_size_percent(&settings_directory);
         let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
@@ -686,6 +713,7 @@ impl Library {
             touch_keyboard_open: false,
             virtual_controls_visible,
             virtual_controls_opacity,
+            virtual_controls_size_percent,
             external_media_playing: false,
             external_media_detection_available: false,
             performance_mode,
@@ -705,6 +733,8 @@ impl Library {
         library.performance_mode = load_performance_mode(settings_directory);
         library.virtual_controls_visible = load_virtual_controls_visible(settings_directory);
         library.virtual_controls_opacity = load_virtual_controls_opacity(settings_directory);
+        library.virtual_controls_size_percent =
+            load_virtual_controls_size_percent(settings_directory);
         let preferences = load_library_preferences(settings_directory);
         library.sort_descending = preferences.sort_descending;
         library.view_mode = preferences.view_mode;
@@ -802,6 +832,42 @@ impl Library {
         let next =
             VIRTUAL_CONTROLS_OPACITY_STEPS[(index + 1) % VIRTUAL_CONTROLS_OPACITY_STEPS.len()];
         if let Err(error) = self.set_virtual_controls_opacity(next) {
+            self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
+        }
+    }
+
+    /// Current overall size of the Android virtual gamepad, as a percentage.
+    pub fn virtual_controls_size_percent(&self) -> u8 {
+        self.virtual_controls_size_percent
+    }
+
+    /// Persists a supported virtual-control size percentage.
+    pub fn set_virtual_controls_size_percent(&mut self, size_percent: u8) -> std::io::Result<()> {
+        if !VIRTUAL_CONTROLS_SIZE_STEPS.contains(&size_percent) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported virtual-control size",
+            ));
+        }
+        fs::create_dir_all(&self.scan_settings_directory)?;
+        fs::write(
+            self.scan_settings_directory.join(VIRTUAL_CONTROLS_SIZE_FILE),
+            format!("{VIRTUAL_CONTROLS_SIZE_MAGIC}\nsize_percent={size_percent}\n"),
+        )?;
+        self.virtual_controls_size_percent = size_percent;
+        self.status = Some(format!("TAMANHO DOS CONTROLES: {size_percent}%"));
+        Ok(())
+    }
+
+    fn cycle_virtual_controls_size_from_settings(&mut self) {
+        let current = self.virtual_controls_size_percent;
+        let index = VIRTUAL_CONTROLS_SIZE_STEPS
+            .iter()
+            .position(|value| *value == current)
+            .unwrap_or(1);
+        let next =
+            VIRTUAL_CONTROLS_SIZE_STEPS[(index + 1) % VIRTUAL_CONTROLS_SIZE_STEPS.len()];
+        if let Err(error) = self.set_virtual_controls_size_percent(next) {
             self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
         }
     }
@@ -1457,9 +1523,14 @@ impl Library {
                     }
                 } else if self.touch_keyboard_enabled
                     && (594.0..638.0).contains(&y)
-                    && (38.0..362.0).contains(&x)
+                    && (38.0..194.0).contains(&x)
                 {
                     self.cycle_virtual_controls_opacity_from_settings();
+                } else if self.touch_keyboard_enabled
+                    && (594.0..638.0).contains(&y)
+                    && (206.0..362.0).contains(&x)
+                {
+                    self.cycle_virtual_controls_size_from_settings();
                 } else if (594.0 + settings_offset..638.0 + settings_offset).contains(&y)
                     && (38.0..362.0).contains(&x)
                 {
@@ -1591,9 +1662,14 @@ impl Library {
                     self.toggle_virtual_controls_from_settings();
                 } else if self.touch_keyboard_enabled
                     && (474.0..518.0).contains(&y)
-                    && (590.0..970.0).contains(&x)
+                    && (590.0..775.0).contains(&x)
                 {
                     self.cycle_virtual_controls_opacity_from_settings();
+                } else if self.touch_keyboard_enabled
+                    && (474.0..518.0).contains(&y)
+                    && (785.0..970.0).contains(&x)
+                {
+                    self.cycle_virtual_controls_size_from_settings();
                 } else if (382.0..422.0).contains(&y) && (590.0..775.0).contains(&x) {
                     self.toggle_view_mode();
                 } else if (382.0..422.0).contains(&y) && (785.0..970.0).contains(&x) {
@@ -2148,19 +2224,29 @@ impl Library {
             }
             if self.touch_keyboard_enabled {
                 responsive_panel(
-                    frame, width, height, 38.0, 594.0, 324.0, 40.0, scale, 0x2D1A3B,
+                    frame, width, height, 38.0, 594.0, 156.0, 40.0, scale, 0x2D1A3B,
                 );
                 responsive_text_centered(
                     frame,
                     width,
                     height,
-                    200.0,
+                    116.0,
                     607.0,
                     small_scale,
-                    &format!(
-                        "OPACIDADE DOS CONTROLES: {}%",
-                        self.virtual_controls_opacity_percent()
-                    ),
+                    &format!("OPACIDADE: {}%", self.virtual_controls_opacity_percent()),
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 206.0, 594.0, 156.0, 40.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    284.0,
+                    607.0,
+                    small_scale,
+                    &format!("TAMANHO: {}%", self.virtual_controls_size_percent()),
                     brand::TEXT,
                 );
             }
@@ -3513,19 +3599,29 @@ impl Library {
                         brand::TEXT,
                     );
                     responsive_panel(
-                        frame, width, height, 590.0, 474.0, 380.0, 40.0, scale, 0x2D1A3B,
+                        frame, width, height, 590.0, 474.0, 185.0, 40.0, scale, 0x2D1A3B,
                     );
                     responsive_text_centered(
                         frame,
                         width,
                         height,
-                        780.0,
+                        682.0,
                         487.0,
                         text_scale,
-                        &format!(
-                            "OPACIDADE DOS CONTROLES: {}%",
-                            self.virtual_controls_opacity_percent()
-                        ),
+                        &format!("OPACIDADE: {}%", self.virtual_controls_opacity_percent()),
+                        brand::TEXT,
+                    );
+                    responsive_panel(
+                        frame, width, height, 785.0, 474.0, 185.0, 40.0, scale, 0x2D1A3B,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        877.0,
+                        487.0,
+                        text_scale,
+                        &format!("TAMANHO: {}%", self.virtual_controls_size_percent()),
                         brand::TEXT,
                     );
                 }
@@ -5423,20 +5519,27 @@ mod tests {
         library.click_responsive(780, 446, 1000, 600);
         assert!(!library.virtual_controls_visible());
 
-        // The opacity control is available in landscape and persists independently.
-        library.click_responsive(780, 495, 1000, 600);
+        // Opacity and size occupy separate halves of the same landscape row.
+        assert_eq!(library.virtual_controls_size_percent(), 100);
+        library.click_responsive(680, 495, 1000, 600);
         assert_eq!(library.virtual_controls_opacity(), 204);
+        library.click_responsive(880, 495, 1000, 600);
+        assert_eq!(library.virtual_controls_size_percent(), 120);
         let reopened = Library::new(Vec::new(), dir.display().to_string());
         assert!(!reopened.virtual_controls_visible());
         assert_eq!(reopened.virtual_controls_opacity(), 204);
+        assert_eq!(reopened.virtual_controls_size_percent(), 120);
 
-        // Portrait exposes the same cycle control without moving desktop settings.
+        // Portrait exposes both controls with the same independent persistence.
         let mut portrait = reopened;
         portrait.set_touch_keyboard_enabled(true);
-        portrait.click_responsive(200, 616, 400, 800);
+        portrait.click_responsive(120, 616, 400, 800);
         assert_eq!(portrait.virtual_controls_opacity(), 153);
+        portrait.click_responsive(280, 616, 400, 800);
+        assert_eq!(portrait.virtual_controls_size_percent(), 80);
         let reopened = Library::new(Vec::new(), dir.display().to_string());
         assert_eq!(reopened.virtual_controls_opacity(), 153);
+        assert_eq!(reopened.virtual_controls_size_percent(), 80);
 
         fs::remove_dir_all(dir).unwrap();
     }
