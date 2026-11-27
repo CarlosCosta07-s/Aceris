@@ -22,7 +22,9 @@
 
 use super::arm::{bit, bits};
 use super::cp15::TlbMaintenance;
-use super::{ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, SP, StepEvent, THUMB_INSTRUCTION_SIZE};
+use super::{
+    ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, SP, StepEvent, THUMB_INSTRUCTION_SIZE,
+};
 use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result};
 
@@ -3494,11 +3496,7 @@ mod tests {
 
         fn prepared_machine(program: &[u32]) -> (Arm11Core, FlatMemory) {
             let (mut cpu, mut memory) = machine();
-            set_l1(
-                &mut memory,
-                0,
-                SECTION | SECTION_AP_RW_ALL | (1 << 12),
-            );
+            set_l1(&mut memory, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
             cpu.regs[SP] = 0x2000;
             for (index, instruction) in program.iter().copied().enumerate() {
                 memory
