@@ -10233,7 +10233,7 @@ mod tests {
         );
         let metadata = payload.section(section_id::SYSTEM_METADATA).unwrap();
         assert_eq!(metadata.payload().get(..8), Some(b"ACSYSINF".as_slice()));
-        assert_eq!(payload.encode().unwrap().len() > 16, true);
+        assert!(payload.encode().unwrap().len() > 16);
     }
 
     #[test]
