@@ -666,6 +666,9 @@ fn emulate(
                         menu_selected = 0;
                         keyboard.reset(system.input_mut());
                     }
+                    if let Some(performance) = performance.as_mut() {
+                        performance.reset_after_pause();
+                    }
                 }
                 window::WindowEvent::Key(window::Key::Up) if menu_open => {
                     menu_selected = menu_selected.saturating_sub(1);
@@ -677,6 +680,9 @@ fn emulate(
                     0 => {
                         menu_open = false;
                         keyboard.reset(system.input_mut());
+                        if let Some(performance) = performance.as_mut() {
+                            performance.reset_after_pause();
+                        }
                     }
                     1 => return Ok(Flow::Restart),
                     _ => return Ok(Flow::BackToLibrary),
@@ -693,6 +699,9 @@ fn emulate(
                             0 => {
                                 menu_open = false;
                                 keyboard.reset(system.input_mut());
+                                if let Some(performance) = performance.as_mut() {
+                                    performance.reset_after_pause();
+                                }
                             }
                             1 => return Ok(Flow::Restart),
                             _ => return Ok(Flow::BackToLibrary),
