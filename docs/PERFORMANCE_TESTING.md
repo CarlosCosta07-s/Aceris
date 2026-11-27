@@ -413,3 +413,9 @@ O teste `direct_virtual_overlay_matches_full_frame_reference` compara pixel a pi
 A thread de eventos Android reutiliza um vetor de ponteiros entre callbacks de movimento. Ao levantar um dedo, remove o item correspondente no próprio vetor em vez de alocar outro vetor filtrado; em cancelamentos, limpa o estado imediatamente sem decodificar coordenadas descartadas. O buffer cresce se um evento exceder sua capacidade inicial e mantém a alocação para os eventos seguintes.
 
 A `App::set_pointers` ainda atualiza sua própria estrutura de estado, portanto esta alteração reduz somente os vetores temporários do adaptador NativeActivity; não torna todo o processamento multitouch livre de alocações. A ordem dos ponteiros restantes e os estados de cancelamento são mantidos. Medir em aparelho físico com interação multitouch e profiler de alocação antes de quantificar qualquer ganho.
+
+## Presenter GPU — evitar transferência de frames sem imagem apresentável (27/11/2026)
+
+`GraphicsPresenter::present_pixels` tenta adquirir a imagem atual da swapchain antes de alocar/atualizar a textura do frame e chamar `queue.write_texture`. Quando a superfície retorna `Timeout` ou `Occluded`, a iteração encerra sem transferir o framebuffer inteiro; em `Outdated`/`Lost`, reconfigura e tenta novamente antes de fazer o upload. A regra aplica-se aos caminhos RGBA (Android) e BGRX (desktop).
+
+A alteração reduz trabalho de upload quando a janela está oculta/minimizada ou não há imagem de apresentação disponível, mas não reduz a emulação guest executada antes de chamar o presenter. Não há medição de bytes/tempo GPU nesta revisão. Validar em PC e Android alternando visibilidade/minimização, e comparar o custo de apresentação e atividade GPU antes/depois.
