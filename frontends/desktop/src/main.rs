@@ -676,6 +676,13 @@ fn emulate(
         window::GAME_CANVAS_WIDTH as u32,
         window::GAME_CANVAS_HEIGHT as u32,
     );
+    let (initial_width, initial_height) = screen_layout_canvas_size(layout_profile.mode);
+    window
+        .resize(
+            initial_width as usize * scale,
+            initial_height as usize * scale,
+        )
+        .map_err(|error| format!("could not apply the saved gameplay layout: {error}"))?;
     let mut pending_confirmation: Option<quick_menu::ConfirmationAction> = None;
     let mut confirmation_selected = 0usize;
     loop {
