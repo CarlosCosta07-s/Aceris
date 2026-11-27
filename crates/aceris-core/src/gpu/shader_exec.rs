@@ -533,14 +533,12 @@ impl Machine<'_> {
             .instruction
             .expect("arithmetic shader opcodes have a decoded instruction format");
         let (destination, descriptor_index, sources) = operands(instruction);
-        let descriptor = decoded.descriptor.ok_or(
-            PicaShaderExecError::DescriptorNotUploaded {
+        let descriptor = decoded
+            .descriptor
+            .ok_or(PicaShaderExecError::DescriptorNotUploaded {
                 index,
-                descriptor: decoded
-                    .descriptor_index
-                    .unwrap_or(descriptor_index),
-            },
-        )?;
+                descriptor: decoded.descriptor_index.unwrap_or(descriptor_index),
+            })?;
 
         let selectors = [
             (descriptor.source1_selector, descriptor.source1_negate),
@@ -668,14 +666,12 @@ impl Machine<'_> {
             .instruction
             .expect("MOVA predecodes as Format1Unary");
         let (destination, descriptor_index, sources) = operands(instruction);
-        let descriptor = decoded.descriptor.ok_or(
-            PicaShaderExecError::DescriptorNotUploaded {
+        let descriptor = decoded
+            .descriptor
+            .ok_or(PicaShaderExecError::DescriptorNotUploaded {
                 index,
-                descriptor: decoded
-                    .descriptor_index
-                    .unwrap_or(descriptor_index),
-            },
-        )?;
+                descriptor: decoded.descriptor_index.unwrap_or(descriptor_index),
+            })?;
         let source = sources[0].expect("MOVA has one source");
         let value = swizzle(
             self.read_register(source),
@@ -702,14 +698,15 @@ impl Machine<'_> {
         else {
             unreachable!("CMP predecodes as Format1Compare");
         };
-        let descriptor = decoded_instruction.descriptor.ok_or(
-            PicaShaderExecError::DescriptorNotUploaded {
-                index,
-                descriptor: decoded_instruction
-                    .descriptor_index
-                    .unwrap_or(usize::from(decoded.descriptor)),
-            },
-        )?;
+        let descriptor =
+            decoded_instruction
+                .descriptor
+                .ok_or(PicaShaderExecError::DescriptorNotUploaded {
+                    index,
+                    descriptor: decoded_instruction
+                        .descriptor_index
+                        .unwrap_or(usize::from(decoded.descriptor)),
+                })?;
         let a = swizzle(
             self.read_register(Source {
                 register: decoded.source1,
@@ -767,8 +764,7 @@ impl Machine<'_> {
             | PicaShaderOpcode::CallC
             | PicaShaderOpcode::IfC
             | PicaShaderOpcode::JmpC => {
-                let Some(PicaVertexShaderInstruction::Format2Flow(flow)) =
-                    decoded.instruction
+                let Some(PicaVertexShaderInstruction::Format2Flow(flow)) = decoded.instruction
                 else {
                     unreachable!("conditional flow opcodes predecode as Format2Flow");
                 };
@@ -1749,11 +1745,7 @@ mod tests {
     fn program_snapshot_predecodes_opcode_instruction_and_operand_descriptor() {
         let instruction = format1(0x00, O0, V0, V1);
         let descriptor = plain_descriptor(0b1011);
-        let program = PicaVertexShaderProgram::from_words(
-            &[instruction, END],
-            &[descriptor],
-            &[],
-        );
+        let program = PicaVertexShaderProgram::from_words(&[instruction, END], &[descriptor], &[]);
         let decoded = program.decoded[0].expect("uploaded instruction should be predecoded");
         assert_eq!(decoded.opcode, PicaShaderOpcode::Add);
         assert!(matches!(
@@ -1766,7 +1758,9 @@ mod tests {
             Some(PicaShaderOperandDescriptor::decode(descriptor))
         );
         assert_eq!(
-            program.decoded[1].expect("END opcode should be identified").opcode,
+            program.decoded[1]
+                .expect("END opcode should be identified")
+                .opcode,
             PicaShaderOpcode::End
         );
     }
