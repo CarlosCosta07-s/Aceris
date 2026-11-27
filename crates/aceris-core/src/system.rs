@@ -2603,11 +2603,7 @@ impl System {
                 self.ndm.exclusive_state = 0;
                 Some(result_only())
             }
-            0x0003_0000 => Some(vec![
-                command | 0x80,
-                0,
-                self.ndm.exclusive_state,
-            ]),
+            0x0003_0000 => Some(vec![command | 0x80, 0, self.ndm.exclusive_state]),
             0x0004_0002 => {
                 self.ndm.daemon_lock_enabled = true;
                 Some(result_only())
@@ -2709,11 +2705,7 @@ impl System {
                 }
                 Some(result_only())
             }
-            0x0016_0000 => Some(vec![
-                command | 0x80,
-                0,
-                self.ndm.default_daemon_mask,
-            ]),
+            0x0016_0000 => Some(vec![command | 0x80, 0, self.ndm.default_daemon_mask]),
             0x0017_0000 => Some(result_only()),
             _ => None,
         }
@@ -2724,13 +2716,13 @@ impl System {
     fn dispatch_ptm_sysm_request(message: IpcMessage<'_>) -> Option<Vec<u32>> {
         let raw_header = message.header().raw();
         let value = match raw_header {
-            0x0005_0000 => 0, // Adapter/battery charger is not charging.
+            0x0005_0000 => 0,               // Adapter/battery charger is not charging.
             0x0006_0000 | 0x0811_0000 => 1, // Shell is open.
-            0x0007_0000 => 5, // Battery level: full.
-            0x0008_0000 => 0, // Not charging.
-            0x000C_0000 => 0, // No recorded steps.
-            0x040A_0000 => 0, // Aceris currently models an Old-3DS profile.
-            0x080F_0000 => 0, // No software-closed flag.
+            0x0007_0000 => 5,               // Battery level: full.
+            0x0008_0000 => 0,               // Not charging.
+            0x000C_0000 => 0,               // No recorded steps.
+            0x040A_0000 => 0,               // Aceris currently models an Old-3DS profile.
+            0x080F_0000 => 0,               // No software-closed flag.
             _ => return None,
         };
         Some(vec![raw_header | 0x80, 0, value])
@@ -12685,7 +12677,10 @@ mod tests {
 
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0010_0040, 7]);
         run_one_ipc_svc(&mut system);
-        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0010_0040, 0]);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0010_0040, 0]
+        );
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0011_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
@@ -12695,7 +12690,10 @@ mod tests {
 
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0012_0040, 4]);
         run_one_ipc_svc(&mut system);
-        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0012_0040, 0]);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0012_0040, 0]
+        );
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0013_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
@@ -12705,7 +12703,10 @@ mod tests {
 
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0014_0040, 3]);
         run_one_ipc_svc(&mut system);
-        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0014_0040, 0]);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0014_0040, 0]
+        );
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0016_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
@@ -12714,7 +12715,10 @@ mod tests {
         );
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0015_0000]);
         run_one_ipc_svc(&mut system);
-        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0015_0040, 0]);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0015_0040, 0]
+        );
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0016_0000]);
         run_one_ipc_svc(&mut system);
         assert_eq!(
