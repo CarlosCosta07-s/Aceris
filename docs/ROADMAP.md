@@ -339,7 +339,7 @@ Atualização verificada em 25/11/2026:
 
 ## Próximas tarefas prioritárias
 
-1. **Desempenho do ARM11:** implementar e medir primeiro um cache de instruções decodificadas por bloco e um caminho rápido de memória por página; manter o modelo de D-cache, TLB, monitor exclusivo e regras de invalidação corretos. A sonda atual indica que `Arm11Core::step_instruction` domina o custo; não repetir micro-otimizações de containers que já foram medidas como regressões. Avaliar JIT somente depois de uma base de testes e perfil confiáveis.
+1. **Desempenho para hardware de entrada:** seguir [`docs/PERFORMANCE_LOW_END_PLAN.md`](PERFORMANCE_LOW_END_PLAN.md). Começar pelo cache de blocos ARM/Thumb decodificados e fast path seguro de memória; depois IR e JIT próprios AArch64/x86-64, renderização PICA200 acelerada, cache/compilação assíncrona de shaders e paralelismo seletivo. Manter interpretação como fallback, medir em PCs/celulares reais e priorizar 100% da velocidade guest com precisão. Não aplicar speed hacks globais nem presumir que Vulkan/mais threads sejam sempre mais rápidos.
 2. **Kernel e IPC:** continuar fechando a ABI SVC, accounting de memória/ResourceLimit, ciclo de vida de processos e IPC genérico entre processos (ReplyAndReceive, transferência de handles/buffers e wakeups). Reexecutar o homebrew local para transformar traces reais em tarefas específicas; não inventar retornos de serviço.
 3. **Áudio/DSP:** rastrear por que `Sound.init` falha antes de uma requisição DSP observável, confirmar `srv:GetServiceHandle("dsp::DSP")` e o fluxo de inicialização com base em traces. `csndInit` passar no HLE não significa áudio funcional; validar um tom e a saída em aparelho real.
 4. **PICA200 guest-driven:** remover gradualmente os últimos dados preparados pelo host (matriz/estado do GeometryPipeline e configuração PDC), fechar DRAWARRAYS/DRAWELEMENTS, texturas/TEV e scanout por dados escritos pelo guest; avançar gas, sombras, clip/depth e precisão float24 com referências independentes. Não confundir o triângulo sintético nem a primeira imagem do homebrew com cena comercial validada.
@@ -438,3 +438,13 @@ Não marcar marcos como concluídos apenas por testes unitários, fixtures sint�
 - [ ] Permanecem sem validação: gameplay comercial, compatibilidade ampla, áudio audível, HID guest-visible, GPU acelerada por backend, instalação/uso real do APK e desempenho em tempo real.
 
 > Esta revisão atualiza o estado observado; não declara conclusão de marcos apenas por builds, testes sintéticos ou artefatos gerados pela CI.
+
+## Diretriz de desempenho para hardware de entrada (26/11/2026)
+
+O plano detalhado está em [`docs/PERFORMANCE_LOW_END_PLAN.md`](PERFORMANCE_LOW_END_PLAN.md), complementando [`docs/PERFORMANCE_REFERENCE_STUDY.md`](PERFORMANCE_REFERENCE_STUDY.md) e [`docs/PERFORMANCE_TESTING.md`](PERFORMANCE_TESTING.md).
+
+- Objetivo: 100% da velocidade emulada, frame pacing estável e resolução original em uma seleção crescente de jogos de referência em PCs x86-64 de entrada e Android ARM64 de entrada. A compatibilidade é por jogo e precisa ser medida; não declarar que todo jogo roda em todo aparelho.
+- Estratégia: fast interpreter → cache de blocos ARM/Thumb decodificados + fast path de memória → IR própria → JIT AArch64/x86-64 → PICA200 GPU/cache de pipelines → paralelismo seletivo → otimização térmica Android.
+- Black for Android é referência de recompilação estática de um único jogo Xbox para ARM64, não um substituto para a emulação geral do 3DS. O README declara Vulkan 1.1 e 4 GB de RAM; usar como lição de arquitetura/portabilidade, não como comprovação de suporte a celulares muito fracos.
+- Vulkan, SIMD, caches e multithreading precisam de benchmark por plataforma/driver. A interpretação precisa permanecer como fallback e oráculo diferencial; mudanças de temporização guest e hacks de precisão não podem ser ativados globalmente.
+- Próxima alteração de código proposta: cache de blocos decodificados e caminho rápido de memória comum, com testes diferenciais contra o interpretador e benchmark release repetível. O plano ainda é especificação; nenhum ganho de desempenho foi declarado por sua criação.
