@@ -465,7 +465,7 @@ pub fn pad_from_android_keycode(code: i32) -> Option<u32> {
     })
 }
 
-fn reset_black_frame(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
+fn resize_rgba_frame(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
     let Some(byte_len) = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixel_count| pixel_count.checked_mul(4))
@@ -481,9 +481,82 @@ fn reset_black_frame(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
         }
     }
     frame.resize(byte_len, 0);
-    frame.fill(0);
-    for pixel in frame.chunks_exact_mut(4) {
-        pixel[3] = 0xFF;
+    true
+}
+
+fn fill_opaque_black(pixels: &mut [u8]) {
+    const OPAQUE_BLACK: [u8; 4] = [0, 0, 0, 0xFF];
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel.copy_from_slice(&OPAQUE_BLACK);
+    }
+}
+
+fn reset_black_frame(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
+    if !resize_rgba_frame(frame, width, height) {
+        return false;
+    }
+    fill_opaque_black(frame);
+    true
+}
+
+/// Clears only the parts of the host frame that are not overwritten by LCD blits.
+///
+/// The two screen rectangles are merged per row, so reused pixels cannot leak
+/// through the gutter, letterboxing, or portrait/landscape margins.
+fn reset_frame_background(
+    frame: &mut Vec<u8>,
+    width: u32,
+    height: u32,
+    screens: [ScreenRect; 2],
+) -> bool {
+    if !resize_rgba_frame(frame, width, height) {
+        return false;
+    }
+    if width == 0 || height == 0 {
+        return true;
+    }
+
+    let width_pixels = width as usize;
+    let width_bound = i64::from(width);
+    for row in 0..height as usize {
+        let y = row as i64;
+        let mut ranges = [(0usize, 0usize); 2];
+        let mut range_count = 0usize;
+
+        for screen in screens {
+            let top = i64::from(screen.y);
+            let bottom = top + i64::from(screen.height);
+            if y < top || y >= bottom {
+                continue;
+            }
+
+            let start = i64::from(screen.x).clamp(0, width_bound) as usize;
+            let end = (i64::from(screen.x) + i64::from(screen.width))
+                .clamp(0, width_bound) as usize;
+            if start < end {
+                ranges[range_count] = (start, end);
+                range_count += 1;
+            }
+        }
+
+        if range_count == 2 && ranges[1].0 < ranges[0].0 {
+            ranges.swap(0, 1);
+        }
+
+        let row_start = row * width_pixels * 4;
+        let mut covered_until = 0usize;
+        for &(start, end) in &ranges[..range_count] {
+            if start > covered_until {
+                let clear_start = row_start + covered_until * 4;
+                let clear_end = row_start + start * 4;
+                fill_opaque_black(&mut frame[clear_start..clear_end]);
+            }
+            covered_until = covered_until.max(end);
+        }
+        if covered_until < width_pixels {
+            let clear_start = row_start + covered_until * 4;
+            fill_opaque_black(&mut frame[clear_start..row_start + width_pixels * 4]);
+        }
     }
     true
 }
@@ -547,10 +620,10 @@ fn compose_game_into(
     height: u32,
     frame: &mut Vec<u8>,
 ) -> bool {
-    if !reset_black_frame(frame, width, height) {
+    let layout = compute_screen_layout(width, height, ORIENTATION_AUTO);
+    if !reset_frame_background(frame, width, height, [layout.top, layout.bottom]) {
         return false;
     }
-    let layout = compute_screen_layout(width, height, ORIENTATION_AUTO);
     let mut draw = |surface: &ScreenSurface, rect: ScreenRect| {
         blit_scaled(
             frame,
@@ -908,6 +981,58 @@ mod tests {
         assert_eq!(at(700, 200), [0, 0, 255, 255]);
         // The gutter between the LCDs stays black.
         assert_eq!(at(408, 100), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn optimized_game_composition_matches_full_clear_for_reused_buffers() {
+        let mut display = DualScreenDisplay::new().unwrap();
+        display
+            .surface_mut(ScreenTarget::TopLeft)
+            .clear([17, 34, 51, 255]);
+        display
+            .surface_mut(ScreenTarget::Bottom)
+            .clear([68, 85, 102, 255]);
+
+        let mut actual = Vec::new();
+        for (width, height) in [
+            (736, 240),
+            (1080, 2400),
+            (2400, 1080),
+            (853, 1281),
+            (1280, 720),
+            (0, 720),
+            (1280, 0),
+        ] {
+            let byte_len = (width as usize) * (height as usize) * 4;
+            actual.resize(byte_len, 0xA5);
+            actual.fill(0xA5);
+
+            let mut expected = vec![0xA5; byte_len];
+            assert!(reset_black_frame(&mut expected, width, height));
+            let layout = compute_screen_layout(width, height, ORIENTATION_AUTO);
+            reference_blit_scaled(
+                &mut expected,
+                width,
+                display.top_left().pixels(),
+                display.top_left().width() as u32,
+                display.top_left().height() as u32,
+                layout.top,
+            );
+            reference_blit_scaled(
+                &mut expected,
+                width,
+                display.bottom().pixels(),
+                display.bottom().width() as u32,
+                display.bottom().height() as u32,
+                layout.bottom,
+            );
+
+            assert!(compose_game_into(&display, width, height, &mut actual));
+            assert_eq!(
+                actual, expected,
+                "composition differs at {width}x{height}"
+            );
+        }
     }
 
     #[test]
