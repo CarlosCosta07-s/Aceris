@@ -8,7 +8,9 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use super::thread::ThreadId;
-use crate::loader::ncsd::process::SharedMemoryBacking;
+use crate::loader::ncsd::process::{
+    SharedMemoryBacking, SharedMemoryBackingCatalog, SharedMemoryStateError,
+};
 
 /// Pseudo-handle that always identifies the calling thread.
 pub const CURRENT_THREAD_HANDLE: u32 = 0xFFFF_8000;
@@ -289,6 +291,19 @@ impl Default for Arm11KernelObjectTable {
 }
 
 impl Arm11KernelObjectTable {
+    /// Adds every live or retired memory-block backing to the machine catalog.
+    pub(crate) fn collect_shared_backings(
+        &self,
+        catalog: &mut SharedMemoryBackingCatalog,
+    ) -> Result<(), SharedMemoryStateError> {
+        for object in self.objects.values().chain(self.retired_objects.values()) {
+            if let KernelObject::MemoryBlock(block) = object {
+                catalog.register(&block.backing)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Creates a zero-initialized, page-aligned shared-memory block.
     ///
     /// Permission values use bit 0 for read and bit 1 for write. The shared
