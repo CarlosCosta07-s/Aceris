@@ -2895,3 +2895,16 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A replicação de linhas em `frontends/desktop/src/window.rs` agora usa `split_at_mut` + `copy_from_slice` quando a linha de destino começa depois do fim da primeira linha ampliada, permitindo cópia de fatias comprovadamente disjuntas.
 - Mantido `copy_within` como fallback caso uma geometria futura produza regiões sobrepostas em memória. O teste diferencial completo para 2×/3×/4× permanece a referência de pixels.
 - Commits `d6e751602ca4cc9d777a627e9c492ff8e3545f01` e `90f2fc5d3041e404eb783cd4470943dbcfc916bd`. Compilação/CI e benchmark release ainda pendentes.
+
+
+## Experiência do usuário — preferências persistentes e especificação do menu (27/11/2026, ChatGPT)
+
+- crates/aceris-core/src/video/library.rs agora persiste Grade/Lista e ordenação A–Z/Z–A em .aceris/library_preferences_v1.txt.
+- O arquivo usa o cabeçalho/versionamento ACERIS_LIBRARY_PREFERENCES_V1; valores desconhecidos, campos duplicados, arquivo ausente ou inválido retornam ao padrão seguro. A configuração é global para a biblioteca e não representa override por título.
+- Foram adicionados testes para recuperar as preferências ao recriar Library e para fallback com arquivo inválido.
+- A gravação de falha substitui a mensagem de status da alternância para que o usuário não receba confirmação falsa de persistência.
+- docs/QUICK_MENU_SETTINGS_SPEC.md registra o desenho do menu rápido, pausa segura em limite de quadro, personalização, categorias de configuração, estado atual e critérios de aceite.
+- docs/FRONTENDS.md, docs/USER_EXPERIENCE.md e docs/PRODUCT_IMPLEMENTATION_PLAN.md foram sincronizados com a mudança.
+- A implementação do menu rápido, pausa de sessão, layouts avançados, editor de controles, temas alternativos e perfis por jogo continua pendente. Não há controles fictícios nem save state/screenshot anunciados.
+- Os testes foram adicionados ao código, mas não foram executados nesta sessão; aguardar CI do HEAD final. Nenhum teste em dispositivo Android físico foi feito.
+- Fronteiras preservadas: mudanças funcionais limitadas a crates/aceris-core/src/video/library.rs; documentação de UX/plano/handoff atualizada. Nenhum código CPU/Thumb, GPU/PICA, trabalho de Claude/Thumb, dependência, asset, ROM, firmware ou chave foi alterado. Somente main; nenhuma branch ou PR criada.
