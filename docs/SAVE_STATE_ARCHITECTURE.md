@@ -27,7 +27,7 @@ Surface de janela, dispositivo de áudio, handles do sistema operacional, objeto
 
 ROM/NCCH/ExeFS/RomFS e diretórios de save do usuário são fontes externas. O estado deve guardar identidade e posições lógicas necessárias para reabrir os mesmos recursos, não serializar ponteiros ou caminhos temporários do processo. A gravação normal de save data do jogo deve permanecer fora do arquivo do save state.
 
-GameIdentity atualmente contém apenas Title ID e omite revisão; homebrew 3DSX pode não ter Title ID. O save state exige identidade de imagem mais forte: SHA-256 de uma representação canônica do conteúdo de boot, com Title ID adicional quando disponível. Caminho e nome do arquivo não são identidade confiável.
+GameIdentity atualmente contém apenas Title ID e omite revisão; homebrew 3DSX pode não ter Title ID. O save state usa uma identidade independente: SHA-256 do arquivo de imagem completo, calculado em fluxo com memória limitada, mais Title ID opcional. A comparação é intencionalmente estrita: arquivos repacotados ou com bytes diferentes são identidades distintas, mesmo que executem o mesmo programa. Caminho e nome do arquivo não entram no cálculo.
 
 ## Envelope binário v1
 
