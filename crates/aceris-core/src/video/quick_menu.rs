@@ -504,9 +504,36 @@ mod tests {
                 let x = (row.x + row.width / 2) as i32;
                 let y = (row.y + row.height / 2) as i32;
                 assert_eq!(hit_test(width, height, x, y), Some(index));
+                assert!(row.x + row.width <= width as usize);
+                assert!(row.y + row.height <= height as usize);
             }
             assert_eq!(hit_test(width, height, 0, 0), None);
         }
+    }
+
+    #[test]
+    fn sixth_action_renders_and_remains_reachable_on_compact_canvas() {
+        let (width, height) = (320u32, 240u32);
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+        assert!(render_overlay(
+            &mut frame,
+            width,
+            height,
+            PixelFormat::Rgba8,
+            ACTION_COUNT - 1,
+        ));
+        let geometry = geometry(width, height).unwrap();
+        let last = geometry.rows.last().unwrap();
+        assert!(last.y + last.height <= height as usize);
+        assert_eq!(
+            hit_test(
+                width,
+                height,
+                (last.x + last.width / 2) as i32,
+                (last.y + last.height / 2) as i32,
+            ),
+            Some(ACTION_COUNT - 1)
+        );
     }
 
     #[test]
