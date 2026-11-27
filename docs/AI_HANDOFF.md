@@ -2799,3 +2799,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A sonda é deliberadamente isolada em `FlatMemory`: mede o núcleo CPU/MMU, não o caminho completo de `Arm11ProcessSession`, D-cache do processo, periféricos nem GPU. O CI executa este teste ignorado em release apenas no runner Ubuntu, como etapa dedicada.
 - Resultado 27/11/2026: 6,14 M guest instr/s no passo preciso; 16,71 / 16,89 / 16,90 M no lote; 2,72× / 2,75× / 2,75×. Runner CI, não hardware local nem aparelho Android.
 - Próximo passo: executar uma sonda equivalente através de `Arm11ProcessSession` com MMU ativa e, quando disponível, em Android ARM64 físico; comparar resultados antes de avançar para cache de blocos pré-decodificados.
+## Referência Black for Android aplicada ao plano Aceris (27/11/2026, ChatGPT)
+
+- Fonte pública consultada: `https://github.com/RanggaCasper/Black-Android/releases` e README; latest consultada v1.8.1. O port recompila estaticamente o XBE x86 específico de BLACK para C++/ARM64, usa Vulkan, SDL3, escala de saída 20–200% (67% padrão), opções V-Sync/FPS, contador, filtering, configuração persistente e shader cache. Requisitos declarados: Android 10+, ARM64, Vulkan 1.1, 4 GB RAM e 2 GB de storage.
+- Não copiar código, shaders, assets, recompiler, estruturas ou dependências. A recompilação estática por título não substitui o intérprete/JIT ARM11/Thumb genérico do Aceris.
+- O presenter atual do Aceris é `wgpu` com Vulkan/GL/ES, fallback CPU, `PowerPreference::HighPerformance`, `FIFO` quando disponível e dois pipelines simples de composição. Ele recebe LCDs já renderizados pelo PICA em CPU; não é um rasterizador PICA200 em GPU.
+- Adaptação: futura escala apenas da composição host (nunca alterar buffer LCD/temporização guest); perfis Android estruturados/persistentes; FPS/frametime e backend visíveis; cache PICA de pipeline/shader apenas quando o renderer PICA em GPU existir; teste de V-Sync/power preference por aparelho; ajuste térmico somente em qualidade/trabalho host opcional.
+- Não copiar o default 67%, V-Sync desligado, FPS ilimitado ou requisitos de 4 GB como política Aceris. O port BLACK tem carga, loop de jogo e arquitetura diferentes.
+- Plano e critérios adicionados a `docs/PERFORMANCE_LOW_END_PLAN.md`, `docs/GRAPHICS_BACKENDS.md` e `docs/ROADMAP.md`. Nenhum código de produto foi modificado nesta rodada.
