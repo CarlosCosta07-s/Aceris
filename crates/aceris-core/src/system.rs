@@ -260,6 +260,41 @@ impl From<crate::loader::ncsd::session::kernel::save_state::KernelStateError>
     }
 }
 
+/// Minimal deterministic state for the local NDM service.
+///
+/// Network daemons are modeled as offline; the service still tracks exclusive
+/// state, per-daemon suspension nesting, and configuration values.
+#[derive(Debug)]
+struct NdmService {
+    daemon_mask: u32,
+    default_daemon_mask: u32,
+    daemon_status: [u32; 4],
+    daemon_suspend_count: [u32; 4],
+    exclusive_state: u32,
+    scan_interval: u32,
+    retry_interval: u32,
+    daemon_lock_enabled: bool,
+}
+
+impl Default for NdmService {
+    fn default() -> Self {
+        Self {
+            daemon_mask: 0x09,
+            default_daemon_mask: 0x09,
+            // NDM daemon status: Busy=0, Idle=1, Suspending=2, Suspended=3.
+            daemon_status: [1; 4],
+            daemon_suspend_count: [0; 4],
+            exclusive_state: 0,
+            scan_interval: 30,
+            retry_interval: 10,
+            daemon_lock_enabled: false,
+        }
+    }
+}
+
+/// NDM::ResumeDaemons reports InvalidState when a daemon was not suspended.
+const RESULT_NDM_INVALID_STATE: u32 = 0xC8A0_680D;
+
 /// The emulated console. Front-ends create one of these, load a game and then
 /// drive it one frame at a time.
 #[derive(Debug, Default)]
@@ -274,6 +309,7 @@ pub struct System {
     /// Host directory serving save data, extdata and the SD card (set by the frontend).
     storage: Option<crate::storage::Storage>,
     fs_state: FsState,
+    ndm: NdmService,
     /// Services and commands the guest asked for that are not implemented.
     unhandled: std::collections::BTreeSet<String>,
     dsp: DspService,
@@ -349,11 +385,11 @@ const RESULT_SRV_STRING_SIZE_MISMATCH: u32 = 0xD8E0_6407;
 const RESULT_SRV_SERVICE_ACCESS_DENIED: u32 = 0xD8E0_6406;
 /// Result for a command a stub service does not implement (public tables; unverified).
 const RESULT_INVALID_COMMAND: u32 = 0xD900_182F;
-/// Minimal HLE services: name and how their commands are answered.
+/// Minimal HLE services: name and the command policy used by each endpoint.
 const STUB_SERVICES: [(&str, StubKind); 6] = [
-    ("gsp::Lcd", StubKind::AlwaysOk),
-    ("ndm:u", StubKind::AlwaysOk),
-    ("ptm:sysm", StubKind::AlwaysOk),
+    ("gsp::Lcd", StubKind::Unsupported),
+    ("ndm:u", StubKind::Ndm),
+    ("ptm:sysm", StubKind::PtmSysm),
     ("ac:u", StubKind::Ac),
     ("frd:u", StubKind::Frd),
     ("am:u", StubKind::Am),
@@ -361,8 +397,12 @@ const STUB_SERVICES: [(&str, StubKind); 6] = [
 
 #[derive(Clone, Copy, Debug)]
 enum StubKind {
-    /// Every command succeeds with no payload.
-    AlwaysOk,
+    /// A service endpoint exists, but no command on it is implemented.
+    Unsupported,
+    /// `ndm:u`: local daemon/exclusive-state bookkeeping; networking stays offline.
+    Ndm,
+    /// `ptm:sysm`: read-only system status queries with deterministic device defaults.
+    PtmSysm,
     /// `ac:u`: client version and "not connected" Wi-Fi status.
     Ac,
     /// `frd:u`: not logged in, offline.
@@ -2537,6 +2577,165 @@ impl System {
         }
     }
 
+    /// Handles the stateful local subset of `ndm:u`.
+    ///
+    /// Daemon networking is intentionally not simulated. The status APIs,
+    /// suspend nesting, exclusive mode, lock state and scan/retry intervals
+    /// are deterministic and observable by the guest.
+    fn dispatch_ndm_request(&mut self, message: IpcMessage<'_>) -> Option<Vec<u32>> {
+        let raw_header = message.header().raw();
+        let command = raw_header & 0xFFFF_0000;
+        let parameters = message.normal_parameters();
+        let first = parameters.first().copied().unwrap_or(u32::MAX);
+        let result_only = || vec![command | 0x40, 0];
+        let invalid_enum = || vec![command | 0x40, RESULT_INVALID_ENUM];
+
+        match raw_header {
+            0x0001_0042 => {
+                if first > 4 {
+                    Some(invalid_enum())
+                } else {
+                    self.ndm.exclusive_state = first;
+                    Some(result_only())
+                }
+            }
+            0x0002_0002 => {
+                self.ndm.exclusive_state = 0;
+                Some(result_only())
+            }
+            0x0003_0000 => Some(vec![
+                command | 0x80,
+                0,
+                self.ndm.exclusive_state,
+            ]),
+            0x0004_0002 => {
+                self.ndm.daemon_lock_enabled = true;
+                Some(result_only())
+            }
+            0x0005_0002 => {
+                self.ndm.daemon_lock_enabled = false;
+                Some(result_only())
+            }
+            0x0006_0040 => {
+                if first == u32::MAX {
+                    return Some(invalid_enum());
+                }
+                let mask = first & 0x0F;
+                self.ndm.daemon_mask &= !mask;
+                for index in 0..4 {
+                    if mask & (1 << index) != 0 {
+                        let count = &mut self.ndm.daemon_suspend_count[index];
+                        if *count == 0 {
+                            self.ndm.daemon_status[index] = 3;
+                        }
+                        *count = count.saturating_add(1);
+                    }
+                }
+                Some(result_only())
+            }
+            0x0007_0040 => {
+                if first == u32::MAX {
+                    return Some(invalid_enum());
+                }
+                let mask = first & 0x0F;
+                if (0..4).any(|index| {
+                    mask & (1 << index) != 0 && self.ndm.daemon_suspend_count[index] == 0
+                }) {
+                    return Some(vec![command | 0x40, RESULT_NDM_INVALID_STATE]);
+                }
+                for index in 0..4 {
+                    if mask & (1 << index) != 0 {
+                        let count = &mut self.ndm.daemon_suspend_count[index];
+                        *count -= 1;
+                        if *count == 0 {
+                            self.ndm.daemon_status[index] = 1;
+                            self.ndm.daemon_mask |= self.ndm.default_daemon_mask & (1 << index);
+                        }
+                    }
+                }
+                Some(result_only())
+            }
+            0x0008_0040 | 0x0009_0000 => Some(result_only()),
+            0x000D_0040 => {
+                let Some(status) = self.ndm.daemon_status.get(first as usize).copied() else {
+                    return Some(invalid_enum());
+                };
+                Some(vec![command | 0x80, 0, status])
+            }
+            0x000E_0040 => {
+                let Some(count) = self.ndm.daemon_suspend_count.get(first as usize).copied() else {
+                    return Some(invalid_enum());
+                };
+                Some(vec![command | 0xC0, 0, count, count])
+            }
+            0x000F_0000 => Some(vec![command | 0xC0, 0, 0, 0]),
+            0x0010_0040 => {
+                if first == u32::MAX {
+                    return Some(invalid_enum());
+                }
+                self.ndm.scan_interval = first;
+                Some(result_only())
+            }
+            0x0011_0000 => Some(vec![command | 0x80, 0, self.ndm.scan_interval]),
+            0x0012_0040 => {
+                if first == u32::MAX {
+                    return Some(invalid_enum());
+                }
+                self.ndm.retry_interval = first;
+                Some(result_only())
+            }
+            0x0013_0000 => Some(vec![command | 0x80, 0, self.ndm.retry_interval]),
+            0x0014_0040 => {
+                if first == u32::MAX {
+                    return Some(invalid_enum());
+                }
+                let mask = first & 0x0F;
+                self.ndm.default_daemon_mask = mask;
+                self.ndm.daemon_mask = mask;
+                for index in 0..4 {
+                    if mask & (1 << index) != 0 {
+                        self.ndm.daemon_status[index] = 1;
+                        self.ndm.daemon_suspend_count[index] = 0;
+                    }
+                }
+                Some(result_only())
+            }
+            0x0015_0000 => {
+                self.ndm.default_daemon_mask = 0x09;
+                self.ndm.daemon_mask = 0x09;
+                for index in [0usize, 3] {
+                    self.ndm.daemon_status[index] = 1;
+                    self.ndm.daemon_suspend_count[index] = 0;
+                }
+                Some(result_only())
+            }
+            0x0016_0000 => Some(vec![
+                command | 0x80,
+                0,
+                self.ndm.default_daemon_mask,
+            ]),
+            0x0017_0000 => Some(result_only()),
+            _ => None,
+        }
+    }
+
+    /// Handles read-only `ptm:sysm` queries whose values are represented by
+    /// this deterministic O3DS/offline device profile.
+    fn dispatch_ptm_sysm_request(message: IpcMessage<'_>) -> Option<Vec<u32>> {
+        let raw_header = message.header().raw();
+        let value = match raw_header {
+            0x0005_0000 => 0, // Adapter/battery charger is not charging.
+            0x0006_0000 | 0x0811_0000 => 1, // Shell is open.
+            0x0007_0000 => 5, // Battery level: full.
+            0x0008_0000 => 0, // Not charging.
+            0x000C_0000 => 0, // No recorded steps.
+            0x040A_0000 => 0, // Aceris currently models an Old-3DS profile.
+            0x080F_0000 => 0, // No software-closed flag.
+            _ => return None,
+        };
+        Some(vec![raw_header | 0x80, 0, value])
+    }
+
     /// Answers a stub service from [`STUB_SERVICES`]; unknown commands are recorded.
     fn dispatch_stub_request(&mut self, index: u8, message: IpcMessage<'_>) -> Vec<u32> {
         let (name, kind) = STUB_SERVICES[usize::from(index)];
@@ -2544,9 +2743,11 @@ impl System {
         let command = raw_header & 0xFFFF_0000;
         let ok = vec![command | 0x40, 0];
         let reply = match kind {
-            StubKind::AlwaysOk => Some(ok.clone()),
+            StubKind::Unsupported => None,
+            StubKind::Ndm => self.dispatch_ndm_request(message),
+            StubKind::PtmSysm => Self::dispatch_ptm_sysm_request(message),
             StubKind::Ac => match command >> 16 {
-                0x01 | 0x40 => Some(ok.clone()),
+                0x01 | 0x40 => Some(ok),
                 0x0D => Some(vec![command | 0x80, 0, 0]), // GetWifiStatus: not connected
                 _ => None,
             },
@@ -12383,10 +12584,145 @@ mod tests {
         run_one_ipc_svc(&mut system);
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 2),
-            [0x000B_0040, 0]
+            [0x000B_0040, RESULT_INVALID_COMMAND]
         );
+
+        let ptm = open_hle_service(&mut system, b"ptm:sysm");
+        let reply = write_tls_ipc_request(&mut system, ptm, &[0x040A_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x040A_0080, 0, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, ptm, &[0x0406_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0406_0040, RESULT_INVALID_COMMAND]
+        );
+
         let unhandled = system.unhandled_requests();
-        assert_eq!(unhandled, vec!["ac:u command 0x00990000".to_string()]);
+        assert_eq!(
+            unhandled,
+            [
+                "ac:u command 0x00990000".to_string(),
+                "gsp::Lcd command 0x000B0040".to_string(),
+                "ptm:sysm command 0x04060000".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ndm_u_tracks_exclusive_mode_daemon_suspension_and_intervals() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(12)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let ndm = open_hle_service(&mut system, b"ndm:u");
+
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0003_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0003_0080, 0, 0]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0001_0042, 3]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0001_0040, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0003_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0003_0080, 0, 3]
+        );
+
+        // Suspend daemons 0 and 3 (the default CEC/Friend daemons).
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0006_0040, 0x09]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0006_0040, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x000D_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000D_0080, 0, 3]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x000E_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 4),
+            [0x000E_00C0, 0, 1, 1]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0007_0040, 0x09]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0007_0040, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x000D_0040, 0]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000D_0080, 0, 1]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0007_0040, 0x09]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0007_0040, RESULT_NDM_INVALID_STATE]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0010_0040, 7]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0010_0040, 0]);
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0011_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0011_0080, 0, 7]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0012_0040, 4]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0012_0040, 0]);
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0013_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0013_0080, 0, 4]
+        );
+
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0014_0040, 3]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0014_0040, 0]);
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0016_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0016_0080, 0, 3]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0015_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0015_0040, 0]);
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0016_0000]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x0016_0080, 0, 0x09]
+        );
+
+        assert!(system.unhandled_requests().is_empty());
     }
 
     #[test]

@@ -103,6 +103,9 @@
 | Cheats | Não disponível | Sem gerenciador de códigos por título. |
 | Substituição de textura | Não disponível | Sem pipeline de substituição apresentado ao usuário. |
 | Câmera, microfone, sensores, NFC e multiplayer | Não disponível | Requerem HLE, integração da plataforma, permissões e validação específica. |
+| HLE `ndm:u` | Parcial | Modela estado exclusivo, bloqueio, suspensão aninhada dos quatro daemons e intervalos; não executa networking nem daemons online. Comandos não suportados são registrados e retornam erro, sem sucesso genérico. |
+| HLE `ptm:sysm` | Parcial | Responde consultas de estado da bateria, tampa, passos, modelo O3DS e flag de encerramento com valores determinísticos; operações de energia e LED permanecem não implementadas e são diagnosticadas. |
+| HLE `gsp::Lcd` | Não disponível | O endpoint pode ser aberto, mas seus comandos ainda não têm implementação; eles deixam diagnóstico em `unhandled_requests()` e não retornam falso sucesso. |
 | Sincronização em nuvem/conquistas | Não disponível | Sem integração online habilitada na experiência do usuário. |
 
 **Evidência principal:** crates/aceris-graphics/src/lib.rs, frontends/desktop/src/audio.rs, frontends/android/src/aaudio.rs, crates/aceris-core/src/csnd.rs, crates/aceris-core/src/dsp.rs e docs/FRONTENDS.md.
