@@ -4,10 +4,7 @@
 //! groups per-title preferences, while the latter isolates save states to the
 //! exact bytes of the image that was loaded.
 
-use std::{
-    fmt,
-    path::Path,
-};
+use std::{fmt, path::Path};
 
 use aceris_common::Error as CoreError;
 
@@ -54,11 +51,9 @@ fn identity_for_loaded_image(
     format: ImageFormat,
     game_identity: Option<GameIdentity>,
 ) -> Result<LoadedImageIdentity, LoadIdentifiedImageError> {
-    let save_state_identity = identity_from_image_path(
-        path,
-        game_identity.map(GameIdentity::title_id),
-    )
-    .map_err(LoadIdentifiedImageError::Identity)?;
+    let save_state_identity =
+        identity_from_image_path(path, game_identity.map(GameIdentity::title_id))
+            .map_err(LoadIdentifiedImageError::Identity)?;
 
     Ok(LoadedImageIdentity {
         format,
@@ -78,9 +73,10 @@ impl fmt::Display for LoadIdentifiedImageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Load(error) => write!(formatter, "executable load failed: {error}"),
-            Self::Identity(error) => {
-                write!(formatter, "could not identify loaded image for save states: {error}")
-            }
+            Self::Identity(error) => write!(
+                formatter,
+                "could not identify loaded image for save states: {error}"
+            ),
         }
     }
 }
@@ -115,8 +111,7 @@ mod tests {
     #[test]
     fn homebrew_identity_uses_exact_image_bytes_without_a_title_id() {
         let path = temporary_image_path();
-        fs::write(&path, b"synthetic homebrew image")
-            .expect("synthetic image should be written");
+        fs::write(&path, b"synthetic homebrew image").expect("synthetic image should be written");
 
         let loaded = identity_for_loaded_image(&path, ImageFormat::ThreeDsx, None)
             .expect("homebrew image identity should be calculated");
