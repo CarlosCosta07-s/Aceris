@@ -104,9 +104,9 @@ pub fn render_menu_button(
         frame,
         width as usize,
         height as usize,
-        button.x + 18 * scale / 2,
-        button.y + (button.height.saturating_sub(7 * scale)) / 2,
-        scale,
+        button.x + (button.width.saturating_sub(23 * scale * 2)) / 2,
+        button.y + (button.height.saturating_sub(7 * scale * 2)) / 2,
+        scale * 2,
         "MENU",
         [255, 255, 255],
         format,
@@ -149,6 +149,7 @@ pub fn render_overlay(
     }
 
     let scale = geometry.scale;
+    let text_scale = scale * 2;
     let canvas = Rect {
         x: 0,
         y: 0,
@@ -167,20 +168,20 @@ pub fn render_overlay(
     draw_border(frame, width as usize, geometry.panel, scale, format);
 
     let title_x = geometry.panel.x + 18 * scale;
-    let title_y = geometry.panel.y + 15 * scale;
+    let title_y = geometry.panel.y + 12 * scale;
     draw_text_for_format(
         frame,
         width as usize,
         height as usize,
         title_x,
         title_y,
-        scale,
+        text_scale,
         "MENU DO JOGO",
         [245, 238, 248],
         format,
     );
 
-    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR A BIBLIOTECA"];
+    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR À BIBLIOTECA"];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(ACTION_COUNT - 1);
         blend_rect(
@@ -191,14 +192,14 @@ pub fn render_overlay(
             if is_selected { 245 } else { 230 },
             format,
         );
-        let text_y = row.y + (row.height.saturating_sub(7 * scale)) / 2;
+        let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
         draw_text_for_format(
             frame,
             width as usize,
             height as usize,
             row.x + 12 * scale,
             text_y,
-            scale,
+            text_scale,
             labels[index],
             [255, 255, 255],
             format,
