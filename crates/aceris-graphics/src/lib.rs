@@ -367,9 +367,7 @@ impl GraphicsPresenter {
         let info = adapter.get_info();
         let pipeline_cache_key = wgpu::util::pipeline_cache_key(&info);
         let pipeline_cache_supported = pipeline_cache_key.is_some()
-            && adapter
-                .features()
-                .contains(wgpu::Features::PIPELINE_CACHE);
+            && adapter.features().contains(wgpu::Features::PIPELINE_CACHE);
         let required_features = if pipeline_cache_supported {
             wgpu::Features::PIPELINE_CACHE
         } else {
@@ -389,9 +387,7 @@ impl GraphicsPresenter {
             }
             _ => None,
         };
-        let pipeline_cache_data = pipeline_cache_path
-            .as_deref()
-            .and_then(load_pipeline_cache);
+        let pipeline_cache_data = pipeline_cache_path.as_deref().and_then(load_pipeline_cache);
         let pipeline_cache = if pipeline_cache_supported {
             let descriptor = wgpu::PipelineCacheDescriptor {
                 label: Some("Aceris persistent host pipeline cache"),
@@ -725,10 +721,8 @@ mod tests {
 
     #[test]
     fn pipeline_cache_storage_round_trips_and_uses_atomic_temp_file() {
-        let directory = std::env::temp_dir().join(format!(
-            "aceris-gpu-pipeline-cache-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("aceris-gpu-pipeline-cache-{}", std::process::id()));
         let path = directory.join("adapter.bin");
         let data = [0x41, 0x43, 0x45, 0x52, 0x49, 0x53];
 
@@ -757,11 +751,7 @@ mod tests {
 
         let oversized_path = directory.join("oversized.bin");
         let file = fs::File::create(&oversized_path).unwrap();
-        file.set_len(
-            MAX_PERSISTED_PIPELINE_CACHE_BYTES
-                + PIPELINE_CACHE_FILE_MAGIC.len() as u64
-                + 1,
-        )
+        file.set_len(MAX_PERSISTED_PIPELINE_CACHE_BYTES + PIPELINE_CACHE_FILE_MAGIC.len() as u64 + 1)
         .unwrap();
         assert!(load_pipeline_cache(&oversized_path).is_none());
 
