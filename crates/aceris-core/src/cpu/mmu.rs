@@ -1317,9 +1317,10 @@ impl Arm11Core {
             self.prefetch_fault = fault.access == Access::Execute;
             match fault.access {
                 Access::Execute => self.cp15.latch_prefetch_fault(fault.status, fault.address),
-                access => self
-                    .cp15
-                    .latch_data_fault(fault.status, fault.address, access == Access::Write),
+                access => {
+                    self.cp15
+                        .latch_data_fault(fault.status, fault.address, access == Access::Write)
+                }
             }
         }
         if let Some(error) = execution_error {
@@ -3344,16 +3345,15 @@ mod tests {
         set_l1(&mut precise_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
 
         for (index, instruction) in program.into_iter().enumerate() {
-            fast_mem
-                .write32(index as u32 * 4, instruction)
-                .unwrap();
-            precise_mem
-                .write32(index as u32 * 4, instruction)
-                .unwrap();
+            fast_mem.write32(index as u32 * 4, instruction).unwrap();
+            precise_mem.write32(index as u32 * 4, instruction).unwrap();
         }
 
         for _ in 0..program.len() {
-            assert_eq!(precise_cpu.step(&mut precise_mem).unwrap(), StepEvent::Executed);
+            assert_eq!(
+                precise_cpu.step(&mut precise_mem).unwrap(),
+                StepEvent::Executed
+            );
         }
 
         let (executed, exit) = fast_cpu
@@ -3377,15 +3377,16 @@ mod tests {
         set_l1(&mut precise_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
 
         for (index, instruction) in program.into_iter().enumerate() {
-            fast_mem
-                .write32(index as u32 * 4, instruction)
-                .unwrap();
+            fast_mem.write32(index as u32 * 4, instruction).unwrap();
             precise_mem
                 .write32(index as u32 * 4, instruction)
                 .unwrap();
         }
 
-        assert_eq!(precise_cpu.step(&mut precise_mem).unwrap(), StepEvent::Executed);
+        assert_eq!(
+            precise_cpu.step(&mut precise_mem).unwrap(),
+            StepEvent::Executed
+        );
         assert_eq!(
             precise_cpu.step(&mut precise_mem).unwrap(),
             StepEvent::Svc(0x123)
@@ -3421,5 +3422,4 @@ mod tests {
         assert_eq!(fast_cpu.step(&mut fast_mem).unwrap(), StepEvent::Executed);
         assert!(fast_cpu.cp15.smp_mode_enabled());
     }
-
 }
