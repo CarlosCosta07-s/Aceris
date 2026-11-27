@@ -20,6 +20,7 @@ mod shifter;
 mod thumb;
 mod vfp;
 
+pub use block_cache::BlockCacheStats;
 pub use condition::Condition;
 pub use cp15::Cp15;
 pub use mpcore_gic::{
@@ -184,6 +185,16 @@ pub struct Arm11Core {
 impl Arm11Core {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns a snapshot of immutable-text A32 block-cache counters.
+    pub fn block_cache_stats(&self) -> BlockCacheStats {
+        self.block_cache.stats()
+    }
+
+    /// Returns and resets the block-cache counters for one profiling interval.
+    pub fn take_block_cache_stats(&mut self) -> BlockCacheStats {
+        self.block_cache.take_stats()
     }
 
     /// Changes the active processor mode while preserving all banked registers.
