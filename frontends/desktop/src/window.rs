@@ -268,9 +268,37 @@ pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut
         }
     }
     output.resize(byte_len, 0);
-    output.fill(0);
-    for pixel in output.chunks_exact_mut(4) {
-        pixel[3] = 0xFF;
+    let layout = compute_screen_layout(
+        GAME_CANVAS_WIDTH as u32,
+        GAME_CANVAS_HEIGHT as u32,
+        ORIENTATION_LANDSCAPE,
+    );
+    if scale == 1 {
+        // The two LCDs cover the entire canvas except for the central gutter.
+        // Initialize only that gap; the native-scale blits overwrite every
+        // other pixel and force alpha to opaque.
+        let gap_start_x = layout.top.x as usize + display.top_left().width();
+        let gap_end_x = layout.bottom.x as usize;
+        if gap_start_x <= gap_end_x && gap_end_x <= width {
+            let opaque_black = [0, 0, 0, 0xFF];
+            for y in 0..height {
+                let row_start = (y * width + gap_start_x) * 4;
+                let row_end = (y * width + gap_end_x) * 4;
+                for pixel in output[row_start..row_end].chunks_exact_mut(4) {
+                    pixel.copy_from_slice(&opaque_black);
+                }
+            }
+        } else {
+            output.fill(0);
+            for pixel in output.chunks_exact_mut(4) {
+                pixel[3] = 0xFF;
+            }
+        }
+    } else {
+        output.fill(0);
+        for pixel in output.chunks_exact_mut(4) {
+            pixel[3] = 0xFF;
+        }
     }
 
     let mut blit =
@@ -309,11 +337,6 @@ pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut
                 }
             }
         };
-    let layout = compute_screen_layout(
-        GAME_CANVAS_WIDTH as u32,
-        GAME_CANVAS_HEIGHT as u32,
-        ORIENTATION_LANDSCAPE,
-    );
     blit(
         display.top_left(),
         layout.top.x as usize,
