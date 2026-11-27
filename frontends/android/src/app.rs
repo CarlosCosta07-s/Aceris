@@ -438,19 +438,20 @@ impl App {
         if !self.library.virtual_controls_visible() {
             return 0;
         }
-        frontend::hit_test_virtual_control_with_size(
+        frontend::hit_test_virtual_control_with_size_and_preset(
             self.width,
             self.height,
             x as i32,
             y as i32,
             ORIENTATION_AUTO,
             self.library.virtual_controls_size_percent(),
+            self.library.virtual_controls_preset(),
         )
     }
 
     fn render_virtual_controls_overlay(&self, frame: &mut [u8], pressed_mask: u32) {
         if self.library.virtual_controls_visible() {
-            frontend::blend_virtual_pad_overlay_into_with_opacity_and_size(
+            frontend::blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
                 frame,
                 self.width,
                 self.height,
@@ -458,6 +459,7 @@ impl App {
                 pressed_mask,
                 self.library.virtual_controls_opacity(),
                 self.library.virtual_controls_size_percent(),
+                self.library.virtual_controls_preset(),
             );
         }
     }
@@ -1645,6 +1647,34 @@ mod tests {
         let mut enlarged = original;
         app.render_virtual_controls_overlay(&mut enlarged, 0);
         assert_ne!(compact, enlarged);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn virtual_control_preset_updates_android_hit_testing_and_rendering() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+
+        // The D-pad moves to the right while its directional semantics stay intact.
+        assert_eq!(app.hit_virtual_button(332.0, 576.0), pad::X);
+        app.library
+            .set_virtual_controls_preset(frontend::VirtualControlPreset::LeftHanded)
+            .unwrap();
+        assert_eq!(app.hit_virtual_button(332.0, 576.0), pad::UP);
+
+        let original = [10u8, 20, 30, 255].repeat(400 * 800);
+        app.library
+            .set_virtual_controls_preset(frontend::VirtualControlPreset::Standard)
+            .unwrap();
+        let mut standard = original.clone();
+        app.render_virtual_controls_overlay(&mut standard, 0);
+        app.library
+            .set_virtual_controls_preset(frontend::VirtualControlPreset::LeftHanded)
+            .unwrap();
+        let mut left_handed = original;
+        app.render_virtual_controls_overlay(&mut left_handed, 0);
+        assert_ne!(standard, left_handed);
 
         fs::remove_dir_all(dir).ok();
     }
