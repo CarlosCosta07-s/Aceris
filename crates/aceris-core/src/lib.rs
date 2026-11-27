@@ -14,6 +14,7 @@ pub mod input;
 pub mod loader;
 pub mod memory;
 pub mod save_state;
+pub mod save_state_identity;
 pub mod save_state_store;
 pub mod selftest;
 pub mod services;
