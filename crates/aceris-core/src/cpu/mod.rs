@@ -674,23 +674,21 @@ impl Arm11Core {
             let thumb = self.cpsr.thumb();
             if !thumb {
                 let mode = self.cpsr.mode();
-                if let Some(block) = self.block_cache.block_for(
-                    pc,
-                    mode,
-                    bus,
-                    &mut self.decode_cache,
-                ) {
+                if let Some(block) =
+                    self.block_cache
+                        .block_for(pc, mode, bus, &mut self.decode_cache)
+                {
                     for index in 0..block.len().min((budget - executed) as usize) {
                         let Some(cached) = block.instruction(index) else {
                             break;
                         };
                         let instruction_pc = self.pc();
-                        if instruction_pc != pc.wrapping_add((index as u32) * ARM_INSTRUCTION_SIZE) {
+                        if instruction_pc != pc.wrapping_add((index as u32) * ARM_INSTRUCTION_SIZE)
+                        {
                             break;
                         }
                         self.branch_taken = false;
-                        let mut event =
-                            self.execute_arm_decoded(bus, cached.word, cached.entry)?;
+                        let mut event = self.execute_arm_decoded(bus, cached.word, cached.entry)?;
                         if !self.branch_taken {
                             self.regs[PC] = instruction_pc.wrapping_add(ARM_INSTRUCTION_SIZE);
                         }
