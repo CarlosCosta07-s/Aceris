@@ -43,8 +43,8 @@
 |---|---|---|
 | Scanner .3DS/.CCI | Parcial | Extensões são listadas. O carregamento NCSD comum depende das condições NoCrypto suportadas pelo loader; a extensão sozinha não valida o arquivo. |
 | Carregar .3DSX | Parcial | Caminho de homebrew existe no loader. A presença no catálogo não garante que toda aplicação homebrew funcione. |
-| Carregar .CIA | Parcial | Só nas condições suportadas pelo núcleo: conteúdo de boot em claro e NCCH NoCrypto. Não existe instalação persistente ou gestão de títulos/atualizações pela biblioteca. |
-| Conteúdo criptografado | Parcial | Há pontos de entrada onde o host fornece material de chave temporário. Aceris não descobre nem persiste chaves e não oferece gestor de chaves ao usuário. |
+| Carregar .CIA | Parcial | Lançamento direto apenas quando o conteúdo de boot está em claro e o NCCH é NoCrypto. Não existe instalação persistente ou gestão de títulos/atualizações pela biblioteca. CIA criptografado é recusado pelo caminho normal. |
+| Conteúdo criptografado | Não disponível no lançamento normal | O caminho usado pela biblioteca recusa NCSD/CIA criptografados e aceita somente NCCH NoCrypto e conteúdo CIA em claro. Rotinas criptográficas de baixo nível permanecem para testes internos, mas não estão integradas à experiência de lançamento. Aceris não descobre, incorpora nem persiste chaves. |
 | Identidade de título por Title ID | Parcial | System::game_identity expõe o program ID de NCCH em NCSD/CCI e o Title ID do TMD em CIA após conferir o NCCH. 3DSX permanece sem identidade; região, produto, versão/revisão e metadados na biblioteca ainda faltam. SourceId da biblioteca continua baseado no caminho. |
 | Relatório de compatibilidade por título | Não disponível | Há mensagens de erro e diagnóstico de execução, mas não há classificação de compatibilidade ou histórico por jogo. |
 
