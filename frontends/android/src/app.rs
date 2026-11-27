@@ -438,24 +438,26 @@ impl App {
         if !self.library.virtual_controls_visible() {
             return 0;
         }
-        frontend::hit_test_virtual_control(
+        frontend::hit_test_virtual_control_with_size(
             self.width,
             self.height,
             x as i32,
             y as i32,
             ORIENTATION_AUTO,
+            self.library.virtual_controls_size_percent(),
         )
     }
 
     fn render_virtual_controls_overlay(&self, frame: &mut [u8], pressed_mask: u32) {
         if self.library.virtual_controls_visible() {
-            frontend::blend_virtual_pad_overlay_into_with_opacity(
+            frontend::blend_virtual_pad_overlay_into_with_opacity_and_size(
                 frame,
                 self.width,
                 self.height,
                 ORIENTATION_AUTO,
                 pressed_mask,
                 self.library.virtual_controls_opacity(),
+                self.library.virtual_controls_size_percent(),
             );
         }
     }
@@ -1621,6 +1623,28 @@ mod tests {
         let mut full_overlay = original.clone();
         app.render_virtual_controls_overlay(&mut full_overlay, 0);
         assert_ne!(full_overlay, original);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn virtual_control_size_setting_updates_android_hit_testing_and_overlay() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+
+        // The point sits just outside the default A button but inside the 120% target.
+        assert_eq!(app.hit_virtual_button(382.0, 608.0), 0);
+        app.library.set_virtual_controls_size_percent(120).unwrap();
+        assert_eq!(app.hit_virtual_button(382.0, 608.0), pad::A);
+
+        let original = [10u8, 20, 30, 255].repeat(400 * 800);
+        app.library.set_virtual_controls_size_percent(80).unwrap();
+        let mut compact = original.clone();
+        app.render_virtual_controls_overlay(&mut compact, 0);
+        app.library.set_virtual_controls_size_percent(120).unwrap();
+        let mut enlarged = original;
+        app.render_virtual_controls_overlay(&mut enlarged, 0);
+        assert_ne!(compact, enlarged);
 
         fs::remove_dir_all(dir).ok();
     }
