@@ -25,7 +25,7 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 
 - Biblioteca com páginas Jogos, Favoritos, Recentes, Homebrew e Configurações.
 - Pesquisa local por título, nome de arquivo e caminho.
-- Grade/lista nos contextos suportados pelo layout atual; a escolha ainda não é persistida entre reinicializações.
+- Grade/lista nos contextos suportados pelo layout atual; preferência e ordenação já são persistidas no arquivo versionado da biblioteca.
 - Favoritos e Recentes persistidos.
 - Filtro de extensão para formatos listados pelo scanner (.3DS, .CCI, .CIA e .3DSX); listar CIA não significa instalar títulos.
 - Gerenciamento básico de raízes de biblioteca, recursão opcional e persistência da configuração do scanner.
@@ -40,7 +40,7 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 - Progresso, cancelamento, resumo e recuperação de erros do processo de importação/varredura.
 - Persistência ampliada de metadados da biblioteca e página detalhada de jogo.
 - Mapeamento completo de teclado/gamepad, detecção/reconexão, perfis e editor de controles virtuais.
-- Menu de pausa completo, atalhos, opções avançadas de layout/troca de telas e perfis por orientação.
+- Menu rápido básico implementado; atalhos configuráveis, sincronização explícita do áudio, confirmação de progresso, layouts avançados/troca de telas e perfis por orientação continuam pendentes.
 - Configurações globais com overrides por jogo e migrações seguras.
 - Save states versionados, slots e recuperação — distintos dos saves gravados pelo próprio jogo.
 - Validação física do frontend Android e dos backends desktop; saída de áudio do sistema emulado ainda não foi confirmada como funcional.
@@ -147,11 +147,12 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 **Dependências:** M3 para atalhos/ações consistentes e um mecanismo seguro de pausar o agendamento guest.
 
 **M4.1 — Pausa e menu**
-- [ ] Implementar pausa real da sessão guest com sincronização segura entre CPU, GPU, áudio e eventos.
-- [ ] Abrir menu sem bloquear o thread de UI nem deixar a sessão em estado parcialmente atualizado.
-- [ ] Expor Continuar, Reiniciar e Encerrar; pedir confirmação quando houver risco real de perda de progresso.
-- [ ] Disponibilizar menu via botão no Android e atalho configurável no desktop.
-- [ ] Manter menu compacto no celular e painel/overlay adequado no PC.
+- [x] Pausar a execução guest no limite entre quadros nos loops desktop e Android; enquanto o painel está aberto, o host continua processando eventos e redesenhando o último scanout, sem executar o próximo quadro guest.
+- [x] Abrir o menu sem bloquear a thread de UI. Entradas mantidas são liberadas ao abrir/retomar, e o toque no botão MENU Android é separado da entrada stylus.
+- [x] Expor Continuar, Reiniciar e Voltar à biblioteca. Reiniciar recria a sessão do mesmo arquivo.
+- [x] Disponibilizar botão visível e tecla Voltar no Android e Esc no desktop. O mapeamento de teclas ainda não é configurável.
+- [x] Manter o menu compacto no celular e painel/overlay no PC.
+- [ ] Sincronizar/limpar explicitamente as filas de áudio do host, definir confirmação de perda de progresso e validar pausa/retomada em hardware físico. Por enquanto, a produção guest de áudio para e a saída pode terminar de consumir amostras já enfileiradas..
 
 **M4.2 — Layout**
 - [ ] Implementar modos vertical, lado a lado, superior ampliada, inferior ampliada e tela única.
