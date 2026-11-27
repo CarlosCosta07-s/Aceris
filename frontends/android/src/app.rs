@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use aceris_core::System;
 use aceris_core::input::{pad, touch_from_surface_point};
 use aceris_core::video::frontend::{
-    self, ORIENTATION_AUTO, ScreenLayout, ScreenRect, compute_screen_layout,
+    self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect,
+    compute_screen_layout, compute_screen_layout_for_mode,
 };
 use aceris_core::video::library::{self, ClickResult, Library};
 use aceris_core::video::{
@@ -48,6 +49,8 @@ pub struct App {
     current_game_path: Option<PathBuf>,
     quick_menu_selected: usize,
     confirmation_selected: usize,
+    screen_layout_mode: ScreenLayoutMode,
+    swap_screens: bool,
     menu_tap: Option<(i32, i32)>,
     menu_button_pointer: Option<i32>,
     width: u32,
@@ -78,6 +81,8 @@ impl App {
             current_game_path: None,
             quick_menu_selected: 0,
             confirmation_selected: 0,
+            screen_layout_mode: ScreenLayoutMode::Auto,
+            swap_screens: false,
             menu_tap: None,
             menu_button_pointer: None,
             width: 0,
@@ -335,7 +340,8 @@ impl App {
             let _ = self.library.render_responsive_into(self.width, self.height, output);
             return;
         };
-        if !compose_game_into(system.display(), self.width, self.height, output) {
+        let layout = self.game_layout();
+        if !compose_game_into(system.display(), &layout, self.width, self.height, output) {
             return;
         }
         let _ = quick_menu::render_overlay(
@@ -357,7 +363,8 @@ impl App {
             let _ = self.library.render_responsive_into(self.width, self.height, output);
             return;
         };
-        if !compose_game_into(system.display(), self.width, self.height, output) {
+        let layout = self.game_layout();
+        if !compose_game_into(system.display(), &layout, self.width, self.height, output) {
             return;
         }
         let _ = quick_menu::render_confirmation_overlay(
@@ -393,7 +400,8 @@ impl App {
         }
         system.take_audio_samples(&mut self.audio);
         let system = self.system.as_ref().expect("system exists while in game");
-        if !compose_game_into(system.display(), self.width, self.height, output) {
+        let layout = self.game_layout();
+        if !compose_game_into(system.display(), &layout, self.width, self.height, output) {
             return;
         }
         let pressed_mask = self.held_mask();
@@ -425,7 +433,16 @@ impl App {
     }
 
     fn game_layout(&self) -> ScreenLayout {
-        compute_screen_layout(self.width, self.height, ORIENTATION_AUTO)
+        compute_screen_layout_for_mode(
+            self.width,
+            self.height,
+            self.screen_layout_mode,
+            self.swap_screens,
+        )
+    }
+
+    fn cycle_screen_layout(&mut self) {
+        self.screen_layout_mode = self.screen_layout_mode.next();
     }
 
     fn apply_game_input(&mut self) {
@@ -575,9 +592,10 @@ impl App {
             1 => self.request_game_menu_confirmation(
                 quick_menu::ConfirmationAction::Restart,
             ),
-            _ => self.request_game_menu_confirmation(
+            2 => self.request_game_menu_confirmation(
                 quick_menu::ConfirmationAction::BackToLibrary,
             ),
+            _ => self.cycle_screen_layout(),
         }
     }
 
@@ -916,18 +934,19 @@ fn blit_scaled(
 /// Composes both LCDs into an RGBA frame of the surface size.
 pub fn compose_game(display: &DualScreenDisplay, width: u32, height: u32) -> Vec<u8> {
     let mut frame = Vec::new();
-    compose_game_into(display, width, height, &mut frame);
+    let layout = compute_screen_layout(width, height, ORIENTATION_AUTO);
+    compose_game_into(display, &layout, width, height, &mut frame);
     frame
 }
 
 /// Composes both LCDs into a reusable RGBA frame buffer.
 fn compose_game_into(
     display: &DualScreenDisplay,
+    layout: &ScreenLayout,
     width: u32,
     height: u32,
     frame: &mut Vec<u8>,
 ) -> bool {
-    let layout = compute_screen_layout(width, height, ORIENTATION_AUTO);
     if !reset_frame_background(frame, width, height, [layout.top, layout.bottom]) {
         return false;
     }
