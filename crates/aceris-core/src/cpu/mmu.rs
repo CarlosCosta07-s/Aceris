@@ -962,6 +962,25 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         let (physical_start, _) = self
             .map_with_privilege(address, Access::Execute, self.params.privileged)
             .ok()?;
+
+        // A block is short enough to cross at most one 4 KiB page boundary.
+        // Validate each page start and the last byte so a remapped middle
+        // page can never make a previously cached block appear contiguous.
+        let mut next_page = (address & !0xFFF).checked_add(0x1000);
+        while let Some(page_address) = next_page {
+            if page_address > last_address {
+                break;
+            }
+            let expected_offset = page_address.checked_sub(address)?;
+            let (physical_page, _) = self
+                .map_with_privilege(page_address, Access::Execute, self.params.privileged)
+                .ok()?;
+            if physical_page != physical_start.checked_add(expected_offset)? {
+                return None;
+            }
+            next_page = page_address.checked_add(0x1000);
+        }
+
         let (physical_end, _) = self
             .map_with_privilege(last_address, Access::Execute, self.params.privileged)
             .ok()?;
