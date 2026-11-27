@@ -1,6 +1,6 @@
 # Plano de implementação do produto Aceris
 
-> Plano executivo derivado de `docs/USER_EXPERIENCE.md`. Revisão: 27/11/2026. Este documento ordena o trabalho por dependência e define critérios objetivos de conclusão. Os itens marcados como pendentes são trabalho futuro; não representam recursos já disponíveis.
+> Plano executivo derivado de `docs/USER_EXPERIENCE.md`. Revisão: 27/11/2026. Este documento ordena o trabalho por dependência e define critérios objetivos de conclusão. Os itens marcados como pendentes são trabalho futuro; não representam recursos já disponíveis. A especificação complementar de menu rápido e configurações está em [`QUICK_MENU_SETTINGS_SPEC.md`](QUICK_MENU_SETTINGS_SPEC.md).
 
 ## 1. Objetivo e regras de execução
 
@@ -82,7 +82,7 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 - [ ] Evitar recalcular hashes completos de arquivos grandes em cada inicialização; definir uma estratégia de identidade e invalidação baseada em metadados, com hash apenas quando necessário.
 
 **M1.3 — Biblioteca**
-- [ ] Persistir preferência Grade/Lista e ordenação.
+- [x] Persistir preferência Grade/Lista e ordenação em `.aceris/library_preferences_v1.txt`, com parser versionado, fallback seguro e testes de recuperação após reabrir a biblioteca.
 - [ ] Adicionar ordenação por data de adição, última execução e tamanho somente quando esses dados forem persistidos com precisão.
 - [ ] Melhorar seleção múltipla e operações em lote sem tocar nos arquivos originais.
 - [ ] Identificar duplicatas visualmente e permitir ao usuário escolher a entrada preferida, sem remover arquivos automaticamente.
