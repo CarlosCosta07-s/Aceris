@@ -38,6 +38,11 @@ impl ThreadId {
     pub const fn raw(self) -> u32 {
         self.0
     }
+
+    /// Rebuilds a thread ID from a validated save-state field.
+    pub(crate) const fn from_raw(value: u32) -> Self {
+        Self(value)
+    }
 }
 
 /// Current lifecycle state of an application thread.
