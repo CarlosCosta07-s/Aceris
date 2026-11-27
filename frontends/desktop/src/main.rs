@@ -652,13 +652,17 @@ fn emulate(
     let mut frame = Vec::new();
     let mut menu_open = false;
     let mut menu_selected = 0usize;
+    let mut pending_confirmation: Option<quick_menu::ConfirmationAction> = None;
+    let mut confirmation_selected = 0usize;
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
             match event {
                 window::WindowEvent::CloseRequested => return Ok(Flow::Quit),
                 window::WindowEvent::Key(window::Key::Escape) => {
-                    if menu_open {
+                    if pending_confirmation.take().is_some() {
+                        confirmation_selected = 0;
+                    } else if menu_open {
                         menu_open = false;
                         keyboard.reset(system.input_mut());
                     } else {
@@ -675,6 +679,28 @@ fn emulate(
                         performance.reset_after_pause();
                     }
                 }
+                window::WindowEvent::Key(window::Key::Up)
+                    if pending_confirmation.is_some() =>
+                {
+                    confirmation_selected = confirmation_selected.saturating_sub(1);
+                }
+                window::WindowEvent::Key(window::Key::Down)
+                    if pending_confirmation.is_some() =>
+                {
+                    confirmation_selected = (confirmation_selected + 1).min(1);
+                }
+                window::WindowEvent::Key(window::Key::Enter)
+                    if pending_confirmation.is_some() =>
+                {
+                    if confirmation_selected == 0 {
+                        pending_confirmation = None;
+                    } else if let Some(action) = pending_confirmation {
+                        return Ok(match action {
+                            quick_menu::ConfirmationAction::Restart => Flow::Restart,
+                            quick_menu::ConfirmationAction::BackToLibrary => Flow::BackToLibrary,
+                        });
+                    }
+                }
                 window::WindowEvent::Key(window::Key::Up) if menu_open => {
                     menu_selected = menu_selected.saturating_sub(1);
                 }
@@ -689,9 +715,34 @@ fn emulate(
                             performance.reset_after_pause();
                         }
                     }
-                    1 => return Ok(Flow::Restart),
-                    _ => return Ok(Flow::BackToLibrary),
+                    1 => {
+                        pending_confirmation = Some(quick_menu::ConfirmationAction::Restart);
+                        confirmation_selected = 0;
+                    }
+                    _ => {
+                        pending_confirmation =
+                            Some(quick_menu::ConfirmationAction::BackToLibrary);
+                        confirmation_selected = 0;
+                    }
                 },
+                window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
+                    if let Some(choice) = quick_menu::hit_test_confirmation(
+                        (window::GAME_CANVAS_WIDTH * scale) as u32,
+                        (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                        x,
+                        y,
+                    ) {
+                        confirmation_selected = choice;
+                        if choice == 0 {
+                            pending_confirmation = None;
+                        } else if let Some(action) = pending_confirmation {
+                            return Ok(match action {
+                                quick_menu::ConfirmationAction::Restart => Flow::Restart,
+                                quick_menu::ConfirmationAction::BackToLibrary => Flow::BackToLibrary,
+                            });
+                        }
+                    }
+                }
                 window::WindowEvent::Click { x, y } if menu_open => {
                     if let Some(action) = quick_menu::hit_test(
                         (window::GAME_CANVAS_WIDTH * scale) as u32,
@@ -708,12 +759,22 @@ fn emulate(
                                     performance.reset_after_pause();
                                 }
                             }
-                            1 => return Ok(Flow::Restart),
-                            _ => return Ok(Flow::BackToLibrary),
+                            1 => {
+                                pending_confirmation =
+                                    Some(quick_menu::ConfirmationAction::Restart);
+                                confirmation_selected = 0;
+                            }
+                            _ => {
+                                pending_confirmation =
+                                    Some(quick_menu::ConfirmationAction::BackToLibrary);
+                                confirmation_selected = 0;
+                            }
                         }
                     }
                 }
-                window::WindowEvent::Game { key, pressed } if !menu_open => {
+                window::WindowEvent::Game { key, pressed }
+                    if !menu_open && pending_confirmation.is_none() =>
+                {
                     keyboard.apply(key, pressed, system.input_mut());
                 }
                 window::WindowEvent::Click { x, y } if !menu_open => touch_at(system, x, y, scale),
@@ -749,16 +810,27 @@ fn emulate(
         if !window::compose_bgrx_into(system.display(), scale, &mut frame) {
             return Err("could not allocate the desktop presentation buffer".to_string());
         }
-        if menu_open
-            && !quick_menu::render_overlay(
-                &mut frame,
-                (window::GAME_CANVAS_WIDTH * scale) as u32,
-                (window::GAME_CANVAS_HEIGHT * scale) as u32,
-                MenuPixelFormat::Bgrx8,
-                menu_selected,
-            )
-        {
-            return Err("could not render the quick menu overlay".to_string());
+        if menu_open {
+            let rendered = match pending_confirmation {
+                Some(action) => quick_menu::render_confirmation_overlay(
+                    &mut frame,
+                    (window::GAME_CANVAS_WIDTH * scale) as u32,
+                    (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                    MenuPixelFormat::Bgrx8,
+                    action,
+                    confirmation_selected,
+                ),
+                None => quick_menu::render_overlay(
+                    &mut frame,
+                    (window::GAME_CANVAS_WIDTH * scale) as u32,
+                    (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                    MenuPixelFormat::Bgrx8,
+                    menu_selected,
+                ),
+            };
+            if !rendered {
+                return Err("could not render the quick menu overlay".to_string());
+            }
         }
         let composition_elapsed = composition_started
             .map(|composition_started| composition_started.elapsed())
