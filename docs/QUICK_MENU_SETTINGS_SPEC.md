@@ -22,6 +22,16 @@ PPSSPP, Azahar, Citra, PCSX2 e outros emuladores são referências de requisitos
 - Esc abre o menu durante a partida; dentro do menu, Esc retorna ao jogo. Fechar a janela continua sendo uma ação separada.
 - Painel lateral ou sobreposição central, navegável por teclado, mouse e controle.
 
+### Estado da primeira implementação (27/11/2026)
+
+A primeira camada do menu está conectada aos dois frontends:
+- Android: botão MENU visível durante o jogo e tecla/gesto Voltar; toque no botão é excluído do stylus guest.
+- PC: Esc abre/fecha; setas/Enter e mouse navegam.
+- Continuar, Reiniciar e Voltar à biblioteca executam ações reais.
+- Quando aberto, o loop não executa um novo quadro guest e continua redesenhando o último scanout.
+- A produção de novas amostras de áudio para, mas a fila do host não recebe ainda um comando explícito de flush/pause e pode terminar de consumir o que já estava enfileirado.
+- O atalho PC ainda não é configurável; a confirmação de perda de progresso e a validação física também estão pendentes.
+
 ### Pausa real
 
 O menu não pode apenas desenhar uma camada sobre uma emulação que continua avançando. O fluxo obrigatório é:
@@ -146,7 +156,7 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 | Modo Desempenho | Disponível como opção global; efeito aplicado no próximo jogo e com ressalvas de compatibilidade |
 | Fundo personalizado | Suporte de renderer; não confundir com seletor completo de tema |
 | Overlay de controles virtuais | Básico e fixo; ainda sem editor |
-| Menu rápido com pausa | Planejado; não há menu de jogo completo |
+| Menu rápido com pausa | Parcial | Continuar, Reiniciar e Voltar à biblioteca funcionam no PC e Android; pausa entre quadros e botão Android MENU. Atalhos editáveis, sincronização explícita de áudio, confirmação de progresso, layouts e ferramentas continuam planejados. |
 | Layouts avançados/troca de telas | Planejados |
 | Perfis de controles | Planejados |
 | Temas alternativos e alto contraste | Planejados |
@@ -155,7 +165,7 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 ## 6. Sequência de implementação
 
 1. **Preferências da biblioteca:** concluída nesta revisão — persistir Grade/Lista e ordenação com formato versionado e testes.
-2. **Pausa e menu mínimo:** implementar estado pausado no limite de quadro, manter a janela responsiva, congelar o jogo e expor Continuar/Reiniciar/Voltar à biblioteca.
+2. **Pausa e menu mínimo:** primeira versão implementada no desktop e Android — estado pausado no limite de quadro, janela responsiva, scanout mantido e ações Continuar/Reiniciar/Voltar à biblioteca. Próximo: sincronização explícita de áudio, confirmação de progresso, atalho PC configurável e validação física.
 3. **Atalhos e navegação:** unificar ações de teclado, controle e toque, com detecção de conflitos e acessibilidade.
 4. **Layouts de telas:** criar modelo de geometria configurável e atualizar renderização e hit-test para manter o stylus alinhado.
 5. **Editor de controles:** separar dispositivo físico, mapeamento lógico e perfil por jogo.
