@@ -221,6 +221,9 @@ impl AAudioOutput {
                 state = self.wait_for_transition(STREAM_STATE_PAUSING, "pause")?;
             }
 
+            if state == STREAM_STATE_FLUSHING {
+                state = self.wait_for_transition(STREAM_STATE_FLUSHING, "flush")?;
+            }
             if state == STREAM_STATE_PAUSED {
                 // SAFETY: requestFlush is valid after the output has reached PAUSED.
                 let status = unsafe { (self.flush)(self.stream) };
