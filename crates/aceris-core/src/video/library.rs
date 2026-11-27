@@ -1095,12 +1095,19 @@ impl Library {
     ) -> bool {
         match self.virtual_control_edit_scope {
             VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
-                if !self.active_game_control_override {
-                    self.virtual_control_positions = self.global_virtual_control_positions;
-                    self.active_game_control_override = true;
+                if self.active_game_control_override {
+                    self.virtual_control_positions
+                        .adjust(orientation, button, delta_x, delta_y)
+                } else {
+                    let mut positions = self.global_virtual_control_positions;
+                    let previous = positions.offset(orientation, button);
+                    let accepted = positions.adjust(orientation, button, delta_x, delta_y);
+                    if accepted && positions.offset(orientation, button) != previous {
+                        self.virtual_control_positions = positions;
+                        self.active_game_control_override = true;
+                    }
+                    accepted
                 }
-                self.virtual_control_positions
-                    .adjust(orientation, button, delta_x, delta_y)
             }
             _ => {
                 let changed = self.global_virtual_control_positions.adjust(
@@ -1126,12 +1133,19 @@ impl Library {
     ) -> bool {
         match self.virtual_control_edit_scope {
             VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
-                if !self.active_game_control_override {
-                    self.virtual_control_positions = self.global_virtual_control_positions;
-                    self.active_game_control_override = true;
+                if self.active_game_control_override {
+                    self.virtual_control_positions
+                        .set_size_percent(orientation, button, size_percent)
+                } else {
+                    let mut positions = self.global_virtual_control_positions;
+                    let previous = positions.size_percent(orientation, button);
+                    let accepted = positions.set_size_percent(orientation, button, size_percent);
+                    if accepted && positions.size_percent(orientation, button) != previous {
+                        self.virtual_control_positions = positions;
+                        self.active_game_control_override = true;
+                    }
+                    accepted
                 }
-                self.virtual_control_positions
-                    .set_size_percent(orientation, button, size_percent)
             }
             _ => {
                 let changed = self.global_virtual_control_positions.set_size_percent(
@@ -1149,6 +1163,16 @@ impl Library {
 
     /// Saves the selected scope without overwriting the other profile.
     pub fn save_virtual_control_positions(&mut self) -> std::io::Result<()> {
+        if self.virtual_control_edit_scope == VirtualControlEditScope::Game
+            && self.active_game_identity.is_some()
+            && !self.active_game_control_override
+        {
+            self.status = Some(
+                "PERFIL DO JOGO CONTINUA HERDANDO O PADRÃO GLOBAL".to_string(),
+            );
+            return Ok(());
+        }
+
         let destination = match (self.virtual_control_edit_scope, self.active_game_identity) {
             (VirtualControlEditScope::Game, Some(identity)) => {
                 game_virtual_control_layout_path(&self.scan_settings_directory, identity)
@@ -1184,11 +1208,16 @@ impl Library {
     pub fn reset_virtual_control_positions(&mut self, orientation: u32) -> std::io::Result<()> {
         match self.virtual_control_edit_scope {
             VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
-                if !self.active_game_control_override {
-                    self.virtual_control_positions = self.global_virtual_control_positions;
+                if self.active_game_control_override {
+                    self.virtual_control_positions.reset_orientation(orientation);
+                } else {
+                    let mut positions = self.global_virtual_control_positions;
+                    positions.reset_orientation(orientation);
+                    if positions != self.global_virtual_control_positions {
+                        self.virtual_control_positions = positions;
+                        self.active_game_control_override = true;
+                    }
                 }
-                self.virtual_control_positions
-                    .reset_orientation(orientation);
             }
             _ => {
                 self.global_virtual_control_positions
@@ -6308,6 +6337,26 @@ mod virtual_control_profile_tests {
         );
 
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn untouched_game_editor_does_not_create_a_profile_override() {
+        let directory = temporary_directory();
+        let mut library = Library::new(Vec::new(), directory.display().to_string());
+        let title = identity(0x0004_0000_1234_56fe);
+        library.set_active_game_identity(Some(title));
+        assert!(!library.game_has_control_override());
+
+        // A tap/release in the editor can reach save without changing geometry.
+        assert!(library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 0, 0));
+        assert!(library.resize_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 100));
+        library.save_virtual_control_positions().unwrap();
+
+        assert!(!library.game_has_control_override());
+        assert!(
+            !game_virtual_control_layout_path(&directory.join(".aceris"), title).exists()
+        );
+        fs::remove_dir_all(directory).ok();
     }
 
 }
