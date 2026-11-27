@@ -372,6 +372,28 @@ mod tests {
     }
 
     #[test]
+    fn monitor_emits_and_resets_each_five_second_window() {
+        let mut monitor = DesktopPerformanceMonitor::new();
+        monitor.interval_started = Instant::now() - REPORT_INTERVAL;
+
+        monitor.record(
+            DesktopFrameKind::Game,
+            Duration::from_millis(12),
+            Duration::from_millis(6),
+            Duration::from_millis(3),
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+            true,
+        );
+
+        assert_eq!(monitor.kind, Some(DesktopFrameKind::Game));
+        assert_eq!(monitor.sample_count, 0);
+        assert_eq!(monitor.presented_frames, 0);
+        assert_eq!(monitor.gpu_presented_frames, 0);
+        assert_eq!(monitor.next_sample, 0);
+    }
+
+    #[test]
     fn reports_use_only_the_latest_fixed_capacity_samples() {
         let mut storage = [FrameSample::default(); SAMPLE_CAPACITY];
         storage.fill(sample(1, 1, 1, 1, 1, 16));
