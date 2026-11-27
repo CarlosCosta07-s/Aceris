@@ -949,6 +949,12 @@ pub struct Arm11CodeAddressSpace {
     /// Last ACTLR.SMP value published to the SCU per core; the CPU reports it
     /// after every instruction, so repeats must not take the SCU lock.
     published_smp_mode: [Option<bool>; 2],
+    /// Fast memory mode: guest loads and stores go straight to the backing
+    /// store without modelling the D-cache or write buffer (the approach used
+    /// by Citra/Azahar and PPSSPP). Every agent then sees one coherent memory.
+    fast_memory: bool,
+    /// Set by any access to MPCore interrupt, timer or SCU registers.
+    interrupt_state_touched: std::cell::Cell<bool>,
     /// Per-set least-recently-used order, oldest line first.
     data_cache_lru: Vec<VecDeque<DataCacheKey>>,
     /// FIFO of dirty D-cache lines awaiting visibility in physical memory.
@@ -1055,6 +1061,8 @@ impl Arm11CodeAddressSpace {
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             published_smp_mode: [None; 2],
+            fast_memory: false,
+            interrupt_state_touched: std::cell::Cell::new(false),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
                 .collect(),
@@ -1154,6 +1162,8 @@ impl Arm11CodeAddressSpace {
             static_backing_ids: std::array::from_fn(|_| crate::memory::next_memory_backing_id()),
             data_cache: BTreeMap::new(),
             published_smp_mode: [None; 2],
+            fast_memory: false,
+            interrupt_state_touched: std::cell::Cell::new(false),
             data_cache_lru: (0..ARM11_DATA_CACHE_SET_COUNT)
                 .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
                 .collect(),
@@ -1284,6 +1294,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn read_mpcore_cpu_interface_register(&mut self, address: u32) -> BusResult<u32> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_cpu_interface_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -1296,6 +1307,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn write_mpcore_cpu_interface_register(&mut self, address: u32, value: u32) -> BusResult<()> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_cpu_interface_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -1309,6 +1321,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn read_mpcore_gic_distributor_byte(&self, address: u32) -> BusResult<u8> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_gic_distributor_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -1318,6 +1331,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn write_mpcore_gic_distributor_byte(&mut self, address: u32, value: u8) -> BusResult<()> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_gic_distributor_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -1327,6 +1341,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn read_mpcore_gic_distributor_word(&self, address: u32) -> BusResult<u32> {
+        self.interrupt_state_touched.set(true);
         let mut bytes = [0u8; 4];
         for (index, byte) in bytes.iter_mut().enumerate() {
             *byte = self.read_mpcore_gic_distributor_byte(address.wrapping_add(index as u32))?;
@@ -1335,6 +1350,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn write_mpcore_gic_distributor_word(&mut self, address: u32, value: u32) -> BusResult<()> {
+        self.interrupt_state_touched.set(true);
         for (index, byte) in value.to_le_bytes().into_iter().enumerate() {
             self.write_mpcore_gic_distributor_byte(address.wrapping_add(index as u32), byte)?;
         }
@@ -1342,6 +1358,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn read_mpcore_private_timer_register(&self, address: u32) -> BusResult<u32> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_private_timer_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -1354,6 +1371,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn write_mpcore_private_timer_register(&mut self, address: u32, value: u32) -> BusResult<()> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_private_timer_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -1370,6 +1388,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn read_mpcore_scu_register(&self, address: u32) -> BusResult<u32> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_scu_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -1380,6 +1399,7 @@ impl Arm11CodeAddressSpace {
     }
 
     fn write_mpcore_scu_register(&mut self, address: u32, value: u32) -> BusResult<()> {
+        self.interrupt_state_touched.set(true);
         let offset = self
             .mpcore_scu_register_offset(address)
             .ok_or(Error::InvalidAccess { addr: address })?;
@@ -2454,6 +2474,116 @@ impl Arm11CodeAddressSpace {
         }
     }
 
+    /// Whether loads and stores bypass the D-cache and write-buffer model.
+    pub fn fast_memory(&self) -> bool {
+        self.fast_memory
+    }
+
+    /// Switches between the precise cache model and fast direct memory.
+    /// Enabling writes back every dirty line and drains the write buffer
+    /// first, so no guest store is lost.
+    pub fn set_fast_memory(&mut self, enabled: bool) -> BusResult<()> {
+        if enabled && !self.fast_memory {
+            let mut keys: Vec<DataCacheKey> = self.data_cache.keys().copied().collect();
+            keys.sort_unstable();
+            for key in keys {
+                if let Some(line) = self.remove_data_cache_line(key) {
+                    if line.dirty {
+                        self.write_cache_target_range(&line.target, 0, &line.bytes)?;
+                    }
+                }
+            }
+            self.drain_arm11_write_buffer()?;
+        }
+        self.fast_memory = enabled;
+        Ok(())
+    }
+
+    /// Reads `out.len()` bytes from one location without the cache model.
+    #[inline]
+    fn read_location_direct(&self, location: MemoryLocation, out: &mut [u8]) -> bool {
+        match location {
+            MemoryLocation::Static { kind, offset } => {
+                match self.bytes_for(kind).get(offset..offset + out.len()) {
+                    Some(source) => {
+                        out.copy_from_slice(source);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            MemoryLocation::Dynamic { index, offset } => self
+                .dynamic_regions
+                .get(index)
+                .is_some_and(|region| region.backing.backing_ref().read_range(offset, out)),
+            MemoryLocation::Shared { index, offset } => self
+                .shared_regions
+                .get(index)
+                .is_some_and(|region| region.backing.read_range(offset, out)),
+            MemoryLocation::Physical { address, .. } => self
+                .gpu_memory
+                .as_ref()
+                .is_some_and(|memory| memory.read(address, out).is_ok()),
+        }
+    }
+
+    /// Writes bytes to one location without the cache model.
+    #[inline]
+    fn write_location_direct(&mut self, location: MemoryLocation, bytes: &[u8]) -> bool {
+        match location {
+            MemoryLocation::Static { kind, offset } => {
+                match self
+                    .bytes_for_mut(kind)
+                    .get_mut(offset..offset + bytes.len())
+                {
+                    Some(destination) => {
+                        destination.copy_from_slice(bytes);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            MemoryLocation::Dynamic { index, offset } => self
+                .dynamic_regions
+                .get(index)
+                .is_some_and(|region| region.backing.backing_ref().write_range(offset, bytes)),
+            MemoryLocation::Shared { index, offset } => self
+                .shared_regions
+                .get(index)
+                .is_some_and(|region| region.backing.write_range(offset, bytes)),
+            MemoryLocation::Physical { address, .. } => self
+                .gpu_memory
+                .as_mut()
+                .is_some_and(|memory| memory.write(address, bytes).is_ok()),
+        }
+    }
+
+    /// Fast-memory scalar load. `None` sends the access down the precise
+    /// byte path (region boundary, unmapped byte or MPCore window).
+    #[inline]
+    fn fast_read(&self, address: u32, len: usize) -> Option<u32> {
+        let location = self.locate(address)?;
+        if !self.location_is_readable(location) {
+            return None;
+        }
+        let mut bytes = [0u8; 4];
+        self.read_location_direct(location, &mut bytes[..len])
+            .then(|| u32::from_le_bytes(bytes))
+    }
+
+    /// Fast-memory scalar store; returns false to fall back to the byte path.
+    #[inline]
+    fn fast_write(&mut self, address: u32, bytes: &[u8]) -> bool {
+        let Some(location) = self.locate(address) else {
+            return false;
+        };
+        if !self.location_is_writable(location) || !self.write_location_direct(location, bytes) {
+            return false;
+        }
+        self.invalidate_exclusive_range(address, bytes.len());
+        true
+    }
+
     fn write_bytes(&mut self, address: u32, bytes: &[u8]) -> BusResult<()> {
         self.write_bytes_with_cache_policy(address, bytes, CachePolicy::WriteBack)
     }
@@ -2464,6 +2594,9 @@ impl Arm11CodeAddressSpace {
         bytes: &[u8],
         policy: CachePolicy,
     ) -> BusResult<()> {
+        if self.fast_memory && bytes.len() <= 8 && self.fast_write(address, bytes) {
+            return Ok(());
+        }
         if policy == CachePolicy::WriteBack
             && (self.try_write_cached_hit(address, bytes)
                 || self.try_write_cached_miss(address, bytes)?)
@@ -2804,6 +2937,11 @@ impl Arm11CodeAddressSpace {
         if !(1..=4).contains(&len) {
             return Ok(None);
         }
+        if self.fast_memory {
+            if let Some(value) = self.fast_read(address, len) {
+                return Ok(Some(value));
+            }
+        }
         let Some(location) = self.locate(address) else {
             return Ok(None);
         };
@@ -3115,6 +3253,9 @@ impl Arm11CodeAddressSpace {
         offset: usize,
         value: u8,
     ) -> BusResult<()> {
+        if self.fast_memory {
+            return self.write_cache_target_range(target, offset, &[value]);
+        }
         let resident = if let Some(line) = self.data_cache.get_mut(&key) {
             let was_dirty = line.dirty;
             line.bytes[offset] = value;
@@ -3146,6 +3287,14 @@ impl Arm11CodeAddressSpace {
         key: DataCacheKey,
         offset: usize,
     ) -> BusResult<u8> {
+        if self.fast_memory {
+            return self
+                .read_cache_target_line(target)?
+                .get(offset)
+                .copied()
+                .ok_or(Error::InvalidAccess { addr: 0 });
+        }
+        let _ = key;
         // Resolve a resident line with one tree lookup. The previous
         // contains_key + get sequence walked the BTreeMap twice on every hit.
         if let Some(value) = self
@@ -3182,6 +3331,9 @@ impl Arm11CodeAddressSpace {
         offset: usize,
         value: u8,
     ) -> BusResult<()> {
+        if self.fast_memory {
+            return self.write_cache_target_range(target, offset, &[value]);
+        }
         // A resident write needs only one mutable lookup; loading the old byte
         // first added no architectural effect because this operation replaces it.
         if let Some(line) = self.data_cache.get_mut(&key) {
@@ -3214,6 +3366,9 @@ impl Arm11CodeAddressSpace {
         offset: usize,
         value: u8,
     ) -> BusResult<()> {
+        if self.fast_memory {
+            return self.write_cache_target_range(target, offset, &[value]);
+        }
         if let Some(line) = self.data_cache.get_mut(&key) {
             line.bytes[offset] = value;
             line.dirty = true;
@@ -3561,6 +3716,11 @@ impl Arm11CodeAddressSpace {
 
 impl Bus for Arm11CodeAddressSpace {
     fn read8(&mut self, address: u32) -> BusResult<u8> {
+        if self.fast_memory {
+            if let Some(value) = self.fast_read(address, 1) {
+                return Ok(value as u8);
+            }
+        }
         self.read8_with_cache_policy(address, CachePolicy::WriteBack)
     }
 
@@ -3876,6 +4036,10 @@ impl Bus for Arm11CodeAddressSpace {
             scu.set_cpu_smp_mode(core_id, enabled);
             *slot = Some(enabled);
         }
+    }
+
+    fn take_interrupt_state_touched(&mut self) -> bool {
+        self.interrupt_state_touched.replace(false)
     }
 
     fn exclusive_read(&mut self, address: u32, size: usize) -> BusResult<(u64, u64)> {

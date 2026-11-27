@@ -225,6 +225,10 @@ impl Cp15 {
     }
 
     /// Takes the pending maintenance command after the issuing instruction.
+    pub(super) fn has_pending_tlb_maintenance(&self) -> bool {
+        self.pending_tlb_maintenance.is_some()
+    }
+
     pub(super) fn take_tlb_maintenance(&mut self) -> Option<TlbMaintenance> {
         self.pending_tlb_maintenance.take()
     }

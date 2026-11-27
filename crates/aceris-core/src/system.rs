@@ -187,6 +187,8 @@ pub struct System {
     dsp: DspService,
     csnd: CsndService,
     csnd_audio: CsndAudio,
+    /// Precise D-cache/write-buffer model instead of fast direct memory.
+    precise_memory: bool,
     image: Option<ImageFormat>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
@@ -512,6 +514,7 @@ impl System {
         self.image = Some(ImageFormat::ThreeDsx);
         map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
+        self.apply_memory_mode()?;
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
@@ -610,6 +613,7 @@ impl System {
         self.image = Some(ImageFormat::Cia);
         map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
+        self.apply_memory_mode()?;
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
@@ -708,6 +712,7 @@ impl System {
         self.image = Some(ImageFormat::Cia);
         map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
+        self.apply_memory_mode()?;
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
@@ -813,6 +818,7 @@ impl System {
         self.image = Some(ImageFormat::Cia);
         map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
+        self.apply_memory_mode()?;
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
         self.pending_gsp_acquires.clear();
@@ -885,6 +891,7 @@ impl System {
         self.image = Some(ImageFormat::Ncsd);
         map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
+        self.apply_memory_mode()?;
         self.romfs = None;
         self.fs_state = FsState::default();
         self.unhandled.clear();
@@ -3135,6 +3142,28 @@ impl System {
         backing.write_bytes(0, &block);
         if let Some(session) = self.ncsd_session.as_mut() {
             let _ = session.invalidate_shared_backing_cache(backing);
+        }
+        Ok(())
+    }
+
+    /// Selects the precise ARM11 cache model (`true`) or fast direct memory
+    /// (`false`, the default). Fast memory is how Citra/Azahar and PPSSPP
+    /// treat guest RAM; the precise model exists for cache-sensitive
+    /// diagnostics and tests.
+    pub fn set_precise_memory(&mut self, precise: bool) -> Result<()> {
+        self.precise_memory = precise;
+        self.apply_memory_mode()
+    }
+
+    /// Whether the precise cache model is selected.
+    pub fn precise_memory(&self) -> bool {
+        self.precise_memory
+    }
+
+    fn apply_memory_mode(&mut self) -> Result<()> {
+        let fast = !self.precise_memory;
+        if let Some(session) = self.ncsd_session.as_mut() {
+            session.set_fast_memory(fast)?;
         }
         Ok(())
     }
@@ -7226,6 +7255,8 @@ mod tests {
         };
 
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&[
@@ -7389,6 +7420,8 @@ mod tests {
     #[test]
     fn gsp_gx_request_dma_requires_cpu_invalidation_after_device_write() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
@@ -7482,6 +7515,8 @@ mod tests {
     #[test]
     fn gsp_gx_request_dma_cache_coherence_uses_physical_identity_across_aliases() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
@@ -8198,6 +8233,8 @@ mod tests {
         use crate::gpu::{DISPLAY_TRANSFER_LINEAR_TO_TILED, execute_display_transfer};
 
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
@@ -8339,6 +8376,8 @@ mod tests {
     #[test]
     fn gsp_gx_process_command_list_flushes_cache_before_pica_submission() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
@@ -8847,6 +8886,8 @@ mod tests {
             0xEF00_0032, // SVC SendSyncRequest
         ];
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture(&guest_program)),
@@ -9750,6 +9791,8 @@ mod tests {
     #[test]
     fn gpu_render_into_fcram_is_not_snooped_by_a_clean_cpu_line() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         let fixture = render_fixture(&mut system);
         system
             .physical_memory_mut()
@@ -9787,6 +9830,8 @@ mod tests {
     #[test]
     fn a_dirty_cpu_line_flushed_after_the_draw_overwrites_the_gpu_pixels() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         let fixture = render_fixture(&mut system);
         system
             .physical_memory_mut()
@@ -9864,6 +9909,8 @@ mod tests {
     #[test]
     fn unflushed_cpu_vertex_data_is_not_seen_by_the_gpu_but_flushed_data_is() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         let fixture = render_fixture(&mut system);
         // The CPU writes the vertices; they sit dirty in the D-cache.
         system
@@ -10811,6 +10858,8 @@ mod tests {
     #[test]
     fn gsp_gx_texture_copy_to_fcram_requires_cpu_invalidation() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
@@ -10984,6 +11033,8 @@ mod tests {
     #[test]
     fn gsp_gx_flush_then_texture_copy_reads_dirty_cpu_fcram_data() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),
@@ -11130,6 +11181,8 @@ mod tests {
     #[test]
     fn gsp_gx_flush_cache_regions_cleans_and_invalidates_fcram_ranges() {
         let mut system = System::new();
+        // Exercises the precise D-cache model, not fast memory.
+        system.set_precise_memory(true).unwrap();
         system
             .load_ncsd_with_keys(
                 std::io::Cursor::new(clear_ncsd_cartridge_fixture()),

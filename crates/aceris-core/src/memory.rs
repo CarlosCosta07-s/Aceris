@@ -133,6 +133,13 @@ pub trait Bus {
         let _ = (core_id, enabled);
     }
 
+    /// Returns true, and clears the flag, if an access since the last call
+    /// touched interrupt-controller or timer state. The CPU fast loop uses it
+    /// to hand control back so the IRQ line is re-sampled.
+    fn take_interrupt_state_touched(&mut self) -> bool {
+        false
+    }
+
     /// Synchronizes the instruction stream after code or execution-context changes.
     /// The interpreter has no independently cached/pipelined instruction stream by default.
     fn instruction_sync_barrier(&mut self) -> Result<()> {

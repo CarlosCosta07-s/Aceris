@@ -2772,3 +2772,9 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Testes adicionados para ciclo de filtros, comparação case-insensitive, interação nos dois layouts e manutenção do filtro na página Homebrew.
 - Fronteiras: somente `crates/aceris-core/src/video/library.rs` e documentação da experiência/frontends. Nenhum subsistema de emulação, dependência, asset ou conteúdo de jogo foi alterado/adicionado. Trabalho restrito à branch `main`.
 - Validação: a primeira CI apontou somente diferenças de Rustfmt, confirmadas nos logs de Linux/macOS; os trechos foram alinhados ao formato emitido pelo próprio verificador. A nova CI precisa executar formatação, builds, testes e Clippy antes de marcar a etapa como aprovada.
+
+## Desempenho — memória rápida e despacho rápido (27/11/2026, Claude)
+
+- A memória rápida é o padrão; o modelo preciso de D-cache fica disponível via `System::set_precise_memory(true)` e `Arm11ProcessSession::set_fast_memory(false)`. Testes de coerência de cache precisam ativar o modo preciso.
+- `Arm11Core::run_fast` e `Arm11ProcessSession::run_fast_chunk` implementam o laço rápido; `set_fast_dispatch(false)` força o passo preciso para diagnóstico. A variável `ACERIS_WATCH_PC` também força o passo preciso.
+- Sonda: de ~20 para ~41 M instruções/s. Detalhes e próximos passos em `docs/PERFORMANCE_TESTING.md`.

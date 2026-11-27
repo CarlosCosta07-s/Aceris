@@ -255,6 +255,8 @@ enum SvcRunDisposition {
 /// a cooperative scheduler and a process-local SVC dispatcher.
 #[derive(Debug)]
 pub struct Arm11ProcessSession {
+    /// Use the CPU fast loop in `run_instructions`.
+    fast_dispatch: bool,
     scheduler: Arm11ThreadScheduler,
     address_space: Arm11CodeAddressSpace,
     svc_dispatcher: Arm11SvcDispatcher,
@@ -307,6 +309,7 @@ impl Arm11ProcessSession {
             gpu_memory: None,
             gpu_address_space: None,
             instruction_count: 0,
+            fast_dispatch: true,
         }
     }
 
@@ -454,6 +457,17 @@ impl Arm11ProcessSession {
     ) -> Result<usize> {
         self.address_space
             .invalidate_data_cache_range(address, size_bytes)
+    }
+
+    /// Enables or disables fast memory (no D-cache/write-buffer model) for
+    /// guest loads and stores. See `Arm11CodeAddressSpace::set_fast_memory`.
+    pub fn set_fast_memory(&mut self, enabled: bool) -> Result<()> {
+        self.address_space.set_fast_memory(enabled)
+    }
+
+    /// Whether fast memory is active.
+    pub fn fast_memory(&self) -> bool {
+        self.address_space.fast_memory()
     }
 
     /// Commits the guest's cached writes to every mapping of a backing before an
@@ -2036,6 +2050,26 @@ impl Arm11ProcessSession {
         Ok(event)
     }
 
+    /// Runs the current thread on the CPU fast loop. Instructions it executes
+    /// count exactly as if each had gone through [`Self::step`].
+    fn run_fast_chunk(&mut self, budget: u64) -> Result<(u64, crate::cpu::FastRunExit)> {
+        self.refresh_irq_line();
+        let core = self
+            .scheduler
+            .current_core_mut()
+            .ok_or(crate::Error::Unimplemented("no runnable ARM11 thread"))?;
+        let (count, exit) = core.run_fast(&mut self.address_space, budget)?;
+        let counted = count + u64::from(matches!(exit, crate::cpu::FastRunExit::Event(_)));
+        self.instruction_count = self.instruction_count.saturating_add(counted);
+        Ok((count, exit))
+    }
+
+    /// Enables or disables the CPU fast loop (on by default). Disabling it
+    /// forces every instruction through the precise step, for diagnostics.
+    pub fn set_fast_dispatch(&mut self, enabled: bool) {
+        self.fast_dispatch = enabled;
+    }
+
     /// Advances the virtual scheduler clock and wakes expired sleeping threads.
     ///
     /// This is an explicit virtual-time hook, not a claim that hardware timers
@@ -2106,8 +2140,23 @@ impl Arm11ProcessSession {
         // thread can change only while dispatching an SVC, so keep the common
         // instruction path free of repeated scheduler and OnceLock lookups.
         let watch_range = pc_watch_range();
+        let fast_dispatch = watch_range.is_none() && self.fast_dispatch;
         let mut executed = 0u64;
-        for _ in 0..instruction_budget {
+        let mut iterations = 0u64;
+        let instruction_budget = instruction_budget as u64;
+        while iterations < instruction_budget {
+            let mut fast_event = None;
+            if fast_dispatch {
+                let (count, exit) = self.run_fast_chunk(instruction_budget - iterations)?;
+                iterations += count;
+                executed = executed.saturating_add(count);
+                match exit {
+                    crate::cpu::FastRunExit::Budget | crate::cpu::FastRunExit::Yield => continue,
+                    crate::cpu::FastRunExit::NeedsPreciseStep => {}
+                    crate::cpu::FastRunExit::Event(event) => fast_event = Some(event),
+                }
+            }
+            iterations += 1;
             if let Some((low, high)) = watch_range {
                 let core = self.core();
                 let pc = core.pc();
@@ -2118,7 +2167,11 @@ impl Arm11ProcessSession {
                     );
                 }
             }
-            match self.step()? {
+            let event = match fast_event {
+                Some(event) => event,
+                None => self.step()?,
+            };
+            match event {
                 StepEvent::Executed => executed = executed.saturating_add(1),
                 StepEvent::WaitForInterrupt => {
                     executed = executed.saturating_add(1);

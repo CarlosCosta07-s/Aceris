@@ -47,6 +47,21 @@ pub const PC: usize = 15;
 const ARM_INSTRUCTION_SIZE: u32 = 4;
 const THUMB_INSTRUCTION_SIZE: u32 = 2;
 
+/// Why [`Arm11Core::run_fast`] returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FastRunExit {
+    /// The instruction budget was used up.
+    Budget,
+    /// Interrupt or execution state changed; call `run_fast` again (it will
+    /// decline if the next instruction needs the precise step).
+    Yield,
+    /// The next instruction must run through [`Arm11Core::step`].
+    NeedsPreciseStep,
+    /// The last executed instruction produced this event. It is not counted
+    /// in the returned number of executed instructions.
+    Event(StepEvent),
+}
+
 /// What happened when the CPU executed one instruction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepEvent {
@@ -401,6 +416,90 @@ impl Arm11Core {
         // Publish writes made by this instruction even when SCTLR.M is clear.
         bus.set_arm11_smp_mode(self.cp15.core_id(), self.cp15.smp_mode_enabled());
         outcome
+    }
+
+    /// True when no per-instruction check of [`Self::step`] can have an
+    /// effect: no pending IRQ/FIQ line, no WFI/WFE sleep, no pending TLB
+    /// maintenance, MMU off and fault-exception entry off.
+    #[inline]
+    fn fast_path_eligible(&self) -> bool {
+        !(self.fault_exception_entry_enabled
+            || self.irq_line_asserted
+            || self.fiq_line_asserted
+            || self.waiting_for_event
+            || self.waiting_for_interrupt
+            || self.cp15.mmu_enabled()
+            || self.cp15.has_pending_tlb_maintenance())
+    }
+
+    /// ARM instructions that may change CP15 state (and therefore what the
+    /// fast loop assumes) always take the precise step. VFP (CP10/CP11)
+    /// stays on the fast path.
+    #[inline]
+    fn needs_precise_step(word: u32, thumb: bool) -> bool {
+        if thumb {
+            return false;
+        }
+        let coprocessor_space = (word >> 25) & 7 == 0b110 || (word >> 24) & 0xF == 0xE;
+        coprocessor_space && ((word >> 8) & 0xF == 15 || word >> 28 == 0xF)
+    }
+
+    /// Executes up to `budget` instructions without the per-instruction
+    /// interrupt, sleep, MMU and SMP bookkeeping of [`Self::step`], in the
+    /// style of PPSSPP's interpreter dispatcher. Architectural results are
+    /// the same as calling `step` repeatedly: the loop leaves as soon as an
+    /// instruction needs the precise path or interrupt state may change.
+    pub fn run_fast<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        budget: u64,
+    ) -> Result<(u64, FastRunExit)> {
+        if budget == 0 {
+            return Ok((0, FastRunExit::Budget));
+        }
+        if !self.fast_path_eligible() {
+            return Ok((0, FastRunExit::NeedsPreciseStep));
+        }
+        // ACTLR cannot change inside the loop (CP15 writes take the precise
+        // step), so one publication covers the whole run.
+        bus.set_arm11_smp_mode(self.cp15.core_id(), self.cp15.smp_mode_enabled());
+        let mut executed = 0u64;
+        while executed < budget {
+            let pc = self.pc();
+            let thumb = self.cpsr.thumb();
+            let fetched = if thumb {
+                bus.fetch16(pc).map(u32::from)
+            } else {
+                bus.fetch32(pc)
+            };
+            let instruction = fetched.inspect_err(|_| self.prefetch_fault = true)?;
+            if Self::needs_precise_step(instruction, thumb) {
+                return Ok((executed, FastRunExit::NeedsPreciseStep));
+            }
+            self.branch_taken = false;
+            let (mut event, size) = if thumb {
+                (
+                    self.execute_thumb(bus, instruction)?,
+                    THUMB_INSTRUCTION_SIZE,
+                )
+            } else {
+                (self.execute_arm(bus, instruction)?, ARM_INSTRUCTION_SIZE)
+            };
+            if !self.branch_taken {
+                self.regs[PC] = pc.wrapping_add(size);
+            }
+            if std::mem::take(&mut self.exception_return_wakeup) {
+                event = StepEvent::ExceptionReturn;
+            }
+            if event != StepEvent::Executed {
+                return Ok((executed, FastRunExit::Event(event)));
+            }
+            executed += 1;
+            if bus.take_interrupt_state_touched() || !self.fast_path_eligible() {
+                return Ok((executed, FastRunExit::Yield));
+            }
+        }
+        Ok((executed, FastRunExit::Budget))
     }
 
     fn step_instruction<B: Bus + ?Sized>(&mut self, bus: &mut B) -> Result<StepEvent> {
