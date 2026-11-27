@@ -40,7 +40,7 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 - Progresso, cancelamento, resumo e recuperação de erros do processo de importação/varredura.
 - Persistência ampliada de metadados da biblioteca e página detalhada de jogo.
 - Mapeamento completo de teclado/gamepad, detecção/reconexão, perfis e editor de controles virtuais.
-- Menu rápido básico implementado, incluindo limpeza explícita da fila host de áudio, confirmação preventiva antes de Reiniciar/Voltar à biblioteca, seis layouts de tela e troca de LCDs. Atalhos configuráveis, espaçamento/posição personalizados e perfis globais/por jogo continuam pendentes. O host não detecta automaticamente progresso não salvo.
+- Menu rápido básico implementado, incluindo limpeza explícita da fila host de áudio, confirmação preventiva antes de Reiniciar/Voltar à biblioteca, seis layouts, troca de LCDs e overrides de layout por Title ID com restauração do padrão global. Atalhos configuráveis, espaçamento/posição personalizados e validação física continuam pendentes. O host não detecta automaticamente progresso não salvo.
 - Configurações globais com overrides por jogo e migrações seguras.
 - Save states versionados, slots e recuperação — distintos dos saves gravados pelo próprio jogo.
 - Validação física do frontend Android e dos backends desktop; saída de áudio do sistema emulado ainda não foi confirmada como funcional.
@@ -99,10 +99,11 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 
 Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE.md](FILE_SOURCE_ARCHITECTURE.md).
 
-- [ ] Criar identidade separada para o título e para cada arquivo/origem encontrada. Um mesmo título pode ter cópias ou revisões distintas.
-- [ ] Extrair Title ID, região, produto, versão/revisão e tipo de conteúdo somente quando o cabeçalho realmente fornecer esses dados e a validação for bem-sucedida.
-- [ ] Manter fallback estável para homebrew ou arquivos sem metadados completos.
-- [ ] Não associar configurações por jogo usando apenas o nome do arquivo.
+- [x] Introduzir GameIdentity no core, separada do caminho usado como identidade da origem. A biblioteca ainda precisa formalizar o SourceId versionado sem depender de PathBuf.
+- [x] Extrair Title ID do NCCH primário em NCSD/CCI e do TMD em CIA; no CIA, o TMD é conferido com o program ID do NCCH antes de aceitar a identidade.
+- [ ] Completar região, código de produto, versão/revisão e tipo de conteúdo na identidade/metadados apresentados ao usuário.
+- [ ] Definir fallback estável para homebrew ou arquivos sem Title ID validado; 3DSX atualmente retorna identidade desconhecida.
+- [x] Os overrides de layout usam GameIdentity/Title ID, nunca nome do arquivo; conteúdos sem identidade herdam o perfil global.
 - [ ] Implementar página de detalhes com título, formato, caminho/URI, identificadores conhecidos, estado de validação, ações e mensagens.
 - [ ] Permitir arte/capa local escolhida pelo usuário e fallback sem capa.
 - [ ] Manter capa e metadados como dados auxiliares: sua ausência nunca deve impedir a inicialização.
@@ -163,8 +164,10 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [x] Mapear toque/stylus para o LCD inferior em todos os modos, inclusive após a troca física de posições.
 - [ ] Permitir ajustar espaçamento e posição dentro de limites seguros.
 - [ ] Criar modo personalizado com restaurar padrão.
-- [x] Persistir o perfil global em `.aceris/screen_layout_preferences_v1.txt`, separado para retrato e paisagem e compartilhado entre Android/desktop.
-- [ ] Adicionar overrides por jogo com herança do perfil global; preservar seleção ao alternar títulos.
+- [x] Persistir os perfis globais por retrato/paisagem e migrar o formato v1 para `.aceris/screen_layout_preferences_v2.txt`.
+- [x] Adicionar overrides por título/Title ID com herança do perfil global, separados por orientação e preservados ao alternar jogos.
+- [x] Disponibilizar no menu a ação Padrão global, removendo apenas os overrides do título atual.
+- [ ] Exibir claramente na página de detalhes quando o título herda o perfil global ou possui override; 3DSX sem identidade continua no perfil global.
 - [ ] Janela separada de telas no desktop fica para etapa posterior, após validar o gerenciamento de múltiplas janelas.
 - [ ] Validar rotação, redimensionamento, troca, hit-test do stylus e renderização em Android físico e Windows/macOS/Linux.
 
