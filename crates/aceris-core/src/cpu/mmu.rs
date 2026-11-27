@@ -3415,6 +3415,64 @@ mod tests {
     }
 
     #[test]
+    fn translated_fast_dispatch_uses_cached_block_halfword_and_multiply_decoders() {
+        let program = [
+            0xE8B0_000E, // LDMIA r0!, {r1-r3}
+            0xE8A0_000E, // STMIA r0!, {r1-r3}
+            0xE1D0_10B4, // LDRH r1, [r0, #4]
+            0xE1C0_10B4, // STRH r1, [r0, #4]
+            0xE1D0_20D1, // LDRSB r2, [r0, #1]
+            0xE1D0_20F4, // LDRSH r2, [r0, #4]
+            0xE003_0291, // MUL r3, r1, r2
+            0xE023_4291, // MLA r3, r1, r2, r4
+            0xE086_5291, // UMULL r5, r6, r1, r2
+            0xE105_42A1, // SMLAxy r5, r1, r2, r4
+        ];
+
+        let (mut fast_cpu, mut fast_mem) = machine();
+        set_l1(&mut fast_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        let (mut precise_cpu, mut precise_mem) = machine();
+        set_l1(&mut precise_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+
+        for offset in (0x400..0x500).step_by(4) {
+            let value = (offset as u32).wrapping_mul(0x0102_0305) ^ 0x89AB_CDEF;
+            fast_mem.write32(offset as u32, value).unwrap();
+            precise_mem.write32(offset as u32, value).unwrap();
+        }
+        for cpu in [&mut fast_cpu, &mut precise_cpu] {
+            cpu.regs[0] = 0x400;
+            cpu.regs[4] = 0x55AA_33CC;
+        }
+        for (index, instruction) in program.iter().copied().enumerate() {
+            fast_mem.write32(index as u32 * 4, instruction).unwrap();
+            precise_mem.write32(index as u32 * 4, instruction).unwrap();
+        }
+
+        for _ in 0..program.len() {
+            assert_eq!(
+                precise_cpu.step(&mut precise_mem).unwrap(),
+                StepEvent::Executed
+            );
+        }
+        let (executed, exit) = fast_cpu
+            .run_fast(&mut fast_mem, program.len() as u64)
+            .unwrap();
+
+        assert_eq!(executed, program.len() as u64);
+        assert_eq!(exit, FastRunExit::Budget);
+        assert_eq!(fast_cpu.regs, precise_cpu.regs);
+        assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+        assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+        for address in (0x400..0x500).step_by(4) {
+            assert_eq!(
+                fast_mem.read32(address as u32).unwrap(),
+                precise_mem.read32(address as u32).unwrap(),
+                "memory at {address:#X}",
+            );
+        }
+    }
+
+    #[test]
     fn translated_fast_dispatch_matches_precise_steps_for_a_thumb_block() {
         let program = [0x2007, 0x2105, 0x3002];
 
