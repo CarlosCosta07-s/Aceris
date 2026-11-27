@@ -15,6 +15,7 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const PRESENT_SHADER: &str = r#"
@@ -201,15 +202,28 @@ pub struct GraphicsAdapterInfo {
 }
 
 const MAX_PERSISTED_PIPELINE_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+const PIPELINE_CACHE_FILE_MAGIC: &[u8] = b"ACERIS_WGPU_PIPELINE_CACHE_V1\\n";
 
-/// Loads only small, non-empty cache files. Invalid or stale cache data is
-/// treated as a cache miss; wgpu's fallback path can build a fresh cache.
+/// Loads only small, non-empty cache payloads written by this Aceris cache
+/// wrapper. Invalid, stale or truncated files are treated as cache misses.
 fn load_pipeline_cache(path: &Path) -> Option<Vec<u8>> {
+    let maximum_file_size =
+        MAX_PERSISTED_PIPELINE_CACHE_BYTES + PIPELINE_CACHE_FILE_MAGIC.len() as u64;
     let metadata = fs::metadata(path).ok()?;
-    if metadata.len() == 0 || metadata.len() > MAX_PERSISTED_PIPELINE_CACHE_BYTES {
+    if metadata.len() <= PIPELINE_CACHE_FILE_MAGIC.len() as u64
+        || metadata.len() > maximum_file_size
+    {
         return None;
     }
-    fs::read(path).ok()
+    let contents = fs::read(path).ok()?;
+    if !contents.starts_with(PIPELINE_CACHE_FILE_MAGIC) {
+        return None;
+    }
+    let payload = &contents[PIPELINE_CACHE_FILE_MAGIC.len()..];
+    if payload.is_empty() || payload.len() as u64 > MAX_PERSISTED_PIPELINE_CACHE_BYTES {
+        return None;
+    }
+    Some(payload.to_vec())
 }
 
 /// Writes cache data through a temporary file so an interrupted shutdown does
@@ -223,7 +237,15 @@ fn store_pipeline_cache(path: &Path, data: &[u8]) -> std::io::Result<()> {
         .ok_or_else(|| std::io::Error::other("pipeline cache path has no parent"))?;
     fs::create_dir_all(parent)?;
     let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
-    fs::write(&temporary, data)?;
+    let mut file = fs::File::create(&temporary)?;
+    if let Err(error) = file
+        .write_all(PIPELINE_CACHE_FILE_MAGIC)
+        .and_then(|()| file.write_all(data))
+    {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    drop(file);
     if let Err(error) = fs::rename(&temporary, path) {
         let _ = fs::remove_file(&temporary);
         return Err(error);
@@ -699,24 +721,51 @@ mod tests {
         let data = [0x41, 0x43, 0x45, 0x52, 0x49, 0x53];
 
         store_pipeline_cache(&path, &data).unwrap();
-        assert_eq!(load_pipeline_cache(&path).unwrap(), data);
-        assert!(!path.with_extension(format!("tmp-{}", std::process::id())).exists());
+        assert_eq!(load_pipeline_cache(&path).as_deref(), Some(&data[..]));
+        assert!(
+            !path
+                .with_extension(format!("tmp-{}", std::process::id()))
+                .exists()
+        );
 
         fs::remove_dir_all(directory).ok();
     }
 
     #[test]
-    fn pipeline_cache_storage_ignores_empty_and_oversized_payloads() {
+    fn pipeline_cache_storage_rejects_empty_and_oversized_files() {
         let directory = std::env::temp_dir().join(format!(
             "aceris-gpu-pipeline-cache-limit-{}",
             std::process::id()
         ));
-        let path = directory.join("adapter.bin");
-        store_pipeline_cache(&path, &[]).unwrap();
-        assert!(!path.exists());
+        fs::create_dir_all(&directory).unwrap();
+        let empty_path = directory.join("empty.bin");
+        store_pipeline_cache(&empty_path, &[]).unwrap();
+        assert!(!empty_path.exists());
+        assert!(load_pipeline_cache(&empty_path).is_none());
 
+        let oversized_path = directory.join("oversized.bin");
+        let file = fs::File::create(&oversized_path).unwrap();
+        file.set_len(
+            MAX_PERSISTED_PIPELINE_CACHE_BYTES
+                + PIPELINE_CACHE_FILE_MAGIC.len() as u64
+                + 1,
+        )
+        .unwrap();
+        assert!(load_pipeline_cache(&oversized_path).is_none());
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn pipeline_cache_storage_rejects_unknown_file_versions() {
+        let directory = std::env::temp_dir().join(format!(
+            "aceris-gpu-pipeline-cache-version-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("adapter.bin");
+        fs::write(&path, b"not an Aceris cache").unwrap();
         assert!(load_pipeline_cache(&path).is_none());
-        assert_eq!(MAX_PERSISTED_PIPELINE_CACHE_BYTES, 64 * 1024 * 1024);
         fs::remove_dir_all(directory).ok();
     }
 
