@@ -48,6 +48,12 @@ enum LibraryViewMode {
     List,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LibraryPreferences {
+    sort_descending: bool,
+    view_mode: LibraryViewMode,
+}
+
 /// File-name extension filter for the game collection.
 ///
 /// This describes the container extension only; it does not imply that every
@@ -275,6 +281,65 @@ impl LibraryScanConfig {
 
 const LIBRARY_SCAN_CONFIG_FILE: &str = "library_scan_v1.txt";
 const LIBRARY_SCAN_CONFIG_MAGIC: &str = "ACERIS_LIBRARY_SCAN_V1";
+const LIBRARY_PREFERENCES_FILE: &str = "library_preferences_v1.txt";
+const LIBRARY_PREFERENCES_MAGIC: &str = "ACERIS_LIBRARY_PREFERENCES_V1";
+
+fn load_library_preferences(settings_directory: &Path) -> LibraryPreferences {
+    let Ok(contents) = fs::read_to_string(settings_directory.join(LIBRARY_PREFERENCES_FILE)) else {
+        return LibraryPreferences::default();
+    };
+    let mut lines = contents.lines();
+    if lines.next() != Some(LIBRARY_PREFERENCES_MAGIC) {
+        return LibraryPreferences::default();
+    }
+
+    let mut view_mode = None;
+    let mut sort_descending = None;
+    for line in lines {
+        let Some((key, value)) = line.split_once('=') else {
+            return LibraryPreferences::default();
+        };
+        match (key, value) {
+            ("view", "grid") if view_mode.is_none() => {
+                view_mode = Some(LibraryViewMode::Grid);
+            }
+            ("view", "list") if view_mode.is_none() => {
+                view_mode = Some(LibraryViewMode::List);
+            }
+            ("sort", "az") if sort_descending.is_none() => {
+                sort_descending = Some(false);
+            }
+            ("sort", "za") if sort_descending.is_none() => {
+                sort_descending = Some(true);
+            }
+            _ => return LibraryPreferences::default(),
+        }
+    }
+
+    match (view_mode, sort_descending) {
+        (Some(view_mode), Some(sort_descending)) => LibraryPreferences {
+            sort_descending,
+            view_mode,
+        },
+        _ => LibraryPreferences::default(),
+    }
+}
+
+fn save_library_preferences(
+    settings_directory: &Path,
+    preferences: LibraryPreferences,
+) -> std::io::Result<()> {
+    fs::create_dir_all(settings_directory)?;
+    let view_mode = match preferences.view_mode {
+        LibraryViewMode::Grid => "grid",
+        LibraryViewMode::List => "list",
+    };
+    let sort_order = if preferences.sort_descending { "za" } else { "az" };
+    let contents = format!(
+        "{LIBRARY_PREFERENCES_MAGIC}\\nview={view_mode}\\nsort={sort_order}\\n"
+    );
+    fs::write(settings_directory.join(LIBRARY_PREFERENCES_FILE), contents)
+}
 
 fn normalize_scan_directory(directory: &Path) -> PathBuf {
     let absolute = if directory.is_absolute() {
@@ -556,6 +621,7 @@ impl Library {
 
         let favorites = favorite_ids.into_iter().collect();
         let performance_mode = load_performance_mode(&settings_directory);
+        let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
             selected: 0,
@@ -567,8 +633,8 @@ impl Library {
             page: LibraryPage::Home,
             favorites,
             recent,
-            sort_descending: false,
-            view_mode: LibraryViewMode::Grid,
+            sort_descending: preferences.sort_descending,
+            view_mode: preferences.view_mode,
             format_filter: LibraryFormatFilter::All,
             search_query: String::new(),
             search_focused: false,
@@ -592,6 +658,9 @@ impl Library {
         library.scan_config = scan_config;
         library.scan_settings_directory = settings_directory.to_path_buf();
         library.performance_mode = load_performance_mode(settings_directory);
+        let preferences = load_library_preferences(settings_directory);
+        library.sort_descending = preferences.sort_descending;
+        library.view_mode = preferences.view_mode;
         library
     }
 
@@ -778,9 +847,24 @@ impl Library {
             .count()
     }
 
+    fn persist_view_preferences(&mut self) {
+        let preferences = LibraryPreferences {
+            sort_descending: self.sort_descending,
+            view_mode: self.view_mode,
+        };
+        if let Err(error) =
+            save_library_preferences(&self.scan_settings_directory, preferences)
+        {
+            self.status = Some(format!(
+                "NÃO FOI POSSÍVEL SALVAR AS PREFERÊNCIAS DA BIBLIOTECA: {error}"
+            ));
+        }
+    }
+
     /// Switches between A–Z and Z–A; the Recent section keeps its time order.
     pub fn toggle_sort_order(&mut self) {
         self.sort_descending = !self.sort_descending;
+        self.persist_view_preferences();
         self.selected = 0;
         self.first_visible = 0;
         self.status = Some(
@@ -812,6 +896,7 @@ impl Library {
             LibraryViewMode::Grid => LibraryViewMode::List,
             LibraryViewMode::List => LibraryViewMode::Grid,
         };
+        self.persist_view_preferences();
         self.selected = 0;
         self.first_visible = 0;
         self.status = Some(
@@ -3995,6 +4080,60 @@ mod tests {
             fs::read_to_string(dir.join(".aceris").join("recent.txt")).unwrap(),
             library_path_id(&beta).unwrap()
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn library_view_and_sort_preferences_survive_reopening() {
+        let dir =
+            std::env::temp_dir().join(format!("aceris-library-preferences-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let games = vec![
+            Entry {
+                title: "Alpha".to_string(),
+                path: dir.join("alpha.3ds"),
+            },
+            Entry {
+                title: "Beta".to_string(),
+                path: dir.join("beta.3ds"),
+            },
+        ];
+
+        {
+            let mut library = Library::new(games.clone(), dir.display().to_string());
+            library.select_page(LibraryPage::Games);
+            assert!(!library.is_list_view());
+            assert!(!library.sort_descending);
+            library.toggle_view_mode();
+            library.toggle_sort_order();
+            assert!(library.is_list_view());
+            assert!(library.sort_descending);
+        }
+
+        let reopened = Library::new(games, dir.display().to_string());
+        assert!(reopened.is_list_view());
+        assert!(reopened.sort_descending);
+        assert_eq!(
+            fs::read_to_string(dir.join(".aceris").join(LIBRARY_PREFERENCES_FILE)).unwrap(),
+            format!("{LIBRARY_PREFERENCES_MAGIC}\\nview=list\\nsort=za\\n")
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn invalid_library_preferences_fall_back_to_safe_defaults() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-library-preferences-invalid-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(LIBRARY_PREFERENCES_FILE),
+            format!("{LIBRARY_PREFERENCES_MAGIC}\\nview=unknown\\nsort=za\\n"),
+        )
+        .unwrap();
+        let preferences = load_library_preferences(&dir);
+        assert_eq!(preferences, LibraryPreferences::default());
         fs::remove_dir_all(dir).unwrap();
     }
 
