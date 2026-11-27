@@ -347,6 +347,18 @@ impl SharedMemoryBacking {
         self.root_length
     }
 
+    /// Returns a full-range handle to this view's root allocation.
+    pub(crate) fn root_view(&self) -> Self {
+        Self {
+            bytes: self.bytes.clone(),
+            offset: 0,
+            length: self.root_length,
+            root_length: self.root_length,
+            backing_id: self.backing_id,
+            exclusive_versions: self.exclusive_versions.clone(),
+        }
+    }
+
     /// Creates another view from the root allocation, not from this view's range.
     pub(crate) fn view_from_root(&self, offset: usize, length: usize) -> Option<Self> {
         let end = offset.checked_add(length)?;
@@ -655,6 +667,10 @@ pub enum SharedMemoryStateError {
     DuplicatePage(u64),
     InvalidExclusiveGranule(u32),
     DuplicateExclusiveGranule(u32),
+    TooManyBackings(u32),
+    InvalidCatalogEntry,
+    InvalidBackingSlot(u32),
+    InvalidViewRange { slot: u32, offset: u64, length: u64 },
     TrailingData,
 }
 
@@ -696,6 +712,17 @@ impl fmt::Display for SharedMemoryStateError {
             Self::DuplicateExclusiveGranule(address) => {
                 write!(formatter, "shared-memory exclusive granule {address:#010X} is duplicated or unordered")
             }
+            Self::TooManyBackings(count) => {
+                write!(formatter, "shared-memory catalog contains too many roots: {count}")
+            }
+            Self::InvalidCatalogEntry => formatter.write_str("shared-memory catalog entry is invalid"),
+            Self::InvalidBackingSlot(slot) => {
+                write!(formatter, "shared-memory backing slot {slot} does not exist")
+            }
+            Self::InvalidViewRange { slot, offset, length } => write!(
+                formatter,
+                "shared-memory view {offset:#X}+{length:#X} is outside backing slot {slot}"
+            ),
             Self::TrailingData => formatter.write_str("shared-memory snapshot contains trailing bytes"),
         }
     }
