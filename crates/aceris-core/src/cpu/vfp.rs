@@ -120,6 +120,49 @@ impl Vfp {
         Self::default()
     }
 
+
+    pub(super) fn write_save_state(
+        &self,
+        writer: &mut super::state::StateWriter,
+    ) -> Result<(), super::state::CpuStateError> {
+        for value in self.s {
+            writer.write_u32(value)?;
+        }
+        writer.write_u32(self.fpscr)?;
+        writer.write_u32(self.fpexc)?;
+        writer.write_u32(self.fpinst)?;
+        writer.write_u32(self.fpinst2)?;
+        Ok(())
+    }
+
+    pub(super) fn read_save_state(
+        reader: &mut super::state::StateReader<'_>,
+    ) -> Result<Self, super::state::CpuStateError> {
+        use super::state::CpuStateError;
+
+        let mut s = [0u32; 32];
+        for value in &mut s {
+            *value = reader.read_u32()?;
+        }
+        let fpscr = reader.read_u32()?;
+        let fpexc = reader.read_u32()?;
+        let fpinst = reader.read_u32()?;
+        let fpinst2 = reader.read_u32()?;
+        if fpscr & !FPSCR_WRITABLE != 0 {
+            return Err(CpuStateError::InvalidFpscr(fpscr));
+        }
+        if fpexc & !FPEXC_WRITABLE != 0 {
+            return Err(CpuStateError::InvalidFpexc(fpexc));
+        }
+        Ok(Self {
+            s,
+            fpscr,
+            fpexc,
+            fpinst,
+            fpinst2,
+        })
+    }
+
     pub fn s(&self, index: usize) -> u32 {
         self.s[index]
     }

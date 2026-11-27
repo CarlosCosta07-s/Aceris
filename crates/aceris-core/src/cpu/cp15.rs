@@ -128,6 +128,121 @@ impl Cp15 {
         }
     }
 
+
+    pub(super) fn write_save_state(
+        &self,
+        writer: &mut super::state::StateWriter,
+    ) -> Result<(), super::state::CpuStateError> {
+        for value in [
+            self.core_id,
+            self.sctlr,
+            self.actlr,
+            self.cpacr,
+            self.ttbr0,
+            self.ttbr1,
+            self.ttbcr,
+            self.dacr,
+            self.dfsr,
+            self.ifsr,
+            self.dfar,
+            self.ifar,
+            self.fcse_pid,
+            self.context_id,
+            self.tpidrurw,
+            self.tpidruro,
+            self.tpidrprw,
+            self.tlb_lockdown,
+            self.primary_remap,
+            self.normal_remap,
+            self.pa_register,
+        ] {
+            writer.write_u32(value)?;
+        }
+        match self.pending_tlb_maintenance {
+            None => writer.write_u8(0)?,
+            Some(TlbMaintenance::All) => writer.write_u8(1)?,
+            Some(TlbMaintenance::MvaAsid { mva, asid }) => {
+                writer.write_u8(2)?;
+                writer.write_u32(mva)?;
+                writer.write_u8(asid)?;
+            }
+            Some(TlbMaintenance::Asid { asid }) => {
+                writer.write_u8(3)?;
+                writer.write_u8(asid)?;
+            }
+            Some(TlbMaintenance::MvaAllAsids { mva }) => {
+                writer.write_u8(4)?;
+                writer.write_u32(mva)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn read_save_state(
+        reader: &mut super::state::StateReader<'_>,
+    ) -> Result<Self, super::state::CpuStateError> {
+        use super::state::CpuStateError;
+
+        let mut values = [0u32; 21];
+        for value in &mut values {
+            *value = reader.read_u32()?;
+        }
+        if values[0] > 15 {
+            return Err(CpuStateError::InvalidCp15CoreId(values[0]));
+        }
+        if values[6] & !7 != 0 {
+            return Err(CpuStateError::InvalidTtbcr(values[6]));
+        }
+        let pending_tlb_maintenance = match reader.read_u8()? {
+            0 => None,
+            1 => Some(TlbMaintenance::All),
+            2 => {
+                let mva = reader.read_u32()?;
+                let asid = reader.read_u8()?;
+                if mva & 0xFFF != 0 {
+                    return Err(CpuStateError::InvalidTlbEntry);
+                }
+                Some(TlbMaintenance::MvaAsid { mva, asid })
+            }
+            3 => Some(TlbMaintenance::Asid {
+                asid: reader.read_u8()?,
+            }),
+            4 => {
+                let mva = reader.read_u32()?;
+                if mva & 0xFFF != 0 {
+                    return Err(CpuStateError::InvalidTlbEntry);
+                }
+                Some(TlbMaintenance::MvaAllAsids { mva })
+            }
+            _ => return Err(CpuStateError::InvalidTlbEntry),
+        };
+
+        Ok(Self {
+            core_id: values[0],
+            sctlr: values[1],
+            actlr: values[2],
+            cpacr: values[3],
+            ttbr0: values[4],
+            ttbr1: values[5],
+            ttbcr: values[6],
+            dacr: values[7],
+            dfsr: values[8],
+            ifsr: values[9],
+            dfar: values[10],
+            ifar: values[11],
+            fcse_pid: values[12],
+            context_id: values[13],
+            tpidrurw: values[14],
+            tpidruro: values[15],
+            tpidrprw: values[16],
+            tlb_lockdown: values[17],
+            primary_remap: values[18],
+            normal_remap: values[19],
+            pa_register: values[20],
+            pending_tlb_maintenance,
+        })
+    }
+
     /// Raw system control register.
     pub fn sctlr(&self) -> u32 {
         self.sctlr

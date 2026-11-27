@@ -17,6 +17,7 @@ mod mpcore_scu;
 mod mpcore_timer;
 mod psr;
 mod shifter;
+mod state;
 mod thumb;
 mod vfp;
 
@@ -37,7 +38,10 @@ pub use mpcore_timer::{
     MPCORE_PRIVATE_TIMER_REGISTER_SIZE, MPCORE_TIMER_DEFAULT_CLOCK_HZ, MpcorePrivateTimer,
 };
 pub use psr::Psr;
+pub use state::CpuStateError;
 pub use vfp::Vfp;
+
+use state::{StateReader, StateWriter};
 
 use crate::memory::Bus;
 use aceris_common::{Error, Result};
@@ -186,6 +190,187 @@ impl Arm11Core {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Version of the complete architectural ARM11 core state.
+    pub const SAVE_STATE_VERSION: u16 = 1;
+
+    /// Serializes architectural CPU state. Host decode/block caches are omitted
+    /// and rebuilt lazily; architectural TLB and CP15 state are preserved.
+    pub fn encode_save_state(&self) -> Result<Vec<u8>, CpuStateError> {
+        let mut writer = StateWriter::with_capacity(4096)?;
+        writer.write_bytes(b"ACARM11\0")?;
+        writer.write_u16(Self::SAVE_STATE_VERSION)?;
+
+        for register in self.regs {
+            writer.write_u32(register)?;
+        }
+        writer.write_u32(self.cpsr.0)?;
+        writer.write_bool(self.branch_taken)?;
+
+        writer.write_bool(self.exclusive_reservation.is_some())?;
+        if let Some(reservation) = self.exclusive_reservation {
+            writer.write_u32(reservation.address)?;
+            writer.write_u8(reservation.size)?;
+            writer.write_u64(reservation.version)?;
+        }
+
+        for value in self.banked.user_r8_r12 {
+            writer.write_u32(value)?;
+        }
+        for value in self.banked.user_sp_lr {
+            writer.write_u32(value)?;
+        }
+        for value in self.banked.fiq_r8_r14 {
+            writer.write_u32(value)?;
+        }
+        for value in self.banked.irq_sp_lr {
+            writer.write_u32(value)?;
+        }
+        for value in self.banked.svc_sp_lr {
+            writer.write_u32(value)?;
+        }
+        for value in self.banked.abort_sp_lr {
+            writer.write_u32(value)?;
+        }
+        for value in self.banked.undefined_sp_lr {
+            writer.write_u32(value)?;
+        }
+
+        for saved in [
+            self.saved_status.fiq,
+            self.saved_status.irq,
+            self.saved_status.svc,
+            self.saved_status.abort,
+            self.saved_status.undefined,
+        ] {
+            writer.write_bool(saved.is_some())?;
+            if let Some(value) = saved {
+                writer.write_u32(value.0)?;
+            }
+        }
+
+        for value in [
+            self.high_vectors_enabled,
+            self.exception_big_endian,
+            self.svc_exception_entry_enabled,
+            self.irq_line_asserted,
+            self.fiq_line_asserted,
+            self.waiting_for_interrupt,
+            self.waiting_for_event,
+            self.event_registered,
+            self.exception_return_wakeup,
+            self.fault_exception_entry_enabled,
+            self.prefetch_fault,
+            self.fault_latched,
+        ] {
+            writer.write_bool(value)?;
+        }
+
+        self.cp15.write_save_state(&mut writer)?;
+        self.tlb.write_save_state(&mut writer)?;
+        self.vfp.write_save_state(&mut writer)?;
+        Ok(writer.into_bytes())
+    }
+
+    /// Restores a complete core state transactionally. The active core remains
+    /// untouched when the input is malformed or incompatible.
+    pub fn restore_save_state(&mut self, encoded: &[u8]) -> Result<(), CpuStateError> {
+        let mut reader = StateReader::new(encoded);
+        if reader.read_bytes(8)? != b"ACARM11\0" {
+            return Err(CpuStateError::InvalidMagic);
+        }
+        let version = reader.read_u16()?;
+        if version != Self::SAVE_STATE_VERSION {
+            return Err(CpuStateError::UnsupportedVersion(version));
+        }
+
+        let mut restored = Self::default();
+        for register in &mut restored.regs {
+            *register = reader.read_u32()?;
+        }
+        let cpsr = reader.read_u32()?;
+        if !Psr::is_valid_mode(cpsr & Psr::MODE_MASK) {
+            return Err(CpuStateError::InvalidProcessorMode(cpsr & Psr::MODE_MASK));
+        }
+        restored.cpsr = Psr(cpsr);
+        restored.branch_taken = reader.read_bool()?;
+
+        if reader.read_bool()? {
+            let address = reader.read_u32()?;
+            let size = reader.read_u8()?;
+            if !matches!(size, 1 | 2 | 4 | 8) || address & u32::from(size - 1) != 0 {
+                return Err(CpuStateError::InvalidReservationSize(size));
+            }
+            restored.exclusive_reservation = Some(ExclusiveReservation {
+                address,
+                size,
+                version: reader.read_u64()?,
+            });
+        }
+
+        for value in &mut restored.banked.user_r8_r12 {
+            *value = reader.read_u32()?;
+        }
+        for value in &mut restored.banked.user_sp_lr {
+            *value = reader.read_u32()?;
+        }
+        for value in &mut restored.banked.fiq_r8_r14 {
+            *value = reader.read_u32()?;
+        }
+        for value in &mut restored.banked.irq_sp_lr {
+            *value = reader.read_u32()?;
+        }
+        for value in &mut restored.banked.svc_sp_lr {
+            *value = reader.read_u32()?;
+        }
+        for value in &mut restored.banked.abort_sp_lr {
+            *value = reader.read_u32()?;
+        }
+        for value in &mut restored.banked.undefined_sp_lr {
+            *value = reader.read_u32()?;
+        }
+
+        let mut read_saved_status = || -> Result<Option<Psr>, CpuStateError> {
+            if !reader.read_bool()? {
+                return Ok(None);
+            }
+            let value = reader.read_u32()?;
+            if !Psr::is_valid_mode(value & Psr::MODE_MASK) {
+                return Err(CpuStateError::InvalidProcessorMode(value & Psr::MODE_MASK));
+            }
+            Ok(Some(Psr(value)))
+        };
+        restored.saved_status = SavedStatusRegisters {
+            fiq: read_saved_status()?,
+            irq: read_saved_status()?,
+            svc: read_saved_status()?,
+            abort: read_saved_status()?,
+            undefined: read_saved_status()?,
+        };
+        drop(read_saved_status);
+
+        restored.high_vectors_enabled = reader.read_bool()?;
+        restored.exception_big_endian = reader.read_bool()?;
+        restored.svc_exception_entry_enabled = reader.read_bool()?;
+        restored.irq_line_asserted = reader.read_bool()?;
+        restored.fiq_line_asserted = reader.read_bool()?;
+        restored.waiting_for_interrupt = reader.read_bool()?;
+        restored.waiting_for_event = reader.read_bool()?;
+        restored.event_registered = reader.read_bool()?;
+        restored.exception_return_wakeup = reader.read_bool()?;
+        restored.fault_exception_entry_enabled = reader.read_bool()?;
+        restored.prefetch_fault = reader.read_bool()?;
+        restored.fault_latched = reader.read_bool()?;
+
+        restored.cp15 = Cp15::read_save_state(&mut reader)?;
+        restored.tlb = mmu::TranslationLookasideBuffer::read_save_state(&mut reader)?;
+        restored.vfp = Vfp::read_save_state(&mut reader)?;
+        reader.finish()?;
+
+        *self = restored;
+        Ok(())
+    }
+
 
     /// Returns a snapshot of immutable-text A32 block-cache counters.
     pub fn block_cache_stats(&self) -> BlockCacheStats {
@@ -886,6 +1071,92 @@ mod tests {
         assert_eq!(cpu.pc(), 0xFFFF_0018);
         assert!(cpu.cpsr.big_endian());
         assert_eq!(cpu.cpsr.mode(), Psr::IRQ_MODE);
+    }
+
+    #[test]
+    fn arm11_save_state_round_trips_architectural_cpu_context() {
+        let mut cpu = Arm11Core::new();
+        cpu.regs = [
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+        ];
+        cpu.cpsr = Psr(Psr::SUPERVISOR_MODE | Psr::N | Psr::I | Psr::Q);
+        cpu.switch_mode(Psr::FIQ_MODE).unwrap();
+        cpu.regs[8..15].copy_from_slice(&[0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86]);
+        cpu.cpsr = Psr(Psr::FIQ_MODE | Psr::F);
+        cpu.saved_status.fiq = Some(Psr(Psr::SUPERVISOR_MODE | Psr::T | Psr::Z));
+        cpu.saved_status.irq = Some(Psr(Psr::USER_MODE | Psr::I));
+
+        cpu.branch_taken = true;
+        cpu.exclusive_reservation = Some(ExclusiveReservation {
+            address: 0x1000,
+            size: 4,
+            version: 0x1234_5678,
+        });
+        cpu.high_vectors_enabled = true;
+        cpu.exception_big_endian = true;
+        cpu.svc_exception_entry_enabled = true;
+        cpu.irq_line_asserted = true;
+        cpu.fiq_line_asserted = true;
+        cpu.waiting_for_event = true;
+        cpu.event_registered = true;
+        cpu.exception_return_wakeup = true;
+        cpu.fault_exception_entry_enabled = true;
+
+        cpu.cp15.write(true, 0, 1, 0, 0, 0x00C5_0079).unwrap();
+        cpu.cp15.write(true, 0, 2, 0, 2, 3).unwrap();
+        cpu.cp15
+            .write(true, 0, 8, 5, 1, 0x1234_5678)
+            .unwrap();
+        cpu.vfp.set_s(7, 0x7FC0_1234);
+        cpu.vfp.set_enabled(true);
+        cpu.vfp.set_fpinst(0xEE00_0A10);
+        cpu.vfp.set_fpinst2(0xEE00_0A20);
+
+        let encoded = cpu.encode_save_state().unwrap();
+        let mut restored = Arm11Core::new();
+        restored.restore_save_state(&encoded).unwrap();
+
+        assert_eq!(restored.regs, cpu.regs);
+        assert_eq!(restored.cpsr, cpu.cpsr);
+        assert_eq!(restored.banked.user_r8_r12, cpu.banked.user_r8_r12);
+        assert_eq!(restored.banked.fiq_r8_r14, cpu.banked.fiq_r8_r14);
+        assert_eq!(restored.saved_status.fiq, cpu.saved_status.fiq);
+        assert_eq!(restored.saved_status.irq, cpu.saved_status.irq);
+        assert_eq!(
+            restored.exclusive_reservation,
+            cpu.exclusive_reservation
+        );
+        assert_eq!(restored.cp15.sctlr(), cpu.cp15.sctlr());
+        assert_eq!(restored.cp15.ttbr0(), cpu.cp15.ttbr0());
+        assert_eq!(restored.vfp.s(7), cpu.vfp.s(7));
+        assert_eq!(restored.vfp.fpexc(), cpu.vfp.fpexc());
+        assert_eq!(restored.vfp.fpinst(), cpu.vfp.fpinst());
+        assert_eq!(restored.vfp.fpinst2(), cpu.vfp.fpinst2());
+        assert_eq!(restored.encode_save_state().unwrap(), encoded);
+    }
+
+    #[test]
+    fn malformed_arm11_save_state_does_not_change_the_active_core() {
+        let mut cpu = Arm11Core::new();
+        cpu.regs[0] = 0xDEAD_BEEF;
+        let before = cpu.encode_save_state().unwrap();
+
+        assert!(cpu.restore_save_state(&before[..before.len() - 1]).is_err());
+        assert_eq!(cpu.encode_save_state().unwrap(), before);
+
+        let mut invalid_mode = before.clone();
+        invalid_mode[10 + 16 * 4..10 + 17 * 4]
+            .copy_from_slice(&0x13u32.to_le_bytes());
+        invalid_mode[10 + 16 * 4..10 + 17 * 4]
+            .copy_from_slice(&0u32.to_le_bytes());
+        assert!(cpu.restore_save_state(&invalid_mode).is_err());
+        assert_eq!(cpu.encode_save_state().unwrap(), before);
+
+        let mut trailing = before.clone();
+        trailing.push(0);
+        assert!(cpu.restore_save_state(&trailing).is_err());
+        assert_eq!(cpu.encode_save_state().unwrap(), before);
     }
 
     #[test]

@@ -401,6 +401,163 @@ pub(super) struct TranslationLookasideBuffer {
 }
 
 impl TranslationLookasideBuffer {
+    fn write_entry(
+        entry: Option<TlbEntry>,
+        writer: &mut super::state::StateWriter,
+    ) -> Result<(), super::state::CpuStateError> {
+        let Some(entry) = entry else {
+            writer.write_bool(false)?;
+            return Ok(());
+        };
+        writer.write_bool(true)?;
+        writer.write_u32(entry.virtual_base)?;
+        writer.write_u32(entry.physical_base)?;
+        writer.write_u32(entry.address_mask)?;
+        writer.write_u8(entry.asid)?;
+        writer.write_bool(entry.global)?;
+        writer.write_u8(entry.domain)?;
+        for value in entry.ap {
+            writer.write_u8(value)?;
+        }
+        writer.write_u8(entry.subpage_shift)?;
+        writer.write_bool(entry.legacy)?;
+        writer.write_bool(entry.sctlr_s)?;
+        writer.write_bool(entry.sctlr_r)?;
+        writer.write_bool(entry.apx)?;
+        writer.write_bool(entry.xn)?;
+        writer.write_bool(entry.section)?;
+        writer.write_u8(entry.memory_attributes.memory_type as u8)?;
+        writer.write_bool(entry.memory_attributes.shareable)?;
+        writer.write_u8(entry.memory_attributes.inner)?;
+        writer.write_u8(entry.memory_attributes.outer)?;
+        Ok(())
+    }
+
+    fn read_entry(
+        reader: &mut super::state::StateReader<'_>,
+    ) -> Result<Option<TlbEntry>, super::state::CpuStateError> {
+        use super::state::CpuStateError;
+
+        if !reader.read_bool()? {
+            return Ok(None);
+        }
+        let virtual_base = reader.read_u32()?;
+        let physical_base = reader.read_u32()?;
+        let address_mask = reader.read_u32()?;
+        let asid = reader.read_u8()?;
+        let global = reader.read_bool()?;
+        let domain = reader.read_u8()?;
+        let mut ap = [0u8; 4];
+        for value in &mut ap {
+            *value = reader.read_u8()?;
+        }
+        let subpage_shift = reader.read_u8()?;
+        let legacy = reader.read_bool()?;
+        let sctlr_s = reader.read_bool()?;
+        let sctlr_r = reader.read_bool()?;
+        let apx = reader.read_bool()?;
+        let xn = reader.read_bool()?;
+        let section = reader.read_bool()?;
+        let memory_type = match reader.read_u8()? {
+            0 => MemoryType::StronglyOrdered,
+            1 => MemoryType::Device,
+            2 => MemoryType::Normal,
+            3 => MemoryType::Reserved,
+            _ => return Err(CpuStateError::InvalidTlbEntry),
+        };
+        let shareable = reader.read_bool()?;
+        let inner = reader.read_u8()?;
+        let outer = reader.read_u8()?;
+        let valid_mask = [12u32, 16, 20, 24]
+            .into_iter()
+            .any(|shift| u32::MAX << shift == address_mask);
+        if !valid_mask
+            || virtual_base & address_mask != virtual_base
+            || physical_base & address_mask != physical_base
+            || domain > 15
+            || ap.iter().any(|value| *value > 3)
+            || !matches!(subpage_shift, 0 | 10 | 14)
+            || inner > 3
+            || outer > 3
+        {
+            return Err(CpuStateError::InvalidTlbEntry);
+        }
+
+        Ok(Some(TlbEntry {
+            virtual_base,
+            physical_base,
+            address_mask,
+            asid,
+            global,
+            domain,
+            ap,
+            subpage_shift,
+            legacy,
+            sctlr_s,
+            sctlr_r,
+            apx,
+            xn,
+            section,
+            memory_attributes: MemoryAttributes {
+                memory_type,
+                shareable,
+                inner,
+                outer,
+            },
+        }))
+    }
+
+    pub(super) fn write_save_state(
+        &self,
+        writer: &mut super::state::StateWriter,
+    ) -> Result<(), super::state::CpuStateError> {
+        for set in &self.sets {
+            for entry in set {
+                Self::write_entry(*entry, writer)?;
+            }
+        }
+        for entry in &self.lockdown_entries {
+            Self::write_entry(*entry, writer)?;
+        }
+        for victim in self.next_victim {
+            writer.write_u8(victim as u8)?;
+        }
+        writer.write_u64(self.generation)?;
+        Ok(())
+    }
+
+    pub(super) fn read_save_state(
+        reader: &mut super::state::StateReader<'_>,
+    ) -> Result<Self, super::state::CpuStateError> {
+        use super::state::CpuStateError;
+
+        let mut sets = [[None; TLB_WAYS]; TLB_SET_COUNT];
+        for set in &mut sets {
+            for entry in set {
+                *entry = Self::read_entry(reader)?;
+            }
+        }
+        let mut lockdown_entries = [None; 8];
+        for entry in &mut lockdown_entries {
+            *entry = Self::read_entry(reader)?;
+        }
+        let mut next_victim = [0usize; TLB_SET_COUNT];
+        for victim in &mut next_victim {
+            let value = reader.read_u8()?;
+            if usize::from(value) >= TLB_WAYS {
+                return Err(CpuStateError::InvalidTlbVictim(value));
+            }
+            *victim = usize::from(value);
+        }
+        let generation = reader.read_u64()?;
+        Ok(Self {
+            sets,
+            lockdown_entries,
+            next_victim,
+            generation,
+        })
+    }
+
     fn set_index_for_entry(entry: &TlbEntry) -> usize {
         let page_shift = entry.address_mask.trailing_zeros();
         ((entry.virtual_base >> page_shift) as usize) & (TLB_SET_COUNT - 1)
@@ -3868,3 +4025,60 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod save_state_tests {
+    use super::*;
+    use crate::cpu::state::{StateReader, StateWriter};
+
+    #[test]
+    fn tlb_snapshot_round_trips_cached_and_lockdown_entries() {
+        let entry = TlbEntry {
+            virtual_base: 0x1230_0000,
+            physical_base: 0x2230_0000,
+            address_mask: 0xFFF0_0000,
+            asid: 7,
+            global: false,
+            domain: 3,
+            ap: [3, 2, 1, 0],
+            subpage_shift: 0,
+            legacy: false,
+            sctlr_s: false,
+            sctlr_r: false,
+            apx: true,
+            xn: false,
+            section: true,
+            memory_attributes: MemoryAttributes {
+                memory_type: MemoryType::Normal,
+                shareable: true,
+                inner: 1,
+                outer: 2,
+            },
+        };
+        let mut tlb = TranslationLookasideBuffer::default();
+        tlb.insert(entry, false, 0);
+        tlb.insert(
+            TlbEntry {
+                virtual_base: 0x4567_0000,
+                physical_base: 0x5567_0000,
+                address_mask: 0xFFFF_0000,
+                ..entry
+            },
+            true,
+            5,
+        );
+
+        let mut writer = StateWriter::with_capacity(4096).unwrap();
+        tlb.write_save_state(&mut writer).unwrap();
+        let encoded = writer.into_bytes();
+
+        let mut reader = StateReader::new(&encoded);
+        let restored = TranslationLookasideBuffer::read_save_state(&mut reader).unwrap();
+        reader.finish().unwrap();
+
+        let mut restored_writer = StateWriter::with_capacity(4096).unwrap();
+        restored.write_save_state(&mut restored_writer).unwrap();
+        assert_eq!(restored_writer.into_bytes(), encoded);
+    }
+}
+
