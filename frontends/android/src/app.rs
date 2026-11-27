@@ -13,7 +13,10 @@ use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenRect, compute_screen_layout,
 };
 use aceris_core::video::library::{self, ClickResult, Library};
-use aceris_core::video::{DualScreenDisplay, ScreenSurface, intro, quick_menu::{self, PixelFormat as MenuPixelFormat}};
+use aceris_core::video::{
+    DualScreenDisplay, ScreenSurface, intro,
+    quick_menu::{self, PixelFormat as MenuPixelFormat},
+};
 
 /// Which part of the application is on screen.
 #[derive(Debug)]
