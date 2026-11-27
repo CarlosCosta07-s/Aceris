@@ -566,7 +566,26 @@ fn render_overlay_with_action_count(
     }
 
     let scale = geometry.scale;
-    let text_scale = scale * 2;
+    let title_text_scale = scale * 2;
+    let labels = [
+        "CONTINUAR",
+        "REINICIAR",
+        "VOLTAR À BIBLIOTECA",
+        "ALTERAR LAYOUT",
+        "TROCAR TELAS",
+        "PADRÃO GLOBAL",
+        "RESTAURAR CONTROLES",
+        "ESCOPO DOS CONTROLES",
+        "EDITAR CONTROLES",
+    ];
+    let row_text_scale = menu_row_text_scale(
+        &geometry,
+        action_count,
+        scale,
+        &labels,
+        control_reset_label,
+        control_scope_label,
+    );
     let canvas = Rect {
         x: 0,
         y: 0,
@@ -592,7 +611,7 @@ fn render_overlay_with_action_count(
         height as usize,
         title_x,
         title_y,
-        text_scale,
+        title_text_scale,
         "MENU DO JOGO",
         [245, 238, 248],
         format,
@@ -608,18 +627,6 @@ fn render_overlay_with_action_count(
         [190, 225, 203],
         format,
     );
-
-    let labels = [
-        "CONTINUAR",
-        "REINICIAR",
-        "VOLTAR À BIBLIOTECA",
-        "ALTERAR LAYOUT",
-        "TROCAR TELAS",
-        "PADRÃO GLOBAL",
-        "RESTAURAR CONTROLES",
-        "ESCOPO DOS CONTROLES",
-        "EDITAR CONTROLES",
-    ];
     for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
         let is_selected = index == selected.min(action_count - 1);
         blend_rect(
@@ -646,13 +653,46 @@ fn render_overlay_with_action_count(
             height as usize,
             row.x + 12 * scale,
             text_y,
-            text_scale,
+            row_text_scale,
             label,
             [255, 255, 255],
             format,
         );
     }
     true
+}
+
+
+/// Keeps action labels inside their rows on compact or narrow host surfaces.
+fn menu_row_text_scale(
+    geometry: &Geometry,
+    action_count: usize,
+    base_scale: usize,
+    labels: &[&str; ACTION_COUNT],
+    control_reset_label: &str,
+    control_scope_label: &str,
+) -> usize {
+    let longest_label_chars = (0..action_count)
+        .map(|index| match index {
+            6 => control_reset_label,
+            7 => control_scope_label,
+            _ => labels[index],
+        })
+        .map(|label| label.chars().count())
+        .max()
+        .unwrap_or(1);
+
+    let row_height = geometry.rows[0].height;
+    let vertical_scale = (row_height / 7).max(1);
+    let available_width = geometry.rows[0]
+        .width
+        .saturating_sub(24 * base_scale);
+    let glyph_width = font::text_width(longest_label_chars, 1).max(1);
+    let horizontal_scale = (available_width / glyph_width).max(1);
+    (base_scale * 2)
+        .min(vertical_scale)
+        .min(horizontal_scale)
+        .max(1)
 }
 
 fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, format: PixelFormat) {
@@ -1017,4 +1057,57 @@ mod tests {
             Some(ACTION_COUNT - 1)
         );
     }
+    #[test]
+    fn android_menu_labels_scale_down_on_short_and_narrow_surfaces() {
+        for (width, height) in [(320u32, 180u32), (240u32, 320u32)] {
+            let layout = geometry(width, height, ACTION_COUNT).unwrap();
+            let labels = [
+                "CONTINUAR",
+                "REINICIAR",
+                "VOLTAR À BIBLIOTECA",
+                "ALTERAR LAYOUT",
+                "TROCAR TELAS",
+                "PADRÃO GLOBAL",
+                "RESTAURAR CONTROLES",
+                "ESCOPO DOS CONTROLES",
+                "EDITAR CONTROLES",
+            ];
+            assert_eq!(
+                menu_row_text_scale(
+                    &layout,
+                    ACTION_COUNT,
+                    layout.scale,
+                    &labels,
+                    "RESTAURAR PERFIL",
+                    "PADRÃO GLOBAL",
+                ),
+                1,
+                "labels must fit at one-pixel font scale on {width}x{height}",
+            );
+
+            let mut frame = vec![0u8; width as usize * height as usize * 4];
+            assert!(render_overlay_with_control_profiles(
+                &mut frame,
+                width,
+                height,
+                PixelFormat::Rgba8,
+                ACTION_COUNT - 1,
+                "TELAS: GLOBAL | CONTROLES: JOGO",
+                "RESTAURAR PERFIL",
+                "PADRÃO GLOBAL",
+            ));
+            for (index, row) in layout.rows.iter().take(ACTION_COUNT).enumerate() {
+                assert_eq!(
+                    hit_test(
+                        width,
+                        height,
+                        (row.x + row.width / 2) as i32,
+                        (row.y + row.height / 2) as i32,
+                    ),
+                    Some(index),
+                );
+            }
+        }
+    }
+
 }
