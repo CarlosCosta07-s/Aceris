@@ -1604,8 +1604,8 @@ mod tests {
         assert_eq!(app.held_mask(), 0);
 
         // Physical keys remain available when the touch overlay is hidden.
-        app.key_mask = pad::A;
-        assert_eq!(app.held_mask(), pad::A);
+        app.key_mask = frontend::buttons::A;
+        assert_eq!(app.held_mask(), frontend::buttons::A);
 
         fs::remove_dir_all(dir).ok();
     }
@@ -1637,7 +1637,10 @@ mod tests {
         // The point sits just outside the default A button but inside the 120% target.
         assert_eq!(app.hit_virtual_button(382.0, 608.0), 0);
         app.library.set_virtual_controls_size_percent(120).unwrap();
-        assert_eq!(app.hit_virtual_button(382.0, 608.0), pad::A);
+        assert_eq!(
+            app.hit_virtual_button(382.0, 608.0),
+            frontend::buttons::A
+        );
 
         let original = [10u8, 20, 30, 255].repeat(400 * 800);
         app.library.set_virtual_controls_size_percent(80).unwrap();
@@ -1657,11 +1660,17 @@ mod tests {
         app.resize(400, 800);
 
         // The D-pad moves to the right while its directional semantics stay intact.
-        assert_eq!(app.hit_virtual_button(332.0, 576.0), pad::X);
+        assert_eq!(
+            app.hit_virtual_button(332.0, 576.0),
+            frontend::buttons::X
+        );
         app.library
             .set_virtual_controls_preset(frontend::VirtualControlPreset::LeftHanded)
             .unwrap();
-        assert_eq!(app.hit_virtual_button(332.0, 576.0), pad::UP);
+        assert_eq!(
+            app.hit_virtual_button(332.0, 576.0),
+            frontend::buttons::UP
+        );
 
         let original = [10u8, 20, 30, 255].repeat(400 * 800);
         app.library
