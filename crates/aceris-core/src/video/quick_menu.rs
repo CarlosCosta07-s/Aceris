@@ -435,7 +435,7 @@ pub fn render_confirmation_overlay(
     );
 
     let labels = ["CANCELAR", "CONFIRMAR"];
-    for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
+    for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(1);
         blend_rect(
             frame,
