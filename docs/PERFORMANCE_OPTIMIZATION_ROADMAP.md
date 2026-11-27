@@ -39,7 +39,7 @@ As variantes não cobertas continuam no interpretador genérico, incluindo forma
 
 Os blocos terminam em branch ou transferência de registradores múltiplos. Encodings genéricos ou instruções que exigem o passo preciso ficam fora do bloco e usam o loop existente. Buses sem contrato explícito de texto imutável (por exemplo, RAM gravável) continuam no caminho por instrução. Assim, a primeira versão evita precisar invalidar blocos após escrita guest, DMA ou sincronização de código, porque não aceita esse tipo de backing.
 
-Ainda é necessário medir hit rate, custo das consultas de faixa e ganhos em jogos reais. Também faltam política de invalidação para futuras regiões dinâmicas, contadores e uma extensão de blocos para Thumb.
+A API `Arm11Core::block_cache_stats()` expõe consultas, hits, misses, blocos/instruções compilados e fallbacks; `take_block_cache_stats()` permite medir intervalos sem reiniciar o núcleo. Testes verificam a contabilização básica. Ainda é necessário coletar benchmarks em jogos reais e medir o custo das consultas de faixa. Também faltam política de invalidação para futuras regiões dinâmicas e uma extensão de blocos para Thumb.
 
 ### 2. Interpretador intermediário (IR)
 
