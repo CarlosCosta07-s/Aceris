@@ -133,6 +133,7 @@ pub struct Library {
     scan_path_input_focused: bool,
     touch_keyboard_enabled: bool,
     touch_keyboard_open: bool,
+    virtual_controls_visible: bool,
     external_media_playing: bool,
     external_media_detection_available: bool,
     performance_mode: bool,
@@ -140,6 +141,24 @@ pub struct Library {
 
 /// File in the settings folder that persists the opt-in performance mode.
 const PERFORMANCE_MODE_FILE: &str = "performance_mode.txt";
+const VIRTUAL_CONTROLS_FILE: &str = "virtual_controls_v1.txt";
+const VIRTUAL_CONTROLS_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_V1";
+
+/// Missing or malformed settings preserve the default visible-controls state.
+fn load_virtual_controls_visible(settings_directory: &Path) -> bool {
+    let Ok(contents) = fs::read_to_string(settings_directory.join(VIRTUAL_CONTROLS_FILE)) else {
+        return true;
+    };
+    let mut lines = contents.lines();
+    if lines.next() != Some(VIRTUAL_CONTROLS_MAGIC) {
+        return true;
+    }
+    match (lines.next(), lines.next()) {
+        (Some("visible=1"), None) => true,
+        (Some("visible=0"), None) => false,
+        _ => true,
+    }
+}
 
 fn load_performance_mode(settings_directory: &Path) -> bool {
     fs::read_to_string(settings_directory.join(PERFORMANCE_MODE_FILE))
@@ -621,6 +640,7 @@ impl Library {
 
         let favorites = favorite_ids.into_iter().collect();
         let performance_mode = load_performance_mode(&settings_directory);
+        let virtual_controls_visible = load_virtual_controls_visible(&settings_directory);
         let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
@@ -641,6 +661,7 @@ impl Library {
             scan_path_input_focused: false,
             touch_keyboard_enabled: false,
             touch_keyboard_open: false,
+            virtual_controls_visible,
             external_media_playing: false,
             external_media_detection_available: false,
             performance_mode,
@@ -658,6 +679,7 @@ impl Library {
         library.scan_config = scan_config;
         library.scan_settings_directory = settings_directory.to_path_buf();
         library.performance_mode = load_performance_mode(settings_directory);
+        library.virtual_controls_visible = load_virtual_controls_visible(settings_directory);
         let preferences = load_library_preferences(settings_directory);
         library.sort_descending = preferences.sort_descending;
         library.view_mode = preferences.view_mode;
@@ -689,6 +711,33 @@ impl Library {
 
     fn toggle_performance_mode_from_settings(&mut self) {
         if let Err(error) = self.set_performance_mode(!self.performance_mode) {
+            self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
+        }
+    }
+
+    /// Whether the Android virtual gamepad should be rendered and receive touch input.
+    pub fn virtual_controls_visible(&self) -> bool {
+        self.virtual_controls_visible
+    }
+
+    /// Persists whether the Android virtual gamepad is visible.
+    pub fn set_virtual_controls_visible(&mut self, visible: bool) -> std::io::Result<()> {
+        fs::create_dir_all(&self.scan_settings_directory)?;
+        fs::write(
+            self.scan_settings_directory.join(VIRTUAL_CONTROLS_FILE),
+            format!("{VIRTUAL_CONTROLS_MAGIC}\nvisible={}\n", u8::from(visible)),
+        )?;
+        self.virtual_controls_visible = visible;
+        self.status = Some(if visible {
+            "CONTROLES DE TOQUE ATIVADOS".to_string()
+        } else {
+            "CONTROLES DE TOQUE OCULTOS".to_string()
+        });
+        Ok(())
+    }
+
+    fn toggle_virtual_controls_from_settings(&mut self) {
+        if let Err(error) = self.set_virtual_controls_visible(!self.virtual_controls_visible) {
             self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
         }
     }
@@ -1332,7 +1381,11 @@ impl Library {
                 } else if (478.0..522.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.focus_scan_path();
                 } else if (526.0..570.0).contains(&y) && (38.0..362.0).contains(&x) {
-                    self.reload();
+                    if self.touch_keyboard_enabled {
+                        self.toggle_virtual_controls_from_settings();
+                    } else {
+                        self.reload();
+                    }
                 } else if (594.0..638.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.toggle_performance_mode_from_settings();
                 } else if logical_height >= 740.0
@@ -1455,6 +1508,11 @@ impl Library {
                 }
                 if (296.0..340.0).contains(&y) && (590.0..970.0).contains(&x) {
                     self.toggle_performance_mode_from_settings();
+                } else if self.touch_keyboard_enabled
+                    && (426.0..470.0).contains(&y)
+                    && (590.0..970.0).contains(&x)
+                {
+                    self.toggle_virtual_controls_from_settings();
                 } else if (382.0..422.0).contains(&y) && (590.0..775.0).contains(&x) {
                     self.toggle_view_mode();
                 } else if (382.0..422.0).contains(&y) && (785.0..970.0).contains(&x) {
@@ -1873,7 +1931,11 @@ impl Library {
                 324.0,
                 40.0,
                 scale,
-                brand::ACCENT_RED,
+                if self.touch_keyboard_enabled && self.virtual_controls_visible {
+                    0x28543F
+                } else {
+                    brand::ACCENT_RED
+                },
             );
             responsive_text_centered(
                 frame,
@@ -1882,7 +1944,15 @@ impl Library {
                 200.0,
                 559.0,
                 small_scale,
-                "ATUALIZAR BIBLIOTECA",
+                if self.touch_keyboard_enabled {
+                    if self.virtual_controls_visible {
+                        "CONTROLES DE TOQUE: ATIVOS"
+                    } else {
+                        "CONTROLES DE TOQUE: OCULTOS"
+                    }
+                } else {
+                    "ATUALIZAR BIBLIOTECA"
+                },
                 brand::TEXT,
             );
             if logical_height >= 640.0 {
@@ -2974,7 +3044,15 @@ impl Library {
             }
             LibraryPage::Settings => {
                 responsive_panel(
-                    frame, width, height, 128.0, 112.0, 842.0, 318.0, scale, 0x21152F,
+                    frame,
+                    width,
+                    height,
+                    128.0,
+                    112.0,
+                    842.0,
+                    if self.touch_keyboard_enabled { 362.0 } else { 318.0 },
+                    scale,
+                    0x21152F,
                 );
                 responsive_text(
                     frame,
@@ -3268,6 +3346,37 @@ impl Library {
                     },
                     brand::TEXT,
                 );
+                if self.touch_keyboard_enabled {
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        590.0,
+                        426.0,
+                        380.0,
+                        40.0,
+                        scale,
+                        if self.virtual_controls_visible {
+                            0x28543F
+                        } else {
+                            0x2D1A3B
+                        },
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        780.0,
+                        439.0,
+                        text_scale,
+                        if self.virtual_controls_visible {
+                            "CONTROLES DE TOQUE: ATIVOS"
+                        } else {
+                            "CONTROLES DE TOQUE: OCULTOS"
+                        },
+                        brand::TEXT,
+                    );
+                }
             }
             LibraryPage::Games
             | LibraryPage::Favorites
