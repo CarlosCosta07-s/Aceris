@@ -113,3 +113,9 @@ Cada relatório cobre cinco segundos e usa até 300 amostras recentes. Os campos
 - `frames_not_presented`: tentativas de renderização sem apresentação concluída.
 
 A primeira janela pode incluir a inicialização fria do presenter e do driver. Compare relatórios subsequentes e anote aparelho, SoC, GPU/driver, perfil e duração do ensaio. Essa telemetria mede o caminho host; ela não altera clock, timers, orçamento de instruções, resolução guest ou temporização do 3DS.
+
+## Caminho de cópia CPU contíguo (27/11/2026)
+
+O fallback `ANativeWindow` agora detecta buffers com stride exatamente igual à largura do frame e dimensões idênticas. Nesse caso, copia o frame RGBA inteiro em uma operação; em buffers com padding ou dimensões recortadas, mantém a cópia por linha.
+
+Esse caminho só atua quando o presenter GPU não está sendo usado. Para testá-lo, registre o backend selecionado no log e faça um ensaio com presenter GPU e outro com fallback CPU, mantendo o mesmo aparelho, jogo, resolução e sequência de entrada. Não considere o build ARM64 como evidência de aceleração: a cópia ainda precisa ser medida em hardware físico.
