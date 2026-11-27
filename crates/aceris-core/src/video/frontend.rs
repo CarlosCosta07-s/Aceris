@@ -938,10 +938,11 @@ mod tests {
         };
         assert!(difference(&half, &original) > 0);
         assert!(difference(&half, &original) < difference(&full, &original));
-        assert!(half
-            .chunks_exact(4)
-            .zip(original.chunks_exact(4))
-            .all(|(actual, expected)| actual[3] == expected[3]));
+        assert!(
+            half.chunks_exact(4)
+                .zip(original.chunks_exact(4))
+                .all(|(actual, expected)| actual[3] == expected[3])
+        );
     }
 
     #[test]
