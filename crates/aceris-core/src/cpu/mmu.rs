@@ -1315,7 +1315,7 @@ impl Arm11Core {
                     self.execute_thumb(&mut mmu, instruction)
                         .map(|event| (event, THUMB_INSTRUCTION_SIZE))
                 } else {
-                    self.execute_arm(&mut mmu, instruction)
+                    self.execute_arm_cached(&mut mmu, instruction)
                         .map(|event| (event, ARM_INSTRUCTION_SIZE))
                 };
                 let (mut event, size) = match execution {
