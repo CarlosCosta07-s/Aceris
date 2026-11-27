@@ -12629,11 +12629,17 @@ mod tests {
         );
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0004_0002]);
         run_one_ipc_svc(&mut system);
-        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0004_0040, 0]);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0004_0040, 0]
+        );
         assert!(system.ndm.daemon_lock_enabled);
         let reply = write_tls_ipc_request(&mut system, ndm, &[0x0005_0002]);
         run_one_ipc_svc(&mut system);
-        assert_eq!(read_tls_ipc_response(&mut system, reply, 2), [0x0005_0040, 0]);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0005_0040, 0]
+        );
         assert!(!system.ndm.daemon_lock_enabled);
 
 
