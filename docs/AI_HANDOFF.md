@@ -2874,3 +2874,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O teste diferencial `direct_virtual_overlay_matches_full_frame_reference` inclui 64×48 além dos tamanhos portrait/landscape já exercitados e compara o frame resultante pixel a pixel com a composição de overlay em tela inteira.
 - Commit: `e7f29c876aed64b3de1ca2a4c101b6f4c47825ef`. A equivalência automatizada precisa ser confirmada pela CI; ainda não há medição em aparelho Android.
 - Ambas as otimizações atuam somente na apresentação host. Não alteram instruções, cache, temporização, frame pacing ou estado guest; nenhuma dependência, ROM, firmware, chave ou asset foi adicionado.
+
+## Android — reutilizar buffer de eventos multitouch (27/11/2026, ChatGPT)
+
+- `frontends/android/src/native_activity.rs` mantém um `Vec<Pointer>` de scratch durante toda a thread da aplicação e o reutiliza em `poll_looper`/`drain_input`/`handle_motion`, evitando criar um vetor temporário novo a cada evento de movimento.
+- `MOTION_ACTION_POINTER_UP` remove o ponteiro levantado in-place (`Vec::remove`) em vez de coletar um segundo vetor filtrado. `MOTION_ACTION_CANCEL` limpa o scratch e libera os ponteiros da App sem ler coordenadas que seriam descartadas.
+- O estado de toque entregue a `App::set_pointers` permanece o mesmo e a ordem dos demais ponteiros é preservada. A App ainda atualiza sua estrutura interna de ponteiros; esta mudança elimina apenas as alocações intermediárias do adaptador Android.
+- Commit da reutilização: `1dc201763e5286bfa5fc615693c1f8e28f66122c`; cancelamento antecipado: `cdd4cda2f2591475b7dd1b09b177c3fe1bd12ad6`.
+- Sem teste em dispositivo físico ou medição de latência de toque nesta revisão. A compilação Android ARM64/CI ainda precisa confirmar o estado final.
