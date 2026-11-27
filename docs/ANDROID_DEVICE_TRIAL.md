@@ -1,6 +1,6 @@
 # Teste do Aceris em aparelho Android
 
-> Guia de teste inicial. Estado do repositório consultado em 25/11/2026. O APK é de desenvolvimento, arm64-v8a, assinado com chave descartável gerada no CI. A compilação/assinatura não equivale a um teste em dispositivo físico.
+> Guia de teste inicial. Estado do repositório consultado em 27/11/2026. O APK é de desenvolvimento, arm64-v8a, assinado com chave descartável gerada no CI. A compilação/assinatura não equivale a um teste em dispositivo físico.
 
 ## APK de teste
 
@@ -31,16 +31,16 @@ O frontend Android atual procura os jogos na pasta `games` dentro do diretório 
 /storage/emulated/0/Android/data/org.aceris.emulator/files/games/
 ```
 
-Crie a pasta `games` e coloque diretamente nela um arquivo de jogo/homebrew que você tenha direito de usar, com extensão `.3ds`, `.cci` ou `.3dsx`. A biblioteca Android atual só lista esses três formatos e não pesquisa subpastas. Embora o núcleo tenha testes headless com CIA NoCrypto, a biblioteca visual ainda não lista arquivos `.cia`; portanto, não use CIA para este primeiro teste da interface. O pacote não inclui jogos, firmware, chaves, ROMs ou dados extraídos.
+Crie a pasta `games` e coloque diretamente nela um arquivo que você tenha direito de usar, com extensão `.3ds`, `.cci`, `.cia` ou `.3dsx`. A NativeActivity usa a biblioteca compartilhada do Aceris, cujo scanner já lista os quatro formatos; a extensão é apenas um filtro de nome e não valida o conteúdo. O carregamento normal atual aceita `.3ds`/`.cci` NCSD sem criptografia, `.cia` cujo conteúdo de boot esteja em claro e cujo NCCH use NoCrypto, e `.3dsx` homebrew. Arquivos NCSD/CIA criptografados exigem material de chave fornecido pelo usuário: existem rotinas internas para isso, mas elas ainda não estão integradas ao fluxo de lançamento da interface Android. Portanto, um dump comercial criptografado pode aparecer na biblioteca e mesmo assim não iniciar. O pacote não inclui jogos, firmware, chaves, ROMs ou dados extraídos.
 
 O frontend atual ainda não oferece um seletor SAF de arquivos dentro do app. Se o gerenciador de arquivos do Android bloquear o acesso a `Android/data`, conecte o telefone a um computador com ADB e use:
 
 ```sh
 adb shell mkdir -p /sdcard/Android/data/org.aceris.emulator/files/games
-adb push "SEU_ARQUIVO.cci" /sdcard/Android/data/org.aceris.emulator/files/games/
+adb push "SEU_ARQUIVO.3ds" /sdcard/Android/data/org.aceris.emulator/files/games/
 ```
 
-Substitua `SEU_ARQUIVO.cci` pelo caminho de um CCI/3DS compatível no computador (ou use `.3dsx`). Não use `.cia` neste primeiro teste: o loader central aceita CIA NoCrypto, mas o scanner da biblioteca ainda não lista essa extensão. Não renomeie a extensão para contornar a lista. Não envie o arquivo de jogo ao GitHub ou ao workflow.
+Substitua `SEU_ARQUIVO.3ds` pelo caminho do seu arquivo local. Você também pode copiar `.cci`, `.cia` ou `.3dsx`; todos aparecem na biblioteca. Para um primeiro teste de execução sem configurar chaves, prefira um NCSD `.3ds`/`.cci` sem criptografia ou um CIA de conteúdo claro com NCCH NoCrypto. Um CIA ou NCSD criptografado poderá ser listado, mas falhará no lançamento normal até o frontend integrar as chaves que você fornece. Não renomeie a extensão para contornar validação. Não envie o arquivo de jogo nem chaves ao GitHub ou ao workflow.
 
 ## Coleta de diagnóstico
 
