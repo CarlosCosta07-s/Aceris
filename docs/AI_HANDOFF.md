@@ -2778,3 +2778,14 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - O modelo preciso de D-cache continua sendo o padrão. A memória rápida é opcional, via `System::set_fast_memory(true)`, destinada ao preset "Desempenho" do `PERFORMANCE_LOW_END_PLAN.md`. O despacho rápido preserva a semântica e fica ligado por padrão.
 - `Arm11Core::run_fast` e `Arm11ProcessSession::run_fast_chunk` implementam o laço rápido; `set_fast_dispatch(false)` força o passo preciso para diagnóstico. A variável `ACERIS_WATCH_PC` também força o passo preciso.
 - Sonda: de ~20 para ~36 M instruções/s no padrão e ~41 M com memória rápida. Detalhes e próximos passos em `docs/PERFORMANCE_TESTING.md`.
+
+## Desempenho — despacho em lote com MMU ativa (27/11/2026, ChatGPT)
+
+- A sessão do ARM11 agora usa `Arm11Core::run_fast_translated` quando `SCTLR.M` está ativa. O lote segura um `MmuBus` e a TLB durante várias instruções, evitando reconstruir o adaptador e retirar/restaurar a TLB a cada instrução.
+- A tradução virtual→física e a checagem de permissões continuam ocorrendo em cada fetch e acesso de dados. O lote atualiza a condição de privilégio após mudanças de modo; CP15, eventos e acessos ao espaço de registradores GIC/timer/SCU entregam o controle ao caminho preciso.
+- `MmuBus` encaminha `take_interrupt_state_touched` ao barramento real para que um acesso de dispositivo encerre o lote no ponto arquitetural correto.
+- Testes diferenciais em `crates/aceris-core/src/cpu/mmu.rs`: bloco ARM com `STR/LDR` traduzidos, bloco Thumb, retorno em SVC e handoff antes de MCR CP15. O caso de CP15 inicializa `r1` com ACTLR.SMP para testar a alteração real.
+- Arquivos de produto tocados: `crates/aceris-core/src/cpu/mod.rs` e `crates/aceris-core/src/cpu/mmu.rs`. Nenhum código externo, dependência, ROM, firmware, chave ou asset foi adicionado; trabalho feito diretamente em `main`.
+- **Desempenho ainda não medido para SCTLR.M ativo.** A sonda `session_loop_throughput` usa `Arm11Core` com `SCTLR.M` no valor de reset desligado; os antigos resultados de −32%/−39% são do caminho sintético sem MMU e não podem ser atribuídos a esta otimização.
+- Validação da revisão `731e7e9`: Linux/Ubuntu passou `cargo fmt`, build workspace, testes completos, benchmark example, Clippy e benchmarks auxiliares; o job Android ARM64 compilou o app, benchmark e `memory_profile`. macOS e Windows estavam terminando as últimas etapas quando esta nota foi escrita; confirmar os jobs no Actions antes de marcar a revisão como multiplataforma aprovada.
+- Próximo passo medido: criar sonda release com MMU ativa, tabelas de página válidas e bloco ARM/Thumb de load/store/ALU, comparar passo preciso versus lote com contagem idêntica e então avançar para cache de blocos pré-decodificados.
