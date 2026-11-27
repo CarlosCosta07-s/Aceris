@@ -947,8 +947,7 @@ mod tests {
         assert_eq!((normal_a.x, normal_a.y), (large_a.x, large_a.y));
         assert!(large_a.radius > normal_a.radius);
 
-        let between_radii =
-            (normal_a.x + (normal_a.radius + large_a.radius) * 0.5).round() as i32;
+        let between_radii = (normal_a.x + (normal_a.radius + large_a.radius) * 0.5).round() as i32;
         let center_y = normal_a.y.round() as i32;
         assert_eq!(
             hit_test_virtual_control_with_size(
