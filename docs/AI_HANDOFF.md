@@ -2993,3 +2993,24 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Fronteiras preservadas: nenhuma alteração em CPU/Thumb, GPU/PICA, SVC, DSP/CSND, ou código reservado a Claude; sem dependências novas, ativos, ROMs, firmware, chaves ou dados derivados. Somente `main`.
 
 - Revisão final adicional: o carregamento agora trata erro de leitura do arquivo v2 de forma conservadora (padrões seguros; não ressuscita v1 quando v2 existe mas não pode ser lido), e testes foram acrescentados para alteração global quando GameIdentity é None e herança da orientação sem override. Commits: `81c1018` formatação do parser/testes; `f70c5d2` leitura v2 não acessível retorna a padrões seguros; `cb1f8e7` testes de fallback global/herança por orientação.
+
+## Interface — profundidade dos painéis da biblioteca (27/11/2026, ChatGPT)
+
+- crates/aceris-core/src/video/library.rs: responsive_panel agora desenha uma sombra deslocada, borda violeta, preenchimento existente, brilho superior discreto e borda inferior escura. A alteração é compartilhada pelas telas de Home, biblioteca e configurações que usam o primitivo.
+- O tamanho lógico, posições, hit targets, navegação e estado da biblioteca não foram alterados. Não foram adicionados gradientes, assets ou dependências.
+- Teste novo: responsive_panels_render_shadow_outline_and_depth_highlights, verificando as cores no buffer RGBA. A CI ainda precisa executar os testes; a verificação de Rustfmt do workspace continua bloqueada por diferenças em arquivos de CPU e trechos anteriores de library.rs que não foram modificados nesta etapa.
+- Commits: 63879b5 (estilo) e 0f2718d (ajuste da amostragem no teste).
+
+## Save states — contêiner versionado e tabela de seções (27/11/2026, ChatGPT)
+
+- crates/aceris-core/src/save_state.rs implementa o envelope ACRSTATE v1 com identidade de conteúdo, Title ID opcional, frame, tempo virtual, limite de 512 MiB e CRC-32.
+- A tabela interna ACRPAYLD separa o payload em até 32 seções. Cada seção tem ID e versão não-zero, tamanho, CRC-32 e flags reservadas. IDs duplicados, seções truncadas, flags desconhecidas, tamanhos fora do limite e checksum inválido são rejeitados. A ordem de inserção é mantida para arquivos reproduzíveis.
+- Foram adicionados testes para round-trip, identidade homebrew sem Title ID, corrupção, truncamento, IDs duplicados e limite de seções.
+- docs/SAVE_STATE_ARCHITECTURE.md registra a distinção entre saves do jogo e save states e mantém explícito que ainda não existe captura/restauração integral de System, serialização dos componentes, escrita dos slots nem integração Save/Load à UI.
+- Commits: 42a649c (envelope), b8b141c (seções), 0b5e07b (Rustfmt) e 2b22245 (documentação). A execução de CI deve confirmar build/testes; o CI observado nesta sessão ainda é interrompido por Rustfmt em arquivos paralelos de CPU/biblioteca, não por save_state.rs.
+
+## Áudio — caminho de aquisição do serviço DSP (27/11/2026, ChatGPT)
+
+- crates/aceris-core/src/system.rs: teste service_manager_gets_dsp_handle_and_dispatches_first_request solicita dsp::DSP por srv:GetServiceHandle com ACL autorizada, valida o tipo do handle retornado e envia a primeira requisição ao endpoint DSP.
+- O teste cobre o caminho de aquisição de serviço, não o Sound.init do homebrew, a inicialização do componente DSP completo nem saída audível em hardware. Permanecem necessários trace de execução real e teste físico.
+- Commit: 6fc100f.
