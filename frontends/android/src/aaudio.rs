@@ -29,17 +29,36 @@ type SetI32Fn = unsafe extern "C" fn(*mut c_void, i32);
 type OpenStreamFn = unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32;
 type BuilderDeleteFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type StreamFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type StreamStateFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type WaitForStateChangeFn =
+    unsafe extern "C" fn(*mut c_void, i32, *mut i32, i64) -> i32;
 type WriteFn = unsafe extern "C" fn(*mut c_void, *const c_void, i32, i64) -> i32;
+
+const AAUDIO_OK: i32 = 0;
+const STREAM_STATE_STARTING: i32 = 3;
+const STREAM_STATE_STARTED: i32 = 4;
+const STREAM_STATE_PAUSING: i32 = 5;
+const STREAM_STATE_PAUSED: i32 = 6;
+const STREAM_STATE_FLUSHING: i32 = 7;
+const STREAM_STATE_FLUSHED: i32 = 8;
+const STREAM_STATE_STOPPED: i32 = 10;
+const STATE_CHANGE_TIMEOUT_NANOS: i64 = 100_000_000;
 
 /// Plays the DSP's mixed audio on the default output device.
 pub struct AAudioOutput {
     library: *mut c_void,
     stream: *mut c_void,
     write: WriteFn,
+    start: StreamFn,
+    pause: StreamFn,
+    flush: StreamFn,
+    get_state: StreamStateFn,
+    wait_for_state_change: WaitForStateChangeFn,
     close: StreamFn,
     resampler: Resampler,
     resampled: Vec<i16>,
     muted: bool,
+    paused: bool,
     game_usage: bool,
 }
 
@@ -93,6 +112,11 @@ impl AAudioOutput {
         let open_stream: OpenStreamFn = load(library, "AAudioStreamBuilder_openStream")?;
         let delete_builder: BuilderDeleteFn = load(library, "AAudioStreamBuilder_delete")?;
         let start: StreamFn = load(library, "AAudioStream_requestStart")?;
+        let pause: StreamFn = load(library, "AAudioStream_requestPause")?;
+        let flush: StreamFn = load(library, "AAudioStream_requestFlush")?;
+        let get_state: StreamStateFn = load(library, "AAudioStream_getState")?;
+        let wait_for_state_change: WaitForStateChangeFn =
+            load(library, "AAudioStream_waitForStateChange")?;
         let write: WriteFn = load(library, "AAudioStream_write")?;
         let close: StreamFn = load(library, "AAudioStream_close")?;
 
@@ -129,12 +153,107 @@ impl AAudioOutput {
             library,
             stream,
             write,
+            start,
+            pause,
+            flush,
+            get_state,
+            wait_for_state_change,
             close,
             resampler: Resampler::new(System::audio_sample_rate(), OUTPUT_RATE),
             resampled: Vec::new(),
             muted: false,
+            paused: false,
             game_usage,
         })
+    }
+
+    /// Waits for one asynchronous AAudio transition to leave its transient state.
+    fn wait_for_transition(&self, transient: i32, operation: &str) -> Result<i32, String> {
+        // SAFETY: the stream is open and owned by this output object.
+        let mut state = unsafe { (self.get_state)(self.stream) };
+        if state == transient {
+            let mut next_state = state;
+            // SAFETY: the stream is live; the output pointer is a valid local.
+            let status = unsafe {
+                (self.wait_for_state_change)(
+                    self.stream,
+                    transient,
+                    &mut next_state,
+                    STATE_CHANGE_TIMEOUT_NANOS,
+                )
+            };
+            // Re-read the state even after timeout: the transition may have
+            // completed at the boundary of the wait.
+            // SAFETY: the stream remains open on this app thread.
+            state = unsafe { (self.get_state)(self.stream) };
+            if status != AAUDIO_OK && state == transient {
+                return Err(format!(
+                    "AAudio {operation} did not finish before the state-change timeout"
+                ));
+            }
+        }
+        Ok(state)
+    }
+
+    /// Pauses the output and discards queued samples; resumes from a clean queue.
+    ///
+    /// AAudio state changes are asynchronous, so each transition is observed
+    /// before requesting the next one. This method is called only by the
+    /// Android app thread, never by an audio callback.
+    pub fn set_paused(&mut self, paused: bool) -> Result<(), String> {
+        let mut state = {
+            // SAFETY: the stream is open and owned by this output object.
+            unsafe { (self.get_state)(self.stream) }
+        };
+
+        if paused {
+            if state == STREAM_STATE_STARTING {
+                state = self.wait_for_transition(STREAM_STATE_STARTING, "start")?;
+            }
+            if state == STREAM_STATE_STARTED {
+                // SAFETY: requestPause is valid for this output stream.
+                let status = unsafe { (self.pause)(self.stream) };
+                if status != AAUDIO_OK {
+                    return Err(format!("AAudio requestPause failed (error {status})"));
+                }
+                state = self.wait_for_transition(STREAM_STATE_PAUSING, "pause")?;
+            } else if state == STREAM_STATE_PAUSING {
+                state = self.wait_for_transition(STREAM_STATE_PAUSING, "pause")?;
+            }
+
+            if state == STREAM_STATE_PAUSED {
+                // SAFETY: requestFlush is valid after the output has reached PAUSED.
+                let status = unsafe { (self.flush)(self.stream) };
+                if status != AAUDIO_OK {
+                    return Err(format!("AAudio requestFlush failed (error {status})"));
+                }
+                state = self.wait_for_transition(STREAM_STATE_FLUSHING, "flush")?;
+            }
+            if state != STREAM_STATE_FLUSHED {
+                return Err(format!("AAudio cannot pause from stream state {state}"));
+            }
+            self.paused = true;
+        } else {
+            if state == STREAM_STATE_STARTING {
+                state = self.wait_for_transition(STREAM_STATE_STARTING, "start")?;
+            }
+            if state == STREAM_STATE_FLUSHED
+                || state == STREAM_STATE_PAUSED
+                || state == STREAM_STATE_STOPPED
+            {
+                // SAFETY: requestStart resumes a paused/flushed output stream.
+                let status = unsafe { (self.start)(self.stream) };
+                if status != AAUDIO_OK {
+                    return Err(format!("AAudio requestStart failed (error {status})"));
+                }
+                state = self.wait_for_transition(STREAM_STATE_STARTING, "resume")?;
+            }
+            if state != STREAM_STATE_STARTED {
+                return Err(format!("AAudio cannot resume from stream state {state}"));
+            }
+            self.paused = false;
+        }
+        Ok(())
     }
 
     /// Mutes only the emulator's output while keeping the stream clock alive.
@@ -149,7 +268,7 @@ impl AAudioOutput {
 
     /// Queues interleaved stereo samples (core rate) without blocking.
     pub fn feed(&mut self, samples: &[i16]) {
-        if samples.is_empty() {
+        if self.paused || samples.is_empty() {
             return;
         }
         self.resampled.clear();
@@ -166,7 +285,18 @@ impl AAudioOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::mute_samples;
+    use super::{STREAM_STATE_FLUSHED, STREAM_STATE_PAUSED, STREAM_STATE_STARTED, mute_samples};
+
+    fn is_silent_queue_state(state: i32) -> bool {
+        state == STREAM_STATE_PAUSED || state == STREAM_STATE_FLUSHED
+    }
+
+    #[test]
+    fn only_paused_or_flushed_streams_are_treated_as_silent_queue_states() {
+        assert!(is_silent_queue_state(STREAM_STATE_PAUSED));
+        assert!(is_silent_queue_state(STREAM_STATE_FLUSHED));
+        assert!(!is_silent_queue_state(STREAM_STATE_STARTED));
+    }
 
     #[test]
     fn muting_keeps_a_silent_buffer_with_the_same_length() {
