@@ -115,6 +115,11 @@ impl App {
         self.audio = samples;
     }
 
+    /// True while the quick menu is open and guest audio must not reach the host.
+    pub fn is_game_menu_open(&self) -> bool {
+        matches!(self.screen(), Screen::GameMenu)
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn screen(&self) -> &Screen {
         &self.screen
@@ -1123,9 +1128,11 @@ mod tests {
         assert_eq!(app.system.as_mut().unwrap().input_mut().snapshot().held, 0);
         assert!(app.key(AKEYCODE_BACK, true));
         assert!(matches!(app.screen(), Screen::GameMenu));
+        assert!(app.is_game_menu_open());
         assert!(app.system.is_some());
         assert!(app.key(AKEYCODE_BACK, true));
         assert!(matches!(app.screen(), Screen::Game));
+        assert!(!app.is_game_menu_open());
         assert!(app.system.is_some());
         fs::remove_dir_all(dir).ok();
     }
