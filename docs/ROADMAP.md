@@ -482,3 +482,12 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [ ] Confirmar Rustfmt, testes e builds do frontend nos alvos Linux, Windows e macOS.
 - [ ] Comparar Vulkan, OpenGL e fallback CPU em PC físico release; registrar CPU, GPU, driver, escala e modo de energia.
 - [ ] Usar as medições para orientar futuros perfis `Baixo consumo` e `Desempenho`; não alterar V-Sync, power preference ou limite de FPS sem A/B em hardware.
+
+### Otimizações rápidas de apresentação host PC/Android (27/11/2026)
+
+- [x] Desktop: especializar a composição em escala nativa `1×` com conversão RGBA→BGRX por linha; preservar o caminho genérico para escalas maiores.
+- [x] Android: usar cópia única no fallback CPU quando `ANativeWindow` apresenta largura, altura e stride idênticos ao frame; manter o caminho linha a linha para stride com padding/recorte.
+- [x] Agrupar os tempos da telemetria desktop em `DesktopFrameTimings` para remover o excesso de argumentos sem mudar as medições.
+- [ ] Validar o HEAD resultante com Rustfmt, testes da composição, builds desktop e APK ARM64. O último Clippy conhecido ainda apontava também um aviso em `crates/aceris-core/src/cpu/decode_cache.rs`, arquivo de outro agente; não modificar sem autorização.
+- [ ] Comparar em PC e Android físicos, builds release, com telemetria e backend identificados. Não há ganho de FPS confirmado por estas especializações.
+- [ ] Manter como prioridade seguinte a sonda release da sessão completa com MMU ativa; só depois decidir sobre cache de blocos ARM/Thumb e invalidação de código.
