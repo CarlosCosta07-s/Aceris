@@ -3052,3 +3052,12 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 
 - Follow-up de vínculo: `SaveStateStore` agora expõe wrappers por caminho e leitor que calculam SHA-256 da imagem e comparam a identidade ao estado antes de salvar/carregar. Adicionados testes de renomeação com bytes idênticos, recusa de imagem diferente e preservação do cursor. Commit: `3d280ef`. Os testes desse último commit aguardam o CI.
 - Correção de estado: a identidade por SHA-256 agora está ligada à API do armazenamento; ainda não está integrada automaticamente aos loaders nem à rotina de snapshot `System`. Evitar afirmar que o frontend já usa essa identidade até existir integração explícita.
+
+
+## Correção e validação do SHA-256 de save states (27/11/2026, ChatGPT)
+
+- A primeira execução de `cargo test --workspace` no Ubuntu encontrou três falhas nos testes do novo módulo de identidade SHA-256. A investigação isolou uma constante de rodada digitada incorretamente: `0x983e_51a2` em vez de `0x983e_5152`.
+- Corrigido no commit `f3a5f51`. O commit `e60f177` acrescentou testes de preenchimento nos limites de 55, 56, 63, 64 e 65 bytes, além dos vetores conhecidos e do teste em 1 MB.
+- CI do commit `e60f177`: Rustfmt e build do workspace passaram no Ubuntu; `cargo test --workspace` e o benchmark de testes do core passaram no Ubuntu. O build Android ARM64 concluiu. Na última consulta, macOS e Windows ainda executavam `cargo test --workspace`, e Ubuntu continuava no benchmark release/Clippy audit. Não registrar a matriz completa como aprovada até todos os jobs terminarem.
+- O SHA-256 foi implementado sem dependência adicional e continua sujeito aos testes de referência; nunca remover ou enfraquecer esses testes para ocultar falhas.
+- A camada de identidade e armazenamento permanece independente do snapshot integral de `System`. Save/Load na interface continua bloqueado até captura/restauração completa, safe point e validação cruzada de todos os subsistemas.
