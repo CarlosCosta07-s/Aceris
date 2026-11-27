@@ -13,7 +13,7 @@ use aceris_common::Result;
 /// One conditionally executed guest instruction in the intermediate stream.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct IrInstruction {
-    pub(super) condition: u8,
+    pub(super) condition: Condition,
     /// Original encoding retained only for architectural fault diagnostics.
     /// Native IR execution never decodes this word again.
     pub(super) diagnostic_word: u32,
@@ -22,7 +22,7 @@ pub(super) struct IrInstruction {
 
 impl IrInstruction {
     pub(super) const EMPTY: Self = Self {
-        condition: 0xF,
+        condition: Condition::Unconditional,
         diagnostic_word: u32::MAX,
         operation: IrOperation::A32Fallback(Entry {
             word: u32::MAX,
@@ -37,6 +37,16 @@ impl IrInstruction {
     /// no longer retain the original guest instruction word in the IR.
     pub(super) fn lower(entry: Entry) -> Self {
         let operation = match entry.op {
+            FastOp::DpImm {
+                opcode,
+                set_flags: false,
+                rd,
+                imm,
+                ..
+            } if opcode == 0xD || opcode == 0xF => IrOperation::LoadImmediate {
+                rd,
+                value: if opcode == 0xD { imm } else { !imm },
+            },
             FastOp::DpImm {
                 opcode,
                 set_flags,
@@ -219,7 +229,7 @@ impl IrInstruction {
             FastOp::Generic => IrOperation::A32Fallback(entry),
         };
         Self {
-            condition: entry.condition,
+            condition: Condition::from_bits(entry.condition),
             diagnostic_word: entry.word,
             operation,
         }
@@ -229,6 +239,8 @@ impl IrInstruction {
 /// Operations in the first executable tier of the Aceris ARM11 IR.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum IrOperation {
+    /// Direct register load after folding a MOV/MVN immediate with no flag update.
+    LoadImmediate { rd: u8, value: u32 },
     /// ALU operation with a fully decoded immediate operand.
     AluImmediate {
         opcode: u8,
@@ -346,11 +358,15 @@ impl Arm11Core {
         bus: &mut B,
         instruction: IrInstruction,
     ) -> Result<StepEvent> {
-        if !Condition::from_bits(instruction.condition).passes(self.cpsr) {
+        if !instruction.condition.passes(self.cpsr) {
             return Ok(StepEvent::Executed);
         }
 
         match instruction.operation {
+            IrOperation::LoadImmediate { rd, value } => {
+                self.regs[usize::from(rd)] = value;
+                Ok(StepEvent::Executed)
+            }
             IrOperation::AluImmediate {
                 opcode,
                 set_flags,
@@ -605,13 +621,36 @@ mod tests {
         };
 
         let lowered = IrInstruction::lower(entry);
-        assert_eq!(lowered.condition, 0xE);
+        assert_eq!(lowered.condition, Condition::Al);
         assert!(matches!(
             lowered.operation,
-            IrOperation::AluImmediate {
-                opcode: 0xD,
-                immediate: 7,
+            IrOperation::LoadImmediate {
+                value: 7,
                 ..
+            }
+        ));
+    }
+
+    #[test]
+    fn lowers_mvn_immediate_without_changing_flags() {
+        let entry = Entry {
+            word: 0xE3E0_0007, // MVN r0, #7
+            condition: 0xE,
+            op: FastOp::DpImm {
+                opcode: 0xF,
+                set_flags: false,
+                rn: 0,
+                rd: 0,
+                imm: 7,
+                imm_carry: Some(false),
+            },
+        };
+        let lowered = IrInstruction::lower(entry);
+        assert!(matches!(
+            lowered.operation,
+            IrOperation::LoadImmediate {
+                rd: 0,
+                value: 0xFFFF_FFF8
             }
         ));
     }
