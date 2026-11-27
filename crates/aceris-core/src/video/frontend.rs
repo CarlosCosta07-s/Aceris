@@ -749,8 +749,11 @@ pub fn hit_test_virtual_control_with_positions(
     }
     let x = x as f32;
     let y = y as f32;
+    // Rendering gives later shapes priority when circles overlap, so hit testing
+    // must inspect the same order from front to back.
     button_shapes_with_positions(width, height, orientation, size_percent, preset, positions)
         .into_iter()
+        .rev()
         .find(|shape| {
             let dx = x - shape.x;
             let dy = y - shape.y;
@@ -1649,6 +1652,41 @@ mod tests {
         assert_eq!(decoded, VirtualControlPositions::default());
         assert_eq!(decoded.size_percent(ORIENTATION_PORTRAIT, buttons::A), 100);
         assert_eq!(decoded.size_percent(ORIENTATION_LANDSCAPE, buttons::A), 100);
+    }
+
+    #[test]
+    fn overlapping_resized_buttons_follow_overlay_draw_order_for_hit_testing() {
+        let (width, height) = (480, 800);
+        let mut positions = VirtualControlPositions::default();
+        assert!(positions.set_size_percent(ORIENTATION_PORTRAIT, buttons::A, 150));
+        let shapes = button_shapes_with_positions(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
+        );
+        let a = shapes.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        let b = shapes.iter().find(|shape| shape.bit == buttons::B).unwrap();
+        let overlap_x = ((a.x + b.x) * 0.5).round() as i32;
+        let overlap_y = ((a.y + b.y) * 0.5).round() as i32;
+
+        assert!(overlap_x as f32 - a.x < a.radius);
+        assert!(overlap_y as f32 - a.y < a.radius);
+        assert_eq!(
+            hit_test_virtual_control_with_positions(
+                width,
+                height,
+                overlap_x,
+                overlap_y,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::Standard,
+                &positions,
+            ),
+            buttons::B
+        );
     }
 
     #[test]
