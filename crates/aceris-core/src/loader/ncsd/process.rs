@@ -1867,6 +1867,33 @@ pub struct Arm11MemoryUsageReport {
 }
 
 impl Arm11CodeAddressSpace {
+    /// Adds every shared backing reachable from this address space to a
+    /// machine-wide catalog. Repeated aliases resolve to the same root slot.
+    pub(crate) fn collect_shared_backings(
+        &self,
+        catalog: &mut SharedMemoryBackingCatalog,
+    ) -> Result<(), SharedMemoryStateError> {
+        for region in &self.dynamic_regions {
+            catalog.register(region.backing.backing_ref())?;
+        }
+        for region in &self.shared_regions {
+            catalog.register(&region.backing)?;
+        }
+        for key in self.data_cache.keys() {
+            if let Some(line) = self.data_cache.get(key) {
+                if let DataCacheTarget::Backing { backing, .. } = &line.target {
+                    catalog.register(backing)?;
+                }
+            }
+        }
+        for entry in &self.write_buffer {
+            if let DataCacheTarget::Backing { backing, .. } = &entry.target {
+                catalog.register(backing)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Creates a segmented address space from a verified prepared executable.
     pub fn from_prepared(
         prepared: PreparedArm11Image,
