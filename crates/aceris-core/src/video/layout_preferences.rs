@@ -6,8 +6,8 @@
 
 use super::frontend::ScreenLayoutMode;
 use crate::game_identity::GameIdentity;
-use std::{collections::BTreeMap, fs};
 use std::path::Path;
+use std::{collections::BTreeMap, fs};
 
 /// One layout profile for a particular surface orientation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,7 +74,8 @@ impl ScreenLayoutPreferences {
             Err(_) => {}
         }
 
-        let Ok(legacy_contents) = fs::read_to_string(settings_directory.join(LEGACY_FILE_NAME)) else {
+        let Ok(legacy_contents) = fs::read_to_string(settings_directory.join(LEGACY_FILE_NAME))
+        else {
             return Self::default();
         };
         Self::parse(&legacy_contents).unwrap_or_default()
@@ -400,7 +401,10 @@ mod tests {
             reopened.profile_for_game(Some(second), 1080, 2400).mode,
             ScreenLayoutMode::TopOnly
         );
-        assert_eq!(reopened.profile_for_game(None, 1080, 2400), reopened.portrait);
+        assert_eq!(
+            reopened.profile_for_game(None, 1080, 2400),
+            reopened.portrait
+        );
         fs::remove_dir_all(directory).ok();
     }
 
@@ -463,10 +467,7 @@ mod tests {
         preferences.set_profile_for_game(None, 1080, 2400, custom);
 
         assert_eq!(preferences.portrait, custom);
-        assert_eq!(
-            preferences.profile_for_game(None, 1080, 2400),
-            custom
-        );
+        assert_eq!(preferences.profile_for_game(None, 1080, 2400), custom);
         assert!(preferences.game_overrides.is_empty());
     }
 

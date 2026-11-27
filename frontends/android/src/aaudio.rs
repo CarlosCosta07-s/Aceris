@@ -30,8 +30,7 @@ type OpenStreamFn = unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32;
 type BuilderDeleteFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type StreamFn = unsafe extern "C" fn(*mut c_void) -> i32;
 type StreamStateFn = unsafe extern "C" fn(*mut c_void) -> i32;
-type WaitForStateChangeFn =
-    unsafe extern "C" fn(*mut c_void, i32, *mut i32, i64) -> i32;
+type WaitForStateChangeFn = unsafe extern "C" fn(*mut c_void, i32, *mut i32, i64) -> i32;
 type WriteFn = unsafe extern "C" fn(*mut c_void, *const c_void, i32, i64) -> i32;
 
 const AAUDIO_OK: i32 = 0;
@@ -249,7 +248,9 @@ impl AAudioOutput {
                 // SAFETY: requestFlush is valid from PAUSED.
                 let status = unsafe { (self.flush)(self.stream) };
                 if status != AAUDIO_OK {
-                    return Err(format!("AAudio requestFlush before resume failed (error {status})"));
+                    return Err(format!(
+                        "AAudio requestFlush before resume failed (error {status})"
+                    ));
                 }
                 state = self.wait_for_transition(STREAM_STATE_FLUSHING, "flush before resume")?;
             } else if state == STREAM_STATE_FLUSHING {

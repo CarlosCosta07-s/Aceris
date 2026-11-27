@@ -163,11 +163,7 @@ impl Sink for WaveOutSink {
             }
             // SAFETY: reset has returned each queued header; no buffer is playing.
             let status = unsafe {
-                waveOutUnprepareHeader(
-                    self.device,
-                    &mut *slot.header,
-                    size_of::<WaveHdr>() as u32,
-                )
+                waveOutUnprepareHeader(self.device, &mut *slot.header, size_of::<WaveHdr>() as u32)
             };
             if status == MMSYSERR_NOERROR {
                 slot.prepared = false;
@@ -176,7 +172,9 @@ impl Sink for WaveOutSink {
             }
         }
         if let Some(status) = first_error {
-            Err(format!("waveOutUnprepareHeader failed after reset (error {status})"))
+            Err(format!(
+                "waveOutUnprepareHeader failed after reset (error {status})"
+            ))
         } else {
             Ok(())
         }

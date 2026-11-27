@@ -151,12 +151,7 @@ pub fn hit_test_menu_button(width: u32, height: u32, x: i32, y: i32) -> bool {
 }
 
 /// Draws the small in-game menu shortcut used by touch-first frontends.
-pub fn render_menu_button(
-    frame: &mut [u8],
-    width: u32,
-    height: u32,
-    format: PixelFormat,
-) -> bool {
+pub fn render_menu_button(frame: &mut [u8], width: u32, height: u32, format: PixelFormat) -> bool {
     let Some((button, scale)) = menu_button_rect(width, height) else {
         return false;
     };
@@ -441,7 +436,11 @@ pub fn render_confirmation_overlay(
             frame,
             width as usize,
             *row,
-            if is_selected { [166, 29, 61] } else { [54, 36, 70] },
+            if is_selected {
+                [166, 29, 61]
+            } else {
+                [54, 36, 70]
+            },
             if is_selected { 245 } else { 230 },
             format,
         );
@@ -597,7 +596,11 @@ fn render_overlay_with_action_count(
             frame,
             width as usize,
             *row,
-            if is_selected { [166, 29, 61] } else { [54, 36, 70] },
+            if is_selected {
+                [166, 29, 61]
+            } else {
+                [54, 36, 70]
+            },
             if is_selected { 245 } else { 230 },
             format,
         );
@@ -617,18 +620,15 @@ fn render_overlay_with_action_count(
     true
 }
 
-fn draw_border(
-    frame: &mut [u8],
-    width: usize,
-    rect: Rect,
-    thickness: usize,
-    format: PixelFormat,
-) {
+fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, format: PixelFormat) {
     let color = [211, 52, 85];
     blend_rect(
         frame,
         width,
-        Rect { height: thickness, ..rect },
+        Rect {
+            height: thickness,
+            ..rect
+        },
         color,
         255,
         format,
@@ -648,7 +648,10 @@ fn draw_border(
     blend_rect(
         frame,
         width,
-        Rect { width: thickness, ..rect },
+        Rect {
+            width: thickness,
+            ..rect
+        },
         color,
         255,
         format,
@@ -688,9 +691,7 @@ fn blend_rect(
             for channel in 0..3 {
                 let destination = u32::from(frame[at + channel]);
                 frame[at + channel] =
-                    ((u32::from(source[channel]) * u32::from(alpha)
-                        + destination * inverse
-                        + 127)
+                    ((u32::from(source[channel]) * u32::from(alpha) + destination * inverse + 127)
                         / 255) as u8;
             }
             if format == PixelFormat::Rgba8 {
@@ -720,14 +721,7 @@ fn draw_text_for_format(
 ) {
     let color = channel_order(color, format);
     font::draw_text(
-        frame,
-        width,
-        height,
-        x as i32,
-        y as i32,
-        scale,
-        value,
-        color,
+        frame, width, height, x as i32, y as i32, scale, value, color,
     );
 }
 
@@ -758,7 +752,9 @@ mod tests {
                 ("PERFIL DESTE JOGO", PixelFormat::Bgrx8),
             ] {
                 let mut frame = vec![0u8; width as usize * height as usize * 4];
-                assert!(render_overlay_with_profile(&mut frame, width, height, format, 0, label,));
+                assert!(render_overlay_with_profile(
+                    &mut frame, width, height, format, 0, label,
+                ));
                 assert_eq!(frame.len(), width as usize * height as usize * 4);
                 assert!(frame.iter().any(|channel| *channel != 0));
             }
@@ -853,7 +849,10 @@ mod tests {
             ));
             let guide_pixel = (360usize * width as usize + 120) * 4;
             let outside_pixel = (10usize * width as usize + 10) * 4;
-            assert_ne!(&frame[guide_pixel..guide_pixel + 3], &original[guide_pixel..guide_pixel + 3]);
+            assert_ne!(
+                &frame[guide_pixel..guide_pixel + 3],
+                &original[guide_pixel..guide_pixel + 3]
+            );
             assert_eq!(
                 &frame[outside_pixel..outside_pixel + 3],
                 &original[outside_pixel..outside_pixel + 3]
@@ -874,7 +873,12 @@ mod tests {
     fn android_menu_shortcut_has_a_matching_render_and_hit_target() {
         let (width, height) = (2400u32, 1080u32);
         let mut frame = vec![0u8; width as usize * height as usize * 4];
-        assert!(render_menu_button(&mut frame, width, height, PixelFormat::Rgba8));
+        assert!(render_menu_button(
+            &mut frame,
+            width,
+            height,
+            PixelFormat::Rgba8
+        ));
         let mut target = None;
         for y in 0..height as i32 {
             for x in 0..width as i32 {
@@ -916,12 +920,7 @@ mod tests {
                 let mut frame = vec![40u8; width as usize * height as usize * 4];
                 let length = frame.len();
                 assert!(render_confirmation_overlay(
-                    &mut frame,
-                    width,
-                    height,
-                    format,
-                    action,
-                    1,
+                    &mut frame, width, height, format, action, 1,
                 ));
                 assert_eq!(frame.len(), length);
                 assert_ne!(frame, vec![40u8; length]);

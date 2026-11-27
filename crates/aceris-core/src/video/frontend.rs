@@ -173,8 +173,7 @@ impl VirtualControlPositions {
     pub fn size_percent(&self, orientation: u32, button: u32) -> u8 {
         Self::index(button)
             .map(|index| {
-                (100i16 + i16::from(self.size_adjustments(orientation)[index]))
-                    .clamp(60, 150) as u8
+                (100i16 + i16::from(self.size_adjustments(orientation)[index])).clamp(60, 150) as u8
             })
             .unwrap_or(100)
     }
@@ -672,8 +671,8 @@ fn button_shapes_with_positions(
         ORIENTATION_PORTRAIT
     };
     for shape in &mut shapes {
-        let individual_scale = f32::from(positions.size_percent(resolved_orientation, shape.bit))
-            / 100.0;
+        let individual_scale =
+            f32::from(positions.size_percent(resolved_orientation, shape.bit)) / 100.0;
         shape.radius *= individual_scale;
         let offset = positions.offset(resolved_orientation, shape.bit);
         let min_x = shape.radius;
@@ -1044,9 +1043,7 @@ pub fn blend_virtual_pad_overlay_into_with_positions(
                     let later = &shapes[later_index];
                     let later_dx = x as f32 + 0.5 - later.x;
                     let later_dy = y as f32 + 0.5 - later.y;
-                    if later_dx * later_dx + later_dy * later_dy
-                        <= later.radius * later.radius
-                    {
+                    if later_dx * later_dx + later_dy * later_dy <= later.radius * later.radius {
                         overwritten = true;
                         break;
                     }
@@ -1254,10 +1251,8 @@ mod tests {
 
     #[test]
     fn swapping_screens_changes_positions_but_preserves_bottom_touch_mapping() {
-        let normal =
-            compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::Vertical, false);
-        let swapped =
-            compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::Vertical, true);
+        let normal = compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::Vertical, false);
+        let swapped = compute_screen_layout_for_mode(1080, 2400, ScreenLayoutMode::Vertical, true);
         assert_eq!(normal.top, swapped.bottom);
         assert_eq!(normal.bottom, swapped.top);
         assert_eq!(
@@ -1273,13 +1268,34 @@ mod tests {
 
     #[test]
     fn natural_canvas_sizes_match_each_layout_mode() {
-        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::Auto), (736, 240));
-        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::SideBySide), (736, 240));
-        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::Vertical), (400, 496));
-        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::TopEnlarged), (480, 544));
-        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::BottomEnlarged), (400, 556));
-        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::TopOnly), (400, 240));
-        assert_eq!(screen_layout_canvas_size(ScreenLayoutMode::BottomOnly), (320, 240));
+        assert_eq!(
+            screen_layout_canvas_size(ScreenLayoutMode::Auto),
+            (736, 240)
+        );
+        assert_eq!(
+            screen_layout_canvas_size(ScreenLayoutMode::SideBySide),
+            (736, 240)
+        );
+        assert_eq!(
+            screen_layout_canvas_size(ScreenLayoutMode::Vertical),
+            (400, 496)
+        );
+        assert_eq!(
+            screen_layout_canvas_size(ScreenLayoutMode::TopEnlarged),
+            (480, 544)
+        );
+        assert_eq!(
+            screen_layout_canvas_size(ScreenLayoutMode::BottomEnlarged),
+            (400, 556)
+        );
+        assert_eq!(
+            screen_layout_canvas_size(ScreenLayoutMode::TopOnly),
+            (400, 240)
+        );
+        assert_eq!(
+            screen_layout_canvas_size(ScreenLayoutMode::BottomOnly),
+            (320, 240)
+        );
     }
 
     #[test]
@@ -1484,7 +1500,7 @@ mod tests {
         );
 
         let shape = |shapes: &[ButtonShape; 12], bit| {
-            shapes.iter().find(|button| button.bit == bit).unwrap()
+            *shapes.iter().find(|button| button.bit == bit).unwrap()
         };
         assert!(shape(&compact, buttons::A).radius < shape(&standard, buttons::A).radius);
         assert_eq!(
@@ -1612,10 +1628,22 @@ mod tests {
             VirtualControlPreset::Standard,
             &positions,
         );
-        let default_a = defaults.iter().find(|shape| shape.bit == buttons::A).unwrap();
-        let enlarged_a = enlarged.iter().find(|shape| shape.bit == buttons::A).unwrap();
-        let default_b = defaults.iter().find(|shape| shape.bit == buttons::B).unwrap();
-        let enlarged_b = enlarged.iter().find(|shape| shape.bit == buttons::B).unwrap();
+        let default_a = defaults
+            .iter()
+            .find(|shape| shape.bit == buttons::A)
+            .unwrap();
+        let enlarged_a = enlarged
+            .iter()
+            .find(|shape| shape.bit == buttons::A)
+            .unwrap();
+        let default_b = defaults
+            .iter()
+            .find(|shape| shape.bit == buttons::B)
+            .unwrap();
+        let enlarged_b = enlarged
+            .iter()
+            .find(|shape| shape.bit == buttons::B)
+            .unwrap();
         assert_eq!(enlarged_a.x, default_a.x);
         assert_eq!(enlarged_a.y, default_a.y);
         assert!((enlarged_a.radius - default_a.radius * 1.5).abs() < 0.01);
@@ -1654,7 +1682,10 @@ mod tests {
 
         assert!(positions.adjust_size_percent(ORIENTATION_PORTRAIT, buttons::A, -200));
         assert_eq!(positions.size_percent(ORIENTATION_PORTRAIT, buttons::A), 60);
-        assert_eq!(positions.size_percent(ORIENTATION_LANDSCAPE, buttons::A), 60);
+        assert_eq!(
+            positions.size_percent(ORIENTATION_LANDSCAPE, buttons::A),
+            60
+        );
         assert!(!positions.set_size_percent(ORIENTATION_PORTRAIT, 0, 120));
     }
 
@@ -1701,26 +1732,30 @@ mod tests {
         .find(|shape| shape.bit == buttons::A)
         .unwrap();
         assert_eq!(center, (shape.x.round() as i32, shape.y.round() as i32));
-        assert!(virtual_control_center_with_positions(
-            0,
-            800,
-            ORIENTATION_PORTRAIT,
-            100,
-            VirtualControlPreset::Standard,
-            &positions,
-            buttons::A,
-        )
-        .is_none());
-        assert!(virtual_control_center_with_positions(
-            400,
-            800,
-            ORIENTATION_PORTRAIT,
-            100,
-            VirtualControlPreset::Standard,
-            &positions,
-            0,
-        )
-        .is_none());
+        assert!(
+            virtual_control_center_with_positions(
+                0,
+                800,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::Standard,
+                &positions,
+                buttons::A,
+            )
+            .is_none()
+        );
+        assert!(
+            virtual_control_center_with_positions(
+                400,
+                800,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::Standard,
+                &positions,
+                0,
+            )
+            .is_none()
+        );
     }
 
     #[test]

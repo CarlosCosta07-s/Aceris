@@ -444,10 +444,12 @@ fn save_library_preferences(
         LibraryViewMode::Grid => "grid",
         LibraryViewMode::List => "list",
     };
-    let sort_order = if preferences.sort_descending { "za" } else { "az" };
-    let contents = format!(
-        "{LIBRARY_PREFERENCES_MAGIC}\nview={view_mode}\nsort={sort_order}\n"
-    );
+    let sort_order = if preferences.sort_descending {
+        "za"
+    } else {
+        "az"
+    };
+    let contents = format!("{LIBRARY_PREFERENCES_MAGIC}\nview={view_mode}\nsort={sort_order}\n");
     fs::write(settings_directory.join(LIBRARY_PREFERENCES_FILE), contents)
 }
 
@@ -1164,9 +1166,7 @@ impl Library {
             sort_descending: self.sort_descending,
             view_mode: self.view_mode,
         };
-        if let Err(error) =
-            save_library_preferences(&self.scan_settings_directory, preferences)
-        {
+        if let Err(error) = save_library_preferences(&self.scan_settings_directory, preferences) {
             self.status = Some(format!(
                 "NÃO FOI POSSÍVEL SALVAR AS PREFERÊNCIAS DA BIBLIOTECA: {error}"
             ));
@@ -4569,8 +4569,8 @@ fn tail(text: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::frontend::{self, ORIENTATION_PORTRAIT, VirtualControlOffset};
     use super::*;
-    use super::super::frontend::{self, VirtualControlOffset, ORIENTATION_PORTRAIT};
 
     fn library(count: usize) -> Library {
         let entries = (0..count)
@@ -5250,12 +5250,7 @@ mod tests {
         fs::create_dir_all(&settings).unwrap();
 
         let mut old_positions = VirtualControlPositions::default();
-        assert!(old_positions.adjust(
-            ORIENTATION_PORTRAIT,
-            frontend::buttons::A,
-            450,
-            -250
-        ));
+        assert!(old_positions.adjust(ORIENTATION_PORTRAIT, frontend::buttons::A, 450, -250));
         let mut legacy = String::from("ACERIS_VIRTUAL_CONTROL_POSITIONS_V1\n");
         for line in old_positions.to_config_string().lines().skip(1) {
             let (key, values) = line.split_once('=').unwrap();
@@ -5266,41 +5261,33 @@ mod tests {
 
         let mut library = Library::from_scan_settings(&settings, &games);
         assert_eq!(
-            library.virtual_control_positions().offset(
-                ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            library
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, frontend::buttons::A),
             VirtualControlOffset { x: 450, y: -250 }
         );
         assert_eq!(
-            library.virtual_control_positions().size_percent(
-                ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            library
+                .virtual_control_positions()
+                .size_percent(ORIENTATION_PORTRAIT, frontend::buttons::A),
             100
         );
-        assert!(library.resize_virtual_control(
-            ORIENTATION_PORTRAIT,
-            frontend::buttons::A,
-            135
-        ));
+        assert!(library.resize_virtual_control(ORIENTATION_PORTRAIT, frontend::buttons::A, 135));
         library.save_virtual_control_positions().unwrap();
 
         let migrated = fs::read_to_string(settings.join(VIRTUAL_CONTROL_LAYOUT_FILE)).unwrap();
         assert!(migrated.starts_with("ACERIS_VIRTUAL_CONTROL_LAYOUT_V2\n"));
         let reopened = Library::from_scan_settings(&settings, &games);
         assert_eq!(
-            reopened.virtual_control_positions().offset(
-                ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            reopened
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, frontend::buttons::A),
             VirtualControlOffset { x: 450, y: -250 }
         );
         assert_eq!(
-            reopened.virtual_control_positions().size_percent(
-                ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            reopened
+                .virtual_control_positions()
+                .size_percent(ORIENTATION_PORTRAIT, frontend::buttons::A),
             135
         );
 

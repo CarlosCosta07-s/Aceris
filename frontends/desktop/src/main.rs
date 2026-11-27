@@ -13,8 +13,9 @@ use aceris_common::{NAME, VERSION};
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     video::{
-        DualScreenDisplay, intro,
+        DualScreenDisplay,
         frontend::{ScreenLayoutMode, screen_layout_canvas_size},
+        intro,
         layout_preferences::ScreenLayoutPreferences,
         library::{ClickResult, Library, VISIBLE_ROWS},
         quick_menu::{self, PixelFormat as MenuPixelFormat},
@@ -711,19 +712,13 @@ fn emulate(
                         performance.reset_after_pause();
                     }
                 }
-                window::WindowEvent::Key(window::Key::Up)
-                    if pending_confirmation.is_some() =>
-                {
+                window::WindowEvent::Key(window::Key::Up) if pending_confirmation.is_some() => {
                     confirmation_selected = confirmation_selected.saturating_sub(1);
                 }
-                window::WindowEvent::Key(window::Key::Down)
-                    if pending_confirmation.is_some() =>
-                {
+                window::WindowEvent::Key(window::Key::Down) if pending_confirmation.is_some() => {
                     confirmation_selected = (confirmation_selected + 1).min(1);
                 }
-                window::WindowEvent::Key(window::Key::Enter)
-                    if pending_confirmation.is_some() =>
-                {
+                window::WindowEvent::Key(window::Key::Enter) if pending_confirmation.is_some() => {
                     if confirmation_selected == 0 {
                         pending_confirmation = None;
                     } else if let Some(action) = pending_confirmation {
@@ -752,8 +747,7 @@ fn emulate(
                         confirmation_selected = 0;
                     }
                     2 => {
-                        pending_confirmation =
-                            Some(quick_menu::ConfirmationAction::BackToLibrary);
+                        pending_confirmation = Some(quick_menu::ConfirmationAction::BackToLibrary);
                         confirmation_selected = 0;
                     }
                     3 => {
@@ -793,11 +787,14 @@ fn emulate(
                                     window::GAME_CANVAS_WIDTH as u32,
                                     window::GAME_CANVAS_HEIGHT as u32,
                                 );
-                                let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+                                let (width, height) =
+                                    screen_layout_canvas_size(layout_profile.mode);
                                 window
                                     .resize(width as usize * scale, height as usize * scale)
                                     .map_err(|error| {
-                                        format!("could not restore the global gameplay layout: {error}")
+                                        format!(
+                                            "could not restore the global gameplay layout: {error}"
+                                        )
                                     })?;
                                 if let Err(error) = layout_preferences.save(settings_directory) {
                                     eprintln!("could not save screen layout preferences: {error}");
@@ -822,7 +819,9 @@ fn emulate(
                         } else if let Some(action) = pending_confirmation {
                             return Ok(match action {
                                 quick_menu::ConfirmationAction::Restart => Flow::Restart,
-                                quick_menu::ConfirmationAction::BackToLibrary => Flow::BackToLibrary,
+                                quick_menu::ConfirmationAction::BackToLibrary => {
+                                    Flow::BackToLibrary
+                                }
                             });
                         }
                     }
@@ -857,7 +856,8 @@ fn emulate(
                             }
                             3 => {
                                 layout_profile.mode = layout_profile.mode.next();
-                                let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+                                let (width, height) =
+                                    screen_layout_canvas_size(layout_profile.mode);
                                 window
                                     .resize(width as usize * scale, height as usize * scale)
                                     .map_err(|error| {
@@ -892,14 +892,19 @@ fn emulate(
                                             window::GAME_CANVAS_WIDTH as u32,
                                             window::GAME_CANVAS_HEIGHT as u32,
                                         );
-                                        let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+                                        let (width, height) =
+                                            screen_layout_canvas_size(layout_profile.mode);
                                         window
                                             .resize(width as usize * scale, height as usize * scale)
                                             .map_err(|error| {
                                                 format!("could not restore the global gameplay layout: {error}")
                                             })?;
-                                        if let Err(error) = layout_preferences.save(settings_directory) {
-                                            eprintln!("could not save screen layout preferences: {error}");
+                                        if let Err(error) =
+                                            layout_preferences.save(settings_directory)
+                                        {
+                                            eprintln!(
+                                                "could not save screen layout preferences: {error}"
+                                            );
                                         }
                                     }
                                 }
@@ -913,26 +918,22 @@ fn emulate(
                 {
                     keyboard.apply(key, pressed, system.input_mut());
                 }
-                window::WindowEvent::Click { x, y } if !menu_open => {
-                    touch_at(
-                        system,
-                        x,
-                        y,
-                        scale,
-                        layout_profile.mode,
-                        layout_profile.swap_screens,
-                    )
-                }
-                window::WindowEvent::Pointer { x, y, down: true } if !menu_open => {
-                    touch_at(
-                        system,
-                        x,
-                        y,
-                        scale,
-                        layout_profile.mode,
-                        layout_profile.swap_screens,
-                    )
-                }
+                window::WindowEvent::Click { x, y } if !menu_open => touch_at(
+                    system,
+                    x,
+                    y,
+                    scale,
+                    layout_profile.mode,
+                    layout_profile.swap_screens,
+                ),
+                window::WindowEvent::Pointer { x, y, down: true } if !menu_open => touch_at(
+                    system,
+                    x,
+                    y,
+                    scale,
+                    layout_profile.mode,
+                    layout_profile.swap_screens,
+                ),
                 window::WindowEvent::Pointer { down: false, .. } if !menu_open => {
                     system.input_mut().touch_end()
                 }
@@ -1009,13 +1010,7 @@ fn emulate(
 
         let had_gpu_presenter = presenter.is_some();
         let presentation_started = performance.as_ref().map(|_| Instant::now());
-        present_desktop_frame(
-            window,
-            presenter,
-            &frame,
-            frame_width,
-            frame_height,
-        )?;
+        present_desktop_frame(window, presenter, &frame, frame_width, frame_height)?;
         let presentation_elapsed = presentation_started
             .map(|presentation_started| presentation_started.elapsed())
             .unwrap_or_default();

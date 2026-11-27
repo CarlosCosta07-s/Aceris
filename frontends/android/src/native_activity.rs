@@ -894,12 +894,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
 }
 
 /// Waits up to `timeout` for looper events and drains pending input.
-fn poll_looper(
-    timeout: Duration,
-    app: &mut App,
-    queue: Raw,
-    pointer_scratch: &mut Vec<Pointer>,
-) {
+fn poll_looper(timeout: Duration, app: &mut App, queue: Raw, pointer_scratch: &mut Vec<Pointer>) {
     let mut first = true;
     loop {
         let millis = if first {

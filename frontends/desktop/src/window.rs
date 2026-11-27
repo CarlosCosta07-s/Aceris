@@ -208,13 +208,7 @@ impl KeyboardInput {
 /// Converts a point in the legacy side-by-side game window into bottom-screen touch.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn touch_from_window_point(x: i32, y: i32, scale: usize) -> Option<(u16, u16)> {
-    touch_from_window_point_with_layout(
-        x,
-        y,
-        scale,
-        ScreenLayoutMode::SideBySide,
-        false,
-    )
+    touch_from_window_point_with_layout(x, y, scale, ScreenLayoutMode::SideBySide, false)
 }
 
 /// Converts a game-window point using the current screen layout and screen swap.
@@ -288,13 +282,9 @@ pub fn compose_bgrx_layout_into(
         pixel[3] = 0xFF;
     }
 
-    let layout = compute_screen_layout_for_mode(
-        logical_width,
-        logical_height,
-        mode,
-        swap_screens,
-    );
-    let mut blit = |surface: &aceris_core::video::ScreenSurface, rect: aceris_core::video::frontend::ScreenRect| {
+    let layout = compute_screen_layout_for_mode(logical_width, logical_height, mode, swap_screens);
+    let mut blit = |surface: &aceris_core::video::ScreenSurface,
+                    rect: aceris_core::video::frontend::ScreenRect| {
         if rect.width == 0 || rect.height == 0 {
             return;
         }
@@ -448,62 +438,61 @@ pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut
         }
     }
 
-    let mut blit =
-        |surface: &aceris_core::video::ScreenSurface, origin_x: usize, origin_y: usize| {
-            for (y, row) in surface
-                .pixels()
-                .chunks_exact(surface.stride_bytes())
-                .enumerate()
-            {
-                let scaled_y = (origin_y + y) * scale;
-                let scaled_x = origin_x * scale;
-                if scale == 1 {
-                    let row_start = (scaled_y * width + scaled_x) * 4;
-                    let row_end = row_start + row.len();
-                    for (destination, pixel) in output[row_start..row_end]
-                        .chunks_exact_mut(4)
-                        .zip(row.chunks_exact(4))
-                    {
-                        destination[0] = pixel[2];
-                        destination[1] = pixel[1];
-                        destination[2] = pixel[0];
-                        destination[3] = 0xFF;
-                    }
-                    continue;
+    let mut blit = |surface: &aceris_core::video::ScreenSurface,
+                    origin_x: usize,
+                    origin_y: usize| {
+        for (y, row) in surface
+            .pixels()
+            .chunks_exact(surface.stride_bytes())
+            .enumerate()
+        {
+            let scaled_y = (origin_y + y) * scale;
+            let scaled_x = origin_x * scale;
+            if scale == 1 {
+                let row_start = (scaled_y * width + scaled_x) * 4;
+                let row_end = row_start + row.len();
+                for (destination, pixel) in output[row_start..row_end]
+                    .chunks_exact_mut(4)
+                    .zip(row.chunks_exact(4))
+                {
+                    destination[0] = pixel[2];
+                    destination[1] = pixel[1];
+                    destination[2] = pixel[0];
+                    destination[3] = 0xFF;
                 }
-                // Expand one contiguous output row first. Copying that row
-                // vertically is more cache-friendly than writing each source
-                // pixel as a tall column across the destination.
-                let expanded_row_start = (scaled_y * width + scaled_x) * 4;
-                for (x, pixel) in row.chunks_exact(4).enumerate() {
-                    let color = [pixel[2], pixel[1], pixel[0], 0xFF];
-                    let column_start = expanded_row_start + x * scale * 4;
-                    for column_offset in 0..scale {
-                        let at = column_start + column_offset * 4;
-                        output[at..at + 4].copy_from_slice(&color);
-                    }
-                }
-                let expanded_row_end = expanded_row_start + row.len() * scale;
-                let expanded_row_bytes = expanded_row_end - expanded_row_start;
-                for row_offset in 1..scale {
-                    let destination_start =
-                        ((scaled_y + row_offset) * width + scaled_x) * 4;
-                    if destination_start >= expanded_row_end {
-                        // The destination rows are disjoint from the first
-                        // expanded row, so avoid the overlap-safe memmove path.
-                        let (before_destination, destination_and_after) =
-                            output.split_at_mut(destination_start);
-                        destination_and_after[..expanded_row_bytes].copy_from_slice(
-                            &before_destination[expanded_row_start..expanded_row_end],
-                        );
-                    } else {
-                        // Keep the general path safe if a future layout makes
-                        // the vertically replicated rows overlap in memory.
-                        output.copy_within(expanded_row_start..expanded_row_end, destination_start);
-                    }
+                continue;
+            }
+            // Expand one contiguous output row first. Copying that row
+            // vertically is more cache-friendly than writing each source
+            // pixel as a tall column across the destination.
+            let expanded_row_start = (scaled_y * width + scaled_x) * 4;
+            for (x, pixel) in row.chunks_exact(4).enumerate() {
+                let color = [pixel[2], pixel[1], pixel[0], 0xFF];
+                let column_start = expanded_row_start + x * scale * 4;
+                for column_offset in 0..scale {
+                    let at = column_start + column_offset * 4;
+                    output[at..at + 4].copy_from_slice(&color);
                 }
             }
-        };
+            let expanded_row_end = expanded_row_start + row.len() * scale;
+            let expanded_row_bytes = expanded_row_end - expanded_row_start;
+            for row_offset in 1..scale {
+                let destination_start = ((scaled_y + row_offset) * width + scaled_x) * 4;
+                if destination_start >= expanded_row_end {
+                    // The destination rows are disjoint from the first
+                    // expanded row, so avoid the overlap-safe memmove path.
+                    let (before_destination, destination_and_after) =
+                        output.split_at_mut(destination_start);
+                    destination_and_after[..expanded_row_bytes]
+                        .copy_from_slice(&before_destination[expanded_row_start..expanded_row_end]);
+                } else {
+                    // Keep the general path safe if a future layout makes
+                    // the vertically replicated rows overlap in memory.
+                    output.copy_within(expanded_row_start..expanded_row_end, destination_start);
+                }
+            }
+        }
+    };
     blit(
         display.top_left(),
         layout.top.x as usize,
@@ -546,12 +535,7 @@ mod tests {
             ScreenLayoutMode::BottomOnly,
         ] {
             let (logical_width, logical_height) = screen_layout_canvas_size(mode);
-            let layout = compute_screen_layout_for_mode(
-                logical_width,
-                logical_height,
-                mode,
-                false,
-            );
+            let layout = compute_screen_layout_for_mode(logical_width, logical_height, mode, false);
             let canvas = compose_bgrx_layout(&display, 2, mode, false);
             assert_eq!(
                 canvas.len(),
@@ -606,13 +590,7 @@ mod tests {
         let at = (layout.bottom.y as usize * width as usize + layout.bottom.x as usize) * 4;
         assert_eq!(&canvas[at..at + 4], &[30, 20, 10, 255]);
         assert_eq!(
-            touch_from_window_point_with_layout(
-                layout.bottom.x,
-                layout.bottom.y,
-                1,
-                mode,
-                true
-            ),
+            touch_from_window_point_with_layout(layout.bottom.x, layout.bottom.y, 1, mode, true),
             Some((0, 0))
         );
     }
@@ -750,7 +728,10 @@ mod tests {
 
             let mut actual = vec![0xA5; width * height * 4];
             assert!(compose_bgrx_into(&display, scale, &mut actual));
-            assert_eq!(actual, expected, "scaled composition differs at scale {scale}");
+            assert_eq!(
+                actual, expected,
+                "scaled composition differs at scale {scale}"
+            );
         }
     }
 

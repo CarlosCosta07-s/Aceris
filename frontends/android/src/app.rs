@@ -10,12 +10,10 @@ use std::path::{Path, PathBuf};
 use aceris_core::System;
 use aceris_core::input::{pad, touch_from_surface_point};
 use aceris_core::video::frontend::{
-    self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect,
-    compute_screen_layout, compute_screen_layout_for_mode,
+    self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
+    compute_screen_layout_for_mode,
 };
-use aceris_core::video::layout_preferences::{
-    ScreenLayoutPreferences, ScreenLayoutProfile,
-};
+use aceris_core::video::layout_preferences::{ScreenLayoutPreferences, ScreenLayoutProfile};
 use aceris_core::video::library::{self, ClickResult, Library};
 use aceris_core::video::{
     DualScreenDisplay, ScreenSurface, intro,
@@ -25,7 +23,9 @@ use aceris_core::video::{
 /// Which part of the application is on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
-    Intro { frame: u32 },
+    Intro {
+        frame: u32,
+    },
     Library,
     Game,
     GameMenu,
@@ -349,7 +349,9 @@ impl App {
     fn step_game_menu_into(&mut self, output: &mut Vec<u8>) {
         let Some(system) = self.system.as_ref() else {
             self.screen = Screen::Library;
-            let _ = self.library.render_responsive_into(self.width, self.height, output);
+            let _ = self
+                .library
+                .render_responsive_into(self.width, self.height, output);
             return;
         };
         let layout = self.game_layout();
@@ -382,7 +384,9 @@ impl App {
     ) {
         let Some(system) = self.system.as_ref() else {
             self.screen = Screen::Library;
-            let _ = self.library.render_responsive_into(self.width, self.height, output);
+            let _ = self
+                .library
+                .render_responsive_into(self.width, self.height, output);
             return;
         };
         let layout = self.game_layout();
@@ -403,7 +407,9 @@ impl App {
         if self.controls_editor {
             let Some(system) = self.system.as_ref() else {
                 self.screen = Screen::Library;
-                let _ = self.library.render_responsive_into(self.width, self.height, output);
+                let _ = self
+                    .library
+                    .render_responsive_into(self.width, self.height, output);
                 return;
             };
             if compose_game_into(
@@ -472,12 +478,8 @@ impl App {
         }
         let pressed_mask = self.held_mask();
         self.render_virtual_controls_overlay(output, pressed_mask);
-        let _ = quick_menu::render_menu_button(
-            output,
-            self.width,
-            self.height,
-            MenuPixelFormat::Rgba8,
-        );
+        let _ =
+            quick_menu::render_menu_button(output, self.width, self.height, MenuPixelFormat::Rgba8);
     }
 
     fn held_mask(&self) -> u32 {
@@ -528,12 +530,7 @@ impl App {
 
     fn game_layout(&self) -> ScreenLayout {
         let profile = self.active_layout_profile();
-        compute_screen_layout_for_mode(
-            self.width,
-            self.height,
-            profile.mode,
-            profile.swap_screens,
-        )
+        compute_screen_layout_for_mode(self.width, self.height, profile.mode, profile.swap_screens)
     }
 
     fn save_layout_preferences(&self) {
@@ -576,9 +573,7 @@ impl App {
         let orientation = self.virtual_control_orientation();
         match self.library.reset_virtual_control_positions(orientation) {
             Ok(()) => self.library.set_status(match orientation {
-                frontend::ORIENTATION_LANDSCAPE => {
-                    "CONTROLES RESTAURADOS PARA PAISAGEM"
-                }
+                frontend::ORIENTATION_LANDSCAPE => "CONTROLES RESTAURADOS PARA PAISAGEM",
                 _ => "CONTROLES RESTAURADOS PARA RETRATO",
             }),
             Err(error) => self
@@ -671,9 +666,7 @@ impl App {
         if self.control_resize.is_none() {
             if let (Some(&(first_x, first_y)), Some((&second_id, &(second_x, second_y)))) = (
                 self.pointers.get(&pointer_id),
-                self.pointers
-                    .iter()
-                    .find(|(id, _)| **id != pointer_id),
+                self.pointers.iter().find(|(id, _)| **id != pointer_id),
             ) {
                 if self.hit_virtual_button(second_x, second_y) == button {
                     let start_distance = (second_x - first_x).hypot(second_y - first_y);
@@ -721,9 +714,8 @@ impl App {
                     self.control_resize = None;
                     self.control_drag = None;
                     if let Err(error) = self.library.save_virtual_control_positions() {
-                        self.library.set_status(format!(
-                            "NÃO FOI POSSÍVEL SALVAR O LAYOUT: {error}"
-                        ));
+                        self.library
+                            .set_status(format!("NÃO FOI POSSÍVEL SALVAR O LAYOUT: {error}"));
                     }
                     return;
                 }
@@ -888,12 +880,8 @@ impl App {
     fn activate_game_menu_action(&mut self) {
         match self.quick_menu_selected {
             0 => self.resume_game(),
-            1 => self.request_game_menu_confirmation(
-                quick_menu::ConfirmationAction::Restart,
-            ),
-            2 => self.request_game_menu_confirmation(
-                quick_menu::ConfirmationAction::BackToLibrary,
-            ),
+            1 => self.request_game_menu_confirmation(quick_menu::ConfirmationAction::Restart),
+            2 => self.request_game_menu_confirmation(quick_menu::ConfirmationAction::BackToLibrary),
             3 => self.cycle_screen_layout(),
             4 => self.toggle_screen_swap(),
             5 => self.reset_game_layout(),
@@ -953,7 +941,8 @@ impl App {
             }
             Err(error) => {
                 self.leave_game();
-                self.library.set_status(format!("Não foi possível reiniciar: {error}"));
+                self.library
+                    .set_status(format!("Não foi possível reiniciar: {error}"));
             }
         }
     }
@@ -1691,9 +1680,19 @@ mod tests {
         app.system = Some(System::new());
         app.screen = Screen::Game;
         let (x, y) = (app.width as i32 - 60, 40);
-        assert!(quick_menu::hit_test_menu_button(app.width, app.height, x, y));
+        assert!(quick_menu::hit_test_menu_button(
+            app.width, app.height, x, y
+        ));
         touch(&mut app, x as f32, y as f32);
-        assert!(app.system.as_mut().unwrap().input_mut().snapshot().touch.is_none());
+        assert!(
+            app.system
+                .as_mut()
+                .unwrap()
+                .input_mut()
+                .snapshot()
+                .touch
+                .is_none()
+        );
         release(&mut app);
         assert!(matches!(app.screen(), Screen::GameMenu));
         fs::remove_dir_all(dir).ok();
@@ -1799,7 +1798,13 @@ mod tests {
                 layout.bottom,
             );
 
-            assert!(compose_game_into(&display, width, height, &mut actual));
+            assert!(compose_game_into(
+                &display,
+                &layout,
+                width,
+                height,
+                &mut actual
+            ));
             assert_eq!(actual, expected, "composition differs at {width}x{height}");
         }
     }
@@ -2005,31 +2010,27 @@ mod tests {
         app.quick_menu_selected = 6;
         app.activate_game_menu_action();
         assert_eq!(
-            app.library.virtual_control_positions().offset(
-                frontend::ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            app.library
+                .virtual_control_positions()
+                .offset(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
             frontend::VirtualControlOffset::default()
         );
         assert_eq!(
-            app.library.virtual_control_positions().size_percent(
-                frontend::ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            app.library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
             100
         );
         assert_eq!(
-            app.library.virtual_control_positions().offset(
-                frontend::ORIENTATION_LANDSCAPE,
-                frontend::buttons::A
-            ),
+            app.library
+                .virtual_control_positions()
+                .offset(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
             frontend::VirtualControlOffset { x: -300, y: 400 }
         );
         assert_eq!(
-            app.library.virtual_control_positions().size_percent(
-                frontend::ORIENTATION_LANDSCAPE,
-                frontend::buttons::A
-            ),
+            app.library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
             130
         );
         assert_eq!(
@@ -2044,17 +2045,17 @@ mod tests {
 
         let reopened = App::new(&dir);
         assert_eq!(
-            reopened.library.virtual_control_positions().size_percent(
-                frontend::ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            reopened
+                .library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
             100
         );
         assert_eq!(
-            reopened.library.virtual_control_positions().size_percent(
-                frontend::ORIENTATION_LANDSCAPE,
-                frontend::buttons::A
-            ),
+            reopened
+                .library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
             130
         );
         fs::remove_dir_all(dir).ok();

@@ -192,7 +192,9 @@ impl Sink for AudioQueueSink {
         // SAFETY: a stopped queue can be started again after the reset.
         let status = unsafe { AudioQueueStart(self.queue, ptr::null()) };
         if status != 0 {
-            return Err(format!("AudioQueueStart after reset failed (error {status})"));
+            return Err(format!(
+                "AudioQueueStart after reset failed (error {status})"
+            ));
         }
         Ok(())
     }

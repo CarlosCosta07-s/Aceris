@@ -11,8 +11,8 @@ pub mod layout_preferences;
 mod lcd;
 pub mod library;
 pub mod png;
-pub mod quick_menu;
 mod present;
+pub mod quick_menu;
 pub use lcd::{
     LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport, PDC_CONTROL,
     PDC_CONTROL_ENABLED, PDC_FRAMEBUFFER_A_FIRST, PDC_FRAMEBUFFER_A_SECOND,
