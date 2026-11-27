@@ -14,7 +14,7 @@ Este documento descreve o estado atual dos hosts do Aceris. O núcleo de emulaç
 
 ## Android NativeActivity
 
-O aplicativo Android usa `frontends/android`, com NativeActivity e lógica do host em Rust. A interface compartilhada mostra a biblioteca, navegação, Favoritos, Recentes e Configurações. A atividade usa orientação horizontal (`sensorLandscape`) na versão atual.
+O aplicativo Android usa `frontends/android`, com NativeActivity e lógica do host em Rust. A interface compartilhada mostra a biblioteca, navegação, Favoritos, Recentes e Configurações. A atividade aceita rotação do sensor (`sensor`); o modo Auto escolhe disposição lado a lado em landscape e vertical em portrait, enquanto o menu de jogo permite selecionar outros layouts.
 
 O workflow **Build Android APK** compila e empacota um APK debug ARM64. Isso confirma geração do artefato, não valida instalação, renderização, toque, áudio ou desempenho em um aparelho real. O estado de teste e os passos de instalação estão em [ANDROID_DEVICE_TRIAL.md](ANDROID_DEVICE_TRIAL.md).
 
@@ -47,8 +47,9 @@ A C ABI também oferece renderização e hit-test para uma camada de controles v
 - **Android:** a tela do jogo mostra um botão discreto **MENU** no canto superior direito; a tecla/gesto Voltar também abre o painel. Tocar no botão MENU é consumido pela interface e não é encaminhado como toque da caneta ao jogo.
 - **PC:** Esc abre e fecha o painel rápido. A escolha é navegável por setas/Enter e mouse. O atalho ainda é fixo; personalização de atalhos permanece pendente.
 - O painel apresenta Continuar, Reiniciar e Voltar à biblioteca. Reiniciar recria a sessão do mesmo arquivo; Voltar à biblioteca encerra a sessão atual. Ambas as ações exibem confirmação com aviso de que o progresso não salvo pelo próprio jogo pode ser perdido. O aviso é preventivo: o Aceris ainda não detecta automaticamente um estado de progresso não salvo.
+- O menu também oferece **Alterar layout** e **Trocar telas**. Os seis modos são Lado a lado, Vertical, Superior ampliada, Inferior ampliada, Somente superior e Somente inferior. No desktop, a janela acompanha o canvas do modo; no Android, a disposição é ajustada à surface e à orientação atual. A troca preserva a identidade física do LCD inferior para o stylus.
 - Enquanto o painel está aberto, o frontend continua processando eventos e redesenhando o último scanout; não chama o próximo passo de emulação guest. Ao abrir o painel, o Android solicita pausa, aguarda a transição e limpa a fila AAudio antes de retomá-la com `requestStart`; o fluxo também é pausado e limpo quando a NativeActivity vai para segundo plano. No PC, a fila host é descartada pelo backend (ALSA `drop`/`prepare`, WinMM `waveOutReset` e AudioQueue `Stop` imediato), e o resampler desktop reinicia seu histórico.
-- Layouts alternativos, troca de telas, save states, rewind, screenshot, cheats e editor de controles não são ações disponíveis neste menu.
+- Espaçamento/posição personalizados, perfis globais/por jogo, save states, rewind, screenshot, cheats e editor de controles não são ações disponíveis neste menu. Os modos básicos de tela e a troca já estão ligados, mas ainda precisam de validação física.
 - Esta primeira implementação ainda precisa passar pela CI e por testes visuais/entrada/áudio em PC e aparelho Android físico.
 
 
