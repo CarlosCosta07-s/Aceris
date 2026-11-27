@@ -896,12 +896,23 @@ mod tests {
             0xE1C0_10B4, // STRH r1, [r0, #4]
             0xE1D0_20D1, // LDRSB r2, [r0, #1]
             0xE1D0_20F4, // LDRSH r2, [r0, #4]
+        ] {
+            assert_cached_matches_generic(word, core.clone(), &memory);
+        }
+
+        // Use a small in-range Rm value so the register-offset forms exercise
+        // successful data accesses and write-back semantics, not only faults.
+        let mut register_offset_core = core;
+        register_offset_core.regs[2] = 4;
+        for word in [
             0xE190_10B2, // LDRH r1, [r0, r2]
             0xE180_10B2, // STRH r1, [r0, r2]
             0xE190_30D2, // LDRSB r3, [r0, r2]
             0xE190_30F2, // LDRSH r3, [r0, r2]
+            0xE110_10B2, // LDRH r1, [r0, -r2]
+            0xE090_10B2, // LDRH r1, [r0], r2
         ] {
-            assert_cached_matches_generic(word, core.clone(), &memory);
+            assert_cached_matches_generic(word, register_offset_core.clone(), &memory);
         }
     }
 
