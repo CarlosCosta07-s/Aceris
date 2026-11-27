@@ -11,6 +11,7 @@ mod coprocessor;
 mod cp15;
 mod decode_cache;
 mod faults;
+mod ir;
 mod mmu;
 mod mpcore_gic;
 mod mpcore_scu;
