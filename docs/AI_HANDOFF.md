@@ -3025,3 +3025,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A CI anterior comprovou builds, suite `cargo test --workspace` e benchmark do núcleo em Linux, macOS e Windows, além do build Android ARM64. A matriz falhou apenas no Clippy global estrito, que expôs dívida de avisos/dead_code em módulos do núcleo; a validação estrita de `aceris-graphics` passou.
 - O workflow foi ajustado para manter Clippy estrito no renderer gráfico e executar Clippy de todo o workspace como auditoria com os avisos visíveis, sem impedir os builds release/artefatos por lints legados. Isso não significa que a dívida de Clippy foi corrigida; ela continua registrada nos logs e precisa ser tratada por área/autoria.
 - Nenhum arquivo de jogo, firmware, chave ou dado derivado foi adicionado. Somente `main`; sem branches ou PRs.
+
+
+## Save states — armazenamento durável em slots (27/11/2026, ChatGPT)
+
+- Criado `crates/aceris-core/src/save_state_store.rs` e exportado em `aceris-core/src/lib.rs`.
+- `SaveStateStore` oferece dez slots por identidade de título, usando SHA-256 do conteúdo de boot e Title ID opcional para separar diretórios. Nomes de arquivo são gerados internamente e não dependem de nomes/caminhos fornecidos pelo usuário.
+- Cada gravação publica uma geração imutável com abertura `create_new`, `write_all` e `sync_all`; gerações anteriores não são sobrescritas. A leitura valida a identidade e o envelope completo, percorre as gerações em ordem decrescente e recua para uma anterior quando encontra uma parcial/corrompida. Após sucesso, são retidas as três gerações mais recentes.
+- Testes sintéticos adicionados para slots independentes, isolamento por identidade, recuperação de geração corrompida/interrompida, retenção de três gerações, rejeição de slots inválidos e slot vazio. A execução desses testes depende do CI; ainda não declarar compilação ou testes aprovados.
+- Limite explícito: armazenamento não é captura/restauração de `System`, não está conectado à interface e não deve ser divulgado como Save/Load jogável. Não houve alterações nos módulos de CPU/Thumb, PICA200, DSP/CSND, SVC ou em arquivos de propriedade reservada a outro agente.
+- Commit inicial: `60ae3d8`; export público: `a357744`. Alterações apenas em `main`, sem branches ou PRs.
