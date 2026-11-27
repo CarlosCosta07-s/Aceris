@@ -82,6 +82,12 @@ jobs:
       - run: cargo build --locked --release -p aceris-core --example benchmark
       - name: Run standalone component profiling
         run: cargo run --release -p aceris-core --example benchmark -- --profile-components
+      - name: Measure translated MMU dispatch (Ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          ACERIS_MMU_PROBE_INSTRUCTIONS: 1000000
+          ACERIS_MMU_PROBE_ROUNDS: 3
+        run: cargo test --release -p aceris-core --lib translated_fast_dispatch_throughput -- --ignored --nocapture
       - name: Run sparse GPU memory access profiling
         run: cargo run --release -p aceris-core --example memory_profile
       - uses: actions/upload-artifact@v4
