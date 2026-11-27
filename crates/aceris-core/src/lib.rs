@@ -8,6 +8,7 @@ pub mod csnd;
 pub mod dsp;
 pub mod fs;
 pub mod game_identity;
+pub mod loaded_image;
 pub mod gpu;
 pub mod hid;
 pub mod input;
