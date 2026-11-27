@@ -2398,14 +2398,14 @@ impl Arm11Core {
         load: bool,
         rn: u8,
         rd: u8,
-        offset: u8,
+        offset: u32,
         transfer_kind: u8,
     ) -> Result<StepEvent> {
         let base = self.regs[usize::from(rn)];
         let offset_address = if up {
-            base.wrapping_add(u32::from(offset))
+            base.wrapping_add(offset)
         } else {
-            base.wrapping_sub(u32::from(offset))
+            base.wrapping_sub(offset)
         };
         let address = if pre_index { offset_address } else { base };
         let rn = u32::from(rn);
