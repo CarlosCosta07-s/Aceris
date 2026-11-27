@@ -217,6 +217,7 @@ fn create_gpu_presenter(
     window: &window::Window,
     width: usize,
     height: usize,
+    cache_directory: &Path,
 ) -> Option<GraphicsPresenter> {
     let backend = match GraphicsBackend::from_env() {
         Ok(backend) => backend,
@@ -242,7 +243,16 @@ fn create_gpu_presenter(
 
     // SAFETY: Window is declared before the presenter and lives for the whole
     // run_windowed call. Rust drops the presenter before the native Window.
-    match unsafe { GraphicsPresenter::new(display, raw_window, width, height, backend) } {
+    match unsafe {
+        GraphicsPresenter::new_with_cache_directory(
+            display,
+            raw_window,
+            width,
+            height,
+            backend,
+            Some(cache_directory),
+        )
+    } {
         Ok(presenter) => {
             let info = presenter.adapter_info();
             println!(
@@ -387,6 +397,7 @@ fn run_windowed(
     background_fps: u32,
 ) -> Result<(), String> {
     let settings_directory = games_dir.join(".aceris");
+    let gpu_pipeline_cache_directory = settings_directory.join("gpu_pipeline_cache");
     let mut layout_preferences = ScreenLayoutPreferences::load(&settings_directory);
     let mut performance =
         performance_logging_enabled(&settings_directory).then(DesktopPerformanceMonitor::new);
@@ -403,6 +414,7 @@ fn run_windowed(
         &window,
         window::CANVAS_WIDTH * scale,
         window::CANVAS_HEIGHT * scale,
+        &gpu_pipeline_cache_directory,
     );
     if !skip_intro && !play_intro(&mut window, &mut presenter, scale, &mut performance)? {
         return Ok(());
