@@ -1330,6 +1330,8 @@ mod shared_memory_state_tests {
     #[test]
     fn shared_backing_snapshot_rejects_views_and_out_of_range_records() {
         let root = SharedMemoryBacking::zeroed(0x2000).unwrap();
+        // The malformed page-index record below must exist in the snapshot.
+        root.write_bytes(0, &[0xA5]);
         let view = root.view_from_root(0x1000, 0x1000).unwrap();
         assert!(matches!(
             view.encode_root_save_state(),
