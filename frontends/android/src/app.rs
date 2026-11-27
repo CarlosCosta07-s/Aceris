@@ -417,9 +417,7 @@ impl App {
             return;
         }
         let pressed_mask = self.held_mask();
-        if self.library.virtual_controls_visible() {
-            overlay_virtual_pad(output, self.width, self.height, pressed_mask);
-        }
+        self.render_virtual_controls_overlay(output, pressed_mask);
         let _ = quick_menu::render_menu_button(
             output,
             self.width,
@@ -447,6 +445,12 @@ impl App {
             y as i32,
             ORIENTATION_AUTO,
         )
+    }
+
+    fn render_virtual_controls_overlay(&self, frame: &mut [u8], pressed_mask: u32) {
+        if self.library.virtual_controls_visible() {
+            overlay_virtual_pad(frame, self.width, self.height, pressed_mask);
+        }
     }
 
     fn active_layout_profile(&self) -> ScreenLayoutProfile {
@@ -1576,6 +1580,12 @@ mod tests {
         let (mut app, dir) = app_with_games(0);
         app.resize(400, 800);
         app.library.set_virtual_controls_visible(false).unwrap();
+        assert!(!App::new(&dir).library.virtual_controls_visible());
+
+        let mut frame = [10u8, 20, 30, 255].repeat(400 * 800);
+        let unchanged = frame.clone();
+        app.render_virtual_controls_overlay(&mut frame, 0);
+        assert_eq!(frame, unchanged);
 
         // This point is the centre of the default on-screen A button.
         assert_eq!(app.hit_virtual_button(361.0, 608.0), 0);
