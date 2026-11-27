@@ -25,7 +25,8 @@ use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use crate::Result;
-use crate::cpu::{Arm11Core, MpcoreScu, StepEvent};
+use crate::cpu::{Arm11Core, CpuStateError, MpcoreScu, StepEvent};
+use crate::save_state::{SaveStateSection, section_id};
 use crate::gpu::{
     FCRAM_BASE, GpuDmaAddressSpace, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END,
     OLD_LINEAR_BASE, OLD_LINEAR_END,
@@ -376,6 +377,39 @@ impl Arm11ProcessSession {
             .current_core()
             .or_else(|| self.scheduler.core(MAIN_THREAD_ID))
             .expect("the main thread context is retained for the process lifetime")
+    }
+
+    /// Encodes the process' CPU contexts and scheduler as the ACRPAYLD ARM11_CPU section.
+    ///
+    /// This section deliberately excludes address-space bytes, kernel objects,
+    /// service queues and peripheral state. It is one component of a complete
+    /// machine snapshot, not a stand-alone loadable save state.
+    pub fn encode_cpu_thread_section(
+        &self,
+    ) -> std::result::Result<SaveStateSection, CpuStateError> {
+        let payload = self.scheduler.encode_save_state()?;
+        SaveStateSection::new(
+            section_id::ARM11_CPU,
+            Arm11ThreadScheduler::SAVE_STATE_VERSION,
+            payload,
+        )
+        .map_err(|_| CpuStateError::InvalidThreadMetadata)
+    }
+
+    /// Restores a CPU/thread section into a staged process session.
+    ///
+    /// Callers must restore the matching process memory and other machine
+    /// components before installing this staged session as the active guest.
+    pub fn restore_cpu_thread_section(
+        &mut self,
+        section: &SaveStateSection,
+    ) -> std::result::Result<(), CpuStateError> {
+        if section.id() != section_id::ARM11_CPU
+            || section.version() != Arm11ThreadScheduler::SAVE_STATE_VERSION
+        {
+            return Err(CpuStateError::InvalidThreadMetadata);
+        }
+        self.scheduler.restore_save_state(section.payload())
     }
 
     /// Returns the current core context when a thread is runnable.
