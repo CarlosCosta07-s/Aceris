@@ -127,7 +127,9 @@ impl BlockCache {
         for index in 0..BLOCK_MAX_INSTRUCTIONS {
             let byte_offset = u32::try_from(index.checked_mul(4)?).ok()?;
             let address = pc.checked_add(byte_offset)?;
-            let location = bus.immutable_instruction_location(address, 4)?;
+            let Some(location) = bus.immutable_instruction_location(address, 4) else {
+                break;
+            };
             if location.backing_id != first_location.backing_id
                 || location.offset != first_location.offset.checked_add(u64::from(byte_offset))?
             {
