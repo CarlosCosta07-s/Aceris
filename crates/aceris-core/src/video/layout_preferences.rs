@@ -226,6 +226,29 @@ impl ScreenLayoutPreferences {
         self.game_overrides.contains_key(&identity)
     }
 
+    /// Returns whether the current title overrides the global profile for this orientation.
+    ///
+    /// A title may have a portrait override while still inheriting the landscape profile,
+    /// or vice versa. Unknown identities always use the global profile.
+    pub fn game_has_override_for_surface(
+        &self,
+        identity: Option<GameIdentity>,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(identity) = identity else {
+            return false;
+        };
+        let Some(overrides) = self.game_overrides.get(&identity) else {
+            return false;
+        };
+        if width >= height {
+            overrides.landscape.is_some()
+        } else {
+            overrides.portrait.is_some()
+        }
+    }
+
     /// Removes all per-title layout overrides, leaving global defaults unchanged.
     pub fn reset_game_overrides(&mut self, identity: GameIdentity) -> bool {
         self.game_overrides.remove(&identity).is_some()
@@ -406,6 +429,27 @@ mod tests {
             preferences.profile_for_game(Some(first), 1080, 2400),
             ScreenLayoutProfile::portrait_default()
         );
+    }
+
+    #[test]
+    fn override_indicator_tracks_the_current_orientation_and_title() {
+        let mut preferences = ScreenLayoutPreferences::default();
+        let first = identity(0x0004_0000_1234_5600);
+        let second = identity(0x0004_0000_1234_5601);
+        let custom = ScreenLayoutProfile {
+            mode: ScreenLayoutMode::TopOnly,
+            swap_screens: true,
+        };
+
+        preferences.set_profile_for_game(Some(first), 2400, 1080, custom);
+
+        assert!(preferences.game_has_override_for_surface(Some(first), 2400, 1080));
+        assert!(!preferences.game_has_override_for_surface(Some(first), 1080, 2400));
+        assert!(!preferences.game_has_override_for_surface(Some(second), 2400, 1080));
+        assert!(!preferences.game_has_override_for_surface(None, 2400, 1080));
+
+        assert!(preferences.reset_game_overrides(first));
+        assert!(!preferences.game_has_override_for_surface(Some(first), 2400, 1080));
     }
 
     #[test]
