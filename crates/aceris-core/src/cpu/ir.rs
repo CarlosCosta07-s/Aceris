@@ -14,12 +14,16 @@ use aceris_common::Result;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct IrInstruction {
     pub(super) condition: u8,
+    /// Original encoding retained only for architectural fault diagnostics.
+    /// Native IR execution never decodes this word again.
+    pub(super) diagnostic_word: u32,
     pub(super) operation: IrOperation,
 }
 
 impl IrInstruction {
     pub(super) const EMPTY: Self = Self {
         condition: 0xF,
+        diagnostic_word: u32::MAX,
         operation: IrOperation::A32Fallback(Entry {
             word: u32::MAX,
             condition: 0xF,
@@ -65,6 +69,146 @@ impl IrInstruction {
                 shift_kind: kind,
                 shift_amount: amount,
             },
+            FastOp::TransferImm {
+                load,
+                byte,
+                pre_index,
+                writeback,
+                rn,
+                rd,
+                offset,
+            } => IrOperation::TransferImmediate {
+                load,
+                byte,
+                pre_index,
+                writeback,
+                rn,
+                rd,
+                offset,
+            },
+            FastOp::HalfwordTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                offset,
+                transfer_kind,
+            } => IrOperation::HalfwordTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                offset,
+                transfer_kind,
+            },
+            FastOp::HalfwordTransferReg {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                rm,
+                transfer_kind,
+            } => IrOperation::HalfwordTransferRegister {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                rm,
+                transfer_kind,
+            },
+            FastOp::BlockTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                s_bit,
+                rn,
+                list,
+            } => IrOperation::BlockTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                s_bit,
+                rn,
+                list,
+            },
+            FastOp::Multiply {
+                rd,
+                rn,
+                rs,
+                rm,
+                accumulate,
+                set_flags,
+            } => IrOperation::Multiply {
+                rd,
+                rn,
+                rs,
+                rm,
+                accumulate,
+                set_flags,
+            },
+            FastOp::MultiplyLong {
+                rd_hi,
+                rd_lo,
+                rs,
+                rm,
+                signed,
+                accumulate,
+                set_flags,
+            } => IrOperation::MultiplyLong {
+                rd_hi,
+                rd_lo,
+                rs,
+                rm,
+                signed,
+                accumulate,
+                set_flags,
+            },
+            FastOp::HalfwordMultiply {
+                class,
+                rd,
+                rn,
+                rs,
+                rm,
+                x,
+                y,
+            } => IrOperation::HalfwordMultiply {
+                class,
+                rd,
+                rn,
+                rs,
+                rm,
+                x,
+                y,
+            },
+            FastOp::DspMultiply {
+                class,
+                rd,
+                ra,
+                rs,
+                rm,
+                bit7,
+                subtract,
+                exchange_or_round,
+            } => IrOperation::DspMultiply {
+                class,
+                rd,
+                ra,
+                rs,
+                rm,
+                bit7,
+                subtract,
+                exchange_or_round,
+            },
             FastOp::Branch => {
                 let displacement = (((entry.word & 0x00FF_FFFF) << 8) as i32) >> 6;
                 IrOperation::Branch {
@@ -72,10 +216,11 @@ impl IrInstruction {
                     link: entry.word & (1 << 24) != 0,
                 }
             }
-            _ => IrOperation::A32Fallback(entry),
+            FastOp::Generic => IrOperation::A32Fallback(entry),
         };
         Self {
             condition: entry.condition,
+            diagnostic_word: entry.word,
             operation,
         }
     }
@@ -104,9 +249,91 @@ pub(super) enum IrOperation {
         shift_kind: super::shifter::ShiftKind,
         shift_amount: u8,
     },
+    /// LDR/STR/LDRB/STRB with an already decoded immediate offset.
+    TransferImmediate {
+        load: bool,
+        byte: bool,
+        pre_index: bool,
+        writeback: bool,
+        rn: u8,
+        rd: u8,
+        offset: i32,
+    },
+    /// LDRH/STRH/LDRSB/LDRSH with an immediate offset.
+    HalfwordTransfer {
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        rn: u8,
+        rd: u8,
+        offset: u8,
+        transfer_kind: u8,
+    },
+    /// LDRH/STRH/LDRSB/LDRSH with the offset read from Rm at execution.
+    HalfwordTransferRegister {
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        rn: u8,
+        rd: u8,
+        rm: u8,
+        transfer_kind: u8,
+    },
+    /// LDM/STM with a predecoded register mask.
+    BlockTransfer {
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        s_bit: bool,
+        rn: u8,
+        list: u16,
+    },
+    /// MUL/MLA.
+    Multiply {
+        rd: u8,
+        rn: u8,
+        rs: u8,
+        rm: u8,
+        accumulate: bool,
+        set_flags: bool,
+    },
+    /// UMULL/UMLAL/SMULL/SMLAL.
+    MultiplyLong {
+        rd_hi: u8,
+        rd_lo: u8,
+        rs: u8,
+        rm: u8,
+        signed: bool,
+        accumulate: bool,
+        set_flags: bool,
+    },
+    /// Signed halfword and word-by-halfword multiply forms.
+    HalfwordMultiply {
+        class: u32,
+        rd: u8,
+        rn: u8,
+        rs: u8,
+        rm: u8,
+        x: bool,
+        y: bool,
+    },
+    /// Dual-halfword and most-significant-word DSP multiplies.
+    DspMultiply {
+        class: u32,
+        rd: u8,
+        ra: u8,
+        rs: u8,
+        rm: u8,
+        bit7: bool,
+        subtract: bool,
+        exchange_or_round: bool,
+    },
     /// Branch displacement and link behavior decoded ahead of execution.
     Branch { displacement: i32, link: bool },
-    /// Transitional node for instructions not yet represented by native IR ops.
+    /// Compatibility node used only for encodings not recognized by the decoder.
     A32Fallback(Entry),
 }
 
@@ -160,6 +387,186 @@ impl Arm11Core {
                 self.execute_alu(opcode, set_flags, rn, rd, operand, carry);
                 Ok(StepEvent::Executed)
             }
+            IrOperation::TransferImmediate {
+                load,
+                byte,
+                pre_index,
+                writeback,
+                rn,
+                rd,
+                offset,
+            } => {
+                let base = self.regs[usize::from(rn)];
+                let offset_address = base.wrapping_add_signed(offset);
+                let address = if pre_index { offset_address } else { base };
+                if load {
+                    let value = if byte {
+                        u32::from(bus.read8(address)?)
+                    } else {
+                        self.read_armv6_single_word(bus, address, false, instruction.diagnostic_word)?
+                    };
+                    if writeback {
+                        self.regs[usize::from(rn)] = offset_address;
+                    }
+                    self.regs[usize::from(rd)] = value;
+                } else {
+                    let value = self.regs[usize::from(rd)];
+                    if byte {
+                        bus.write8(address, value as u8)?;
+                    } else {
+                        self.write_armv6_single_word(
+                            bus,
+                            address,
+                            value,
+                            false,
+                            instruction.diagnostic_word,
+                        )?;
+                    }
+                    if writeback {
+                        self.regs[usize::from(rn)] = offset_address;
+                    }
+                }
+                Ok(StepEvent::Executed)
+            }
+            IrOperation::HalfwordTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                offset,
+                transfer_kind,
+            } => self.execute_cached_halfword_transfer(
+                bus,
+                instruction.diagnostic_word,
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                u32::from(offset),
+                transfer_kind,
+            ),
+            IrOperation::HalfwordTransferRegister {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                rm,
+                transfer_kind,
+            } => self.execute_cached_halfword_transfer(
+                bus,
+                instruction.diagnostic_word,
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                self.regs[usize::from(rm)],
+                transfer_kind,
+            ),
+            IrOperation::BlockTransfer {
+                pre_index,
+                up,
+                writeback,
+                load,
+                s_bit,
+                rn,
+                list,
+            } => self.execute_block_transfer_decoded(
+                bus,
+                instruction.diagnostic_word,
+                pre_index,
+                up,
+                writeback,
+                load,
+                s_bit,
+                u32::from(rn),
+                u32::from(list),
+            ),
+            IrOperation::Multiply {
+                rd,
+                rn,
+                rs,
+                rm,
+                accumulate,
+                set_flags,
+            } => {
+                self.execute_cached_multiply(
+                    instruction.diagnostic_word,
+                    rd,
+                    rn,
+                    rs,
+                    rm,
+                    accumulate,
+                    set_flags,
+                )?;
+                Ok(StepEvent::Executed)
+            }
+            IrOperation::MultiplyLong {
+                rd_hi,
+                rd_lo,
+                rs,
+                rm,
+                signed,
+                accumulate,
+                set_flags,
+            } => {
+                self.execute_cached_multiply_long(
+                    instruction.diagnostic_word,
+                    signed,
+                    accumulate,
+                    set_flags,
+                    rd_hi,
+                    rd_lo,
+                    rs,
+                    rm,
+                )?;
+                Ok(StepEvent::Executed)
+            }
+            IrOperation::HalfwordMultiply {
+                class,
+                rd,
+                rn,
+                rs,
+                rm,
+                x,
+                y,
+            } => self.execute_cached_halfword_multiply(
+                instruction.diagnostic_word,
+                class,
+                rd,
+                rn,
+                rs,
+                rm,
+                x,
+                y,
+            ),
+            IrOperation::DspMultiply {
+                class,
+                rd,
+                ra,
+                rs,
+                rm,
+                bit7,
+                subtract,
+                exchange_or_round,
+            } => self.execute_cached_signed_dsp_multiply_instruction(
+                instruction.diagnostic_word,
+                class,
+                rd,
+                ra,
+                rs,
+                rm,
+                bit7,
+                subtract,
+                exchange_or_round,
+            ),
             IrOperation::Branch { displacement, link } => {
                 let pc = self.pc();
                 if link {
@@ -223,18 +630,53 @@ mod tests {
     }
 
     #[test]
-    fn keeps_unlowered_instructions_in_the_explicit_compatibility_node() {
+    fn lowers_all_remaining_cached_instruction_families_to_native_ir() {
+        let entries = [
+            Entry { word: 0xE590_1004, condition: 0xE, op: FastOp::TransferImm {
+                load: true, byte: false, pre_index: true, writeback: false,
+                rn: 0, rd: 1, offset: 4,
+            }},
+            Entry { word: 0xE1D0_10B4, condition: 0xE, op: FastOp::HalfwordTransfer {
+                pre_index: true, up: true, writeback: false, load: true,
+                rn: 0, rd: 1, offset: 4, transfer_kind: 1,
+            }},
+            Entry { word: 0xE190_10B2, condition: 0xE, op: FastOp::HalfwordTransferReg {
+                pre_index: true, up: true, writeback: false, load: true,
+                rn: 0, rd: 1, rm: 2, transfer_kind: 1,
+            }},
+            Entry { word: 0xE8B0_0006, condition: 0xE, op: FastOp::BlockTransfer {
+                pre_index: false, up: true, writeback: true, load: true,
+                s_bit: false, rn: 0, list: 6,
+            }},
+            Entry { word: 0xE000_0291, condition: 0xE, op: FastOp::Multiply {
+                rd: 0, rn: 0, rs: 2, rm: 1, accumulate: false, set_flags: false,
+            }},
+            Entry { word: 0xE081_2394, condition: 0xE, op: FastOp::MultiplyLong {
+                rd_hi: 2, rd_lo: 3, rs: 1, rm: 4, signed: false,
+                accumulate: false, set_flags: false,
+            }},
+            Entry { word: 0xE100_3281, condition: 0xE, op: FastOp::HalfwordMultiply {
+                class: 0x0100_0080, rd: 3, rn: 0, rs: 2, rm: 1, x: false, y: false,
+            }},
+            Entry { word: 0xE704_5201, condition: 0xE, op: FastOp::DspMultiply {
+                class: 0x0700_0010, rd: 4, ra: 5, rs: 2, rm: 1,
+                bit7: false, subtract: false, exchange_or_round: false,
+            }},
+        ];
+        for entry in entries {
+            assert!(!matches!(
+                IrInstruction::lower(entry).operation,
+                IrOperation::A32Fallback(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn keeps_unknown_instructions_in_the_explicit_compatibility_node() {
         let entry = Entry {
             word: 0xE000_0291,
             condition: 0xE,
-            op: FastOp::Multiply {
-                rd: 0,
-                rn: 0,
-                rs: 2,
-                rm: 1,
-                accumulate: false,
-                set_flags: false,
-            },
+            op: FastOp::Generic,
         };
 
         assert!(matches!(
