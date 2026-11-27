@@ -44,11 +44,11 @@ A API `Arm11Core::block_cache_stats()` expõe consultas, hits, misses, blocos/in
 
 ### 2. Interpretador intermediário (IR)
 
-**Primeira camada implementada:** os blocos agora são baixados para um IR próprio (IrInstruction/IrOperation) antes da execução. O interpretador IR já executa diretamente operações de dados com imediato, operações com registrador e shift imediato, além de branches com displacement/link pré-decodificados. Nessas operações, a palavra A32 original não é consultada durante a execução. O restante usa um nó explícito de compatibilidade que encaminha para o dispatcher antigo, preservando a semântica enquanto mais famílias são convertidas.
+**Primeira camada implementada:** os blocos são baixados para um IR próprio (IrInstruction/IrOperation) antes da execução. O IR representa diretamente todas as famílias que o decode cache reconhece atualmente: ALU imediato e registrador com shift imediato, transferências LDR/STR byte/word, halfword imediato e por registrador, LDM/STM, MUL/MLA, multiplicações longas, halfword/DSP multiplies e branches com displacement/link pré-decodificados. A palavra A32 original fica apenas como metadado para diagnósticos de falhas; a operação já tipada não a redescodifica na execução. Somente encodings genéricos permanecem no nó explícito de compatibilidade.
 
-A execução pelo IR está integrada tanto ao caminho normal quanto ao caminho com MMU. Testes cobrem o lowering de ALU/branch, fallback explícito e comparação diferencial de MOV, shift de registrador, condição EQ e BL contra o interpretador preciso. A etapa ainda não tem passes de otimização nem mede ganho; isso permanece pendente até a cobertura e correção do IR amadurecerem.
+A execução pelo IR está integrada tanto ao caminho normal quanto ao caminho com MMU. Os testes cobrem lowering de cada família e comparação diferencial entre o interpretador IR e o interpretador preciso, incluindo ALU, shift, condições, BL, acessos à memória e multiplicações. O teste de bloco também compara registradores, CPSR, PC e conteúdo da memória. **Validação pendente:** a CI está em execução; ainda não há resultado verde confirmado em todas as plataformas. A etapa não tem passes de otimização nem ganho de desempenho medido.
 
-**Próxima etapa:** converter transferências de memória, halfword, block transfer e multiplicações para operações IR nativas, removendo gradualmente os nós A32 de compatibilidade. Depois, adicionar passes conservadores (propagação de constantes e eliminação de operações redundantes locais) com testes diferenciais.
+**Próxima etapa:** executar integralmente os testes diferenciais em CI e corrigir divergências antes de adicionar passes conservadores, como propagação local de constantes e simplificação de operações. Depois medir o IR no PC e Android; só então iniciar o JIT.
 
 O IR deverá representar explicitamente:
 
