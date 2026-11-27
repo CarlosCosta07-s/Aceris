@@ -263,3 +263,11 @@ O commit 0dc68f9a adicionou tracing opcional de resultados SVC e HLE mínimo csn
 - Testes diferenciais comparam ARM e Thumb contra `step` preciso; o caso ARM também faz `STR/LDR` através da MMU. Testes separados verificam o retorno em SVC e o handoff de instrução CP15.
 - **Não há ainda um número de desempenho para o caminho MMU ativo.** Os valores Callgrind de 1,865B → 1,270B → 1,139B instruções do host pertencem à sonda sintética anterior, que executa com a MMU guest desligada. Não devem ser atribuídos ao novo lote traduzido.
 - Próxima medição necessária: acrescentar uma sonda release específica com `SCTLR.M` ativo, tabelas de página válidas e ciclos de load/store/ALU; comparar execução precisa e em lote com o mesmo programa e contagem guest idêntica, em Linux x86-64 e Android ARM64 físico.
+
+## Sonda isolada do despacho com MMU ativa (27/11/2026)
+
+- O teste ignorado `cpu::mmu::tests::translated_fast_dispatch_throughput` compara o passo preciso (`Arm11Core::step`) com o lote (`Arm11Core::run_fast`) usando `SCTLR.M=1`, uma seção traduzida e o mesmo laço ARM de ALU + `STR/LDR`. Ambos executam exatamente o mesmo orçamento e verificam registradores, CPSR, PC e memória antes de imprimir taxa e speedup.
+- Execução release: `cargo test --release -p aceris-core --lib translated_fast_dispatch_throughput -- --ignored --nocapture`.
+- Padrões: 1.000.000 instruções por rodada e 3 rodadas. `ACERIS_MMU_PROBE_INSTRUCTIONS` e `ACERIS_MMU_PROBE_ROUNDS` permitem ajustar duração e amostras.
+- Esta é uma microsonda de CPU/MMU com `FlatMemory`; não inclui scheduler/process session, o D-cache completo do processo, periféricos, GPU ou apresentação. Ela isola o custo da tradução e do despacho e não deve ser descrita como FPS de jogo.
+- A suíte normal compila o teste, mas não o executa porque está marcado `#[ignore]`. Nenhum número de speedup foi registrado ainda; executar a sonda em build release antes de decidir a próxima mudança.
