@@ -182,7 +182,6 @@ impl Arm11ThreadScheduler {
         })
     }
 
-
     /// Version of the multi-thread ARM11 scheduler snapshot.
     pub const SAVE_STATE_VERSION: u16 = 1;
 
