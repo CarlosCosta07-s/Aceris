@@ -1060,7 +1060,6 @@ impl Machine<'_> {
             *next_pc = target;
         }
     }
-
 }
 
 /// Extracts destination, descriptor index and up to three sources.
