@@ -1672,8 +1672,12 @@ mod tests {
         let overlap_x = ((a.x + b.x) * 0.5).round() as i32;
         let overlap_y = ((a.y + b.y) * 0.5).round() as i32;
 
-        assert!(overlap_x as f32 - a.x < a.radius);
-        assert!(overlap_y as f32 - a.y < a.radius);
+        let a_dx = overlap_x as f32 - a.x;
+        let a_dy = overlap_y as f32 - a.y;
+        let b_dx = overlap_x as f32 - b.x;
+        let b_dy = overlap_y as f32 - b.y;
+        assert!(a_dx * a_dx + a_dy * a_dy <= a.radius * a.radius);
+        assert!(b_dx * b_dx + b_dy * b_dy <= b.radius * b.radius);
         assert_eq!(
             hit_test_virtual_control_with_positions(
                 width,
