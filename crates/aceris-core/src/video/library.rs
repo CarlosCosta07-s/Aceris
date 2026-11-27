@@ -195,7 +195,10 @@ fn load_virtual_controls_size_percent(settings_directory: &Path) -> u8 {
     if lines.next() != Some(VIRTUAL_CONTROLS_SIZE_MAGIC) {
         return 100;
     }
-    let Some(value) = lines.next().and_then(|line| line.strip_prefix("size_percent=")) else {
+    let Some(value) = lines
+        .next()
+        .and_then(|line| line.strip_prefix("size_percent="))
+    else {
         return 100;
     };
     if lines.next().is_some() {
@@ -689,8 +692,7 @@ impl Library {
         let performance_mode = load_performance_mode(&settings_directory);
         let virtual_controls_visible = load_virtual_controls_visible(&settings_directory);
         let virtual_controls_opacity = load_virtual_controls_opacity(&settings_directory);
-        let virtual_controls_size_percent =
-            load_virtual_controls_size_percent(&settings_directory);
+        let virtual_controls_size_percent = load_virtual_controls_size_percent(&settings_directory);
         let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
@@ -851,7 +853,8 @@ impl Library {
         }
         fs::create_dir_all(&self.scan_settings_directory)?;
         fs::write(
-            self.scan_settings_directory.join(VIRTUAL_CONTROLS_SIZE_FILE),
+            self.scan_settings_directory
+                .join(VIRTUAL_CONTROLS_SIZE_FILE),
             format!("{VIRTUAL_CONTROLS_SIZE_MAGIC}\nsize_percent={size_percent}\n"),
         )?;
         self.virtual_controls_size_percent = size_percent;
@@ -865,8 +868,7 @@ impl Library {
             .iter()
             .position(|value| *value == current)
             .unwrap_or(1);
-        let next =
-            VIRTUAL_CONTROLS_SIZE_STEPS[(index + 1) % VIRTUAL_CONTROLS_SIZE_STEPS.len()];
+        let next = VIRTUAL_CONTROLS_SIZE_STEPS[(index + 1) % VIRTUAL_CONTROLS_SIZE_STEPS.len()];
         if let Err(error) = self.set_virtual_controls_size_percent(next) {
             self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
         }
