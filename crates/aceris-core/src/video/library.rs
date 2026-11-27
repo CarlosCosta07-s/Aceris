@@ -1873,7 +1873,7 @@ impl Library {
                 250.0,
                 360.0,
                 if self.touch_keyboard_enabled {
-                    408.0
+                    540.0
                 } else {
                     360.0
                 },
