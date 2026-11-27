@@ -49,10 +49,16 @@ impl fmt::Display for CpuStateError {
                 write!(f, "ARM11 CP15 TTBCR value {value:#010X} is invalid")
             }
             Self::InvalidFpscr(value) => {
-                write!(f, "ARM11 VFP FPSCR value {value:#010X} has reserved bits set")
+                write!(
+                    f,
+                    "ARM11 VFP FPSCR value {value:#010X} has reserved bits set"
+                )
             }
             Self::InvalidFpexc(value) => {
-                write!(f, "ARM11 VFP FPEXC value {value:#010X} has reserved bits set")
+                write!(
+                    f,
+                    "ARM11 VFP FPEXC value {value:#010X} has reserved bits set"
+                )
             }
             Self::TrailingData => f.write_str("ARM11 save-state contains trailing bytes"),
         }
