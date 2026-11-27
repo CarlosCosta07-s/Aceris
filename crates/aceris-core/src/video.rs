@@ -10,6 +10,7 @@ pub mod intro;
 mod lcd;
 pub mod library;
 pub mod png;
+pub mod quick_menu;
 mod present;
 pub use lcd::{
     LcdController, LcdControllerError, LcdPanel, LcdPixelFormat, LcdScanoutReport, PDC_CONTROL,
