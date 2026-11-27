@@ -17,6 +17,9 @@ pub enum CpuStateError {
     InvalidTtbcr(u32),
     InvalidFpscr(u32),
     InvalidFpexc(u32),
+    InvalidThreadMetadata,
+    InvalidThreadState(u8),
+    TooManyThreads(u32),
     TrailingData,
 }
 
@@ -60,6 +63,15 @@ impl fmt::Display for CpuStateError {
                     "ARM11 VFP FPEXC value {value:#010X} has reserved bits set"
                 )
             }
+            Self::InvalidThreadMetadata => {
+                f.write_str("ARM11 save-state thread scheduler metadata is inconsistent")
+            }
+            Self::InvalidThreadState(state) => {
+                write!(f, "ARM11 save-state thread state {state} is invalid")
+            }
+            Self::TooManyThreads(count) => {
+                write!(f, "ARM11 save-state contains too many threads: {count}")
+            }
             Self::TrailingData => f.write_str("ARM11 save-state contains trailing bytes"),
         }
     }
@@ -67,12 +79,12 @@ impl fmt::Display for CpuStateError {
 
 impl std::error::Error for CpuStateError {}
 
-pub(super) struct StateWriter {
+pub(crate) struct StateWriter {
     bytes: Vec<u8>,
 }
 
 impl StateWriter {
-    pub(super) fn with_capacity(capacity: usize) -> Result<Self, CpuStateError> {
+    pub(crate) fn with_capacity(capacity: usize) -> Result<Self, CpuStateError> {
         let mut bytes = Vec::new();
         bytes
             .try_reserve_exact(capacity)
@@ -113,7 +125,7 @@ impl StateWriter {
     }
 }
 
-pub(super) struct StateReader<'a> {
+pub(crate) struct StateReader<'a> {
     bytes: &'a [u8],
     cursor: usize,
 }
