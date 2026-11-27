@@ -301,6 +301,19 @@ pub fn render_overlay(
     format: PixelFormat,
     selected: usize,
 ) -> bool {
+    render_overlay_with_profile(frame, width, height, format, selected, "PADRÃO GLOBAL")
+}
+
+/// Draws the quick menu and identifies whether the active layout uses global or
+/// title-specific preferences.
+pub fn render_overlay_with_profile(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    selected: usize,
+    profile_label: &str,
+) -> bool {
     let Some(geometry) = geometry(width, height) else {
         return false;
     };
@@ -341,6 +354,17 @@ pub fn render_overlay(
         text_scale,
         "MENU DO JOGO",
         [245, 238, 248],
+        format,
+    );
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        title_x,
+        geometry.panel.y + 28 * scale,
+        scale,
+        profile_label,
+        [190, 225, 203],
         format,
     );
 
@@ -508,6 +532,28 @@ mod tests {
                 assert!(row.y + row.height <= height as usize);
             }
             assert_eq!(hit_test(width, height, 0, 0), None);
+        }
+    }
+
+    #[test]
+    fn profile_label_renders_on_compact_phone_and_desktop_canvases() {
+        for (width, height) in [(320u32, 240u32), (400, 800), (736, 240), (2400, 1080)] {
+            for (label, format) in [
+                ("PADRÃO GLOBAL", PixelFormat::Rgba8),
+                ("PERFIL DESTE JOGO", PixelFormat::Bgrx8),
+            ] {
+                let mut frame = vec![0u8; width as usize * height as usize * 4];
+                assert!(render_overlay_with_profile(
+                    &mut frame,
+                    width,
+                    height,
+                    format,
+                    0,
+                    label,
+                ));
+                assert_eq!(frame.len(), width as usize * height as usize * 4);
+                assert!(frame.iter().any(|channel| *channel != 0));
+            }
         }
     }
 
