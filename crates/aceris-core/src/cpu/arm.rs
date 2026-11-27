@@ -433,8 +433,8 @@ impl Arm11Core {
                 if rd_hi == PC || rd_lo == PC || rs == PC || rm == PC || rd_hi == rd_lo {
                     return Err(undefined());
                 }
-                let first = signed_halfword(self.regs[rm], bit(word, 5));
-                let second = signed_halfword(self.regs[rs], bit(word, 6));
+                let first = signed_halfword(self.regs[rm], x);
+                let second = signed_halfword(self.regs[rs], y);
                 let product = first * second;
                 let accumulator = (u64::from(self.regs[rd_hi]) << 32) | u64::from(self.regs[rd_lo]);
                 let result = accumulator.wrapping_add(product as u64);
@@ -446,8 +446,8 @@ impl Arm11Core {
                 if rn != 0 || rd == PC || rs == PC || rm == PC {
                     return Err(undefined());
                 }
-                let first = signed_halfword(self.regs[rm], bit(word, 5));
-                let second = signed_halfword(self.regs[rs], bit(word, 6));
+                let first = signed_halfword(self.regs[rm], x);
+                let second = signed_halfword(self.regs[rs], y);
                 self.regs[rd] = (first * second) as u32;
             }
             _ => return Err(undefined()),
