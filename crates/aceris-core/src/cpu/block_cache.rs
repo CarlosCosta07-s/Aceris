@@ -347,7 +347,7 @@ mod tests {
             0xE3A0_0003, // MOV r0, #3
             0xE1A0_1080, // MOV r1, r0, LSL #1
             0x03A0_2007, // MOVEQ r2, #7 (skipped while Z is clear)
-            0xEA00_0000, // B to the instruction after the branch
+            0xEB00_0000, // BL to the instruction after the branch
         ];
         let mut fast_bus = bus();
         let mut precise_bus = bus();
@@ -381,6 +381,7 @@ mod tests {
             (fast_cpu.regs[0], fast_cpu.regs[1], fast_cpu.regs[2]),
             (3, 6, 0)
         );
+        assert_eq!(fast_cpu.regs[super::super::LR], 0x110);
     }
 
     #[test]
