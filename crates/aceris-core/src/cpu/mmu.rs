@@ -404,7 +404,7 @@ impl TranslationLookasideBuffer {
     fn write_entry(
         entry: Option<TlbEntry>,
         writer: &mut super::state::StateWriter,
-    ) -> Result<(), super::state::CpuStateError> {
+    ) -> std::result::Result<(), super::state::CpuStateError> {
         let Some(entry) = entry else {
             writer.write_bool(false)?;
             return Ok(());
@@ -435,7 +435,7 @@ impl TranslationLookasideBuffer {
 
     fn read_entry(
         reader: &mut super::state::StateReader<'_>,
-    ) -> Result<Option<TlbEntry>, super::state::CpuStateError> {
+    ) -> std::result::Result<Option<TlbEntry>, super::state::CpuStateError> {
         use super::state::CpuStateError;
 
         if !reader.read_bool()? {
@@ -510,7 +510,7 @@ impl TranslationLookasideBuffer {
     pub(super) fn write_save_state(
         &self,
         writer: &mut super::state::StateWriter,
-    ) -> Result<(), super::state::CpuStateError> {
+    ) -> std::result::Result<(), super::state::CpuStateError> {
         for set in &self.sets {
             for entry in set {
                 Self::write_entry(*entry, writer)?;
@@ -528,7 +528,7 @@ impl TranslationLookasideBuffer {
 
     pub(super) fn read_save_state(
         reader: &mut super::state::StateReader<'_>,
-    ) -> Result<Self, super::state::CpuStateError> {
+    ) -> std::result::Result<Self, super::state::CpuStateError> {
         use super::state::CpuStateError;
 
         let mut sets = [[None; TLB_WAYS]; TLB_SET_COUNT];
