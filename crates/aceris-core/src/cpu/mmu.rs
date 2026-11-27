@@ -798,6 +798,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
         params: Params,
         tlb: &'a mut TranslationLookasideBuffer,
     ) -> Self {
+        let tlb_generation = tlb.generation;
         Self {
             inner,
             tlb,
@@ -805,7 +806,7 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
             fetching: false,
             fault: None,
             last_entry: None,
-            tlb_generation: tlb.generation,
+            tlb_generation,
         }
     }
 
