@@ -282,6 +282,20 @@ pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut
             {
                 let scaled_y = (origin_y + y) * scale;
                 let scaled_x = origin_x * scale;
+                if scale == 1 {
+                    let row_start = (scaled_y * width + scaled_x) * 4;
+                    let row_end = row_start + row.len();
+                    for (destination, pixel) in output[row_start..row_end]
+                        .chunks_exact_mut(4)
+                        .zip(row.chunks_exact(4))
+                    {
+                        destination[0] = pixel[2];
+                        destination[1] = pixel[1];
+                        destination[2] = pixel[0];
+                        destination[3] = 0xFF;
+                    }
+                    continue;
+                }
                 for (x, pixel) in row.chunks_exact(4).enumerate() {
                     let color = [pixel[2], pixel[1], pixel[0], 0xFF];
                     let column_start = scaled_x + x * scale;
