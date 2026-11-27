@@ -1,5 +1,8 @@
 # Frontends PC e Android
 
+Para consultar a distinção entre suporte do core, recursos parcialmente integrados e opções realmente expostas ao usuário, veja a [Matriz de capacidades reais](CAPABILITY_MATRIX.md). A ordem de implementação está no [Plano de implementação do produto](PRODUCT_IMPLEMENTATION_PLAN.md).
+
+
 Este documento descreve o estado atual dos hosts do Aceris. O núcleo de emulação continua independente de plataforma e é compartilhado entre desktop e Android.
 
 ## Desktop
