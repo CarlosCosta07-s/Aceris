@@ -45,7 +45,15 @@ pub fn load_executable_file_with_identity(
     let format = system
         .load_executable_file(path)
         .map_err(LoadIdentifiedImageError::Load)?;
-    let game_identity = system.game_identity();
+    identity_for_loaded_image(path, format, system.game_identity())
+}
+
+/// Associates a validated loader result with the exact full-file fingerprint.
+fn identity_for_loaded_image(
+    path: &Path,
+    format: ImageFormat,
+    game_identity: Option<GameIdentity>,
+) -> Result<LoadedImageIdentity, LoadIdentifiedImageError> {
     let save_state_identity = identity_from_image_path(
         path,
         game_identity.map(GameIdentity::title_id),
@@ -107,25 +115,16 @@ mod tests {
     #[test]
     fn homebrew_identity_uses_exact_image_bytes_without_a_title_id() {
         let path = temporary_image_path();
-        let bytes = b"synthetic homebrew image";
-        fs::write(&path, bytes).expect("synthetic image should be written");
+        fs::write(&path, b"synthetic homebrew image")
+            .expect("synthetic image should be written");
 
-        let loaded = LoadedImageIdentity {
-            format: ImageFormat::ThreeDsx,
-            game_identity: None,
-            save_state_identity: identity_from_image_path(&path, None)
-                .expect("image identity should be calculated"),
-        };
+        let loaded = identity_for_loaded_image(&path, ImageFormat::ThreeDsx, None)
+            .expect("homebrew image identity should be calculated");
 
         assert_eq!(loaded.format, ImageFormat::ThreeDsx);
         assert_eq!(loaded.game_identity, None);
-        assert_eq!(
-            loaded.save_state_identity.content_sha256,
-            identity_from_image_path(&path, None)
-                .expect("same image should retain its fingerprint")
-                .content_sha256
-        );
         assert_eq!(loaded.save_state_identity.title_id, None);
+        assert_ne!(loaded.save_state_identity.content_sha256, [0; 32]);
         let _ = fs::remove_file(path);
     }
 
@@ -134,31 +133,53 @@ mod tests {
         let path = temporary_image_path();
         fs::write(&path, b"synthetic retail image").expect("synthetic image should be written");
         let game_identity = GameIdentity::from_title_id(0x0004_0000_1234_5600);
-        let identity = identity_from_image_path(
-            &path,
-            game_identity.map(GameIdentity::title_id),
-        )
-        .expect("retail image identity should be calculated");
 
-        assert_eq!(identity.title_id, Some(0x0004_0000_1234_5600));
-        assert_ne!(identity.content_sha256, [0; 32]);
+        let loaded = identity_for_loaded_image(&path, ImageFormat::Ncsd, game_identity)
+            .expect("retail image identity should be calculated");
+
+        assert_eq!(loaded.game_identity, game_identity);
+        assert_eq!(
+            loaded.save_state_identity.title_id,
+            Some(0x0004_0000_1234_5600)
+        );
+        assert_ne!(loaded.save_state_identity.content_sha256, [0; 32]);
         let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn changing_image_bytes_changes_save_state_identity_even_when_title_id_matches() {
+    fn changing_image_bytes_changes_identity_even_when_title_id_matches() {
         let path = temporary_image_path();
+        let game_identity = GameIdentity::from_title_id(0x0004_0000_1234_5600);
         fs::write(&path, b"first revision").expect("first image should be written");
-        let title_id = Some(0x0004_0000_1234_5600);
-        let first = identity_from_image_path(&path, title_id)
+        let first = identity_for_loaded_image(&path, ImageFormat::Cia, game_identity)
             .expect("first identity should be calculated");
 
         fs::write(&path, b"second revision").expect("second image should be written");
-        let second = identity_from_image_path(&path, title_id)
+        let second = identity_for_loaded_image(&path, ImageFormat::Cia, game_identity)
             .expect("second identity should be calculated");
 
-        assert_eq!(first.title_id, second.title_id);
-        assert_ne!(first.content_sha256, second.content_sha256);
+        assert_eq!(
+            first.save_state_identity.title_id,
+            second.save_state_identity.title_id
+        );
+        assert_ne!(
+            first.save_state_identity.content_sha256,
+            second.save_state_identity.content_sha256
+        );
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn identity_errors_are_reported_after_the_loader_has_accepted_the_image() {
+        let path = temporary_image_path();
+        let error = identity_for_loaded_image(&path, ImageFormat::ThreeDsx, None)
+            .expect_err("a missing image must not receive a save-state identity");
+
+        assert!(matches!(
+            error,
+            LoadIdentifiedImageError::Identity(SaveStateIdentityError::Read(
+                std::io::ErrorKind::NotFound
+            ))
+        ));
     }
 }
