@@ -65,7 +65,7 @@
 | Deadzone/sensibilidade/inversão | Não disponível | Não existem controles de ajuste expostos. |
 | Controles virtuais Android | Parcial | Há overlay/hit-test e envio de botões; posição, escala, opacidade, presets e perfis não são editáveis. |
 | Multi-touch | Parcial | NativeActivity coleta ponteiros e o app mantém estado multitoque; falta validar em aparelho e todas as combinações de stylus + botões. |
-| Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar à biblioteca estão conectados; a execução guest não avança enquanto o painel fica aberto. Atalho configurável, sincronização/flush explícito de áudio, confirmação de progresso, layouts e troca de telas ainda não estão disponíveis. CI e hardware físico pendentes. |
+| Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar à biblioteca estão conectados; a execução guest não avança enquanto o painel fica aberto; as filas host de áudio são limpas ao pausar. Reiniciar/Voltar pedem confirmação preventiva, sem detecção automática de progresso não salvo. Atalho configurável, layouts e troca de telas ainda não estão disponíveis. CI e hardware físico pendentes. |
 | Atalhos configuráveis | Não disponível | Existem teclas/eventos específicos do host, mas não há editor de atalhos. |
 | Screenshot durante a partida | Não disponível | Existem saídas de diagnóstico/PNG e dump de LCD no desktop; não existe ação de captura pela interface durante o jogo. |
 
