@@ -160,10 +160,7 @@ impl Arm11Core {
                 self.execute_alu(opcode, set_flags, rn, rd, operand, carry);
                 Ok(StepEvent::Executed)
             }
-            IrOperation::Branch {
-                displacement,
-                link,
-            } => {
+            IrOperation::Branch { displacement, link } => {
                 let pc = self.pc();
                 if link {
                     self.regs[LR] = pc.wrapping_add(4);
@@ -171,9 +168,7 @@ impl Arm11Core {
                 self.branch(pc.wrapping_add(8).wrapping_add(displacement as u32));
                 Ok(StepEvent::Executed)
             }
-            IrOperation::A32Fallback(entry) => {
-                self.execute_arm_decoded(bus, entry.word, entry)
-            }
+            IrOperation::A32Fallback(entry) => self.execute_arm_decoded(bus, entry.word, entry),
         }
     }
 }
