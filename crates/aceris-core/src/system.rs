@@ -6159,6 +6159,61 @@ mod tests {
     }
 
     #[test]
+    fn service_manager_gets_dsp_handle_and_dispatches_first_request() {
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_svc_ncsd_cartridge_fixture(14)),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let service_manager = {
+            let session = system.ncsd_session.as_mut().unwrap();
+            let handle = session.create_service_manager_session().unwrap();
+            session.register_service_manager_client(handle).unwrap();
+            handle
+        };
+
+        // Obtain dsp::DSP through the same srv:GetServiceHandle route used by
+        // guest applications, with the DSP name present in the synthetic ACI.
+        let mut name = [0u8; 8];
+        name.copy_from_slice(b"dsp::DSP");
+        let reply = write_tls_ipc_request(
+            &mut system,
+            service_manager,
+            &[
+                0x0005_0100,
+                u32::from_le_bytes(name[..4].try_into().unwrap()),
+                u32::from_le_bytes(name[4..].try_into().unwrap()),
+                8,
+                0,
+            ],
+        );
+        run_one_ipc_svc(&mut system);
+        let response = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&response[..3], &[0x0005_0042, 0, 0]);
+        let dsp = response[3];
+        assert_ne!(dsp, 0);
+        assert_eq!(
+            system
+                .ncsd_session
+                .as_ref()
+                .unwrap()
+                .service_session_kind(dsp),
+            Some(ServiceSessionKind::Dsp)
+        );
+
+        // The returned handle must reach the DSP endpoint, not merely exist.
+        let reply = write_tls_ipc_request(&mut system, dsp, &[0x0016_0000]);
+        run_one_ipc_svc(&mut system);
+        let semaphore = read_tls_ipc_response(&mut system, reply, 4);
+        assert_eq!(&semaphore[..3], &[0x0016_0042, 0, 0]);
+        assert_ne!(semaphore[3], 0);
+        assert!(system.unhandled_requests().is_empty());
+    }
+
+    #[test]
     fn service_manager_registers_ports_wakes_pending_lookups_and_releases_slots() {
         let mut system = System::new();
         system
