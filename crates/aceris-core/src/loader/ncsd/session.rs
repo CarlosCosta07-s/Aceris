@@ -4322,7 +4322,9 @@ mod tests {
         original.wait_deadlines.insert(thread, (event, 9_876_543));
         original.arbiter_waiters.push((0x0020_1000, thread));
         original.multi_waits.insert(thread, vec![event]);
-        original.wait_all_waits.insert(thread, vec![event, second_event]);
+        original
+            .wait_all_waits
+            .insert(thread, vec![event, second_event]);
         original
             .interrupts
             .bind(0x20, event, 3, false, InterruptTargetKind::Event)
@@ -4361,10 +4363,7 @@ mod tests {
         .unwrap();
 
         assert!(session.restore_runtime_state_section(&malformed).is_err());
-        assert_eq!(
-            session.encode_runtime_state_section().unwrap(),
-            before
-        );
+        assert_eq!(session.encode_runtime_state_section().unwrap(), before);
         assert!(session.external_irq_asserted);
     }
 
