@@ -15,12 +15,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::save_state_identity::{
-    SaveStateIdentityError, identity_from_image_path, identity_from_image_reader,
-};
 use crate::save_state::{
     MAX_SAVE_STATE_PAYLOAD_BYTES, SAVE_STATE_HEADER_SIZE, SaveStateError, SaveStateFile,
     SaveStateIdentity,
+};
+use crate::save_state_identity::{
+    SaveStateIdentityError, identity_from_image_path, identity_from_image_reader,
 };
 
 /// Number of independently addressable save-state slots for each title.
