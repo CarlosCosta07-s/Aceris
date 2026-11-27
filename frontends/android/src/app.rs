@@ -5,7 +5,9 @@
 //! RGBA frames it produces.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use aceris_core::input::{pad, pad_from_frontend_buttons, touch_from_surface_point};
 use aceris_core::video::frontend::{
@@ -944,7 +946,35 @@ impl App {
             5 => self.reset_game_layout(),
             6 => self.reset_virtual_controls_layout(),
             7 => self.toggle_virtual_control_edit_scope(),
-            _ => self.begin_control_editor(),
+            8 => self.begin_control_editor(),
+            9 => self.capture_screenshot(),
+        }
+    }
+
+    fn capture_screenshot(&mut self) {
+        let frame = {
+            let Some(system) = self.system.as_ref() else {
+                self.library.set_status("NÃO HÁ JOGO ATIVO PARA CAPTURAR.");
+                return;
+            };
+            let layout = self.game_layout();
+            let mut rgba = Vec::new();
+            if !compose_game_into(system.display(), &layout, self.width, self.height, &mut rgba) {
+                self.library
+                    .set_status("NÃO FOI POSSÍVEL COMPOR A CAPTURA DE TELA.");
+                return;
+            }
+            rgba
+        };
+
+        let directory = self.games_dir.join(".aceris").join("screenshots");
+        match write_screenshot_rgba8(&directory, self.width, self.height, &frame) {
+            Ok(path) => self
+                .library
+                .set_status(format!("CAPTURA SALVA: {}", path.display())),
+            Err(error) => self
+                .library
+                .set_status(format!("NÃO FOI POSSÍVEL SALVAR A CAPTURA: {error}")),
         }
     }
 
@@ -1118,6 +1148,47 @@ impl App {
             self.library
                 .set_status(format!("Diagnóstico HLE: {diagnostic}"));
         }
+    }
+}
+
+fn write_screenshot_rgba8(
+    directory: &Path,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<PathBuf, String> {
+    let encoded = aceris_core::video::png::encode_rgba8(width as usize, height as usize, rgba)
+        .ok_or_else(|| "dimensões ou buffer RGBA inválidos".to_string())?;
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = directory.join(format!("aceris-{timestamp}.png"));
+    fs::write(&path, encoded).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod screenshot_tests {
+    use super::*;
+
+    #[test]
+    fn screenshot_writer_creates_a_valid_png_in_the_requested_directory() {
+        let directory = std::env::temp_dir().join(format!(
+            "aceris-app-screenshot-{}",
+            std::process::id()
+        ));
+        let rgba = [255, 0, 0, 255];
+        let path = write_screenshot_rgba8(&directory, 1, 1, &rgba).unwrap();
+        let encoded = fs::read(&path).unwrap();
+
+        assert_eq!(
+            &encoded[..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        assert_eq!(&encoded[16..24], &[0, 0, 0, 1, 0, 0, 0, 1]);
+        fs::remove_dir_all(directory).unwrap();
     }
 }
 
