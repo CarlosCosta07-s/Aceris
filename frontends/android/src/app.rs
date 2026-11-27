@@ -392,18 +392,22 @@ impl App {
     }
 
     fn update_game_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
-        if previous.is_empty() {
-            if let Some((&id, &(x, y))) = self.pointers.iter().next() {
-                if quick_menu::hit_test_menu_button(
-                    self.width,
-                    self.height,
-                    x.round() as i32,
-                    y.round() as i32,
-                ) {
+        if self.menu_button_pointer.is_none() {
+            for (&id, &(x, y)) in &self.pointers {
+                if !previous.contains_key(&id)
+                    && quick_menu::hit_test_menu_button(
+                        self.width,
+                        self.height,
+                        x.round() as i32,
+                        y.round() as i32,
+                    )
+                {
                     self.menu_button_pointer = Some(id);
+                    break;
                 }
             }
-        } else if let Some(pointer_id) = self.menu_button_pointer {
+        }
+        if let Some(pointer_id) = self.menu_button_pointer {
             if !self.pointers.contains_key(&pointer_id) {
                 let opened = previous.get(&pointer_id).is_some_and(|&(x, y)| {
                     quick_menu::hit_test_menu_button(
@@ -1147,9 +1151,10 @@ mod tests {
     #[test]
     fn tapping_the_visible_menu_shortcut_opens_the_quick_menu_without_guest_stylus_input() {
         let (mut app, dir) = app_with_games(0);
+        app.resize(2400, 1080);
         app.system = Some(System::new());
         app.screen = Screen::Game;
-        let (x, y) = (app.width as i32 - 40, 40);
+        let (x, y) = (app.width as i32 - 60, 40);
         assert!(quick_menu::hit_test_menu_button(app.width, app.height, x, y));
         touch(&mut app, x as f32, y as f32);
         assert!(app.system.as_mut().unwrap().input_mut().snapshot().touch.is_none());
