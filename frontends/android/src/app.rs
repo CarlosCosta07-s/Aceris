@@ -595,7 +595,8 @@ impl App {
             2 => self.request_game_menu_confirmation(
                 quick_menu::ConfirmationAction::BackToLibrary,
             ),
-            _ => self.cycle_screen_layout(),
+            3 => self.cycle_screen_layout(),
+            _ => self.swap_screens = !self.swap_screens,
         }
     }
 
@@ -1263,6 +1264,34 @@ mod tests {
         assert!(matches!(app.screen(), Screen::Game));
         assert!(!app.is_game_menu_open());
         assert!(app.system.is_some());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn quick_menu_cycles_layout_and_swaps_physical_screens() {
+        let (mut app, dir) = app_with_games(0);
+        app.screen = Screen::GameMenu;
+        app.system = Some(System::new());
+        app.quick_menu_selected = 3;
+
+        app.activate_game_menu_action();
+        assert_eq!(app.screen_layout_mode, ScreenLayoutMode::Vertical);
+        assert!(matches!(app.screen(), Screen::GameMenu));
+
+        app.quick_menu_selected = 4;
+        app.activate_game_menu_action();
+        assert!(app.swap_screens);
+        assert!(matches!(app.screen(), Screen::GameMenu));
+
+        let layout = app.game_layout();
+        let normal = compute_screen_layout_for_mode(
+            app.width,
+            app.height,
+            app.screen_layout_mode,
+            false,
+        );
+        assert_eq!(layout.top, normal.bottom);
+        assert_eq!(layout.bottom, normal.top);
         fs::remove_dir_all(dir).ok();
     }
 
