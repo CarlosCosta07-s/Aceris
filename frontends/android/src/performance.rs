@@ -266,14 +266,7 @@ mod tests {
         let mut storage = [FrameSample::default(); SAMPLE_CAPACITY];
         storage[..samples.len()].copy_from_slice(&samples);
 
-        let report = summarize(
-            &storage,
-            samples.len(),
-            Duration::from_secs(5),
-            5,
-            4,
-            3,
-        );
+        let report = summarize(&storage, samples.len(), Duration::from_secs(5), 5, 4, 3);
 
         assert_eq!(report.presented_fps, 0.8);
         assert_eq!(report.render_average_ms, 3.0);
@@ -346,14 +339,7 @@ mod tests {
     #[test]
     fn zero_samples_do_not_create_nan_percentages() {
         let storage = [FrameSample::default(); SAMPLE_CAPACITY];
-        let report = summarize(
-            &storage,
-            0,
-            Duration::ZERO,
-            3,
-            0,
-            0,
-        );
+        let report = summarize(&storage, 0, Duration::ZERO, 3, 0, 0);
 
         assert_eq!(report.presented_fps, 0.0);
         assert_eq!(report.gpu_presentation_percent, 0.0);
