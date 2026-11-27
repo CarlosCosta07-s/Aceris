@@ -2938,3 +2938,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - M4.1 continua parcial: confirmação de perda de progresso, atalhos configuráveis e validação física não estão concluídos. Nenhuma alteração em CPU/Thumb, GPU/PICA, SVC, DSP/CSND, código reservado de Claude, dependências, assets, ROMs, firmware ou chaves. Todas as alterações seguem diretamente em `main`, sem branch ou PR.
 - Commits desta etapa: `50fca2e`, `802218c`, `5141ecb`, `5f648b8`, `62bd875`, `d4074a2`, `b16ee51`, `a9eca78` e `1390684`.
 - Revisão adicional `3311d77`: se uma espera anterior terminar em timeout no estado AAudio FLUSHING, a próxima tentativa de pausa agora aguarda a conclusão dessa transição em vez de retornar erro imediatamente.
+
+## Confirmação de ações destrutivas do menu rápido (27/11/2026, ChatGPT)
+
+- `crates/aceris-core/src/video/quick_menu.rs` agora oferece `ConfirmationAction::{Restart, BackToLibrary}`, renderização da confirmação em RGBA8/BGRX8 e hit-test para Cancelar/Confirmar. A geometria é responsiva e reutiliza as métricas de fonte do Aceris; testes cobrem hit-test em PC/telefone/retrato, ambos os formatos de pixel e ambas as ações.
+- Android: `Screen::GameMenuConfirm` mantém a sessão pausada. D-pad/A/Start e toque escolhem Cancelar ou Confirmar; B/Voltar cancela e retorna ao menu rápido. Reiniciar ou sair para a biblioteca só executa depois da confirmação. Testes cobrem cancelamento sem abandonar a sessão e retorno à biblioteca somente após confirmar.
+- Desktop: o mesmo painel compartilhado aparece para Reiniciar/Voltar. Setas/Enter e mouse navegam; Esc cancela a confirmação e mantém o menu aberto. A ação confirmada retorna o fluxo Restart/BackToLibrary ao launcher.
+- O aviso é deliberadamente preventivo: informa que o progresso que o próprio jogo ainda não salvou pode ser perdido, mas Aceris não detecta estado dirty nem implementa save states/auto-save.
+- Testes adicionados não foram executados nesta sessão. Não declarar build, Rustfmt, Clippy, testes ou CI aprovados sem evidência do workflow. Testes físicos/visuais continuam pendentes.
+- Alterações restritas a `quick_menu.rs`, frontend Android/desktop e documentação de UX/capacidade/plano. Sem mudança em CPU/Thumb, GPU/PICA, DSP/CSND, SVC, áreas reservadas de Claude, dependências, assets, ROMs, firmware ou chaves. Somente `main`; sem branches/PRs.
+- Commits: `e08707f` overlay compartilhado; `b6ab305` centralização tipográfica; `8c07efa` fluxo Android; `7f1ec06` testes Android; `c177090` fluxo desktop.
