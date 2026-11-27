@@ -4884,13 +4884,13 @@ mod tests {
 
         let pixel = |x: usize, y: usize| {
             let offset = (y * width + x) * 4;
-            &frame[offset..offset + 3]
+            [frame[offset], frame[offset + 1], frame[offset + 2]]
         };
-        assert_eq!(pixel(13, 13), &[0x0C, 0x08, 0x14]);
-        assert_eq!(pixel(10, 10), &[0x56, 0x3B, 0x67]);
-        assert_eq!(pixel(11, 11), &[0x21, 0x15, 0x2F]);
-        assert_eq!(pixel(12, 12), &[0x63, 0x4B, 0x7E]);
-        assert_eq!(pixel(12, 32), &[0x16, 0x0F, 0x24]);
+        assert_eq!(pixel(52, 20), [0x0C, 0x08, 0x14]);
+        assert_eq!(pixel(10, 10), [0x56, 0x3B, 0x67]);
+        assert_eq!(pixel(11, 11), [0x21, 0x15, 0x2F]);
+        assert_eq!(pixel(12, 12), [0x63, 0x4B, 0x7E]);
+        assert_eq!(pixel(12, 32), [0x16, 0x0F, 0x24]);
     }
 
     #[test]
