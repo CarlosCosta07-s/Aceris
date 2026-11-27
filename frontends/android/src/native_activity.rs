@@ -696,6 +696,7 @@ fn create_android_gpu_presenter(
     window: *mut c_void,
     width: u32,
     height: u32,
+    cache_directory: &Path,
 ) -> Option<AndroidGpuPresenter> {
     let backend = match GraphicsBackend::from_env() {
         Ok(backend) => backend,
@@ -715,7 +716,16 @@ fn create_android_gpu_presenter(
     let native_window = RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(window));
     // SAFETY: this object owns an extra ANativeWindow reference, released only
     // after its WGPU surface has been destroyed by Drop.
-    match unsafe { GraphicsPresenter::new(Some(display), native_window, width, height, backend) } {
+    match unsafe {
+        GraphicsPresenter::new_with_cache_directory(
+            Some(display),
+            native_window,
+            width,
+            height,
+            backend,
+            Some(cache_directory),
+        )
+    } {
         Ok(presenter) => {
             let info = presenter.adapter_info();
             eprintln!(
@@ -743,6 +753,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     lock(&host.shared).looper = Raw::new(looper);
 
     let mut app = App::new(&games_dir);
+    let gpu_pipeline_cache_directory = games_dir.join(".aceris").join("gpu_pipeline_cache");
     let mut frame = Vec::new();
     let mut performance_monitor =
         performance_logging_enabled(&games_dir).then(FramePerformanceMonitor::new);
@@ -875,6 +886,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
                 &mut attempted_gpu_window,
                 &mut cpu_geometry_size,
                 &mut performance_monitor,
+                &gpu_pipeline_cache_directory,
             );
             let samples = app.take_audio();
             if let Some(audio) = audio.as_mut() {
@@ -1022,6 +1034,7 @@ fn render(
     attempted_gpu_window: &mut Raw,
     cpu_geometry_size: &mut (u32, u32),
     performance_monitor: &mut Option<FramePerformanceMonitor>,
+    cache_directory: &Path,
 ) {
     let frame_started = performance_monitor.as_ref().map(|_| Instant::now());
     // Holding the lock keeps the window alive: `on_window_destroyed` takes it
@@ -1077,7 +1090,8 @@ fn render(
         let presentation_started = performance_monitor.as_ref().map(|_| Instant::now());
         if gpu_presenter.is_none() && *attempted_gpu_window != window {
             *attempted_gpu_window = window;
-            *gpu_presenter = create_android_gpu_presenter(window.get(), width, height);
+            *gpu_presenter =
+                create_android_gpu_presenter(window.get(), width, height, cache_directory);
         }
 
         let gpu_result = gpu_presenter.as_mut().map(|gpu| {
