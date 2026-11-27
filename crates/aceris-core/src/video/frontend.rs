@@ -185,7 +185,7 @@ impl VirtualControlPositions {
             return false;
         };
         let size_percent = size_percent.clamp(60, 150);
-        self.size_adjustments_mut(orientation)[index] = size_percent as i8 - 100;
+        self.size_adjustments_mut(orientation)[index] = (i16::from(size_percent) - 100) as i8;
         true
     }
 
