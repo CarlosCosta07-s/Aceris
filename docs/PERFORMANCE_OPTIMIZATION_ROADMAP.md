@@ -35,18 +35,11 @@ As variantes não cobertas continuam no interpretador genérico, incluindo forma
 
 ### 1. Cache de blocos básicos
 
-Não transformar o cache atual diretamente em um cache por PC. Um bloco precisa de identidade e invalidação próprias.
+**Primeira versão implementada:** cache direto de 256 entradas por núcleo, com até 16 instruções A32 por bloco. A compilação só ocorre quando o bus confirma que o intervalo pertence a texto executável, contíguo e imutável. O cache usa identidade do backing, deslocamento inicial, PC e modo; no acerto, o bus revalida a faixa inteira. O adapter MMU valida permissões de execução, fronteiras de página e continuidade da tradução física.
 
-Requisitos de arquitetura:
+Os blocos terminam em branch ou transferência de registradores múltiplos. Encodings genéricos ou instruções que exigem o passo preciso ficam fora do bloco e usam o loop existente. Buses sem contrato explícito de texto imutável (por exemplo, RAM gravável) continuam no caminho por instrução. Assim, a primeira versão evita precisar invalidar blocos após escrita guest, DMA ou sincronização de código, porque não aceita esse tipo de backing.
 
-- Chave por endereço de início, estado ARM/Thumb, modo/estado relevante do CPU e geração do mapeamento de memória.
-- Guardar instruções pré-decodificadas em sequência, com tamanho máximo limitado.
-- Encerrar o bloco em branch, exceção, troca de estado ARM/Thumb, escrita em PC, retorno de exceção ou operação cujo efeito não permita continuar com segurança.
-- Invalidar blocos quando código executável for alterado por escrita da CPU, DMA, carregamento de executável ou mudança de mapeamento.
-- Verificar limites de página e instruções que atravessam fronteiras.
-- Manter fallback para execução genérica quando o bloco não for válido ou seguro.
-
-A primeira implementação deve priorizar blocos curtos, invalidação correta e contadores de hit/miss; o comprimento e a política de substituição serão escolhidos por benchmarks.
+Ainda é necessário medir hit rate, custo das consultas de faixa e ganhos em jogos reais. Também faltam política de invalidação para futuras regiões dinâmicas, contadores e uma extensão de blocos para Thumb.
 
 ### 2. Interpretador intermediário (IR)
 
