@@ -26,7 +26,6 @@ use std::io::{Read, Seek};
 
 use crate::Result;
 use crate::cpu::{Arm11Core, CpuStateError, MpcoreScu, StepEvent};
-use crate::save_state::{SaveStateSection, section_id};
 use crate::gpu::{
     FCRAM_BASE, GpuDmaAddressSpace, GpuPhysicalMemory, NEW_LINEAR_BASE, NEW_LINEAR_END,
     OLD_LINEAR_BASE, OLD_LINEAR_END,
@@ -39,6 +38,7 @@ use crate::loader::ncsd::process::{
 use crate::loader::ncsd::{NcsdImageReader, NcsdImageReaderError};
 use crate::loader::threedsx::process::ThreeDsxPreparedProcess;
 use crate::memory::Bus;
+use crate::save_state::{SaveStateSection, section_id};
 use kernel::{
     Arm11KernelObjectTable, CURRENT_PROCESS_HANDLE, CURRENT_THREAD_HANDLE, EventResetType,
     IpcHandleTranslationError, KernelHandleError, ServiceSessionKind,
