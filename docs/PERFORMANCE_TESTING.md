@@ -395,3 +395,15 @@ Os testes diferenciais do Android comparam a saída com a referência de limpeza
 Essas mudanças eliminam escrita host redundante sobre pixels que seriam imediatamente sobrescritos pelas LCDs, mas o ganho real ainda precisa ser medido. Não alteram a resolução/frequência guest, o relógio ARM11, timers, áudio ou sincronização. Para uma comparação física, use builds Release, a mesma cena/título, tamanho de janela/orientação/escala e backend; compare telemetria desligada e ligada e registre frametime p50/p95/p99. Não use apenas FPS apresentado como prova de velocidade de emulação.
 
 Validação CI do commit `fa0db091`: Rustfmt, build e testes completos passaram em Windows, Ubuntu e macOS; os builds ARM64 e APK de desenvolvimento passaram. Clippy permanece bloqueado por `needless_range_loop` em `crates/aceris-core/src/cpu/decode_cache.rs:386`, pertencente a outro agente.
+
+## Composição host — ampliação desktop por linhas (27/11/2026)
+
+Nas escalas inteiras 2×–4×, o compositor desktop agora cria a primeira linha ampliada escrevendo os pixels adjacentes em sequência e replica essa linha para as demais linhas de saída. Isso substitui a escrita em pequenas colunas verticais por pixel fonte, com objetivo de melhorar a localidade de cache. A conversão para BGRX e o resultado nearest-neighbour permanecem iguais.
+
+O teste `row_major_scaled_composition_matches_reference_pixel_for_pixel` compara o buffer completo com uma implementação de referência para padrões de cores não uniformes nas escalas 2×, 3× e 4×. A equivalência dos pixels não mede a velocidade da implementação: o ganho precisa ser verificado em build Release no mesmo PC e mesma escala.
+
+## Android — candidatos de sobreposição dos controles virtuais (27/11/2026)
+
+O compositor dos controles virtuais calcula uma máscara de círculos posteriores que podem intersectar cada botão. Para cada pixel, a etapa de preservação da ordem visual verifica somente os candidatos; a checagem de distância exata permanece ativa para todos eles. Em layouts normais, a maioria dos pares não precisa ser revisitada em cada pixel; em superfícies compactas, a precedência continua correta.
+
+O teste `direct_virtual_overlay_matches_full_frame_reference` compara pixel a pixel a mistura direta com a composição tradicional de overlay em tela inteira, incluindo uma superfície compacta de 64×48 para cobrir círculos sobrepostos. Não há benchmark de aparelho físico nem ganho quantificado ainda. A alteração não afeta resolução LCD guest, instruções, clock, timers ou frame pacing.
