@@ -54,6 +54,7 @@ pub struct App {
     confirmation_selected: usize,
     controls_editor: bool,
     control_drag: Option<(i32, u32)>,
+    control_resize: Option<(i32, i32, u32, f32, u8)>,
     layout_preferences: ScreenLayoutPreferences,
     menu_tap: Option<(i32, i32)>,
     menu_button_pointer: Option<i32>,
@@ -88,6 +89,7 @@ impl App {
             confirmation_selected: 0,
             controls_editor: false,
             control_drag: None,
+            control_resize: None,
             layout_preferences,
             menu_tap: None,
             menu_button_pointer: None,
@@ -627,6 +629,64 @@ impl App {
         let Some((pointer_id, button)) = self.control_drag else {
             return;
         };
+        let orientation = self.virtual_control_orientation();
+
+        // A second finger on the selected button switches from moving to pinch-resize.
+        if self.control_resize.is_none() {
+            if let (Some(&(first_x, first_y)), Some((&second_id, &(second_x, second_y)))) = (
+                self.pointers.get(&pointer_id),
+                self.pointers
+                    .iter()
+                    .find(|(id, _)| **id != pointer_id),
+            ) {
+                if self.hit_virtual_button(second_x, second_y) == button {
+                    let start_distance = (second_x - first_x).hypot(second_y - first_y);
+                    if start_distance >= 6.0 {
+                        let initial_size = self
+                            .library
+                            .virtual_control_positions()
+                            .size_percent(orientation, button);
+                        self.control_resize = Some((
+                            pointer_id,
+                            second_id,
+                            button,
+                            start_distance,
+                            initial_size,
+                        ));
+                    }
+                }
+            }
+        }
+
+        if let Some((first_id, second_id, resize_button, start_distance, initial_size)) =
+            self.control_resize
+        {
+            match (self.pointers.get(&first_id), self.pointers.get(&second_id)) {
+                (Some(&(first_x, first_y)), Some(&(second_x, second_y))) => {
+                    let current_distance = (second_x - first_x).hypot(second_y - first_y);
+                    let scaled =
+                        (f32::from(initial_size) * current_distance / start_distance).round();
+                    let size_percent = (scaled as i16).clamp(60, 150) as u8;
+                    self.library.resize_virtual_control(
+                        orientation,
+                        resize_button,
+                        size_percent,
+                    );
+                    return;
+                }
+                _ => {
+                    self.control_resize = None;
+                    self.control_drag = None;
+                    if let Err(error) = self.library.save_virtual_control_positions() {
+                        self.library.set_status(format!(
+                            "NÃO FOI POSSÍVEL SALVAR O LAYOUT: {error}"
+                        ));
+                    }
+                    return;
+                }
+            }
+        }
+
         match (previous.get(&pointer_id), self.pointers.get(&pointer_id)) {
             (Some(&(old_x, old_y)), Some(&(new_x, new_y))) => {
                 let delta_x = new_x - old_x;
@@ -636,7 +696,6 @@ impl App {
                     let height = self.height.max(1) as f32;
                     let normalized_x = (delta_x * 10_000.0 / width).round() as i16;
                     let normalized_y = (delta_y * 10_000.0 / height).round() as i16;
-                    let orientation = self.virtual_control_orientation();
                     self.library.move_virtual_control(
                         orientation,
                         button,
@@ -667,6 +726,7 @@ impl App {
     fn begin_control_editor(&mut self) {
         self.controls_editor = true;
         self.control_drag = None;
+        self.control_resize = None;
         self.pointers.clear();
         self.menu_tap = None;
         self.menu_button_pointer = None;
@@ -677,12 +737,13 @@ impl App {
     }
 
     fn finish_control_editor(&mut self) {
-        if self.control_drag.take().is_some() {
+        if self.control_drag.take().is_some() || self.control_resize.take().is_some() {
             if let Err(error) = self.library.save_virtual_control_positions() {
                 self.library
-                    .set_status(format!("NÃO FOI POSSÍVEL SALVAR AS POSIÇÕES: {error}"));
+                    .set_status(format!("NÃO FOI POSSÍVEL SALVAR O LAYOUT: {error}"));
             }
         }
+        self.control_resize = None;
         self.controls_editor = false;
         self.pointers.clear();
         self.key_mask = 0;
@@ -750,6 +811,7 @@ impl App {
         self.key_mask = 0;
         self.controls_editor = false;
         self.control_drag = None;
+        self.control_resize = None;
         self.pointers.clear();
         self.menu_tap = None;
         self.menu_button_pointer = None;
@@ -770,6 +832,7 @@ impl App {
         self.key_mask = 0;
         self.controls_editor = false;
         self.control_drag = None;
+        self.control_resize = None;
         self.pointers.clear();
         self.menu_tap = None;
         self.menu_button_pointer = None;
@@ -1858,6 +1921,124 @@ mod tests {
                 .virtual_control_positions()
                 .offset(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
             frontend::VirtualControlOffset { x: -250, y: 500 }
+        );
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn custom_virtual_control_pinch_resizes_independently_and_persists() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+        app.system = Some(System::new());
+        app.quick_menu_selected = quick_menu::ACTION_COUNT - 1;
+        app.activate_game_menu_action();
+        assert!(app.controls_editor);
+
+        // Two touches on A spread apart to enlarge only the portrait button.
+        app.set_pointers(&[Pointer {
+            id: 0,
+            x: 353.0,
+            y: 608.0,
+        }]);
+        app.set_pointers(&[
+            Pointer {
+                id: 0,
+                x: 353.0,
+                y: 608.0,
+            },
+            Pointer {
+                id: 1,
+                x: 369.0,
+                y: 608.0,
+            },
+        ]);
+        app.set_pointers(&[
+            Pointer {
+                id: 0,
+                x: 353.0,
+                y: 608.0,
+            },
+            Pointer {
+                id: 1,
+                x: 377.0,
+                y: 608.0,
+            },
+        ]);
+        assert_eq!(
+            app.library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
+            150
+        );
+        app.set_pointers(&[Pointer {
+            id: 0,
+            x: 353.0,
+            y: 608.0,
+        }]);
+        app.set_pointers(&[]);
+
+        // Pinching inward in landscape changes only that orientation's A button.
+        app.resize(800, 400);
+        app.set_pointers(&[Pointer {
+            id: 0,
+            x: 751.0,
+            y: 304.0,
+        }]);
+        app.set_pointers(&[
+            Pointer {
+                id: 0,
+                x: 751.0,
+                y: 304.0,
+            },
+            Pointer {
+                id: 1,
+                x: 739.0,
+                y: 304.0,
+            },
+        ]);
+        app.set_pointers(&[
+            Pointer {
+                id: 0,
+                x: 751.0,
+                y: 304.0,
+            },
+            Pointer {
+                id: 1,
+                x: 745.0,
+                y: 304.0,
+            },
+        ]);
+        assert_eq!(
+            app.library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
+            60
+        );
+        assert_eq!(
+            app.library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
+            150
+        );
+
+        app.set_pointers(&[]);
+        app.key(AKEYCODE_BACK, true);
+        assert!(!app.controls_editor);
+        let reopened = App::new(&dir);
+        assert_eq!(
+            reopened
+                .library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
+            150
+        );
+        assert_eq!(
+            reopened
+                .library
+                .virtual_control_positions()
+                .size_percent(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
+            60
         );
 
         fs::remove_dir_all(dir).ok();
