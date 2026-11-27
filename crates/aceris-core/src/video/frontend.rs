@@ -11,6 +11,58 @@ pub const ORIENTATION_PORTRAIT: u32 = 1;
 /// Explicit landscape layout (the two LCDs are side by side).
 pub const ORIENTATION_LANDSCAPE: u32 = 2;
 
+/// Arrangement preset for Android virtual gamepad controls.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VirtualControlPreset {
+    /// Original balanced layout.
+    #[default]
+    Standard = 0,
+    /// Smaller controls for games that need more unobstructed screen area.
+    Compact = 1,
+    /// Direction pad on the right and action buttons on the left.
+    LeftHanded = 2,
+    /// Action buttons sit slightly farther toward the right edge.
+    RightHanded = 3,
+}
+
+impl VirtualControlPreset {
+    pub const ALL: [Self; 4] = [
+        Self::Standard,
+        Self::Compact,
+        Self::LeftHanded,
+        Self::RightHanded,
+    ];
+
+    pub const fn config_value(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Compact => "compact",
+            Self::LeftHanded => "left_handed",
+            Self::RightHanded => "right_handed",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "PADRÃO",
+            Self::Compact => "COMPACTO",
+            Self::LeftHanded => "CANHOTO",
+            Self::RightHanded => "DESTRO",
+        }
+    }
+
+    pub const fn from_config_value(value: &str) -> Option<Self> {
+        match value {
+            "standard" => Some(Self::Standard),
+            "compact" => Some(Self::Compact),
+            "left_handed" => Some(Self::LeftHanded),
+            "right_handed" => Some(Self::RightHanded),
+            _ => None,
+        }
+    }
+}
+
 /// Stable C-compatible rectangle in host-surface coordinates.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -241,17 +293,48 @@ fn button_shapes_with_size(
     orientation: u32,
     size_percent: u8,
 ) -> [ButtonShape; 12] {
+    button_shapes_with_size_and_preset(
+        width,
+        height,
+        orientation,
+        size_percent,
+        VirtualControlPreset::Standard,
+    )
+}
+
+fn button_shapes_with_size_and_preset(
+    width: u32,
+    height: u32,
+    orientation: u32,
+    size_percent: u8,
+    preset: VirtualControlPreset,
+) -> [ButtonShape; 12] {
     let w = width as f32;
     let h = height as f32;
     let unit = w.min(h);
-    let size_scale = f32::from(size_percent.clamp(80, 120)) / 100.0;
+    let preset_scale = if preset == VirtualControlPreset::Compact {
+        0.8
+    } else {
+        1.0
+    };
+    let size_scale = f32::from(size_percent.clamp(80, 120)) / 100.0 * preset_scale;
     let radius = (unit * 0.048).clamp(15.0, 38.0) * size_scale;
     let is_landscape = orientation == ORIENTATION_LANDSCAPE
         || (orientation == ORIENTATION_AUTO && width >= height);
-    let (left_x, right_x, control_y) = if is_landscape {
+    let (base_left_x, base_right_x, control_y) = if is_landscape {
         (w * 0.105, w * 0.895, h * 0.76)
     } else {
         (w * 0.17, w * 0.83, h * 0.76)
+    };
+    let (left_x, right_x) = match preset {
+        VirtualControlPreset::LeftHanded => (base_right_x, base_left_x),
+        VirtualControlPreset::RightHanded => (
+            base_left_x,
+            if is_landscape { w * 0.915 } else { w * 0.855 },
+        ),
+        VirtualControlPreset::Standard | VirtualControlPreset::Compact => {
+            (base_left_x, base_right_x)
+        }
     };
     let d = radius * 1.65;
     let face_d = radius * 1.5;
@@ -330,14 +413,22 @@ fn button_shapes_with_size(
         },
         ButtonShape {
             bit: buttons::START,
-            x: w * 0.54,
+            x: if preset == VirtualControlPreset::LeftHanded {
+                w * 0.46
+            } else {
+                w * 0.54
+            },
             y: h * 0.94,
             radius: small,
             label: "S",
         },
         ButtonShape {
             bit: buttons::SELECT,
-            x: w * 0.46,
+            x: if preset == VirtualControlPreset::LeftHanded {
+                w * 0.54
+            } else {
+                w * 0.46
+            },
             y: h * 0.94,
             radius: small,
             label: "E",
@@ -359,12 +450,33 @@ pub fn hit_test_virtual_control_with_size(
     orientation: u32,
     size_percent: u8,
 ) -> u32 {
+    hit_test_virtual_control_with_size_and_preset(
+        width,
+        height,
+        x,
+        y,
+        orientation,
+        size_percent,
+        VirtualControlPreset::Standard,
+    )
+}
+
+/// Hit-tests the selected preset using the same geometry as the renderer.
+pub fn hit_test_virtual_control_with_size_and_preset(
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    orientation: u32,
+    size_percent: u8,
+    preset: VirtualControlPreset,
+) -> u32 {
     if width == 0 || height == 0 || x < 0 || y < 0 {
         return 0;
     }
     let x = x as f32;
     let y = y as f32;
-    button_shapes_with_size(width, height, orientation, size_percent)
+    button_shapes_with_size_and_preset(width, height, orientation, size_percent, preset)
         .into_iter()
         .find(|shape| {
             let dx = x - shape.x;
@@ -540,6 +652,29 @@ pub fn blend_virtual_pad_overlay_into_with_opacity_and_size(
     opacity: u8,
     size_percent: u8,
 ) -> bool {
+    blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
+        frame,
+        width,
+        height,
+        orientation,
+        pressed_mask,
+        opacity,
+        size_percent,
+        VirtualControlPreset::Standard,
+    )
+}
+
+/// Alpha-blends the selected virtual-control preset, size and opacity.
+pub fn blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    orientation: u32,
+    pressed_mask: u32,
+    opacity: u8,
+    size_percent: u8,
+    preset: VirtualControlPreset,
+) -> bool {
     use aceris_common::brand;
 
     if width == 0 || height == 0 || width > 4096 || height > 4096 {
@@ -555,7 +690,8 @@ pub fn blend_virtual_pad_overlay_into_with_opacity_and_size(
         return false;
     }
 
-    let shapes = button_shapes_with_size(width, height, orientation, size_percent);
+    let shapes =
+        button_shapes_with_size_and_preset(width, height, orientation, size_percent, preset);
     let later_overlap_masks = later_circle_overlap_masks(&shapes);
     for (index, shape) in shapes.iter().enumerate() {
         let pressed = pressed_mask & shape.bit != 0;
@@ -993,6 +1129,102 @@ mod tests {
             120,
         ));
         assert_ne!(compact_frame, large_frame);
+    }
+
+    #[test]
+    fn virtual_control_presets_change_layout_and_keep_hit_testing_aligned() {
+        let (width, height) = (480, 800);
+        let standard = button_shapes_with_size_and_preset(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+        );
+        let compact = button_shapes_with_size_and_preset(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Compact,
+        );
+        let left_handed = button_shapes_with_size_and_preset(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::LeftHanded,
+        );
+        let right_handed = button_shapes_with_size_and_preset(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::RightHanded,
+        );
+
+        let shape = |shapes: &[ButtonShape; 12], bit| {
+            shapes.iter().find(|button| button.bit == bit).unwrap()
+        };
+        assert!(shape(&compact, buttons::A).radius < shape(&standard, buttons::A).radius);
+        assert_eq!(
+            shape(&left_handed, buttons::UP).x,
+            shape(&standard, buttons::A).x - shape(&standard, buttons::A).radius * 1.5
+        );
+        assert!(
+            shape(&right_handed, buttons::A).x > shape(&standard, buttons::A).x
+        );
+
+        let left_pad_center = shape(&left_handed, buttons::UP);
+        assert_eq!(
+            hit_test_virtual_control_with_size_and_preset(
+                width,
+                height,
+                left_pad_center.x.round() as i32,
+                left_pad_center.y.round() as i32,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::LeftHanded,
+            ),
+            buttons::UP
+        );
+        assert_eq!(
+            hit_test_virtual_control_with_size_and_preset(
+                width,
+                height,
+                left_pad_center.x.round() as i32,
+                left_pad_center.y.round() as i32,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::Standard,
+            ),
+            0
+        );
+
+        let base = vec![40u8, 80, 120, 255].repeat(width as usize * height as usize);
+        let mut standard_frame = base.clone();
+        let mut left_frame = base;
+        assert!(blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
+            &mut standard_frame,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            0,
+            255,
+            100,
+            VirtualControlPreset::Standard,
+        ));
+        assert!(blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
+            &mut left_frame,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            0,
+            255,
+            100,
+            VirtualControlPreset::LeftHanded,
+        ));
+        assert_ne!(standard_frame, left_frame);
     }
 
     #[test]
