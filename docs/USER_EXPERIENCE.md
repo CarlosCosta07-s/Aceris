@@ -1,6 +1,6 @@
 # Experiência do usuário e funções planejadas do Aceris
 
-> Proposta de produto e prioridades — 26/11/2026. Este documento define a experiência desejada para os usuários do Aceris. Não declara que os recursos planejados já estejam implementados. O estado real do núcleo e dos frontends continua registrado em `README.md`, `docs/ROADMAP.md` e `docs/FRONTENDS.md`.
+> Proposta de produto e prioridades — 27/11/2026. Este documento define a experiência desejada para os usuários do Aceris. Não declara que os recursos planejados já estejam implementados. O estado real do núcleo e dos frontends continua registrado em `README.md`, `docs/ROADMAP.md` e `docs/FRONTENDS.md`.
 
 ## 1. Objetivo
 
@@ -339,3 +339,91 @@ Cheats, substituição de texturas, Amiibo/NFC, sensores, câmera, microfone, mu
 - Lista histórica de pedidos de funcionalidades do PPSSPP, incluindo textura personalizada, configurações por jogo, rotação e atalhos de save: https://forums.ppsspp.org/showthread.php?pid=20824
 
 As discussões comunitárias refletem experiências e preferências de quem participou delas; não devem ser interpretadas como votação oficial nem como consenso universal.
+
+
+### 4.14 Acessibilidade e ergonomia
+
+A interface deve ser utilizável por pessoas com diferentes necessidades e também em sessões longas:
+
+- Escala de interface independente da escala de imagem do jogo.
+- Opção de alto contraste e respeito às preferências de contraste do sistema quando disponíveis.
+- Tamanho de texto ajustável, sem cortar rótulos, descrições ou mensagens importantes.
+- Estados de foco visíveis para navegação por teclado e controle.
+- Navegação completa por teclado, D-pad e controle: abrir páginas, selecionar jogos, operar menus, confirmar e voltar.
+- Atalhos configuráveis, com indicação de conflitos e opção de restaurar os padrões.
+- Não depender exclusivamente de cor para comunicar erro, compatibilidade, seleção ou estado.
+- Animações da interface reduzíveis ou desativáveis; evitar transições que bloqueiem a interação.
+- Alvos de toque confortáveis e espaçamento adequado no Android, com suporte a orientação retrato e paisagem.
+- Opção de reduzir ou ocultar elementos decorativos durante o jogo.
+- Textos de interface objetivos, com termos técnicos explicados em linguagem simples e detalhes adicionais sob demanda.
+
+### 4.15 Ajuda, mensagens e recuperação de erros
+
+O Aceris deve orientar o usuário no momento em que a dúvida ou falha acontece:
+
+- Ajuda contextual em cada categoria de configuração, explicando finalidade, efeito esperado e possíveis custos.
+- Busca nas configurações por nome e por termos comuns, levando diretamente à opção encontrada.
+- Indicadores claros de configuração global herdada ou substituição específica daquele jogo.
+- Mensagens de erro com título, causa provável, arquivo ou jogo afetado e ação recomendada.
+- Ações de recuperação seguras: tentar novamente, reexaminar arquivo, restaurar a opção alterada ou abrir o diagnóstico.
+- Histórico local de avisos recentes, com opção de limpar o histórico.
+- Progresso e possibilidade de cancelar varreduras, importações, verificações e operações demoradas.
+- Não usar mensagens genéricas como "falha desconhecida" quando houver informação técnica suficiente para explicar o problema.
+- Modo de diagnóstico detalhado opcional, sem despejar logs técnicos na experiência padrão.
+- Relatórios exportados devem permitir revisão antes de salvar ou compartilhar e ocultar dados pessoais por padrão.
+
+### 4.16 Personalização e organização
+
+- Favoritos e filtros salvos, para que o usuário possa criar atalhos para subconjuntos da biblioteca.
+- Coleções personalizadas, sem mover nem duplicar os arquivos originais.
+- Tags locais opcionais, como "zerando", "coop" ou "testar", sem alterar metadados do jogo.
+- Escolha do comportamento ao abrir um jogo: iniciar imediatamente ou abrir primeiro a página de detalhes.
+- Preferência para retomar o último jogo, mostrar a biblioteca ou abrir a página inicial.
+- Preferências independentes para janela, orientação, layout e controles, quando fizer sentido em cada plataforma.
+- Backup e restauração das configurações, perfis de controle, layouts e metadados locais.
+- Importação/exportação em formato documentado e versionado, com prévia do que será aplicado.
+- Sincronização entre dispositivos somente como recurso futuro, opcional e transparente; nunca enviar saves, jogos ou dados pessoais sem consentimento explícito.
+
+### 4.17 Integração com o sistema e comportamento da aplicação
+
+**Desktop**
+- Redimensionamento livre da janela, comportamento correto em tela cheia e restauração do tamanho/posição anterior.
+- Atalhos de teclado configuráveis e operação integral sem mouse.
+- Suporte a múltiplos monitores sem mover janelas ou telas do jogo inesperadamente.
+- Opções de minimizar, fechar e confirmar saída quando houver operações ou progresso que possam ser perdidos.
+- Tratamento de perda, reconexão e troca de dispositivo de áudio ou controle, sempre que suportado pelo sistema.
+
+**Android**
+- Respeitar ciclo de vida da Activity: pausa, retomada, perda de foco, rotação e encerramento pelo sistema.
+- Não presumir que o processo continuará ativo em segundo plano.
+- Ao perder foco, oferecer comportamento configurável para pausar ou continuar em condições seguras.
+- Compatibilidade com navegação por gestos e barras do sistema, sem encobrir controles ou ações importantes.
+- Seletor de documentos/pastas da plataforma e persistência das permissões concedidas.
+- Feedback tátil, orientação e controles virtuais ajustáveis, respeitando as opções do usuário e os recursos do aparelho.
+
+### 4.18 Atualizações e confiança
+
+- Exibir versão instalada, canal de atualização e changelog antes de atualizar.
+- Permitir adiar atualizações e escolher canal estável ou de testes apenas quando ambos existirem de verdade.
+- Não baixar nem instalar atualizações silenciosamente.
+- Preservar configurações, perfis e dados de usuário durante atualizações.
+- Avisar quando um formato de save state ou configuração for incompatível com a versão atual, preservando o arquivo original.
+- Não prometer compatibilidade, desempenho ou suporte a recurso com base apenas na presença de uma opção na interface.
+- Não exigir conta, login ou conexão com a internet para abrir jogos locais e usar funções essenciais.
+- Toda integração online futura deve explicar quais dados transmite, por que são necessários e como desativá-la.
+
+## 4.19 Princípios de apresentação das opções
+
+Para evitar que a quantidade de recursos torne o Aceris confuso:
+
+1. **Padrão simples:** mostrar primeiro as ações comuns e configurações recomendadas.
+2. **Avançado sob demanda:** opções técnicas ficam em seções avançadas, com explicações acessíveis.
+3. **Uma opção, um efeito:** cada controle da interface deve corresponder a um comportamento implementado e verificável.
+4. **Herança explícita:** deixar visível quando o jogo usa a configuração global e quando possui uma substituição.
+5. **Reversibilidade:** toda personalização deve ter uma forma clara de voltar ao padrão.
+6. **Sem promessas falsas:** recursos planejados, experimentais e indisponíveis devem ser identificados corretamente.
+7. **Consistência multiplataforma:** nomes e conceitos iguais no PC e Android, com disposição adaptada a cada dispositivo.
+8. **Prioridade ao jogo:** configurações e ferramentas não devem ocupar a tela durante a partida sem solicitação do usuário.
+9. **Privacidade por padrão:** nada de telemetria invasiva, uploads automáticos ou sincronização oculta.
+10. **Desempenho responsável:** opções que aumentem uso de CPU, GPU, memória ou bateria devem informar esse impacto e começar desativadas quando forem caras ou experimentais.
+
