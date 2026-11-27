@@ -3050,7 +3050,11 @@ impl Library {
                     128.0,
                     112.0,
                     842.0,
-                    if self.touch_keyboard_enabled { 362.0 } else { 318.0 },
+                    if self.touch_keyboard_enabled {
+                        362.0
+                    } else {
+                        318.0
+                    },
                     scale,
                     0x21152F,
                 );
