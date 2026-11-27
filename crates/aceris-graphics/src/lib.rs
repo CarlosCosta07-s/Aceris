@@ -14,6 +14,8 @@
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 const PRESENT_SHADER: &str = r#"
 struct VertexOutput {
@@ -158,6 +160,7 @@ fn create_present_pipeline(
     surface_format: wgpu::TextureFormat,
     fragment_entry: &'static str,
     label: &'static str,
+    cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
     let color_targets = [Some(wgpu::ColorTargetState {
         format: surface_format,
@@ -183,7 +186,7 @@ fn create_present_pipeline(
             targets: &color_targets,
         }),
         multiview_mask: None,
-        cache: None,
+        cache,
     })
 }
 
@@ -195,6 +198,37 @@ pub struct GraphicsAdapterInfo {
     pub device: u32,
     pub backend: String,
     pub device_type: String,
+}
+
+const MAX_PERSISTED_PIPELINE_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Loads only small, non-empty cache files. Invalid or stale cache data is
+/// treated as a cache miss; wgpu's fallback path can build a fresh cache.
+fn load_pipeline_cache(path: &Path) -> Option<Vec<u8>> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.len() == 0 || metadata.len() > MAX_PERSISTED_PIPELINE_CACHE_BYTES {
+        return None;
+    }
+    fs::read(path).ok()
+}
+
+/// Writes cache data through a temporary file so an interrupted shutdown does
+/// not leave a partially written pipeline cache at the active path.
+fn store_pipeline_cache(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if data.is_empty() || data.len() as u64 > MAX_PERSISTED_PIPELINE_CACHE_BYTES {
+        return Ok(());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("pipeline cache path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    fs::write(&temporary, data)?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Presents an already-composed RGBA8 frame through the selected host GPU.
@@ -210,6 +244,8 @@ pub struct GraphicsPresenter {
     surface_config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
     bgrx_pipeline: wgpu::RenderPipeline,
+    pipeline_cache: Option<wgpu::PipelineCache>,
+    pipeline_cache_path: Option<PathBuf>,
     frame_layout: wgpu::BindGroupLayout,
     frame_texture: Option<wgpu::Texture>,
     frame_bind_group: Option<wgpu::BindGroup>,
@@ -233,6 +269,40 @@ impl GraphicsPresenter {
         width: u32,
         height: u32,
         backend: GraphicsBackend,
+    ) -> Result<Self, String> {
+        let cache_directory = env::var_os("ACERIS_GPU_CACHE_DIR").map(PathBuf::from);
+        // SAFETY: the caller's guarantees for the native handles are forwarded unchanged.
+        unsafe {
+            Self::new_with_cache_directory(
+                display_handle,
+                window_handle,
+                width,
+                height,
+                backend,
+                cache_directory.as_deref(),
+            )
+        }
+    }
+
+    /// Creates a presenter and optionally persists the selected adapter's wgpu
+    /// pipeline cache in the supplied directory.
+    ///
+    /// The on-disk cache contains host GPU pipeline data only; it is not a
+    /// PICA guest shader cache and is currently available through wgpu on Vulkan.
+    ///
+    /// # Safety
+    ///
+    /// The caller must keep the native display and window alive until this
+    /// presenter has been dropped. The presenter must be dropped before either
+    /// native object is released or destroyed. On Android, retain an additional
+    /// ANativeWindow reference for the full presenter lifetime.
+    pub unsafe fn new_with_cache_directory(
+        display_handle: Option<RawDisplayHandle>,
+        window_handle: RawWindowHandle,
+        width: u32,
+        height: u32,
+        backend: GraphicsBackend,
+        cache_directory: Option<&Path>,
     ) -> Result<Self, String> {
         if width == 0 || height == 0 {
             return Err("GPU surface dimensions must be non-zero".to_string());
@@ -260,13 +330,47 @@ impl GraphicsPresenter {
         }))
         .map_err(|error| format!("no compatible {:?} GPU adapter: {error}", backend))?;
 
+        let info = adapter.get_info();
+        let pipeline_cache_key = wgpu::util::pipeline_cache_key(&info);
+        let pipeline_cache_supported = pipeline_cache_key.is_some()
+            && adapter
+                .features()
+                .contains(wgpu::Features::PIPELINE_CACHE);
+        let required_features = if pipeline_cache_supported {
+            wgpu::Features::PIPELINE_CACHE
+        } else {
+            wgpu::Features::empty()
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Aceris host presentation device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: adapter.limits(),
             ..Default::default()
         }))
         .map_err(|error| format!("could not create GPU device: {error}"))?;
+
+        let pipeline_cache_path = match (pipeline_cache_key, cache_directory) {
+            (Some(key), Some(directory)) if pipeline_cache_supported => {
+                Some(directory.join(format!("{key}.bin")))
+            }
+            _ => None,
+        };
+        let pipeline_cache_data = pipeline_cache_path
+            .as_deref()
+            .and_then(load_pipeline_cache);
+        let pipeline_cache = if pipeline_cache_supported {
+            let descriptor = wgpu::PipelineCacheDescriptor {
+                label: Some("Aceris persistent host pipeline cache"),
+                data: pipeline_cache_data.as_deref(),
+                fallback: true,
+            };
+            // SAFETY: cache bytes are loaded only from the path associated with
+            // wgpu's adapter-specific pipeline cache key and were previously
+            // returned by PipelineCache::get_data in this application.
+            Some(unsafe { device.create_pipeline_cache(&descriptor) })
+        } else {
+            None
+        };
 
         let mut surface_config = surface
             .get_default_config(&adapter, width, height)
@@ -312,6 +416,7 @@ impl GraphicsPresenter {
             surface_config.format,
             "fragment_main",
             "Aceris RGBA host presentation pipeline",
+            pipeline_cache.as_ref(),
         );
         let bgrx_pipeline = create_present_pipeline(
             &device,
@@ -320,11 +425,11 @@ impl GraphicsPresenter {
             surface_config.format,
             "fragment_bgrx_main",
             "Aceris BGRX host presentation pipeline",
+            pipeline_cache.as_ref(),
         );
 
-        let info = adapter.get_info();
         let adapter_info = GraphicsAdapterInfo {
-            name: info.name,
+            name: info.name.clone(),
             vendor: info.vendor,
             device: info.device,
             backend: format!("{:?}", info.backend),
@@ -339,6 +444,8 @@ impl GraphicsPresenter {
             surface_config,
             pipeline,
             bgrx_pipeline,
+            pipeline_cache,
+            pipeline_cache_path,
             frame_layout,
             frame_texture: None,
             frame_bind_group: None,
@@ -552,6 +659,20 @@ impl GraphicsPresenter {
     }
 }
 
+impl Drop for GraphicsPresenter {
+    fn drop(&mut self) {
+        let (Some(cache), Some(path)) = (&self.pipeline_cache, &self.pipeline_cache_path) else {
+            return;
+        };
+        let Some(data) = cache.get_data() else {
+            return;
+        };
+        if let Err(error) = store_pipeline_cache(path, &data) {
+            eprintln!("could not persist Aceris GPU pipeline cache: {error}");
+        }
+    }
+}
+
 fn frame_byte_len(width: u32, height: u32) -> Result<usize, String> {
     if width == 0 || height == 0 {
         return Err("frame dimensions must be non-zero".to_string());
@@ -567,6 +688,37 @@ fn frame_byte_len(width: u32, height: u32) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pipeline_cache_storage_round_trips_and_uses_atomic_temp_file() {
+        let directory = std::env::temp_dir().join(format!(
+            "aceris-gpu-pipeline-cache-{}",
+            std::process::id()
+        ));
+        let path = directory.join("adapter.bin");
+        let data = [0x41, 0x43, 0x45, 0x52, 0x49, 0x53];
+
+        store_pipeline_cache(&path, &data).unwrap();
+        assert_eq!(load_pipeline_cache(&path).unwrap(), data);
+        assert!(!path.with_extension(format!("tmp-{}", std::process::id())).exists());
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn pipeline_cache_storage_ignores_empty_and_oversized_payloads() {
+        let directory = std::env::temp_dir().join(format!(
+            "aceris-gpu-pipeline-cache-limit-{}",
+            std::process::id()
+        ));
+        let path = directory.join("adapter.bin");
+        store_pipeline_cache(&path, &[]).unwrap();
+        assert!(!path.exists());
+
+        assert!(load_pipeline_cache(&path).is_none());
+        assert_eq!(MAX_PERSISTED_PIPELINE_CACHE_BYTES, 64 * 1024 * 1024);
+        fs::remove_dir_all(directory).ok();
+    }
 
     #[test]
     fn backend_names_are_parsed_case_insensitively() {
