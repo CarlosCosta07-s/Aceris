@@ -63,6 +63,152 @@ impl VirtualControlPreset {
     }
 }
 
+/// Normalized per-button position offsets, stored in hundredths of a percent.
+///
+/// A value of 250 means 2.5% of the surface dimension. Values are clamped to
+/// +/-20% so controls cannot be dragged arbitrarily far off-screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VirtualControlOffset {
+    pub x: i16,
+    pub y: i16,
+}
+
+/// Per-button offsets with independent layouts for portrait and landscape.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VirtualControlPositions {
+    portrait: [VirtualControlOffset; 12],
+    landscape: [VirtualControlOffset; 12],
+}
+
+impl VirtualControlPositions {
+    const POSITION_LIMIT: i16 = 2_000;
+    const BUTTONS: [(u32, &'static str); 12] = [
+        (buttons::UP, "up"),
+        (buttons::DOWN, "down"),
+        (buttons::LEFT, "left"),
+        (buttons::RIGHT, "right"),
+        (buttons::A, "a"),
+        (buttons::B, "b"),
+        (buttons::X, "x"),
+        (buttons::Y, "y"),
+        (buttons::L, "l"),
+        (buttons::R, "r"),
+        (buttons::START, "start"),
+        (buttons::SELECT, "select"),
+    ];
+
+    fn index(button: u32) -> Option<usize> {
+        Self::BUTTONS.iter().position(|(bit, _)| *bit == button)
+    }
+
+    fn offsets(&self, orientation: u32) -> &[VirtualControlOffset; 12] {
+        if orientation == ORIENTATION_LANDSCAPE {
+            &self.landscape
+        } else {
+            &self.portrait
+        }
+    }
+
+    fn offsets_mut(&mut self, orientation: u32) -> &mut [VirtualControlOffset; 12] {
+        if orientation == ORIENTATION_LANDSCAPE {
+            &mut self.landscape
+        } else {
+            &mut self.portrait
+        }
+    }
+
+    pub fn offset(&self, orientation: u32, button: u32) -> VirtualControlOffset {
+        Self::index(button)
+            .map(|index| self.offsets(orientation)[index])
+            .unwrap_or_default()
+    }
+
+    pub fn set_offset(
+        &mut self,
+        orientation: u32,
+        button: u32,
+        offset: VirtualControlOffset,
+    ) -> bool {
+        let Some(index) = Self::index(button) else {
+            return false;
+        };
+        self.offsets_mut(orientation)[index] = VirtualControlOffset {
+            x: offset.x.clamp(-Self::POSITION_LIMIT, Self::POSITION_LIMIT),
+            y: offset.y.clamp(-Self::POSITION_LIMIT, Self::POSITION_LIMIT),
+        };
+        true
+    }
+
+    pub fn adjust(
+        &mut self,
+        orientation: u32,
+        button: u32,
+        delta_x: i16,
+        delta_y: i16,
+    ) -> bool {
+        let current = self.offset(orientation, button);
+        self.set_offset(
+            orientation,
+            button,
+            VirtualControlOffset {
+                x: current.x.saturating_add(delta_x),
+                y: current.y.saturating_add(delta_y),
+            },
+        )
+    }
+
+    pub fn reset_orientation(&mut self, orientation: u32) {
+        self.offsets_mut(orientation).fill(VirtualControlOffset::default());
+    }
+
+    pub fn to_config_string(&self) -> String {
+        let mut contents = String::from("ACERIS_VIRTUAL_CONTROL_POSITIONS_V1\n");
+        for (orientation, prefix) in [
+            (ORIENTATION_PORTRAIT, "portrait"),
+            (ORIENTATION_LANDSCAPE, "landscape"),
+        ] {
+            for (index, (_, name)) in Self::BUTTONS.iter().enumerate() {
+                let offset = self.offsets(orientation)[index];
+                contents.push_str(&format!("{prefix}_{name}={},{}\n", offset.x, offset.y));
+            }
+        }
+        contents
+    }
+
+    pub fn from_config_str(contents: &str) -> Option<Self> {
+        let mut lines = contents.lines();
+        if lines.next()? != "ACERIS_VIRTUAL_CONTROL_POSITIONS_V1" {
+            return None;
+        }
+        let mut positions = Self::default();
+        for (orientation, prefix) in [
+            (ORIENTATION_PORTRAIT, "portrait"),
+            (ORIENTATION_LANDSCAPE, "landscape"),
+        ] {
+            for (button, name) in Self::BUTTONS {
+                let line = lines.next()?;
+                let key = format!("{prefix}_{name}=");
+                let values = line.strip_prefix(&key)?;
+                let (x, y) = values.split_once(',')?;
+                let offset = VirtualControlOffset {
+                    x: x.parse().ok()?,
+                    y: y.parse().ok()?,
+                };
+                if !positions.set_offset(orientation, button, offset) {
+                    return None;
+                }
+                if positions.offset(orientation, button) != offset {
+                    return None;
+                }
+            }
+        }
+        if lines.next().is_some() {
+            return None;
+        }
+        Some(positions)
+    }
+}
+
 /// Stable C-compatible rectangle in host-surface coordinates.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -309,6 +455,24 @@ fn button_shapes_with_size_and_preset(
     size_percent: u8,
     preset: VirtualControlPreset,
 ) -> [ButtonShape; 12] {
+    button_shapes_with_positions(
+        width,
+        height,
+        orientation,
+        size_percent,
+        preset,
+        &VirtualControlPositions::default(),
+    )
+}
+
+fn button_shapes_with_positions(
+    width: u32,
+    height: u32,
+    orientation: u32,
+    size_percent: u8,
+    preset: VirtualControlPreset,
+    positions: &VirtualControlPositions,
+) -> [ButtonShape; 12] {
     let w = width as f32;
     let h = height as f32;
     let unit = w.min(h);
@@ -340,7 +504,7 @@ fn button_shapes_with_size_and_preset(
     let face_d = radius * 1.5;
     let shoulder_y = (h * 0.13).max(radius + 4.0);
     let small = (radius * 0.78).max(12.0 * size_scale);
-    [
+    let mut shapes = [
         ButtonShape {
             bit: buttons::UP,
             x: left_x,
@@ -433,7 +597,18 @@ fn button_shapes_with_size_and_preset(
             radius: small,
             label: "E",
         },
-    ]
+    ];
+    let resolved_orientation = if is_landscape {
+        ORIENTATION_LANDSCAPE
+    } else {
+        ORIENTATION_PORTRAIT
+    };
+    for shape in &mut shapes {
+        let offset = positions.offset(resolved_orientation, shape.bit);
+        shape.x += w * f32::from(offset.x) / 10_000.0;
+        shape.y += h * f32::from(offset.y) / 10_000.0;
+    }
+    shapes
 }
 
 /// Returns the button bit under a touch point, or zero when no control is hit.
@@ -471,12 +646,35 @@ pub fn hit_test_virtual_control_with_size_and_preset(
     size_percent: u8,
     preset: VirtualControlPreset,
 ) -> u32 {
+    hit_test_virtual_control_with_positions(
+        width,
+        height,
+        x,
+        y,
+        orientation,
+        size_percent,
+        preset,
+        &VirtualControlPositions::default(),
+    )
+}
+
+/// Hit-tests the customized button positions used by the overlay renderer.
+pub fn hit_test_virtual_control_with_positions(
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    orientation: u32,
+    size_percent: u8,
+    preset: VirtualControlPreset,
+    positions: &VirtualControlPositions,
+) -> u32 {
     if width == 0 || height == 0 || x < 0 || y < 0 {
         return 0;
     }
     let x = x as f32;
     let y = y as f32;
-    button_shapes_with_size_and_preset(width, height, orientation, size_percent, preset)
+    button_shapes_with_positions(width, height, orientation, size_percent, preset, positions)
         .into_iter()
         .find(|shape| {
             let dx = x - shape.x;
