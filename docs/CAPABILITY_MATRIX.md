@@ -111,6 +111,10 @@
 
 | Capacidade | Estado | Comportamento observado e limite |
 |---|---|---|
+| SVC GetResourceLimit (0x38–0x3A) | Disponível para os 10 tipos ABI | Consulta limites do perfil APPLICATION 64 MiB e uso atual de COMMIT, threads, eventos, mutexes, semáforos, timers, shared memory e address arbiters. Priority e CPUTime têm valores de perfil explícitos. Isso não significa que todas as quotas já sejam impostas por cada caminho de alocação. |
+
+| Capacidade | Estado | Comportamento observado e limite |
+|---|---|---|
 | UI compartilhada em Rust | Disponível | Biblioteca e modelo de UI compartilhados; hosts recebem eventos e apresentam o frame. |
 | Seletor nativo de diretórios desktop | Não disponível | Configuração atual pede caminho digitado. |
 | Android SAF e permissões persistentes | Não disponível | A biblioteca trabalha com caminhos de filesystem; URIs de documentos não são tratadas como origem do scanner. |

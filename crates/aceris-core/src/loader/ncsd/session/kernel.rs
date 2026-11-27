@@ -743,6 +743,33 @@ impl Arm11KernelObjectTable {
         Some(count as u64)
     }
 
+    /// Returns live object counts for the count-based 3DS resource-limit types.
+    ///
+    /// Type IDs follow libctru's ResourceLimitType ABI: Event=3, Mutex=4,
+    /// Semaphore=5, Timer=6, SharedMemory=7 and AddressArbiter=8. Duplicate
+    /// handles are aliases, not separate resources. Retired objects remain
+    /// counted while an alias or an internal waiter/owner still retains them.
+    pub fn resource_limit_object_count(&self, resource_type: u32) -> Option<u64> {
+        if !(3..=8).contains(&resource_type) {
+            return None;
+        }
+        let count = self
+            .objects
+            .values()
+            .chain(self.retired_objects.values())
+            .filter(|object| match resource_type {
+                3 => matches!(object, KernelObject::Event(_)),
+                4 => matches!(object, KernelObject::Mutex(_)),
+                5 => matches!(object, KernelObject::Semaphore(_)),
+                6 => matches!(object, KernelObject::Timer(_)),
+                7 => matches!(object, KernelObject::MemoryBlock(_)),
+                8 => matches!(object, KernelObject::AddressArbiter),
+                _ => false,
+            })
+            .count();
+        Some(count as u64)
+    }
+
     /// Reports the reference count that this process-local table currently models.
     ///
     /// The count includes open primary/duplicate handles, registered synchronization
@@ -1773,6 +1800,28 @@ mod tests {
         assert_eq!(table.synchronization_resource_count(3), Some(1));
         table.close_handle(event_alias).unwrap();
         assert_eq!(table.synchronization_resource_count(3), Some(0));
+    }
+
+    #[test]
+    fn resource_limit_counts_shared_memory_and_address_arbiters() {
+        let mut table = Arm11KernelObjectTable::default();
+        let memory = table.create_memory_block(0x1000, 3, 3).unwrap();
+        let memory_alias = table.duplicate_handle(memory).unwrap();
+        let arbiter = table.insert_address_arbiter().unwrap();
+
+        assert_eq!(table.resource_limit_object_count(7), Some(1));
+        assert_eq!(table.resource_limit_object_count(8), Some(1));
+        assert_eq!(table.resource_limit_object_count(9), None);
+
+        // Closing the primary handle does not release an object still kept alive
+        // by a duplicate handle.
+        table.close_handle(memory).unwrap();
+        assert_eq!(table.resource_limit_object_count(7), Some(1));
+        table.close_handle(memory_alias).unwrap();
+        assert_eq!(table.resource_limit_object_count(7), Some(0));
+
+        table.close_handle(arbiter).unwrap();
+        assert_eq!(table.resource_limit_object_count(8), Some(0));
     }
 
     #[test]

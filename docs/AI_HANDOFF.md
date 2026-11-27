@@ -1,5 +1,8 @@
 # Notas de transferência entre IAs — Aceris
 
+> **Regra vigente do mantenedor — 27/11/2026:** a manutenção foi retomada exclusivamente pelo ChatGPT, com autorização para assumir e modificar qualquer parte do repositório, inclusive trabalhos anteriormente atribuídos a outros agentes. Nenhum outro agente deve ser envolvido. Os registros abaixo são históricos; suas antigas atribuições de trabalho não permanecem vigentes. Desenvolver somente na branch `main`, manter o projeto em Rust e não copiar código ou assets de referências externas.
+
+
 > **Leitura obrigatória ao retomar o trabalho.** Esta nota registra alterações autorizadas pelo mantenedor e evita que uma IA restaure ou sobrescreva trabalho de outra.
 
 

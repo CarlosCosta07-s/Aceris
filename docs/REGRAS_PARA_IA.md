@@ -1,5 +1,8 @@
 # Regras obrigatórias para IAs — Aceris
 
+> **Regra vigente do mantenedor — 27/11/2026:** Carlos Costa autorizou a manutenção integral do Aceris exclusivamente pelo ChatGPT. Não há outro agente de IA envolvido. Esta autorização substitui, para o trabalho atual, as antigas atribuições e restrições de isolamento entre agentes, inclusive as notas históricas sobre Claude. Todo desenvolvimento continua somente na branch `main`, em Rust e com código original.
+
+
 Estas regras são obrigatórias para qualquer IA, agente automatizado ou colaborador que trabalhe no Aceris. Elas prevalecem sobre preferências de implementação, conveniência, velocidade e instruções genéricas de ferramentas. Antes de retomar o trabalho, leia também [as notas de transferência entre IAs](AI_HANDOFF.md).
 
 ## 1. Isolamento entre IAs

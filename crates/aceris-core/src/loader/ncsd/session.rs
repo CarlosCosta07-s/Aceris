@@ -3954,9 +3954,9 @@ impl Arm11ProcessSession {
     ///
     /// r0 = writable s64 output array, r1 = ResourceLimit handle,
     /// r2 = readable u32 resource-type array, r3 = signed element count.
-    /// COMMIT, THREAD and synchronization-object current counters are modelled.
-    /// Limit values beyond COMMIT remain unavailable until exheader/category limits
-    /// are represented rather than replaced with guessed constants.
+    /// All ten 3DS resource IDs are accepted. COMMIT is derived from the live
+    /// application address space; object counts come from the process kernel table.
+    /// The returned application limits match the configured 64 MiB Old-3DS profile.
     fn svc_get_resource_limit_values(
         &mut self,
         caller: ThreadId,
@@ -4003,13 +4003,22 @@ impl Arm11ProcessSession {
             let resource_type =
                 u32::from_le_bytes(resource_type_bytes.try_into().expect("four-byte chunk"));
             let value = match (return_limit, resource_type) {
+                // The application category defaults used by the current 64 MiB
+                // Old-3DS production profile. CPU-time preemption is disabled
+                // in this single-core bootstrap, represented by zero.
+                (true, 0) => 0x18,                                  // PRIORITY
                 (true, RESOURCE_LIMIT_COMMIT) => Self::RESOURCE_LIMIT_COMMIT_MAX_BYTES,
+                (true, RESOURCE_LIMIT_THREAD) => 0x20,             // THREAD
+                (true, 3 | 4) => 0x20,                             // EVENT / MUTEX
+                (true, 5 | 6) => 0x08,                             // SEMAPHORE / TIMER
+                (true, 7) => 0x10,                                 // SHAREDMEMORY
+                (true, 8) => 0x02,                                 // ADDRESSARBITER
+                (true, 9) => 0,                                    // CPUTIME
+                (false, 0 | 9) => 0,
                 (false, RESOURCE_LIMIT_COMMIT) => self.process_committed_memory_bytes(),
                 (false, RESOURCE_LIMIT_THREAD) => self.scheduler.thread_count() as u64,
-                (false, 3..=6) => {
-                    let Some(count) = self
-                        .kernel_objects
-                        .synchronization_resource_count(resource_type)
+                (false, 3..=8) => {
+                    let Some(count) = self.kernel_objects.resource_limit_object_count(resource_type)
                     else {
                         return self.write_svc_result(caller, RESULT_INVALID_ENUM);
                     };
@@ -4488,32 +4497,77 @@ mod tests {
             .kernel_objects
             .insert_timer(EventResetType::OneShot)
             .unwrap();
-        let current_types = [2u32, 3, 4, 5, 6];
-        let mut current_type_bytes = Vec::new();
-        for resource_type in current_types {
-            current_type_bytes.extend_from_slice(&resource_type.to_le_bytes());
+        session
+            .kernel_objects
+            .create_memory_block(0x1000, 3, 3)
+            .unwrap();
+        session.kernel_objects.insert_address_arbiter().unwrap();
+
+        // Query the full LimitableResource enum, not just COMMIT and the
+        // synchronization objects that were implemented first.
+        let resource_types = [0u32, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let mut resource_type_bytes = Vec::new();
+        for resource_type in resource_types {
+            resource_type_bytes.extend_from_slice(&resource_type.to_le_bytes());
         }
         session
-            .write_memory_bytes(TYPES, &current_type_bytes)
+            .write_memory_bytes(TYPES, &resource_type_bytes)
             .unwrap();
+
         session.set_current_register(0, VALUES);
         session.set_current_register(1, handle);
         session.set_current_register(2, TYPES);
-        session.set_current_register(3, current_types.len() as u32);
+        session.set_current_register(3, resource_types.len() as u32);
         session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_CURRENT_VALUES);
         assert_eq!(session.current_registers().unwrap()[0], 0);
-        let mut current_counts = [0u8; 40];
+        let mut current_values = [0u8; 80];
         session
-            .read_memory_bytes(VALUES, &mut current_counts)
+            .read_memory_bytes(VALUES, &mut current_values)
             .unwrap();
-        let decoded_counts = current_counts
+        let current_values = current_values
             .chunks_exact(8)
             .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
             .collect::<Vec<_>>();
-        assert_eq!(decoded_counts, [2, 1, 1, 1, 1]);
+        assert_eq!(current_values[0], 0); // PRIORITY
+        assert_eq!(current_values[1], current); // COMMIT
+        assert_eq!(current_values[2], 2); // THREAD: main + worker
+        assert_eq!(&current_values[3..9], &[1, 1, 1, 1, 1, 1]); // EVENT..ADDRESSARBITER
+        assert_eq!(current_values[9], 0); // CPUTIME: disabled in this profile
+
+        session.set_current_register(0, VALUES);
+        session.set_current_register(1, handle);
+        session.set_current_register(2, TYPES);
+        session.set_current_register(3, resource_types.len() as u32);
+        session.dispatch_svc(SVC_GET_RESOURCE_LIMIT_LIMIT_VALUES);
+        assert_eq!(session.current_registers().unwrap()[0], 0);
+        let mut limit_values = [0u8; 80];
+        session
+            .read_memory_bytes(VALUES, &mut limit_values)
+            .unwrap();
+        let limit_values = limit_values
+            .chunks_exact(8)
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            limit_values,
+            [
+                0x18,
+                Arm11ProcessSession::RESOURCE_LIMIT_COMMIT_MAX_BYTES,
+                0x20,
+                0x20,
+                0x20,
+                0x08,
+                0x08,
+                0x10,
+                0x02,
+                0,
+            ]
+        );
+
         session.scheduler.terminate_thread(worker).unwrap();
 
-        session.write_memory_u32(TYPES, 2).unwrap(); // THREAD max is not yet modelled.
+        // Unknown resource IDs must fail without partially overwriting output.
+        session.write_memory_u32(TYPES, 10).unwrap();
         session
             .write_memory_bytes(VALUES, &0xA5A5_A5A5_A5A5_A5A5u64.to_le_bytes())
             .unwrap();
