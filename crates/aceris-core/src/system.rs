@@ -220,7 +220,9 @@ impl std::fmt::Display for SystemSaveStateError {
                 formatter.write_str("could not allocate System save-state metadata")
             }
             Self::Section(error) => write!(formatter, "save-state section table failed: {error}"),
-            Self::SharedMemory(error) => write!(formatter, "shared-memory snapshot failed: {error}"),
+            Self::SharedMemory(error) => {
+                write!(formatter, "shared-memory snapshot failed: {error}")
+            }
             Self::Cpu(error) => write!(formatter, "ARM11 CPU snapshot failed: {error}"),
             Self::Kernel(error) => write!(formatter, "ARM11 kernel snapshot failed: {error}"),
             Self::GpuPhysicalMemory(error) => {
