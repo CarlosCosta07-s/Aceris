@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use crate::cpu::state::{StateReader, StateWriter};
 use crate::loader::ncsd::session::kernel::save_state::KernelStateError;
-use crate::save_state::{section_id, SaveStateSection};
+use crate::save_state::{SaveStateSection, section_id};
 
 use super::{
     Arm11InterruptController, Arm11ProcessSession, InterruptBinding, InterruptTargetKind, ThreadId,
@@ -43,7 +43,9 @@ impl Arm11ProcessSession {
         for (thread, (handle, deadline)) in &self.wait_deadlines {
             write_thread_id(&mut writer, *thread)?;
             if *handle == 0 {
-                return Err(KernelStateError::InvalidData("wait deadline has a null handle"));
+                return Err(KernelStateError::InvalidData(
+                    "wait deadline has a null handle",
+                ));
             }
             writer.write_u32(*handle)?;
             writer.write_u64(*deadline)?;
@@ -95,12 +97,8 @@ impl Arm11ProcessSession {
         if payload.len() > MAX_SECTION_BYTES {
             return Err(KernelStateError::PayloadTooLarge(payload.len() as u64));
         }
-        SaveStateSection::new(
-            section_id::ARM11_PROCESS_RUNTIME,
-            FORMAT_VERSION,
-            payload,
-        )
-        .map_err(|_| KernelStateError::InvalidSection)
+        SaveStateSection::new(section_id::ARM11_PROCESS_RUNTIME, FORMAT_VERSION, payload)
+            .map_err(|_| KernelStateError::InvalidSection)
     }
 
     /// Restores process-side wait metadata atomically. Every collection and the
@@ -109,13 +107,14 @@ impl Arm11ProcessSession {
         &mut self,
         section: &SaveStateSection,
     ) -> Result<(), KernelStateError> {
-        if section.id() != section_id::ARM11_PROCESS_RUNTIME
-            || section.version() != FORMAT_VERSION
+        if section.id() != section_id::ARM11_PROCESS_RUNTIME || section.version() != FORMAT_VERSION
         {
             return Err(KernelStateError::InvalidSection);
         }
         if section.payload().len() > MAX_SECTION_BYTES {
-            return Err(KernelStateError::PayloadTooLarge(section.payload().len() as u64));
+            return Err(KernelStateError::PayloadTooLarge(
+                section.payload().len() as u64
+            ));
         }
 
         let mut reader = StateReader::new(section.payload());
@@ -149,11 +148,8 @@ impl Arm11ProcessSession {
             }
         }
 
-        let arbiter_count = read_count(
-            &mut reader,
-            MAX_ARBITER_WAITERS,
-            "address-arbiter waiters",
-        )?;
+        let arbiter_count =
+            read_count(&mut reader, MAX_ARBITER_WAITERS, "address-arbiter waiters")?;
         let mut arbiter_waiters = Vec::new();
         arbiter_waiters
             .try_reserve_exact(arbiter_count)
@@ -172,11 +168,7 @@ impl Arm11ProcessSession {
         let multi_waits = read_wait_map(&mut reader, "wait-any entries")?;
         let wait_all_waits = read_wait_map(&mut reader, "wait-all entries")?;
 
-        let binding_count = read_count(
-            &mut reader,
-            MAX_INTERRUPT_BINDINGS,
-            "interrupt bindings",
-        )?;
+        let binding_count = read_count(&mut reader, MAX_INTERRUPT_BINDINGS, "interrupt bindings")?;
         let mut bindings = Vec::new();
         bindings
             .try_reserve_exact(binding_count)
@@ -237,7 +229,9 @@ fn write_wait_map(
         write_count(writer, handles.len(), MAX_WAIT_HANDLES, "wait handles")?;
         for handle in handles {
             if *handle == 0 {
-                return Err(KernelStateError::InvalidData("wait list contains a null handle"));
+                return Err(KernelStateError::InvalidData(
+                    "wait list contains a null handle",
+                ));
             }
             writer.write_u32(*handle)?;
         }
@@ -276,10 +270,7 @@ fn read_wait_map(
     Ok(waits)
 }
 
-fn write_thread_id(
-    writer: &mut StateWriter,
-    thread: ThreadId,
-) -> Result<(), KernelStateError> {
+fn write_thread_id(writer: &mut StateWriter, thread: ThreadId) -> Result<(), KernelStateError> {
     if thread.raw() == 0 {
         return Err(KernelStateError::InvalidData("thread ID zero is reserved"));
     }
@@ -307,9 +298,7 @@ fn write_count(
             count: u32::try_from(count).unwrap_or(u32::MAX),
         });
     }
-    writer.write_u32(
-        u32::try_from(count).map_err(|_| KernelStateError::InvalidData(kind))?,
-    )?;
+    writer.write_u32(u32::try_from(count).map_err(|_| KernelStateError::InvalidData(kind))?)?;
     Ok(())
 }
 
@@ -327,4 +316,3 @@ fn read_count(
     }
     Ok(count)
 }
-
