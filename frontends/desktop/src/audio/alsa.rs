@@ -24,6 +24,8 @@ type SetParamsFn =
     unsafe extern "C" fn(*mut c_void, c_int, c_int, c_uint, c_uint, c_int, c_uint) -> c_int;
 type WriteFn = unsafe extern "C" fn(*mut c_void, *const c_void, c_ulong) -> c_long;
 type RecoverFn = unsafe extern "C" fn(*mut c_void, c_int, c_int) -> c_int;
+type DropPcmFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type PrepareFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type CloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
 pub struct AlsaSink {
@@ -31,6 +33,8 @@ pub struct AlsaSink {
     pcm: *mut c_void,
     write: WriteFn,
     recover: RecoverFn,
+    drop_pcm: DropPcmFn,
+    prepare: PrepareFn,
     close: CloseFn,
 }
 
@@ -68,6 +72,8 @@ impl AlsaSink {
         let set_params: SetParamsFn = load(library, "snd_pcm_set_params")?;
         let write: WriteFn = load(library, "snd_pcm_writei")?;
         let recover: RecoverFn = load(library, "snd_pcm_recover")?;
+        let drop_pcm: DropPcmFn = load(library, "snd_pcm_drop")?;
+        let prepare: PrepareFn = load(library, "snd_pcm_prepare")?;
         let close: CloseFn = load(library, "snd_pcm_close")?;
         let device = CString::new("default").expect("no NUL");
         let mut pcm: *mut c_void = ptr::null_mut();
@@ -105,12 +111,30 @@ impl AlsaSink {
             pcm,
             write,
             recover,
+            drop_pcm,
+            prepare,
             close,
         })
     }
 }
 
 impl Sink for AlsaSink {
+    fn flush(&mut self) -> Result<(), String> {
+        // Dropping stops playback immediately and discards all queued frames.
+        // Preparing returns the PCM handle to a state that accepts new writes.
+        // SAFETY: `self.pcm` is the live nonblocking playback handle.
+        let status = unsafe { (self.drop_pcm)(self.pcm) };
+        if status < 0 {
+            return Err(format!("ALSA snd_pcm_drop failed (error {status})"));
+        }
+        // SAFETY: a dropped PCM stream can be prepared for playback again.
+        let status = unsafe { (self.prepare)(self.pcm) };
+        if status < 0 {
+            return Err(format!("ALSA snd_pcm_prepare failed (error {status})"));
+        }
+        Ok(())
+    }
+
     fn write(&mut self, samples: &[i16]) {
         let mut frames = samples.len() / 2;
         let mut offset = 0;
