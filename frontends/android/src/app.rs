@@ -14,7 +14,9 @@ use aceris_core::video::frontend::{
     compute_screen_layout_for_mode,
 };
 use aceris_core::video::layout_preferences::{ScreenLayoutPreferences, ScreenLayoutProfile};
-use aceris_core::video::library::{self, ClickResult, Library};
+use aceris_core::video::library::{
+    self, ClickResult, Library, VirtualControlEditScope,
+};
 use aceris_core::video::{
     DualScreenDisplay, ScreenSurface, intro,
     quick_menu::{self, PixelFormat as MenuPixelFormat},
@@ -358,22 +360,41 @@ impl App {
         if !compose_game_into(system.display(), &layout, self.width, self.height, output) {
             return;
         }
-        let profile_label = if self.layout_preferences.game_has_override_for_surface(
+        let screen_override = self.layout_preferences.game_has_override_for_surface(
             system.game_identity(),
             self.width,
             self.height,
-        ) {
-            "PERFIL DESTE JOGO"
-        } else {
-            "PADRÃO GLOBAL"
+        );
+        let control_override = self.library.game_has_control_override();
+        let profile_label = match (screen_override, control_override) {
+            (true, true) => "TELAS: JOGO | CONTROLES: JOGO",
+            (true, false) => "TELAS: JOGO | CONTROLES: GLOBAL",
+            (false, true) => "TELAS: GLOBAL | CONTROLES: JOGO",
+            (false, false) => "TELAS: GLOBAL | CONTROLES: GLOBAL",
         };
-        let _ = quick_menu::render_overlay_with_profile(
+        let restore_label =
+            if self.library.virtual_control_edit_scope() == VirtualControlEditScope::Game {
+                "RESTAURAR PERFIL"
+            } else {
+                "RESTAURAR CONTROLES"
+            };
+        let scope_label = match (
+            self.library.active_game_identity().is_some(),
+            self.library.virtual_control_edit_scope(),
+        ) {
+            (true, VirtualControlEditScope::Global) => "PERFIL DESTE JOGO",
+            (true, VirtualControlEditScope::Game) => "PADRÃO GLOBAL",
+            (false, _) => "GLOBAL (SEM ID)",
+        };
+        let _ = quick_menu::render_overlay_with_control_profiles(
             output,
             self.width,
             self.height,
             MenuPixelFormat::Rgba8,
             self.quick_menu_selected,
             profile_label,
+            restore_label,
+            scope_label,
         );
     }
 
@@ -428,7 +449,7 @@ impl App {
                             ORIENTATION_AUTO,
                             self.library.virtual_controls_size_percent(),
                             self.library.virtual_controls_preset(),
-                            self.library.virtual_control_positions(),
+                            self.displayed_virtual_control_positions(),
                             button,
                         ) {
                             let _ = quick_menu::render_control_editor_guides(
@@ -488,6 +509,14 @@ impl App {
             .values()
             .fold(0, |mask, &(x, y)| mask | self.hit_virtual_button(x, y));
         self.key_mask | touch_mask
+    }
+
+    fn displayed_virtual_control_positions(&self) -> &frontend::VirtualControlPositions {
+        if self.controls_editor {
+            self.library.virtual_control_editor_positions()
+        } else {
+            self.library.virtual_control_positions()
+        }
     }
 
     fn hit_virtual_button(&self, x: f32, y: f32) -> u32 {
@@ -570,6 +599,16 @@ impl App {
     }
 
     fn reset_virtual_controls_layout(&mut self) {
+        if self.library.virtual_control_edit_scope() == VirtualControlEditScope::Game {
+            match self.library.reset_game_virtual_control_profile() {
+                Ok(_) => {}
+                Err(error) => self.library.set_status(format!(
+                    "NÃO FOI POSSÍVEL RESTAURAR O PERFIL DO JOGO: {error}"
+                )),
+            }
+            return;
+        }
+
         let orientation = self.virtual_control_orientation();
         match self.library.reset_virtual_control_positions(orientation) {
             Ok(()) => self.library.set_status(match orientation {
@@ -580,6 +619,10 @@ impl App {
                 .library
                 .set_status(format!("NÃO FOI POSSÍVEL RESTAURAR OS CONTROLES: {error}")),
         }
+    }
+
+    fn toggle_virtual_control_edit_scope(&mut self) {
+        self.library.toggle_virtual_control_edit_scope();
     }
 
     fn apply_game_input(&mut self) {
@@ -672,8 +715,7 @@ impl App {
                     let start_distance = (second_x - first_x).hypot(second_y - first_y);
                     if start_distance >= 6.0 {
                         let initial_size = self
-                            .library
-                            .virtual_control_positions()
+                            .displayed_virtual_control_positions()
                             .size_percent(orientation, button);
                         self.control_resize = Some((
                             pointer_id,
@@ -886,6 +928,7 @@ impl App {
             4 => self.toggle_screen_swap(),
             5 => self.reset_game_layout(),
             6 => self.reset_virtual_controls_layout(),
+            7 => self.toggle_virtual_control_edit_scope(),
             _ => self.begin_control_editor(),
         }
     }
@@ -931,6 +974,7 @@ impl App {
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
             Ok(_) => {
+                self.library.set_active_game_identity(system.game_identity());
                 self.system = Some(system);
                 self.key_mask = 0;
                 self.pointers.clear();
@@ -1012,6 +1056,7 @@ impl App {
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
             Ok(_) => {
+                self.library.set_active_game_identity(system.game_identity());
                 self.library.mark_launched(&path);
                 self.system = Some(system);
                 self.current_game_path = Some(path);
@@ -1040,6 +1085,7 @@ impl App {
     fn leave_game(&mut self) {
         let diagnostic = self.game_diagnostic();
         self.system = None;
+        self.library.set_active_game_identity(None);
         self.current_game_path = None;
         self.audio.clear();
         self.key_mask = 0;

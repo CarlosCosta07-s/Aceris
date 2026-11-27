@@ -5,6 +5,7 @@
 
 use super::font::{self, draw_text};
 use super::frontend::{VirtualControlPositions, VirtualControlPreset};
+use crate::game_identity::GameIdentity;
 use aceris_common::brand;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -113,6 +114,16 @@ pub enum ClickResult {
     Activated,
 }
 
+/// The profile scope used when the Android virtual-control editor changes a layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VirtualControlEditScope {
+    /// Changes the shared layout inherited by games without a title override.
+    #[default]
+    Global,
+    /// Changes only the currently loaded, validated title ID.
+    Game,
+}
+
 /// Library state.
 #[derive(Clone, Debug)]
 pub struct Library {
@@ -138,7 +149,13 @@ pub struct Library {
     virtual_controls_opacity: u8,
     virtual_controls_size_percent: u8,
     virtual_controls_preset: VirtualControlPreset,
+    /// Effective layout displayed by the currently loaded title.
     virtual_control_positions: VirtualControlPositions,
+    /// Shared fallback layout inherited by titles without an override.
+    global_virtual_control_positions: VirtualControlPositions,
+    active_game_identity: Option<GameIdentity>,
+    active_game_control_override: bool,
+    virtual_control_edit_scope: VirtualControlEditScope,
     external_media_playing: bool,
     external_media_detection_available: bool,
     performance_mode: bool,
@@ -249,6 +266,29 @@ fn load_virtual_control_positions(settings_directory: &Path) -> VirtualControlPo
         .ok()
         .and_then(|contents| VirtualControlPositions::from_config_str(&contents))
         .unwrap_or_default()
+}
+
+/// Per-title layouts use only a validated 64-bit Title ID. Hexadecimal filenames
+/// are line-safe and portable across Windows, Android, and desktop filesystems.
+fn game_virtual_control_layout_path(
+    settings_directory: &Path,
+    identity: GameIdentity,
+) -> PathBuf {
+    settings_directory
+        .join("virtual_control_profiles")
+        .join(format!("{:016x}.v2", identity.title_id()))
+}
+
+fn load_game_virtual_control_positions(
+    settings_directory: &Path,
+    identity: GameIdentity,
+) -> Option<VirtualControlPositions> {
+    let contents = fs::read_to_string(game_virtual_control_layout_path(
+        settings_directory,
+        identity,
+    ))
+    .ok()?;
+    VirtualControlPositions::from_config_str(&contents)
 }
 
 fn load_performance_mode(settings_directory: &Path) -> bool {
@@ -737,7 +777,9 @@ impl Library {
         let virtual_controls_opacity = load_virtual_controls_opacity(&settings_directory);
         let virtual_controls_size_percent = load_virtual_controls_size_percent(&settings_directory);
         let virtual_controls_preset = load_virtual_controls_preset(&settings_directory);
-        let virtual_control_positions = load_virtual_control_positions(&settings_directory);
+        let global_virtual_control_positions =
+            load_virtual_control_positions(&settings_directory);
+        let virtual_control_positions = global_virtual_control_positions;
         let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
@@ -763,6 +805,10 @@ impl Library {
             virtual_controls_size_percent,
             virtual_controls_preset,
             virtual_control_positions,
+            global_virtual_control_positions,
+            active_game_identity: None,
+            active_game_control_override: false,
+            virtual_control_edit_scope: VirtualControlEditScope::Global,
             external_media_playing: false,
             external_media_detection_available: false,
             performance_mode,
@@ -958,14 +1004,91 @@ impl Library {
         }
     }
 
-    /// Returns the current per-button positions for both surface orientations.
+    /// Selects the active title and loads its saved control override, if one exists.
+    ///
+    /// Titles without a validated identity always inherit the global layout. Changing
+    /// the active title does not write a profile; the first edit materializes an override.
+    pub fn set_active_game_identity(&mut self, identity: Option<GameIdentity>) {
+        if self.active_game_identity == identity {
+            return;
+        }
+        self.active_game_identity = identity;
+        self.virtual_control_edit_scope = if identity.is_some() {
+            VirtualControlEditScope::Game
+        } else {
+            VirtualControlEditScope::Global
+        };
+
+        if let Some(identity) = identity {
+            if let Some(positions) =
+                load_game_virtual_control_positions(&self.scan_settings_directory, identity)
+            {
+                self.virtual_control_positions = positions;
+                self.active_game_control_override = true;
+            } else {
+                self.virtual_control_positions = self.global_virtual_control_positions;
+                self.active_game_control_override = false;
+            }
+        } else {
+            self.virtual_control_positions = self.global_virtual_control_positions;
+            self.active_game_control_override = false;
+        }
+    }
+
+    /// Returns the validated identity of the currently active title, if available.
+    pub fn active_game_identity(&self) -> Option<GameIdentity> {
+        self.active_game_identity
+    }
+
+    /// Returns whether the active title has a persisted or pending control override.
+    pub fn game_has_control_override(&self) -> bool {
+        self.active_game_control_override
+    }
+
+    /// Current scope chosen for edits made by the virtual-control editor.
+    pub fn virtual_control_edit_scope(&self) -> VirtualControlEditScope {
+        self.virtual_control_edit_scope
+    }
+
+    /// Switches between global and per-title editing. Games without a validated
+    /// title ID cannot enter per-title mode and remain on the global profile.
+    pub fn toggle_virtual_control_edit_scope(&mut self) -> bool {
+        if self.active_game_identity.is_none() {
+            self.virtual_control_edit_scope = VirtualControlEditScope::Global;
+            self.status = Some(
+                "ESTE JOGO NÃO TEM TITLE ID VALIDADO; PERFIL GLOBAL EM USO".to_string(),
+            );
+            return false;
+        }
+        self.virtual_control_edit_scope = match self.virtual_control_edit_scope {
+            VirtualControlEditScope::Global => VirtualControlEditScope::Game,
+            VirtualControlEditScope::Game => VirtualControlEditScope::Global,
+        };
+        self.status = Some(match self.virtual_control_edit_scope {
+            VirtualControlEditScope::Global => "EDIÇÃO DE CONTROLES: PERFIL GLOBAL".to_string(),
+            VirtualControlEditScope::Game => "EDIÇÃO DE CONTROLES: PERFIL DESTE JOGO".to_string(),
+        });
+        true
+    }
+
+    /// Returns the effective layout used while the game is running.
     pub fn virtual_control_positions(&self) -> &VirtualControlPositions {
         &self.virtual_control_positions
     }
 
+    /// Returns the layout currently shown by the editor. This may be the global
+    /// layout even while the running game has its own independent override.
+    pub fn virtual_control_editor_positions(&self) -> &VirtualControlPositions {
+        match self.virtual_control_edit_scope {
+            VirtualControlEditScope::Global => &self.global_virtual_control_positions,
+            VirtualControlEditScope::Game => &self.virtual_control_positions,
+        }
+    }
+
     /// Applies a transient drag delta in hundredths of a percent.
     ///
-    /// Persist once after the drag ends rather than writing for every pointer movement.
+    /// The first per-title change copies the global profile, preserving inheritance
+    /// until the user actually edits that game. Persist once after drag release.
     pub fn move_virtual_control(
         &mut self,
         orientation: u32,
@@ -973,8 +1096,28 @@ impl Library {
         delta_x: i16,
         delta_y: i16,
     ) -> bool {
-        self.virtual_control_positions
-            .adjust(orientation, button, delta_x, delta_y)
+        match self.virtual_control_edit_scope {
+            VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
+                if !self.active_game_control_override {
+                    self.virtual_control_positions = self.global_virtual_control_positions;
+                    self.active_game_control_override = true;
+                }
+                self.virtual_control_positions
+                    .adjust(orientation, button, delta_x, delta_y)
+            }
+            _ => {
+                let changed = self.global_virtual_control_positions.adjust(
+                    orientation,
+                    button,
+                    delta_x,
+                    delta_y,
+                );
+                if !self.active_game_control_override {
+                    self.virtual_control_positions = self.global_virtual_control_positions;
+                }
+                changed
+            }
+        }
     }
 
     /// Updates one button's scale during the editor gesture; the host saves on release.
@@ -984,27 +1127,101 @@ impl Library {
         button: u32,
         size_percent: u8,
     ) -> bool {
-        self.virtual_control_positions
-            .set_size_percent(orientation, button, size_percent)
+        match self.virtual_control_edit_scope {
+            VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
+                if !self.active_game_control_override {
+                    self.virtual_control_positions = self.global_virtual_control_positions;
+                    self.active_game_control_override = true;
+                }
+                self.virtual_control_positions
+                    .set_size_percent(orientation, button, size_percent)
+            }
+            _ => {
+                let changed = self.global_virtual_control_positions.set_size_percent(
+                    orientation,
+                    button,
+                    size_percent,
+                );
+                if !self.active_game_control_override {
+                    self.virtual_control_positions = self.global_virtual_control_positions;
+                }
+                changed
+            }
+        }
     }
 
-    /// Persists the complete per-button control layout as one versioned text file.
+    /// Saves the selected scope without overwriting the other profile.
     pub fn save_virtual_control_positions(&mut self) -> std::io::Result<()> {
-        fs::create_dir_all(&self.scan_settings_directory)?;
-        fs::write(
-            self.scan_settings_directory
+        let destination = match (self.virtual_control_edit_scope, self.active_game_identity) {
+            (VirtualControlEditScope::Game, Some(identity)) => {
+                game_virtual_control_layout_path(&self.scan_settings_directory, identity)
+            }
+            _ => self
+                .scan_settings_directory
                 .join(VIRTUAL_CONTROL_LAYOUT_FILE),
-            self.virtual_control_positions.to_config_string(),
+        };
+        fs::create_dir_all(
+            destination
+                .parent()
+                .expect("control profile paths always have a parent directory"),
         )?;
+        let positions = match self.virtual_control_edit_scope {
+            VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
+                &self.virtual_control_positions
+            }
+            _ => &self.global_virtual_control_positions,
+        };
+        fs::write(destination, positions.to_config_string())?;
+        if self.virtual_control_edit_scope == VirtualControlEditScope::Game
+            && self.active_game_identity.is_some()
+        {
+            self.active_game_control_override = true;
+        } else if !self.active_game_control_override {
+            self.virtual_control_positions = self.global_virtual_control_positions;
+        }
         self.status = Some("LAYOUT DOS CONTROLES SALVO".to_string());
         Ok(())
     }
 
-    /// Restores only the selected orientation to its preset's default positions.
+    /// Restores the selected orientation to the default layout in the chosen scope.
     pub fn reset_virtual_control_positions(&mut self, orientation: u32) -> std::io::Result<()> {
-        self.virtual_control_positions
-            .reset_orientation(orientation);
+        match self.virtual_control_edit_scope {
+            VirtualControlEditScope::Game if self.active_game_identity.is_some() => {
+                if !self.active_game_control_override {
+                    self.virtual_control_positions = self.global_virtual_control_positions;
+                }
+                self.virtual_control_positions.reset_orientation(orientation);
+            }
+            _ => {
+                self.global_virtual_control_positions.reset_orientation(orientation);
+                if !self.active_game_control_override {
+                    self.virtual_control_positions = self.global_virtual_control_positions;
+                }
+            }
+        }
         self.save_virtual_control_positions()
+    }
+
+    /// Removes the active title's entire override and returns it to global inheritance.
+    pub fn reset_game_virtual_control_profile(&mut self) -> std::io::Result<bool> {
+        let Some(identity) = self.active_game_identity else {
+            return Ok(false);
+        };
+        let path = game_virtual_control_layout_path(&self.scan_settings_directory, identity);
+        let removed_file = match fs::remove_file(path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error),
+        };
+        let had_override = self.active_game_control_override;
+        self.active_game_control_override = false;
+        self.virtual_control_positions = self.global_virtual_control_positions;
+        self.status = Some(if had_override || removed_file {
+            "PERFIL DE CONTROLES DO JOGO RESTAURADO".to_string()
+        } else {
+            "O JOGO JÁ USA O PADRÃO GLOBAL".to_string()
+        });
+        Ok(had_override || removed_file)
     }
 
     /// Current persisted roots and scanner options.
@@ -5817,5 +6034,217 @@ mod tests {
         assert!(entries.is_empty());
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod virtual_control_profile_tests {
+    use super::*;
+    use super::super::frontend::{
+        buttons, ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT, VirtualControlOffset,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temporary_directory() -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "aceris-control-profiles-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    fn identity(title_id: u64) -> GameIdentity {
+        GameIdentity::from_title_id(title_id).unwrap()
+    }
+
+    #[test]
+    fn title_profiles_inherit_global_then_materialize_and_persist_independently() {
+        let directory = temporary_directory();
+        let mut library = Library::new(Vec::new(), directory.display().to_string());
+        assert!(library.move_virtual_control(
+            ORIENTATION_PORTRAIT,
+            buttons::A,
+            250,
+            -150
+        ));
+        assert!(library.resize_virtual_control(
+            ORIENTATION_LANDSCAPE,
+            buttons::A,
+            115
+        ));
+        library.save_virtual_control_positions().unwrap();
+
+        let first = identity(0x0004_0000_1234_5600);
+        let second = identity(0x0004_0000_1234_5601);
+        library.set_active_game_identity(Some(first));
+        assert!(!library.game_has_control_override());
+        assert_eq!(
+            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 250, y: -150 }
+        );
+        assert_eq!(
+            library.virtual_control_positions().size_percent(ORIENTATION_LANDSCAPE, buttons::A),
+            115
+        );
+
+        assert!(library.move_virtual_control(
+            ORIENTATION_PORTRAIT,
+            buttons::A,
+            500,
+            300
+        ));
+        assert!(library.resize_virtual_control(
+            ORIENTATION_LANDSCAPE,
+            buttons::A,
+            135
+        ));
+        assert!(library.game_has_control_override());
+        library.save_virtual_control_positions().unwrap();
+
+        let first_path = game_virtual_control_layout_path(
+            &directory.join(".aceris"),
+            first,
+        );
+        assert!(first_path.is_file());
+        assert_eq!(
+            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 750, y: 150 }
+        );
+
+        library.set_active_game_identity(Some(second));
+        assert!(!library.game_has_control_override());
+        assert_eq!(
+            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 250, y: -150 }
+        );
+        assert_eq!(
+            library.virtual_control_positions().size_percent(ORIENTATION_LANDSCAPE, buttons::A),
+            115
+        );
+
+        let mut reopened = Library::new(Vec::new(), directory.display().to_string());
+        reopened.set_active_game_identity(Some(first));
+        assert!(reopened.game_has_control_override());
+        assert_eq!(
+            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 750, y: 150 }
+        );
+        assert_eq!(
+            reopened.virtual_control_positions().size_percent(ORIENTATION_LANDSCAPE, buttons::A),
+            135
+        );
+        reopened.set_active_game_identity(Some(second));
+        assert!(!reopened.game_has_control_override());
+        assert_eq!(
+            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 250, y: -150 }
+        );
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn editing_global_does_not_overwrite_an_active_game_override() {
+        let directory = temporary_directory();
+        let mut library = Library::new(Vec::new(), directory.display().to_string());
+        let title = identity(0x0004_0000_1234_5602);
+        library.set_active_game_identity(Some(title));
+        library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 700, 0);
+        library.save_virtual_control_positions().unwrap();
+        let game_layout = *library.virtual_control_positions();
+
+        assert!(library.toggle_virtual_control_edit_scope());
+        assert_eq!(library.virtual_control_edit_scope(), VirtualControlEditScope::Global);
+        library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 200, 100);
+        library.save_virtual_control_positions().unwrap();
+
+        assert_eq!(*library.virtual_control_positions(), game_layout);
+        assert_eq!(
+            library.virtual_control_editor_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 200, y: 100 }
+        );
+
+        let mut reopened = Library::new(Vec::new(), directory.display().to_string());
+        reopened.set_active_game_identity(Some(title));
+        assert_eq!(
+            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 700, y: 0 }
+        );
+        reopened.set_active_game_identity(None);
+        assert_eq!(
+            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 200, y: 100 }
+        );
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn resetting_game_profile_removes_only_its_override_and_restores_inheritance() {
+        let directory = temporary_directory();
+        let mut library = Library::new(Vec::new(), directory.display().to_string());
+        library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 300, 0);
+        library.save_virtual_control_positions().unwrap();
+
+        let first = identity(0x0004_0000_1234_5603);
+        let second = identity(0x0004_0000_1234_5604);
+        library.set_active_game_identity(Some(first));
+        library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 700, 0);
+        library.save_virtual_control_positions().unwrap();
+        library.set_active_game_identity(Some(second));
+        library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, -200, 0);
+        library.save_virtual_control_positions().unwrap();
+
+        library.set_active_game_identity(Some(first));
+        assert!(library.reset_game_virtual_control_profile().unwrap());
+        assert!(!library.game_has_control_override());
+        assert_eq!(
+            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 300, y: 0 }
+        );
+        assert!(!game_virtual_control_layout_path(&directory.join(".aceris"), first).exists());
+        assert!(game_virtual_control_layout_path(&directory.join(".aceris"), second).exists());
+
+        let mut reopened = Library::new(Vec::new(), directory.display().to_string());
+        reopened.set_active_game_identity(Some(first));
+        assert!(!reopened.game_has_control_override());
+        assert_eq!(
+            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 300, y: 0 }
+        );
+        reopened.set_active_game_identity(Some(second));
+        assert!(reopened.game_has_control_override());
+        assert_eq!(
+            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            VirtualControlOffset { x: 100, y: 0 }
+        );
+
+        fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn unidentified_homebrew_stays_on_global_scope() {
+        let directory = temporary_directory();
+        let mut library = Library::new(Vec::new(), directory.display().to_string());
+        assert!(!library.toggle_virtual_control_edit_scope());
+        assert_eq!(library.virtual_control_edit_scope(), VirtualControlEditScope::Global);
+        library.set_active_game_identity(None);
+        assert!(library.move_virtual_control(
+            ORIENTATION_LANDSCAPE,
+            buttons::B,
+            -400,
+            250
+        ));
+        library.save_virtual_control_positions().unwrap();
+        assert_eq!(
+            library.virtual_control_positions().offset(ORIENTATION_LANDSCAPE, buttons::B),
+            VirtualControlOffset { x: -400, y: 250 }
+        );
+
+        fs::remove_dir_all(directory).ok();
     }
 }

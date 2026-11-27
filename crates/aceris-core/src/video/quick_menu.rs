@@ -2,7 +2,7 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 8;
+pub const ACTION_COUNT: usize = 9;
 /// Desktop exposes the six actions that do not depend on Android touch controls.
 pub const DESKTOP_ACTION_COUNT: usize = 6;
 
@@ -462,7 +462,7 @@ pub fn render_confirmation_overlay(
     true
 }
 
-/// Draws a dimmed, seven-action quick menu over an existing RGBA8 or BGRX8 frame.
+/// Draws a dimmed, nine-action quick menu over an existing RGBA8 or BGRX8 frame.
 ///
 /// The function does not allocate and leaves the frame unchanged when its
 /// dimensions or byte length are invalid.
@@ -493,6 +493,8 @@ pub fn render_desktop_overlay_with_profile(
         selected,
         profile_label,
         DESKTOP_ACTION_COUNT,
+        "RESTAURAR CONTROLES",
+        "PERFIL GLOBAL",
     )
 }
 
@@ -506,6 +508,29 @@ pub fn render_overlay_with_profile(
     selected: usize,
     profile_label: &str,
 ) -> bool {
+    render_overlay_with_control_profiles(
+        frame,
+        width,
+        height,
+        format,
+        selected,
+        profile_label,
+        "RESTAURAR CONTROLES",
+        "ESCOPO DOS CONTROLES",
+    )
+}
+
+/// Draws the Android menu with scope-aware control reset and profile actions.
+pub fn render_overlay_with_control_profiles(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    selected: usize,
+    profile_label: &str,
+    control_reset_label: &str,
+    control_scope_label: &str,
+) -> bool {
     render_overlay_with_action_count(
         frame,
         width,
@@ -514,6 +539,8 @@ pub fn render_overlay_with_profile(
         selected,
         profile_label,
         ACTION_COUNT,
+        control_reset_label,
+        control_scope_label,
     )
 }
 
@@ -525,6 +552,8 @@ fn render_overlay_with_action_count(
     selected: usize,
     profile_label: &str,
     action_count: usize,
+    control_reset_label: &str,
+    control_scope_label: &str,
 ) -> bool {
     let Some(geometry) = geometry(width, height, action_count) else {
         return false;
@@ -588,6 +617,7 @@ fn render_overlay_with_action_count(
         "TROCAR TELAS",
         "PADRÃO GLOBAL",
         "RESTAURAR CONTROLES",
+        "ESCOPO DOS CONTROLES",
         "EDITAR CONTROLES",
     ];
     for (index, row) in geometry.rows.iter().take(geometry.action_count).enumerate() {
@@ -605,6 +635,11 @@ fn render_overlay_with_action_count(
             format,
         );
         let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
+        let label = match index {
+            6 => control_reset_label,
+            7 => control_scope_label,
+            _ => labels[index],
+        };
         draw_text_for_format(
             frame,
             width as usize,
@@ -612,7 +647,7 @@ fn render_overlay_with_action_count(
             row.x + 12 * scale,
             text_y,
             text_scale,
-            labels[index],
+            label,
             [255, 255, 255],
             format,
         );
@@ -762,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn eighth_action_renders_and_remains_reachable_on_compact_canvas() {
+    fn ninth_action_renders_and_remains_reachable_on_compact_canvas() {
         let (width, height) = (320u32, 240u32);
         let mut frame = vec![0u8; width as usize * height as usize * 4];
         assert!(render_overlay(
@@ -955,4 +990,32 @@ mod tests {
         assert_eq!(frame, before);
         assert_eq!(hit_test(0, 0, 2, 2), None);
     }
+
+    #[test]
+    fn scope_and_reset_labels_render_on_compact_android_canvas() {
+        let (width, height) = (320u32, 240u32);
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+        assert!(render_overlay_with_control_profiles(
+            &mut frame,
+            width,
+            height,
+            PixelFormat::Rgba8,
+            ACTION_COUNT - 1,
+            "TELAS: GLOBAL | CONTROLES: JOGO",
+            "RESTAURAR PERFIL",
+            "PADRÃO GLOBAL",
+        ));
+        let geometry = geometry(width, height, ACTION_COUNT).unwrap();
+        let last = geometry.rows[ACTION_COUNT - 1];
+        assert_eq!(
+            hit_test(
+                width,
+                height,
+                (last.x + last.width / 2) as i32,
+                (last.y + last.height / 2) as i32,
+            ),
+            Some(ACTION_COUNT - 1)
+        );
+    }
+
 }
