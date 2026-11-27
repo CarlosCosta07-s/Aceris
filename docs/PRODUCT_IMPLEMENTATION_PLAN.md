@@ -1,6 +1,6 @@
 # Plano de implementação do produto Aceris
 
-> Plano executivo derivado de `docs/USER_EXPERIENCE.md`. Revisão: 27/11/2026. Este documento ordena o trabalho por dependência e define critérios objetivos de conclusão. Os itens marcados como pendentes são trabalho futuro; não representam recursos já disponíveis. A especificação complementar de menu rápido e configurações está em [`QUICK_MENU_SETTINGS_SPEC.md`](QUICK_MENU_SETTINGS_SPEC.md).
+> Plano executivo derivado de `docs/USER_EXPERIENCE.md`. Revisão: 27/11/2026. Este documento ordena o trabalho por dependência e define critérios objetivos de conclusão. Os itens marcados como pendentes são trabalho futuro; não representam recursos já disponíveis. A especificação complementar de menu rápido e configurações está em [`QUICK_MENU_SETTINGS_SPEC.md`](QUICK_MENU_SETTINGS_SPEC.md). O estudo de adoção de recursos do PPSSPP está em [`PPSSPP_REFERENCE_STUDY.md`](PPSSPP_REFERENCE_STUDY.md).
 
 ## 1. Objetivo e regras de execução
 
@@ -39,10 +39,10 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 - Seleção de pastas por diálogo nativo no desktop e seleção de diretórios via Android Storage Access Framework (SAF), com permissões persistentes.
 - Progresso, cancelamento, resumo e recuperação de erros do processo de importação/varredura.
 - Persistência ampliada de metadados da biblioteca e página detalhada de jogo.
-- Mapeamento completo de teclado/gamepad, detecção/reconexão, perfis e editor de controles virtuais.
+- Mapeamento completo de teclado/gamepad, detecção/reconexão, perfis por dispositivo e atalhos configuráveis. O editor Android de controles virtuais já suporta visibilidade, opacidade, escala, presets, arraste, pinça, layouts por orientação e overrides por Title ID; falta validação em aparelho físico e remapeamento dos controles físicos.
 - Menu rápido básico implementado, incluindo limpeza explícita da fila host de áudio, confirmação preventiva antes de Reiniciar/Voltar à biblioteca, seis layouts, troca de LCDs e overrides de layout por Title ID com restauração do padrão global. Atalhos configuráveis, espaçamento/posição personalizados e validação física continuam pendentes. O host não detecta automaticamente progresso não salvo.
 - Configurações globais com overrides por jogo e migrações seguras.
-- Save states versionados, slots e recuperação — distintos dos saves gravados pelo próprio jogo.
+- Infraestrutura de save states já existe no core: envelope/section table versionados, identidade exata do jogo e armazenamento de slots com gerações imutáveis e recuperação. Ainda falta serializar e restaurar o estado completo de `System`; portanto, save states ainda não são uma função utilizável durante o jogo.
 - Validação física do frontend Android e dos backends desktop; saída de áudio do sistema emulado ainda não foi confirmada como funcional.
 - Temas completos, acessibilidade, ajuda contextual e ferramentas de relatório em nível de produto.
 
@@ -118,25 +118,25 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 **Objetivo:** permitir jogar por touchscreen, teclado e controles físicos de forma consistente.
 
 **M3.1 — Camada comum**
-- [ ] Definir modelo comum de ação lógica (botões digitais, eixos analógicos, touchscreen/stylus e hotkeys).
+- [ ] Definir modelo comum de ação lógica (botões digitais, eixos analógicos, touchscreen/stylus e hotkeys), com calibração e limites explícitos para eixos do Circle Pad.
 - [ ] Separar dispositivo físico de mapeamento lógico; um perfil pode mapear vários dispositivos.
 - [ ] Persistir perfis globais, por dispositivo e por jogo com herança explícita.
 - [ ] Tratar conexão, desconexão, reconexão e troca de dispositivo.
-- [ ] Implementar teste visual de botões, eixos, deadzone, sensibilidade e inversão.
+- [ ] Implementar teste visual de botões/eixos, deadzone, sensibilidade, curva de resposta e inversão; apresentar claramente o dispositivo ativo.
 - [ ] Detectar conflitos de atalhos e permitir redefinir o padrão.
 
 **M3.2 — Desktop**
 - [ ] Enumerar gamepads e apresentar nomes dos dispositivos detectados.
 - [ ] Mapeamento automático somente para layouts conhecidos e confirmados; manter remapeamento manual.
-- [ ] Permitir mapear teclado, mouse quando aplicável, botões, gatilhos e eixos.
+- [ ] Permitir mapear teclado, mouse quando aplicável, botões, gatilhos e eixos; persistir mapeamentos por dispositivo e testar desconexão/reconexão.
 - [ ] Atalhos globais configuráveis para pausar, retomar, menu, screenshot, troca de telas e ações de progresso quando existirem.
 
 **M3.3 — Android**
 - [ ] Mapear gamepads USB/Bluetooth e teclas externas.
-- [ ] Editor dos controles virtuais: mover, redimensionar, ocultar, opacidade e área de toque.
-- [ ] Presets padrão, compacto, canhoto, destro e personalizado.
-- [ ] Salvar layouts separados para retrato e paisagem, mas só expor orientação depois de validar rotação e composição de telas.
-- [ ] Ajustar Circle Pad e área de stylus, sem sobrepor indevidamente a superfície de toque da tela inferior.
+- [x] Editor Android de controles virtuais: mover, redimensionar, ocultar, ajustar opacidade, escala, presets e posições individuais; layouts separados por orientação e overrides por Title ID com herança/restauração já existem. Falta validação física abrangente.
+- [x] Presets padrão, compacto, canhoto e destro; o modo personalizado é composto pelas posições e tamanhos editados pelo usuário.
+- [x] Persistir layouts de controles separados para retrato e paisagem. [ ] Validar rotação e composição em Android físico.
+- [ ] Ajustar Circle Pad e área de stylus, sem sobrepor indevidamente a superfície de toque da tela inferior; validar simultaneidade de multi-touch + botões + stylus.
 - [ ] Feedback tátil configurável; não prometer rumble se o hardware/host não suportar.
 - [ ] Ocultar os controles virtuais quando um controle físico conectar, com opção de manter o overlay.
 
@@ -198,13 +198,13 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 Antes de implementar a interface, demonstrar que o estado serializado inclui todos os dados determinantes para retomar a execução de forma coerente: CPU e modos bancados, MMU/TLB/cache quando aplicável, memória, GPU/PICA e filas pendentes, serviços/HLE, timers, interrupções, DSP/áudio, touchscreen/HID e sincronização de threads/eventos. Recursos do host (janelas, ponteiros, dispositivos e handles nativos) devem ser religados, não serializados como ponteiros.
 
 - [ ] Inventariar o estado completo do emulador e classificar cada campo como serializável, reconstruível ou não persistente.
-- [ ] Definir formato versionado, assinatura de integridade e identificação do jogo.
+- [x] Implementar envelope versionado, CRC/integridade, tabela de seções e identidade do jogo por hash do conteúdo. Isso valida o formato do arquivo, não serializa automaticamente os subsistemas do emulador.
 - [ ] Criar captura e restauração atômicas, com validação antes de alterar a sessão ativa.
-- [ ] Salvar em arquivo temporário e trocar pelo destino somente após gravação completa.
-- [ ] Implementar slots manuais nomeados, quick save/load e metadados de data/hora.
+- [x] Implementar armazenamento atômico por gerações imutáveis, sincronização do arquivo, retenção de gerações anteriores e fallback para geração válida. A captura do estado completo continua pendente.
+- [ ] Implementar slots manuais nomeados, quick save/load, metadados de data/hora e miniatura sincronizada com o snapshot.
 - [ ] Adicionar screenshot de prévia apenas depois de a captura visual estar sincronizada com o snapshot.
 - [ ] Confirmar sobrescrita e carregamento de estados; nunca descartar arquivo inválido.
-- [ ] Criar backups rotativos e recuperação após falha de gravação.
+- [x] Infraestrutura de retenção/recuperação de gerações já existe em `SaveStateStore`; integrar e testar com snapshots completos antes de expor ao usuário.
 - [ ] Distinguir claramente save do jogo e save state em toda a interface.
 - [ ] Auto-save ao sair e Rewind ficam desativados por padrão e só entram após testes de consistência e medição de consumo de armazenamento/memória.
 
@@ -215,13 +215,13 @@ Antes de implementar a interface, demonstrar que o estado serializado inclui tod
 **Prioridade:** P1.  
 **Dependência:** opções reais do core e evidência por backend.
 
-- [ ] Criar perfis Compatibilidade, Equilibrado e Desempenho usando apenas opções já implementadas e testadas.
+- [ ] Criar perfis Compatibilidade, Equilibrado, Desempenho e Personalizado usando apenas opções já implementadas e testadas; cada perfil deve explicar precisão, memória, bateria e impacto por jogo.
 - [ ] Identificar claramente o modo Fast Memory como experimental ou potencialmente incompatível enquanto a coerência de cache não estiver garantida.
 - [ ] Expor VSync, limitador, resolução interna, filtros e antialiasing somente quando cada recurso tiver efeito real e validação.
 - [ ] Diferenciar resolução interna de ampliação/escala do framebuffer LCD.
 - [ ] Não exibir filtros ou multiplicadores de resolução que só ampliem a imagem final.
-- [ ] Apresentar FPS, velocidade relativa e frametime com método de medição consistente; métricas de CPU/GPU/bateria somente se disponíveis pelo host.
-- [ ] Manter telemetria local e desativada por padrão; sem upload automático.
+- [ ] Criar overlay de diagnóstico opcional com FPS apresentado, frametime e tempos de CPU/render/composição/apresentação; identificar essas medições como host-side.
+- [ ] Medir velocidade guest separadamente do FPS apresentado; nunca inferir velocidade da emulação a partir do ritmo de apresentação. Manter telemetria local e desativada por padrão, sem upload automático.
 - [ ] Resolver e validar a inicialização/saída real do áudio antes de apresentar controles de áudio como prontos.
 - [ ] Adicionar volume, mute, dispositivo e latência somente quando controlarem de fato o caminho de áudio.
 - [ ] Testar suspensão, troca de dispositivo, foco e retomada sem ruído, bloqueio ou áudio preso.
@@ -250,8 +250,8 @@ Antes de implementar a interface, demonstrar que o estado serializado inclui tod
 **Prioridade:** P2 — não bloqueia a primeira experiência completa.
 
 - [ ] Gerenciador de cheats locais por jogo, com origem, descrição e desativar tudo.
-- [ ] Screenshot durante a partida, com escolha de destino e confirmação visual.
-- [ ] Exportação de relatórios sanitizados, com prévia dos campos compartilhados.
+- [ ] Screenshot durante a partida nos modos de tela suportados, com escolha de destino, confirmação visual e teste de orientação/formato em PC e Android.
+- [ ] Exportação de relatórios sanitizados, com prévia dos campos compartilhados, opção de remover caminhos privados e sem anexar jogos, firmware, chaves, saves ou dumps.
 - [ ] Importação/exportação de perfis, controles e layouts em formato versionado.
 - [ ] Texturas personalizadas locais quando o pipeline de substituição estiver validado.
 - [ ] Câmera, microfone, sensores, NFC/Amiibo e multiplayer somente após HLE, permissões e testes funcionais.
