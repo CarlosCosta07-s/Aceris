@@ -332,16 +332,6 @@ impl SharedMemoryBacking {
         })
     }
 
-    /// Stable identity shared by aliases and clones of this backing root.
-    pub(crate) fn backing_id(&self) -> u64 {
-        self.backing_id
-    }
-
-    /// Root-relative offset represented by this bounded view.
-    pub(crate) fn root_base_offset(&self) -> usize {
-        self.offset
-    }
-
     /// Full logical length of the root allocation, including unmaterialized pages.
     pub(crate) fn root_length(&self) -> usize {
         self.root_length
