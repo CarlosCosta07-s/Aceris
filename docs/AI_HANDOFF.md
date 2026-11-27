@@ -3035,3 +3035,6 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Testes sintéticos adicionados para slots independentes, isolamento por identidade, recuperação de geração corrompida/interrompida, retenção de três gerações, rejeição de slots inválidos e slot vazio. A execução desses testes depende do CI; ainda não declarar compilação ou testes aprovados.
 - Limite explícito: armazenamento não é captura/restauração de `System`, não está conectado à interface e não deve ser divulgado como Save/Load jogável. Não houve alterações nos módulos de CPU/Thumb, PICA200, DSP/CSND, SVC ou em arquivos de propriedade reservada a outro agente.
 - Commit inicial: `60ae3d8`; export público: `a357744`. Alterações apenas em `main`, sem branches ou PRs.
+
+
+- Follow-up de durabilidade: a gravação agora escreve em `.tmp`, sincroniza o arquivo e publica o nome `.acrs` por `rename` no mesmo diretório. Temporários abandonados por interrupção são ignorados na leitura e provocam avanço do contador de geração na próxima gravação. Commit: `140f1b7`.
