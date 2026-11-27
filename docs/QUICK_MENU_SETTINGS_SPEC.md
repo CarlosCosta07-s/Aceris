@@ -29,7 +29,7 @@ A primeira camada do menu está conectada aos dois frontends:
 - PC: Esc abre/fecha; setas/Enter e mouse navegam.
 - Continuar, Reiniciar e Voltar à biblioteca executam ações reais.
 - Quando aberto, o loop não executa um novo quadro guest e continua redesenhando o último scanout.
-- A produção de novas amostras de áudio para, mas a fila do host não recebe ainda um comando explícito de flush/pause e pode terminar de consumir o que já estava enfileirado.
+- Ao abrir o menu, o Android pausa e limpa a fila AAudio após aguardar os estados assíncronos; no PC, o host limpa as filas ALSA, WinMM ou AudioQueue e reinicia o histórico do resampler. O Android também limpa a fila quando a NativeActivity vai para segundo plano.
 - O atalho PC ainda não é configurável; a confirmação de perda de progresso e a validação física também estão pendentes.
 
 ### Pausa real
@@ -38,7 +38,7 @@ O menu não pode apenas desenhar uma camada sobre uma emulação que continua av
 
 1. Receber a solicitação de pausa.
 2. Concluir o quadro guest já iniciado e parar no limite seguro entre quadros.
-3. Parar a produção de novos quadros e tratar os buffers de áudio pendentes.
+3. Parar a produção de novos quadros e limpar explicitamente as filas de áudio do host; no Android, aguardar as transições AAudio antes de pausar/limpar e iniciar novamente ao retomar.
 4. Liberar entradas mantidas ou evitar que teclas/botões pressionados antes da pausa fiquem presos.
 5. Exibir o menu mantendo a última imagem do jogo.
 6. Ao continuar, restaurar o fluxo de áudio/entrada e retomar o agendamento guest.
@@ -156,7 +156,7 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 | Modo Desempenho | Disponível como opção global; efeito aplicado no próximo jogo e com ressalvas de compatibilidade |
 | Fundo personalizado | Suporte de renderer; não confundir com seletor completo de tema |
 | Overlay de controles virtuais | Básico e fixo; ainda sem editor |
-| Menu rápido com pausa | Parcial | Continuar, Reiniciar e Voltar à biblioteca funcionam no PC e Android; pausa entre quadros e botão Android MENU. Atalhos editáveis, sincronização explícita de áudio, confirmação de progresso, layouts e ferramentas continuam planejados. |
+| Menu rápido com pausa | Parcial | Continuar, Reiniciar e Voltar à biblioteca funcionam no PC e Android; pausa entre quadros, limpeza explícita das filas host de áudio e botão Android MENU. Atalhos editáveis, confirmação de progresso, layouts e ferramentas continuam planejados; os backends ainda precisam de teste físico. |
 | Layouts avançados/troca de telas | Planejados |
 | Perfis de controles | Planejados |
 | Temas alternativos e alto contraste | Planejados |
@@ -165,7 +165,7 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 ## 6. Sequência de implementação
 
 1. **Preferências da biblioteca:** concluída nesta revisão — persistir Grade/Lista e ordenação com formato versionado e testes.
-2. **Pausa e menu mínimo:** primeira versão implementada no desktop e Android — estado pausado no limite de quadro, janela responsiva, scanout mantido e ações Continuar/Reiniciar/Voltar à biblioteca. Próximo: sincronização explícita de áudio, confirmação de progresso, atalho PC configurável e validação física.
+2. **Pausa e menu mínimo:** primeira versão implementada no desktop e Android — estado pausado no limite de quadro, janela responsiva, scanout mantido, ações Continuar/Reiniciar/Voltar à biblioteca e limpeza explícita das filas host de áudio. Próximo: confirmação de progresso, atalho PC configurável e validação física dos backends.
 3. **Atalhos e navegação:** unificar ações de teclado, controle e toque, com detecção de conflitos e acessibilidade.
 4. **Layouts de telas:** criar modelo de geometria configurável e atualizar renderização e hit-test para manter o stylus alinhado.
 5. **Editor de controles:** separar dispositivo físico, mapeamento lógico e perfil por jogo.
