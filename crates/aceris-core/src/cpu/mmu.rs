@@ -938,6 +938,39 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
 }
 
 impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
+    fn fetch16(&mut self, addr: u32) -> Result<u16> {
+        let previous = std::mem::replace(&mut self.fetching, true);
+        let result = self.read16(addr);
+        self.fetching = previous;
+        result
+    }
+
+    fn fetch32(&mut self, addr: u32) -> Result<u32> {
+        let previous = std::mem::replace(&mut self.fetching, true);
+        let result = self.read32(addr);
+        self.fetching = previous;
+        result
+    }
+
+    fn immutable_instruction_location(
+        &mut self,
+        address: u32,
+        size: u32,
+    ) -> Option<crate::memory::ImmutableCodeLocation> {
+        let last_offset = size.checked_sub(1)?;
+        let last_address = address.checked_add(last_offset)?;
+        let (physical_start, _) = self
+            .map_with_privilege(address, Access::Execute, self.params.privileged)
+            .ok()?;
+        let (physical_end, _) = self
+            .map_with_privilege(last_address, Access::Execute, self.params.privileged)
+            .ok()?;
+        if physical_end != physical_start.checked_add(last_offset)? {
+            return None;
+        }
+        self.inner.immutable_instruction_location(physical_start, size)
+    }
+
     fn is_normal_memory(&mut self, addr: u32, write: bool, privileged: bool) -> Result<bool> {
         let access = if write { Access::Write } else { Access::Read };
         let (_, attributes) = self.map_with_privilege(addr, access, privileged)?;
@@ -1289,6 +1322,65 @@ impl Arm11Core {
 
                 let pc = self.pc();
                 let thumb = self.cpsr.thumb();
+                if !thumb {
+                    let mode = self.cpsr.mode();
+                    if let Some(block) = self.block_cache.block_for(
+                        pc,
+                        mode,
+                        &mut mmu,
+                        &mut self.decode_cache,
+                    ) {
+                        let remaining = usize::try_from(budget - executed).unwrap_or(usize::MAX);
+                        for index in 0..block.len().min(remaining) {
+                            let Some(cached) = block.instruction(index) else {
+                                break;
+                            };
+                            let instruction_pc = self.pc();
+                            if instruction_pc
+                                != pc.wrapping_add(index as u32 * ARM_INSTRUCTION_SIZE)
+                            {
+                                break;
+                            }
+                            self.branch_taken = false;
+                            let mut event = match self.execute_arm_decoded(
+                                &mut mmu,
+                                cached.word,
+                                cached.entry,
+                            ) {
+                                Ok(event) => event,
+                                Err(error) => {
+                                    execution_error = Some(error);
+                                    break;
+                                }
+                            };
+                            if !self.branch_taken {
+                                self.regs[PC] =
+                                    instruction_pc.wrapping_add(ARM_INSTRUCTION_SIZE);
+                            }
+                            if std::mem::take(&mut self.exception_return_wakeup) {
+                                event = StepEvent::ExceptionReturn;
+                            }
+                            if event != StepEvent::Executed {
+                                exit = FastRunExit::Event(event);
+                                break;
+                            }
+
+                            executed += 1;
+                            mmu.params.privileged = self.cpsr.privileged();
+                            if mmu.take_interrupt_state_touched() || !self.fast_path_eligible() {
+                                exit = FastRunExit::Yield;
+                                break;
+                            }
+                            if cached.ends_block {
+                                break;
+                            }
+                        }
+                        if execution_error.is_some() || exit != FastRunExit::Budget {
+                            break;
+                        }
+                        continue;
+                    }
+                }
                 mmu.fetching = true;
                 let fetched = if thumb {
                     mmu.read16(pc).map(u32::from)
