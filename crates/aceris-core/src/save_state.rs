@@ -207,6 +207,8 @@ pub mod section_id {
     pub const FILESYSTEM: u32 = 10;
     /// Sparse VRAM/FCRAM pages, linear reservations and physical exclusive monitors.
     pub const GPU_PHYSICAL_MEMORY: u32 = 11;
+    /// Deduplicated roots referenced by process mappings, kernel handles and HLE services.
+    pub const SHARED_BACKINGS: u32 = 12;
 }
 
 /// Signature for the section table inside a save-state payload.
