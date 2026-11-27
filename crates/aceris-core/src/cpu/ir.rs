@@ -624,10 +624,7 @@ mod tests {
         assert_eq!(lowered.condition, Condition::Al);
         assert!(matches!(
             lowered.operation,
-            IrOperation::LoadImmediate {
-                value: 7,
-                ..
-            }
+            IrOperation::LoadImmediate { value: 7, .. }
         ));
     }
 
