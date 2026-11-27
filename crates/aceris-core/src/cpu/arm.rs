@@ -457,22 +457,47 @@ impl Arm11Core {
 
     /// Executes ARMv6 dual-halfword and most-significant-word multiply instructions.
     fn execute_signed_dsp_multiply_instruction(&mut self, word: u32) -> Result<StepEvent> {
-        let class = word & 0x0FF0_0010;
-        let rd = bits(word, 19, 16) as usize;
-        let ra = bits(word, 15, 12) as usize;
-        let rs = bits(word, 11, 8) as usize;
-        let rm = bits(word, 3, 0) as usize;
+        self.execute_cached_signed_dsp_multiply_instruction(
+            word,
+            word & 0x0FF0_0010,
+            bits(word, 19, 16) as u8,
+            bits(word, 15, 12) as u8,
+            bits(word, 11, 8) as u8,
+            bits(word, 3, 0) as u8,
+            bit(word, 7),
+            bit(word, 6),
+            bit(word, 5),
+        )
+    }
+
+    /// Executes an ARMv6 DSP multiply using operands extracted by the decode cache.
+    pub(super) fn execute_cached_signed_dsp_multiply_instruction(
+        &mut self,
+        word: u32,
+        class: u32,
+        rd: u8,
+        ra: u8,
+        rs: u8,
+        rm: u8,
+        bit7: bool,
+        subtract: bool,
+        exchange_or_round: bool,
+    ) -> Result<StepEvent> {
+        let rd = usize::from(rd);
+        let ra = usize::from(ra);
+        let rs = usize::from(rs);
+        let rm = usize::from(rm);
         let pc = self.pc();
         let undefined = || Error::UndefinedInstruction { pc, word };
 
         match class {
             0x0700_0010 => {
                 // SMLAD{X}/SMLSD{X}; Ra=PC selects SMUAD{X}/SMUSD{X}.
-                if bit(word, 7) || rd == PC || rm == PC || rs == PC {
+                if bit7 || rd == PC || rm == PC || rs == PC {
                     return Err(undefined());
                 }
-                let subtract = bit(word, 6);
-                let exchange = bit(word, 5);
+                let subtract = subtract;
+                let exchange = exchange_or_round;
                 let first = self.regs[rm];
                 let second = if exchange {
                     self.regs[rs].rotate_right(16)
@@ -506,7 +531,7 @@ impl Arm11Core {
                 // SMLALD{X}/SMLSLD{X}; 64-bit accumulator in RdHi:RdLo.
                 let rd_hi = rd;
                 let rd_lo = ra;
-                if bit(word, 7)
+                if bit7
                     || rd_hi == PC
                     || rd_lo == PC
                     || rd_hi == rd_lo
@@ -515,8 +540,8 @@ impl Arm11Core {
                 {
                     return Err(undefined());
                 }
-                let exchange = bit(word, 5);
-                let subtract = bit(word, 6);
+                let exchange = exchange_or_round;
+                let subtract = subtract;
                 let first = self.regs[rm];
                 let second = if exchange {
                     self.regs[rs].rotate_right(16)
@@ -538,11 +563,11 @@ impl Arm11Core {
             0x0750_0010 => {
                 // SMMUL{R}/SMMLA{R}/SMMLS{R}; bit 6 selects subtraction,
                 // and bit 5 requests rounding before extracting the high word.
-                if bit(word, 7) != bit(word, 6) || rd == PC || rm == PC || rs == PC {
+                if bit7 != subtract || rd == PC || rm == PC || rs == PC {
                     return Err(undefined());
                 }
-                let subtract = bit(word, 6);
-                let round = if bit(word, 5) { 1i128 << 31 } else { 0 };
+                let subtract = subtract;
+                let round = if exchange_or_round { 1i128 << 31 } else { 0 };
                 if subtract && ra == PC {
                     return Err(undefined());
                 }
