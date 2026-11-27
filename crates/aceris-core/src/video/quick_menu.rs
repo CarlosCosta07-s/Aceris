@@ -27,7 +27,7 @@ struct Rect {
     height: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Geometry {
     panel: Rect,
     rows: Vec<Rect>,
