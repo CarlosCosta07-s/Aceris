@@ -834,11 +834,8 @@ impl<'a, B: Bus + ?Sized> MmuBus<'a, B> {
 
     #[inline]
     fn insert_entry(&mut self, entry: TlbEntry) {
-        self.tlb.insert(
-            entry,
-            self.params.tlb_preserve,
-            self.params.tlb_victim,
-        );
+        self.tlb
+            .insert(entry, self.params.tlb_preserve, self.params.tlb_victim);
         self.last_entry = Some(entry);
         self.tlb_generation = self.tlb.generation;
     }
