@@ -4,8 +4,8 @@
 //! as immutable and executable. Writable RAM, dynamically generated code and
 //! buses without this guarantee stay on the existing per-instruction path.
 
-use super::decode_cache::{DecodeCache, Entry, FastOp};
 use super::Arm11Core;
+use super::decode_cache::{DecodeCache, Entry, FastOp};
 use crate::memory::{Bus, ImmutableCodeLocation};
 use aceris_common::Result;
 
@@ -50,12 +50,7 @@ impl BasicBlock {
         (index < self.len()).then_some(self.instructions[index])
     }
 
-    fn matches(
-        &self,
-        pc: u32,
-        mode: u32,
-        location: ImmutableCodeLocation,
-    ) -> bool {
+    fn matches(&self, pc: u32, mode: u32, location: ImmutableCodeLocation) -> bool {
         self.start_pc == pc
             && self.mode == mode
             && self.backing_id == location.backing_id
@@ -234,11 +229,7 @@ mod tests {
             self.memory.read8(address)
         }
 
-        fn write8(
-            &mut self,
-            address: u32,
-            value: u8,
-        ) -> Result<()> {
+        fn write8(&mut self, address: u32, value: u8) -> Result<()> {
             self.memory.write8(address, value)
         }
 
@@ -255,10 +246,9 @@ mod tests {
             if end > self.size {
                 return None;
             }
-            if self
-                .split_address
-                .is_some_and(|split| address < split && address.checked_add(size).is_some_and(|end| end > split))
-            {
+            if self.split_address.is_some_and(|split| {
+                address < split && address.checked_add(size).is_some_and(|end| end > split)
+            }) {
                 return None;
             }
             let backing_id = if self.split_address.is_some_and(|split| address >= split) {
@@ -350,7 +340,11 @@ mod tests {
         let mut decode = DecodeCache::default();
 
         bus.expose_immutable_text = false;
-        assert!(cache.block_for(0x100, 0x13, &mut bus, &mut decode).is_none());
+        assert!(
+            cache
+                .block_for(0x100, 0x13, &mut bus, &mut decode)
+                .is_none()
+        );
     }
 
     #[test]
@@ -359,17 +353,13 @@ mod tests {
         let mut cache = BlockCache::default();
         let mut decode = DecodeCache::default();
 
-        let original = cache
-            .block_for(0x100, 0x13, &mut bus, &mut decode)
-            .unwrap();
+        let original = cache.block_for(0x100, 0x13, &mut bus, &mut decode).unwrap();
         assert_eq!(original.len(), 4);
 
         // The first two instructions still map to the original backing, but
         // the following instruction now belongs to another code allocation.
         bus.split_address = Some(0x108);
-        let remapped = cache
-            .block_for(0x100, 0x13, &mut bus, &mut decode)
-            .unwrap();
+        let remapped = cache.block_for(0x100, 0x13, &mut bus, &mut decode).unwrap();
         assert_eq!(remapped.len(), 2);
         assert_ne!(remapped.backing_id, 0);
     }
@@ -380,18 +370,12 @@ mod tests {
         let mut cache = BlockCache::default();
         let mut decode = DecodeCache::default();
 
-        let first = cache
-            .block_for(0x100, 0x13, &mut bus, &mut decode)
-            .unwrap();
+        let first = cache.block_for(0x100, 0x13, &mut bus, &mut decode).unwrap();
         bus.backing_id = 8;
-        let second = cache
-            .block_for(0x100, 0x13, &mut bus, &mut decode)
-            .unwrap();
+        let second = cache.block_for(0x100, 0x13, &mut bus, &mut decode).unwrap();
         assert_eq!(first.backing_id, 7);
         assert_eq!(second.backing_id, 8);
-        let third = cache
-            .block_for(0x100, 0x1F, &mut bus, &mut decode)
-            .unwrap();
+        let third = cache.block_for(0x100, 0x1F, &mut bus, &mut decode).unwrap();
         assert_eq!(third.mode, 0x1F);
     }
 }
