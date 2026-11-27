@@ -9,6 +9,7 @@ mod aaudio;
 mod app;
 #[cfg(any(target_os = "android", aceris_typecheck_native))]
 mod native_activity;
+mod performance;
 mod ui;
 
 use std::ffi::{CStr, c_char};
