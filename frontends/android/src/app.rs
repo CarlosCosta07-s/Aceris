@@ -19,12 +19,15 @@ use aceris_core::video::{
 };
 
 /// Which part of the application is on screen.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
     Intro { frame: u32 },
     Library,
     Game,
     GameMenu,
+    GameMenuConfirm {
+        action: quick_menu::ConfirmationAction,
+    },
 }
 
 /// One active touch pointer in surface pixels.
@@ -44,6 +47,7 @@ pub struct App {
     system: Option<System>,
     current_game_path: Option<PathBuf>,
     quick_menu_selected: usize,
+    confirmation_selected: usize,
     menu_tap: Option<(i32, i32)>,
     menu_button_pointer: Option<i32>,
     width: u32,
@@ -73,6 +77,7 @@ impl App {
             system: None,
             current_game_path: None,
             quick_menu_selected: 0,
+            confirmation_selected: 0,
             menu_tap: None,
             menu_button_pointer: None,
             width: 0,
@@ -117,7 +122,10 @@ impl App {
 
     /// True while the quick menu is open and guest audio must not reach the host.
     pub fn is_game_menu_open(&self) -> bool {
-        matches!(self.screen(), Screen::GameMenu)
+        matches!(
+            self.screen(),
+            Screen::GameMenu | Screen::GameMenuConfirm { .. }
+        )
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -145,6 +153,9 @@ impl App {
             Screen::Library => self.update_library_touch(&previous),
             Screen::Game => self.update_game_touch(&previous),
             Screen::GameMenu => self.update_game_menu_touch(&previous),
+            Screen::GameMenuConfirm { action } => {
+                self.update_game_menu_confirmation_touch(&previous, action)
+            }
         }
     }
 
@@ -158,10 +169,14 @@ impl App {
                     }
                     Screen::Game => self.open_game_menu(),
                     Screen::GameMenu => self.resume_game(),
+                    Screen::GameMenuConfirm { .. } => self.cancel_game_menu_confirmation(),
                     _ => {}
                 }
             }
-            return matches!(self.screen, Screen::Game | Screen::GameMenu | Screen::Library);
+            return matches!(
+                self.screen,
+                Screen::Game | Screen::GameMenu | Screen::GameMenuConfirm { .. } | Screen::Library
+            );
         }
         if pressed && matches!(self.screen, Screen::Library) && self.library.search_is_focused() {
             match android_keycode {
@@ -200,6 +215,18 @@ impl App {
                 pad::B => self.resume_game(),
                 _ => {}
             },
+            Screen::GameMenuConfirm { action } if pressed => match bit {
+                pad::UP => {
+                    self.confirmation_selected = self.confirmation_selected.saturating_sub(1);
+                }
+                pad::DOWN => {
+                    self.confirmation_selected = (self.confirmation_selected + 1).min(1);
+                }
+                pad::A | pad::START => self.activate_game_menu_confirmation(action),
+                pad::B => self.cancel_game_menu_confirmation(),
+                _ => {}
+            },
+            Screen::GameMenuConfirm { .. } => {}
             Screen::GameMenu => {}
             Screen::Library if pressed => match bit {
                 pad::UP => self
@@ -296,6 +323,9 @@ impl App {
             }
             Screen::Game => self.step_game_into(output),
             Screen::GameMenu => self.step_game_menu_into(output),
+            Screen::GameMenuConfirm { action } => {
+                self.step_game_menu_confirmation_into(output, action)
+            }
         }
     }
 
@@ -314,6 +344,29 @@ impl App {
             self.height,
             MenuPixelFormat::Rgba8,
             self.quick_menu_selected,
+        );
+    }
+
+    fn step_game_menu_confirmation_into(
+        &mut self,
+        output: &mut Vec<u8>,
+        action: quick_menu::ConfirmationAction,
+    ) {
+        let Some(system) = self.system.as_ref() else {
+            self.screen = Screen::Library;
+            let _ = self.library.render_responsive_into(self.width, self.height, output);
+            return;
+        };
+        if !compose_game_into(system.display(), self.width, self.height, output) {
+            return;
+        }
+        let _ = quick_menu::render_confirmation_overlay(
+            output,
+            self.width,
+            self.height,
+            MenuPixelFormat::Rgba8,
+            action,
+            self.confirmation_selected,
         );
     }
 
@@ -455,6 +508,33 @@ impl App {
         }
     }
 
+    fn update_game_menu_confirmation_touch(
+        &mut self,
+        previous: &BTreeMap<i32, (f32, f32)>,
+        action: quick_menu::ConfirmationAction,
+    ) {
+        if previous.is_empty() {
+            if let Some((&_id, &(x, y))) = self.pointers.iter().next() {
+                self.menu_tap = Some((x.round() as i32, y.round() as i32));
+            }
+            return;
+        }
+        if self.pointers.is_empty() {
+            let last = previous.values().next().copied();
+            if let (Some(_start), Some((x, y))) = (self.menu_tap.take(), last) {
+                if let Some(index) = quick_menu::hit_test_confirmation(
+                    self.width,
+                    self.height,
+                    x.round() as i32,
+                    y.round() as i32,
+                ) {
+                    self.confirmation_selected = index;
+                    self.activate_game_menu_confirmation(action);
+                }
+            }
+        }
+    }
+
     /// Opens the menu at a frame boundary. The app thread keeps processing input
     /// and drawing the last LCD scanout while no guest frame is executed.
     fn open_game_menu(&mut self) {
@@ -470,6 +550,7 @@ impl App {
             system.input_mut().reset();
         }
         self.quick_menu_selected = 0;
+        self.confirmation_selected = 0;
         self.screen = Screen::GameMenu;
     }
 
@@ -491,8 +572,36 @@ impl App {
     fn activate_game_menu_action(&mut self) {
         match self.quick_menu_selected {
             0 => self.resume_game(),
-            1 => self.restart_current_game(),
-            _ => self.leave_game(),
+            1 => self.request_game_menu_confirmation(
+                quick_menu::ConfirmationAction::Restart,
+            ),
+            _ => self.request_game_menu_confirmation(
+                quick_menu::ConfirmationAction::BackToLibrary,
+            ),
+        }
+    }
+
+    fn request_game_menu_confirmation(&mut self, action: quick_menu::ConfirmationAction) {
+        self.confirmation_selected = 0;
+        self.menu_tap = None;
+        self.screen = Screen::GameMenuConfirm { action };
+    }
+
+    fn cancel_game_menu_confirmation(&mut self) {
+        self.confirmation_selected = 0;
+        self.menu_tap = None;
+        self.pointers.clear();
+        self.screen = Screen::GameMenu;
+    }
+
+    fn activate_game_menu_confirmation(&mut self, action: quick_menu::ConfirmationAction) {
+        if self.confirmation_selected == 0 {
+            self.cancel_game_menu_confirmation();
+            return;
+        }
+        match action {
+            quick_menu::ConfirmationAction::Restart => self.restart_current_game(),
+            quick_menu::ConfirmationAction::BackToLibrary => self.leave_game(),
         }
     }
 
@@ -628,6 +737,7 @@ impl App {
         self.menu_tap = None;
         self.menu_button_pointer = None;
         self.quick_menu_selected = 0;
+        self.confirmation_selected = 0;
         self.screen = Screen::Library;
         if let Some(diagnostic) = diagnostic {
             self.library
