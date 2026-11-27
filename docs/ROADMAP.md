@@ -498,3 +498,6 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [x] Reportar `CP15.SCTLR.M` após aquecimento e o número de limites de quadro que observaram a MMU ligada durante a janela medida.
 - [ ] Executar três ou mais rodadas release por modo em PC x86-64 e Android ARM64 físico, com o mesmo título, entrada, orçamento e aquecimento; manter `--fast-memory` desligado.
 - [ ] Só classificar a comparação como sessão MMU-ativa quando as amostras por quadro confirmarem `SCTLR.M` habilitado; documentar a limitação de que a observação ocorre na fronteira de quadro.
+
+- [x] Desktop 1×: evitar zerar e escrever alpha em todo o canvas; inicializar apenas o gutter opaco, deixando o blit das LCDs sobrescrever o restante. Teste cobre reutilização do buffer e alpha em todos os pixels.
+- [ ] Medir essa redução de escrita redundante em PC release, com telemetria desligada e ligada para isolar o custo da instrumentação.
