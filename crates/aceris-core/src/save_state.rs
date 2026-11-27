@@ -22,7 +22,7 @@ pub const MAX_SAVE_STATE_PAYLOAD_BYTES: usize = 512 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SaveStateIdentity {
     pub title_id: Option<u64>,
-    /// SHA-256 of the canonical boot content, never a path or display name.
+    /// SHA-256 of the exact complete image bytes, never a path or display name.
     pub content_sha256: [u8; 32],
 }
 
