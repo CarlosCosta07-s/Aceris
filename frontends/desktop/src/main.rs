@@ -378,8 +378,8 @@ fn run_windowed(
     background_fps: u32,
 ) -> Result<(), String> {
     let settings_directory = games_dir.join(".aceris");
-    let mut performance = performance_logging_enabled(&settings_directory)
-        .then(DesktopPerformanceMonitor::new);
+    let mut performance =
+        performance_logging_enabled(&settings_directory).then(DesktopPerformanceMonitor::new);
     if performance.is_some() {
         eprintln!("Aceris desktop performance logging enabled (5-second reports)");
     }
