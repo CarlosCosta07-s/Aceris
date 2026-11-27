@@ -530,3 +530,10 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - Testes adicionados para defaults por orientação, round-trip em disco, isolamento dos perfis, rejeição de conteúdo inválido, geometria e toque nas diferentes disposições. Foram também adicionados testes de reinicialização da App Android para conferir que a configuração global é recuperada.
 - Estado parcial: ajustes personalizados de posição/espaçamento e overrides por jogo ainda não foram implementados. Layout/rotação e redimensionamento precisam de validação física em Android e Linux/Windows/macOS.
 - Esta etapa alterou somente geometria/layout de UI, preferências e frontends; não tocou em CPU/Thumb, GPU/PICA, DSP/CSND, SVC, módulos de Claude, dependências ou conteúdo protegido. Testes ainda não executados nesta sessão; não alegar CI/build aprovados.
+
+
+## Experiência do usuário — identidade de título e layouts por jogo (27/11/2026)
+
+O core agora expõe uma identidade de título baseada no Title ID validado: program ID do NCCH primário para NCSD/CCI e Title ID do TMD para CIA após correspondência com o NCCH. 3DSX sem metadado confiável continua sem identidade e herda o padrão global. Esta identidade não representa ainda versão/revisão/região nem substitui o identificador de origem da biblioteca.
+
+O layout de duas telas agora permite overrides por Title ID, separados para retrato e paisagem, com herança do padrão global e ação **Padrão global** no menu rápido Android/desktop. O formato v2 migra em leitura as preferências globais v1. Permanecem pendentes outras categorias de configurações por jogo, página de metadados, SourceId formal, customização fina e validação física.
