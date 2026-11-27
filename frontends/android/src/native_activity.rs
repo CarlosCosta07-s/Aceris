@@ -760,6 +760,9 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
     let mut attached_queue = Raw::default();
+    // Reuse touch-event storage across motion callbacks instead of allocating
+    // a new pointer Vec for every movement event.
+    let mut pointer_scratch = Vec::with_capacity(10);
     let mut size = (0u32, 0u32);
     let mut gpu_presenter: Option<AndroidGpuPresenter> = None;
     let mut gpu_window = Raw::default();
@@ -809,7 +812,7 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
         } else {
             Duration::from_millis(250)
         };
-        poll_looper(wait, &mut app, attached_queue);
+        poll_looper(wait, &mut app, attached_queue, &mut pointer_scratch);
 
         if resumed && !window.is_null() && Instant::now() >= next_frame {
             let now = Instant::now();
@@ -867,7 +870,12 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
 }
 
 /// Waits up to `timeout` for looper events and drains pending input.
-fn poll_looper(timeout: Duration, app: &mut App, queue: Raw) {
+fn poll_looper(
+    timeout: Duration,
+    app: &mut App,
+    queue: Raw,
+    pointer_scratch: &mut Vec<Pointer>,
+) {
     let mut first = true;
     loop {
         let millis = if first {
@@ -886,12 +894,12 @@ fn poll_looper(timeout: Duration, app: &mut App, queue: Raw) {
             break;
         }
         if result == LOOPER_ID_INPUT && !queue.is_null() {
-            drain_input(queue, app);
+            drain_input(queue, app, pointer_scratch);
         }
     }
 }
 
-fn drain_input(queue: Raw, app: &mut App) {
+fn drain_input(queue: Raw, app: &mut App, pointer_scratch: &mut Vec<Pointer>) {
     loop {
         let mut event = ptr::null_mut();
         // SAFETY: the queue stays valid while attached on this thread.
@@ -907,7 +915,7 @@ fn drain_input(queue: Raw, app: &mut App) {
             let handled = match AInputEvent_getType(event) {
                 INPUT_EVENT_TYPE_KEY => handle_key(event, app),
                 INPUT_EVENT_TYPE_MOTION => {
-                    handle_motion(event, app);
+                    handle_motion(event, app, pointer_scratch);
                     true
                 }
                 _ => false,
@@ -946,35 +954,40 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
 
 /// # Safety
 /// `event` must be a live motion event.
-unsafe fn handle_motion(event: *mut c_void, app: &mut App) {
+unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Pointer>) {
     // SAFETY: caller guarantees a motion event; indices stay below the pointer count.
-    let (action, pointers) = unsafe {
-        let action = AMotionEvent_getAction(event);
-        let count = AMotionEvent_getPointerCount(event);
-        let pointers: Vec<Pointer> = (0..count)
-            .map(|index| Pointer {
-                id: AMotionEvent_getPointerId(event, index),
-                x: AMotionEvent_getX(event, index),
-                y: AMotionEvent_getY(event, index),
-            })
-            .collect();
-        (action, pointers)
+    let (action, count) = unsafe {
+        (
+            AMotionEvent_getAction(event),
+            AMotionEvent_getPointerCount(event),
+        )
     };
+    pointers.clear();
+    // SAFETY: the pointer indices are bounded by AMotionEvent_getPointerCount.
+    unsafe {
+        pointers.extend((0..count).map(|index| Pointer {
+            id: AMotionEvent_getPointerId(event, index),
+            x: AMotionEvent_getX(event, index),
+            y: AMotionEvent_getY(event, index),
+        }));
+    }
+
     let pointer_index =
         ((action & MOTION_ACTION_POINTER_INDEX_MASK) >> MOTION_ACTION_POINTER_INDEX_SHIFT) as usize;
     match action & MOTION_ACTION_MASK {
-        MOTION_ACTION_CANCEL => app.set_pointers(&[]),
-        MOTION_ACTION_UP | MOTION_ACTION_POINTER_UP => {
-            // The lifted pointer is still listed in the event; drop it.
-            let remaining: Vec<Pointer> = pointers
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| *index != pointer_index)
-                .map(|(_, pointer)| *pointer)
-                .collect();
-            app.set_pointers(&remaining);
+        MOTION_ACTION_CANCEL => {
+            pointers.clear();
+            app.set_pointers(&[]);
         }
-        _ => app.set_pointers(&pointers),
+        MOTION_ACTION_UP | MOTION_ACTION_POINTER_UP => {
+            // The lifted pointer is still listed in the event; remove it in
+            // place so this high-frequency path does not allocate a second Vec.
+            if pointer_index < pointers.len() {
+                pointers.remove(pointer_index);
+            }
+            app.set_pointers(pointers);
+        }
+        _ => app.set_pointers(pointers),
     }
 }
 
