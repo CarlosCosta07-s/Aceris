@@ -7,6 +7,7 @@
 pub mod font;
 pub mod frontend;
 pub mod intro;
+pub mod layout_preferences;
 mod lcd;
 pub mod library;
 pub mod png;
