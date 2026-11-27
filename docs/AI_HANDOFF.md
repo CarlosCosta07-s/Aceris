@@ -2859,3 +2859,18 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - A CI completa ainda fica vermelha em Clippy, devido ao aviso preexistente `clippy::needless_range_loop` em `crates/aceris-core/src/cpu/decode_cache.rs:386`. Esse arquivo pertence ao trabalho de outro agente e não foi modificado.
 - Pendência: medir Release em PC x86-64 e Android físico, com o mesmo título/entrada e telemetria ligada/desligada. Não declarar ganho de desempenho até obter resultados em hardware real.
 - Fronteiras: somente `main`; alterações funcionais limitadas a `frontends/android/src/app.rs` e `frontends/desktop/src/window.rs`, sem dependências, assets, jogos, firmware ou chaves adicionados.
+
+## Composição escalonada desktop em ordem de linhas (27/11/2026, ChatGPT)
+
+- `frontends/desktop/src/window.rs` agora amplia cada linha LCD em ordem contígua: primeiro replica horizontalmente os pixels BGRX na primeira linha ampliada e depois replica a linha pronta nas demais linhas verticais com `copy_within`.
+- O caminho anterior escrevia cada pixel fonte como uma pequena coluna vertical. A nova ordem melhora a localidade de memória para escalas inteiras maiores sem alterar a conversão RGBA→BGRX, alpha opaco, dimensões do canvas ou a replicação nearest-neighbour.
+- O teste `row_major_scaled_composition_matches_reference_pixel_for_pixel` usa padrões não uniformes e compara o buffer inteiro com uma implementação de referência para escalas 2×, 3× e 4×, incluindo buffer inicializado com sentinela.
+- Commit: `8585b41bc5b2c4efb05970ad5c65e4d6080b2156`. CI e medição em hardware físico ainda pendentes; não declarar ganho de FPS.
+
+## Android — reduzir verificações redundantes na sobreposição dos controles (27/11/2026, ChatGPT)
+
+- `crates/aceris-core/src/video/frontend.rs` calcula uma máscara fixa de círculos posteriores que podem geometricamente cobrir cada botão. O loop de pixels só testa esses candidatos, mantendo a verificação exata de distância e a precedência do desenho.
+- O cálculo é feito uma vez por composição, sem alocação, e mantém o comportamento correto em superfícies compactas onde os círculos realmente se sobrepõem.
+- O teste diferencial `direct_virtual_overlay_matches_full_frame_reference` inclui 64×48 além dos tamanhos portrait/landscape já exercitados e compara o frame resultante pixel a pixel com a composição de overlay em tela inteira.
+- Commit: `e7f29c876aed64b3de1ca2a4c101b6f4c47825ef`. A equivalência automatizada precisa ser confirmada pela CI; ainda não há medição em aparelho Android.
+- Ambas as otimizações atuam somente na apresentação host. Não alteram instruções, cache, temporização, frame pacing ou estado guest; nenhuma dependência, ROM, firmware, chave ou asset foi adicionado.
