@@ -770,12 +770,14 @@ impl System {
 
         // Match the current decrypted-image-only launch policy: fail clearly
         // before trying to parse the outer AES-CBC ciphertext as an NCCH.
-        let boot_content = archive.content_location(boot_content_index).ok_or_else(|| {
-            Error::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "CIA boot content is not selected by its content-index bitmap",
-            ))
-        })?;
+        let boot_content = archive
+            .content_location(boot_content_index)
+            .ok_or_else(|| {
+                Error::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CIA boot content is not selected by its content-index bitmap",
+                ))
+            })?;
         if boot_content.content_type & CONTENT_TYPE_ENCRYPTED != 0 {
             return Err(Error::Unimplemented(
                 "Este jogo está criptografado. O Aceris aceita apenas cópias descriptografadas de .3DS, .CCI e .CIA.",
