@@ -339,6 +339,27 @@ pub fn render_virtual_pad_overlay_into(
     true
 }
 
+/// Identifies which later circles could cover each button.
+///
+/// The layout normally keeps controls separate. Precomputing the small set of
+/// geometrically overlapping circles avoids testing every later control for
+/// every pixel in every button, while retaining exact draw-order behavior on
+/// compact surfaces where circles can overlap.
+fn later_circle_overlap_masks(shapes: &[ButtonShape; 12]) -> [u16; 12] {
+    let mut masks = [0u16; 12];
+    for (index, shape) in shapes.iter().enumerate() {
+        for (later_index, later) in shapes.iter().enumerate().skip(index + 1) {
+            let dx = shape.x - later.x;
+            let dy = shape.y - later.y;
+            let combined_radius = shape.radius + later.radius;
+            if dx * dx + dy * dy <= combined_radius * combined_radius {
+                masks[index] |= 1u16 << later_index;
+            }
+        }
+    }
+    masks
+}
+
 /// Blends the virtual controls directly into an RGBA frame without a full-screen overlay.
 ///
 /// Only button bounds are visited. For overlapping controls, the last shape in
@@ -366,6 +387,7 @@ pub fn blend_virtual_pad_overlay_into(
     }
 
     let shapes = button_shapes(width, height, orientation);
+    let later_overlap_masks = later_circle_overlap_masks(&shapes);
     for (index, shape) in shapes.iter().enumerate() {
         let pressed = pressed_mask & shape.bit != 0;
         let radius_squared = shape.radius * shape.radius;
@@ -389,11 +411,21 @@ pub fn blend_virtual_pad_overlay_into(
 
                 // The original overlay is drawn in shape order, so a later
                 // circle replaces the earlier pixel instead of alpha-stacking.
-                let overwritten = shapes[index + 1..].iter().any(|later| {
+                let mut candidates = later_overlap_masks[index];
+                let mut overwritten = false;
+                while candidates != 0 {
+                    let later_index = candidates.trailing_zeros() as usize;
+                    candidates &= candidates - 1;
+                    let later = &shapes[later_index];
                     let later_dx = x as f32 + 0.5 - later.x;
                     let later_dy = y as f32 + 0.5 - later.y;
-                    later_dx * later_dx + later_dy * later_dy <= later.radius * later.radius
-                });
+                    if later_dx * later_dx + later_dy * later_dy
+                        <= later.radius * later.radius
+                    {
+                        overwritten = true;
+                        break;
+                    }
+                }
                 if overwritten {
                     continue;
                 }
@@ -637,7 +669,16 @@ mod tests {
 
     #[test]
     fn direct_virtual_overlay_matches_full_frame_reference() {
+        let compact_shapes = button_shapes(64, 48, ORIENTATION_AUTO);
+        assert!(
+            later_circle_overlap_masks(&compact_shapes)
+                .iter()
+                .any(|mask| *mask != 0),
+            "compact layouts should exercise overlap preservation"
+        );
+
         for (width, height, orientation) in [
+            (64, 48, ORIENTATION_AUTO),
             (480, 800, ORIENTATION_PORTRAIT),
             (1280, 720, ORIENTATION_LANDSCAPE),
             (1080, 2400, ORIENTATION_AUTO),
