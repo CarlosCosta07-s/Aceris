@@ -97,6 +97,8 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 **Prioridade:** P0.  
 **Dependência:** M1 fornece origens de arquivo confiáveis.
 
+Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE.md](FILE_SOURCE_ARCHITECTURE.md).
+
 - [ ] Criar identidade separada para o título e para cada arquivo/origem encontrada. Um mesmo título pode ter cópias ou revisões distintas.
 - [ ] Extrair Title ID, região, produto, versão/revisão e tipo de conteúdo somente quando o cabeçalho realmente fornecer esses dados e a validação for bem-sucedida.
 - [ ] Manter fallback estável para homebrew ou arquivos sem metadados completos.
