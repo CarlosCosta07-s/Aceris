@@ -346,12 +346,22 @@ impl App {
         if !compose_game_into(system.display(), &layout, self.width, self.height, output) {
             return;
         }
-        let _ = quick_menu::render_overlay(
+        let profile_label = if self.layout_preferences.game_has_override_for_surface(
+            system.game_identity(),
+            self.width,
+            self.height,
+        ) {
+            "PERFIL DESTE JOGO"
+        } else {
+            "PADRÃO GLOBAL"
+        };
+        let _ = quick_menu::render_overlay_with_profile(
             output,
             self.width,
             self.height,
             MenuPixelFormat::Rgba8,
             self.quick_menu_selected,
+            profile_label,
         );
     }
 
