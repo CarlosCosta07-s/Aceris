@@ -357,3 +357,23 @@ Os tempos são métricas do host. `emulation_ms_p95` não isola o custo de cada 
 - Android: quando o fallback `ANativeWindow` oferece buffer contíguo com largura, altura e stride exatamente iguais ao frame, a cópia usa uma única operação bulk. Buffers com padding, dimensões diferentes ou recorte continuam usando a cópia linha a linha.
 - Os dois caminhos alteram somente a cópia/composição da imagem host. Não mudam as dimensões ou o conteúdo das LCDs guest, o orçamento ARM11, relógios, timers, áudio ou a frequência de execução do 3DS.
 - Estas são especializações de caminho, ainda sem ganho quantificado em PC físico ou telefone Android. Comparar builds release com o mesmo jogo e perfil; no Android, registrar se a apresentação foi pelo presenter GPU ou pelo fallback CPU.
+
+## Comparação A/B do despacho ARM11 em sessão real (27/11/2026)
+
+O benchmark de sessão aceita `--precise-dispatch`, que desliga apenas o laço rápido e força o caminho de passo preciso. Sem essa opção, o despacho rápido permanece ligado como no emulador normal. O modo de memória rápida `--fast-memory` deve ficar desligado nesta comparação para manter o modelo normal de D-cache.
+
+Execute a mesma imagem local, sequência de entradas, orçamento, aquecimento e número de quadros nos dois modos:
+
+```sh
+cargo run --release -p aceris-core --example benchmark -- /caminho/para/jogo.3ds --warmup 30 --frames 120
+cargo run --release -p aceris-core --example benchmark -- /caminho/para/jogo.3ds --warmup 30 --frames 120 --precise-dispatch
+```
+
+No Android ARM64, compile o mesmo exemplo `aceris-benchmark` em release e execute as duas variantes no aparelho usando o caminho privado/URI que o frontend permitir; não envie a imagem do jogo ao CI ou ao repositório.
+
+O resultado informa:
+- modo de despacho selecionado;
+- se `SCTLR.M` estava ligado ao final do aquecimento;
+- quantos limites de quadro medidos encontraram `SCTLR.M` ligado.
+
+Essa contagem é uma amostragem no limite entre quadros, não prova que a MMU permaneceu ligada durante cada instrução. Para aceitar uma melhoria, compare throughput de instruções/s, p50/p95/p99 do tempo por quadro, atividade GSP/LCD e estado final PC/CPSR; use ao menos três execuções por modo e compare somente rodadas em que as condições de MMU e D-cache sejam equivalentes. Não use o resultado de um título que não habilita `SCTLR.M` como medição da sessão MMU-ativa.
