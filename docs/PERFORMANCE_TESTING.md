@@ -236,3 +236,12 @@ O teste manual do Lua Player Plus Cookie Clicker (CIA NoCrypto fornecido pelo ma
 O commit 0dc68f9a adicionou tracing opcional de resultados SVC e HLE mínimo csnd:SND; csndInit passa, mas Sound.init ainda falha antes de uma inicialização DSP observável. Não afirmar que o áudio funciona. A CI ARM64 é compilação, não medição de gameplay em Android físico.
 
 > **Estado verificado em 22/11/2026 — HEAD 0dc68f9a2f0b17253cc491a1d3dd363fdffa1a3c.** CI aprovada em Linux, Windows, macOS e Android arm64-v8a. O homebrew Lua Player Plus Cookie Clicker em CIA NoCrypto carregou, executou código ARM11, leu RomFS e desenhou sua própria tela de erro. csndInit passou após HLE inicial de csnd:SND, mas Sound.init ainda falha. Nenhum jogo jogável foi validado.
+
+
+## Sonda do caminho completo da sessão ARM11 (26/11/2026, Claude)
+
+- Teste ignorado `system::tests::session_loop_throughput`: laço ARM de load/store/ALU executado pelo caminho real da sessão (MMU, modelo de D-cache, monitor exclusivo, scheduler). Execução: `cargo test --release -p aceris-core --lib session_loop_throughput -- --ignored --nocapture` (`ACERIS_PROBE_FRAMES` define o número de quadros).
+- Resultado no contêiner de nuvem: 19–23 M instruções guest/s (≈5 quadros/s com orçamento de 4M). O tempo de relógio varia ±15% entre execuções nesta máquina; para comparar mudanças, use contagem determinística de instruções do host com `valgrind --tool=callgrind` sobre 1 quadro (linha de base: 1,865 bilhão de instruções do host por 4M instruções guest, ≈466 por instrução guest).
+- Distribuição (callgrind, inclusivo): `Arm11Core::step_instruction` 72%; loads e stores pelo modelo de D-cache ≈45% (store ≈390 e load ≈280 instruções do host); `Arm11ProcessSession::step` 13% próprio; publicação de ACTLR.SMP 5%; `locate` 5%.
+- Tentativas descartadas por medição: trocar os `BTreeMap` do D-cache e do monitor exclusivo por `HashMap` com hasher multiplicativo ficou mais lento (o conjunto residente típico é pequeno); tornar inline a publicação SMP rendeu só 1,5%, e apenas sem SCU.
+- Conclusão: não há ganho grande e seguro só com micro-otimização. O próximo passo de alto retorno é um cache de instruções decodificadas por bloco, com caminho rápido de memória por página para acessos que acertam linhas já residentes, e depois um JIT. Cada etapa precisa preservar o modelo de cache e manter a suíte de testes passando.

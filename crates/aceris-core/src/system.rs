@@ -12405,6 +12405,51 @@ mod tests {
         assert_eq!(status[0], 0, "voice finished after its 480 samples");
     }
 
+    /// Host throughput of the full session path on a load/store/ALU loop.
+    /// Run with `cargo test --release -p aceris-core --lib session_loop_throughput -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "host performance probe"]
+    fn session_loop_throughput() {
+        let program = [
+            0xE3A0_0000, // mov r0, #0
+            0xE280_0001, // loop: add r0, r0, #1
+            0xE50D_0004, // str r0, [sp, #-4]
+            0xE51D_2004, // ldr r2, [sp, #-4]
+            0xE082_3000, // add r3, r2, r0
+            0xE350_0000, // cmp r0, #0
+            0xEAFF_FFF9, // b loop
+        ];
+        let mut system = System::new();
+        system
+            .load_ncsd_with_keys(
+                std::io::Cursor::new(ipc_program_ncsd_cartridge_fixture_with_services(
+                    &program,
+                    &[],
+                )),
+                [0; AES_BLOCK_SIZE],
+                [0; AES_BLOCK_SIZE],
+            )
+            .unwrap();
+        let frames: u32 = std::env::var("ACERIS_PROBE_FRAMES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let start = std::time::Instant::now();
+        let mut instructions = 0u64;
+        for _ in 0..frames {
+            instructions += system
+                .run_frame_with_budget(4_000_000)
+                .unwrap()
+                .instructions_executed;
+        }
+        let seconds = start.elapsed().as_secs_f64();
+        println!(
+            "{frames} frames, {instructions} instructions, {seconds:.3} s, {:.1} M instr/s, {:.1} frames/s",
+            instructions as f64 / seconds / 1e6,
+            f64::from(frames) / seconds
+        );
+    }
+
     #[test]
     fn csnd_executes_guest_command_lists_and_mixes_audio() {
         let mut system = System::new();
