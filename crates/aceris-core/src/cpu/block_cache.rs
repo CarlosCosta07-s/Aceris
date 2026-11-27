@@ -5,8 +5,9 @@
 //! buses without this guarantee stay on the existing per-instruction path.
 
 use super::decode_cache::{DecodeCache, Entry, FastOp};
-use super::{Arm11Core, PC};
+use super::Arm11Core;
 use crate::memory::{Bus, ImmutableCodeLocation};
+use aceris_common::Result;
 
 const CACHE_ENTRIES: usize = 256;
 const BLOCK_MAX_INSTRUCTIONS: usize = 16;
@@ -101,7 +102,7 @@ impl BlockCache {
         bus: &mut B,
         decode_cache: &mut DecodeCache,
     ) -> Option<BasicBlock> {
-        if pc as usize == PC || pc & 3 != 0 {
+        if pc & 3 != 0 {
             return None;
         }
         let first_location = bus.immutable_instruction_location(pc, 4)?;
@@ -178,7 +179,7 @@ mod tests {
     }
 
     impl Bus for ImmutableTextBus {
-        fn read8(&mut self, address: u32) -> crate::memory::BusResult<u8> {
+        fn read8(&mut self, address: u32) -> Result<u8> {
             self.memory.read8(address)
         }
 
@@ -186,7 +187,7 @@ mod tests {
             &mut self,
             address: u32,
             value: u8,
-        ) -> crate::memory::BusResult<()> {
+        ) -> Result<()> {
             self.memory.write8(address, value)
         }
 
