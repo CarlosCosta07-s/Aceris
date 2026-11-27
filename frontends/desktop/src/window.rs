@@ -381,6 +381,26 @@ mod tests {
     }
 
     #[test]
+    fn native_scale_overwrites_reused_buffer_and_keeps_the_gutter_opaque() {
+        let mut display = DualScreenDisplay::new().unwrap();
+        display
+            .surface_mut(ScreenTarget::TopLeft)
+            .clear([1, 2, 3, 0]);
+        display
+            .surface_mut(ScreenTarget::Bottom)
+            .clear([4, 5, 6, 0]);
+        let mut output = vec![0xA5; GAME_CANVAS_WIDTH * GAME_CANVAS_HEIGHT * 4];
+
+        assert!(compose_bgrx_into(&display, 1, &mut output));
+
+        assert!(output.chunks_exact(4).all(|pixel| pixel[3] == 0xFF));
+        assert_eq!(pixel(&output, 1, 0, 0), [3, 2, 1, 0xFF]);
+        assert_eq!(pixel(&output, 1, 400, 120), [0, 0, 0, 0xFF]);
+        assert_eq!(pixel(&output, 1, 415, 120), [0, 0, 0, 0xFF]);
+        assert_eq!(pixel(&output, 1, 416, 0), [6, 5, 4, 0xFF]);
+    }
+
+    #[test]
     fn integer_scaling_replicates_pixels() {
         let mut display = DualScreenDisplay::new().unwrap();
         display
