@@ -636,7 +636,7 @@ impl Arm11Core {
     /// ALU core shared by the decoded data-processing forms. `rd` and `rn`
     /// are never R15 here.
     #[inline]
-    fn execute_alu(
+    pub(super) fn execute_alu(
         &mut self,
         opcode: u8,
         set_flags: bool,
