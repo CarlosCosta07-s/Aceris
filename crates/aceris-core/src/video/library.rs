@@ -911,7 +911,8 @@ impl Library {
     ) -> std::io::Result<()> {
         fs::create_dir_all(&self.scan_settings_directory)?;
         fs::write(
-            self.scan_settings_directory.join(VIRTUAL_CONTROLS_PRESET_FILE),
+            self.scan_settings_directory
+                .join(VIRTUAL_CONTROLS_PRESET_FILE),
             format!(
                 "{VIRTUAL_CONTROLS_PRESET_MAGIC}\npreset={}\n",
                 preset.config_value()
@@ -5618,20 +5619,32 @@ mod tests {
 
         // Opacity, size and preset occupy separate thirds of the landscape row.
         assert_eq!(library.virtual_controls_size_percent(), 100);
-        assert_eq!(library.virtual_controls_preset(), VirtualControlPreset::Standard);
+        assert_eq!(
+            library.virtual_controls_preset(),
+            VirtualControlPreset::Standard
+        );
         library.click_responsive(650, 495, 1000, 600);
         assert_eq!(library.virtual_controls_opacity(), 204);
         library.click_responsive(780, 495, 1000, 600);
         assert_eq!(library.virtual_controls_size_percent(), 120);
         library.click_responsive(910, 495, 1000, 600);
-        assert_eq!(library.virtual_controls_preset(), VirtualControlPreset::Compact);
+        assert_eq!(
+            library.virtual_controls_preset(),
+            VirtualControlPreset::Compact
+        );
         library.click_responsive(910, 495, 1000, 600);
-        assert_eq!(library.virtual_controls_preset(), VirtualControlPreset::LeftHanded);
+        assert_eq!(
+            library.virtual_controls_preset(),
+            VirtualControlPreset::LeftHanded
+        );
         let reopened = Library::new(Vec::new(), dir.display().to_string());
         assert!(!reopened.virtual_controls_visible());
         assert_eq!(reopened.virtual_controls_opacity(), 204);
         assert_eq!(reopened.virtual_controls_size_percent(), 120);
-        assert_eq!(reopened.virtual_controls_preset(), VirtualControlPreset::LeftHanded);
+        assert_eq!(
+            reopened.virtual_controls_preset(),
+            VirtualControlPreset::LeftHanded
+        );
 
         // Portrait exposes all three controls with the same independent persistence.
         let mut portrait = reopened;
@@ -5641,11 +5654,17 @@ mod tests {
         portrait.click_responsive(200, 616, 400, 800);
         assert_eq!(portrait.virtual_controls_size_percent(), 80);
         portrait.click_responsive(310, 616, 400, 800);
-        assert_eq!(portrait.virtual_controls_preset(), VirtualControlPreset::RightHanded);
+        assert_eq!(
+            portrait.virtual_controls_preset(),
+            VirtualControlPreset::RightHanded
+        );
         let reopened = Library::new(Vec::new(), dir.display().to_string());
         assert_eq!(reopened.virtual_controls_opacity(), 153);
         assert_eq!(reopened.virtual_controls_size_percent(), 80);
-        assert_eq!(reopened.virtual_controls_preset(), VirtualControlPreset::RightHanded);
+        assert_eq!(
+            reopened.virtual_controls_preset(),
+            VirtualControlPreset::RightHanded
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }
