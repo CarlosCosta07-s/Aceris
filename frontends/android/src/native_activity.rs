@@ -744,8 +744,8 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
 
     let mut app = App::new(&games_dir);
     let mut frame = Vec::new();
-    let mut performance_monitor = performance_logging_enabled(&games_dir)
-        .then(FramePerformanceMonitor::new);
+    let mut performance_monitor =
+        performance_logging_enabled(&games_dir).then(FramePerformanceMonitor::new);
     if performance_monitor.is_some() {
         eprintln!("Aceris Android performance logging enabled (5-second reports)");
     }
