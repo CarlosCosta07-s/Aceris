@@ -686,6 +686,25 @@ fn button_shapes_with_positions(
     shapes
 }
 
+/// Returns the rendered center of an individual virtual control in surface coordinates.
+pub fn virtual_control_center_with_positions(
+    width: u32,
+    height: u32,
+    orientation: u32,
+    size_percent: u8,
+    preset: VirtualControlPreset,
+    positions: &VirtualControlPositions,
+    button: u32,
+) -> Option<(i32, i32)> {
+    if width == 0 || height == 0 || width > 4096 || height > 4096 {
+        return None;
+    }
+    button_shapes_with_positions(width, height, orientation, size_percent, preset, positions)
+        .into_iter()
+        .find(|shape| shape.bit == button)
+        .map(|shape| (shape.x.round() as i32, shape.y.round() as i32))
+}
+
 /// Returns the button bit under a touch point, or zero when no control is hit.
 pub fn hit_test_virtual_control(width: u32, height: u32, x: i32, y: i32, orientation: u32) -> u32 {
     hit_test_virtual_control_with_size(width, height, x, y, orientation, 100)
@@ -1652,6 +1671,56 @@ mod tests {
         assert_eq!(decoded, VirtualControlPositions::default());
         assert_eq!(decoded.size_percent(ORIENTATION_PORTRAIT, buttons::A), 100);
         assert_eq!(decoded.size_percent(ORIENTATION_LANDSCAPE, buttons::A), 100);
+    }
+
+    #[test]
+    fn virtual_control_center_uses_custom_position_and_orientation_scale() {
+        let mut positions = VirtualControlPositions::default();
+        assert!(positions.adjust(ORIENTATION_PORTRAIT, buttons::A, 500, -250));
+        assert!(positions.set_size_percent(ORIENTATION_PORTRAIT, buttons::A, 140));
+
+        let center = virtual_control_center_with_positions(
+            400,
+            800,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
+            buttons::A,
+        )
+        .unwrap();
+        let shape = button_shapes_with_positions(
+            400,
+            800,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
+        )
+        .into_iter()
+        .find(|shape| shape.bit == buttons::A)
+        .unwrap();
+        assert_eq!(center, (shape.x.round() as i32, shape.y.round() as i32));
+        assert!(virtual_control_center_with_positions(
+            0,
+            800,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
+            buttons::A,
+        )
+        .is_none());
+        assert!(virtual_control_center_with_positions(
+            400,
+            800,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
+            0,
+        )
+        .is_none());
     }
 
     #[test]
