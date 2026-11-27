@@ -409,6 +409,49 @@ mod tests {
     }
 
     #[test]
+    fn unidentified_games_change_the_global_profile_not_a_fake_override() {
+        let mut preferences = ScreenLayoutPreferences::default();
+        let custom = ScreenLayoutProfile {
+            mode: ScreenLayoutMode::TopOnly,
+            swap_screens: true,
+        };
+
+        preferences.set_profile_for_game(None, 1080, 2400, custom);
+
+        assert_eq!(preferences.portrait, custom);
+        assert_eq!(
+            preferences.profile_for_game(None, 1080, 2400),
+            custom
+        );
+        assert!(preferences.game_overrides.is_empty());
+    }
+
+    #[test]
+    fn missing_title_orientation_override_inherits_the_matching_global() {
+        let mut preferences = ScreenLayoutPreferences::default();
+        let identity = identity(0x0004_0000_1234_5600);
+        let portrait = ScreenLayoutProfile {
+            mode: ScreenLayoutMode::BottomOnly,
+            swap_screens: true,
+        };
+
+        preferences.set_profile_for_game(Some(identity), 1080, 2400, portrait);
+
+        assert_eq!(
+            preferences.profile_for_game(Some(identity), 1080, 2400),
+            portrait
+        );
+        assert_eq!(
+            preferences.profile_for_game(Some(identity), 2400, 1080),
+            ScreenLayoutProfile::landscape_default()
+        );
+        assert_eq!(
+            preferences.profile_for_game(None, 1080, 2400),
+            ScreenLayoutProfile::portrait_default()
+        );
+    }
+
+    #[test]
     fn legacy_v1_preferences_migrate_to_global_only_v2_state() {
         let legacy = "ACERIS_SCREEN_LAYOUT_PREFERENCES_V1\nportrait_mode=top_enlarged\nportrait_swap=1\nlandscape_mode=side_by_side\nlandscape_swap=0\n";
         let parsed = ScreenLayoutPreferences::parse(legacy).unwrap();
