@@ -377,3 +377,9 @@ O resultado informa:
 - quantos limites de quadro medidos encontraram `SCTLR.M` ligado.
 
 Essa contagem é uma amostragem no limite entre quadros, não prova que a MMU permaneceu ligada durante cada instrução. Para aceitar uma melhoria, compare throughput de instruções/s, p50/p95/p99 do tempo por quadro, atividade GSP/LCD e estado final PC/CPSR; use ao menos três execuções por modo e compare somente rodadas em que as condições de MMU e D-cache sejam equivalentes. Não use o resultado de um título que não habilita `SCTLR.M` como medição da sessão MMU-ativa.
+
+### Redução de escrita redundante na composição desktop 1× (27/11/2026)
+
+Na escala nativa, as duas LCDs cobrem o canvas inteiro exceto o vão central. O compositor agora inicializa somente esse gutter em preto opaco e deixa os blits RGBA→BGRX preencherem os pixels das telas; as escalas maiores continuam limpando o canvas inteiro antes da composição. Um teste inicializa o buffer reutilizado com bytes sentinela e verifica que todas as posições são sobrescritas e todos os pixels mantêm alpha opaco.
+
+Essa alteração evita uma passagem de inicialização sobre quase todo o buffer em 1×. O tempo economizado ainda precisa ser medido em build release no PC.
