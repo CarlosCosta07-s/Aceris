@@ -340,16 +340,23 @@ pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut
                     }
                     continue;
                 }
+                // Expand one contiguous output row first. Copying that row
+                // vertically is more cache-friendly than writing each source
+                // pixel as a tall column across the destination.
+                let expanded_row_start = (scaled_y * width + scaled_x) * 4;
                 for (x, pixel) in row.chunks_exact(4).enumerate() {
                     let color = [pixel[2], pixel[1], pixel[0], 0xFF];
-                    let column_start = scaled_x + x * scale;
-                    for row_offset in 0..scale {
-                        let row_start = ((scaled_y + row_offset) * width + column_start) * 4;
-                        for column_offset in 0..scale {
-                            let at = row_start + column_offset * 4;
-                            output[at..at + 4].copy_from_slice(&color);
-                        }
+                    let column_start = expanded_row_start + x * scale * 4;
+                    for column_offset in 0..scale {
+                        let at = column_start + column_offset * 4;
+                        output[at..at + 4].copy_from_slice(&color);
                     }
+                }
+                let expanded_row_end = expanded_row_start + row.len() * scale;
+                for row_offset in 1..scale {
+                    let destination_start =
+                        ((scaled_y + row_offset) * width + scaled_x) * 4;
+                    output.copy_within(expanded_row_start..expanded_row_end, destination_start);
                 }
             }
         };
@@ -449,6 +456,67 @@ mod tests {
                     "non-black gutter pixel at scale {scale}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn row_major_scaled_composition_matches_reference_pixel_for_pixel() {
+        let mut display = DualScreenDisplay::new().unwrap();
+        for target in [ScreenTarget::TopLeft, ScreenTarget::Bottom] {
+            let surface = display.surface_mut(target);
+            let mut pattern = Vec::with_capacity(surface.pixels().len());
+            for y in 0..surface.height() {
+                for x in 0..surface.width() {
+                    pattern.extend_from_slice(&[
+                        x.wrapping_mul(3) as u8,
+                        y.wrapping_mul(5) as u8,
+                        (x ^ y) as u8,
+                        (x.wrapping_add(y)) as u8,
+                    ]);
+                }
+            }
+            surface.copy_from_rgba8(&pattern).unwrap();
+        }
+
+        let layout = compute_screen_layout(
+            GAME_CANVAS_WIDTH as u32,
+            GAME_CANVAS_HEIGHT as u32,
+            ORIENTATION_LANDSCAPE,
+        );
+        for scale in [2, 3, 4] {
+            let width = GAME_CANVAS_WIDTH * scale;
+            let height = GAME_CANVAS_HEIGHT * scale;
+            let mut expected = vec![0; width * height * 4];
+            for pixel in expected.chunks_exact_mut(4) {
+                pixel[3] = 0xFF;
+            }
+
+            for (surface, rect) in [
+                (display.top_left(), layout.top),
+                (display.bottom(), layout.bottom),
+            ] {
+                for (source_y, row) in surface
+                    .pixels()
+                    .chunks_exact(surface.stride_bytes())
+                    .enumerate()
+                {
+                    for (source_x, pixel) in row.chunks_exact(4).enumerate() {
+                        let color = [pixel[2], pixel[1], pixel[0], 0xFF];
+                        for row_offset in 0..scale {
+                            let y = (rect.y as usize + source_y) * scale + row_offset;
+                            for column_offset in 0..scale {
+                                let x = (rect.x as usize + source_x) * scale + column_offset;
+                                let at = (y * width + x) * 4;
+                                expected[at..at + 4].copy_from_slice(&color);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut actual = vec![0xA5; width * height * 4];
+            assert!(compose_bgrx_into(&display, scale, &mut actual));
+            assert_eq!(actual, expected, "scaled composition differs at scale {scale}");
         }
     }
 
