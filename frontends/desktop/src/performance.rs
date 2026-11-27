@@ -28,6 +28,16 @@ impl DesktopFrameKind {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DesktopFrameTimings {
+    pub(crate) frame_time: Duration,
+    pub(crate) emulation_time: Duration,
+    pub(crate) composition_time: Duration,
+    pub(crate) audio_time: Duration,
+    pub(crate) presentation_time: Duration,
+    pub(crate) gpu_presented: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct FrameSample {
     frame_ns: u64,
@@ -82,16 +92,7 @@ impl DesktopPerformanceMonitor {
 
     /// Records one successfully presented host frame. The render-loop mode is
     /// tracked separately so intro, library, and gameplay results are not mixed.
-    pub(crate) fn record(
-        &mut self,
-        kind: DesktopFrameKind,
-        frame_time: Duration,
-        emulation_time: Duration,
-        composition_time: Duration,
-        audio_time: Duration,
-        presentation_time: Duration,
-        gpu_presented: bool,
-    ) {
+    pub(crate) fn record(&mut self, kind: DesktopFrameKind, timings: DesktopFrameTimings) {
         if self.kind != Some(kind) {
             self.reset(kind);
         }
@@ -105,17 +106,17 @@ impl DesktopPerformanceMonitor {
         self.last_presentation = Some(now);
 
         self.samples[self.next_sample] = FrameSample {
-            frame_ns: duration_ns(frame_time),
-            emulation_ns: duration_ns(emulation_time),
-            composition_ns: duration_ns(composition_time),
-            audio_ns: duration_ns(audio_time),
-            presentation_ns: duration_ns(presentation_time),
+            frame_ns: duration_ns(timings.frame_time),
+            emulation_ns: duration_ns(timings.emulation_time),
+            composition_ns: duration_ns(timings.composition_time),
+            audio_ns: duration_ns(timings.audio_time),
+            presentation_ns: duration_ns(timings.presentation_time),
             presentation_interval_ns: duration_ns(presentation_interval),
         };
         self.next_sample = (self.next_sample + 1) % SAMPLE_CAPACITY;
         self.sample_count = (self.sample_count + 1).min(SAMPLE_CAPACITY);
         self.presented_frames += 1;
-        if gpu_presented {
+        if timings.gpu_presented {
             self.gpu_presented_frames += 1;
         }
 
@@ -398,12 +399,14 @@ mod tests {
 
         monitor.record(
             DesktopFrameKind::Game,
-            Duration::from_millis(12),
-            Duration::from_millis(6),
-            Duration::from_millis(3),
-            Duration::from_millis(1),
-            Duration::from_millis(2),
-            true,
+            DesktopFrameTimings {
+                frame_time: Duration::from_millis(12),
+                emulation_time: Duration::from_millis(6),
+                composition_time: Duration::from_millis(3),
+                audio_time: Duration::from_millis(1),
+                presentation_time: Duration::from_millis(2),
+                gpu_presented: true,
+            },
         );
 
         assert_eq!(monitor.kind, Some(DesktopFrameKind::Game));
