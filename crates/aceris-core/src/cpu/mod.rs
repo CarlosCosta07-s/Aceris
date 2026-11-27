@@ -689,7 +689,7 @@ impl Arm11Core {
                             break;
                         }
                         self.branch_taken = false;
-                        let mut event = self.execute_arm_decoded(bus, cached.word, cached.entry)?;
+                        let mut event = self.execute_ir(bus, cached.ir)?;
                         if !self.branch_taken {
                             self.regs[PC] = instruction_pc.wrapping_add(ARM_INSTRUCTION_SIZE);
                         }
