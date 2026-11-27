@@ -336,7 +336,7 @@ fn save_library_preferences(
     };
     let sort_order = if preferences.sort_descending { "za" } else { "az" };
     let contents = format!(
-        "{LIBRARY_PREFERENCES_MAGIC}\\nview={view_mode}\\nsort={sort_order}\\n"
+        "{LIBRARY_PREFERENCES_MAGIC}\nview={view_mode}\nsort={sort_order}\n"
     );
     fs::write(settings_directory.join(LIBRARY_PREFERENCES_FILE), contents)
 }
@@ -4115,7 +4115,7 @@ mod tests {
         assert!(reopened.sort_descending);
         assert_eq!(
             fs::read_to_string(dir.join(".aceris").join(LIBRARY_PREFERENCES_FILE)).unwrap(),
-            format!("{LIBRARY_PREFERENCES_MAGIC}\\nview=list\\nsort=za\\n")
+            format!("{LIBRARY_PREFERENCES_MAGIC}\nview=list\nsort=za\n")
         );
         fs::remove_dir_all(dir).unwrap();
     }
@@ -4129,7 +4129,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(LIBRARY_PREFERENCES_FILE),
-            format!("{LIBRARY_PREFERENCES_MAGIC}\\nview=unknown\\nsort=za\\n"),
+            format!("{LIBRARY_PREFERENCES_MAGIC}\nview=unknown\nsort=za\n"),
         )
         .unwrap();
         let preferences = load_library_preferences(&dir);
