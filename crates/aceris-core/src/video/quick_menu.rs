@@ -3,6 +3,8 @@
 use super::font;
 
 pub const ACTION_COUNT: usize = 8;
+/// Desktop exposes the six actions that do not depend on Android touch controls.
+pub const DESKTOP_ACTION_COUNT: usize = 6;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,12 +30,18 @@ struct Rect {
 #[derive(Clone, Copy)]
 struct Geometry {
     panel: Rect,
-    rows: [Rect; ACTION_COUNT],
+    rows: Vec<Rect>,
     scale: usize,
 }
 
-fn geometry(width: u32, height: u32) -> Option<Geometry> {
-    if width < 120 || height < 100 || width > 4096 || height > 4096 {
+fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
+    if width < 120
+        || height < 100
+        || width > 4096
+        || height > 4096
+        || action_count == 0
+        || action_count > ACTION_COUNT
+    {
         return None;
     }
     let width = width as usize;
@@ -57,16 +65,18 @@ fn geometry(width: u32, height: u32) -> Option<Geometry> {
     let row_gap = 2 * scale;
     let row_space = panel.height.saturating_sub(52 * scale);
     let row_height = row_space
-        .saturating_sub(row_gap * (ACTION_COUNT - 1))
-        .checked_div(ACTION_COUNT)?
+        .saturating_sub(row_gap * (action_count - 1))
+        .checked_div(action_count)?
         .min(32 * scale);
     let row_width = panel.width.saturating_sub(horizontal_padding * 2);
-    let rows = std::array::from_fn(|index| Rect {
-        x: panel.x + horizontal_padding,
-        y: row_top + index * (row_height + row_gap),
-        width: row_width,
-        height: row_height,
-    });
+    let rows = (0..action_count)
+        .map(|index| Rect {
+            x: panel.x + horizontal_padding,
+            y: row_top + index * (row_height + row_gap),
+            width: row_width,
+            height: row_height,
+        })
+        .collect();
     Some(Geometry { panel, rows, scale })
 }
 
@@ -78,7 +88,7 @@ struct ConfirmationGeometry {
 }
 
 fn confirmation_geometry(width: u32, height: u32) -> Option<ConfirmationGeometry> {
-    let base = geometry(width, height)?;
+    let base = geometry(width, height, ACTION_COUNT)?;
     let scale = base.scale;
     let horizontal_padding = 12 * scale;
     let row_height = 28 * scale;
@@ -104,7 +114,7 @@ fn confirmation_geometry(width: u32, height: u32) -> Option<ConfirmationGeometry
 }
 
 fn menu_button_rect(width: u32, height: u32) -> Option<(Rect, usize)> {
-    let layout = geometry(width, height)?;
+    let layout = geometry(width, height, ACTION_COUNT)?;
     let scale = layout.scale;
     let button = Rect {
         x: (width as usize).saturating_sub(76 * scale),
@@ -160,7 +170,22 @@ pub fn render_menu_button(
 
 /// Returns the action row under a surface-space point.
 pub fn hit_test(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
-    let geometry = geometry(width, height)?;
+    hit_test_with_action_count(width, height, x, y, ACTION_COUNT)
+}
+
+/// Returns the action row under a point for the desktop-only menu.
+pub fn hit_test_desktop(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
+    hit_test_with_action_count(width, height, x, y, DESKTOP_ACTION_COUNT)
+}
+
+fn hit_test_with_action_count(
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    action_count: usize,
+) -> Option<usize> {
+    let geometry = geometry(width, height, action_count)?;
     if x < 0 || y < 0 {
         return None;
     }
@@ -438,6 +463,26 @@ pub fn render_overlay(
     render_overlay_with_profile(frame, width, height, format, selected, "PADRÃO GLOBAL")
 }
 
+/// Draws the desktop quick menu without Android-only virtual-touch actions.
+pub fn render_desktop_overlay_with_profile(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    selected: usize,
+    profile_label: &str,
+) -> bool {
+    render_overlay_with_action_count(
+        frame,
+        width,
+        height,
+        format,
+        selected,
+        profile_label,
+        DESKTOP_ACTION_COUNT,
+    )
+}
+
 /// Draws the quick menu and identifies whether the active layout uses global or
 /// title-specific preferences.
 pub fn render_overlay_with_profile(
@@ -448,7 +493,27 @@ pub fn render_overlay_with_profile(
     selected: usize,
     profile_label: &str,
 ) -> bool {
-    let Some(geometry) = geometry(width, height) else {
+    render_overlay_with_action_count(
+        frame,
+        width,
+        height,
+        format,
+        selected,
+        profile_label,
+        ACTION_COUNT,
+    )
+}
+
+fn render_overlay_with_action_count(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    selected: usize,
+    profile_label: &str,
+    action_count: usize,
+) -> bool {
+    let Some(geometry) = geometry(width, height, action_count) else {
         return false;
     };
     let expected = (width as usize)
@@ -513,7 +578,7 @@ pub fn render_overlay_with_profile(
         "EDITAR CONTROLES",
     ];
     for (index, row) in geometry.rows.iter().enumerate() {
-        let is_selected = index == selected.min(ACTION_COUNT - 1);
+        let is_selected = index == selected.min(action_count - 1);
         blend_rect(
             frame,
             width as usize,
@@ -659,7 +724,7 @@ mod tests {
     #[test]
     fn hit_testing_matches_the_drawn_action_rows_on_phone_and_desktop() {
         for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800), (320, 240)] {
-            let geometry = geometry(width, height).unwrap();
+            let geometry = geometry(width, height, ACTION_COUNT).unwrap();
             for (index, row) in geometry.rows.iter().enumerate() {
                 let x = (row.x + row.width / 2) as i32;
                 let y = (row.y + row.height / 2) as i32;
@@ -697,7 +762,7 @@ mod tests {
             PixelFormat::Rgba8,
             ACTION_COUNT - 1,
         ));
-        let geometry = geometry(width, height).unwrap();
+        let geometry = geometry(width, height, ACTION_COUNT).unwrap();
         let last = geometry.rows.last().unwrap();
         assert!(last.y + last.height <= height as usize);
         assert_eq!(
@@ -708,6 +773,43 @@ mod tests {
                 (last.y + last.height / 2) as i32,
             ),
             Some(ACTION_COUNT - 1)
+        );
+    }
+
+    #[test]
+    fn desktop_menu_hides_android_touch_editor_actions() {
+        let (width, height) = (400u32, 800u32);
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+        assert!(render_desktop_overlay_with_profile(
+            &mut frame,
+            width,
+            height,
+            PixelFormat::Rgba8,
+            DESKTOP_ACTION_COUNT - 1,
+            "PADRÃO GLOBAL",
+        ));
+        let geometry = geometry(width, height, DESKTOP_ACTION_COUNT).unwrap();
+        assert_eq!(geometry.rows.len(), DESKTOP_ACTION_COUNT);
+        let last = geometry.rows.last().unwrap();
+        assert_eq!(
+            hit_test_desktop(
+                width,
+                height,
+                (last.x + last.width / 2) as i32,
+                (last.y + last.height / 2) as i32,
+            ),
+            Some(DESKTOP_ACTION_COUNT - 1)
+        );
+        let android_geometry = geometry(width, height, ACTION_COUNT).unwrap();
+        let android_only = android_geometry.rows[DESKTOP_ACTION_COUNT];
+        assert_eq!(
+            hit_test_desktop(
+                width,
+                height,
+                (android_only.x + android_only.width / 2) as i32,
+                (android_only.y + android_only.height / 2) as i32,
+            ),
+            None
         );
     }
 
