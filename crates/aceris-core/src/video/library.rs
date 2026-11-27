@@ -1335,6 +1335,16 @@ impl Library {
                     self.reload();
                 } else if (594.0..638.0).contains(&y) && (38.0..362.0).contains(&x) {
                     self.toggle_performance_mode_from_settings();
+                } else if logical_height >= 740.0
+                    && (648.0..690.0).contains(&y)
+                    && (38.0..362.0).contains(&x)
+                {
+                    self.toggle_view_mode();
+                } else if logical_height >= 740.0
+                    && (692.0..734.0).contains(&y)
+                    && (38.0..362.0).contains(&x)
+                {
+                    self.toggle_sort_order();
                 }
                 return ClickResult::Ignored;
             }
@@ -1445,6 +1455,10 @@ impl Library {
                 }
                 if (296.0..340.0).contains(&y) && (590.0..970.0).contains(&x) {
                     self.toggle_performance_mode_from_settings();
+                } else if (382.0..422.0).contains(&y) && (590.0..775.0).contains(&x) {
+                    self.toggle_view_mode();
+                } else if (382.0..422.0).contains(&y) && (785.0..970.0).contains(&x) {
+                    self.toggle_sort_order();
                 }
                 ClickResult::Ignored
             }
@@ -1898,6 +1912,52 @@ impl Library {
                         "MODO DESEMPENHO: ATIVADO"
                     } else {
                         "MODO DESEMPENHO: DESATIVADO"
+                    },
+                    brand::TEXT,
+                );
+            }
+            if logical_height >= 740.0 {
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    642.0,
+                    small_scale,
+                    "PREFERÊNCIAS DA BIBLIOTECA",
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_panel(
+                    frame, width, height, 38.0, 650.0, 324.0, 38.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    663.0,
+                    small_scale,
+                    if self.view_mode == LibraryViewMode::Grid {
+                        "GRADE (PAISAGEM)"
+                    } else {
+                        "LISTA (PAISAGEM)"
+                    },
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 38.0, 694.0, 324.0, 38.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    707.0,
+                    small_scale,
+                    if self.sort_descending {
+                        "ORDEM: Z–A"
+                    } else {
+                        "ORDEM: A–Z"
                     },
                     brand::TEXT,
                 );
@@ -3163,6 +3223,50 @@ impl Library {
                     text_scale,
                     "Mais rápido; pode quebrar jogos sensíveis a cache.",
                     0xBBAFC7,
+                );
+                responsive_text(
+                    frame,
+                    width,
+                    height,
+                    590.0,
+                    368.0,
+                    text_scale,
+                    "PREFERÊNCIAS DA BIBLIOTECA",
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_panel(
+                    frame, width, height, 590.0, 382.0, 185.0, 40.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    682.0,
+                    395.0,
+                    text_scale,
+                    if self.view_mode == LibraryViewMode::Grid {
+                        "GRADE"
+                    } else {
+                        "LISTA"
+                    },
+                    brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 785.0, 382.0, 185.0, 40.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    877.0,
+                    395.0,
+                    text_scale,
+                    if self.sort_descending {
+                        "ORDEM: Z–A"
+                    } else {
+                        "ORDEM: A–Z"
+                    },
+                    brand::TEXT,
                 );
             }
             LibraryPage::Games
@@ -4547,6 +4651,43 @@ mod tests {
         assert!(!library.performance_mode());
         assert!(!Library::from_scan_settings(&settings, &root).performance_mode());
         assert_eq!(library.render_responsive(400, 800).len(), 400 * 800 * 4);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn library_view_and_sort_preferences_are_accessible_in_settings_on_both_orientations() {
+        let root = std::env::temp_dir().join(format!(
+            "aceris-library-view-settings-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let settings = root.join("settings");
+
+        let mut library = Library::from_scan_settings(&settings, &root);
+        library.select_page(LibraryPage::Settings);
+        assert!(!library.is_list_view());
+        assert!(!library.sort_descending);
+
+        // Desktop / landscape settings expose both choices in the library settings card.
+        library.click_responsive(680, 402, 1000, 600);
+        library.click_responsive(875, 402, 1000, 600);
+        assert!(library.is_list_view());
+        assert!(library.sort_descending);
+
+        let mut library = Library::from_scan_settings(&settings, &root);
+        library.select_page(LibraryPage::Settings);
+        // Tall Android portrait settings expose the same choices below the existing options.
+        library.click_responsive(200, 670, 400, 800);
+        library.click_responsive(200, 714, 400, 800);
+        assert!(!library.is_list_view());
+        assert!(!library.sort_descending);
+
+        let reopened = Library::from_scan_settings(&settings, &root);
+        assert!(!reopened.is_list_view());
+        assert!(!reopened.sort_descending);
+        assert_eq!(reopened.render_responsive(1000, 600).len(), 1000 * 600 * 4);
+        assert_eq!(reopened.render_responsive(400, 800).len(), 400 * 800 * 4);
         let _ = fs::remove_dir_all(&root);
     }
 
