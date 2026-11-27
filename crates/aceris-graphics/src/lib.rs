@@ -202,7 +202,7 @@ pub struct GraphicsAdapterInfo {
 }
 
 const MAX_PERSISTED_PIPELINE_CACHE_BYTES: u64 = 64 * 1024 * 1024;
-const PIPELINE_CACHE_FILE_MAGIC: &[u8] = b"ACERIS_WGPU_PIPELINE_CACHE_V1\\n";
+const PIPELINE_CACHE_FILE_MAGIC: &[u8] = b"ACERIS_WGPU_PIPELINE_CACHE_V1\n";
 
 /// Loads only small, non-empty cache payloads written by this Aceris cache
 /// wrapper. Invalid, stale or truncated files are treated as cache misses.
@@ -216,7 +216,10 @@ fn load_pipeline_cache(path: &Path) -> Option<Vec<u8>> {
         return None;
     }
     let contents = fs::read(path).ok()?;
-    if !contents.starts_with(PIPELINE_CACHE_FILE_MAGIC) {
+    if contents.len() as u64 > maximum_file_size
+        || contents.len() <= PIPELINE_CACHE_FILE_MAGIC.len()
+        || !contents.starts_with(PIPELINE_CACHE_FILE_MAGIC)
+    {
         return None;
     }
     let payload = &contents[PIPELINE_CACHE_FILE_MAGIC.len()..];
@@ -227,7 +230,9 @@ fn load_pipeline_cache(path: &Path) -> Option<Vec<u8>> {
 }
 
 /// Writes cache data through a temporary file so an interrupted shutdown does
-/// not leave a partially written pipeline cache at the active path.
+/// not leave a partially written pipeline cache at the active path. Unix-like
+/// platforms replace the destination atomically; Windows removes an old optional
+/// cache first because std::fs::rename does not replace an existing file there.
 fn store_pipeline_cache(path: &Path, data: &[u8]) -> std::io::Result<()> {
     if data.is_empty() || data.len() as u64 > MAX_PERSISTED_PIPELINE_CACHE_BYTES {
         return Ok(());
@@ -246,6 +251,13 @@ fn store_pipeline_cache(path: &Path, data: &[u8]) -> std::io::Result<()> {
         return Err(error);
     }
     drop(file);
+    #[cfg(windows)]
+    if path.exists() {
+        if let Err(error) = fs::remove_file(path) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+    }
     if let Err(error) = fs::rename(&temporary, path) {
         let _ = fs::remove_file(&temporary);
         return Err(error);
