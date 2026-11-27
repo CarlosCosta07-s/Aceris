@@ -672,7 +672,8 @@ fn emulate(
     let mut frame = Vec::new();
     let mut menu_open = false;
     let mut menu_selected = 0usize;
-    let mut layout_profile = layout_preferences.profile_for_surface(
+    let mut layout_profile = layout_preferences.profile_for_game(
+        system.game_identity(),
         window::GAME_CANVAS_WIDTH as u32,
         window::GAME_CANVAS_HEIGHT as u32,
     );
@@ -763,7 +764,20 @@ fn emulate(
                             .map_err(|error| {
                                 format!("could not resize the gameplay layout: {error}")
                             })?;
-                        layout_preferences.set_profile_for_surface(
+                        layout_preferences.set_profile_for_game(
+                            system.game_identity(),
+                            window::GAME_CANVAS_WIDTH as u32,
+                            window::GAME_CANVAS_HEIGHT as u32,
+                            layout_profile,
+                        );
+                        if let Err(error) = layout_preferences.save(settings_directory) {
+                            eprintln!("could not save screen layout preferences: {error}");
+                        }
+                    }
+                    4 => {
+                        layout_profile.swap_screens = !layout_profile.swap_screens;
+                        layout_preferences.set_profile_for_game(
+                            system.game_identity(),
                             window::GAME_CANVAS_WIDTH as u32,
                             window::GAME_CANVAS_HEIGHT as u32,
                             layout_profile,
@@ -773,14 +787,22 @@ fn emulate(
                         }
                     }
                     _ => {
-                        layout_profile.swap_screens = !layout_profile.swap_screens;
-                        layout_preferences.set_profile_for_surface(
-                            window::GAME_CANVAS_WIDTH as u32,
-                            window::GAME_CANVAS_HEIGHT as u32,
-                            layout_profile,
-                        );
-                        if let Err(error) = layout_preferences.save(settings_directory) {
-                            eprintln!("could not save screen layout preferences: {error}");
+                        if let Some(identity) = system.game_identity() {
+                            if layout_preferences.reset_game_overrides(identity) {
+                                layout_profile = layout_preferences.profile_for_surface(
+                                    window::GAME_CANVAS_WIDTH as u32,
+                                    window::GAME_CANVAS_HEIGHT as u32,
+                                );
+                                let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+                                window
+                                    .resize(width as usize * scale, height as usize * scale)
+                                    .map_err(|error| {
+                                        format!("could not restore the global gameplay layout: {error}")
+                                    })?;
+                                if let Err(error) = layout_preferences.save(settings_directory) {
+                                    eprintln!("could not save screen layout preferences: {error}");
+                                }
+                            }
                         }
                     }
                 },
@@ -840,7 +862,20 @@ fn emulate(
                                     .map_err(|error| {
                                         format!("could not resize the gameplay layout: {error}")
                                     })?;
-                                layout_preferences.set_profile_for_surface(
+                                layout_preferences.set_profile_for_game(
+                            system.game_identity(),
+                                    window::GAME_CANVAS_WIDTH as u32,
+                                    window::GAME_CANVAS_HEIGHT as u32,
+                                    layout_profile,
+                                );
+                                if let Err(error) = layout_preferences.save(settings_directory) {
+                                    eprintln!("could not save screen layout preferences: {error}");
+                                }
+                            }
+                            4 => {
+                                layout_profile.swap_screens = !layout_profile.swap_screens;
+                                layout_preferences.set_profile_for_game(
+                                    system.game_identity(),
                                     window::GAME_CANVAS_WIDTH as u32,
                                     window::GAME_CANVAS_HEIGHT as u32,
                                     layout_profile,
@@ -850,14 +885,22 @@ fn emulate(
                                 }
                             }
                             _ => {
-                                layout_profile.swap_screens = !layout_profile.swap_screens;
-                                layout_preferences.set_profile_for_surface(
-                                    window::GAME_CANVAS_WIDTH as u32,
-                                    window::GAME_CANVAS_HEIGHT as u32,
-                                    layout_profile,
-                                );
-                                if let Err(error) = layout_preferences.save(settings_directory) {
-                                    eprintln!("could not save screen layout preferences: {error}");
+                                if let Some(identity) = system.game_identity() {
+                                    if layout_preferences.reset_game_overrides(identity) {
+                                        layout_profile = layout_preferences.profile_for_surface(
+                                            window::GAME_CANVAS_WIDTH as u32,
+                                            window::GAME_CANVAS_HEIGHT as u32,
+                                        );
+                                        let (width, height) = screen_layout_canvas_size(layout_profile.mode);
+                                        window
+                                            .resize(width as usize * scale, height as usize * scale)
+                                            .map_err(|error| {
+                                                format!("could not restore the global gameplay layout: {error}")
+                                            })?;
+                                        if let Err(error) = layout_preferences.save(settings_directory) {
+                                            eprintln!("could not save screen layout preferences: {error}");
+                                        }
+                                    }
                                 }
                             }
                         }
