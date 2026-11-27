@@ -1395,6 +1395,8 @@ impl DynamicMemoryBacking {
 struct DynamicMemoryRegion {
     address: u32,
     backing: DynamicMemoryBacking,
+    /// 3DS MemoryPermission bits: bit 0 read, bit 1 write.
+    permissions: u32,
 }
 
 impl DynamicMemoryRegion {
@@ -1906,7 +1908,7 @@ pub struct Arm11MemoryUsageReport {
 }
 
 const ADDRESS_SPACE_STATE_MAGIC: &[u8; 8] = b"ACADDRSP";
-const ADDRESS_SPACE_STATE_VERSION: u16 = 1;
+const ADDRESS_SPACE_STATE_VERSION: u16 = 2;
 const ADDRESS_SPACE_STATE_MAX_BYTES: usize = 512 * 1024 * 1024;
 const ADDRESS_SPACE_STATE_MAX_REGIONS: usize = 4096;
 const ADDRESS_SPACE_STATE_MAX_TLS_SLOTS: usize =
@@ -2244,6 +2246,11 @@ impl Arm11CodeAddressSpace {
         address_state_write(writer.write_u32(self.dynamic_regions.len() as u32))?;
         for region in &self.dynamic_regions {
             address_state_validate_region_range(region.address, region.len())?;
+            if region.permissions > 3 {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "dynamic-region permissions are invalid",
+                ));
+            }
             address_state_write(writer.write_u32(region.address))?;
             let backing = region.backing.backing_ref();
             let backing_kind = match &region.backing {
@@ -2254,12 +2261,13 @@ impl Arm11CodeAddressSpace {
             address_state_write(writer.write_u32(catalog.slot_for(backing)?))?;
             address_state_write(writer.write_u64(backing.root_base_offset() as u64))?;
             address_state_write(writer.write_u64(backing.length as u64))?;
+            address_state_write(writer.write_u32(region.permissions))?;
         }
 
         address_state_write(writer.write_u32(self.shared_regions.len() as u32))?;
         for region in &self.shared_regions {
             address_state_validate_region_range(region.address, region.backing.length)?;
-            if region.permissions > 3 || region.permissions == 2 {
+            if region.permissions > 3 {
                 return Err(SharedMemoryStateError::InvalidAddressSpaceState(
                     "shared-region permissions are invalid",
                 ));
@@ -2398,7 +2406,7 @@ impl Arm11CodeAddressSpace {
             return Err(SharedMemoryStateError::InvalidMagic);
         }
         let version = address_state_read(reader.read_u16())?;
-        if version != ADDRESS_SPACE_STATE_VERSION {
+        if version == 0 || version > ADDRESS_SPACE_STATE_VERSION {
             return Err(SharedMemoryStateError::UnsupportedVersion(version));
         }
         if address_state_read(reader.read_u16())? != 0 {
@@ -2439,6 +2447,16 @@ impl Arm11CodeAddressSpace {
                 .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
             let length = usize::try_from(address_state_read(reader.read_u64())?)
                 .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
+            let permissions = if version >= 2 {
+                address_state_read(reader.read_u32())?
+            } else {
+                3
+            };
+            if permissions > 3 {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "dynamic-region permissions are invalid",
+                ));
+            }
             address_state_validate_region_range(address, length)?;
             let backing = catalog.view(slot, root_offset, length)?;
             let backing = match kind {
@@ -2450,7 +2468,11 @@ impl Arm11CodeAddressSpace {
                     ));
                 }
             };
-            dynamic_regions.push(DynamicMemoryRegion { address, backing });
+            dynamic_regions.push(DynamicMemoryRegion {
+                address,
+                backing,
+                permissions,
+            });
         }
 
         let shared_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS)?;
@@ -2467,7 +2489,7 @@ impl Arm11CodeAddressSpace {
                 .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
             let permissions = address_state_read(reader.read_u32())?;
             address_state_validate_region_range(address, length)?;
-            if permissions > 3 || permissions == 2 {
+            if permissions > 3 {
                 return Err(SharedMemoryStateError::InvalidAddressSpaceState(
                     "shared-region permissions are invalid",
                 ));
@@ -2723,7 +2745,8 @@ impl Arm11CodeAddressSpace {
         catalog: &SharedMemoryBackingCatalog,
     ) -> Result<(), SharedMemoryStateError> {
         if section.id() != crate::save_state::section_id::PROCESS_MEMORY
-            || section.version() != ADDRESS_SPACE_STATE_VERSION
+            || section.version() == 0
+            || section.version() > ADDRESS_SPACE_STATE_VERSION
         {
             return Err(SharedMemoryStateError::InvalidAddressSpaceState(
                 "process-memory section ID or version is unsupported",
@@ -3199,7 +3222,7 @@ impl Arm11CodeAddressSpace {
         if u64::from(address) % PAGE_SIZE != 0 {
             return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
         }
-        if permissions > 3 || permissions == 2 {
+        if permissions > 3 {
             return Err(Arm11DynamicMemoryError::InvalidPermissions(permissions));
         }
         let size = backing
@@ -3253,6 +3276,51 @@ impl Arm11CodeAddressSpace {
         });
         self.shared_regions.sort_by_key(|region| region.address);
         Ok(())
+    }
+
+    /// Changes R/W permissions for one complete heap allocation or shared mapping.
+    ///
+    /// The current VM model stores permissions per mapping, so partial-page or
+    /// subrange reprotection is rejected rather than silently changing a larger
+    /// or smaller region than the guest requested.
+    pub fn protect_memory_region(
+        &mut self,
+        address: u32,
+        size: u32,
+        permissions: u32,
+    ) -> std::result::Result<(), Arm11DynamicMemoryError> {
+        if !address.is_multiple_of(PAGE_SIZE as u32) {
+            return Err(Arm11DynamicMemoryError::MisalignedAddress(address));
+        }
+        if size == 0 || !size.is_multiple_of(PAGE_SIZE as u32) {
+            return Err(Arm11DynamicMemoryError::InvalidSize(size));
+        }
+        if permissions > 3 {
+            return Err(Arm11DynamicMemoryError::InvalidPermissions(permissions));
+        }
+        let end = u64::from(address)
+            .checked_add(u64::from(size))
+            .filter(|end| *end <= ADDRESS_SPACE_END)
+            .ok_or(Arm11DynamicMemoryError::AddressRangeOverflow { address, size })?;
+
+        if address >= APPLICATION_HEAP_BASE && end <= APPLICATION_HEAP_END {
+            if let Some(region) = self.dynamic_regions.iter_mut().find(|region| {
+                region.address == address && region.len() == size as usize
+            }) {
+                region.permissions = permissions;
+                return Ok(());
+            }
+        }
+
+        if let Some(region) = self.shared_regions.iter_mut().find(|region| {
+            region.address == address
+                && region.backing.length == size as usize
+        }) {
+            region.permissions = permissions;
+            return Ok(());
+        }
+
+        Err(Arm11DynamicMemoryError::MappingNotFound { address, size })
     }
 
     /// Maps one IPC temporary buffer into the 0x04000000 alias window.
@@ -3704,6 +3772,7 @@ impl Arm11CodeAddressSpace {
         self.dynamic_regions.push(DynamicMemoryRegion {
             address,
             backing: DynamicMemoryBacking::Private(backing),
+            permissions: 3,
         });
         self.dynamic_regions.sort_by_key(|region| region.address);
 
@@ -3740,6 +3809,7 @@ impl Arm11CodeAddressSpace {
                                 Arm11DynamicMemoryError::AllocationFailure(error)
                             })?,
                         ),
+                        permissions: 3,
                     });
                     self.dynamic_regions.sort_by_key(|region| region.address);
                 }
@@ -4264,9 +4334,11 @@ impl Arm11CodeAddressSpace {
 
     fn location_is_readable(&self, location: MemoryLocation) -> bool {
         match location {
-            MemoryLocation::Static { .. }
-            | MemoryLocation::Dynamic { .. }
-            | MemoryLocation::Physical { .. } => true,
+            MemoryLocation::Static { .. } | MemoryLocation::Physical { .. } => true,
+            MemoryLocation::Dynamic { index, .. } => self
+                .dynamic_regions
+                .get(index)
+                .is_some_and(|region| region.permissions & 1 != 0),
             MemoryLocation::Shared { index, .. } => self
                 .shared_regions
                 .get(index)
@@ -4277,7 +4349,11 @@ impl Arm11CodeAddressSpace {
     fn location_is_writable(&self, location: MemoryLocation) -> bool {
         match location {
             MemoryLocation::Static { kind, .. } => self.segment_is_writable(kind),
-            MemoryLocation::Dynamic { .. } | MemoryLocation::Physical { .. } => true,
+            MemoryLocation::Physical { .. } => true,
+            MemoryLocation::Dynamic { index, .. } => self
+                .dynamic_regions
+                .get(index)
+                .is_some_and(|region| region.permissions & 2 != 0),
             MemoryLocation::Shared { index, .. } => self
                 .shared_regions
                 .get(index)
@@ -6260,6 +6336,7 @@ mod tests {
         original
             .allocate_application_heap_region(heap, 0x2000)
             .unwrap();
+        original.protect_memory_region(heap, 0x2000, 1).unwrap();
         let mut heap_view = original
             .shared_memory_backing_for_heap_range(heap, 0x2000)
             .unwrap();
@@ -6271,7 +6348,7 @@ mod tests {
             .map_shared_memory_region(0x0600_0000, shared_root.clone(), 3)
             .unwrap();
         original
-            .map_shared_memory_region(0x0600_2000, shared_root.clone(), 3)
+            .map_shared_memory_region(0x0600_2000, shared_root.clone(), 2)
             .unwrap();
 
         let mut catalog = SharedMemoryBackingCatalog::new();
@@ -6286,6 +6363,10 @@ mod tests {
             .unwrap();
         assert_eq!(restored.dynamic_regions.len(), 1);
         assert_eq!(restored.shared_regions.len(), 2);
+        assert!(restored.is_readable_range(heap, 0x2000));
+        assert!(!restored.is_writable_range(heap, 0x2000));
+        assert!(!restored.is_readable_range(0x0600_2000, 0x1000));
+        assert!(restored.is_writable_range(0x0600_2000, 0x1000));
 
         let dynamic = restored.dynamic_regions[0].backing.backing_ref();
         let mut heap_bytes = [0u8; 4];
@@ -6573,10 +6654,14 @@ mod tests {
             address_space.map_shared_memory_region(0x0800_0000, backing.clone(), 4),
             Err(Arm11DynamicMemoryError::InvalidPermissions(4))
         );
-        assert_eq!(
-            address_space.map_shared_memory_region(0x0800_0000, backing.clone(), 2),
-            Err(Arm11DynamicMemoryError::InvalidPermissions(2))
-        );
+        address_space
+            .map_shared_memory_region(0x0800_0000, backing.clone(), 2)
+            .unwrap();
+        assert!(address_space.is_writable_range(0x0800_0000, 0x1000));
+        assert!(!address_space.is_readable_range(0x0800_0000, 0x1000));
+        address_space
+            .unmap_shared_memory_region(0x0800_0000, 0x1000)
+            .unwrap();
         let oversized_backing = SharedMemoryBacking::zeroed(0x2000).unwrap();
         assert_eq!(
             address_space.map_shared_memory_region(0xFFFF_F000, oversized_backing, 3),
@@ -7862,6 +7947,58 @@ mod tests {
             .unwrap();
         assert!(!address_space.is_writable_range(base, 1));
         assert!(address_space.read8(base).is_err());
+    }
+
+    #[test]
+    fn heap_and_shared_mappings_enforce_reprotection_permissions() {
+        let mut address_space = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let heap = address_space
+            .allocate_application_heap_region(0x0800_0000, 0x2000)
+            .unwrap();
+
+        address_space
+            .protect_memory_region(heap, 0x2000, 1)
+            .unwrap();
+        assert!(address_space.is_readable_range(heap, 0x2000));
+        assert!(!address_space.is_writable_range(heap, 0x2000));
+        assert!(address_space.write32(heap, 0x1111_2222).is_err());
+
+        address_space
+            .protect_memory_region(heap, 0x2000, 2)
+            .unwrap();
+        assert!(!address_space.is_readable_range(heap, 0x2000));
+        assert!(address_space.is_writable_range(heap, 0x2000));
+        address_space.write32(heap, 0x3333_4444).unwrap();
+        assert!(address_space.read32(heap).is_err());
+
+        address_space
+            .protect_memory_region(heap, 0x2000, 0)
+            .unwrap();
+        assert!(!address_space.is_readable_range(heap, 0x2000));
+        assert!(!address_space.is_writable_range(heap, 0x2000));
+
+        address_space
+            .protect_memory_region(heap, 0x2000, 3)
+            .unwrap();
+        assert!(address_space.is_readable_range(heap, 0x2000));
+        assert!(address_space.is_writable_range(heap, 0x2000));
+        assert_eq!(address_space.read32(heap).unwrap(), 0x3333_4444);
+
+        let shared = SharedMemoryBacking::zeroed(0x1000).unwrap();
+        address_space
+            .map_shared_memory_region(0x0600_0000, shared, 2)
+            .unwrap();
+        assert!(!address_space.is_readable_range(0x0600_0000, 0x1000));
+        assert!(address_space.is_writable_range(0x0600_0000, 0x1000));
+        address_space
+            .protect_memory_region(0x0600_0000, 0x1000, 1)
+            .unwrap();
+        assert!(address_space.is_readable_range(0x0600_0000, 0x1000));
+        assert!(!address_space.is_writable_range(0x0600_0000, 0x1000));
+
+        assert!(address_space
+            .protect_memory_region(heap, 0x1000, 3)
+            .is_err());
     }
 
     #[test]

@@ -98,10 +98,12 @@ const MEMOP_FREE: u32 = 1;
 const MEMOP_ALLOC: u32 = 3;
 const MEMOP_MAP: u32 = 4;
 const MEMOP_UNMAP: u32 = 5;
+const MEMOP_PROTECT: u32 = 6;
 const MEMOP_LINEAR: u32 = 0x0001_0000;
 const OLD_LINEAR_VIRTUAL_TO_PHYSICAL_OFFSET: u32 = 0x0C00_0000;
 const MEMPERM_NONE: u32 = 0;
 const MEMPERM_READ_ONLY: u32 = 1;
+const MEMPERM_WRITE_ONLY: u32 = 2;
 const MEMPERM_READ_WRITE: u32 = 3;
 
 /// Nintendo 3DS result: no more free kernel synchronization/thread objects.
@@ -2821,7 +2823,7 @@ impl Arm11ProcessSession {
                 .free_application_heap_region(address, size)
                 .map(|()| address)
                 .map_err(dynamic_memory_result_code),
-            (MEMOP_MAP, source_address, permissions @ (MEMPERM_READ_ONLY | MEMPERM_READ_WRITE)) => {
+            (MEMOP_MAP, source_address, permissions @ 0..=3) => {
                 (|| {
                     // ControlMemory maps an alias of an existing regular-heap range.
                     // Publish source writes before exposing the second virtual view.
@@ -2839,6 +2841,19 @@ impl Arm11ProcessSession {
                         .map_err(dynamic_memory_result_code)
                 })()
             }
+            (MEMOP_PROTECT, _, permissions @ 0..=3) => (|| {
+                // Publish writes before changing the guest-visible R/W contract.
+                self.flush_process_data_cache(address, size)
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                self.drain_write_buffer()
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                self.address_space
+                    .protect_memory_region(address, size, permissions)
+                    .map_err(dynamic_memory_result_code)?;
+                self.invalidate_process_data_cache(address, size)
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                Ok(address)
+            })(),
             (MEMOP_UNMAP, source_address, MEMPERM_NONE) => (|| {
                 // Require the exact source/destination pair created by MAP.
                 let backing = self
@@ -6238,6 +6253,10 @@ mod tests {
             0xEF00_0001, // SVC ControlMemory: map heap alias
             0xEF00_0001, // SVC ControlMemory: reject mismatched unmap source
             0xEF00_0001, // SVC ControlMemory: reject free while alias is live
+            0xEF00_0001, // SVC ControlMemory: protect alias read-only
+            0xEF00_0001, // SVC ControlMemory: protect alias write-only
+            0xEF00_0001, // SVC ControlMemory: protect alias no-access
+            0xEF00_0001, // SVC ControlMemory: restore alias read-write
             0xEF00_0001, // SVC ControlMemory: unmap exact alias
             0xEF00_0001, // SVC ControlMemory: free original heap
         ]);
@@ -6276,6 +6295,62 @@ mod tests {
         assert_eq!(session.core().regs[0], 0);
         assert_eq!(session.core().regs[1], ALIAS);
         assert_eq!(session.read_memory_u32(ALIAS + 0x100).unwrap(), 0xCAFE_BABE);
+
+        // Read-only protection permits loads but rejects stores through the alias.
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_PROTECT;
+            core.regs[1] = ALIAS;
+            core.regs[2] = 0;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_READ_ONLY;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.read_memory_u32(ALIAS + 0x100).unwrap(), 0xCAFE_BABE);
+        assert!(session.write_memory_u32(ALIAS + 0x108, 0x1111_2222).is_err());
+
+        // Write-only protection permits stores but rejects loads.
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_PROTECT;
+            core.regs[1] = ALIAS;
+            core.regs[2] = 0;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_WRITE_ONLY;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert!(session.read_memory_u32(ALIAS + 0x100).is_err());
+        session
+            .write_memory_u32(ALIAS + 0x108, 0x3333_4444)
+            .unwrap();
+
+        // No-access and restoring read/write both update permissions immediately.
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_PROTECT;
+            core.regs[1] = ALIAS;
+            core.regs[2] = 0;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_NONE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert!(session.read_memory_u32(ALIAS + 0x100).is_err());
+        assert!(session.write_memory_u32(ALIAS + 0x10C, 0x5555_6666).is_err());
+
+        {
+            let core = session.scheduler.current_core_mut().unwrap();
+            core.regs[0] = MEMOP_PROTECT;
+            core.regs[1] = ALIAS;
+            core.regs[2] = 0;
+            core.regs[3] = SIZE;
+            core.regs[4] = MEMPERM_READ_WRITE;
+        }
+        session.run_instructions(1).unwrap();
+        assert_eq!(session.core().regs[0], 0);
+        assert_eq!(session.read_memory_u32(ALIAS + 0x108).unwrap(), 0x3333_4444);
 
         // A wrong source range cannot unmap the alias.
         {
