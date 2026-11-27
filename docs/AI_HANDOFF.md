@@ -2919,3 +2919,11 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Limites: atalho PC ainda fixo em Esc; filas de áudio do host não têm flush/pause explícito (podem drenar amostras já enfileiradas); não há confirmação de progresso não salvo. Layout alternativo, troca de telas, save states, rewind, screenshot, cheats e editor de controles continuam indisponíveis.
 - Testes foram adicionados, mas não foram executados localmente nesta sessão. O clone local não pôde ser obtido por indisponibilidade de resolução de github.com e os status de checks retornados pelo conector estavam vazios; não declarar CI aprovada. Teste Android físico e desktop com janela/áudio reais permanecem pendentes.
 - Fronteiras: somente `main`; arquivos funcionais alterados: `crates/aceris-core/src/video/quick_menu.rs`, `crates/aceris-core/src/video.rs`, `frontends/android/src/app.rs`, `frontends/desktop/src/main.rs`. Documentação de estado/plano/capacidades atualizada. Nenhum trabalho reservado de Claude/Thumb, CPU/Thumb, GPU/PICA ou conteúdo protegido foi alterado.
+
+
+## Telemetria desktop durante pausa do menu rápido (27/11/2026, ChatGPT)
+
+- `DesktopPerformanceMonitor::reset_after_pause` inicia uma nova janela de amostragem quando o menu rápido abre ou retoma o jogo, para que o tempo de pausa não contamine FPS/frametime de gameplay.
+- Foi adicionado teste para confirmar que a janela, contagem de amostras, quadros apresentados e timestamp são reiniciados mantendo o modo Game.
+- O reset acontece tanto na tecla Esc quanto na ação Continuar pelo Enter/mouse. Não altera temporização guest nem a cadência do jogo.
+- Teste ainda não executado nesta sessão; CI e hardware físico pendentes.
