@@ -42,6 +42,7 @@ pub struct App {
     current_game_path: Option<PathBuf>,
     quick_menu_selected: usize,
     menu_tap: Option<(i32, i32)>,
+    menu_button_pointer: Option<i32>,
     width: u32,
     height: u32,
     pointers: BTreeMap<i32, (f32, f32)>,
@@ -70,6 +71,7 @@ impl App {
             current_game_path: None,
             quick_menu_selected: 0,
             menu_tap: None,
+            menu_button_pointer: None,
             width: 0,
             height: 0,
             pointers: BTreeMap::new(),
@@ -133,7 +135,7 @@ impl App {
                 }
             }
             Screen::Library => self.update_library_touch(&previous),
-            Screen::Game => self.apply_game_input(),
+            Screen::Game => self.update_game_touch(&previous),
             Screen::GameMenu => self.update_game_menu_touch(&previous),
         }
     }
@@ -335,6 +337,12 @@ impl App {
         }
         let pressed_mask = self.held_mask();
         overlay_virtual_pad(output, self.width, self.height, pressed_mask);
+        let _ = quick_menu::render_menu_button(
+            output,
+            self.width,
+            self.height,
+            MenuPixelFormat::Rgba8,
+        );
     }
 
     fn held_mask(&self) -> u32 {
@@ -362,9 +370,9 @@ impl App {
     fn apply_game_input(&mut self) {
         let layout = self.game_layout();
         let mask = self.held_mask();
-        let touch = self.pointers.values().find_map(|&(x, y)| {
-            // A pointer on a virtual button never also touches the screen.
-            if self.hit_virtual_button(x, y) != 0 {
+        let touch = self.pointers.iter().find_map(|(id, &(x, y))| {
+            // Menu-shortcut and virtual-control touches must not reach the guest stylus.
+            if self.menu_button_pointer == Some(*id) || self.hit_virtual_button(x, y) != 0 {
                 return None;
             }
             touch_from_surface_point(&layout, x as i32, y as i32)
@@ -378,6 +386,38 @@ impl App {
             Some((x, y)) => input.touch(i32::from(x), i32::from(y)),
             None => input.touch_end(),
         }
+    }
+
+    fn update_game_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
+        if previous.is_empty() {
+            if let Some((&id, &(x, y))) = self.pointers.iter().next() {
+                if quick_menu::hit_test_menu_button(
+                    self.width,
+                    self.height,
+                    x.round() as i32,
+                    y.round() as i32,
+                ) {
+                    self.menu_button_pointer = Some(id);
+                }
+            }
+        } else if let Some(pointer_id) = self.menu_button_pointer {
+            if !self.pointers.contains_key(&pointer_id) {
+                let opened = previous.get(&pointer_id).is_some_and(|&(x, y)| {
+                    quick_menu::hit_test_menu_button(
+                        self.width,
+                        self.height,
+                        x.round() as i32,
+                        y.round() as i32,
+                    )
+                });
+                self.menu_button_pointer = None;
+                if opened {
+                    self.open_game_menu();
+                    return;
+                }
+            }
+        }
+        self.apply_game_input();
     }
 
     fn update_game_menu_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
@@ -412,6 +452,7 @@ impl App {
         self.key_mask = 0;
         self.pointers.clear();
         self.menu_tap = None;
+        self.menu_button_pointer = None;
         self.audio.clear();
         if let Some(system) = self.system.as_mut() {
             system.input_mut().reset();
@@ -428,6 +469,7 @@ impl App {
         self.key_mask = 0;
         self.pointers.clear();
         self.menu_tap = None;
+        self.menu_button_pointer = None;
         if let Some(system) = self.system.as_mut() {
             system.input_mut().reset();
         }
@@ -463,6 +505,7 @@ impl App {
                 self.key_mask = 0;
                 self.pointers.clear();
                 self.menu_tap = None;
+                self.menu_button_pointer = None;
                 self.quick_menu_selected = 0;
                 self.screen = Screen::Game;
             }
@@ -571,6 +614,7 @@ impl App {
         self.key_mask = 0;
         self.pointers.clear();
         self.menu_tap = None;
+        self.menu_button_pointer = None;
         self.quick_menu_selected = 0;
         self.screen = Screen::Library;
         if let Some(diagnostic) = diagnostic {
@@ -1094,6 +1138,20 @@ mod tests {
         assert!(app.key(AKEYCODE_ENTER, true));
         assert!(!app.library.search_is_focused());
         assert_eq!(app.library.search_query(), "P");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn tapping_the_visible_menu_shortcut_opens_the_quick_menu_without_guest_stylus_input() {
+        let (mut app, dir) = app_with_games(0);
+        app.system = Some(System::new());
+        app.screen = Screen::Game;
+        let (x, y) = (app.width as i32 - 40, 40);
+        assert!(quick_menu::hit_test_menu_button(app.width, app.height, x, y));
+        touch(&mut app, x as f32, y as f32);
+        assert!(app.system.as_mut().unwrap().input_mut().snapshot().touch.is_none());
+        release(&mut app);
+        assert!(matches!(app.screen(), Screen::GameMenu));
         fs::remove_dir_all(dir).ok();
     }
 
