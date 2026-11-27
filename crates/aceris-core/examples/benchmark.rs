@@ -863,15 +863,6 @@ fn run(options: Options) -> Result<(), String> {
                 report_guest_failure(&system, "warm-up", frame + 1, &error.to_string());
                 return Err(format!("warm-up frame {} failed: {error}", frame + 1));
             }
-
-    let mmu_enabled_after_warmup = system
-        .ncsd_session()
-        .is_some_and(|session| session.core().cp15().mmu_enabled());
-    println!(
-        "MMU SCTLR.M after warm-up: {}",
-        if mmu_enabled_after_warmup { "enabled" } else { "disabled" }
-    );
-
         };
         if report.instructions_executed == 0 {
             eprintln!(
@@ -881,6 +872,14 @@ fn run(options: Options) -> Result<(), String> {
             );
         }
     }
+
+    let mmu_enabled_after_warmup = system
+        .ncsd_session()
+        .is_some_and(|session| session.core().cp15().mmu_enabled());
+    println!(
+        "MMU SCTLR.M after warm-up: {}",
+        if mmu_enabled_after_warmup { "enabled" } else { "disabled" }
+    );
 
     let mut samples_ns = Vec::with_capacity(options.frames);
     let mut mmu_enabled_frames = 0usize;
