@@ -3038,3 +3038,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 
 
 - Follow-up de durabilidade: a gravação agora escreve em `.tmp`, sincroniza o arquivo e publica o nome `.acrs` por `rename` no mesmo diretório. Temporários abandonados por interrupção são ignorados na leitura e provocam avanço do contador de geração na próxima gravação. Commit: `140f1b7`.
+
+
+## Identidade do arquivo de imagem — SHA-256 em fluxo (27/11/2026, ChatGPT)
+
+- Criado `crates/aceris-core/src/save_state_identity.rs`, com SHA-256 implementado em Rust e leitura em blocos de 64 KiB; não foi adicionada dependência criptográfica.
+- `identity_from_image_reader` calcula o hash de byte zero até EOF, preserva a posição original do leitor e associa Title ID opcional (zero é rejeitado). `identity_from_image_path` oferece o mesmo contrato para arquivos.
+- A política identifica os bytes exatos do arquivo completo, não um conteúdo lógico normalizado: arquivos repacotados ou alterados recebem identidades diferentes. O caminho/nome não participa do hash. Imagem vazia e falhas de leitura/restauração são erros explícitos.
+- Testes sintéticos cobrem vetores SHA-256 conhecidos, arquivo de 1 MB em múltiplos blocos, preservação da posição do leitor, igualdade para bytes idênticos, diferença entre imagens distintas e Title ID inválido. O CI ainda precisa executar esta nova etapa.
+- Limite: a função está disponível no core, mas ainda não foi chamada automaticamente pelos loaders nem conectada ao agregador de snapshot/SaveStateStore; portanto, a identidade real do jogo ainda deve ser passada pelo chamador. Nenhuma ROM/homebrew foi usada.
+- Commits: `a603837` implementação e `8ef6e2a` export. Nenhuma área de CPU/Thumb, PICA200, DSP/CSND, SVC ou reservada a outro agente foi alterada.
