@@ -1650,6 +1650,37 @@ mod tests {
         }
     }
 
+    struct ImmutableCodeBus {
+        memory: FlatMemory,
+        code_size: u32,
+        backing_id: u64,
+    }
+
+    impl Bus for ImmutableCodeBus {
+        fn read8(&mut self, address: u32) -> Result<u8> {
+            self.memory.read8(address)
+        }
+
+        fn write8(&mut self, address: u32, value: u8) -> Result<()> {
+            self.memory.write8(address, value)
+        }
+
+        fn immutable_instruction_location(
+            &mut self,
+            address: u32,
+            size: u32,
+        ) -> Option<crate::memory::ImmutableCodeLocation> {
+            let end = address.checked_add(size)?;
+            if size == 0 || end > self.code_size {
+                return None;
+            }
+            Some(crate::memory::ImmutableCodeLocation {
+                backing_id: self.backing_id,
+                offset: u64::from(address),
+            })
+        }
+    }
+
     #[derive(Debug)]
     struct CachePolicyTrackingBus {
         memory: FlatMemory,
@@ -3590,6 +3621,55 @@ mod tests {
                 "memory at {address:#X}",
             );
         }
+    }
+
+    #[test]
+    fn translated_fast_loop_executes_immutable_a32_blocks() {
+        let program = [
+            0xE3A0_0001, // MOV r0, #1
+            0xE280_1002, // ADD r1, r0, #2
+            0xE281_2003, // ADD r2, r1, #3
+            0xEA00_0000, // B to the instruction after the branch
+        ];
+
+        let (mut fast_cpu, mut fast_memory) = machine();
+        set_l1(
+            &mut fast_memory,
+            0,
+            SECTION | SECTION_AP_RW_ALL | (1 << 12),
+        );
+        let (mut precise_cpu, mut precise_memory) = machine();
+        set_l1(
+            &mut precise_memory,
+            0,
+            SECTION | SECTION_AP_RW_ALL | (1 << 12),
+        );
+
+        for (index, instruction) in program.iter().copied().enumerate() {
+            let address = index as u32 * 4;
+            fast_memory.write32(address, instruction).unwrap();
+            precise_memory.write32(address, instruction).unwrap();
+        }
+        fast_cpu.regs[PC] = 0;
+        precise_cpu.regs[PC] = 0;
+
+        let mut fast_bus = ImmutableCodeBus {
+            memory: fast_memory,
+            code_size: 0x100,
+            backing_id: 0xA11,
+        };
+        let (executed, exit) = fast_cpu
+            .run_fast(&mut fast_bus, program.len() as u64)
+            .unwrap();
+        assert_eq!(executed, program.len() as u64);
+        assert_eq!(exit, FastRunExit::Budget);
+
+        for _ in 0..program.len() {
+            assert_eq!(precise_cpu.step(&mut precise_memory).unwrap(), StepEvent::Executed);
+        }
+        assert_eq!(fast_cpu.regs, precise_cpu.regs);
+        assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+        assert!(fast_cpu.pc() > 0);
     }
 
     #[test]
