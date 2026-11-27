@@ -957,37 +957,46 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         address: u32,
         size: u32,
     ) -> Option<crate::memory::ImmutableCodeLocation> {
-        let last_offset = size.checked_sub(1)?;
-        let last_address = address.checked_add(last_offset)?;
-        let (physical_start, _) = self
-            .map_with_privilege(address, Access::Execute, self.params.privileged)
-            .ok()?;
-
-        // A block is short enough to cross at most one 4 KiB page boundary.
-        // Validate each page start and the last byte so a remapped middle
-        // page can never make a previously cached block appear contiguous.
-        let mut next_page = (address & !0xFFF).checked_add(0x1000);
-        while let Some(page_address) = next_page {
-            if page_address > last_address {
-                break;
-            }
-            let expected_offset = page_address.checked_sub(address)?;
-            let (physical_page, _) = self
-                .map_with_privilege(page_address, Access::Execute, self.params.privileged)
+        // This is a speculative block-cache probe. It may inspect upcoming
+        // mappings, but must not leave a future translation fault latched for
+        // the guest instruction stream to observe prematurely.
+        let previous_fault = self.fault;
+        let result = (|| {
+            let last_offset = size.checked_sub(1)?;
+            let last_address = address.checked_add(last_offset)?;
+            let (physical_start, _) = self
+                .map_with_privilege(address, Access::Execute, self.params.privileged)
                 .ok()?;
-            if physical_page != physical_start.checked_add(expected_offset)? {
+
+            // Validate every 4 KiB page start covered by the short block and
+            // the last byte, so a remapped page cannot appear contiguous.
+            let mut next_page = (address & !0xFFF).checked_add(0x1000);
+            while let Some(page_address) = next_page {
+                if page_address > last_address {
+                    break;
+                }
+                let expected_offset = page_address.checked_sub(address)?;
+                let (physical_page, _) = self
+                    .map_with_privilege(page_address, Access::Execute, self.params.privileged)
+                    .ok()?;
+                if physical_page != physical_start.checked_add(expected_offset)? {
+                    return None;
+                }
+                next_page = page_address.checked_add(0x1000);
+            }
+
+            let (physical_end, _) = self
+                .map_with_privilege(last_address, Access::Execute, self.params.privileged)
+                .ok()?;
+            if physical_end != physical_start.checked_add(last_offset)? {
                 return None;
             }
-            next_page = page_address.checked_add(0x1000);
+            self.inner.immutable_instruction_location(physical_start, size)
+        })();
+        if result.is_none() {
+            self.fault = previous_fault;
         }
-
-        let (physical_end, _) = self
-            .map_with_privilege(last_address, Access::Execute, self.params.privileged)
-            .ok()?;
-        if physical_end != physical_start.checked_add(last_offset)? {
-            return None;
-        }
-        self.inner.immutable_instruction_location(physical_start, size)
+        result
     }
 
     fn is_normal_memory(&mut self, addr: u32, write: bool, privileged: bool) -> Result<bool> {
