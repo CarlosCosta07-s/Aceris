@@ -863,6 +863,15 @@ fn run(options: Options) -> Result<(), String> {
                 report_guest_failure(&system, "warm-up", frame + 1, &error.to_string());
                 return Err(format!("warm-up frame {} failed: {error}", frame + 1));
             }
+
+    let mmu_enabled_after_warmup = system
+        .ncsd_session()
+        .is_some_and(|session| session.core().cp15().mmu_enabled());
+    println!(
+        "MMU SCTLR.M after warm-up: {}",
+        if mmu_enabled_after_warmup { "enabled" } else { "disabled" }
+    );
+
         };
         if report.instructions_executed == 0 {
             eprintln!(
@@ -874,6 +883,7 @@ fn run(options: Options) -> Result<(), String> {
     }
 
     let mut samples_ns = Vec::with_capacity(options.frames);
+    let mut mmu_enabled_frames = 0usize;
     let mut instructions = 0u128;
     let mut gpu_lists = 0u128;
     let mut lcd_scans = 0u128;
@@ -897,6 +907,12 @@ fn run(options: Options) -> Result<(), String> {
             }
         };
         let elapsed_ns = started.elapsed().as_nanos();
+        if system
+            .ncsd_session()
+            .is_some_and(|session| session.core().cp15().mmu_enabled())
+        {
+            mmu_enabled_frames += 1;
+        }
         samples_ns.push(elapsed_ns);
 
         if let Some(trace) = frame_trace.as_mut() {
@@ -925,6 +941,8 @@ fn run(options: Options) -> Result<(), String> {
             .or_default() += 1;
         first_report.get_or_insert(report);
     }
+
+    println!("MMU-enabled measured frame boundaries: {mmu_enabled_frames}/{}", options.frames);
 
     print_summary(
         &options,
