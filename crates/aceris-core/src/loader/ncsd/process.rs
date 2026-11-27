@@ -983,6 +983,30 @@ impl SharedMemoryBackingCatalog {
         self.roots.len()
     }
 
+    /// Wraps this catalog as the shared-backing section in ACRPAYLD.
+    pub(crate) fn encode_section(
+        &self,
+    ) -> Result<crate::save_state::SaveStateSection, SharedMemoryStateError> {
+        crate::save_state::SaveStateSection::new(
+            crate::save_state::section_id::SHARED_BACKINGS,
+            SHARED_BACKING_CATALOG_VERSION,
+            self.encode()?,
+        )
+        .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)
+    }
+
+    /// Restores a catalog section before any mapping or kernel handle is rebuilt.
+    pub(crate) fn decode_section(
+        section: &crate::save_state::SaveStateSection,
+    ) -> Result<Self, SharedMemoryStateError> {
+        if section.id() != crate::save_state::section_id::SHARED_BACKINGS
+            || section.version() != SHARED_BACKING_CATALOG_VERSION
+        {
+            return Err(SharedMemoryStateError::InvalidCatalogEntry);
+        }
+        Self::decode(section.payload())
+    }
+
     /// Encodes roots in slot order. Each sparse root is emitted only once.
     pub(crate) fn encode(&self) -> Result<Vec<u8>, SharedMemoryStateError> {
         if self.roots.len() > MAX_SHARED_BACKING_CATALOG_ENTRIES {
