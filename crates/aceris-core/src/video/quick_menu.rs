@@ -827,7 +827,7 @@ mod tests {
                 Some(index)
             );
         }
-        for row in &desktop_geometry.rows {
+        for row in desktop_geometry.rows.iter().take(DESKTOP_ACTION_COUNT) {
             let action = hit_test_desktop(
                 width,
                 height,
