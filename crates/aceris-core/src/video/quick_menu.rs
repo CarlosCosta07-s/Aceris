@@ -2,7 +2,7 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 3;
+pub const ACTION_COUNT: usize = 4;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,7 +41,7 @@ fn geometry(width: u32, height: u32) -> Option<Geometry> {
     let scale = (width.min(height) / 240).clamp(1, 8);
     let margin = 8 * scale;
     let panel_width = (420 * scale).min(width.saturating_sub(margin * 2));
-    let panel_height = (190 * scale).min(height.saturating_sub(margin * 2));
+    let panel_height = (220 * scale).min(height.saturating_sub(margin * 2));
     if panel_width < 180 * scale || panel_height < 150 * scale {
         return None;
     }
@@ -340,7 +340,7 @@ pub fn render_overlay(
         format,
     );
 
-    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR À BIBLIOTECA"];
+    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR À BIBLIOTECA", "ALTERAR LAYOUT"];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(ACTION_COUNT - 1);
         blend_rect(
