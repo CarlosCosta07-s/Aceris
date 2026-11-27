@@ -63,6 +63,19 @@ impl SaveStateFile {
         &self.payload
     }
 
+    /// Builds the outer save-state file from a validated section table.
+    pub fn from_sections(
+        metadata: SaveStateMetadata,
+        sections: &SaveStatePayload,
+    ) -> Result<Self, SaveStateError> {
+        Self::new(metadata, sections.encode()?)
+    }
+
+    /// Decodes the section table stored in this file's payload.
+    pub fn decode_sections(&self) -> Result<SaveStatePayload, SaveStateError> {
+        SaveStatePayload::decode(&self.payload)
+    }
+
     /// Encodes the versioned little-endian header and a CRC32-protected payload.
     pub fn encode(&self) -> Result<Vec<u8>, SaveStateError> {
         validate_identity(self.metadata.identity)?;
@@ -168,6 +181,30 @@ impl SaveStateFile {
             payload,
         })
     }
+}
+
+/// Stable IDs reserved for the first machine-state components.
+pub mod section_id {
+    /// Frame counter, virtual clock and versioned machine metadata.
+    pub const SYSTEM_METADATA: u32 = 1;
+    /// ARM11 CPU registers, execution mode and internal pipeline state.
+    pub const ARM11_CPU: u32 = 2;
+    /// Guest process address spaces and physical memory contents.
+    pub const PROCESS_MEMORY: u32 = 3;
+    /// Kernel threads, handles, events, mutexes and scheduler state.
+    pub const KERNEL: u32 = 4;
+    /// PICA200 registers, command state and guest rendering state.
+    pub const PICA200: u32 = 5;
+    /// GSP queues, LCD scanout and display timing state.
+    pub const GSP_LCD: u32 = 6;
+    /// DSP RAM, pipes, voices, semaphores and pending samples.
+    pub const DSP: u32 = 7;
+    /// CSND channels, capture state and pending sample output.
+    pub const CSND: u32 = 8;
+    /// HID, input and APT state visible to the guest.
+    pub const INPUT_APT: u32 = 9;
+    /// Guest filesystem sessions and pending filesystem operations.
+    pub const FILESYSTEM: u32 = 10;
 }
 
 /// Signature for the section table inside a save-state payload.
@@ -568,6 +605,38 @@ mod tests {
             b"synthetic machine state payload".to_vec(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn outer_file_round_trips_the_inner_section_table() {
+        let mut sections = SaveStatePayload::new();
+        sections
+            .insert(SaveStateSection::new(
+                super::section_id::ARM11_CPU,
+                1,
+                b"synthetic-cpu-state".to_vec(),
+            )
+            .unwrap())
+            .unwrap();
+        sections
+            .insert(SaveStateSection::new(
+                super::section_id::PROCESS_MEMORY,
+                1,
+                b"synthetic-memory-state".to_vec(),
+            )
+            .unwrap())
+            .unwrap();
+        let metadata = SaveStateMetadata {
+            identity: identity(),
+            frame_number: 42,
+            virtual_time_ns: 123_456_789,
+        };
+
+        let file = SaveStateFile::from_sections(metadata, &sections).unwrap();
+        let encoded = file.encode().unwrap();
+        let decoded = SaveStateFile::decode(&encoded, identity()).unwrap();
+        assert_eq!(decoded.metadata(), metadata);
+        assert_eq!(decoded.decode_sections().unwrap(), sections);
     }
 
     #[test]
