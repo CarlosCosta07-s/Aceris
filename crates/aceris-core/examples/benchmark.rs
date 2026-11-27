@@ -37,6 +37,7 @@ struct Options {
     taps: Vec<Tap>,
     profile_components: bool,
     fast_memory: bool,
+    precise_dispatch: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +90,7 @@ fn usage() {
          --frame-trace <CSV>       Save per-frame timing and guest activity to CSV\n\
          --tap <X,Y@FRAME[+HOLD]>  Script a bottom-screen touch (repeatable; default HOLD=3)\n\
          --fast-memory             Opt-in \"Desempenho\" mode: bypass the precise D-cache model\n\
+         --precise-dispatch        Disable the fast CPU loop (diagnostic comparison)\n\
          -h, --help                Show this help\n\
          \n\
          Supports 3DSX, NCSD (.3ds/.cci) and CIA files supported by the current loader."
@@ -155,6 +157,7 @@ fn parse_args() -> Result<Option<Options>, String> {
         taps: Vec::new(),
         profile_components: profile_only,
         fast_memory: false,
+        precise_dispatch: false,
     };
 
     while let Some(argument) = args.next() {
@@ -164,6 +167,10 @@ fn parse_args() -> Result<Option<Options>, String> {
         }
         if argument == "--fast-memory" && options.image.is_some() {
             options.fast_memory = true;
+            continue;
+        }
+        if argument == "--precise-dispatch" && options.image.is_some() {
+            options.precise_dispatch = true;
             continue;
         }
         if options.image.is_none() {
@@ -829,6 +836,18 @@ fn run(options: Options) -> Result<(), String> {
         println!("Fast memory:              enabled");
     }
     let format = load_image(&mut system, image_path)?;
+    let session = system
+        .ncsd_session_mut()
+        .ok_or_else(|| "loaded executable did not create an ARM11 process session".to_string())?;
+    session.set_fast_dispatch(!options.precise_dispatch);
+    println!(
+        "Fast dispatch:            {}",
+        if options.precise_dispatch {
+            "disabled (precise step)"
+        } else {
+            "enabled (default)"
+        }
+    );
     println!("Loaded {:?}: {}", format, image_path.display());
     println!(
         "Prepared ARM11 entry: PC={:#010X}, CPSR={:#010X}",
