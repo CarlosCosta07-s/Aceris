@@ -55,7 +55,7 @@
 | Capacidade | Estado | Comportamento observado e limite |
 |---|---|---|
 | Apresentar as duas telas | Disponível | Composição das telas LCD existentes para a superfície do host, mantendo proporção. |
-| Modos de tela básicos | Parcial | Menu oferece lado a lado, vertical, superior ampliada, inferior ampliada e somente superior/inferior; Android segue rotação e desktop redimensiona a janela. Persistência dos perfis e teste físico ainda pendentes. |
+| Modos de tela básicos | Parcial | Menu oferece lado a lado, vertical, superior ampliada, inferior ampliada e somente superior/inferior; Android segue rotação e desktop redimensiona a janela. Perfil global persistido separadamente para retrato/paisagem; override por jogo e teste físico pendentes. |
 | Trocar tela principal/secundária | Parcial | A ação Trocar telas troca a posição dos LCDs sem perder a identidade física; o toque continua ligado ao LCD inferior. Falta validação em aparelho e nos backends desktop. |
 | Layout personalizado/ajuste fino/janela separada | Não disponível | Não há editor de posição, tamanho ou espaçamento, nem janela independente por tela. |
 | Touchscreen da tela inferior | Parcial | O mapeamento usa o retângulo atual do LCD inferior nos seis modos e após a troca; ainda falta validar toque físico em aparelho e gestos complexos. |
