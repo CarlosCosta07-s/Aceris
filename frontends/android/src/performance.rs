@@ -63,8 +63,8 @@ impl FramePerformanceMonitor {
     /// Times are host durations; they do not imply guest FPS or guest time.
     pub(crate) fn record(
         &mut self,
-        frame_time: Duration,
-        emulation_time: Duration,
+        render_time: Duration,
+        app_step_time: Duration,
         presentation_time: Duration,
         presented: bool,
         gpu_presented: bool,
@@ -82,8 +82,8 @@ impl FramePerformanceMonitor {
             Duration::ZERO
         };
         self.samples[self.next_sample] = FrameSample {
-            render_ns: duration_ns(frame_time),
-            app_step_ns: duration_ns(emulation_time),
+            render_ns: duration_ns(render_time),
+            app_step_ns: duration_ns(app_step_time),
             presentation_ns: duration_ns(presentation_time),
             presentation_interval_ns: duration_ns(presentation_interval),
         };
@@ -255,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn report_separates_emulation_presentation_and_frame_percentiles() {
+    fn report_separates_app_step_presentation_and_frame_percentiles() {
         let samples = [
             sample(1, 1, 0, 0),
             sample(2, 1, 1, 15),
