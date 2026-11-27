@@ -1270,6 +1270,7 @@ mod tests {
     #[test]
     fn quick_menu_cycles_layout_and_swaps_physical_screens() {
         let (mut app, dir) = app_with_games(0);
+        app.resize(1080, 2400);
         app.screen = Screen::GameMenu;
         app.system = Some(System::new());
         app.quick_menu_selected = 3;
