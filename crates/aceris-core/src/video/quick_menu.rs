@@ -59,6 +59,61 @@ fn geometry(width: u32, height: u32) -> Option<Geometry> {
     Some(Geometry { panel, rows, scale })
 }
 
+fn menu_button_rect(width: u32, height: u32) -> Option<(Rect, usize)> {
+    let layout = geometry(width, height)?;
+    let scale = layout.scale;
+    let button = Rect {
+        x: (width as usize).saturating_sub(76 * scale),
+        y: 8 * scale,
+        width: 66 * scale,
+        height: 26 * scale,
+    };
+    Some((button, scale))
+}
+
+/// Returns true when a point is inside the small Android in-game menu shortcut.
+pub fn hit_test_menu_button(width: u32, height: u32, x: i32, y: i32) -> bool {
+    let Some((button, _)) = menu_button_rect(width, height) else {
+        return false;
+    };
+    x >= button.x as i32
+        && x < (button.x + button.width) as i32
+        && y >= button.y as i32
+        && y < (button.y + button.height) as i32
+}
+
+/// Draws the small in-game menu shortcut used by touch-first frontends.
+pub fn render_menu_button(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+) -> bool {
+    let Some((button, scale)) = menu_button_rect(width, height) else {
+        return false;
+    };
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+    blend_rect(frame, width as usize, button, [45, 30, 62], 220, format);
+    draw_border(frame, width as usize, button, scale.max(1), format);
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        button.x + 18 * scale / 2,
+        button.y + (button.height.saturating_sub(7 * scale)) / 2,
+        scale,
+        "MENU",
+        [255, 255, 255],
+        format,
+    );
+    true
+}
+
 /// Returns the action row under a surface-space point.
 pub fn hit_test(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
     let geometry = geometry(width, height)?;
@@ -281,6 +336,28 @@ mod tests {
             }
             assert_eq!(hit_test(width, height, 0, 0), None);
         }
+    }
+
+    #[test]
+    fn android_menu_shortcut_has_a_matching_render_and_hit_target() {
+        let (width, height) = (2400u32, 1080u32);
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+        assert!(render_menu_button(&mut frame, width, height, PixelFormat::Rgba8));
+        let mut target = None;
+        for y in 0..height as i32 {
+            for x in 0..width as i32 {
+                if hit_test_menu_button(width, height, x, y) {
+                    target = Some((x, y));
+                    break;
+                }
+            }
+            if target.is_some() {
+                break;
+            }
+        }
+        let (x, y) = target.expect("visible menu button has a hit target");
+        assert!(hit_test_menu_button(width, height, x, y));
+        assert!(!hit_test_menu_button(width, height, 0, 0));
     }
 
     #[test]
