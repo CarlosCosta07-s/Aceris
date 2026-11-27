@@ -7,7 +7,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use aceris_core::System;
+use aceris_core::{
+    System,
+    loaded_image::{LoadedImageIdentity, load_executable_file_with_identity},
+};
 use aceris_core::input::{pad, pad_from_frontend_buttons, touch_from_surface_point};
 use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
@@ -50,6 +53,7 @@ pub struct App {
     library: Library,
     system: Option<System>,
     current_game_path: Option<PathBuf>,
+    active_image_identity: Option<LoadedImageIdentity>,
     quick_menu_selected: usize,
     confirmation_selected: usize,
     controls_editor: bool,
@@ -85,6 +89,7 @@ impl App {
             library,
             system: None,
             current_game_path: None,
+            active_image_identity: None,
             quick_menu_selected: 0,
             confirmation_selected: 0,
             controls_editor: false,
@@ -144,6 +149,14 @@ impl App {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn screen(&self) -> &Screen {
         &self.screen
+    }
+
+    /// Identity of the exact executable currently loaded, when available.
+    ///
+    /// This is metadata for future save-state operations; it does not imply
+    /// that full machine snapshots are currently supported.
+    pub fn active_image_identity(&self) -> Option<LoadedImageIdentity> {
+        self.active_image_identity
     }
 
     /// Sets the surface size in pixels; call on creation and resize.
@@ -1057,11 +1070,13 @@ impl App {
         }
         let save_name = path.file_name().unwrap_or_default().to_os_string();
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
-        match system.load_executable_file(&path) {
-            Ok(_) => {
+        self.active_image_identity = None;
+        match load_executable_file_with_identity(&mut system, &path) {
+            Ok(loaded) => {
                 self.library
-                    .set_active_game_identity(system.game_identity());
+                    .set_active_game_identity(loaded.game_identity);
                 self.library.mark_launched(&path);
+                self.active_image_identity = Some(loaded);
                 self.system = Some(system);
                 self.current_game_path = Some(path);
                 self.key_mask = 0;
@@ -1089,6 +1104,7 @@ impl App {
     fn leave_game(&mut self) {
         let diagnostic = self.game_diagnostic();
         self.system = None;
+        self.active_image_identity = None;
         self.library.set_active_game_identity(None);
         self.current_game_path = None;
         self.audio.clear();
