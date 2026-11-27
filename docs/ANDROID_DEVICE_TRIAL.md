@@ -77,3 +77,39 @@ Inicie Aceris, reproduza o problema e capture as linhas do momento da falha. Reg
 - Biblioteca detecta um arquivo compatível presente na pasta `games`.
 - O primeiro diagnóstico do loader/HLE fica legível quando a execução falha.
 - São guardados logs e dados do aparelho para reproduzir o resultado.
+
+## Medição de FPS e frametime no Android (opt-in)
+
+O render thread pode emitir um resumo de desempenho a cada cinco segundos. A coleta fica desativada por padrão. Para habilitá-la, crie o arquivo de configuração abaixo com o conteúdo `1`:
+
+```sh
+adb shell mkdir -p /sdcard/Android/data/org.aceris.emulator/files/games/.aceris
+adb shell "echo 1 > /sdcard/Android/data/org.aceris.emulator/files/games/.aceris/android_performance_log_v1.txt"
+```
+
+Reinicie o Aceris e filtre o Logcat:
+
+```sh
+adb logcat -c
+adb logcat | grep "Aceris Android performance"
+```
+
+No PowerShell, substitua `grep` por `findstr`.
+
+Para desativar, remova o arquivo e reinicie o Aceris:
+
+```sh
+adb shell rm /sdcard/Android/data/org.aceris.emulator/files/games/.aceris/android_performance_log_v1.txt
+```
+
+Cada relatório cobre cinco segundos e usa até 300 amostras recentes. Os campos são:
+
+- `presented_fps`: apresentações concluídas por segundo, não FPS guest nem velocidade de emulação.
+- `render_ms_avg/p50/p95`: duração da função de renderização no host, incluindo bloqueio da janela, `App::step_into` e apresentação.
+- `app_step_ms_p95`: tempo de `App::step_into`; inclui execução do jogo e composição do frame, não é tempo isolado da CPU guest.
+- `present_ms_p95`: tempo gasto pelo presenter Vulkan/OpenGL ES ou pelo fallback `ANativeWindow`.
+- `present_interval_ms_p50/p95`: intervalo entre apresentações concluídas; lacunas acima de dois segundos são descartadas para não confundir pausa/retomada com o ritmo normal.
+- `gpu_present`: porcentagem das apresentações concluídas pelo presenter `wgpu`; o restante foi apresentado pelo fallback CPU.
+- `frames_not_presented`: tentativas de renderização sem apresentação concluída.
+
+A primeira janela pode incluir a inicialização fria do presenter e do driver. Compare relatórios subsequentes e anote aparelho, SoC, GPU/driver, perfil e duração do ensaio. Essa telemetria mede o caminho host; ela não altera clock, timers, orçamento de instruções, resolução guest ou temporização do 3DS.
