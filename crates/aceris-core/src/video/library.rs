@@ -781,7 +781,8 @@ impl Library {
     pub fn set_virtual_controls_opacity(&mut self, opacity: u8) -> std::io::Result<()> {
         fs::create_dir_all(&self.scan_settings_directory)?;
         fs::write(
-            self.scan_settings_directory.join(VIRTUAL_CONTROLS_OPACITY_FILE),
+            self.scan_settings_directory
+                .join(VIRTUAL_CONTROLS_OPACITY_FILE),
             format!("{VIRTUAL_CONTROLS_OPACITY_MAGIC}\nopacity={opacity}\n"),
         )?;
         self.virtual_controls_opacity = opacity;
@@ -798,8 +799,8 @@ impl Library {
             .iter()
             .position(|value| *value == current)
             .unwrap_or(0);
-        let next = VIRTUAL_CONTROLS_OPACITY_STEPS
-            [(index + 1) % VIRTUAL_CONTROLS_OPACITY_STEPS.len()];
+        let next =
+            VIRTUAL_CONTROLS_OPACITY_STEPS[(index + 1) % VIRTUAL_CONTROLS_OPACITY_STEPS.len()];
         if let Err(error) = self.set_virtual_controls_opacity(next) {
             self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
         }
@@ -1432,7 +1433,11 @@ impl Library {
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
-                let settings_offset = if self.touch_keyboard_enabled { 48.0 } else { 0.0 };
+                let settings_offset = if self.touch_keyboard_enabled {
+                    48.0
+                } else {
+                    0.0
+                };
                 for index in 0..self.scan_config.directories.len().min(3) {
                     let row_top = 300.0 + index as f32 * 32.0;
                     if (row_top..row_top + 28.0).contains(&y) && (334.0..374.0).contains(&x) {
@@ -1455,8 +1460,7 @@ impl Library {
                     && (38.0..362.0).contains(&x)
                 {
                     self.cycle_virtual_controls_opacity_from_settings();
-                } else if (594.0 + settings_offset..638.0 + settings_offset)
-                    .contains(&y)
+                } else if (594.0 + settings_offset..638.0 + settings_offset).contains(&y)
                     && (38.0..362.0).contains(&x)
                 {
                     self.toggle_performance_mode_from_settings();
@@ -2044,7 +2048,11 @@ impl Library {
                 },
                 brand::TEXT,
             );
-            let settings_offset = if self.touch_keyboard_enabled { 48.0 } else { 0.0 };
+            let settings_offset = if self.touch_keyboard_enabled {
+                48.0
+            } else {
+                0.0
+            };
             if logical_height >= 640.0 + settings_offset {
                 responsive_panel(
                     frame,
@@ -2140,15 +2148,7 @@ impl Library {
             }
             if self.touch_keyboard_enabled {
                 responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    38.0,
-                    594.0,
-                    324.0,
-                    40.0,
-                    scale,
-                    0x2D1A3B,
+                    frame, width, height, 38.0, 594.0, 324.0, 40.0, scale, 0x2D1A3B,
                 );
                 responsive_text_centered(
                     frame,
@@ -3513,15 +3513,7 @@ impl Library {
                         brand::TEXT,
                     );
                     responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        590.0,
-                        474.0,
-                        380.0,
-                        40.0,
-                        scale,
-                        0x2D1A3B,
+                        frame, width, height, 590.0, 474.0, 380.0, 40.0, scale, 0x2D1A3B,
                     );
                     responsive_text_centered(
                         frame,
