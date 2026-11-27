@@ -4661,6 +4661,20 @@ fn responsive_panel(
     scale: f32,
     color: u32,
 ) {
+    // Offset shadow separates cards from the shared dark canvas without
+    // changing their hit targets or the logical layout coordinates.
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x + 3.0,
+        y + 3.0,
+        rect_width,
+        rect_height,
+        scale,
+        0x0C0814,
+    );
+    // Violet outer stroke and the existing per-control fill.
     responsive_fill(
         frame,
         width as usize,
@@ -4682,6 +4696,29 @@ fn responsive_panel(
         rect_height - 2.0,
         scale,
         color,
+    );
+    // A restrained top highlight and bottom edge add depth without gradients.
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x + 2.0,
+        y + 2.0,
+        rect_width - 4.0,
+        1.0,
+        scale,
+        0x634B7E,
+    );
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x + 2.0,
+        y + rect_height - 2.0,
+        rect_width - 4.0,
+        1.0,
+        scale,
+        0x160F24,
     );
 }
 
@@ -4827,6 +4864,33 @@ mod tests {
         let mut library = Library::new(entries, "/games".to_string());
         library.select_page(LibraryPage::Games);
         library
+    }
+
+    #[test]
+    fn responsive_panels_render_shadow_outline_and_depth_highlights() {
+        let (width, height) = (100, 60);
+        let mut frame = vec![0u8; width * height * 4];
+        responsive_panel(
+            &mut frame,
+            width as u32,
+            height as u32,
+            10.0,
+            10.0,
+            40.0,
+            24.0,
+            1.0,
+            0x21152F,
+        );
+
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * width + x) * 4;
+            &frame[offset..offset + 3]
+        };
+        assert_eq!(pixel(13, 13), &[0x0C, 0x08, 0x14]);
+        assert_eq!(pixel(10, 10), &[0x56, 0x3B, 0x67]);
+        assert_eq!(pixel(11, 11), &[0x21, 0x15, 0x2F]);
+        assert_eq!(pixel(12, 12), &[0x63, 0x4B, 0x7E]);
+        assert_eq!(pixel(12, 32), &[0x16, 0x0F, 0x24]);
     }
 
     #[test]
