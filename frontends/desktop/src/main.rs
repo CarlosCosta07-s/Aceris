@@ -665,6 +665,11 @@ fn emulate(
                         menu_open = true;
                         menu_selected = 0;
                         keyboard.reset(system.input_mut());
+                        if let Some(audio) = audio.as_mut() {
+                            if let Err(message) = audio.flush() {
+                                eprintln!("desktop audio queue flush failed: {message}");
+                            }
+                        }
                     }
                     if let Some(performance) = performance.as_mut() {
                         performance.reset_after_pause();
