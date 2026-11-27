@@ -85,11 +85,11 @@ impl fmt::Display for GpuPhysicalMemoryStateError {
         match self {
             Self::AllocationFailed => {
                 formatter.write_str("could not allocate physical-memory snapshot")
-            },
+            }
             Self::Truncated => formatter.write_str("physical-memory snapshot is truncated"),
             Self::InvalidMagic => {
                 formatter.write_str("physical-memory snapshot signature is invalid")
-            },
+            }
             Self::UnsupportedVersion(version) => {
                 write!(
                     formatter,
