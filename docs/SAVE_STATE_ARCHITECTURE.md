@@ -51,6 +51,22 @@ O payload é opaco nesta primeira etapa. O decodificador valida assinatura, vers
 
 O CRC-32 detecta corrupção acidental; não autentica o arquivo e não substitui uma política de integridade/segurança se os estados forem compartilhados entre usuários.
 
+### Tabela interna de seções — ACRPAYLD v1
+
+O módulo também implementa um segundo contêiner, usado como payload do arquivo externo:
+
+| Campo | Tamanho |
+|---|---:|
+| Magic ACRPAYLD | 8 bytes |
+| Quantidade de seções | 4 bytes |
+| Flags reservadas | 4 bytes |
+
+Cada seção contém um cabeçalho de 24 bytes: ID (u32), versão do componente (u16), flags (u16), comprimento (u64), CRC-32 (u32) e palavra reservada (u32), seguido pelos bytes do componente.
+
+Os IDs devem ser não-zero, versões devem ser não-zero e IDs duplicados são rejeitados. A ordem de inserção é preservada para produzir arquivos reproduzíveis. O limite atual é 32 seções e o tamanho total continua sujeito ao limite de 512 MiB. Flags ainda não definidas são rejeitadas. Seções desconhecidas podem ser preservadas pelo contêiner, mas um futuro restaurador deve rejeitar IDs desconhecidos quando forem obrigatórios para a versão da máquina.
+
+O contêiner não define ainda serializers para CPU, memória ou serviços; ele fornece a estrutura de enquadramento e validação para que esses serializers sejam adicionados individualmente.
+
 ## Próximas etapas obrigatórias
 
 1. Calcular e persistir a identidade canônica do conteúdo de boot em todos os loaders suportados, inclusive 3DSX. Recusar estados quando a identidade não puder ser confirmada.
