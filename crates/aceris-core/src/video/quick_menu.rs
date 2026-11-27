@@ -2,7 +2,7 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 7;
+pub const ACTION_COUNT: usize = 8;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,6 +232,79 @@ pub fn render_control_editor_hint(
     true
 }
 
+/// Draws dashed vertical and horizontal guides through the selected control center.
+pub fn render_control_editor_guides(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    center: (i32, i32),
+) -> bool {
+    if width == 0 || height == 0 || width > 4096 || height > 4096 {
+        return false;
+    }
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+
+    let scale = (width.min(height) / 240).clamp(1, 4) as usize;
+    let x = (center.0.clamp(0, width as i32 - 1)) as usize;
+    let y = (center.1.clamp(0, height as i32 - 1)) as usize;
+    let thickness = scale.max(1);
+    let dash = 5 * scale;
+    let period = dash * 2;
+
+    for top in (0..height as usize).step_by(period) {
+        blend_rect(
+            frame,
+            width as usize,
+            Rect {
+                x: x.saturating_sub(thickness / 2),
+                y: top,
+                width: thickness,
+                height: dash.min(height as usize - top),
+            },
+            [76, 220, 224],
+            184,
+            format,
+        );
+    }
+    for left in (0..width as usize).step_by(period) {
+        blend_rect(
+            frame,
+            width as usize,
+            Rect {
+                x: left,
+                y: y.saturating_sub(thickness / 2),
+                width: dash.min(width as usize - left),
+                height: thickness,
+            },
+            [76, 220, 224],
+            184,
+            format,
+        );
+    }
+
+    let marker_size = (3 * scale).max(2);
+    blend_rect(
+        frame,
+        width as usize,
+        Rect {
+            x: x.saturating_sub(marker_size / 2),
+            y: y.saturating_sub(marker_size / 2),
+            width: marker_size.min(width as usize),
+            height: marker_size.min(height as usize),
+        },
+        [245, 238, 248],
+        235,
+        format,
+    );
+    true
+}
+
 /// Returns the confirmation button under a surface-space point.
 pub fn hit_test_confirmation(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
     let geometry = confirmation_geometry(width, height)?;
@@ -436,6 +509,7 @@ pub fn render_overlay_with_profile(
         "ALTERAR LAYOUT",
         "TROCAR TELAS",
         "PADRÃO GLOBAL",
+        "RESTAURAR CONTROLES",
         "EDITAR CONTROLES",
     ];
     for (index, row) in geometry.rows.iter().enumerate() {
@@ -613,7 +687,7 @@ mod tests {
     }
 
     #[test]
-    fn seventh_action_renders_and_remains_reachable_on_compact_canvas() {
+    fn eighth_action_renders_and_remains_reachable_on_compact_canvas() {
         let (width, height) = (320u32, 240u32);
         let mut frame = vec![0u8; width as usize * height as usize * 4];
         assert!(render_overlay(
@@ -635,6 +709,38 @@ mod tests {
             ),
             Some(ACTION_COUNT - 1)
         );
+    }
+
+    #[test]
+    fn control_editor_alignment_guides_follow_the_selected_center() {
+        for format in [PixelFormat::Rgba8, PixelFormat::Bgrx8] {
+            let (width, height) = (400u32, 800u32);
+            let mut frame = vec![0u8; width as usize * height as usize * 4];
+            let original = frame.clone();
+            assert!(render_control_editor_guides(
+                &mut frame,
+                width,
+                height,
+                format,
+                (120, 360),
+            ));
+            let guide_pixel = (360usize * width as usize + 120) * 4;
+            let outside_pixel = (10usize * width as usize + 10) * 4;
+            assert_ne!(&frame[guide_pixel..guide_pixel + 3], &original[guide_pixel..guide_pixel + 3]);
+            assert_eq!(
+                &frame[outside_pixel..outside_pixel + 3],
+                &original[outside_pixel..outside_pixel + 3]
+            );
+        }
+
+        let mut invalid = vec![0u8; 4];
+        assert!(!render_control_editor_guides(
+            &mut invalid,
+            0,
+            1,
+            PixelFormat::Rgba8,
+            (0, 0),
+        ));
     }
 
     #[test]
