@@ -56,7 +56,8 @@ impl ScreenLayoutMode {
     /// Cycles through the concrete layouts exposed by the in-game menu.
     pub const fn next(self) -> Self {
         match self {
-            Self::Auto | Self::SideBySide => Self::Vertical,
+            Self::Auto => Self::SideBySide,
+            Self::SideBySide => Self::Vertical,
             Self::Vertical => Self::TopEnlarged,
             Self::TopEnlarged => Self::BottomEnlarged,
             Self::BottomEnlarged => Self::TopOnly,
@@ -739,6 +740,11 @@ mod tests {
             crate::input::touch_from_surface_point(&swapped, swapped.bottom.x, swapped.bottom.y),
             Some((0, 0))
         );
+    }
+
+    #[test]
+    fn auto_mode_cycles_to_a_concrete_side_by_side_mode() {
+        assert_eq!(ScreenLayoutMode::Auto.next(), ScreenLayoutMode::SideBySide);
     }
 
     #[test]
