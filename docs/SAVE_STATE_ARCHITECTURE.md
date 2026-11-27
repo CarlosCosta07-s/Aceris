@@ -71,7 +71,9 @@ Já há serializers para o contexto arquitetural ARM11 (registradores, bancos, S
 
 O codec de RAM física usa o magic ACGPUMEM v1: cabeçalho de 24 bytes com contagens de páginas, alocações e monitores; cada página materializada armazena o número da página e seus 4096 bytes; alocações guardam base/tamanho; monitores guardam endereço/geração. A restauração valida todos os registros em estruturas temporárias e atualiza o Arc compartilhado apenas após a validação completa, preservando os clones já mantidos pelos subsistemas.
 
-Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11, 3 memória do processo, 4 kernel, 5 PICA200, 6 GSP/LCD, 7 DSP, 8 CSND, 9 HID/entrada/APT, 10 filesystem e 11 GPU_PHYSICAL_MEMORY. O ID 11 já possui um codec de seção; os IDs 1, 3–10 ainda precisam da integração dos respectivos estados completos.
+Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11, 3 memória do processo, 4 kernel, 5 PICA200, 6 GSP/LCD, 7 DSP, 8 CSND, 9 HID/entrada/APT, 10 filesystem, 11 GPU_PHYSICAL_MEMORY e 12 SHARED_BACKINGS. Os IDs 11 e 12 já possuem codecs de seção; os IDs 1, 3–10 ainda precisam da integração dos respectivos estados completos.
+
+O catálogo SHARED_BACKINGS guarda cada root esparso uma vez, atribui slots estáveis durante a montagem do snapshot e recria views por (slot, offset, comprimento). Ao restaurar, as views que pertenciam a um mesmo root voltam a compartilhar a mesma alocação, em vez de receber cópias independentes. O codec do catálogo está pronto, mas a montagem global ainda precisa coletar referências de todos os address spaces, kernel objects e serviços HLE antes de salvar a máquina inteira.
 
 O caminho de API também está conectado: SaveStateFile::from_sections cria o envelope externo a partir de uma tabela validada, e decode_sections recupera a tabela interna depois que o arquivo externo foi validado para a identidade do jogo.
 
