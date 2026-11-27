@@ -202,9 +202,8 @@ fn read_generation(
         ));
     }
 
-    let capacity = usize::try_from(length).map_err(|_| {
-        SaveStateStoreError::InvalidSaveState(SaveStateError::InvalidLength)
-    })?;
+    let capacity = usize::try_from(length)
+        .map_err(|_| SaveStateStoreError::InvalidSaveState(SaveStateError::InvalidLength))?;
     let mut encoded = Vec::new();
     encoded
         .try_reserve_exact(capacity)
