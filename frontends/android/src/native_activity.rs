@@ -759,6 +759,8 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
     let mut last_media_poll = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
+    let mut audio_pause_state = None;
+    let mut last_audio_pause_error: Option<String> = None;
     let mut attached_queue = Raw::default();
     // Reuse touch-event storage across motion callbacks instead of allocating
     // a new pointer Vec for every movement event.
@@ -813,6 +815,28 @@ fn run_app_thread(host: &Host, games_dir: PathBuf) {
             Duration::from_millis(250)
         };
         poll_looper(wait, &mut app, attached_queue, &mut pointer_scratch);
+
+        // Pause also when the Activity is backgrounded, so queued game audio
+        // cannot continue playing behind another app or after the screen closes.
+        let audio_should_pause = !resumed || app.is_game_menu_open();
+        if audio_pause_state != Some(audio_should_pause) {
+            if let Some(audio) = audio.as_mut() {
+                match audio.set_paused(audio_should_pause) {
+                    Ok(()) => {
+                        audio_pause_state = Some(audio_should_pause);
+                        last_audio_pause_error = None;
+                    }
+                    Err(message) => {
+                        if last_audio_pause_error.as_deref() != Some(message.as_str()) {
+                            eprintln!("Android audio pause/flush failed: {message}");
+                            last_audio_pause_error = Some(message);
+                        }
+                    }
+                }
+            } else {
+                audio_pause_state = Some(audio_should_pause);
+            }
+        }
 
         if resumed && !window.is_null() && Instant::now() >= next_frame {
             let now = Instant::now();
