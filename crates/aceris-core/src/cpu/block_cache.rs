@@ -385,6 +385,74 @@ mod tests {
     }
 
     #[test]
+    fn native_ir_memory_and_multiply_families_match_precise_interpreter() {
+        let program = [
+            0xE580_1000, // STR r1, [r0]
+            0xE590_4000, // LDR r4, [r0]
+            0xE5C0_1001, // STRB r1, [r0, #1]
+            0xE5D0_5001, // LDRB r5, [r0, #1]
+            0xE180_10B2, // STRH r1, [r0, r2]
+            0xE190_60B2, // LDRH r6, [r0, r2]
+            0xE190_70D2, // LDRSB r7, [r0, r2]
+            0xE1D0_80F4, // LDRSH r8, [r0, #4]
+            0xE009_0291, // MUL r9, r1, r2
+            0xE02A_3291, // MLA r10, r1, r2, r3
+            0xE086_5291, // UMULL r5, r6, r1, r2
+            0xE145_62C1, // SMLALxy r5, r6, r1, r2
+            0xE105_42A1, // SMLAxy r5, r1, r2, r4
+            0xE704_5201, // SMLAD r4, r1, r2, r5
+            0xE8A0_000E, // STMIA r0!, {r1-r3}; ends the block
+        ];
+        let mut fast_bus = bus();
+        let mut precise_bus = bus();
+        for (index, word) in program.into_iter().enumerate() {
+            let address = 0x100 + index as u32 * 4;
+            fast_bus.memory.write32(address, word).unwrap();
+            precise_bus.memory.write32(address, word).unwrap();
+        }
+
+        let mut fast_cpu = Arm11Core::new();
+        fast_cpu.regs[super::super::PC] = 0x100;
+        fast_cpu.regs[0] = 0x300;
+        fast_cpu.regs[1] = 0x1234_5678;
+        fast_cpu.regs[2] = 4;
+        fast_cpu.regs[3] = 0x0102_0304;
+        let mut precise_cpu = fast_cpu.clone();
+
+        for _ in 0..program.len() {
+            assert_eq!(
+                precise_cpu.step(&mut precise_bus).unwrap(),
+                super::super::StepEvent::Executed
+            );
+        }
+        let (executed, exit) = fast_cpu
+            .run_fast(&mut fast_bus, program.len() as u64)
+            .unwrap();
+
+        assert_eq!(executed, program.len() as u64);
+        assert_eq!(exit, super::super::FastRunExit::Budget);
+        assert_eq!(fast_cpu.regs, precise_cpu.regs);
+        assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+        assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+        for address in (0x300..0x310).step_by(4) {
+            assert_eq!(
+                fast_bus.memory.read32(address).unwrap(),
+                precise_bus.memory.read32(address).unwrap(),
+                "memory at {address:#X}"
+            );
+        }
+        let block = fast_cpu.block_cache.entries[BlockCache::slot(0x100, 0x13)]
+            .expect("native IR block should have been retained");
+        assert_eq!(block.len(), program.len());
+        for index in 0..block.len() {
+            assert!(!matches!(
+                block.instruction(index).unwrap().ir.operation,
+                IrOperation::A32Fallback(_)
+            ));
+        }
+    }
+
+    #[test]
     fn refuses_writable_or_unidentified_instruction_memory() {
         let mut bus = bus();
         let mut cache = BlockCache::default();
