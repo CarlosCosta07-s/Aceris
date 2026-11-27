@@ -187,3 +187,11 @@ Fontes de leitura: [releases do Black for Android](https://github.com/RanggaCasp
 - Usa uma janela fixa de até 300 amostras e só chama `Instant` quando a coleta está habilitada. Não muda orçamento guest, relógio, timers, resolução LCD, layout, áudio ou ritmo do sistema guest.
 - `App::step_into` inclui execução do jogo e composição do frame; não deve ser interpretado como CPU guest pura. A telemetria ainda não mede temperatura/bateria/ADPF nem custo isolado de cada estágio PICA.
 - Guia de ativação por ADB em `docs/ANDROID_DEVICE_TRIAL.md`. Próxima validação: CI e coleta de um aparelho físico em pelo menos 15 minutos, com identificação do SoC/GPU/driver e comparação Vulkan versus OpenGL ES.
+### Telemetria host desktop (27/11/2026)
+
+- Implementado monitor opt-in em `frontends/desktop/src/performance.rs`, habilitado por `ACERIS_PERFORMANCE_LOG=1` ou por `games/.aceris/desktop_performance_log_v1.txt` com conteúdo `1`.
+- Relatórios a cada cinco segundos, janela de até 300 amostras e modos separados `intro`, `library` e `game`.
+- Mede FPS apresentado, frametime host média/p50/p95, p95 da execução de um frame do sistema, composição/escala, processamento de áudio, apresentação host, intervalo entre apresentações e proporção do presenter GPU.
+- Na partida, `emulation_ms_p95` cronometra `run_frame_with_diagnostics`; não é custo isolado por instrução. `composition_ms_p95` mede apenas a composição final CPU dos LCDs. O presenter atual continua sendo saída host, não rasterização PICA200.
+- A coleta é desativada por padrão e usa `Instant` adicional somente quando habilitada. Não modifica relógio guest, timers, orçamento de instruções, áudio, frame pacing, resolução ou conteúdo das LCDs.
+- Procedimento e interpretação em `docs/PERFORMANCE_TESTING.md`. Próxima validação: build/teste desktop Windows/Linux/macOS e comparação release em hardware físico, Vulkan versus OpenGL e presenter GPU versus CPU sem mudar outras variáveis.
