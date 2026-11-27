@@ -449,7 +449,14 @@ impl App {
 
     fn render_virtual_controls_overlay(&self, frame: &mut [u8], pressed_mask: u32) {
         if self.library.virtual_controls_visible() {
-            overlay_virtual_pad(frame, self.width, self.height, pressed_mask);
+            frontend::blend_virtual_pad_overlay_into_with_opacity(
+                frame,
+                self.width,
+                self.height,
+                ORIENTATION_AUTO,
+                pressed_mask,
+                self.library.virtual_controls_opacity(),
+            );
         }
     }
 
@@ -1599,6 +1606,26 @@ mod tests {
         fs::remove_dir_all(dir).ok();
     }
 
+    #[test]
+    fn virtual_control_opacity_setting_changes_android_overlay_strength() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+        let original = [10u8, 20, 30, 255].repeat(400 * 800);
+
+        app.library.set_virtual_controls_opacity(0).unwrap();
+        let mut hidden_overlay = original.clone();
+        app.render_virtual_controls_overlay(&mut hidden_overlay, 0);
+        assert_eq!(hidden_overlay, original);
+
+        app.library.set_virtual_controls_opacity(255).unwrap();
+        let mut full_overlay = original.clone();
+        app.render_virtual_controls_overlay(&mut full_overlay, 0);
+        assert_ne!(full_overlay, original);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     #[test]
     fn android_keycodes_map_dpad_and_gamepad_buttons() {
         assert_eq!(pad_from_android_keycode(19), Some(frontend::buttons::UP));
