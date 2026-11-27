@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use aceris_core::System;
-use aceris_core::input::{pad, touch_from_surface_point};
+use aceris_core::input::{pad, pad_from_frontend_buttons, touch_from_surface_point};
 use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
     compute_screen_layout_for_mode,
@@ -208,8 +208,12 @@ impl App {
         let Some(bit) = pad_from_android_keycode(android_keycode) else {
             return false;
         };
+        // The host key map returns frontend button bits for key_mask and the
+        // on-screen overlay. Menu navigation uses the guest's hardware-order
+        // bits, so convert before comparing against input::pad constants.
+        let pad_bit = pad_from_frontend_buttons(bit);
         match self.screen {
-            Screen::Game if self.controls_editor && pressed && bit == pad::B => {
+            Screen::Game if self.controls_editor && pressed && pad_bit == pad::B => {
                 self.finish_control_editor();
             }
             Screen::Game => {
@@ -220,7 +224,7 @@ impl App {
                 }
                 self.apply_game_input();
             }
-            Screen::GameMenu if pressed => match bit {
+            Screen::GameMenu if pressed => match pad_bit {
                 pad::UP => {
                     self.quick_menu_selected = self.quick_menu_selected.saturating_sub(1);
                 }
@@ -232,7 +236,7 @@ impl App {
                 pad::B => self.resume_game(),
                 _ => {}
             },
-            Screen::GameMenuConfirm { action } if pressed => match bit {
+            Screen::GameMenuConfirm { action } if pressed => match pad_bit {
                 pad::UP => {
                     self.confirmation_selected = self.confirmation_selected.saturating_sub(1);
                 }
@@ -245,7 +249,7 @@ impl App {
             },
             Screen::GameMenuConfirm { .. } => {}
             Screen::GameMenu => {}
-            Screen::Library if pressed => match bit {
+            Screen::Library if pressed => match pad_bit {
                 pad::UP => self
                     .library
                     .move_selection_responsive(-1, self.width, self.height),
@@ -1984,14 +1988,14 @@ mod tests {
         // The landscape layout starts from its own defaults and stores its own delta.
         app.resize(800, 400);
         touch(&mut app, 745.0, 304.0);
-        touch(&mut app, 725.0, 324.0);
-        assert_eq!(app.hit_virtual_button(725.0, 324.0), frontend::buttons::A);
+        touch(&mut app, 740.0, 309.0);
+        assert_eq!(app.hit_virtual_button(740.0, 309.0), frontend::buttons::A);
         app.set_pointers(&[]);
         assert_eq!(
             app.library
                 .virtual_control_positions()
                 .offset(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
-            frontend::VirtualControlOffset { x: -250, y: 500 }
+            frontend::VirtualControlOffset { x: -63, y: 125 }
         );
         assert_eq!(
             app.library
@@ -2015,7 +2019,7 @@ mod tests {
                 .library
                 .virtual_control_positions()
                 .offset(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
-            frontend::VirtualControlOffset { x: -250, y: 500 }
+            frontend::VirtualControlOffset { x: -63, y: 125 }
         );
 
         fs::remove_dir_all(dir).ok();
