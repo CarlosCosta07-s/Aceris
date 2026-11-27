@@ -14,6 +14,7 @@ use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
     video::{
         DualScreenDisplay, intro,
+        frontend::{ScreenLayoutMode, screen_layout_canvas_size},
         library::{ClickResult, Library, VISIBLE_ROWS},
         quick_menu::{self, PixelFormat as MenuPixelFormat},
     },
@@ -619,9 +620,16 @@ fn browse_library(
     }
 }
 
-/// Starts or moves a touch; a point outside the bottom screen ends it.
-fn touch_at(system: &mut System, x: i32, y: i32, scale: usize) {
-    match window::touch_from_window_point(x, y, scale) {
+/// Starts or moves a touch using the active layout's bottom-screen rectangle.
+fn touch_at(
+    system: &mut System,
+    x: i32,
+    y: i32,
+    scale: usize,
+    mode: ScreenLayoutMode,
+    swap_screens: bool,
+) {
+    match window::touch_from_window_point_with_layout(x, y, scale, mode, swap_screens) {
         Some((tx, ty)) => system.input_mut().touch(i32::from(tx), i32::from(ty)),
         None => system.input_mut().touch_end(),
     }
@@ -652,6 +660,8 @@ fn emulate(
     let mut frame = Vec::new();
     let mut menu_open = false;
     let mut menu_selected = 0usize;
+    let mut screen_layout_mode = ScreenLayoutMode::SideBySide;
+    let mut swap_screens = false;
     let mut pending_confirmation: Option<quick_menu::ConfirmationAction> = None;
     let mut confirmation_selected = 0usize;
     loop {
@@ -719,16 +729,30 @@ fn emulate(
                         pending_confirmation = Some(quick_menu::ConfirmationAction::Restart);
                         confirmation_selected = 0;
                     }
-                    _ => {
+                    2 => {
                         pending_confirmation =
                             Some(quick_menu::ConfirmationAction::BackToLibrary);
                         confirmation_selected = 0;
                     }
+                    3 => {
+                        screen_layout_mode = screen_layout_mode.next();
+                        let (width, height) = screen_layout_canvas_size(screen_layout_mode);
+                        window
+                            .resize(width as usize * scale, height as usize * scale)
+                            .map_err(|error| {
+                                format!("could not resize the gameplay layout: {error}")
+                            })?;
+                    }
+                    _ => {
+                        swap_screens = !swap_screens;
+                    }
                 },
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(screen_layout_mode);
                     if let Some(choice) = quick_menu::hit_test_confirmation(
-                        (window::GAME_CANVAS_WIDTH * scale) as u32,
-                        (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
                         x,
                         y,
                     ) {
@@ -744,9 +768,11 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Click { x, y } if menu_open => {
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(screen_layout_mode);
                     if let Some(action) = quick_menu::hit_test(
-                        (window::GAME_CANVAS_WIDTH * scale) as u32,
-                        (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
                         x,
                         y,
                     ) {
@@ -764,10 +790,22 @@ fn emulate(
                                     Some(quick_menu::ConfirmationAction::Restart);
                                 confirmation_selected = 0;
                             }
-                            _ => {
+                            2 => {
                                 pending_confirmation =
                                     Some(quick_menu::ConfirmationAction::BackToLibrary);
                                 confirmation_selected = 0;
+                            }
+                            3 => {
+                                screen_layout_mode = screen_layout_mode.next();
+                                let (width, height) = screen_layout_canvas_size(screen_layout_mode);
+                                window
+                                    .resize(width as usize * scale, height as usize * scale)
+                                    .map_err(|error| {
+                                        format!("could not resize the gameplay layout: {error}")
+                                    })?;
+                            }
+                            _ => {
+                                swap_screens = !swap_screens;
                             }
                         }
                     }
@@ -777,9 +815,11 @@ fn emulate(
                 {
                     keyboard.apply(key, pressed, system.input_mut());
                 }
-                window::WindowEvent::Click { x, y } if !menu_open => touch_at(system, x, y, scale),
+                window::WindowEvent::Click { x, y } if !menu_open => {
+                    touch_at(system, x, y, scale, screen_layout_mode, swap_screens)
+                }
                 window::WindowEvent::Pointer { x, y, down: true } if !menu_open => {
-                    touch_at(system, x, y, scale)
+                    touch_at(system, x, y, scale, screen_layout_mode, swap_screens)
                 }
                 window::WindowEvent::Pointer { down: false, .. } if !menu_open => {
                     system.input_mut().touch_end()
@@ -807,23 +847,32 @@ fn emulate(
         }
 
         let composition_started = performance.as_ref().map(|_| Instant::now());
-        if !window::compose_bgrx_into(system.display(), scale, &mut frame) {
+        if !window::compose_bgrx_layout_into(
+            system.display(),
+            scale,
+            screen_layout_mode,
+            swap_screens,
+            &mut frame,
+        ) {
             return Err("could not allocate the desktop presentation buffer".to_string());
         }
+        let (canvas_width, canvas_height) = screen_layout_canvas_size(screen_layout_mode);
+        let frame_width = canvas_width as usize * scale;
+        let frame_height = canvas_height as usize * scale;
         if menu_open {
             let rendered = match pending_confirmation {
                 Some(action) => quick_menu::render_confirmation_overlay(
                     &mut frame,
-                    (window::GAME_CANVAS_WIDTH * scale) as u32,
-                    (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                    frame_width as u32,
+                    frame_height as u32,
                     MenuPixelFormat::Bgrx8,
                     action,
                     confirmation_selected,
                 ),
                 None => quick_menu::render_overlay(
                     &mut frame,
-                    (window::GAME_CANVAS_WIDTH * scale) as u32,
-                    (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                    frame_width as u32,
+                    frame_height as u32,
                     MenuPixelFormat::Bgrx8,
                     menu_selected,
                 ),
@@ -842,8 +891,8 @@ fn emulate(
             window,
             presenter,
             &frame,
-            window::GAME_CANVAS_WIDTH * scale,
-            window::GAME_CANVAS_HEIGHT * scale,
+            frame_width,
+            frame_height,
         )?;
         let presentation_elapsed = presentation_started
             .map(|presentation_started| presentation_started.elapsed())
