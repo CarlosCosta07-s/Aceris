@@ -70,6 +70,17 @@ pub(super) enum FastOp {
         offset: u8,
         transfer_kind: u8,
     },
+    /// LDRH/STRH/LDRSB/LDRSH with a register offset.
+    HalfwordTransferReg {
+        pre_index: bool,
+        up: bool,
+        writeback: bool,
+        load: bool,
+        rn: u8,
+        rd: u8,
+        rm: u8,
+        transfer_kind: u8,
+    },
     /// LDM/STM register lists.
     BlockTransfer {
         pre_index: bool,
@@ -245,10 +256,10 @@ fn decode(word: u32) -> FastOp {
                     return FastOp::Generic;
                 }
 
-                // The immediate-offset single-halfword forms use bits 11:8
-                // and 3:0 as one unsigned 8-bit offset. Register-offset
-                // variants and LDRD/STRD retain the generic path for now.
-                if bit(word, 7) && bit(word, 22) {
+                // Single-register halfword/signed-byte transfers. Immediate
+                // offsets are split across bits[11:8] and [3:0]; register
+                // offsets require bits[11:8] == 0 and use Rm.
+                if bit(word, 7) {
                     let load = bit(word, 20);
                     let transfer_kind = field(word, 6, 5) as u8;
                     let single_transfer = (load && matches!(transfer_kind, 1..=3))
@@ -262,16 +273,32 @@ fn decode(word: u32) -> FastOp {
                         && rd != pc
                         && !(writeback && rn == rd)
                     {
-                        return FastOp::HalfwordTransfer {
-                            pre_index,
-                            up: bit(word, 23),
-                            writeback,
-                            load,
-                            rn: rn as u8,
-                            rd: rd as u8,
-                            offset: ((field(word, 11, 8) << 4) | field(word, 3, 0)) as u8,
-                            transfer_kind,
-                        };
+                        if bit(word, 22) {
+                            return FastOp::HalfwordTransfer {
+                                pre_index,
+                                up: bit(word, 23),
+                                writeback,
+                                load,
+                                rn: rn as u8,
+                                rd: rd as u8,
+                                offset: ((field(word, 11, 8) << 4)
+                                    | field(word, 3, 0)) as u8,
+                                transfer_kind,
+                            };
+                        }
+                        let rm = field(word, 3, 0);
+                        if field(word, 11, 8) == 0 && rm != pc {
+                            return FastOp::HalfwordTransferReg {
+                                pre_index,
+                                up: bit(word, 23),
+                                writeback,
+                                load,
+                                rn: rn as u8,
+                                rd: rd as u8,
+                                rm: rm as u8,
+                                transfer_kind,
+                            };
+                        }
                     }
                 }
                 return FastOp::Generic;
@@ -505,7 +532,30 @@ impl Arm11Core {
                     load,
                     rn,
                     rd,
-                    offset,
+                    u32::from(offset),
+                    transfer_kind,
+                );
+            }
+            FastOp::HalfwordTransferReg {
+                pre_index,
+                up,
+                writeback,
+                load,
+                rn,
+                rd,
+                rm,
+                transfer_kind,
+            } => {
+                return self.execute_cached_halfword_transfer(
+                    bus,
+                    word,
+                    pre_index,
+                    up,
+                    writeback,
+                    load,
+                    rn,
+                    rd,
+                    self.regs[usize::from(rm)],
                     transfer_kind,
                 );
             }
@@ -846,6 +896,10 @@ mod tests {
             0xE1C0_10B4, // STRH r1, [r0, #4]
             0xE1D0_20D1, // LDRSB r2, [r0, #1]
             0xE1D0_20F4, // LDRSH r2, [r0, #4]
+            0xE190_10B2, // LDRH r1, [r0, r2]
+            0xE180_10B2, // STRH r1, [r0, r2]
+            0xE190_30D2, // LDRSB r3, [r0, r2]
+            0xE190_30F2, // LDRSH r3, [r0, r2]
         ] {
             assert_cached_matches_generic(word, core.clone(), &memory);
         }
