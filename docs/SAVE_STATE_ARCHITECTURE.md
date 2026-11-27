@@ -75,6 +75,16 @@ Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11
 
 O catálogo SHARED_BACKINGS guarda cada root esparso uma vez, atribui slots estáveis durante a montagem do snapshot e recria views por (slot, offset, comprimento). Ao restaurar, as views que pertenciam a um mesmo root voltam a compartilhar a mesma alocação, em vez de receber cópias independentes. O codec do catálogo está pronto, mas a montagem global ainda precisa coletar referências de todos os address spaces, kernel objects e serviços HLE antes de salvar a máquina inteira.
 
+### Estado do kernel ARM11 — ACKERNEL v1
+
+A seção KERNEL (ID 4) agora possui um codec binário próprio, com versão, limites de quantidade e validação antes da substituição da tabela ativa. O payload registra objetos vivos e aposentados, handles duplicados, registro de serviços, referências de espera, pinos de WaitSynchronizationN, handoffs e o próximo handle. Os tipos cobertos são threads, eventos, mutexes, semáforos, timers, memory blocks, resource limits, portas, endpoints de sessão IPC, sessões HLE e address arbiters.
+
+Os memory blocks guardam somente (slot, offset, tamanho, permissões). Os bytes e as gerações dos monitores exclusivos continuam em SHARED_BACKINGS, evitando duplicação e preservando aliases entre address spaces, handles e serviços. A decodificação constrói uma tabela temporária e valida referências entre handles, objetos, endpoints de sessão, portas, filas e registros de serviço antes de trocar a tabela ativa.
+
+A sessão ARM11 expõe a gravação e restauração desta seção, que deve ocorrer depois da reconstrução do catálogo SHARED_BACKINGS. Testes cobrem round-trip de eventos/mutexes/aliases e shared memory, além da rejeição de payload malformado sem alterar a tabela corrente.
+
+**Limite desta etapa:** o codec cobre a tabela de objetos do kernel, não todos os campos de sincronização mantidos por Arm11ProcessSession (deadlines, arbiters em espera, WaitSynchronizationN pendente e bindings de interrupção), nem os estados de DSP/CSND/GSP/PICA/LCD/filesystem. Portanto, ainda não é um snapshot integral nem pode ser conectado diretamente ao Save/Load da interface.
+
 O caminho de API também está conectado: SaveStateFile::from_sections cria o envelope externo a partir de uma tabela validada, e decode_sections recupera a tabela interna depois que o arquivo externo foi validado para a identidade do jogo.
 
 ## Próximas etapas obrigatórias
