@@ -18,7 +18,10 @@ use aceris_core::{
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
-use performance::{DesktopFrameKind, DesktopPerformanceMonitor, performance_logging_enabled};
+use performance::{
+    DesktopFrameKind, DesktopFrameTimings, DesktopPerformanceMonitor,
+    performance_logging_enabled,
+};
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
@@ -331,12 +334,14 @@ fn play_intro(
         if let Some(performance) = performance.as_mut() {
             performance.record(
                 DesktopFrameKind::Intro,
-                started.elapsed(),
-                Duration::ZERO,
-                composition_elapsed,
-                Duration::ZERO,
-                presentation_elapsed,
-                had_gpu_presenter && presenter.is_some(),
+                DesktopFrameTimings {
+                    frame_time: started.elapsed(),
+                    emulation_time: Duration::ZERO,
+                    composition_time: composition_elapsed,
+                    audio_time: Duration::ZERO,
+                    presentation_time: presentation_elapsed,
+                    gpu_presented: had_gpu_presenter && presenter.is_some(),
+                },
             );
         }
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
@@ -593,12 +598,14 @@ fn browse_library(
         if let Some(performance) = performance.as_mut() {
             performance.record(
                 DesktopFrameKind::Library,
-                started.elapsed(),
-                Duration::ZERO,
-                composition_elapsed,
-                Duration::ZERO,
-                presentation_elapsed,
-                had_gpu_presenter && presenter.is_some(),
+                DesktopFrameTimings {
+                    frame_time: started.elapsed(),
+                    emulation_time: Duration::ZERO,
+                    composition_time: composition_elapsed,
+                    audio_time: Duration::ZERO,
+                    presentation_time: presentation_elapsed,
+                    gpu_presented: had_gpu_presenter && presenter.is_some(),
+                },
             );
         }
         animation_frame = animation_frame.wrapping_add(1);
@@ -692,12 +699,14 @@ fn emulate(
         if let Some(performance) = performance.as_mut() {
             performance.record(
                 DesktopFrameKind::Game,
-                started.elapsed(),
-                emulation_elapsed,
-                composition_elapsed,
-                audio_elapsed,
-                presentation_elapsed,
-                had_gpu_presenter && presenter.is_some(),
+                DesktopFrameTimings {
+                    frame_time: started.elapsed(),
+                    emulation_time: emulation_elapsed,
+                    composition_time: composition_elapsed,
+                    audio_time: audio_elapsed,
+                    presentation_time: presentation_elapsed,
+                    gpu_presented: had_gpu_presenter && presenter.is_some(),
+                },
             );
         }
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
