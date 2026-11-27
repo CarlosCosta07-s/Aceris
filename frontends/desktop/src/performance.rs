@@ -335,7 +335,7 @@ mod tests {
         let path = settings_directory.join("desktop_performance_log_v1.txt");
         std::fs::write(&path, "true").unwrap();
         assert!(!settings_file_enabled(&settings_directory));
-        std::fs::write(&path, "1\\n").unwrap();
+        std::fs::write(&path, "1\n").unwrap();
         assert!(settings_file_enabled(&settings_directory));
         std::fs::write(&path, "0").unwrap();
         assert!(!settings_file_enabled(&settings_directory));
