@@ -1031,7 +1031,7 @@ impl Arm11Core {
 
     // ----- branches ---------------------------------------------------------
 
-    fn branch_with_link(&mut self, word: u32) {
+    pub(super) fn branch_with_link(&mut self, word: u32) {
         let pc = self.pc();
         let offset = (((word & 0x00FF_FFFF) << 8) as i32 >> 6) as u32;
         if bit(word, 24) {

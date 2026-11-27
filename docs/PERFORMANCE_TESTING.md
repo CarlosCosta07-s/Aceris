@@ -273,3 +273,12 @@ O commit 0dc68f9a adicionou tracing opcional de resultados SVC e HLE mínimo csn
 - Padrões: 1.000.000 instruções por rodada e 3 rodadas. `ACERIS_MMU_PROBE_INSTRUCTIONS` e `ACERIS_MMU_PROBE_ROUNDS` permitem ajustar duração e amostras.
 - Esta é uma microsonda de CPU/MMU com `FlatMemory`; não inclui scheduler/process session, o D-cache completo do processo, periféricos, GPU ou apresentação. Ela isola o custo da tradução e do despacho e não deve ser descrita como FPS de jogo.
 - A suíte normal compila o teste, mas não o executa porque está marcado `#[ignore]`. O workflow CI tem uma etapa adicional Ubuntu-only que o executa explicitamente em release, com 1M de instruções × 3 rodadas; a saída aparece no log do job. A CI de 27/11/2026 passou em Ubuntu, Windows, macOS e Android arm64-v8a.
+
+### Cache de instruções A32 decodificadas (27/11/2026, Claude)
+
+- `crates/aceris-core/src/cpu/decode_cache.rs`: cache de mapeamento direto com 4096 entradas, indexado pela **codificação** da instrução, não pelo endereço. Como a decodificação depende só dos 32 bits, o cache nunca precisa de invalidação, seja por código reescrito, remapeado, CRO ou MMU. Formas decodificadas: data processing com imediato ou registrador com deslocamento imediato; LDR/STR/LDRB/STRB com offset imediato; B/BL. Qualquer forma com R15, codificação rejeitada pelo caminho genérico, LDRT/STRT ou condição 0xF cai em `execute_arm`.
+- Usado apenas pelo laço rápido (`run_fast`); o passo preciso continua usando `execute_arm`.
+- Teste diferencial `decoded_execution_matches_the_generic_interpreter`: 60 mil instruções aleatórias, com estado e memória aleatórios, comparando resultado, registradores, CPSR, branch e memória entre os dois caminhos.
+- Medição (callgrind, sonda, modo padrão): de 1,270 para 1,025 bilhão de instruções do host por quadro (−19%). Acumulado desde a linha de base de 1,865 bilhão: −45%.
+- Ideia inspirada no "decodificar uma vez, despachar muitas" do interpretador IR do PPSSPP (consulta somente leitura, GPLv2+); código próprio.
+- Próximos gargalos: laço/fetch (~44% próprio de `run_instructions`), escrita pelo modelo de D-cache (13%) e `locate` (10%).

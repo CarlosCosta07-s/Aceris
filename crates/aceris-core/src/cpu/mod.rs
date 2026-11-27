@@ -8,6 +8,7 @@ mod arm;
 mod condition;
 mod coprocessor;
 mod cp15;
+mod decode_cache;
 mod faults;
 mod mmu;
 mod mpcore_gic;
@@ -147,6 +148,8 @@ impl SavedStatusRegisters {
 /// One ARM11 processor core with banked exception-mode registers.
 #[derive(Clone, Debug, Default)]
 pub struct Arm11Core {
+    /// Decoded A32 forms for the fast dispatch loop (keyed by encoding).
+    decode_cache: decode_cache::DecodeCache,
     /// `r0`-`r15`. While an instruction executes, `r15` holds the address of
     /// that instruction; operand reads of `pc` add the pipeline offset.
     pub regs: [u32; 16],
@@ -487,7 +490,10 @@ impl Arm11Core {
                     THUMB_INSTRUCTION_SIZE,
                 )
             } else {
-                (self.execute_arm(bus, instruction)?, ARM_INSTRUCTION_SIZE)
+                (
+                    self.execute_arm_cached(bus, instruction)?,
+                    ARM_INSTRUCTION_SIZE,
+                )
             };
             if !self.branch_taken {
                 self.regs[PC] = pc.wrapping_add(size);
