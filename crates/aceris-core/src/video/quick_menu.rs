@@ -190,7 +190,7 @@ pub fn render_control_editor_hint(
     let scale = (width.min(height) / 240).clamp(1, 4) as usize;
     let panel = Rect {
         x: 8 * scale,
-        y: 8 * scale,
+        y: (height as usize * 42 / 100).saturating_sub(17 * scale),
         width: (width as usize - 116 * scale).min(230 * scale),
         height: 34 * scale,
     };
@@ -340,7 +340,7 @@ pub fn render_confirmation_overlay(
     true
 }
 
-/// Draws a dimmed, six-action quick menu over an existing RGBA8 or BGRX8 frame.
+/// Draws a dimmed, seven-action quick menu over an existing RGBA8 or BGRX8 frame.
 ///
 /// The function does not allocate and leaves the frame unchanged when its
 /// dimensions or byte length are invalid.
@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn sixth_action_renders_and_remains_reachable_on_compact_canvas() {
+    fn seventh_action_renders_and_remains_reachable_on_compact_canvas() {
         let (width, height) = (320u32, 240u32);
         let mut frame = vec![0u8; width as usize * height as usize * 4];
         assert!(render_overlay(
