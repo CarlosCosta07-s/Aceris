@@ -15,6 +15,7 @@ use aceris_core::{
     video::{
         DualScreenDisplay, intro,
         library::{ClickResult, Library, VISIBLE_ROWS},
+        quick_menu::{self, PixelFormat as MenuPixelFormat},
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
@@ -353,6 +354,7 @@ fn play_intro(
 /// How a stretch of emulation or browsing ended.
 enum Flow {
     Quit,
+    Restart,
     BackToLibrary,
 }
 
@@ -450,6 +452,9 @@ fn run_windowed(
         report_unhandled(system);
         match outcome {
             Ok(Flow::Quit) => return Ok(()),
+            Ok(Flow::Restart) => {
+                next = Some(path.clone());
+            }
             Ok(Flow::BackToLibrary) => {
                 window
                     .resize(window::CANVAS_WIDTH * scale, window::CANVAS_HEIGHT * scale)
@@ -645,39 +650,101 @@ fn emulate(
     let mut keyboard = window::KeyboardInput::default();
     let mut audio = audio::AudioOutput::open();
     let mut frame = Vec::new();
+    let mut menu_open = false;
+    let mut menu_selected = 0usize;
     loop {
         let started = Instant::now();
         for event in window.poll_events() {
             match event {
                 window::WindowEvent::CloseRequested => return Ok(Flow::Quit),
-                window::WindowEvent::Key(window::Key::Escape) => return Ok(Flow::BackToLibrary),
-                window::WindowEvent::Game { key, pressed } => {
+                window::WindowEvent::Key(window::Key::Escape) => {
+                    if menu_open {
+                        menu_open = false;
+                        keyboard.reset(system.input_mut());
+                    } else {
+                        menu_open = true;
+                        menu_selected = 0;
+                        keyboard.reset(system.input_mut());
+                    }
+                }
+                window::WindowEvent::Key(window::Key::Up) if menu_open => {
+                    menu_selected = menu_selected.saturating_sub(1);
+                }
+                window::WindowEvent::Key(window::Key::Down) if menu_open => {
+                    menu_selected = (menu_selected + 1).min(quick_menu::ACTION_COUNT - 1);
+                }
+                window::WindowEvent::Key(window::Key::Enter) if menu_open => match menu_selected {
+                    0 => {
+                        menu_open = false;
+                        keyboard.reset(system.input_mut());
+                    }
+                    1 => return Ok(Flow::Restart),
+                    _ => return Ok(Flow::BackToLibrary),
+                },
+                window::WindowEvent::Click { x, y } if menu_open => {
+                    if let Some(action) = quick_menu::hit_test(
+                        (window::GAME_CANVAS_WIDTH * scale) as u32,
+                        (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                        x,
+                        y,
+                    ) {
+                        menu_selected = action;
+                        match action {
+                            0 => {
+                                menu_open = false;
+                                keyboard.reset(system.input_mut());
+                            }
+                            1 => return Ok(Flow::Restart),
+                            _ => return Ok(Flow::BackToLibrary),
+                        }
+                    }
+                }
+                window::WindowEvent::Game { key, pressed } if !menu_open => {
                     keyboard.apply(key, pressed, system.input_mut());
                 }
-                window::WindowEvent::Click { x, y } => touch_at(system, x, y, scale),
-                window::WindowEvent::Pointer { x, y, down: true } => touch_at(system, x, y, scale),
-                window::WindowEvent::Pointer { down: false, .. } => system.input_mut().touch_end(),
+                window::WindowEvent::Click { x, y } if !menu_open => touch_at(system, x, y, scale),
+                window::WindowEvent::Pointer { x, y, down: true } if !menu_open => {
+                    touch_at(system, x, y, scale)
+                }
+                window::WindowEvent::Pointer { down: false, .. } if !menu_open => {
+                    system.input_mut().touch_end()
+                }
                 window::WindowEvent::FocusLost => keyboard.reset(system.input_mut()),
                 _ => {}
             }
         }
-        let emulation_started = performance.as_ref().map(|_| Instant::now());
-        run_frame_with_diagnostics(system)?;
-        let emulation_elapsed = emulation_started
-            .map(|emulation_started| emulation_started.elapsed())
-            .unwrap_or_default();
+        let mut emulation_elapsed = Duration::ZERO;
+        let mut audio_elapsed = Duration::ZERO;
+        if !menu_open {
+            let emulation_started = performance.as_ref().map(|_| Instant::now());
+            run_frame_with_diagnostics(system)?;
+            emulation_elapsed = emulation_started
+                .map(|emulation_started| emulation_started.elapsed())
+                .unwrap_or_default();
 
-        let audio_started = performance.as_ref().map(|_| Instant::now());
-        if let Some(audio) = audio.as_mut() {
-            audio.feed(system);
+            let audio_started = performance.as_ref().map(|_| Instant::now());
+            if let Some(audio) = audio.as_mut() {
+                audio.feed(system);
+            }
+            audio_elapsed = audio_started
+                .map(|audio_started| audio_started.elapsed())
+                .unwrap_or_default();
         }
-        let audio_elapsed = audio_started
-            .map(|audio_started| audio_started.elapsed())
-            .unwrap_or_default();
 
         let composition_started = performance.as_ref().map(|_| Instant::now());
         if !window::compose_bgrx_into(system.display(), scale, &mut frame) {
             return Err("could not allocate the desktop presentation buffer".to_string());
+        }
+        if menu_open
+            && !quick_menu::render_overlay(
+                &mut frame,
+                (window::GAME_CANVAS_WIDTH * scale) as u32,
+                (window::GAME_CANVAS_HEIGHT * scale) as u32,
+                MenuPixelFormat::Bgrx8,
+                menu_selected,
+            )
+        {
+            return Err("could not render the quick menu overlay".to_string());
         }
         let composition_elapsed = composition_started
             .map(|composition_started| composition_started.elapsed())
