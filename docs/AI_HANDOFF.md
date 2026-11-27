@@ -2927,3 +2927,13 @@ Esta etapa ficou isolada em `crates/aceris-core/src/cpu/mpcore_gic.rs`; não alt
 - Foi adicionado teste para confirmar que a janela, contagem de amostras, quadros apresentados e timestamp são reiniciados mantendo o modo Game.
 - O reset acontece tanto na tecla Esc quanto na ação Continuar pelo Enter/mouse. Não altera temporização guest nem a cadência do jogo.
 - Teste ainda não executado nesta sessão; CI e hardware físico pendentes.
+
+## Limpeza explícita da fila de áudio no menu rápido (27/11/2026, ChatGPT)
+
+- Android: `frontends/android/src/aaudio.rs` agora resolve dinamicamente `AAudioStream_requestPause`, `AAudioStream_requestFlush`, `AAudioStream_requestStart`, `AAudioStream_getState` e `AAudioStream_waitForStateChange`. A pausa aguarda a saída de PAUSING, limpa a fila apenas depois de PAUSED e aguarda a saída de FLUSHING; ao retomar, estados transitórios pendentes são reconciliados antes de reiniciar. `feed` ignora dados enquanto a saída está marcada como pausada.
+- `frontends/android/src/app.rs` expõe somente a consulta `is_game_menu_open`; `native_activity.rs` sincroniza pause/flush com o menu e com o estado de segundo plano da NativeActivity, registrando uma mensagem de diagnóstico quando uma transição falha.
+- Desktop: `frontends/desktop/src/audio.rs` acrescenta `Sink::flush` e `AudioOutput::flush`, que limpa buffers locais, recria o resampler (descartando histórico de interpolação) e delega ao backend. ALSA usa `snd_pcm_drop` seguido de `snd_pcm_prepare`; WinMM usa `waveOutReset` e desprepara os headers devolvidos; AudioQueue/CoreAudio usa `AudioQueueStop(immediate = true)`, marca os buffers como livres e reinicia a fila. `main.rs` chama a limpeza ao abrir o menu via Esc.
+- Teste unitário adicionado para assegurar que `AudioOutput::flush` limpa os buffers locais e chama o sink. Há também teste da classificação de estados silenciosos Android. Os testes não foram executados nesta sessão; não alegar build, Clippy ou testes aprovados sem CI verificável.
+- Validação pendente: transições AAudio em aparelhos reais (API 26+), reconexão/desconexão de dispositivos, saída audível do DSP/CSND, e funcionamento em Linux/Windows/macOS com hardware real. A limpeza da fila host não demonstra por si só que o áudio emulado do 3DS está correto.
+- M4.1 continua parcial: confirmação de perda de progresso, atalhos configuráveis e validação física não estão concluídos. Nenhuma alteração em CPU/Thumb, GPU/PICA, SVC, DSP/CSND, código reservado de Claude, dependências, assets, ROMs, firmware ou chaves. Todas as alterações seguem diretamente em `main`, sem branch ou PR.
+- Commits desta etapa: `50fca2e`, `802218c`, `5141ecb`, `5f648b8`, `62bd875`, `d4074a2`, `b16ee51`, `a9eca78` e `1390684`.
