@@ -506,3 +506,10 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [x] Validação CI no commit `fa0db091`: Rustfmt, builds e `cargo test --workspace` passaram em Windows, Ubuntu e macOS; Android ARM64 compilou frontend, benchmark e perfil de memória; o APK de desenvolvimento ARM64 foi empacotado.
 - [ ] Clippy completo permanece bloqueado por `clippy::needless_range_loop` em `crates/aceris-core/src/cpu/decode_cache.rs:386`, arquivo de outro agente. Não modificar sem autorização explícita.
 - [ ] Medir os caminhos em PCs e aparelhos Android físicos, Release, com a mesma cena/título e resolução; registrar backend, stride, p50/p95/p99 e relatórios de telemetria. Nenhum ganho de FPS foi medido ainda.
+
+### Otimizações recentes da composição host (27/11/2026)
+
+- [x] Desktop: nas escalas 2×–4×, expandir cada linha LCD contiguamente e replicá-la verticalmente, em vez de escrever colunas pixel a pixel. Teste diferencial compara cada pixel contra uma referência para 2×, 3× e 4×.
+- [x] Android: pré-calcular os possíveis círculos posteriores que podem cobrir cada controle virtual, evitando testar todos os controles em cada pixel; preservar a precedência visual em layouts compactos. Teste diferencial inclui sobreposição real em 64×48.
+- [ ] Aguardar CI da `main` para Rustfmt, Clippy, builds, suíte completa e APK ARM64; separar falhas preexistentes de `decode_cache.rs` sem modificar o arquivo de outro agente.
+- [ ] Medir os dois caminhos em PC x86-64 e Android ARM64 físicos em Release, com a mesma escala, resolução e cena; registrar frametime p50/p95/p99. Nenhum ganho de FPS foi medido ou declarado por estas mudanças.
