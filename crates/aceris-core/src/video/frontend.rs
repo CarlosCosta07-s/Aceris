@@ -78,6 +78,8 @@ pub struct VirtualControlOffset {
 pub struct VirtualControlPositions {
     portrait: [VirtualControlOffset; 12],
     landscape: [VirtualControlOffset; 12],
+    portrait_size_adjustments: [i8; 12],
+    landscape_size_adjustments: [i8; 12],
 }
 
 impl VirtualControlPositions {
@@ -117,6 +119,22 @@ impl VirtualControlPositions {
         }
     }
 
+    fn size_adjustments(&self, orientation: u32) -> &[i8; 12] {
+        if orientation == ORIENTATION_LANDSCAPE {
+            &self.landscape_size_adjustments
+        } else {
+            &self.portrait_size_adjustments
+        }
+    }
+
+    fn size_adjustments_mut(&mut self, orientation: u32) -> &mut [i8; 12] {
+        if orientation == ORIENTATION_LANDSCAPE {
+            &mut self.landscape_size_adjustments
+        } else {
+            &mut self.portrait_size_adjustments
+        }
+    }
+
     pub fn offset(&self, orientation: u32, button: u32) -> VirtualControlOffset {
         Self::index(button)
             .map(|index| self.offsets(orientation)[index])
@@ -151,20 +169,60 @@ impl VirtualControlPositions {
         )
     }
 
+    /// Returns a button's individual scale, independently for each orientation.
+    pub fn size_percent(&self, orientation: u32, button: u32) -> u8 {
+        Self::index(button)
+            .map(|index| {
+                (100i16 + i16::from(self.size_adjustments(orientation)[index]))
+                    .clamp(60, 150) as u8
+            })
+            .unwrap_or(100)
+    }
+
+    /// Sets a button's individual scale. The supported range is 60% through 150%.
+    pub fn set_size_percent(&mut self, orientation: u32, button: u32, size_percent: u8) -> bool {
+        let Some(index) = Self::index(button) else {
+            return false;
+        };
+        let size_percent = size_percent.clamp(60, 150);
+        self.size_adjustments_mut(orientation)[index] = size_percent as i8 - 100;
+        true
+    }
+
+    /// Adjusts one button's scale without changing any other control.
+    pub fn adjust_size_percent(
+        &mut self,
+        orientation: u32,
+        button: u32,
+        delta_percent: i16,
+    ) -> bool {
+        let current = i16::from(self.size_percent(orientation, button));
+        self.set_size_percent(
+            orientation,
+            button,
+            current.saturating_add(delta_percent).clamp(60, 150) as u8,
+        )
+    }
+
     pub fn reset_orientation(&mut self, orientation: u32) {
         self.offsets_mut(orientation)
             .fill(VirtualControlOffset::default());
+        self.size_adjustments_mut(orientation).fill(0);
     }
 
     pub fn to_config_string(&self) -> String {
-        let mut contents = String::from("ACERIS_VIRTUAL_CONTROL_POSITIONS_V1\n");
+        let mut contents = String::from("ACERIS_VIRTUAL_CONTROL_LAYOUT_V2\n");
         for (orientation, prefix) in [
             (ORIENTATION_PORTRAIT, "portrait"),
             (ORIENTATION_LANDSCAPE, "landscape"),
         ] {
             for (index, (_, name)) in Self::BUTTONS.iter().enumerate() {
                 let offset = self.offsets(orientation)[index];
-                contents.push_str(&format!("{prefix}_{name}={},{}\n", offset.x, offset.y));
+                let size_percent = self.size_percent(orientation, Self::BUTTONS[index].0);
+                contents.push_str(&format!(
+                    "{prefix}_{name}={},{},{}\n",
+                    offset.x, offset.y, size_percent
+                ));
             }
         }
         contents
@@ -172,9 +230,12 @@ impl VirtualControlPositions {
 
     pub fn from_config_str(contents: &str) -> Option<Self> {
         let mut lines = contents.lines();
-        if lines.next()? != "ACERIS_VIRTUAL_CONTROL_POSITIONS_V1" {
-            return None;
-        }
+        let version = lines.next()?;
+        let includes_size = match version {
+            "ACERIS_VIRTUAL_CONTROL_POSITIONS_V1" => false,
+            "ACERIS_VIRTUAL_CONTROL_LAYOUT_V2" => true,
+            _ => return None,
+        };
         let mut positions = Self::default();
         for (orientation, prefix) in [
             (ORIENTATION_PORTRAIT, "portrait"),
@@ -184,15 +245,27 @@ impl VirtualControlPositions {
                 let line = lines.next()?;
                 let key = format!("{prefix}_{name}=");
                 let values = line.strip_prefix(&key)?;
-                let (x, y) = values.split_once(',')?;
+                let mut parts = values.split(',');
                 let offset = VirtualControlOffset {
-                    x: x.parse().ok()?,
-                    y: y.parse().ok()?,
+                    x: parts.next()?.parse().ok()?,
+                    y: parts.next()?.parse().ok()?,
                 };
-                if !positions.set_offset(orientation, button, offset) {
+                let size_percent = if includes_size {
+                    parts.next()?.parse().ok()?
+                } else {
+                    100
+                };
+                if parts.next().is_some() {
                     return None;
                 }
-                if positions.offset(orientation, button) != offset {
+                if !positions.set_offset(orientation, button, offset)
+                    || !positions.set_size_percent(orientation, button, size_percent)
+                {
+                    return None;
+                }
+                if positions.offset(orientation, button) != offset
+                    || positions.size_percent(orientation, button) != size_percent
+                {
                     return None;
                 }
             }
@@ -599,6 +672,9 @@ fn button_shapes_with_positions(
         ORIENTATION_PORTRAIT
     };
     for shape in &mut shapes {
+        let individual_scale = f32::from(positions.size_percent(resolved_orientation, shape.bit))
+            / 100.0;
+        shape.radius *= individual_scale;
         let offset = positions.offset(resolved_orientation, shape.bit);
         let min_x = shape.radius;
         let max_x = (w - shape.radius).max(min_x);
@@ -1483,6 +1559,81 @@ mod tests {
             positions.offset(ORIENTATION_LANDSCAPE, buttons::A),
             VirtualControlOffset { x: -200, y: 500 }
         );
+    }
+
+    #[test]
+    fn individual_control_scales_round_trip_and_affect_only_selected_button() {
+        let (width, height) = (480, 800);
+        let mut positions = VirtualControlPositions::default();
+        assert!(positions.set_size_percent(ORIENTATION_PORTRAIT, buttons::A, 150));
+        assert!(positions.set_size_percent(ORIENTATION_LANDSCAPE, buttons::A, 60));
+
+        let encoded = positions.to_config_string();
+        let decoded = VirtualControlPositions::from_config_str(&encoded).unwrap();
+        assert_eq!(decoded, positions);
+        assert_eq!(decoded.size_percent(ORIENTATION_PORTRAIT, buttons::A), 150);
+        assert_eq!(decoded.size_percent(ORIENTATION_LANDSCAPE, buttons::A), 60);
+        assert_eq!(decoded.size_percent(ORIENTATION_PORTRAIT, buttons::B), 100);
+
+        let defaults = button_shapes_with_size_and_preset(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+        );
+        let enlarged = button_shapes_with_positions(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
+        );
+        let default_a = defaults.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        let enlarged_a = enlarged.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        let default_b = defaults.iter().find(|shape| shape.bit == buttons::B).unwrap();
+        let enlarged_b = enlarged.iter().find(|shape| shape.bit == buttons::B).unwrap();
+        assert_eq!(enlarged_a.x, default_a.x);
+        assert_eq!(enlarged_a.y, default_a.y);
+        assert!((enlarged_a.radius - default_a.radius * 1.5).abs() < 0.01);
+        assert_eq!(enlarged_b.radius, default_b.radius);
+
+        let just_outside_default = (
+            (default_a.x + default_a.radius * 1.2).round() as i32,
+            default_a.y.round() as i32,
+        );
+        assert_eq!(
+            hit_test_virtual_control_with_positions(
+                width,
+                height,
+                just_outside_default.0,
+                just_outside_default.1,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::Standard,
+                &VirtualControlPositions::default(),
+            ),
+            0
+        );
+        assert_eq!(
+            hit_test_virtual_control_with_positions(
+                width,
+                height,
+                just_outside_default.0,
+                just_outside_default.1,
+                ORIENTATION_PORTRAIT,
+                100,
+                VirtualControlPreset::Standard,
+                &positions,
+            ),
+            buttons::A
+        );
+
+        assert!(positions.adjust_size_percent(ORIENTATION_PORTRAIT, buttons::A, -200));
+        assert_eq!(positions.size_percent(ORIENTATION_PORTRAIT, buttons::A), 60);
+        assert_eq!(positions.size_percent(ORIENTATION_LANDSCAPE, buttons::A), 60);
+        assert!(!positions.set_size_percent(ORIENTATION_PORTRAIT, 0, 120));
     }
 
     #[test]
