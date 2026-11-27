@@ -131,10 +131,7 @@ impl DesktopPerformanceMonitor {
             self.presented_frames,
             self.gpu_presented_frames,
         );
-        eprintln!(
-            "Aceris desktop performance [{}]: {report}",
-            kind.label()
-        );
+        eprintln!("Aceris desktop performance [{}]: {report}", kind.label());
         self.reset(kind);
     }
 
@@ -355,13 +352,7 @@ mod tests {
         let mut storage = [FrameSample::default(); SAMPLE_CAPACITY];
         storage[..samples.len()].copy_from_slice(&samples);
 
-        let report = summarize(
-            &storage,
-            samples.len(),
-            Duration::from_secs(5),
-            5,
-            3,
-        );
+        let report = summarize(&storage, samples.len(), Duration::from_secs(5), 5, 3);
 
         assert_eq!(report.presented_fps, 1.0);
         assert_eq!(report.frame_average_ms, 6.0);
