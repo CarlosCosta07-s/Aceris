@@ -1814,16 +1814,12 @@ mod tests {
         // Move A 20x40 pixels in portrait; settings use normalized coordinates.
         touch(&mut app, 361.0, 608.0);
         touch(&mut app, 381.0, 648.0);
-        assert_eq!(
-            app.hit_virtual_button(381.0, 648.0),
-            frontend::buttons::A
-        );
+        assert_eq!(app.hit_virtual_button(381.0, 648.0), frontend::buttons::A);
         app.set_pointers(&[]);
         assert_eq!(
-            app.library.virtual_control_positions().offset(
-                frontend::ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            app.library
+                .virtual_control_positions()
+                .offset(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
             frontend::VirtualControlOffset { x: 500, y: 500 }
         );
 
@@ -1831,23 +1827,18 @@ mod tests {
         app.resize(800, 400);
         touch(&mut app, 745.0, 304.0);
         touch(&mut app, 725.0, 324.0);
-        assert_eq!(
-            app.hit_virtual_button(725.0, 324.0),
-            frontend::buttons::A
-        );
+        assert_eq!(app.hit_virtual_button(725.0, 324.0), frontend::buttons::A);
         app.set_pointers(&[]);
         assert_eq!(
-            app.library.virtual_control_positions().offset(
-                frontend::ORIENTATION_LANDSCAPE,
-                frontend::buttons::A
-            ),
+            app.library
+                .virtual_control_positions()
+                .offset(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
             frontend::VirtualControlOffset { x: -250, y: 500 }
         );
         assert_eq!(
-            app.library.virtual_control_positions().offset(
-                frontend::ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            app.library
+                .virtual_control_positions()
+                .offset(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
             frontend::VirtualControlOffset { x: 500, y: 500 }
         );
 
@@ -1855,17 +1846,17 @@ mod tests {
         assert!(!app.controls_editor);
         let reopened = App::new(&dir);
         assert_eq!(
-            reopened.library.virtual_control_positions().offset(
-                frontend::ORIENTATION_PORTRAIT,
-                frontend::buttons::A
-            ),
+            reopened
+                .library
+                .virtual_control_positions()
+                .offset(frontend::ORIENTATION_PORTRAIT, frontend::buttons::A),
             frontend::VirtualControlOffset { x: 500, y: 500 }
         );
         assert_eq!(
-            reopened.library.virtual_control_positions().offset(
-                frontend::ORIENTATION_LANDSCAPE,
-                frontend::buttons::A
-            ),
+            reopened
+                .library
+                .virtual_control_positions()
+                .offset(frontend::ORIENTATION_LANDSCAPE, frontend::buttons::A),
             frontend::VirtualControlOffset { x: -250, y: 500 }
         );
 
