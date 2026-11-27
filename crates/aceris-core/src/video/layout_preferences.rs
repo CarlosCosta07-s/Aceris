@@ -18,11 +18,17 @@ pub struct ScreenLayoutProfile {
 
 impl ScreenLayoutProfile {
     pub const fn portrait_default() -> Self {
-        Self { mode: ScreenLayoutMode::Vertical, swap_screens: false }
+        Self {
+            mode: ScreenLayoutMode::Vertical,
+            swap_screens: false,
+        }
     }
 
     pub const fn landscape_default() -> Self {
-        Self { mode: ScreenLayoutMode::SideBySide, swap_screens: false }
+        Self {
+            mode: ScreenLayoutMode::SideBySide,
+            swap_screens: false,
+        }
     }
 }
 
@@ -92,13 +98,21 @@ impl ScreenLayoutPreferences {
                 ("portrait_mode", value) if portrait_mode.is_none() => {
                     portrait_mode = Some(parse_mode(value)?);
                 }
-                ("portrait_swap", "0") if portrait_swap.is_none() => portrait_swap = Some(false),
-                ("portrait_swap", "1") if portrait_swap.is_none() => portrait_swap = Some(true),
+                ("portrait_swap", "0") if portrait_swap.is_none() => {
+                    portrait_swap = Some(false);
+                }
+                ("portrait_swap", "1") if portrait_swap.is_none() => {
+                    portrait_swap = Some(true);
+                }
                 ("landscape_mode", value) if landscape_mode.is_none() => {
                     landscape_mode = Some(parse_mode(value)?);
                 }
-                ("landscape_swap", "0") if landscape_swap.is_none() => landscape_swap = Some(false),
-                ("landscape_swap", "1") if landscape_swap.is_none() => landscape_swap = Some(true),
+                ("landscape_swap", "0") if landscape_swap.is_none() => {
+                    landscape_swap = Some(false);
+                }
+                ("landscape_swap", "1") if landscape_swap.is_none() => {
+                    landscape_swap = Some(true);
+                }
                 ("game", value) if supports_games => {
                     let mut fields = value.split(',');
                     let identity = GameIdentity::parse_stable_key(fields.next()?)?;
@@ -141,7 +155,11 @@ impl ScreenLayoutPreferences {
 
     /// Selects the global profile matching the current surface orientation.
     pub fn profile_for_surface(&self, width: u32, height: u32) -> ScreenLayoutProfile {
-        if width >= height { self.landscape } else { self.portrait }
+        if width >= height {
+            self.landscape
+        } else {
+            self.portrait
+        }
     }
 
     /// Selects a title override when present, otherwise inheriting the global profile.
@@ -152,8 +170,12 @@ impl ScreenLayoutPreferences {
         height: u32,
     ) -> ScreenLayoutProfile {
         let global = self.profile_for_surface(width, height);
-        let Some(identity) = identity else { return global; };
-        let Some(overrides) = self.game_overrides.get(&identity) else { return global; };
+        let Some(identity) = identity else {
+            return global;
+        };
+        let Some(overrides) = self.game_overrides.get(&identity) else {
+            return global;
+        };
         if width >= height {
             overrides.landscape.unwrap_or(global)
         } else {
@@ -168,7 +190,11 @@ impl ScreenLayoutPreferences {
         height: u32,
         profile: ScreenLayoutProfile,
     ) {
-        if width >= height { self.landscape = profile; } else { self.portrait = profile; }
+        if width >= height {
+            self.landscape = profile;
+        } else {
+            self.portrait = profile;
+        }
     }
 
     /// Sets an override for a known title; no identity updates the global profile.
@@ -184,7 +210,11 @@ impl ScreenLayoutPreferences {
             return;
         };
         let entry = self.game_overrides.entry(identity).or_default();
-        if width >= height { entry.landscape = Some(profile); } else { entry.portrait = Some(profile); }
+        if width >= height {
+            entry.landscape = Some(profile);
+        } else {
+            entry.portrait = Some(profile);
+        }
     }
 
     /// Returns true when a title has at least one saved orientation override.
@@ -210,10 +240,18 @@ impl ScreenLayoutPreferences {
         for (identity, overrides) in &self.game_overrides {
             let key = identity.stable_key();
             if let Some(profile) = overrides.portrait {
-                contents.push_str(&format!("game={key},portrait,{},{}\n", mode_name(profile.mode), u8::from(profile.swap_screens)));
+                contents.push_str(&format!(
+                    "game={key},portrait,{},{}\n",
+                    mode_name(profile.mode),
+                    u8::from(profile.swap_screens),
+                ));
             }
             if let Some(profile) = overrides.landscape {
-                contents.push_str(&format!("game={key},landscape,{},{}\n", mode_name(profile.mode), u8::from(profile.swap_screens)));
+                contents.push_str(&format!(
+                    "game={key},landscape,{},{}\n",
+                    mode_name(profile.mode),
+                    u8::from(profile.swap_screens),
+                ));
             }
         }
         fs::write(settings_directory.join(FILE_NAME), contents)
@@ -251,8 +289,14 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_directory() -> std::path::PathBuf {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-        std::env::temp_dir().join(format!("aceris-layout-preferences-{}-{nonce}", std::process::id()))
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "aceris-layout-preferences-{}-{nonce}",
+            std::process::id()
+        ))
     }
 
     fn identity(title_id: u64) -> GameIdentity {
@@ -262,28 +306,73 @@ mod tests {
     #[test]
     fn defaults_keep_portrait_and_landscape_profiles_separate() {
         let preferences = ScreenLayoutPreferences::default();
-        assert_eq!(preferences.profile_for_surface(1080, 2400), ScreenLayoutProfile::portrait_default());
-        assert_eq!(preferences.profile_for_surface(2400, 1080), ScreenLayoutProfile::landscape_default());
+        assert_eq!(
+            preferences.profile_for_surface(1080, 2400),
+            ScreenLayoutProfile::portrait_default()
+        );
+        assert_eq!(
+            preferences.profile_for_surface(2400, 1080),
+            ScreenLayoutProfile::landscape_default()
+        );
     }
 
     #[test]
     fn globals_and_game_overrides_round_trip_and_persist_independently() {
         let directory = temporary_directory();
         let mut preferences = ScreenLayoutPreferences::default();
-        preferences.portrait = ScreenLayoutProfile { mode: ScreenLayoutMode::BottomEnlarged, swap_screens: true };
-        preferences.landscape = ScreenLayoutProfile { mode: ScreenLayoutMode::TopOnly, swap_screens: false };
+        preferences.portrait = ScreenLayoutProfile {
+            mode: ScreenLayoutMode::BottomEnlarged,
+            swap_screens: true,
+        };
+        preferences.landscape = ScreenLayoutProfile {
+            mode: ScreenLayoutMode::TopOnly,
+            swap_screens: false,
+        };
         let first = identity(0x0004_0000_1234_5600);
         let second = identity(0x0004_0000_1234_5601);
-        preferences.set_profile_for_game(Some(first), 1080, 2400, ScreenLayoutProfile { mode: ScreenLayoutMode::TopEnlarged, swap_screens: false });
-        preferences.set_profile_for_game(Some(first), 2400, 1080, ScreenLayoutProfile { mode: ScreenLayoutMode::BottomOnly, swap_screens: true });
-        preferences.set_profile_for_game(Some(second), 1080, 2400, ScreenLayoutProfile { mode: ScreenLayoutMode::TopOnly, swap_screens: true });
+        preferences.set_profile_for_game(
+            Some(first),
+            1080,
+            2400,
+            ScreenLayoutProfile {
+                mode: ScreenLayoutMode::TopEnlarged,
+                swap_screens: false,
+            },
+        );
+        preferences.set_profile_for_game(
+            Some(first),
+            2400,
+            1080,
+            ScreenLayoutProfile {
+                mode: ScreenLayoutMode::BottomOnly,
+                swap_screens: true,
+            },
+        );
+        preferences.set_profile_for_game(
+            Some(second),
+            1080,
+            2400,
+            ScreenLayoutProfile {
+                mode: ScreenLayoutMode::TopOnly,
+                swap_screens: true,
+            },
+        );
 
         preferences.save(&directory).unwrap();
         let reopened = ScreenLayoutPreferences::load(&directory);
         assert_eq!(reopened, preferences);
-        assert_eq!(reopened.profile_for_game(Some(first), 1080, 2400).mode, ScreenLayoutMode::TopEnlarged);
-        assert_eq!(reopened.profile_for_game(Some(first), 2400, 1080).mode, ScreenLayoutMode::BottomOnly);
-        assert_eq!(reopened.profile_for_game(Some(second), 1080, 2400).mode, ScreenLayoutMode::TopOnly);
+        assert_eq!(
+            reopened.profile_for_game(Some(first), 1080, 2400).mode,
+            ScreenLayoutMode::TopEnlarged
+        );
+        assert_eq!(
+            reopened.profile_for_game(Some(first), 2400, 1080).mode,
+            ScreenLayoutMode::BottomOnly
+        );
+        assert_eq!(
+            reopened.profile_for_game(Some(second), 1080, 2400).mode,
+            ScreenLayoutMode::TopOnly
+        );
         assert_eq!(reopened.profile_for_game(None, 1080, 2400), reopened.portrait);
         fs::remove_dir_all(directory).ok();
     }
@@ -293,21 +382,39 @@ mod tests {
         let mut preferences = ScreenLayoutPreferences::default();
         let first = identity(0x0004_0000_1234_5600);
         let second = identity(0x0004_0000_1234_5601);
-        let custom = ScreenLayoutProfile { mode: ScreenLayoutMode::TopOnly, swap_screens: true };
+        let custom = ScreenLayoutProfile {
+            mode: ScreenLayoutMode::TopOnly,
+            swap_screens: true,
+        };
         preferences.set_profile_for_game(Some(first), 1080, 2400, custom);
-        assert_eq!(preferences.profile_for_game(None, 1080, 2400), ScreenLayoutProfile::portrait_default());
-        assert_eq!(preferences.profile_for_game(Some(second), 1080, 2400), ScreenLayoutProfile::portrait_default());
+        assert_eq!(
+            preferences.profile_for_game(None, 1080, 2400),
+            ScreenLayoutProfile::portrait_default()
+        );
+        assert_eq!(
+            preferences.profile_for_game(Some(second), 1080, 2400),
+            ScreenLayoutProfile::portrait_default()
+        );
         assert!(preferences.reset_game_overrides(first));
         assert!(!preferences.reset_game_overrides(first));
         assert!(!preferences.game_has_overrides(first));
-        assert_eq!(preferences.profile_for_game(Some(first), 1080, 2400), ScreenLayoutProfile::portrait_default());
+        assert_eq!(
+            preferences.profile_for_game(Some(first), 1080, 2400),
+            ScreenLayoutProfile::portrait_default()
+        );
     }
 
     #[test]
     fn legacy_v1_preferences_migrate_to_global_only_v2_state() {
         let legacy = "ACERIS_SCREEN_LAYOUT_PREFERENCES_V1\nportrait_mode=top_enlarged\nportrait_swap=1\nlandscape_mode=side_by_side\nlandscape_swap=0\n";
         let parsed = ScreenLayoutPreferences::parse(legacy).unwrap();
-        assert_eq!(parsed.portrait, ScreenLayoutProfile { mode: ScreenLayoutMode::TopEnlarged, swap_screens: true });
+        assert_eq!(
+            parsed.portrait,
+            ScreenLayoutProfile {
+                mode: ScreenLayoutMode::TopEnlarged,
+                swap_screens: true,
+            }
+        );
         assert_eq!(parsed.landscape, ScreenLayoutProfile::landscape_default());
         assert!(parsed.game_overrides.is_empty());
     }
@@ -325,16 +432,33 @@ mod tests {
             "ACERIS_SCREEN_LAYOUT_PREFERENCES_V2\nportrait_mode=vertical\nportrait_swap=0\nlandscape_mode=side_by_side\nlandscape_swap=0\ngame=title-v1:00040000123456xz,portrait,top_only,0",
         ];
         for contents in invalid {
-            assert_eq!(ScreenLayoutPreferences::parse(contents), None, "accepted malformed preferences: {contents:?}");
+            assert_eq!(
+                ScreenLayoutPreferences::parse(contents),
+                None,
+                "accepted malformed preferences: {contents:?}"
+            );
         }
     }
 
     #[test]
     fn setting_one_orientation_does_not_mutate_the_other() {
         let mut preferences = ScreenLayoutPreferences::default();
-        preferences.set_profile_for_surface(1080, 2400, ScreenLayoutProfile { mode: ScreenLayoutMode::TopEnlarged, swap_screens: true });
-        assert_eq!(preferences.profile_for_surface(1080, 2400).mode, ScreenLayoutMode::TopEnlarged);
-        assert_eq!(preferences.profile_for_surface(2400, 1080), ScreenLayoutProfile::landscape_default());
+        preferences.set_profile_for_surface(
+            1080,
+            2400,
+            ScreenLayoutProfile {
+                mode: ScreenLayoutMode::TopEnlarged,
+                swap_screens: true,
+            },
+        );
+        assert_eq!(
+            preferences.profile_for_surface(1080, 2400).mode,
+            ScreenLayoutMode::TopEnlarged
+        );
+        assert_eq!(
+            preferences.profile_for_surface(2400, 1080),
+            ScreenLayoutProfile::landscape_default()
+        );
     }
 
     #[test]
