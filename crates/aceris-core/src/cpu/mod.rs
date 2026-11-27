@@ -444,11 +444,12 @@ impl Arm11Core {
         coprocessor_space && ((word >> 8) & 0xF == 15 || word >> 28 == 0xF)
     }
 
-    /// Executes up to `budget` instructions without the per-instruction
-    /// interrupt, sleep, MMU and SMP bookkeeping of [`Self::step`], in the
-    /// style of PPSSPP's interpreter dispatcher. Architectural results are
-    /// the same as calling `step` repeatedly: the loop leaves as soon as an
-    /// instruction needs the precise path or interrupt state may change.
+    /// Executes up to `budget` instructions without repeating the
+    /// per-instruction scheduler, interrupt and SMP checks of [`Self::step`].
+    /// With the MMU enabled, one translated bus and TLB are retained for the
+    /// batch; guest address translation and permission checks still apply to
+    /// every memory access. The loop leaves for precise execution when an
+    /// instruction or observable device-state change requires it.
     pub fn run_fast<B: Bus + ?Sized>(
         &mut self,
         bus: &mut B,
