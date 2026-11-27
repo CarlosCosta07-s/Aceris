@@ -309,6 +309,41 @@ mod tests {
     }
 
     #[test]
+    fn monitor_reports_host_metrics_after_the_configured_window() {
+        let mut monitor = FramePerformanceMonitor::new();
+        assert!(
+            monitor
+                .record(
+                    Duration::from_millis(10),
+                    Duration::from_millis(5),
+                    Duration::from_millis(2),
+                    true,
+                    true,
+                )
+                .is_none()
+        );
+
+        monitor.interval_started = Instant::now() - REPORT_INTERVAL;
+        let report = monitor
+            .record(
+                Duration::from_millis(12),
+                Duration::from_millis(6),
+                Duration::from_millis(3),
+                true,
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(report.sample_count, 2);
+        assert_eq!(report.render_p95_ms, 12.0);
+        assert_eq!(report.app_step_p95_ms, 6.0);
+        assert_eq!(report.presentation_p95_ms, 3.0);
+        assert_eq!(report.gpu_presentation_percent, 100.0);
+        assert_eq!(report.frames_not_presented, 0);
+        assert_eq!(monitor.sample_count, 0);
+    }
+
+    #[test]
     fn zero_samples_do_not_create_nan_percentages() {
         let storage = [FrameSample::default(); SAMPLE_CAPACITY];
         let report = summarize(
