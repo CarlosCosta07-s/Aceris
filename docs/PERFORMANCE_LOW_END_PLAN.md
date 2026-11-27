@@ -179,3 +179,11 @@ Fontes de leitura: [releases do Black for Android](https://github.com/RanggaCasp
 - Três ou mais amostras release por configuração; registrar instruções guest/s, quadros guest, FPS apresentado, frametime p50/p95, upload CPU→GPU, memória, temperaturas/estado térmico e bateria.
 - Fazer ensaio sustentado de pelo menos 15 minutos, separando cache frio e quente. Nenhum modo será promovido a padrão por um benchmark curto ou por resultado de runner em nuvem.
 - Aceite exige imagens LCD guest idênticas no mesmo estado de execução, temporização guest preservada, nenhuma perda de áudio/entrada e melhora mensurável no consumo, frametime ou estabilidade.
+
+### Telemetria host Android (27/11/2026)
+
+- Implementado monitor opt-in no render thread Android, habilitado quando `games/.aceris/android_performance_log_v1.txt` contém `1`.
+- A cada cinco segundos reporta FPS de apresentações concluídas, duração do render host (média/p50/p95), p95 de `App::step_into`, p95 da apresentação, intervalo p50/p95 entre apresentações, proporção de frames pelo presenter GPU e tentativas não apresentadas.
+- Usa uma janela fixa de até 300 amostras e só chama `Instant` quando a coleta está habilitada. Não muda orçamento guest, relógio, timers, resolução LCD, layout, áudio ou ritmo do sistema guest.
+- `App::step_into` inclui execução do jogo e composição do frame; não deve ser interpretado como CPU guest pura. A telemetria ainda não mede temperatura/bateria/ADPF nem custo isolado de cada estágio PICA.
+- Guia de ativação por ADB em `docs/ANDROID_DEVICE_TRIAL.md`. Próxima validação: CI e coleta de um aparelho físico em pelo menos 15 minutos, com identificação do SoC/GPU/driver e comparação Vulkan versus OpenGL ES.
