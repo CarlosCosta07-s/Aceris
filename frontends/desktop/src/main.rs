@@ -31,7 +31,7 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 fn print_usage() {
@@ -95,6 +95,86 @@ fn dump_lcd(display: &DualScreenDisplay, dir: &Path) -> io::Result<()> {
         fs::write(dir.join(name), surface.to_png())?;
     }
     Ok(())
+}
+
+/// Converts a composed desktop BGRX frame to a PNG in the local screenshot directory.
+fn save_screenshot_bgrx(
+    bgrx: &[u8],
+    width: usize,
+    height: usize,
+    directory: &Path,
+) -> io::Result<PathBuf> {
+    let expected = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(bgrx.len()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "desktop screenshot buffer does not match its dimensions",
+        ));
+    }
+
+    let rgba = bgrx_to_rgba(bgrx).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "desktop screenshot buffer is not a packed BGRX image",
+        )
+    })?;
+    let encoded = aceris_core::video::png::encode_rgba8(width, height, &rgba).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "could not encode desktop screenshot dimensions",
+        )
+    })?;
+
+    fs::create_dir_all(directory)?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = directory.join(format!("aceris-{timestamp}.png"));
+    fs::write(&path, encoded)?;
+    Ok(path)
+}
+
+/// Converts host BGRX pixels to tightly packed RGBA8 without trusting X as alpha.
+fn bgrx_to_rgba(bgrx: &[u8]) -> Option<Vec<u8>> {
+    if bgrx.len() % 4 != 0 {
+        return None;
+    }
+    let mut rgba = Vec::new();
+    rgba.try_reserve_exact(bgrx.len()).ok()?;
+    for pixel in bgrx.chunks_exact(4) {
+        rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
+    }
+    Some(rgba)
+}
+
+#[cfg(test)]
+mod screenshot_tests {
+    use super::*;
+
+    #[test]
+    fn desktop_bgrx_screenshot_conversion_preserves_rgb_and_sets_opaque_alpha() {
+        assert_eq!(bgrx_to_rgba(&[30, 20, 10, 0]), Some(vec![10, 20, 30, 255]));
+        assert_eq!(bgrx_to_rgba(&[0, 1, 2]), None);
+    }
+
+    #[test]
+    fn desktop_screenshot_writer_creates_png() {
+        let directory = env::temp_dir().join(format!(
+            "aceris-desktop-screenshot-{}",
+            std::process::id()
+        ));
+        let path = save_screenshot_bgrx(&[30, 20, 10, 0], 1, 1, &directory).unwrap();
+        let encoded = fs::read(&path).unwrap();
+        assert_eq!(
+            &encoded[..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        assert_eq!(&encoded[16..24], &[0, 0, 0, 1, 0, 0, 0, 1]);
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 /// Host directory holding a game's save data, extdata and SD card: `<game>.aceris-data`.
@@ -709,6 +789,7 @@ fn emulate(
     let mut confirmation_selected = 0usize;
     loop {
         let started = Instant::now();
+        let mut capture_screenshot = false;
         for event in window.poll_events() {
             match event {
                 window::WindowEvent::CloseRequested => return Ok(Flow::Quit),
@@ -822,6 +903,7 @@ fn emulate(
                             }
                         }
                     }
+                    6 => capture_screenshot = true,
                     _ => {}
                 },
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
@@ -929,6 +1011,7 @@ fn emulate(
                                     }
                                 }
                             }
+                            6 => capture_screenshot = true,
                             _ => {}
                         }
                     }
@@ -992,6 +1075,17 @@ fn emulate(
         let (canvas_width, canvas_height) = screen_layout_canvas_size(layout_profile.mode);
         let frame_width = canvas_width as usize * scale;
         let frame_height = canvas_height as usize * scale;
+        if capture_screenshot {
+            match save_screenshot_bgrx(
+                &frame,
+                frame_width,
+                frame_height,
+                &settings_directory.join("screenshots"),
+            ) {
+                Ok(path) => println!("Screenshot salvo em {}", path.display()),
+                Err(error) => eprintln!("Não foi possível salvar o screenshot: {error}"),
+            }
+        }
         if menu_open {
             let profile_label = if layout_preferences.game_has_override_for_surface(
                 system.game_identity(),
