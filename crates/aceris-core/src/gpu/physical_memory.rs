@@ -864,7 +864,6 @@ fn decode_snapshot(
 mod tests {
     use super::*;
 
-
     #[test]
     fn physical_memory_snapshot_round_trips_sparse_pages_allocations_and_exclusives() {
         let mut original = GpuPhysicalMemory::new();
