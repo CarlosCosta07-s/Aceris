@@ -34,6 +34,9 @@ pub const OUTPUT_RATE: u32 = 48_000;
 pub trait Sink {
     /// Queues samples without blocking; excess samples are dropped.
     fn write(&mut self, samples: &[i16]);
+
+    /// Discards queued and partially assembled samples, preserving the device.
+    fn flush(&mut self) -> Result<(), String>;
 }
 
 /// Feeds the core's mixed audio to the platform device.
@@ -59,6 +62,17 @@ impl AudioOutput {
                 None
             }
         }
+    }
+
+    /// Discards any samples still held by the frontend and its host device.
+    ///
+    /// Recreating the resampler also drops its interpolation history so audio
+    /// from before a pause cannot bleed into the first samples after resuming.
+    pub fn flush(&mut self) -> Result<(), String> {
+        self.mixed.clear();
+        self.resampled.clear();
+        self.resampler = Resampler::new(System::audio_sample_rate(), OUTPUT_RATE);
+        self.sink.flush()
     }
 
     /// Moves everything the DSP mixed since the last call to the device.
@@ -97,6 +111,37 @@ fn open_sink() -> Result<Box<dyn Sink>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct FlushRecordingSink(Arc<AtomicBool>);
+
+    impl Sink for FlushRecordingSink {
+        fn write(&mut self, _samples: &[i16]) {}
+
+        fn flush(&mut self) -> Result<(), String> {
+            self.0.store(true, Ordering::Release);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn flush_clears_frontend_buffers_and_calls_the_host_sink() {
+        let flushed = Arc::new(AtomicBool::new(false));
+        let mut output = AudioOutput {
+            sink: Box::new(FlushRecordingSink(flushed.clone())),
+            resampler: Resampler::new(System::audio_sample_rate(), OUTPUT_RATE),
+            mixed: vec![1, 2, 3, 4],
+            resampled: vec![5, 6, 7, 8],
+        };
+
+        output.flush().expect("test sink flushes");
+        assert!(flushed.load(Ordering::Acquire));
+        assert!(output.mixed.is_empty());
+        assert!(output.resampled.is_empty());
+    }
 
     #[test]
     fn opening_the_device_never_panics_even_without_sound_hardware() {
