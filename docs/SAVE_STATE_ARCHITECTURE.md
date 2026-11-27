@@ -131,3 +131,13 @@ A identidade é exata para o arquivo inteiro, não para um conteúdo normalizado
 - Falha ao salvar preserva o slot válido anterior.
 - Testes automatizados, boot homebrew contínuo e validação em desktop e Android são registrados.
 - Nenhuma ROM, firmware, chave ou dado extraído é armazenado no repositório.
+
+## Identidade da imagem ativa no carregamento
+
+Os fluxos principais desktop e Android usam `load_executable_file_with_identity`, no módulo `aceris_core::loaded_image`. Após o carregador aceitar o executável, essa API calcula o SHA-256 em fluxo sobre os bytes do arquivo completo e devolve `LoadedImageIdentity`, que reúne o formato, o `GameIdentity` validado (se houver) e o `SaveStateIdentity`.
+
+Para 3DSX, o Title ID permanece ausente, mas os bytes completos fornecem a identidade necessária para separar os slots de homebrew. A identificação não usa caminho ou nome e não normaliza arquivos repacotados. O arquivo selecionado deve permanecer inalterado durante o carregamento.
+
+O desktop retém o resultado durante a sessão; o app Android o expõe por `App::active_image_identity()` e limpa o valor ao sair do jogo. As entradas C ABI especializadas que recebem chaves explicitamente ainda não foram conectadas a esse wrapper.
+
+**Limite mantido:** a identidade agora acompanha os fluxos principais de carregamento, mas ainda não existe captura/restauração integral de `System`, safe point coordenado nem Save/Load funcional na interface. O fingerprint não é um snapshot da máquina e não comprova compatibilidade com jogos.
