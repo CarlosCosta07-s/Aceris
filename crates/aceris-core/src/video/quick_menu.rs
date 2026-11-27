@@ -801,16 +801,27 @@ mod tests {
             Some(DESKTOP_ACTION_COUNT - 1)
         );
         let android_geometry = geometry(width, height, ACTION_COUNT).unwrap();
-        let android_only = android_geometry.rows[DESKTOP_ACTION_COUNT];
-        assert_eq!(
-            hit_test_desktop(
+        for index in DESKTOP_ACTION_COUNT..ACTION_COUNT {
+            let row = android_geometry.rows[index];
+            assert_eq!(
+                hit_test(
+                    width,
+                    height,
+                    (row.x + row.width / 2) as i32,
+                    (row.y + row.height / 2) as i32,
+                ),
+                Some(index)
+            );
+        }
+        for row in &geometry.rows {
+            let action = hit_test_desktop(
                 width,
                 height,
-                (android_only.x + android_only.width / 2) as i32,
-                (android_only.y + android_only.height / 2) as i32,
-            ),
-            None
-        );
+                (row.x + row.width / 2) as i32,
+                (row.y + row.height / 2) as i32,
+            );
+            assert!(action.is_some_and(|index| index < DESKTOP_ACTION_COUNT));
+        }
     }
 
     #[test]
