@@ -762,9 +762,11 @@ fn validate_table(table: &Arm11KernelObjectTable) -> Result<(), KernelStateError
                             "session endpoint peer linkage is invalid",
                         ));
                     }
-                } else {
+                } else if !endpoint.remote_closed {
+                    // Closing one endpoint removes its object but leaves the
+                    // peer handle open and marked disconnected.
                     return Err(KernelStateError::InvalidData(
-                        "session endpoint peer is missing",
+                        "live session endpoint peer is missing",
                     ));
                 }
             }
@@ -1143,6 +1145,26 @@ mod tests {
         let after = table.encode_save_state_section(&catalog).unwrap();
         assert_eq!(before, after);
         assert_eq!(table.event_reset_type(event), Some(EventResetType::Sticky));
+    }
+
+    #[test]
+    fn kernel_section_round_trips_a_session_whose_remote_endpoint_was_closed() {
+        let mut table = Arm11KernelObjectTable::default();
+        let port = table.register_service_port(*b"test:svc", 1).unwrap();
+        let client = table.create_session_to_port(port).unwrap();
+        let server = table.accept_session(port).unwrap();
+        table.close_handle(client).unwrap();
+
+        let catalog = SharedMemoryBackingCatalog::new();
+        let section = table.encode_save_state_section(&catalog).unwrap();
+        let mut restored = Arm11KernelObjectTable::default();
+        restored
+            .restore_save_state_section(&section, &catalog)
+            .unwrap();
+
+        assert_eq!(restored.session_role(server), Some(SessionRole::Server));
+        assert_eq!(restored.session_port_key(server), Some(port));
+        assert_eq!(restored.service_port_handle(b"test:svc"), Some(port));
     }
 
     #[test]
