@@ -629,6 +629,31 @@ mod tests {
     }
 
     #[test]
+    fn keeps_flag_setting_mov_in_the_alu_operation() {
+        let entry = Entry {
+            word: 0xE3B0_0007, // MOVS r0, #7
+            condition: 0xE,
+            op: FastOp::DpImm {
+                opcode: 0xD,
+                set_flags: true,
+                rn: 0,
+                rd: 0,
+                imm: 7,
+                imm_carry: None,
+            },
+        };
+        assert!(matches!(
+            IrInstruction::lower(entry).operation,
+            IrOperation::AluImmediate {
+                set_flags: true,
+                opcode: 0xD,
+                immediate: 7,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn lowers_mvn_immediate_without_changing_flags() {
         let entry = Entry {
             word: 0xE3E0_0007, // MVN r0, #7
