@@ -61,8 +61,13 @@ impl SaveStateStore {
         };
 
         loop {
-            let path = generation_path(&directory, slot, generation);
-            let mut output = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            let temporary_path = temporary_generation_path(&directory, slot, generation);
+            let final_path = generation_path(&directory, slot, generation);
+            let mut output = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary_path)
+            {
                 Ok(file) => file,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     generation = generation
@@ -73,10 +78,28 @@ impl SaveStateStore {
                 Err(error) => return Err(map_io_error(error)),
             };
 
+            // A concurrent writer may have completed this generation after our
+            // initial directory scan but before we reserved its temporary name.
+            if fs::symlink_metadata(&final_path).is_ok() {
+                drop(output);
+                let _ = fs::remove_file(&temporary_path);
+                generation = generation
+                    .checked_add(1)
+                    .ok_or(SaveStateStoreError::GenerationExhausted)?;
+                continue;
+            }
+
             let write_result = output.write_all(&encoded).and_then(|()| output.sync_all());
             drop(output);
             if let Err(error) = write_result {
-                let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(&temporary_path);
+                return Err(map_io_error(error));
+            }
+
+            // The final name is immutable and appears only after the complete
+            // file has been synchronized. Both paths are on the same filesystem.
+            if let Err(error) = fs::rename(&temporary_path, &final_path) {
+                let _ = fs::remove_file(&temporary_path);
                 return Err(map_io_error(error));
             }
 
@@ -187,6 +210,10 @@ fn generation_path(directory: &Path, slot: u8, generation: u64) -> PathBuf {
     directory.join(format!(
         "slot-{slot:02}-g{generation:020}.{SAVE_STATE_EXTENSION}"
     ))
+}
+
+fn temporary_generation_path(directory: &Path, slot: u8, generation: u64) -> PathBuf {
+    directory.join(format!("slot-{slot:02}-g{generation:020}.tmp"))
 }
 
 fn read_generation(
@@ -374,8 +401,8 @@ mod tests {
             .expect("first generation should save");
 
         let directory = store.identity_directory(identity);
-        fs::write(generation_path(&directory, 1, 2), b"partial")
-            .expect("partial generation should be created");
+        fs::write(temporary_generation_path(&directory, 1, 2), b"partial")
+            .expect("partial temporary generation should be created");
         assert_eq!(store.load(1, identity).unwrap().metadata().frame_number, 1);
 
         store
