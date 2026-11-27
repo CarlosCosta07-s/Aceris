@@ -2586,19 +2586,18 @@ impl System {
         let raw_header = message.header().raw();
         let command = raw_header & 0xFFFF_0000;
         let parameters = message.normal_parameters();
-        let first = parameters.first().copied().unwrap_or(u32::MAX);
+        let first = parameters.first().copied();
         let result_only = || vec![command | 0x40, 0];
         let invalid_enum = || vec![command | 0x40, RESULT_INVALID_ENUM];
 
         match raw_header {
-            0x0001_0042 => {
-                if first > 4 {
-                    Some(invalid_enum())
-                } else {
-                    self.ndm.exclusive_state = first;
+            0x0001_0042 => match first {
+                Some(state) if state <= 4 => {
+                    self.ndm.exclusive_state = state;
                     Some(result_only())
                 }
-            }
+                _ => Some(invalid_enum()),
+            },
             0x0002_0002 => {
                 self.ndm.exclusive_state = 0;
                 Some(result_only())
@@ -2613,10 +2612,10 @@ impl System {
                 Some(result_only())
             }
             0x0006_0040 => {
-                if first == u32::MAX {
+                let Some(value) = first else {
                     return Some(invalid_enum());
-                }
-                let mask = first & 0x0F;
+                };
+                let mask = value & 0x0F;
                 self.ndm.daemon_mask &= !mask;
                 for index in 0..4 {
                     if mask & (1 << index) != 0 {
@@ -2630,10 +2629,10 @@ impl System {
                 Some(result_only())
             }
             0x0007_0040 => {
-                if first == u32::MAX {
+                let Some(value) = first else {
                     return Some(invalid_enum());
-                }
-                let mask = first & 0x0F;
+                };
+                let mask = value & 0x0F;
                 if (0..4).any(|index| {
                     mask & (1 << index) != 0 && self.ndm.daemon_suspend_count[index] == 0
                 }) {
@@ -2653,39 +2652,45 @@ impl System {
             }
             0x0008_0040 | 0x0009_0000 => Some(result_only()),
             0x000D_0040 => {
-                let Some(status) = self.ndm.daemon_status.get(first as usize).copied() else {
+                let Some(status) = first
+                    .and_then(|value| usize::try_from(value).ok())
+                    .and_then(|index| self.ndm.daemon_status.get(index).copied())
+                else {
                     return Some(invalid_enum());
                 };
                 Some(vec![command | 0x80, 0, status])
             }
             0x000E_0040 => {
-                let Some(count) = self.ndm.daemon_suspend_count.get(first as usize).copied() else {
+                let Some(count) = first
+                    .and_then(|value| usize::try_from(value).ok())
+                    .and_then(|index| self.ndm.daemon_suspend_count.get(index).copied())
+                else {
                     return Some(invalid_enum());
                 };
                 Some(vec![command | 0xC0, 0, count, count])
             }
             0x000F_0000 => Some(vec![command | 0xC0, 0, 0, 0]),
             0x0010_0040 => {
-                if first == u32::MAX {
+                let Some(interval) = first else {
                     return Some(invalid_enum());
-                }
-                self.ndm.scan_interval = first;
+                };
+                self.ndm.scan_interval = interval;
                 Some(result_only())
             }
             0x0011_0000 => Some(vec![command | 0x80, 0, self.ndm.scan_interval]),
             0x0012_0040 => {
-                if first == u32::MAX {
+                let Some(interval) = first else {
                     return Some(invalid_enum());
-                }
-                self.ndm.retry_interval = first;
+                };
+                self.ndm.retry_interval = interval;
                 Some(result_only())
             }
             0x0013_0000 => Some(vec![command | 0x80, 0, self.ndm.retry_interval]),
             0x0014_0040 => {
-                if first == u32::MAX {
+                let Some(value) = first else {
                     return Some(invalid_enum());
-                }
-                let mask = first & 0x0F;
+                };
+                let mask = value & 0x0F;
                 self.ndm.default_daemon_mask = mask;
                 self.ndm.daemon_mask = mask;
                 for index in 0..4 {
@@ -12724,6 +12729,26 @@ mod tests {
         assert_eq!(
             read_tls_ipc_response(&mut system, reply, 3),
             [0x0016_0080, 0, 0x09]
+        );
+
+        // The ABI accepts a full-width mask and uses only its low four bits.
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0006_0040, u32::MAX]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0006_0040, 0]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x000D_0040, 1]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 3),
+            [0x000D_0080, 0, 3]
+        );
+        let reply = write_tls_ipc_request(&mut system, ndm, &[0x0007_0040, u32::MAX]);
+        run_one_ipc_svc(&mut system);
+        assert_eq!(
+            read_tls_ipc_response(&mut system, reply, 2),
+            [0x0007_0040, 0]
         );
 
         assert!(system.unhandled_requests().is_empty());
