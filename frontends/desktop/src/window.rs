@@ -12,7 +12,10 @@
 use aceris_core::input::{CIRCLE_PAD_LIMIT, InputState, pad, touch_from_surface_point};
 use aceris_core::video::{
     DualScreenDisplay,
-    frontend::{ORIENTATION_LANDSCAPE, compute_screen_layout},
+    frontend::{
+        ORIENTATION_LANDSCAPE, ScreenLayoutMode, compute_screen_layout,
+        compute_screen_layout_for_mode, screen_layout_canvas_size,
+    },
 };
 use std::fmt;
 
@@ -201,15 +204,29 @@ impl KeyboardInput {
     }
 }
 
-/// Converts a game-window pixel into bottom-screen touch coordinates.
+/// Converts a point in the legacy side-by-side game window into bottom-screen touch.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn touch_from_window_point(x: i32, y: i32, scale: usize) -> Option<(u16, u16)> {
+    touch_from_window_point_with_layout(
+        x,
+        y,
+        scale,
+        ScreenLayoutMode::SideBySide,
+        false,
+    )
+}
+
+/// Converts a game-window point using the current screen layout and screen swap.
+pub fn touch_from_window_point_with_layout(
+    x: i32,
+    y: i32,
+    scale: usize,
+    mode: ScreenLayoutMode,
+    swap_screens: bool,
+) -> Option<(u16, u16)> {
     let scale = i32::try_from(scale.max(1)).ok()?;
-    let layout = compute_screen_layout(
-        GAME_CANVAS_WIDTH as u32,
-        GAME_CANVAS_HEIGHT as u32,
-        ORIENTATION_LANDSCAPE,
-    );
+    let (width, height) = screen_layout_canvas_size(mode);
+    let layout = compute_screen_layout_for_mode(width, height, mode, swap_screens);
     touch_from_surface_point(&layout, x.div_euclid(scale), y.div_euclid(scale))
 }
 
@@ -233,6 +250,104 @@ pub enum Key {
 /// The top LCD is always on the left; the bottom LCD is always on the right.
 /// The returned buffer is `GAME_CANVAS_WIDTH * scale` by
 /// `GAME_CANVAS_HEIGHT * scale`, in little-endian BGRX byte order.
+/// Composes the requested screen layout into a reusable BGRX output buffer.
+pub fn compose_bgrx_layout_into(
+    display: &DualScreenDisplay,
+    scale: usize,
+    mode: ScreenLayoutMode,
+    swap_screens: bool,
+    output: &mut Vec<u8>,
+) -> bool {
+    let scale = scale.max(1);
+    if mode == ScreenLayoutMode::SideBySide && !swap_screens {
+        return compose_bgrx_into(display, scale, output);
+    }
+
+    let (logical_width, logical_height) = screen_layout_canvas_size(mode);
+    let Some(width) = (logical_width as usize).checked_mul(scale) else {
+        output.clear();
+        return false;
+    };
+    let Some(height) = (logical_height as usize).checked_mul(scale) else {
+        output.clear();
+        return false;
+    };
+    let Some(byte_len) = width
+        .checked_mul(height)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+    else {
+        output.clear();
+        return false;
+    };
+    if output.capacity() < byte_len {
+        let additional = byte_len.saturating_sub(output.len());
+        if output.try_reserve_exact(additional).is_err() {
+            output.clear();
+            return false;
+        }
+    }
+    output.resize(byte_len, 0);
+    for pixel in output.chunks_exact_mut(4) {
+        pixel[3] = 0xFF;
+    }
+
+    let layout = compute_screen_layout_for_mode(
+        logical_width,
+        logical_height,
+        mode,
+        swap_screens,
+    );
+    let mut blit = |surface: &aceris_core::video::ScreenSurface, rect: aceris_core::video::frontend::ScreenRect| {
+        if rect.width == 0 || rect.height == 0 {
+            return;
+        }
+        let Some(destination_width) = (rect.width as usize).checked_mul(scale) else {
+            return;
+        };
+        let Some(destination_height) = (rect.height as usize).checked_mul(scale) else {
+            return;
+        };
+        let origin_x = rect.x.max(0) as usize * scale;
+        let origin_y = rect.y.max(0) as usize * scale;
+        for destination_y in 0..destination_height {
+            let source_y = destination_y * surface.height() / destination_height;
+            let source_row = source_y * surface.stride_bytes();
+            let output_row = ((origin_y + destination_y) * width + origin_x) * 4;
+            for destination_x in 0..destination_width {
+                let source_x = destination_x * surface.width() / destination_width;
+                let source_at = source_row + source_x * 4;
+                let output_at = output_row + destination_x * 4;
+                let pixel = &surface.pixels()[source_at..source_at + 4];
+                output[output_at..output_at + 4]
+                    .copy_from_slice(&[pixel[2], pixel[1], pixel[0], 0xFF]);
+            }
+        }
+    };
+
+    blit(display.top_left(), layout.top);
+    blit(display.bottom(), layout.bottom);
+    true
+}
+
+/// Composes the requested screen layout into an allocated BGRX buffer (test helper).
+#[cfg(test)]
+pub fn compose_bgrx_layout(
+    display: &DualScreenDisplay,
+    scale: usize,
+    mode: ScreenLayoutMode,
+    swap_screens: bool,
+) -> Vec<u8> {
+    let mut frame = Vec::new();
+    assert!(compose_bgrx_layout_into(
+        display,
+        scale,
+        mode,
+        swap_screens,
+        &mut frame,
+    ));
+    frame
+}
+
 #[cfg(test)]
 pub fn compose_bgrx(display: &DualScreenDisplay, scale: usize) -> Vec<u8> {
     let mut frame = Vec::new();
@@ -394,6 +509,96 @@ mod tests {
     fn pixel(buffer: &[u8], scale: usize, x: usize, y: usize) -> [u8; 4] {
         let at = (y * GAME_CANVAS_WIDTH * scale + x) * 4;
         buffer[at..at + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn each_layout_composes_the_correct_physical_lcd_and_bottom_touch_stays_aligned() {
+        let mut display = DualScreenDisplay::new().unwrap();
+        display
+            .surface_mut(ScreenTarget::TopLeft)
+            .clear([1, 2, 3, 255]);
+        display
+            .surface_mut(ScreenTarget::Bottom)
+            .clear([10, 20, 30, 255]);
+
+        for mode in [
+            ScreenLayoutMode::SideBySide,
+            ScreenLayoutMode::Vertical,
+            ScreenLayoutMode::TopEnlarged,
+            ScreenLayoutMode::BottomEnlarged,
+            ScreenLayoutMode::TopOnly,
+            ScreenLayoutMode::BottomOnly,
+        ] {
+            let (logical_width, logical_height) = screen_layout_canvas_size(mode);
+            let layout = compute_screen_layout_for_mode(
+                logical_width,
+                logical_height,
+                mode,
+                false,
+            );
+            let canvas = compose_bgrx_layout(&display, 2, mode, false);
+            assert_eq!(
+                canvas.len(),
+                logical_width as usize * 2 * logical_height as usize * 2 * 4,
+                "{mode:?}"
+            );
+
+            for (rect, expected) in [
+                (layout.top, [3, 2, 1, 255]),
+                (layout.bottom, [30, 20, 10, 255]),
+            ] {
+                if rect.width == 0 || rect.height == 0 {
+                    continue;
+                }
+                let x = (rect.x as usize + rect.width as usize / 2) * 2;
+                let y = (rect.y as usize + rect.height as usize / 2) * 2;
+                let at = (y * logical_width as usize * 2 + x) * 4;
+                assert_eq!(&canvas[at..at + 4], &expected, "{mode:?}");
+            }
+
+            if layout.bottom.width > 0 {
+                let x = layout.bottom.x * 2;
+                let y = layout.bottom.y * 2;
+                assert_eq!(
+                    touch_from_window_point_with_layout(x, y, 2, mode, false),
+                    Some((0, 0)),
+                    "{mode:?}"
+                );
+            } else {
+                assert_eq!(
+                    touch_from_window_point_with_layout(0, 0, 2, mode, false),
+                    None,
+                    "{mode:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn swapped_layout_keeps_the_bottom_screen_touchable_at_its_new_position() {
+        let mut display = DualScreenDisplay::new().unwrap();
+        display
+            .surface_mut(ScreenTarget::TopLeft)
+            .clear([1, 2, 3, 255]);
+        display
+            .surface_mut(ScreenTarget::Bottom)
+            .clear([10, 20, 30, 255]);
+        let mode = ScreenLayoutMode::Vertical;
+        let (width, height) = screen_layout_canvas_size(mode);
+        let layout = compute_screen_layout_for_mode(width, height, mode, true);
+        let canvas = compose_bgrx_layout(&display, 1, mode, true);
+        let at = (layout.bottom.y as usize * width as usize + layout.bottom.x as usize) * 4;
+        assert_eq!(&canvas[at..at + 4], &[30, 20, 10, 255]);
+        assert_eq!(
+            touch_from_window_point_with_layout(
+                layout.bottom.x,
+                layout.bottom.y,
+                1,
+                mode,
+                true
+            ),
+            Some((0, 0))
+        );
     }
 
     #[test]
