@@ -677,53 +677,100 @@ pub enum SharedMemoryStateError {
 impl fmt::Display for SharedMemoryStateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AllocationFailed => formatter.write_str("could not allocate shared-memory snapshot"),
+            Self::AllocationFailed => {
+                formatter.write_str("could not allocate shared-memory snapshot")
+            }
             Self::LockPoisoned => formatter.write_str("shared-memory backing lock is poisoned"),
-            Self::NotRootView => formatter.write_str("only a complete shared-memory root can be serialized"),
+            Self::NotRootView => {
+                formatter.write_str("only a complete shared-memory root can be serialized")
+            }
             Self::Truncated => formatter.write_str("shared-memory snapshot is truncated"),
-            Self::InvalidMagic => formatter.write_str("shared-memory snapshot signature is invalid"),
+            Self::InvalidMagic => {
+                formatter.write_str("shared-memory snapshot signature is invalid")
+            }
             Self::UnsupportedVersion(version) => {
-                write!(formatter, "shared-memory snapshot version {version} is unsupported")
+                write!(
+                    formatter,
+                    "shared-memory snapshot version {version} is unsupported"
+                )
             }
             Self::UnsupportedFlags(flags) => {
-                write!(formatter, "shared-memory snapshot flags {flags:#06X} are invalid")
+                write!(
+                    formatter,
+                    "shared-memory snapshot flags {flags:#06X} are invalid"
+                )
             }
             Self::InvalidRootLength(length) => {
                 write!(formatter, "shared-memory root length {length} is invalid")
             }
             Self::RootLengthMismatch { expected, actual } => {
-                write!(formatter, "shared-memory root length mismatch: expected {expected}, got {actual}")
+                write!(
+                    formatter,
+                    "shared-memory root length mismatch: expected {expected}, got {actual}"
+                )
             }
             Self::TooManyPages(count) => {
-                write!(formatter, "shared-memory snapshot contains too many pages: {count}")
+                write!(
+                    formatter,
+                    "shared-memory snapshot contains too many pages: {count}"
+                )
             }
             Self::TooManyExclusiveMonitors(count) => {
-                write!(formatter, "shared-memory snapshot contains too many exclusive monitors: {count}")
+                write!(
+                    formatter,
+                    "shared-memory snapshot contains too many exclusive monitors: {count}"
+                )
             }
             Self::InvalidPageIndex(page) => {
-                write!(formatter, "shared-memory page index {page} is outside its root")
+                write!(
+                    formatter,
+                    "shared-memory page index {page} is outside its root"
+                )
             }
             Self::DuplicatePage(page) => {
-                write!(formatter, "shared-memory page index {page} is duplicated or unordered")
+                write!(
+                    formatter,
+                    "shared-memory page index {page} is duplicated or unordered"
+                )
             }
             Self::InvalidExclusiveGranule(address) => {
-                write!(formatter, "shared-memory exclusive granule {address:#010X} is invalid")
+                write!(
+                    formatter,
+                    "shared-memory exclusive granule {address:#010X} is invalid"
+                )
             }
             Self::DuplicateExclusiveGranule(address) => {
-                write!(formatter, "shared-memory exclusive granule {address:#010X} is duplicated or unordered")
+                write!(
+                    formatter,
+                    "shared-memory exclusive granule {address:#010X} is duplicated or unordered"
+                )
             }
             Self::TooManyBackings(count) => {
-                write!(formatter, "shared-memory catalog contains too many roots: {count}")
+                write!(
+                    formatter,
+                    "shared-memory catalog contains too many roots: {count}"
+                )
             }
-            Self::InvalidCatalogEntry => formatter.write_str("shared-memory catalog entry is invalid"),
+            Self::InvalidCatalogEntry => {
+                formatter.write_str("shared-memory catalog entry is invalid")
+            }
             Self::InvalidBackingSlot(slot) => {
-                write!(formatter, "shared-memory backing slot {slot} does not exist")
+                write!(
+                    formatter,
+                    "shared-memory backing slot {slot} does not exist"
+                )
             }
-            Self::InvalidViewRange { slot, offset, length } => write!(
+            Self::InvalidViewRange {
+                slot,
+                offset,
+                length,
+            } => write!(
                 formatter,
                 "shared-memory view {offset:#X}+{length:#X} is outside backing slot {slot}"
             ),
-            Self::TrailingData => formatter.write_str("shared-memory snapshot contains trailing bytes"),
+            Self::TrailingData => {
+                formatter.write_str("shared-memory snapshot contains trailing bytes")
+            }
         }
     }
 }
@@ -850,7 +897,9 @@ fn decode_shared_memory_root(
         return Err(SharedMemoryStateError::TooManyPages(page_count));
     }
     if monitor_count as usize > max_monitors {
-        return Err(SharedMemoryStateError::TooManyExclusiveMonitors(monitor_count));
+        return Err(SharedMemoryStateError::TooManyExclusiveMonitors(
+            monitor_count,
+        ));
     }
 
     let page_bytes = (page_count as usize)
@@ -1011,7 +1060,7 @@ impl SharedMemoryBackingCatalog {
     pub(crate) fn encode(&self) -> Result<Vec<u8>, SharedMemoryStateError> {
         if self.roots.len() > MAX_SHARED_BACKING_CATALOG_ENTRIES {
             return Err(SharedMemoryStateError::TooManyBackings(
-                self.roots.len() as u32,
+                self.roots.len() as u32
             ));
         }
 
@@ -1081,8 +1130,8 @@ impl SharedMemoryBackingCatalog {
         for slot in 0..root_count {
             let length = read_state_u64(encoded, cursor)?;
             cursor += 8;
-            let length = usize::try_from(length)
-                .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
+            let length =
+                usize::try_from(length).map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
             let end = cursor
                 .checked_add(length)
                 .ok_or(SharedMemoryStateError::Truncated)?;
@@ -1090,7 +1139,10 @@ impl SharedMemoryBackingCatalog {
                 .get(cursor..end)
                 .ok_or(SharedMemoryStateError::Truncated)?;
             let root = SharedMemoryBacking::from_root_save_state(root_bytes)?;
-            if slots_by_backing_id.insert(root.backing_id(), slot).is_some() {
+            if slots_by_backing_id
+                .insert(root.backing_id(), slot)
+                .is_some()
+            {
                 return Err(SharedMemoryStateError::InvalidCatalogEntry);
             }
             roots.push(root);
