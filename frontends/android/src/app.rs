@@ -1309,7 +1309,7 @@ mod tests {
         app.activate_game_menu_action();
         assert_eq!(
             app.active_layout_profile().mode,
-            ScreenLayoutMode::Vertical
+            ScreenLayoutMode::TopEnlarged
         );
         assert!(matches!(app.screen(), Screen::GameMenu));
 
@@ -1327,6 +1327,22 @@ mod tests {
         );
         assert_eq!(layout.top, normal.bottom);
         assert_eq!(layout.bottom, normal.top);
+
+        // Recreating App reloads the separate portrait/landscape global profiles.
+        let mut reopened = App::new(&dir);
+        reopened.resize(1080, 2400);
+        assert_eq!(
+            reopened.active_layout_profile(),
+            ScreenLayoutProfile {
+                mode: ScreenLayoutMode::TopEnlarged,
+                swap_screens: true,
+            }
+        );
+        reopened.resize(2400, 1080);
+        assert_eq!(
+            reopened.active_layout_profile(),
+            ScreenLayoutProfile::landscape_default()
+        );
         fs::remove_dir_all(dir).ok();
     }
 
