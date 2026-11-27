@@ -531,8 +531,8 @@ fn reset_frame_background(
             }
 
             let start = i64::from(screen.x).clamp(0, width_bound) as usize;
-            let end = (i64::from(screen.x) + i64::from(screen.width))
-                .clamp(0, width_bound) as usize;
+            let end =
+                (i64::from(screen.x) + i64::from(screen.width)).clamp(0, width_bound) as usize;
             if start < end {
                 ranges[range_count] = (start, end);
                 range_count += 1;
@@ -1028,10 +1028,7 @@ mod tests {
             );
 
             assert!(compose_game_into(&display, width, height, &mut actual));
-            assert_eq!(
-                actual, expected,
-                "composition differs at {width}x{height}"
-            );
+            assert_eq!(actual, expected, "composition differs at {width}x{height}");
         }
     }
 
