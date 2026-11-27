@@ -77,3 +77,85 @@
 - Black for Android: https://github.com/RanggaCasper/Black-Android
 - Dragon Rage: https://github.com/dfdx047/Tenkaichi3DecompAndroid
 - Gen1Recomp: https://github.com/bryanthaboi/gen1recomp
+
+
+## Revisão comparativa aplicada ao Aceris — 27/11/2026
+
+Esta revisão foi feita sobre as revisões públicas abaixo. O objetivo é extrair contratos técnicos e métodos de validação; não incorporar código, testes, fixtures, shaders, nomes internos ou organização expressiva dos projetos consultados.
+
+| Projeto | Revisão pública examinada | Licença identificada | Uso permitido neste estudo |
+|---|---|---|---|
+| Azahar | `c5177f309d4f4efac669623dddeb08e2e5262da1` (27/11/2026) | GPL-3.0 | Comportamento do 3DS, scheduler, DSP, GSP, PICA200 e changelog |
+| PPSSPP | `1cd06ff11dd7010123e0b5ada244f76597c42ea5` (27/11/2026) | GPL-2.0-or-later | Separação interpretador/IR/JIT, validação automatizada e profiling |
+| PCSX2 | `51e3036bdb7cad7ae7e25ad8caa438b06f538c4e` (26/11/2026) | GPL-3.0 | Recompilação, estado virtual da máquina, diagnóstico por subsistema e regressões |
+
+O Aceris permanece MIT e integralmente em Rust. As licenças GPL dessas referências não são uma autorização para copiar nem incorporar código, testes, assets ou estrutura. Nenhum arquivo desses projetos foi adicionado ao workspace, Cargo.lock, CI ou produto.
+
+### 1. Azahar — contratos específicos do 3DS
+
+**Core 1 e ResourceLimit.** A revisão 2127.0 corrigiu a validação do limite de tempo do core 1. O valor 10000 é tratado no Azahar como exceção à preempção; não deve ser copiado como constante universal nem confundido com um orçamento de CPU. O Aceris ainda modela uma sessão ARM11 de um único core e não possui o scheduler do core 1. Portanto, a correção não pode ser transplantada como um simples retorno fixo de `CPU_TIME` em `GetResourceLimitCurrentValues`.
+
+Experimento próprio necessário antes de implementar essa área:
+
+1. Interpretar os descritores de limite de recursos da ACI do extended header, em particular o máximo de CPU time, sem presumir categoria ou valor.
+2. Especificar separadamente limite máximo, uso atual, política de preempção e o caso em que o core 1/scheduler ainda não existe.
+3. Cobrir SVC, valores inválidos, limites e mudanças de processo com testes de ABI independentes.
+4. Somente depois adicionar um scheduler de core adicional e comparar o comportamento com traces de homebrew.
+
+**DSP e tempo de áudio.** A revisão 2127.0 também ajustou a conclusão de sleep do DSP para o limite de dois frames de áudio. Isso é uma pista útil para modelar conclusão e despertar por relógio de áudio virtual, em vez de temporizadores host arbitrários. Ainda não prova que essa seja a causa da falha `Sound.init` no Cookie Clicker: o trace Aceris anterior não mostrou uma requisição DSP, então é necessário identificar primeiro até onde a inicialização guest chega (Service Manager, obtenção do handle, primeiro IPC e primeira submissão DSP).
+
+**GPU/GSP.** A referência reforça a necessidade de validar a cadeia completa guest → serviço GSP → fila GX/registradores PICA200 → framebuffer → LCD. Um triângulo preparado pelo host ou um framebuffer apresentado por `wgpu` não demonstra que os comandos DRAWARRAYS/DRAWELEMENTS e os shaders do guest foram executados corretamente. O renderer de software Aceris deve continuar como oráculo e fallback.
+
+### 2. PPSSPP — arquitetura de execução e desempenho
+
+A documentação do PPSSPP descreve a progressão conceitual interpretador → interpretador IR → JIT baseado em IR, com blocos de instruções e passes de otimização. O guest do PPSSPP é MIPS/PSP, não ARM11/3DS; instruções, ABI, temporização e modelo de memória não são transferíveis.
+
+Aplicação ao Aceris:
+
+- Preservar o interpretador A32/Thumb preciso como referência e fallback.
+- Medir o cache de decodificação e o cache de blocos separadamente.
+- Ampliar o IR somente quando operações, flags CPSR, condições, branches, faults, acessos à memória e efeitos colaterais tiverem equivalência diferencial.
+- Criar perfis release repetíveis para desktop e Android; não inferir ganho apenas pelo número de instruções que foram pré-decodificadas.
+- Iniciar JIT só depois de o IR e a invalidação de blocos terem contrato estável. Cada backend terá W^X, sincronização de cache de instruções, limites de memória, descarte de código e fallback explícitos.
+
+A suíte de testes deve comparar estado de registradores, CPSR, PC, memória e eventos entre o caminho preciso e o caminho IR; falhas precisam identificar a instrução guest e a primeira diferença observável.
+
+### 3. PCSX2 — disciplina de validação
+
+O PS2 tem arquitetura distinta, com CPU MIPS, unidades vetoriais e Graphics Synthesizer próprios. PCSX2 não é uma especificação do 3DS nem uma fonte para implementar PICA200, ARM11 ou serviços Nintendo.
+
+O que é útil como método:
+
+- Isolar o subsistema responsável antes de alterar código (CPU, scheduler, memória, DSP, GSP, PICA200, apresentação).
+- Alterar uma variável de emulação por experimento e comparar a mesma sequência de entrada.
+- Manter caminho interpretado/de referência para detectar regressões de recompilação.
+- Registrar jogo, região/versão, configuração, backend, driver, resultado esperado, saída real e logs.
+- Tratar cada correção de compatibilidade como regressão reproduzível, sem fazer refactors amplos junto com a correção de hardware.
+
+### 4. Estado Aceris e bloqueios após a correção da CI
+
+Na revisão de 27/11, o projeto já possui cache de decodificação A32, cache de blocos restrito a texto executável imutável e uma primeira IR tipada para ALU, transferências, halfword, blocos, multiplicações e branches. O JIT ainda não existe. A GPU host apresenta LCD já composto; a rasterização PICA200 do guest permanece no core.
+
+O caminho Cookie Clicker já demonstrou imagem guest-driven e oito toques injetados resultando em oito cookies em ensaio headless, mas não representa velocidade em tempo real nem compatibilidade comercial. `Sound.init` segue sem causa raiz confirmada, áudio audível não foi validado e Android físico ainda não foi testado. O loader também permanece parcial para títulos criptografados e para recursos de sistema que dependem de dados locais legítimos.
+
+Correções publicadas durante esta revisão:
+
+- `23637be` / `45a495e`: compartilhamento dos helpers da MMU entre módulos de teste e ordenação de imports; o código funcional da MMU não foi alterado.
+- `fd2282b`: converte teclas Android do espaço de bits do frontend para os bits físicos antes da navegação dos menus; o estado enviado ao guest continua usando a conversão própria já existente.
+- `b3a7e04` / `61f3878`: ajusta as expectativas do teste IR e corrige o bit de codificação ausente em fixtures DSP ARMv6.
+- `b096b2a`: garante que o teste de snapshot tenha um registro de página real antes de corromper o índice.
+- `5103d5b` / `de258c4`: mantém os centros dos controles virtuais estáveis ao redimensionar e reabre a página Configurações nos testes de persistência.
+
+A matriz CI precisa ser confirmada no HEAD resultante antes de marcar o ciclo como concluído. Nenhum resultado de compilação ou teste automatizado equivale a compatibilidade de jogo comercial.
+
+### 5. Próximos testes de compatibilidade
+
+1. Recuperar CI verde em Linux, Windows, macOS e Android ARM64, incluindo testes completos, Clippy e benchmark release.
+2. Reexecutar o homebrew local e recolher trace de `Sound.init`, `srv:GetServiceHandle`, primeiro IPC DSP e temporização.
+3. Cobrir ACI/ResourceLimit e CPU time apenas com valores fundamentados no extended header e no modelo de scheduler efetivamente implementado.
+4. Validar DSP por frames de áudio virtuais e testes determinísticos de sleep/wakeup.
+5. Fechar cenas PICA200 guest-driven próprias e comparar buffers, shaders e scanout; manter os testes sem dumps protegidos.
+6. Instalar o APK num aparelho ARM64 e validar ciclo de vida, toque, áudio e frametime.
+7. Só então iniciar uma matriz de jogos comerciais com dumps legalmente obtidos e fornecidos localmente pelo usuário, mantendo imagens, firmware e chaves fora do repositório e da CI.
+
+**Critério de declaração:** “abre”, “chega ao primeiro frame”, “renderiza uma cena”, “jogável” e “compatível” são níveis distintos. Cada título precisa ter versão/região identificada, sequência de teste, resultado de áudio/entrada/gráficos, estabilidade e desempenho registrados antes de receber um status de compatibilidade.
