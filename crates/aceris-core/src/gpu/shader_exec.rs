@@ -277,7 +277,6 @@ struct DecodedShaderInstruction {
 pub struct PicaVertexShaderProgram {
     code: Vec<Option<u32>>,
     decoded: Vec<Option<DecodedShaderInstruction>>,
-    descriptors: Vec<Option<u32>>,
     uniforms: Vec<[f32; 4]>,
     boolean_uniforms: u16,
     integer_uniforms: [[u8; 4]; 4],
@@ -318,7 +317,6 @@ impl PicaVertexShaderProgram {
         Self {
             code,
             decoded,
-            descriptors,
             uniforms,
             boolean_uniforms: 0,
             integer_uniforms: [[0; 4]; 4],
@@ -524,7 +522,8 @@ impl Machine<'_> {
         index: usize,
         decoded: DecodedShaderInstruction,
     ) -> Result<(), PicaShaderExecError> {
-        if decoded.opcode == PicaShaderOpcode::Cmp {
+        let opcode = decoded.opcode;
+        if opcode == PicaShaderOpcode::Cmp {
             return self.execute_compare(index, decoded);
         }
         if decoded.opcode == PicaShaderOpcode::Mova {
