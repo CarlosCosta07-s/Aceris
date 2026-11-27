@@ -23,7 +23,7 @@
 use super::arm::{bit, bits};
 use super::cp15::TlbMaintenance;
 use super::{
-    ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, SP, StepEvent, THUMB_INSTRUCTION_SIZE,
+    ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, StepEvent, THUMB_INSTRUCTION_SIZE,
 };
 use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result};
@@ -1414,7 +1414,7 @@ impl Arm11Core {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::Psr;
+    use crate::cpu::{Psr, SP};
     use crate::memory::FlatMemory;
 
     const L1: u32 = 0x4000;
