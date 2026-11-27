@@ -3304,18 +3304,21 @@ impl Arm11CodeAddressSpace {
             .ok_or(Arm11DynamicMemoryError::AddressRangeOverflow { address, size })?;
 
         if address >= APPLICATION_HEAP_BASE && end <= APPLICATION_HEAP_END {
-            if let Some(region) = self.dynamic_regions.iter_mut().find(|region| {
-                region.address == address && region.len() == size as usize
-            }) {
+            if let Some(region) = self
+                .dynamic_regions
+                .iter_mut()
+                .find(|region| region.address == address && region.len() == size as usize)
+            {
                 region.permissions = permissions;
                 return Ok(());
             }
         }
 
-        if let Some(region) = self.shared_regions.iter_mut().find(|region| {
-            region.address == address
-                && region.backing.length == size as usize
-        }) {
+        if let Some(region) = self
+            .shared_regions
+            .iter_mut()
+            .find(|region| region.address == address && region.backing.length == size as usize)
+        {
             region.permissions = permissions;
             return Ok(());
         }
@@ -7996,9 +7999,11 @@ mod tests {
         assert!(address_space.is_readable_range(0x0600_0000, 0x1000));
         assert!(!address_space.is_writable_range(0x0600_0000, 0x1000));
 
-        assert!(address_space
-            .protect_memory_region(heap, 0x1000, 3)
-            .is_err());
+        assert!(
+            address_space
+                .protect_memory_region(heap, 0x1000, 3)
+                .is_err()
+        );
     }
 
     #[test]

@@ -6308,7 +6308,11 @@ mod tests {
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
         assert_eq!(session.read_memory_u32(ALIAS + 0x100).unwrap(), 0xCAFE_BABE);
-        assert!(session.write_memory_u32(ALIAS + 0x108, 0x1111_2222).is_err());
+        assert!(
+            session
+                .write_memory_u32(ALIAS + 0x108, 0x1111_2222)
+                .is_err()
+        );
 
         // Write-only protection permits stores but rejects loads.
         {
@@ -6338,7 +6342,11 @@ mod tests {
         session.run_instructions(1).unwrap();
         assert_eq!(session.core().regs[0], 0);
         assert!(session.read_memory_u32(ALIAS + 0x100).is_err());
-        assert!(session.write_memory_u32(ALIAS + 0x10C, 0x5555_6666).is_err());
+        assert!(
+            session
+                .write_memory_u32(ALIAS + 0x10C, 0x5555_6666)
+                .is_err()
+        );
 
         {
             let core = session.scheduler.current_core_mut().unwrap();
