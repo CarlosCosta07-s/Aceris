@@ -768,6 +768,20 @@ impl System {
         let game_identity = GameIdentity::from_title_id(title_id);
         let boot_content_index = archive.title_metadata().boot_content_index;
 
+        // Match the current decrypted-image-only launch policy: fail clearly
+        // before trying to parse the outer AES-CBC ciphertext as an NCCH.
+        let boot_content = archive.content_location(boot_content_index).ok_or_else(|| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CIA boot content is not selected by its content-index bitmap",
+            ))
+        })?;
+        if boot_content.content_type & CONTENT_TYPE_ENCRYPTED != 0 {
+            return Err(Error::Unimplemented(
+                "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files",
+            ));
+        }
+
         let ncch = archive
             .open_verified_ncch_content_reader(boot_content_index)
             .map_err(|error| {
@@ -794,7 +808,7 @@ impl System {
         }
         if !ncch.header().declares_no_crypto() {
             return Err(Error::Unimplemented(
-                "CIA boot content uses NCCH encryption; encrypted CIA/NCCH launch is not supported by this path",
+                "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files",
             ));
         }
 
@@ -1226,7 +1240,7 @@ impl System {
 
         if !ncch_header.declares_no_crypto() {
             return Err(Error::Unimplemented(
-                "encrypted NCCH content requires caller-supplied keys; use load_ncsd_with_keys",
+                "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files",
             ));
         }
 
@@ -11065,6 +11079,50 @@ mod tests {
     }
 
     #[test]
+    fn normal_launcher_rejects_outer_encrypted_cia_with_actionable_message() {
+        let (cia, _, _, _) = encrypted_cia_archive_fixture(false);
+        let path = std::env::temp_dir().join(format!(
+            "aceris-encrypted-launch-{}.cia",
+            std::process::id()
+        ));
+        std::fs::write(&path, cia).unwrap();
+
+        let mut system = System::new();
+        let error = system.load_executable_file(&path).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(matches!(
+            error,
+            Error::Unimplemented(message)
+                if message == "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files"
+        ));
+        assert_eq!(system.image(), None);
+        assert!(system.ncsd_session().is_none());
+    }
+
+    #[test]
+    fn normal_launcher_rejects_clear_cia_with_encrypted_ncch() {
+        let (cia, _, _) = clear_outer_encrypted_ncch_cia_fixture();
+        let path = std::env::temp_dir().join(format!(
+            "aceris-clear-outer-encrypted-ncch-{}.cia",
+            std::process::id()
+        ));
+        std::fs::write(&path, cia).unwrap();
+
+        let mut system = System::new();
+        let error = system.load_executable_file(&path).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(matches!(
+            error,
+            Error::Unimplemented(message)
+                if message == "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files"
+        ));
+        assert_eq!(system.image(), None);
+        assert!(system.ncsd_session().is_none());
+    }
+
+    #[test]
     fn loads_encrypted_cia_boot_content_with_caller_supplied_ticket_keys() {
         let (cia, normal_key, _, _) = encrypted_cia_archive_fixture(false);
         let mut keys = crate::loader::cia::TicketCommonKeyStore::default();
@@ -11238,10 +11296,14 @@ mod tests {
         encrypted[0x4000 + 0x18F] &= !0x04;
         std::fs::write(&path, encrypted).unwrap();
 
-        let error = system.load_ncsd_no_crypto_file(&path).unwrap_err();
+        let error = system.load_executable_file(&path).unwrap_err();
         let _ = std::fs::remove_file(&path);
 
-        assert!(matches!(error, Error::Unimplemented(_)));
+        assert!(matches!(
+            error,
+            Error::Unimplemented(message)
+                if message == "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files"
+        ));
         assert_eq!(system.image(), Some(ImageFormat::Ncsd));
         assert_eq!(system.cpu().pc(), original_pc);
         assert!(system.ncsd_session().is_some());
