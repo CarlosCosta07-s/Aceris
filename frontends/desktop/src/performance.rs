@@ -174,8 +174,12 @@ impl std::fmt::Display for DesktopPerformanceReport {
 /// <games>/.aceris/desktop_performance_log_v1.txt contains exactly "1".
 pub(crate) fn performance_logging_enabled(settings_directory: &Path) -> bool {
     std::env::var("ACERIS_PERFORMANCE_LOG").is_ok_and(|value| value == "1")
-        || std::fs::read_to_string(settings_directory.join("desktop_performance_log_v1.txt"))
-            .is_ok_and(|value| value.trim() == "1")
+        || settings_file_enabled(settings_directory)
+}
+
+fn settings_file_enabled(settings_directory: &Path) -> bool {
+    std::fs::read_to_string(settings_directory.join("desktop_performance_log_v1.txt"))
+        .is_ok_and(|value| value.trim() == "1")
 }
 
 fn duration_ns(duration: Duration) -> u64 {
@@ -313,6 +317,30 @@ mod tests {
             presentation_ns: presentation_ms * 1_000_000,
             presentation_interval_ns: interval_ms * 1_000_000,
         }
+    }
+
+    #[test]
+    fn settings_file_requires_the_exact_enabled_value() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let settings_directory = std::env::temp_dir().join(format!(
+            "aceris-desktop-performance-test-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&settings_directory).unwrap();
+
+        assert!(!settings_file_enabled(&settings_directory));
+        let path = settings_directory.join("desktop_performance_log_v1.txt");
+        std::fs::write(&path, "true").unwrap();
+        assert!(!settings_file_enabled(&settings_directory));
+        std::fs::write(&path, "1\\n").unwrap();
+        assert!(settings_file_enabled(&settings_directory));
+        std::fs::write(&path, "0").unwrap();
+        assert!(!settings_file_enabled(&settings_directory));
+
+        std::fs::remove_dir_all(settings_directory).unwrap();
     }
 
     #[test]
