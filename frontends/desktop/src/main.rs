@@ -15,6 +15,7 @@ use aceris_core::{
     video::{
         DualScreenDisplay, intro,
         frontend::{ScreenLayoutMode, screen_layout_canvas_size},
+        layout_preferences::{ScreenLayoutPreferences, ScreenLayoutProfile},
         library::{ClickResult, Library, VISIBLE_ROWS},
         quick_menu::{self, PixelFormat as MenuPixelFormat},
     },
@@ -385,6 +386,7 @@ fn run_windowed(
     background_fps: u32,
 ) -> Result<(), String> {
     let settings_directory = games_dir.join(".aceris");
+    let mut layout_preferences = ScreenLayoutPreferences::load(&settings_directory);
     let mut performance =
         performance_logging_enabled(&settings_directory).then(DesktopPerformanceMonitor::new);
     if performance.is_some() {
@@ -449,7 +451,15 @@ fn run_windowed(
             continue;
         }
         library.mark_launched(&path);
-        let outcome = emulate(system, &mut window, &mut presenter, scale, &mut performance);
+        let outcome = emulate(
+            system,
+            &mut window,
+            &mut presenter,
+            scale,
+            &settings_directory,
+            &mut layout_preferences,
+            &mut performance,
+        );
         report_unhandled(system);
         match outcome {
             Ok(Flow::Quit) => return Ok(()),
@@ -627,9 +637,9 @@ fn touch_at(
     y: i32,
     scale: usize,
     mode: ScreenLayoutMode,
-    swap_screens: bool,
+    layout_profile.swap_screens: bool,
 ) {
-    match window::touch_from_window_point_with_layout(x, y, scale, mode, swap_screens) {
+    match window::touch_from_window_point_with_layout(x, y, scale, mode, layout_profile.swap_screens) {
         Some((tx, ty)) => system.input_mut().touch(i32::from(tx), i32::from(ty)),
         None => system.input_mut().touch_end(),
     }
@@ -652,6 +662,8 @@ fn emulate(
     window: &mut window::Window,
     presenter: &mut Option<GraphicsPresenter>,
     scale: usize,
+    settings_directory: &Path,
+    layout_preferences: &mut ScreenLayoutPreferences,
     performance: &mut Option<DesktopPerformanceMonitor>,
 ) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
@@ -660,8 +672,10 @@ fn emulate(
     let mut frame = Vec::new();
     let mut menu_open = false;
     let mut menu_selected = 0usize;
-    let mut screen_layout_mode = ScreenLayoutMode::SideBySide;
-    let mut swap_screens = false;
+    let mut layout_profile = layout_preferences.profile_for_surface(
+        window::GAME_CANVAS_WIDTH as u32,
+        window::GAME_CANVAS_HEIGHT as u32,
+    );
     let mut pending_confirmation: Option<quick_menu::ConfirmationAction> = None;
     let mut confirmation_selected = 0usize;
     loop {
@@ -735,21 +749,37 @@ fn emulate(
                         confirmation_selected = 0;
                     }
                     3 => {
-                        screen_layout_mode = screen_layout_mode.next();
-                        let (width, height) = screen_layout_canvas_size(screen_layout_mode);
+                        layout_profile.mode = layout_profile.mode.next();
+                        let (width, height) = screen_layout_canvas_size(layout_profile.mode);
                         window
                             .resize(width as usize * scale, height as usize * scale)
                             .map_err(|error| {
                                 format!("could not resize the gameplay layout: {error}")
                             })?;
+                        layout_preferences.set_profile_for_surface(
+                            window::GAME_CANVAS_WIDTH as u32,
+                            window::GAME_CANVAS_HEIGHT as u32,
+                            layout_profile,
+                        );
+                        if let Err(error) = layout_preferences.save(settings_directory) {
+                            eprintln!("could not save screen layout preferences: {error}");
+                        }
                     }
                     _ => {
-                        swap_screens = !swap_screens;
+                        layout_profile.swap_screens = !layout_profile.swap_screens;
+                        layout_preferences.set_profile_for_surface(
+                            window::GAME_CANVAS_WIDTH as u32,
+                            window::GAME_CANVAS_HEIGHT as u32,
+                            layout_profile,
+                        );
+                        if let Err(error) = layout_preferences.save(settings_directory) {
+                            eprintln!("could not save screen layout preferences: {error}");
+                        }
                     }
                 },
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
                     let (canvas_width, canvas_height) =
-                        screen_layout_canvas_size(screen_layout_mode);
+                        screen_layout_canvas_size(layout_profile.mode);
                     if let Some(choice) = quick_menu::hit_test_confirmation(
                         canvas_width * scale as u32,
                         canvas_height * scale as u32,
@@ -769,7 +799,7 @@ fn emulate(
                 }
                 window::WindowEvent::Click { x, y } if menu_open => {
                     let (canvas_width, canvas_height) =
-                        screen_layout_canvas_size(screen_layout_mode);
+                        screen_layout_canvas_size(layout_profile.mode);
                     if let Some(action) = quick_menu::hit_test(
                         canvas_width * scale as u32,
                         canvas_height * scale as u32,
@@ -796,16 +826,32 @@ fn emulate(
                                 confirmation_selected = 0;
                             }
                             3 => {
-                                screen_layout_mode = screen_layout_mode.next();
-                                let (width, height) = screen_layout_canvas_size(screen_layout_mode);
+                                layout_profile.mode = layout_profile.mode.next();
+                                let (width, height) = screen_layout_canvas_size(layout_profile.mode);
                                 window
                                     .resize(width as usize * scale, height as usize * scale)
                                     .map_err(|error| {
                                         format!("could not resize the gameplay layout: {error}")
                                     })?;
+                                layout_preferences.set_profile_for_surface(
+                                    window::GAME_CANVAS_WIDTH as u32,
+                                    window::GAME_CANVAS_HEIGHT as u32,
+                                    layout_profile,
+                                );
+                                if let Err(error) = layout_preferences.save(settings_directory) {
+                                    eprintln!("could not save screen layout preferences: {error}");
+                                }
                             }
                             _ => {
-                                swap_screens = !swap_screens;
+                                layout_profile.swap_screens = !layout_profile.swap_screens;
+                                layout_preferences.set_profile_for_surface(
+                                    window::GAME_CANVAS_WIDTH as u32,
+                                    window::GAME_CANVAS_HEIGHT as u32,
+                                    layout_profile,
+                                );
+                                if let Err(error) = layout_preferences.save(settings_directory) {
+                                    eprintln!("could not save screen layout preferences: {error}");
+                                }
                             }
                         }
                     }
@@ -816,10 +862,10 @@ fn emulate(
                     keyboard.apply(key, pressed, system.input_mut());
                 }
                 window::WindowEvent::Click { x, y } if !menu_open => {
-                    touch_at(system, x, y, scale, screen_layout_mode, swap_screens)
+                    touch_at(system, x, y, scale, layout_profile.mode, layout_profile.swap_screens)
                 }
                 window::WindowEvent::Pointer { x, y, down: true } if !menu_open => {
-                    touch_at(system, x, y, scale, screen_layout_mode, swap_screens)
+                    touch_at(system, x, y, scale, layout_profile.mode, layout_profile.swap_screens)
                 }
                 window::WindowEvent::Pointer { down: false, .. } if !menu_open => {
                     system.input_mut().touch_end()
@@ -850,13 +896,13 @@ fn emulate(
         if !window::compose_bgrx_layout_into(
             system.display(),
             scale,
-            screen_layout_mode,
-            swap_screens,
+            layout_profile.mode,
+            layout_profile.swap_screens,
             &mut frame,
         ) {
             return Err("could not allocate the desktop presentation buffer".to_string());
         }
-        let (canvas_width, canvas_height) = screen_layout_canvas_size(screen_layout_mode);
+        let (canvas_width, canvas_height) = screen_layout_canvas_size(layout_profile.mode);
         let frame_width = canvas_width as usize * scale;
         let frame_height = canvas_height as usize * scale;
         if menu_open {
