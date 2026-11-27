@@ -131,7 +131,7 @@ impl Cp15 {
     pub(super) fn write_save_state(
         &self,
         writer: &mut super::state::StateWriter,
-    ) -> Result<(), super::state::CpuStateError> {
+    ) -> std::result::Result<(), super::state::CpuStateError> {
         for value in [
             self.core_id,
             self.sctlr,
@@ -179,7 +179,7 @@ impl Cp15 {
 
     pub(super) fn read_save_state(
         reader: &mut super::state::StateReader<'_>,
-    ) -> Result<Self, super::state::CpuStateError> {
+    ) -> std::result::Result<Self, super::state::CpuStateError> {
         use super::state::CpuStateError;
 
         let mut values = [0u32; 21];
