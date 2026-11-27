@@ -2838,7 +2838,7 @@ impl Arm11ProcessSession {
                         .map(|()| address)
                         .map_err(dynamic_memory_result_code)
                 })()
-            },
+            }
             (MEMOP_UNMAP, source_address, MEMPERM_NONE) => (|| {
                 // Require the exact source/destination pair created by MAP.
                 let backing = self
