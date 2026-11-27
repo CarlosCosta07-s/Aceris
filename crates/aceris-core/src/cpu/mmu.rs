@@ -4081,4 +4081,3 @@ mod save_state_tests {
         assert_eq!(restored_writer.into_bytes(), encoded);
     }
 }
-
