@@ -963,6 +963,11 @@ unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Po
         )
     };
     pointers.clear();
+    if action & MOTION_ACTION_MASK == MOTION_ACTION_CANCEL {
+        app.set_pointers(&[]);
+        return;
+    }
+
     // SAFETY: the pointer indices are bounded by AMotionEvent_getPointerCount.
     unsafe {
         pointers.extend((0..count).map(|index| Pointer {
@@ -975,10 +980,6 @@ unsafe fn handle_motion(event: *mut c_void, app: &mut App, pointers: &mut Vec<Po
     let pointer_index =
         ((action & MOTION_ACTION_POINTER_INDEX_MASK) >> MOTION_ACTION_POINTER_INDEX_SHIFT) as usize;
     match action & MOTION_ACTION_MASK {
-        MOTION_ACTION_CANCEL => {
-            pointers.clear();
-            app.set_pointers(&[]);
-        }
         MOTION_ACTION_UP | MOTION_ACTION_POINTER_UP => {
             // The lifted pointer is still listed in the event; remove it in
             // place so this high-frequency path does not allocate a second Vec.
