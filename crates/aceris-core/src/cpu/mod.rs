@@ -5,6 +5,7 @@
 //! CP15, VFPv2, and ARMv6 short-descriptor MMU state live in dedicated modules.
 
 mod arm;
+mod block_cache;
 mod condition;
 mod coprocessor;
 mod cp15;
@@ -150,6 +151,8 @@ impl SavedStatusRegisters {
 pub struct Arm11Core {
     /// Decoded A32 forms for the fast dispatch loop (keyed by encoding).
     decode_cache: decode_cache::DecodeCache,
+    /// Straight-line A32 blocks from bus-certified immutable executable text.
+    block_cache: block_cache::BlockCache,
     /// `r0`-`r15`. While an instruction executes, `r15` holds the address of
     /// that instruction; operand reads of `pc` add the pipeline offset.
     pub regs: [u32; 16],
@@ -439,7 +442,7 @@ impl Arm11Core {
     /// fast loop assumes) always take the precise step. VFP (CP10/CP11)
     /// stays on the fast path.
     #[inline]
-    fn needs_precise_step(word: u32, thumb: bool) -> bool {
+    pub(super) fn needs_precise_step(word: u32, thumb: bool) -> bool {
         if thumb {
             return false;
         }
