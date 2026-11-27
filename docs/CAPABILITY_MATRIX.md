@@ -55,17 +55,17 @@
 | Capacidade | Estado | Comportamento observado e limite |
 |---|---|---|
 | Apresentar as duas telas | Disponível | Composição das telas LCD existentes para a superfície do host, mantendo proporção. |
-| Layout personalizado de telas | Não disponível | O jogo usa o layout calculado pelo frontend/orientação atual; não há editor de posição, tamanho ou espaçamento. |
-| Trocar tela principal/secundária | Não disponível | Não há ação exposta no menu durante o jogo. |
-| Tela única/híbrida/janela separada | Não disponível | Não há escolha de layout pelo usuário. |
-| Touchscreen da tela inferior | Parcial | O modelo de entrada mapeia ponto da superfície para coordenadas 320×240 da tela inferior; o host Android encaminha toque. Ainda falta validar toque físico em aparelho e gestos complexos. |
+| Modos de tela básicos | Parcial | Menu oferece lado a lado, vertical, superior ampliada, inferior ampliada e somente superior/inferior; Android segue rotação e desktop redimensiona a janela. Persistência dos perfis e teste físico ainda pendentes. |
+| Trocar tela principal/secundária | Parcial | A ação Trocar telas troca a posição dos LCDs sem perder a identidade física; o toque continua ligado ao LCD inferior. Falta validação em aparelho e nos backends desktop. |
+| Layout personalizado/ajuste fino/janela separada | Não disponível | Não há editor de posição, tamanho ou espaçamento, nem janela independente por tela. |
+| Touchscreen da tela inferior | Parcial | O mapeamento usa o retângulo atual do LCD inferior nos seis modos e após a troca; ainda falta validar toque físico em aparelho e gestos complexos. |
 | Botões digitais | Parcial | O core define bits para D-pad, A/B/X/Y, L/R, Start/Select e ZL/ZR; hosts encaminham um subconjunto pelos caminhos atuais. |
 | Circle Pad analógico | Parcial | InputState possui eixo X/Y limitado a ±156, mas isso não equivale a mapeamento completo de eixos do gamepad no desktop/Android. |
 | Perfis de controle/remapeamento | Não disponível | Não há editor, persistência de perfil por dispositivo ou override por jogo. |
 | Deadzone/sensibilidade/inversão | Não disponível | Não existem controles de ajuste expostos. |
 | Controles virtuais Android | Parcial | Há overlay/hit-test e envio de botões; posição, escala, opacidade, presets e perfis não são editáveis. |
 | Multi-touch | Parcial | NativeActivity coleta ponteiros e o app mantém estado multitoque; falta validar em aparelho e todas as combinações de stylus + botões. |
-| Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar à biblioteca estão conectados; a execução guest não avança enquanto o painel fica aberto; as filas host de áudio são limpas ao pausar. Reiniciar/Voltar pedem confirmação preventiva, sem detecção automática de progresso não salvo. Atalho configurável, layouts e troca de telas ainda não estão disponíveis. CI e hardware físico pendentes. |
+| Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar têm confirmação preventiva; as filas host de áudio são limpas ao pausar. O menu permite seis layouts e troca de telas. Atalho configurável, perfis e ajuste fino ainda não disponíveis. CI e hardware físico pendentes. |
 | Atalhos configuráveis | Não disponível | Existem teclas/eventos específicos do host, mas não há editor de atalhos. |
 | Screenshot durante a partida | Não disponível | Existem saídas de diagnóstico/PNG e dump de LCD no desktop; não existe ação de captura pela interface durante o jogo. |
 
