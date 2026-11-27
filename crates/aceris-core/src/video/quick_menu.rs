@@ -4,6 +4,13 @@ use super::font;
 
 pub const ACTION_COUNT: usize = 3;
 
+/// A destructive action that must be confirmed before leaving the game session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfirmationAction {
+    Restart,
+    BackToLibrary,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
     Rgba8,
@@ -57,6 +64,39 @@ fn geometry(width: u32, height: u32) -> Option<Geometry> {
         height: row_height,
     });
     Some(Geometry { panel, rows, scale })
+}
+
+#[derive(Clone, Copy)]
+struct ConfirmationGeometry {
+    panel: Rect,
+    rows: [Rect; 2],
+    scale: usize,
+}
+
+fn confirmation_geometry(width: u32, height: u32) -> Option<ConfirmationGeometry> {
+    let base = geometry(width, height)?;
+    let scale = base.scale;
+    let horizontal_padding = 12 * scale;
+    let row_height = 28 * scale;
+    let row_gap = 4 * scale;
+    let total_rows_height = row_height * 2 + row_gap;
+    let bottom_padding = 10 * scale;
+    if total_rows_height + bottom_padding >= base.panel.height {
+        return None;
+    }
+    let row_top = base.panel.y + base.panel.height - total_rows_height - bottom_padding;
+    let row_width = base.panel.width.saturating_sub(horizontal_padding * 2);
+    let rows = std::array::from_fn(|index| Rect {
+        x: base.panel.x + horizontal_padding,
+        y: row_top + index * (row_height + row_gap),
+        width: row_width,
+        height: row_height,
+    });
+    Some(ConfirmationGeometry {
+        panel: base.panel,
+        rows,
+        scale,
+    })
 }
 
 fn menu_button_rect(width: u32, height: u32) -> Option<(Rect, usize)> {
@@ -125,6 +165,125 @@ pub fn hit_test(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
         let y = y as usize;
         x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height
     })
+}
+
+/// Returns the confirmation button under a surface-space point.
+pub fn hit_test_confirmation(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
+    let geometry = confirmation_geometry(width, height)?;
+    if x < 0 || y < 0 {
+        return None;
+    }
+    geometry.rows.iter().position(|row| {
+        let x = x as usize;
+        let y = y as usize;
+        x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height
+    })
+}
+
+/// Draws a confirmation panel for Restart or Back to Library without allocating.
+pub fn render_confirmation_overlay(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    action: ConfirmationAction,
+    selected: usize,
+) -> bool {
+    let Some(geometry) = confirmation_geometry(width, height) else {
+        return false;
+    };
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+
+    let scale = geometry.scale;
+    let text_scale = scale * 2;
+    let canvas = Rect {
+        x: 0,
+        y: 0,
+        width: width as usize,
+        height: height as usize,
+    };
+    blend_rect(frame, width as usize, canvas, [7, 5, 16], 176, format);
+    blend_rect(
+        frame,
+        width as usize,
+        geometry.panel,
+        [31, 19, 48],
+        248,
+        format,
+    );
+    draw_border(frame, width as usize, geometry.panel, scale, format);
+
+    let title = match action {
+        ConfirmationAction::Restart => "REINICIAR JOGO?",
+        ConfirmationAction::BackToLibrary => "VOLTAR À BIBLIOTECA?",
+    };
+    let text_x = geometry.panel.x + 18 * scale;
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        text_x,
+        geometry.panel.y + 12 * scale,
+        text_scale,
+        title,
+        [245, 238, 248],
+        format,
+    );
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        text_x,
+        geometry.panel.y + 42 * scale,
+        text_scale,
+        "Progresso não salvo",
+        [230, 220, 236],
+        format,
+    );
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        text_x,
+        geometry.panel.y + 58 * scale,
+        text_scale,
+        "pode ser perdido.",
+        [230, 220, 236],
+        format,
+    );
+
+    let labels = ["CANCELAR", "CONFIRMAR"];
+    for (index, row) in geometry.rows.iter().enumerate() {
+        let is_selected = index == selected.min(1);
+        blend_rect(
+            frame,
+            width as usize,
+            *row,
+            if is_selected { [166, 29, 61] } else { [54, 36, 70] },
+            if is_selected { 245 } else { 230 },
+            format,
+        );
+        let label_width = labels[index].len() * 4 * text_scale;
+        let text_x = row.x + row.width.saturating_sub(label_width) / 2;
+        let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            text_x,
+            text_y,
+            text_scale,
+            labels[index],
+            [255, 255, 255],
+            format,
+        );
+    }
+    true
 }
 
 /// Draws a dimmed, three-action quick menu over an existing RGBA8 or BGRX8 frame.
@@ -359,6 +518,46 @@ mod tests {
         let (x, y) = target.expect("visible menu button has a hit target");
         assert!(hit_test_menu_button(width, height, x, y));
         assert!(!hit_test_menu_button(width, height, 0, 0));
+    }
+
+    #[test]
+    fn confirmation_hit_testing_matches_cancel_and_confirm_rows() {
+        for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800)] {
+            let geometry = confirmation_geometry(width, height).unwrap();
+            for (index, row) in geometry.rows.iter().enumerate() {
+                let x = (row.x + row.width / 2) as i32;
+                let y = (row.y + row.height / 2) as i32;
+                assert_eq!(hit_test_confirmation(width, height, x, y), Some(index));
+            }
+            assert_eq!(hit_test_confirmation(width, height, 0, 0), None);
+        }
+    }
+
+    #[test]
+    fn confirmation_overlay_supports_both_pixel_formats_and_actions() {
+        for format in [PixelFormat::Rgba8, PixelFormat::Bgrx8] {
+            for action in [
+                ConfirmationAction::Restart,
+                ConfirmationAction::BackToLibrary,
+            ] {
+                let (width, height) = (736u32, 240u32);
+                let mut frame = vec![40u8; width as usize * height as usize * 4];
+                let length = frame.len();
+                assert!(render_confirmation_overlay(
+                    &mut frame,
+                    width,
+                    height,
+                    format,
+                    action,
+                    1,
+                ));
+                assert_eq!(frame.len(), length);
+                assert_ne!(frame, vec![40u8; length]);
+                if format == PixelFormat::Rgba8 {
+                    assert!(frame.chunks_exact(4).all(|pixel| pixel[3] == 255));
+                }
+            }
+        }
     }
 
     #[test]
