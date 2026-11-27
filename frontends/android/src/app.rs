@@ -7,10 +7,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use aceris_core::{
-    System,
-    loaded_image::{LoadedImageIdentity, load_executable_file_with_identity},
-};
 use aceris_core::input::{pad, pad_from_frontend_buttons, touch_from_surface_point};
 use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
@@ -21,6 +17,10 @@ use aceris_core::video::library::{self, ClickResult, Library, VirtualControlEdit
 use aceris_core::video::{
     DualScreenDisplay, ScreenSurface, intro,
     quick_menu::{self, PixelFormat as MenuPixelFormat},
+};
+use aceris_core::{
+    System,
+    loaded_image::{LoadedImageIdentity, load_executable_file_with_identity},
 };
 
 /// Which part of the application is on screen.
@@ -1073,8 +1073,7 @@ impl App {
         self.active_image_identity = None;
         match load_executable_file_with_identity(&mut system, &path) {
             Ok(loaded) => {
-                self.library
-                    .set_active_game_identity(loaded.game_identity);
+                self.library.set_active_game_identity(loaded.game_identity);
                 self.library.mark_launched(&path);
                 self.active_image_identity = Some(loaded);
                 self.system = Some(system);
