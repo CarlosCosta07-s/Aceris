@@ -42,7 +42,7 @@ struct FramePerformanceReport {
     presentation_interval_p50_ms: f64,
     presentation_interval_p95_ms: f64,
     gpu_presentation_percent: f64,
-    presentation_failures: u64,
+    frames_not_presented: u64,
 }
 
 impl FramePerformanceMonitor {
@@ -126,7 +126,7 @@ impl fmt::Display for FramePerformanceReport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "presented_fps={:.1}, render_ms_avg/p50/p95={:.2}/{:.2}/{:.2}, app_step_ms_p95={:.2}, present_ms_p95={:.2}, present_interval_ms_p50/p95={:.2}/{:.2}, gpu_present={:.0}%, samples={}, presentation_failures={}",
+            "presented_fps={:.1}, render_ms_avg/p50/p95={:.2}/{:.2}/{:.2}, app_step_ms_p95={:.2}, present_ms_p95={:.2}, present_interval_ms_p50/p95={:.2}/{:.2}, gpu_present={:.0}%, samples={}, frames_not_presented={}",
             self.presented_fps,
             self.render_average_ms,
             self.render_p50_ms,
@@ -137,7 +137,7 @@ impl fmt::Display for FramePerformanceReport {
             self.presentation_interval_p95_ms,
             self.gpu_presentation_percent,
             self.sample_count,
-            self.presentation_failures,
+            self.frames_not_presented,
         )
     }
 }
@@ -181,7 +181,7 @@ fn summarize(
     if count == 0 {
         return FramePerformanceReport {
             presented_fps: frames_presented as f64 / interval.as_secs_f64().max(f64::EPSILON),
-            presentation_failures: frame_attempts.saturating_sub(frames_presented),
+            frames_not_presented: frame_attempts.saturating_sub(frames_presented),
             ..FramePerformanceReport::default()
         };
     }
@@ -232,7 +232,7 @@ fn summarize(
         } else {
             frames_presented_by_gpu as f64 * 100.0 / frames_presented as f64
         },
-        presentation_failures: frame_attempts.saturating_sub(frames_presented),
+        frames_not_presented: frame_attempts.saturating_sub(frames_presented),
     }
 }
 
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(report.presentation_interval_p50_ms, 16.0);
         assert_eq!(report.presentation_interval_p95_ms, 18.0);
         assert_eq!(report.gpu_presentation_percent, 75.0);
-        assert_eq!(report.presentation_failures, 1);
+        assert_eq!(report.frames_not_presented, 1);
     }
 
     #[test]
@@ -322,6 +322,6 @@ mod tests {
 
         assert_eq!(report.presented_fps, 0.0);
         assert_eq!(report.gpu_presentation_percent, 0.0);
-        assert_eq!(report.presentation_failures, 3);
+        assert_eq!(report.frames_not_presented, 3);
     }
 }
