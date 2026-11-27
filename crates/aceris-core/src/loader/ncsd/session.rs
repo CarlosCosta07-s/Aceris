@@ -443,7 +443,8 @@ impl Arm11ProcessSession {
         section: &SaveStateSection,
         catalog: &SharedMemoryBackingCatalog,
     ) -> std::result::Result<(), SharedMemoryStateError> {
-        self.address_space.restore_save_state_section(section, catalog)
+        self.address_space
+            .restore_save_state_section(section, catalog)
     }
 
     /// Current deterministic process virtual time, in nanoseconds.
