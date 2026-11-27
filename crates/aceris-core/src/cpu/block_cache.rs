@@ -107,18 +107,18 @@ impl BlockCache {
         }
         let first_location = bus.immutable_instruction_location(pc, 4)?;
         let slot = Self::slot(pc, mode);
-        if let Some(block) = self.entries[slot]
-            && block.matches(pc, mode, first_location)
-        {
-            let cached_size = u32::from(block.len) * 4;
-            let valid = bus
-                .immutable_instruction_location(pc, cached_size)
-                .is_some_and(|location| {
-                    location.backing_id == block.backing_id
-                        && location.offset == block.backing_offset
-                });
-            if valid {
-                return Some(block);
+        if let Some(block) = self.entries[slot] {
+            if block.matches(pc, mode, first_location) {
+                let cached_size = u32::from(block.len) * 4;
+                let valid = bus
+                    .immutable_instruction_location(pc, cached_size)
+                    .is_some_and(|location| {
+                        location.backing_id == block.backing_id
+                            && location.offset == block.backing_offset
+                    });
+                if valid {
+                    return Some(block);
+                }
             }
         }
 
