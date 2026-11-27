@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{Arm11MemoryType, CodeFileLayout, CodeSetInfo};
 use super::ncch::service_access::ServiceAccessControl;
+use crate::cpu::state::{StateReader, StateWriter};
 use crate::cpu::{
     Arm11Core, MPCORE_CPU_INTERFACE_CPU0_OFFSET, MPCORE_CPU_INTERFACE_CURRENT_OFFSET,
     MPCORE_GIC_CPU_INTERFACE_SIZE, MPCORE_GIC_DISTRIBUTOR_OFFSET, MPCORE_GIC_DISTRIBUTOR_SIZE,
@@ -661,6 +662,12 @@ pub enum SharedMemoryStateError {
     InvalidCatalogEntry,
     InvalidBackingSlot(u32),
     InvalidViewRange { slot: u32, offset: u64, length: u64 },
+    InvalidAddressSpaceState(&'static str),
+    TooManyAddressSpaceEntries(u32),
+    TooManyCacheLines(u32),
+    TooManyWriteBufferEntries(u32),
+    InvalidCacheTarget,
+    MissingPhysicalMemory,
     TrailingData,
 }
 
@@ -758,6 +765,24 @@ impl fmt::Display for SharedMemoryStateError {
                 formatter,
                 "shared-memory view {offset:#X}+{length:#X} is outside backing slot {slot}"
             ),
+            Self::InvalidAddressSpaceState(reason) => {
+                write!(formatter, "ARM11 address-space snapshot is invalid: {reason}")
+            }
+            Self::TooManyAddressSpaceEntries(count) => {
+                write!(formatter, "ARM11 address-space snapshot contains too many regions: {count}")
+            }
+            Self::TooManyCacheLines(count) => {
+                write!(formatter, "ARM11 address-space snapshot contains too many D-cache lines: {count}")
+            }
+            Self::TooManyWriteBufferEntries(count) => {
+                write!(formatter, "ARM11 address-space snapshot contains too many write-buffer entries: {count}")
+            }
+            Self::InvalidCacheTarget => {
+                formatter.write_str("ARM11 D-cache entry refers to an invalid backing or offset")
+            }
+            Self::MissingPhysicalMemory => {
+                formatter.write_str("ARM11 address-space snapshot requires attached physical memory")
+            }
             Self::TrailingData => {
                 formatter.write_str("shared-memory snapshot contains trailing bytes")
             }
@@ -997,6 +1022,17 @@ impl SharedMemoryBackingCatalog {
         self.roots.push(view.root_view());
         self.slots_by_backing_id.insert(view.backing_id(), slot);
         Ok(slot)
+    }
+
+    /// Returns the slot assigned to a backing that has already been registered.
+    pub(crate) fn slot_for(
+        &self,
+        view: &SharedMemoryBacking,
+    ) -> Result<u32, SharedMemoryStateError> {
+        self.slots_by_backing_id
+            .get(&view.backing_id())
+            .copied()
+            .ok_or(SharedMemoryStateError::InvalidCatalogEntry)
     }
 
     /// Recreates a bounded view over a catalog root.
@@ -1856,6 +1892,155 @@ pub struct Arm11MemoryUsageReport {
     pub gpu_physical_allocated_bytes: usize,
 }
 
+const ADDRESS_SPACE_STATE_MAGIC: &[u8; 8] = b"ACADDRSP";
+const ADDRESS_SPACE_STATE_VERSION: u16 = 1;
+const ADDRESS_SPACE_STATE_MAX_BYTES: usize = 512 * 1024 * 1024;
+const ADDRESS_SPACE_STATE_MAX_REGIONS: usize = 4096;
+const ADDRESS_SPACE_STATE_MAX_TLS_SLOTS: usize = THREAD_LOCAL_STORAGE_MAX_PAGES as usize
+    * THREAD_LOCAL_STORAGE_SLOTS_PER_PAGE as usize;
+
+fn address_state_write<T>(
+    result: std::result::Result<T, crate::cpu::state::CpuStateError>,
+) -> Result<T, SharedMemoryStateError> {
+    result.map_err(|_| SharedMemoryStateError::AllocationFailed)
+}
+
+fn address_state_read<T>(
+    result: std::result::Result<T, crate::cpu::state::CpuStateError>,
+) -> Result<T, SharedMemoryStateError> {
+    result.map_err(|_| SharedMemoryStateError::Truncated)
+}
+
+fn address_state_write_segment_kind(
+    writer: &mut crate::cpu::state::StateWriter,
+    kind: Arm11SegmentKind,
+) -> Result<(), SharedMemoryStateError> {
+    let value = match kind {
+        Arm11SegmentKind::Text => 0,
+        Arm11SegmentKind::ReadOnly => 1,
+        Arm11SegmentKind::Data => 2,
+        Arm11SegmentKind::Bss => 3,
+        Arm11SegmentKind::Stack => 4,
+    };
+    address_state_write(writer.write_u8(value))
+}
+
+fn address_state_read_segment_kind(
+    reader: &mut crate::cpu::state::StateReader<'_>,
+) -> Result<Arm11SegmentKind, SharedMemoryStateError> {
+    match address_state_read(reader.read_u8())? {
+        0 => Ok(Arm11SegmentKind::Text),
+        1 => Ok(Arm11SegmentKind::ReadOnly),
+        2 => Ok(Arm11SegmentKind::Data),
+        3 => Ok(Arm11SegmentKind::Bss),
+        4 => Ok(Arm11SegmentKind::Stack),
+        _ => Err(SharedMemoryStateError::InvalidAddressSpaceState(
+            "unknown static segment kind",
+        )),
+    }
+}
+
+fn address_state_read_count(
+    reader: &mut crate::cpu::state::StateReader<'_>,
+    maximum: usize,
+) -> Result<usize, SharedMemoryStateError> {
+    let count = address_state_read(reader.read_u32())?;
+    if count as usize > maximum {
+        return Err(SharedMemoryStateError::TooManyAddressSpaceEntries(count));
+    }
+    Ok(count as usize)
+}
+
+fn address_state_read_static_bytes(
+    reader: &mut crate::cpu::state::StateReader<'_>,
+    expected: usize,
+) -> Result<Vec<u8>, SharedMemoryStateError> {
+    let encoded_length = address_state_read(reader.read_u32())? as usize;
+    if encoded_length != expected {
+        return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+            "static segment size does not match the loaded executable",
+        ));
+    }
+    let source = address_state_read(reader.read_bytes(encoded_length))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(encoded_length)
+        .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+    bytes.extend_from_slice(source);
+    Ok(bytes)
+}
+
+fn address_state_validate_region_range(
+    address: u32,
+    size: usize,
+) -> Result<u64, SharedMemoryStateError> {
+    if address as u64 % PAGE_SIZE != 0 || size == 0 || size as u64 % PAGE_SIZE != 0 {
+        return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+            "region address and size must be non-zero and page-aligned",
+        ));
+    }
+    let end = u64::from(address)
+        .checked_add(size as u64)
+        .filter(|end| *end <= ADDRESS_SPACE_END)
+        .ok_or(SharedMemoryStateError::InvalidAddressSpaceState(
+            "region wraps the guest address space",
+        ))?;
+    Ok(end)
+}
+
+fn address_state_check_non_overlapping(
+    layout: &Arm11ProcessLayout,
+    dynamic: &[DynamicMemoryRegion],
+    shared: &[SharedMemoryRegion],
+    linear: &[LinearMemoryRegion],
+) -> Result<(), SharedMemoryStateError> {
+    let mut ranges = Vec::new();
+    let capacity = 5usize
+        .checked_add(dynamic.len())
+        .and_then(|count| count.checked_add(shared.len()))
+        .and_then(|count| count.checked_add(linear.len()))
+        .ok_or(SharedMemoryStateError::AllocationFailed)?;
+    ranges
+        .try_reserve_exact(capacity)
+        .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+    for segment in [
+        layout.text,
+        layout.read_only,
+        layout.data,
+        layout.bss,
+        layout.stack,
+    ] {
+        if !segment.is_empty() {
+            ranges.push((u64::from(segment.address), segment.end_address()));
+        }
+    }
+    for region in dynamic {
+        ranges.push((
+            u64::from(region.address),
+            u64::from(region.address) + region.len() as u64,
+        ));
+    }
+    for region in shared {
+        let length = region.backing.length;
+        address_state_validate_region_range(region.address, length)?;
+        ranges.push((
+            u64::from(region.address),
+            u64::from(region.address) + length as u64,
+        ));
+    }
+    for region in linear {
+        address_state_validate_region_range(region.virtual_base, region.size as usize)?;
+        ranges.push((u64::from(region.virtual_base), region.virtual_end()));
+    }
+    ranges.sort_unstable_by_key(|range| range.0);
+    if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+            "guest virtual regions overlap",
+        ));
+    }
+    Ok(())
+}
+
 impl Arm11CodeAddressSpace {
     /// Adds every shared backing reachable from this address space to a
     /// machine-wide catalog. Repeated aliases resolve to the same root slot.
@@ -1882,6 +2067,681 @@ impl Arm11CodeAddressSpace {
             }
         }
         Ok(())
+    }
+
+    fn save_state_write_cache_target(
+        &self,
+        target: &DataCacheTarget,
+        catalog: &SharedMemoryBackingCatalog,
+        writer: &mut crate::cpu::state::StateWriter,
+    ) -> Result<(), SharedMemoryStateError> {
+        use crate::cpu::state::StateWriter;
+        match target {
+            DataCacheTarget::Static { kind, offset } => {
+                address_state_write(writer.write_u8(0))?;
+                address_state_write_segment_kind(writer, *kind)?;
+                address_state_write(writer.write_u64(*offset as u64))?;
+            }
+            DataCacheTarget::Backing { backing, offset } => {
+                address_state_write(writer.write_u8(1))?;
+                address_state_write(writer.write_u32(catalog.slot_for(backing)?))?;
+                address_state_write(writer.write_u64(backing.root_base_offset() as u64))?;
+                address_state_write(writer.write_u64(backing.length as u64))?;
+                address_state_write(writer.write_u64(*offset as u64))?;
+            }
+            DataCacheTarget::Physical { address, .. } => {
+                address_state_write(writer.write_u8(2))?;
+                address_state_write(writer.write_u32(*address))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn save_state_read_cache_target(
+        &self,
+        catalog: &SharedMemoryBackingCatalog,
+        reader: &mut crate::cpu::state::StateReader<'_>,
+    ) -> Result<(DataCacheKey, DataCacheTarget), SharedMemoryStateError> {
+        match address_state_read(reader.read_u8())? {
+            0 => {
+                let kind = address_state_read_segment_kind(reader)?;
+                let offset = usize::try_from(address_state_read(reader.read_u64())?)
+                    .map_err(|_| SharedMemoryStateError::InvalidCacheTarget)?;
+                let bytes = self.bytes_for(kind);
+                if !offset.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE)
+                    || offset.checked_add(ARM11_DATA_CACHE_LINE_SIZE).is_none_or(|end| end > bytes.len())
+                {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                let key = DataCacheKey {
+                    backing_id: self.static_backing_ids[Self::static_backing_slot(kind)],
+                    line_offset: offset as u64,
+                };
+                Ok((key, DataCacheTarget::Static { kind, offset }))
+            }
+            1 => {
+                let slot = address_state_read(reader.read_u32())?;
+                let root_offset = usize::try_from(address_state_read(reader.read_u64())?)
+                    .map_err(|_| SharedMemoryStateError::InvalidCacheTarget)?;
+                let view_length = usize::try_from(address_state_read(reader.read_u64())?)
+                    .map_err(|_| SharedMemoryStateError::InvalidCacheTarget)?;
+                let offset = usize::try_from(address_state_read(reader.read_u64())?)
+                    .map_err(|_| SharedMemoryStateError::InvalidCacheTarget)?;
+                let backing = catalog.view(slot, root_offset, view_length)?;
+                let root_line = backing
+                    .root_offset(offset)
+                    .filter(|root| root.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE))
+                    .ok_or(SharedMemoryStateError::InvalidCacheTarget)?;
+                if offset
+                    .checked_add(ARM11_DATA_CACHE_LINE_SIZE)
+                    .is_none_or(|end| end > backing.length)
+                {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                let key = DataCacheKey {
+                    backing_id: backing.backing_id(),
+                    line_offset: root_line as u64,
+                };
+                Ok((key, DataCacheTarget::Backing { backing, offset }))
+            }
+            2 => {
+                let address = address_state_read(reader.read_u32())?;
+                let memory = self
+                    .gpu_memory
+                    .as_ref()
+                    .ok_or(SharedMemoryStateError::MissingPhysicalMemory)?
+                    .clone();
+                let backing_id = self
+                    .gpu_memory_backing_id
+                    .ok_or(SharedMemoryStateError::MissingPhysicalMemory)?;
+                if !address.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE as u32)
+                    || memory
+                        .validate_range(address, ARM11_DATA_CACHE_LINE_SIZE)
+                        .is_err()
+                {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                let key = DataCacheKey {
+                    backing_id,
+                    line_offset: u64::from(address),
+                };
+                Ok((key, DataCacheTarget::Physical { memory, address }))
+            }
+            _ => Err(SharedMemoryStateError::InvalidCacheTarget),
+        }
+    }
+
+    /// Encodes all mutable guest-visible process memory state. Immutable layout
+    /// metadata comes from the already validated boot image; host identity IDs
+    /// and lookup hints are rebuilt when the state is restored.
+    pub(crate) fn encode_memory_state(
+        &self,
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> Result<Vec<u8>, SharedMemoryStateError> {
+        use crate::cpu::state::StateWriter;
+        let mut writer = StateWriter::with_capacity(16 * 1024)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        address_state_write(writer.write_bytes(ADDRESS_SPACE_STATE_MAGIC))?;
+        address_state_write(writer.write_u16(ADDRESS_SPACE_STATE_VERSION))?;
+        address_state_write(writer.write_u16(0))?;
+        for bytes in [
+            self.text.as_slice(),
+            self.read_only.as_slice(),
+            self.data.as_slice(),
+            self.bss.as_slice(),
+            self.stack.as_slice(),
+        ] {
+            let length = u32::try_from(bytes.len())
+                .map_err(|_| SharedMemoryStateError::InvalidAddressSpaceState(
+                    "static segment exceeds the format limit",
+                ))?;
+            address_state_write(writer.write_u32(length))?;
+            address_state_write(writer.write_bytes(bytes))?;
+        }
+
+        address_state_write(writer.write_bool(self.fast_memory))?;
+        address_state_write(writer.write_bool(self.interrupt_state_touched.get()))?;
+        for mode in self.published_smp_mode {
+            match mode {
+                None => address_state_write(writer.write_u8(0))?,
+                Some(false) => address_state_write(writer.write_u8(1))?,
+                Some(true) => address_state_write(writer.write_u8(2))?,
+            }
+        }
+
+        if self.dynamic_regions.len() > ADDRESS_SPACE_STATE_MAX_REGIONS
+            || self.shared_regions.len() > ADDRESS_SPACE_STATE_MAX_REGIONS
+            || self.linear_regions.len() > ADDRESS_SPACE_STATE_MAX_REGIONS
+            || self.ipc_temporary_regions.len() > ADDRESS_SPACE_STATE_MAX_REGIONS
+            || self.exclusive_versions.len() > ADDRESS_SPACE_STATE_MAX_REGIONS * 1024
+            || self.tls_slots_in_use.len() > ADDRESS_SPACE_STATE_MAX_TLS_SLOTS
+        {
+            return Err(SharedMemoryStateError::TooManyAddressSpaceEntries(
+                u32::try_from(
+                    self.dynamic_regions.len()
+                        + self.shared_regions.len()
+                        + self.linear_regions.len()
+                        + self.ipc_temporary_regions.len(),
+                )
+                .unwrap_or(u32::MAX),
+            ));
+        }
+        address_state_write(writer.write_u32(self.dynamic_regions.len() as u32))?;
+        for region in &self.dynamic_regions {
+            address_state_validate_region_range(region.address, region.len())?;
+            address_state_write(writer.write_u32(region.address))?;
+            let backing = region.backing.backing_ref();
+            address_state_write(writer.write_u8(match region.backing {
+                DynamicMemoryBacking::Private(_) => 0,
+                DynamicMemoryBacking::Shared(_) => 1,
+            }))?;
+            address_state_write(writer.write_u32(catalog.slot_for(backing)?))?;
+            address_state_write(writer.write_u64(backing.root_base_offset() as u64))?;
+            address_state_write(writer.write_u64(backing.length as u64))?;
+        }
+
+        address_state_write(writer.write_u32(self.shared_regions.len() as u32))?;
+        for region in &self.shared_regions {
+            address_state_validate_region_range(region.address, region.backing.length)?;
+            if region.permissions > 3 || region.permissions == 2 {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "shared-region permissions are invalid",
+                ));
+            }
+            address_state_write(writer.write_u32(region.address))?;
+            address_state_write(writer.write_u32(catalog.slot_for(&region.backing)?))?;
+            address_state_write(writer.write_u64(region.backing.root_base_offset() as u64))?;
+            address_state_write(writer.write_u64(region.backing.length as u64))?;
+            address_state_write(writer.write_u32(region.permissions))?;
+        }
+
+        address_state_write(writer.write_u32(self.linear_regions.len() as u32))?;
+        for region in &self.linear_regions {
+            address_state_validate_region_range(region.virtual_base, region.size as usize)?;
+            if !region.physical_base.is_multiple_of(PAGE_SIZE as u32)
+                || !region.size.is_multiple_of(PAGE_SIZE as u32)
+            {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "linear mapping is not page-aligned",
+                ));
+            }
+            address_state_write(writer.write_u32(region.virtual_base))?;
+            address_state_write(writer.write_u32(region.physical_base))?;
+            address_state_write(writer.write_u32(region.size))?;
+        }
+
+        // Preserve each set's LRU order together with the dirty cache-line bytes.
+        if self.data_cache_lru.len() != ARM11_DATA_CACHE_SET_COUNT {
+            return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                "D-cache LRU set count is inconsistent",
+            ));
+        }
+        let mut encoded_cache_lines = 0usize;
+        for (set_index, lru) in self.data_cache_lru.iter().enumerate() {
+            if lru.len() > ARM11_DATA_CACHE_WAYS
+                || lru.len() != self.data_cache.sets[set_index].len()
+            {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "D-cache lines and LRU metadata disagree",
+                ));
+            }
+            encoded_cache_lines += lru.len();
+        }
+        if encoded_cache_lines > ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE {
+            return Err(SharedMemoryStateError::TooManyCacheLines(
+                encoded_cache_lines as u32,
+            ));
+        }
+        address_state_write(writer.write_u32(encoded_cache_lines as u32))?;
+        for (set_index, lru) in self.data_cache_lru.iter().enumerate() {
+            address_state_write(writer.write_u8(lru.len() as u8))?;
+            for key in lru {
+                if Self::cache_set_index(*key) != set_index {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                let line = self
+                    .data_cache
+                    .get(key)
+                    .ok_or(SharedMemoryStateError::InvalidCacheTarget)?;
+                address_state_write(writer.write_u64(key.line_offset))?;
+                self.save_state_write_cache_target(&line.target, catalog, &mut writer)?;
+                address_state_write(writer.write_bool(line.dirty))?;
+                address_state_write(writer.write_bytes(&line.bytes))?;
+            }
+        }
+
+        if self.write_buffer.len() > ARM11_WRITE_BUFFER_CAPACITY {
+            return Err(SharedMemoryStateError::TooManyWriteBufferEntries(
+                self.write_buffer.len() as u32,
+            ));
+        }
+        address_state_write(writer.write_u32(self.write_buffer.len() as u32))?;
+        for entry in &self.write_buffer {
+            let key = self.cache_key_for_snapshot_target(&entry.target)?;
+            if key != entry.key
+                || entry.length == 0
+                || usize::from(entry.start) + usize::from(entry.length)
+                    > ARM11_DATA_CACHE_LINE_SIZE
+            {
+                return Err(SharedMemoryStateError::InvalidCacheTarget);
+            }
+            self.save_state_write_cache_target(&entry.target, catalog, &mut writer)?;
+            address_state_write(writer.write_u8(entry.start))?;
+            address_state_write(writer.write_u8(entry.length))?;
+            address_state_write(writer.write_bytes(&entry.bytes))?;
+        }
+
+        address_state_write(writer.write_u32(self.exclusive_versions.len() as u32))?;
+        for (address, generation) in &self.exclusive_versions {
+            if !address.is_multiple_of(crate::memory::EXCLUSIVE_RESERVATION_GRANULE) {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "virtual exclusive-monitor address is unaligned",
+                ));
+            }
+            address_state_write(writer.write_u32(*address))?;
+            address_state_write(writer.write_u64(*generation))?;
+        }
+
+        address_state_write(writer.write_u32(self.tls_slots_in_use.len() as u32))?;
+        for occupied in &self.tls_slots_in_use {
+            address_state_write(writer.write_bool(*occupied))?;
+        }
+
+        address_state_write(writer.write_u32(self.ipc_temporary_regions.len() as u32))?;
+        for region in &self.ipc_temporary_regions {
+            for value in [
+                region.alias_address,
+                region.mapping_base,
+                region.mapping_size,
+                region.reservation_base,
+                region.reservation_size,
+            ] {
+                address_state_write(writer.write_u32(value))?;
+            }
+        }
+
+        let encoded = writer.into_bytes();
+        if encoded.len() > ADDRESS_SPACE_STATE_MAX_BYTES {
+            return Err(SharedMemoryStateError::AllocationFailed);
+        }
+        Ok(encoded)
+    }
+
+    /// Restores mutable process-memory state only after every region, backing,
+    /// cache line and pending writeback has been decoded and validated.
+    pub(crate) fn restore_memory_state(
+        &mut self,
+        encoded: &[u8],
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> Result<(), SharedMemoryStateError> {
+        use crate::cpu::state::StateReader;
+        if encoded.len() > ADDRESS_SPACE_STATE_MAX_BYTES {
+            return Err(SharedMemoryStateError::AllocationFailed);
+        }
+        let mut reader = StateReader::new(encoded);
+        if address_state_read(reader.read_bytes(8))? != ADDRESS_SPACE_STATE_MAGIC {
+            return Err(SharedMemoryStateError::InvalidMagic);
+        }
+        let version = address_state_read(reader.read_u16())?;
+        if version != ADDRESS_SPACE_STATE_VERSION {
+            return Err(SharedMemoryStateError::UnsupportedVersion(version));
+        }
+        if address_state_read(reader.read_u16())? != 0 {
+            return Err(SharedMemoryStateError::UnsupportedFlags(1));
+        }
+
+        let text = address_state_read_static_bytes(&mut reader, self.text.len())?;
+        let read_only = address_state_read_static_bytes(&mut reader, self.read_only.len())?;
+        let data = address_state_read_static_bytes(&mut reader, self.data.len())?;
+        let bss = address_state_read_static_bytes(&mut reader, self.bss.len())?;
+        let stack = address_state_read_static_bytes(&mut reader, self.stack.len())?;
+        let fast_memory = address_state_read(reader.read_bool())?;
+        let interrupt_state_touched = address_state_read(reader.read_bool())?;
+        let mut published_smp_mode = [None; 2];
+        for mode in &mut published_smp_mode {
+            *mode = match address_state_read(reader.read_u8())? {
+                0 => None,
+                1 => Some(false),
+                2 => Some(true),
+                _ => {
+                    return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                        "SMP publication state is invalid",
+                    ));
+                }
+            };
+        }
+
+        let dynamic_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS)?;
+        let mut dynamic_regions = Vec::new();
+        dynamic_regions
+            .try_reserve_exact(dynamic_count)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        for _ in 0..dynamic_count {
+            let address = address_state_read(reader.read_u32())?;
+            let kind = address_state_read(reader.read_u8())?;
+            let slot = address_state_read(reader.read_u32())?;
+            let root_offset = usize::try_from(address_state_read(reader.read_u64())?)
+                .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
+            let length = usize::try_from(address_state_read(reader.read_u64())?)
+                .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
+            address_state_validate_region_range(address, length)?;
+            let backing = catalog.view(slot, root_offset, length)?;
+            let backing = match kind {
+                0 => DynamicMemoryBacking::Private(backing),
+                1 => DynamicMemoryBacking::Shared(backing),
+                _ => {
+                    return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                        "dynamic backing kind is invalid",
+                    ));
+                }
+            };
+            dynamic_regions.push(DynamicMemoryRegion { address, backing });
+        }
+
+        let shared_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS)?;
+        let mut shared_regions = Vec::new();
+        shared_regions
+            .try_reserve_exact(shared_count)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        for _ in 0..shared_count {
+            let address = address_state_read(reader.read_u32())?;
+            let slot = address_state_read(reader.read_u32())?;
+            let root_offset = usize::try_from(address_state_read(reader.read_u64())?)
+                .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
+            let length = usize::try_from(address_state_read(reader.read_u64())?)
+                .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
+            let permissions = address_state_read(reader.read_u32())?;
+            address_state_validate_region_range(address, length)?;
+            if permissions > 3 || permissions == 2 {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "shared-region permissions are invalid",
+                ));
+            }
+            shared_regions.push(SharedMemoryRegion {
+                address,
+                backing: catalog.view(slot, root_offset, length)?,
+                permissions,
+            });
+        }
+
+        let linear_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS)?;
+        let mut linear_regions = Vec::new();
+        linear_regions
+            .try_reserve_exact(linear_count)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        for _ in 0..linear_count {
+            let virtual_base = address_state_read(reader.read_u32())?;
+            let physical_base = address_state_read(reader.read_u32())?;
+            let size = address_state_read(reader.read_u32())?;
+            address_state_validate_region_range(virtual_base, size as usize)?;
+            if !physical_base.is_multiple_of(PAGE_SIZE as u32)
+                || !size.is_multiple_of(PAGE_SIZE as u32)
+            {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "linear mapping is not page-aligned",
+                ));
+            }
+            let memory = self
+                .gpu_memory
+                .as_ref()
+                .ok_or(SharedMemoryStateError::MissingPhysicalMemory)?;
+            memory
+                .validate_range(physical_base, size as usize)
+                .map_err(|_| SharedMemoryStateError::InvalidAddressSpaceState(
+                    "linear mapping physical range is invalid",
+                ))?;
+            if !memory.has_linear_fcram_allocation(physical_base, size) {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "linear mapping has no matching FCRAM allocation",
+                ));
+            }
+            let virtual_end = u64::from(virtual_base) + u64::from(size);
+            let expected_physical = if u64::from(virtual_base) >= u64::from(OLD_LINEAR_BASE)
+                && virtual_end <= OLD_LINEAR_END
+            {
+                u64::from(virtual_base) + 0x0C00_0000
+            } else if u64::from(virtual_base) >= u64::from(NEW_LINEAR_BASE)
+                && virtual_end <= NEW_LINEAR_END
+            {
+                u64::from(FCRAM_BASE) + (u64::from(virtual_base) - u64::from(NEW_LINEAR_BASE))
+            } else {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "linear mapping virtual range is outside the supported windows",
+                ));
+            };
+            if expected_physical != u64::from(physical_base) {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "linear mapping virtual and physical ranges disagree",
+                ));
+            }
+            linear_regions.push(LinearMemoryRegion {
+                virtual_base,
+                physical_base,
+                size,
+            });
+        }
+
+        address_state_check_non_overlapping(
+            &self.layout,
+            &dynamic_regions,
+            &shared_regions,
+            &linear_regions,
+        )?;
+
+        let declared_cache_lines =
+            address_state_read_count(&mut reader, ARM11_DATA_CACHE_CAPACITY_BYTES / ARM11_DATA_CACHE_LINE_SIZE)?;
+        let mut data_cache = DataCacheLines::new();
+        let mut data_cache_lru = (0..ARM11_DATA_CACHE_SET_COUNT)
+            .map(|_| VecDeque::with_capacity(ARM11_DATA_CACHE_WAYS))
+            .collect::<Vec<_>>();
+        let mut restored_cache_lines = 0usize;
+        for set_index in 0..ARM11_DATA_CACHE_SET_COUNT {
+            let count = address_state_read(reader.read_u8())? as usize;
+            if count > ARM11_DATA_CACHE_WAYS {
+                return Err(SharedMemoryStateError::TooManyCacheLines(count as u32));
+            }
+            for _ in 0..count {
+                let (key, target) = self.save_state_read_cache_target(catalog, &mut reader)?;
+                if Self::cache_set_index(key) != set_index || data_cache.get(&key).is_some() {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                let dirty = address_state_read(reader.read_bool())?;
+                let source = address_state_read(reader.read_bytes(ARM11_DATA_CACHE_LINE_SIZE))?;
+                let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
+                bytes.copy_from_slice(source);
+                data_cache.insert(key, Arm11DataCacheLine { bytes, dirty, target });
+                data_cache_lru[set_index].push_back(key);
+                restored_cache_lines += 1;
+            }
+        }
+        if restored_cache_lines != declared_cache_lines {
+            return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                "D-cache line count does not match per-set records",
+            ));
+        }
+
+        let write_buffer_count =
+            address_state_read_count(&mut reader, ARM11_WRITE_BUFFER_CAPACITY)?;
+        let mut write_buffer = VecDeque::with_capacity(ARM11_WRITE_BUFFER_CAPACITY);
+        for _ in 0..write_buffer_count {
+            let (key, target) = self.save_state_read_cache_target(catalog, &mut reader)?;
+            let start = address_state_read(reader.read_u8())?;
+            let length = address_state_read(reader.read_u8())?;
+            if length == 0
+                || usize::from(start) + usize::from(length) > ARM11_DATA_CACHE_LINE_SIZE
+            {
+                return Err(SharedMemoryStateError::InvalidCacheTarget);
+            }
+            let source = address_state_read(reader.read_bytes(ARM11_DATA_CACHE_LINE_SIZE))?;
+            let mut bytes = [0u8; ARM11_DATA_CACHE_LINE_SIZE];
+            bytes.copy_from_slice(source);
+            write_buffer.push_back(Arm11WriteBufferEntry {
+                key,
+                target,
+                start,
+                bytes,
+                length,
+            });
+        }
+
+        let exclusive_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS * 1024)?;
+        let mut exclusive_versions = BTreeMap::new();
+        for _ in 0..exclusive_count {
+            let address = address_state_read(reader.read_u32())?;
+            let generation = address_state_read(reader.read_u64())?;
+            if !address.is_multiple_of(crate::memory::EXCLUSIVE_RESERVATION_GRANULE)
+                || exclusive_versions.insert(address, generation).is_some()
+            {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "virtual exclusive monitor is invalid or duplicated",
+                ));
+            }
+        }
+
+        let tls_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_TLS_SLOTS)?;
+        let mut tls_slots_in_use = Vec::new();
+        tls_slots_in_use
+            .try_reserve_exact(tls_count)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        for _ in 0..tls_count {
+            tls_slots_in_use.push(address_state_read(reader.read_bool())?);
+        }
+
+        let ipc_count = address_state_read_count(&mut reader, ADDRESS_SPACE_STATE_MAX_REGIONS)?;
+        let mut ipc_temporary_regions = Vec::new();
+        ipc_temporary_regions
+            .try_reserve_exact(ipc_count)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        for _ in 0..ipc_count {
+            let region = IpcTemporaryMappingRegion {
+                alias_address: address_state_read(reader.read_u32())?,
+                mapping_base: address_state_read(reader.read_u32())?,
+                mapping_size: address_state_read(reader.read_u32())?,
+                reservation_base: address_state_read(reader.read_u32())?,
+                reservation_size: address_state_read(reader.read_u32())?,
+            };
+            let reservation_end = u64::from(region.reservation_base)
+                .checked_add(u64::from(region.reservation_size))
+                .ok_or(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "IPC guard reservation wraps the address space",
+                ))?;
+            if !region.mapping_base.is_multiple_of(PAGE_SIZE as u32)
+                || !region.reservation_base.is_multiple_of(PAGE_SIZE as u32)
+                || !region.mapping_size.is_multiple_of(PAGE_SIZE as u32)
+                || region.reservation_size != region.mapping_size + 2 * PAGE_SIZE as u32
+                || region.alias_address < region.mapping_base
+                || u64::from(region.alias_address) >= u64::from(region.mapping_base) + u64::from(region.mapping_size)
+                || reservation_end > IPC_TEMPORARY_BUFFER_END
+                || !shared_regions.iter().any(|shared| {
+                    shared.address == region.mapping_base
+                        && shared.backing.length == region.mapping_size as usize
+                        && shared.permissions == 3
+                })
+            {
+                return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                    "IPC temporary mapping metadata is inconsistent",
+                ));
+            }
+            ipc_temporary_regions.push(region);
+        }
+        reader.finish().map_err(|_| SharedMemoryStateError::TrailingData)?;
+
+        // All data above is staged; the live address space is changed only here.
+        self.text = text;
+        self.read_only = read_only;
+        self.data = data;
+        self.bss = bss;
+        self.stack = stack;
+        self.fast_memory = fast_memory;
+        self.interrupt_state_touched.set(interrupt_state_touched);
+        self.published_smp_mode = published_smp_mode;
+        self.dynamic_regions = dynamic_regions;
+        self.shared_regions = shared_regions;
+        self.linear_regions = linear_regions;
+        self.data_cache = data_cache;
+        self.data_cache_lru = data_cache_lru;
+        self.write_buffer = write_buffer;
+        self.exclusive_versions = exclusive_versions;
+        self.tls_slots_in_use = tls_slots_in_use;
+        self.ipc_temporary_regions = ipc_temporary_regions;
+        self.static_segment_hint.set(4);
+        Ok(())
+    }
+
+    pub(crate) fn encode_save_state_section(
+        &self,
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> Result<crate::save_state::SaveStateSection, SharedMemoryStateError> {
+        crate::save_state::SaveStateSection::new(
+            crate::save_state::section_id::PROCESS_MEMORY,
+            ADDRESS_SPACE_STATE_VERSION,
+            self.encode_memory_state(catalog)?,
+        )
+        .map_err(|_| SharedMemoryStateError::InvalidAddressSpaceState(
+            "could not wrap process memory section",
+        ))
+    }
+
+    pub(crate) fn restore_save_state_section(
+        &mut self,
+        section: &crate::save_state::SaveStateSection,
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> Result<(), SharedMemoryStateError> {
+        if section.id() != crate::save_state::section_id::PROCESS_MEMORY
+            || section.version() != ADDRESS_SPACE_STATE_VERSION
+        {
+            return Err(SharedMemoryStateError::InvalidAddressSpaceState(
+                "process-memory section ID or version is unsupported",
+            ));
+        }
+        self.restore_memory_state(section.payload(), catalog)
+    }
+
+    fn cache_key_for_snapshot_target(
+        &self,
+        target: &DataCacheTarget,
+    ) -> Result<DataCacheKey, SharedMemoryStateError> {
+        match target {
+            DataCacheTarget::Static { kind, offset } => {
+                if !offset.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE)
+                    || offset.checked_add(ARM11_DATA_CACHE_LINE_SIZE)
+                        .is_none_or(|end| end > self.bytes_for(*kind).len())
+                {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                Ok(DataCacheKey {
+                    backing_id: self.static_backing_ids[Self::static_backing_slot(*kind)],
+                    line_offset: *offset as u64,
+                })
+            }
+            DataCacheTarget::Backing { backing, offset } => {
+                let root_offset = backing
+                    .root_offset(*offset)
+                    .filter(|root| root.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE))
+                    .ok_or(SharedMemoryStateError::InvalidCacheTarget)?;
+                if offset.checked_add(ARM11_DATA_CACHE_LINE_SIZE)
+                    .is_none_or(|end| end > backing.length)
+                {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                Ok(DataCacheKey {
+                    backing_id: backing.backing_id(),
+                    line_offset: root_offset as u64,
+                })
+            }
+            DataCacheTarget::Physical { memory, address } => {
+                if !address.is_multiple_of(ARM11_DATA_CACHE_LINE_SIZE as u32)
+                    || memory.validate_range(*address, ARM11_DATA_CACHE_LINE_SIZE).is_err()
+                    || self.gpu_memory_backing_id.is_none()
+                {
+                    return Err(SharedMemoryStateError::InvalidCacheTarget);
+                }
+                Ok(DataCacheKey {
+                    backing_id: self.gpu_memory_backing_id.unwrap(),
+                    line_offset: u64::from(*address),
+                })
+            }
+        }
     }
 
     /// Creates a segmented address space from a verified prepared executable.
@@ -5274,6 +6134,79 @@ mod tests {
             address_space.read32(base + 0x10),
             Err(Error::InvalidAccess { .. })
         ));
+    }
+
+    #[test]
+    fn process_memory_snapshot_round_trips_static_heap_and_shared_aliases() {
+        let mut original = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        let heap = APPLICATION_HEAP_BASE;
+        original.allocate_application_heap_region(heap, 0x2000).unwrap();
+        let mut heap_view = original
+            .shared_memory_backing_for_heap_range(heap, 0x2000)
+            .unwrap();
+        heap_view.write_bytes(0x20, &[1, 2, 3, 4]);
+
+        let shared_root = SharedMemoryBacking::zeroed(0x2000).unwrap();
+        shared_root.write_bytes(0x100, &[9, 8, 7]);
+        original
+            .map_shared_memory_region(0x0600_0000, shared_root.clone(), 3)
+            .unwrap();
+        original
+            .map_shared_memory_region(0x0600_2000, shared_root.clone(), 3)
+            .unwrap();
+
+        let mut catalog = SharedMemoryBackingCatalog::new();
+        original.collect_shared_backings(&mut catalog).unwrap();
+        let catalog_bytes = catalog.encode().unwrap();
+        let restored_catalog = SharedMemoryBackingCatalog::decode(&catalog_bytes).unwrap();
+        let encoded = original.encode_memory_state(&catalog).unwrap();
+
+        let mut restored = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        restored.restore_memory_state(&encoded, &restored_catalog).unwrap();
+        assert_eq!(restored.dynamic_regions.len(), 1);
+        assert_eq!(restored.shared_regions.len(), 2);
+
+        let dynamic = restored.dynamic_regions[0].backing.backing_ref();
+        let mut heap_bytes = [0u8; 4];
+        dynamic.read_bytes(0x20, &mut heap_bytes);
+        assert_eq!(heap_bytes, [1, 2, 3, 4]);
+
+        let first = &restored.shared_regions[0].backing;
+        let second = &restored.shared_regions[1].backing;
+        assert!(first.shares_backing_with(second));
+        let mut shared_bytes = [0u8; 3];
+        second.read_bytes(0x100, &mut shared_bytes);
+        assert_eq!(shared_bytes, [9, 8, 7]);
+
+        let section = original.encode_save_state_section(&catalog).unwrap();
+        assert_eq!(section.id(), crate::save_state::section_id::PROCESS_MEMORY);
+    }
+
+    #[test]
+    fn malformed_process_memory_snapshot_does_not_replace_live_regions() {
+        let mut original = Arm11CodeAddressSpace::from_prepared(prepared_image()).unwrap();
+        original
+            .allocate_application_heap_region(APPLICATION_HEAP_BASE, 0x2000)
+            .unwrap();
+        let mut catalog = SharedMemoryBackingCatalog::new();
+        original.collect_shared_backings(&mut catalog).unwrap();
+        let before = original.encode_memory_state(&catalog).unwrap();
+
+        let mut truncated = before.clone();
+        truncated.pop();
+        assert!(original.restore_memory_state(&truncated, &catalog).is_err());
+        assert_eq!(original.encode_memory_state(&catalog).unwrap(), before);
+
+        let mut bad_count = before.clone();
+        bad_count[8 + 2 + 2 + 5 * 4 + 1 + 1 + 2 * 4..][..4]
+            .copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(original.restore_memory_state(&bad_count, &catalog).is_err());
+        assert_eq!(original.encode_memory_state(&catalog).unwrap(), before);
+
+        let mut trailing = before.clone();
+        trailing.push(0);
+        assert!(original.restore_memory_state(&trailing, &catalog).is_err());
+        assert_eq!(original.encode_memory_state(&catalog).unwrap(), before);
     }
 
     #[test]
