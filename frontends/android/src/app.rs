@@ -442,7 +442,11 @@ impl App {
     }
 
     fn cycle_screen_layout(&mut self) {
-        self.screen_layout_mode = self.screen_layout_mode.next();
+        self.screen_layout_mode = match self.screen_layout_mode {
+            ScreenLayoutMode::Auto if self.width >= self.height => ScreenLayoutMode::Vertical,
+            ScreenLayoutMode::Auto => ScreenLayoutMode::SideBySide,
+            mode => mode.next(),
+        };
     }
 
     fn apply_game_input(&mut self) {
