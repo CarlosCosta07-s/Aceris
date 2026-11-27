@@ -531,7 +531,7 @@ impl App {
             ORIENTATION_AUTO,
             self.library.virtual_controls_size_percent(),
             self.library.virtual_controls_preset(),
-            self.library.virtual_control_positions(),
+            self.displayed_virtual_control_positions(),
         )
     }
 
@@ -546,7 +546,7 @@ impl App {
                 self.library.virtual_controls_opacity(),
                 self.library.virtual_controls_size_percent(),
                 self.library.virtual_controls_preset(),
-                self.library.virtual_control_positions(),
+                self.displayed_virtual_control_positions(),
             );
         }
     }
