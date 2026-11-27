@@ -778,7 +778,7 @@ impl System {
         })?;
         if boot_content.content_type & CONTENT_TYPE_ENCRYPTED != 0 {
             return Err(Error::Unimplemented(
-                "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files",
+                "Este jogo está criptografado. O Aceris aceita apenas cópias descriptografadas de .3DS, .CCI e .CIA.",
             ));
         }
 
@@ -808,7 +808,7 @@ impl System {
         }
         if !ncch.header().declares_no_crypto() {
             return Err(Error::Unimplemented(
-                "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files",
+                "Este jogo está criptografado. O Aceris aceita apenas cópias descriptografadas de .3DS, .CCI e .CIA.",
             ));
         }
 
@@ -1240,7 +1240,7 @@ impl System {
 
         if !ncch_header.declares_no_crypto() {
             return Err(Error::Unimplemented(
-                "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files",
+                "Este jogo está criptografado. O Aceris aceita apenas cópias descriptografadas de .3DS, .CCI e .CIA.",
             ));
         }
 
@@ -11094,7 +11094,7 @@ mod tests {
         assert!(matches!(
             error,
             Error::Unimplemented(message)
-                if message == "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files"
+                if message == "Este jogo está criptografado. O Aceris aceita apenas cópias descriptografadas de .3DS, .CCI e .CIA."
         ));
         assert_eq!(system.image(), None);
         assert!(system.ncsd_session().is_none());
@@ -11116,7 +11116,7 @@ mod tests {
         assert!(matches!(
             error,
             Error::Unimplemented(message)
-                if message == "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files"
+                if message == "Este jogo está criptografado. O Aceris aceita apenas cópias descriptografadas de .3DS, .CCI e .CIA."
         ));
         assert_eq!(system.image(), None);
         assert!(system.ncsd_session().is_none());
@@ -11302,7 +11302,7 @@ mod tests {
         assert!(matches!(
             error,
             Error::Unimplemented(message)
-                if message == "encrypted game images are not supported; Aceris accepts decrypted .3DS/.CCI/.CIA files"
+                if message == "Este jogo está criptografado. O Aceris aceita apenas cópias descriptografadas de .3DS, .CCI e .CIA."
         ));
         assert_eq!(system.image(), Some(ImageFormat::Ncsd));
         assert_eq!(system.cpu().pc(), original_pc);
