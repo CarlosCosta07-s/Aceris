@@ -5424,11 +5424,11 @@ impl Arm11CodeAddressSpace {
         size_bytes: u32,
         require_read_permission: bool,
     ) -> BusResult<usize> {
-        let lines = self.cache_lines_for_range_with_access(
-            address,
-            size_bytes,
-            require_read_permission,
-        )?;
+        let lines = if require_read_permission {
+            self.cache_lines_for_range(address, size_bytes)?
+        } else {
+            self.cache_lines_for_kernel_maintenance(address, size_bytes)?
+        };
         let mut written_back = 0usize;
 
         for key in lines {
