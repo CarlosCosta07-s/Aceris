@@ -109,6 +109,17 @@ pub(super) enum FastOp {
         x: bool,
         y: bool,
     },
+    /// SMLAD/SMLSD, SMLALD/SMLSLD and SMMLA/SMMLS/SMMUL families.
+    DspMultiply {
+        class: u32,
+        rd: u8,
+        ra: u8,
+        rs: u8,
+        rm: u8,
+        bit7: bool,
+        subtract: bool,
+        exchange_or_round: bool,
+    },
     /// B / BL.
     Branch,
 }
@@ -306,6 +317,25 @@ fn decode(word: u32) -> FastOp {
                     kind: ShiftKind::from_bits(field(word, 6, 5)),
                     amount: field(word, 11, 7) as u8,
                 }
+            }
+        }
+        0b011 if bit(word, 4) => {
+            // Dual-halfword and most-significant-word multiply instructions.
+            // Other ARMv6 media instructions remain on the shared generic path.
+            let class = word & 0x0FF0_0010;
+            if matches!(class, 0x0700_0010 | 0x0740_0010 | 0x0750_0010) {
+                FastOp::DspMultiply {
+                    class,
+                    rd: field(word, 19, 16) as u8,
+                    ra: field(word, 15, 12) as u8,
+                    rs: field(word, 11, 8) as u8,
+                    rm: field(word, 3, 0) as u8,
+                    bit7: bit(word, 7),
+                    subtract: bit(word, 6),
+                    exchange_or_round: bit(word, 5),
+                }
+            } else {
+                FastOp::Generic
             }
         }
         0b010 => {
@@ -552,6 +582,28 @@ impl Arm11Core {
                     rm,
                     x,
                     y,
+                );
+            }
+            FastOp::DspMultiply {
+                class,
+                rd,
+                ra,
+                rs,
+                rm,
+                bit7,
+                subtract,
+                exchange_or_round,
+            } => {
+                return self.execute_cached_signed_dsp_multiply_instruction(
+                    word,
+                    class,
+                    rd,
+                    ra,
+                    rs,
+                    rm,
+                    bit7,
+                    subtract,
+                    exchange_or_round,
                 );
             }
             FastOp::Branch => self.branch_with_link(word),
@@ -822,6 +874,13 @@ mod tests {
             0xE125_02E1, // SMULWy r5, r1, r2
             0xE145_62C1, // SMLALxy r5, r6, r1, r2
             0xE165_02E1, // SMULxy r5, r1, r2
+            0xE704_5201, // SMLAD r4, r1, r2, r5
+            0xE704_F201, // SMUAD r4, r1, r2
+            0xE704_5261, // SMLSDX r4, r1, r2, r5
+            0xE744_5201, // SMLALD r4, r5, r1, r2
+            0xE754_5201, // SMMLA r4, r1, r2, r5
+            0xE754_F221, // SMMULR r4, r1, r2
+            0xE754_52D1, // SMMLS r4, r1, r2, r5
         ] {
             assert_cached_matches_generic(word, core.clone(), &memory);
         }
