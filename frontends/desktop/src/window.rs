@@ -440,10 +440,7 @@ mod tests {
                 "non-opaque pixel at scale {scale}"
             );
             assert_eq!(pixel(&output, scale, 0, 0), [3, 2, 1, 0xFF]);
-            assert_eq!(
-                pixel(&output, scale, 416 * scale, 0),
-                [6, 5, 4, 0xFF]
-            );
+            assert_eq!(pixel(&output, scale, 416 * scale, 0), [6, 5, 4, 0xFF]);
             for row in output.chunks_exact(width * 4) {
                 assert!(
                     row[400 * scale * 4..416 * scale * 4]
