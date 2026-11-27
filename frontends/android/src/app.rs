@@ -54,7 +54,7 @@ pub struct App {
     confirmation_selected: usize,
     controls_editor: bool,
     control_drag: Option<(i32, u32)>,
-    control_resize: Option<(i32, i32, u32, f32, u8)>,
+    control_resize: Option<(i32, i32, u32, f32, u8, u32)>,
     layout_preferences: ScreenLayoutPreferences,
     menu_tap: Option<(i32, i32)>,
     menu_button_pointer: Option<i32>,
@@ -652,14 +652,21 @@ impl App {
                             button,
                             start_distance,
                             initial_size,
+                            orientation,
                         ));
                     }
                 }
             }
         }
 
-        if let Some((first_id, second_id, resize_button, start_distance, initial_size)) =
-            self.control_resize
+        if let Some((
+            first_id,
+            second_id,
+            resize_button,
+            start_distance,
+            initial_size,
+            resize_orientation,
+        )) = self.control_resize
         {
             match (self.pointers.get(&first_id), self.pointers.get(&second_id)) {
                 (Some(&(first_x, first_y)), Some(&(second_x, second_y))) => {
@@ -668,7 +675,7 @@ impl App {
                         (f32::from(initial_size) * current_distance / start_distance).round();
                     let size_percent = (scaled as i16).clamp(60, 150) as u8;
                     self.library.resize_virtual_control(
-                        orientation,
+                        resize_orientation,
                         resize_button,
                         size_percent,
                     );
