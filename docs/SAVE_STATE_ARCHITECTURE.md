@@ -1,6 +1,6 @@
 # Arquitetura de save states
 
-> Estado em 27/11/2026: o formato de contêiner versionado está implementado. A captura/restauração integral de System, a gravação em slots e os controles de interface ainda não estão disponíveis. Não apresentar o subsistema como concluído.
+> Estado em 27/11/2026: o formato de contêiner versionado e o armazenamento durável em slots estão implementados. A captura/restauração integral de System e os controles Save/Load da interface ainda não estão disponíveis. Não apresentar o subsistema como concluído.
 
 ## Save de jogo não é save state
 
@@ -92,6 +92,18 @@ A seção 13 preserva o PID do processo, a linha IRQ externa, deadlines de esper
 Esta seção complementa, mas não substitui, ARM11_CPU e KERNEL: scheduler/contextos por thread continuam na seção 2; objetos e handles continuam na seção 4. A coerência cruzada entre todos esses dados ainda deve ser validada pelo agregador System durante a restauração completa.
 
 O caminho de API também está conectado: SaveStateFile::from_sections cria o envelope externo a partir de uma tabela validada, e decode_sections recupera a tabela interna depois que o arquivo externo foi validado para a identidade do jogo.
+
+### Armazenamento durável em slots — ACRS v1
+
+O módulo `aceris_core::save_state_store` implementa armazenamento em disco independente da interface:
+
+- Dez slots numerados por título, em diretórios derivados do Title ID (quando disponível) e do SHA-256 obrigatório do conteúdo de boot. O caminho não depende do nome nem do local original do arquivo carregado.
+- Cada gravação cria uma geração imutável com `create_new`; arquivos anteriores nunca são abertos para sobrescrita. Os bytes são escritos integralmente e sincronizados antes do retorno de sucesso.
+- A leitura percorre as gerações da mais recente para a mais antiga e valida o envelope/checksum e a identidade exata antes de devolver o estado. Uma geração parcial ou corrompida é ignorada, permitindo fallback para uma gravação anterior.
+- Após uma gravação bem-sucedida, o armazenamento mantém as três gerações mais recentes do slot. Arquivos de outros títulos e slots não são afetados.
+- O módulo possui testes sintéticos para slots independentes, separação por identidade, recuperação de geração corrompida/interrompida, retenção, slots inválidos e slots vazios.
+
+A sincronização do arquivo é obrigatória; a sincronização do diretório é best-effort por diferenças entre sistemas de arquivos/plataformas. O armazenamento ainda não está conectado ao menu nem captura estado da máquina. A API só aceita um `SaveStateFile` já construído, e o agregador de snapshot de `System` continua pendente. O armazenamento por gerações também não substitui validação de identidade nem checksum do formato.
 
 ## Próximas etapas obrigatórias
 
