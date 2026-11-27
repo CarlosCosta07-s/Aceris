@@ -1637,6 +1637,21 @@ mod tests {
     }
 
     #[test]
+    fn legacy_virtual_control_positions_load_with_default_individual_sizes() {
+        let current = VirtualControlPositions::default().to_config_string();
+        let mut legacy = String::from("ACERIS_VIRTUAL_CONTROL_POSITIONS_V1\n");
+        for line in current.lines().skip(1) {
+            legacy.push_str(line.strip_suffix(",100").unwrap());
+            legacy.push('\n');
+        }
+
+        let decoded = VirtualControlPositions::from_config_str(&legacy).unwrap();
+        assert_eq!(decoded, VirtualControlPositions::default());
+        assert_eq!(decoded.size_percent(ORIENTATION_PORTRAIT, buttons::A), 100);
+        assert_eq!(decoded.size_percent(ORIENTATION_LANDSCAPE, buttons::A), 100);
+    }
+
+    #[test]
     fn custom_control_positions_are_shared_by_hit_testing_and_renderer() {
         let (width, height) = (480, 800);
         let mut positions = VirtualControlPositions::default();
