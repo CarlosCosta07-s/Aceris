@@ -331,11 +331,11 @@ mod tests {
             &storage,
             samples.len(),
             Duration::from_secs(5),
-            4,
+            5,
             3,
         );
 
-        assert_eq!(report.presented_fps, 0.8);
+        assert_eq!(report.presented_fps, 1.0);
         assert_eq!(report.frame_average_ms, 6.0);
         assert_eq!(report.frame_p50_ms, 6.0);
         assert_eq!(report.frame_p95_ms, 8.0);
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(report.presentation_p95_ms, 3.0);
         assert_eq!(report.presentation_interval_p50_ms, 16.0);
         assert_eq!(report.presentation_interval_p95_ms, 18.0);
-        assert_eq!(report.gpu_presentation_percent, 75.0);
+        assert_eq!(report.gpu_presentation_percent, 60.0);
     }
 
     #[test]
