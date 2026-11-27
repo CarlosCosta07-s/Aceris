@@ -340,6 +340,43 @@ mod tests {
     }
 
     #[test]
+    fn ir_block_execution_matches_precise_steps_for_alu_shift_and_conditions() {
+        let program = [
+            0xE3A0_0003, // MOV r0, #3
+            0xE1A0_1080, // MOV r1, r0, LSL #1
+            0x03A0_2007, // MOVEQ r2, #7 (skipped while Z is clear)
+            0xEA00_0000, // B to the instruction after the branch
+        ];
+        let mut fast_bus = bus();
+        let mut precise_bus = bus();
+        for (index, word) in program.into_iter().enumerate() {
+            let address = 0x100 + index as u32 * 4;
+            fast_bus.memory.write32(address, word).unwrap();
+            precise_bus.memory.write32(address, word).unwrap();
+        }
+
+        let mut fast_cpu = Arm11Core::new();
+        fast_cpu.regs[super::super::PC] = 0x100;
+        let mut precise_cpu = Arm11Core::new();
+        precise_cpu.regs[super::super::PC] = 0x100;
+
+        for _ in 0..program.len() {
+            assert_eq!(
+                precise_cpu.step(&mut precise_bus).unwrap(),
+                super::super::StepEvent::Executed
+            );
+        }
+        let (executed, exit) = fast_cpu.run_fast(&mut fast_bus, program.len() as u64).unwrap();
+
+        assert_eq!(executed, program.len() as u64);
+        assert_eq!(exit, super::super::FastRunExit::Budget);
+        assert_eq!(fast_cpu.regs, precise_cpu.regs);
+        assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+        assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+        assert_eq!((fast_cpu.regs[0], fast_cpu.regs[1], fast_cpu.regs[2]), (3, 6, 0));
+    }
+
+    #[test]
     fn refuses_writable_or_unidentified_instruction_memory() {
         let mut bus = bus();
         let mut cache = BlockCache::default();
