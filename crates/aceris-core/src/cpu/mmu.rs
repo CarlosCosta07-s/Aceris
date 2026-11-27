@@ -1109,6 +1109,16 @@ impl<B: Bus + ?Sized> Bus for MmuBus<'_, B> {
         result
     }
 
+    fn fetch32_speculative(&mut self, addr: u32) -> Option<u32> {
+        // A future instruction may be unmapped or XN even when the current
+        // instruction is valid. Compilation must not leave its prefetch fault
+        // latched before execution reaches that address.
+        let previous_fault = self.fault;
+        let result = self.fetch32(addr).ok();
+        self.fault = previous_fault;
+        result
+    }
+
     fn immutable_instruction_location(
         &mut self,
         address: u32,
@@ -4080,4 +4090,24 @@ mod save_state_tests {
         restored.write_save_state(&mut restored_writer).unwrap();
         assert_eq!(restored_writer.into_bytes(), encoded);
     }
+    #[test]
+    fn speculative_instruction_fetch_does_not_latch_a_future_execute_fault() {
+        let (cpu, mut memory) = machine();
+        set_l1(
+            &mut memory,
+            0,
+            SECTION | SECTION_AP_RW_ALL | domain(0) | SECTION_XN,
+        );
+        let mut tlb = TranslationLookasideBuffer::default();
+        let mut bus = MmuBus::new(&mut memory, params(&cpu), &mut tlb);
+
+        // The XN section must fail an instruction fetch, but that failure is
+        // only architectural when the guest actually reaches this instruction.
+        assert_eq!(bus.fetch32_speculative(0), None);
+        assert_eq!(bus.fault, None);
+        assert!(bus.fetch32(0).is_err());
+        assert!(bus.fault.is_some());
+    }
+
+
 }
