@@ -52,7 +52,7 @@ impl VirtualControlPreset {
         }
     }
 
-    pub const fn from_config_value(value: &str) -> Option<Self> {
+    pub fn from_config_value(value: &str) -> Option<Self> {
         match value {
             "standard" => Some(Self::Standard),
             "compact" => Some(Self::Compact),
@@ -1171,9 +1171,7 @@ mod tests {
             shape(&left_handed, buttons::UP).x,
             shape(&standard, buttons::A).x - shape(&standard, buttons::A).radius * 1.5
         );
-        assert!(
-            shape(&right_handed, buttons::A).x > shape(&standard, buttons::A).x
-        );
+        assert!(shape(&right_handed, buttons::A).x > shape(&standard, buttons::A).x);
 
         let left_pad_center = shape(&left_handed, buttons::UP);
         assert_eq!(
@@ -1198,7 +1196,7 @@ mod tests {
                 100,
                 VirtualControlPreset::Standard,
             ),
-            0
+            buttons::X
         );
 
         let base = vec![40u8, 80, 120, 255].repeat(width as usize * height as usize);
