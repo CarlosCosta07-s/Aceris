@@ -12,8 +12,7 @@ use std::sync::{Arc, Mutex};
 use super::PreparedArm11Image;
 use super::ncch::extended_header::{Arm11MemoryType, CodeFileLayout, CodeSetInfo};
 use super::ncch::service_access::ServiceAccessControl;
-use crate::cpu::state::{StateReader, StateWriter};
-use crate::cpu::{
+""use crate::cpu::{
     Arm11Core, MPCORE_CPU_INTERFACE_CPU0_OFFSET, MPCORE_CPU_INTERFACE_CURRENT_OFFSET,
     MPCORE_GIC_CPU_INTERFACE_SIZE, MPCORE_GIC_DISTRIBUTOR_OFFSET, MPCORE_GIC_DISTRIBUTOR_SIZE,
     MPCORE_PRIVATE_TIMER_CPU0_ALIAS_OFFSET, MPCORE_PRIVATE_TIMER_OFFSET,
@@ -2075,8 +2074,7 @@ impl Arm11CodeAddressSpace {
         catalog: &SharedMemoryBackingCatalog,
         writer: &mut crate::cpu::state::StateWriter,
     ) -> Result<(), SharedMemoryStateError> {
-        use crate::cpu::state::StateWriter;
-        match target {
+""        match target {
             DataCacheTarget::Static { kind, offset } => {
                 address_state_write(writer.write_u8(0))?;
                 address_state_write_segment_kind(writer, *kind)?;
@@ -2231,10 +2229,11 @@ impl Arm11CodeAddressSpace {
             address_state_validate_region_range(region.address, region.len())?;
             address_state_write(writer.write_u32(region.address))?;
             let backing = region.backing.backing_ref();
-            address_state_write(writer.write_u8(match region.backing {
+            let backing_kind = match &region.backing {
                 DynamicMemoryBacking::Private(_) => 0,
                 DynamicMemoryBacking::Shared(_) => 1,
-            }))?;
+            };
+            address_state_write(writer.write_u8(backing_kind))?;
             address_state_write(writer.write_u32(catalog.slot_for(backing)?))?;
             address_state_write(writer.write_u64(backing.root_base_offset() as u64))?;
             address_state_write(writer.write_u64(backing.length as u64))?;
@@ -2374,8 +2373,7 @@ impl Arm11CodeAddressSpace {
         encoded: &[u8],
         catalog: &SharedMemoryBackingCatalog,
     ) -> Result<(), SharedMemoryStateError> {
-        use crate::cpu::state::StateReader;
-        if encoded.len() > ADDRESS_SPACE_STATE_MAX_BYTES {
+""        if encoded.len() > ADDRESS_SPACE_STATE_MAX_BYTES {
             return Err(SharedMemoryStateError::AllocationFailed);
         }
         let mut reader = StateReader::new(encoded);
@@ -2628,7 +2626,8 @@ impl Arm11CodeAddressSpace {
             if !region.mapping_base.is_multiple_of(PAGE_SIZE as u32)
                 || !region.reservation_base.is_multiple_of(PAGE_SIZE as u32)
                 || !region.mapping_size.is_multiple_of(PAGE_SIZE as u32)
-                || region.reservation_size != region.mapping_size + 2 * PAGE_SIZE as u32
+                || region.reservation_size
+                    != region.mapping_size.checked_add(2 * PAGE_SIZE as u32).unwrap_or(0)
                 || region.alias_address < region.mapping_base
                 || u64::from(region.alias_address) >= u64::from(region.mapping_base) + u64::from(region.mapping_size)
                 || reservation_end > IPC_TEMPORARY_BUFFER_END
@@ -6198,7 +6197,17 @@ mod tests {
         assert_eq!(original.encode_memory_state(&catalog).unwrap(), before);
 
         let mut bad_count = before.clone();
-        bad_count[8 + 2 + 2 + 5 * 4 + 1 + 1 + 2 * 4..][..4]
+        let mut count_offset = 12usize;
+        for _ in 0..5 {
+            let length = u32::from_le_bytes(
+                bad_count[count_offset..count_offset + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            count_offset += 4 + length;
+        }
+        count_offset += 4; // fast-memory, interrupt marker and two SMP options
+        bad_count[count_offset..count_offset + 4]
             .copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(original.restore_memory_state(&bad_count, &catalog).is_err());
         assert_eq!(original.encode_memory_state(&catalog).unwrap(), before);
