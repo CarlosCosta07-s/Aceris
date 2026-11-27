@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+pub(crate) mod save_state;
+
 use super::thread::ThreadId;
 use crate::loader::ncsd::process::{
     SharedMemoryBacking, SharedMemoryBackingCatalog, SharedMemoryStateError,
