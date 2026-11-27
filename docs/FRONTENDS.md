@@ -42,6 +42,16 @@ A NativeActivity recebe eventos nativos de tecla e movimento/toque e encaminha o
 
 A C ABI também oferece renderização e hit-test para uma camada de controles virtuais. A combinação completa de múltiplos dedos, gamepad virtual na tela, gamepad físico e eixos analógicos ainda precisa de uma rodada específica de validação no aparelho.
 
+### Menu rápido durante a partida (PC e Android)
+
+- **Android:** a tela do jogo mostra um botão discreto **MENU** no canto superior direito; a tecla/gesto Voltar também abre o painel. Tocar no botão MENU é consumido pela interface e não é encaminhado como toque da caneta ao jogo.
+- **PC:** Esc abre e fecha o painel rápido. A escolha é navegável por setas/Enter e mouse. O atalho ainda é fixo; personalização de atalhos permanece pendente.
+- O painel apresenta Continuar, Reiniciar e Voltar à biblioteca. Reiniciar recria a sessão do mesmo arquivo; Voltar à biblioteca encerra a sessão atual. A confirmação de perda de progresso ainda não é apresentada.
+- Enquanto o painel está aberto, o frontend continua processando eventos e redesenhando o último scanout; não chama o próximo passo de emulação guest. A produção de novas amostras de áudio para. Áudio que já estava enfileirado no host pode terminar de tocar.
+- Layouts alternativos, troca de telas, save states, rewind, screenshot, cheats e editor de controles não são ações disponíveis neste menu.
+- Esta primeira implementação ainda precisa passar pela CI e por testes visuais/entrada/áudio em PC e aparelho Android físico.
+
+
 ### Áudio e ciclo de vida
 
 O host Android usa AAudio. Há lógica para classificar a saída do Aceris como áudio de jogo e reduzir a própria saída enquanto outra mídia externa está ativa, sem identificar o player ou ler metadados da faixa. A existência do sink não significa que o áudio do console esteja correto: a inicialização de áudio do homebrew de teste ainda apresenta falha e não há confirmação de saída audível.
