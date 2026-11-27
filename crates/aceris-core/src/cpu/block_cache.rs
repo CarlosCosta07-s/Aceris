@@ -63,17 +63,36 @@ impl BasicBlock {
     }
 }
 
+/// Counters for validating the real value of the immutable-text block cache.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockCacheStats {
+    pub lookups: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub compiled_blocks: u64,
+    pub compiled_instructions: u64,
+    pub non_cacheable_fallbacks: u64,
+}
+
+impl BlockCacheStats {
+    fn record_fallback(&mut self) {
+        self.non_cacheable_fallbacks = self.non_cacheable_fallbacks.saturating_add(1);
+    }
+}
+
 /// Direct-mapped block cache. A slot stores at most sixteen A32 instructions;
 /// blocks are tied to an immutable backing identity rather than only a guest PC.
 #[derive(Clone)]
 pub(super) struct BlockCache {
     entries: Box<[Option<BasicBlock>]>,
+    stats: BlockCacheStats,
 }
 
 impl Default for BlockCache {
     fn default() -> Self {
         Self {
             entries: vec![None; CACHE_ENTRIES].into_boxed_slice(),
+            stats: BlockCacheStats::default(),
         }
     }
 }
@@ -102,10 +121,15 @@ impl BlockCache {
         bus: &mut B,
         decode_cache: &mut DecodeCache,
     ) -> Option<BasicBlock> {
+        self.stats.lookups = self.stats.lookups.saturating_add(1);
         if pc & 3 != 0 {
+            self.stats.record_fallback();
             return None;
         }
-        let first_location = bus.immutable_instruction_location(pc, 4)?;
+        let Some(first_location) = bus.immutable_instruction_location(pc, 4) else {
+            self.stats.record_fallback();
+            return None;
+        };
         let slot = Self::slot(pc, mode);
         if let Some(block) = self.entries[slot] {
             if block.matches(pc, mode, first_location) {
@@ -117,11 +141,13 @@ impl BlockCache {
                             && location.offset == block.backing_offset
                     });
                 if valid {
+                    self.stats.hits = self.stats.hits.saturating_add(1);
                     return Some(block);
                 }
             }
         }
 
+        self.stats.misses = self.stats.misses.saturating_add(1);
         let mut instructions = [EMPTY_INSTRUCTION; BLOCK_MAX_INSTRUCTIONS];
         let mut len = 0usize;
         for index in 0..BLOCK_MAX_INSTRUCTIONS {
@@ -161,6 +187,7 @@ impl BlockCache {
         }
 
         if len == 0 {
+            self.stats.record_fallback();
             return None;
         }
         let block = BasicBlock {
@@ -172,7 +199,20 @@ impl BlockCache {
             instructions,
         };
         self.entries[slot] = Some(block);
+        self.stats.compiled_blocks = self.stats.compiled_blocks.saturating_add(1);
+        self.stats.compiled_instructions = self
+            .stats
+            .compiled_instructions
+            .saturating_add(block.len() as u64);
         Some(block)
+    }
+
+    pub(super) fn stats(&self) -> BlockCacheStats {
+        self.stats
+    }
+
+    pub(super) fn take_stats(&mut self) -> BlockCacheStats {
+        std::mem::take(&mut self.stats)
     }
 }
 
