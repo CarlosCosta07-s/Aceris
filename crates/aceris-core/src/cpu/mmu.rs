@@ -1536,9 +1536,7 @@ impl Arm11Core {
                                 break;
                             }
                             self.branch_taken = false;
-                            let mut event =
-                                match self.execute_ir(&mut mmu, cached.ir)
-                                {
+                            let mut event = match self.execute_ir(&mut mmu, cached.ir) {
                                     Ok(event) => event,
                                     Err(error) => {
                                         execution_error = Some(error);
