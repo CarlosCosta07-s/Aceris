@@ -970,6 +970,15 @@ fn emulate(
         let frame_width = canvas_width as usize * scale;
         let frame_height = canvas_height as usize * scale;
         if menu_open {
+            let profile_label = if layout_preferences.game_has_override_for_surface(
+                system.game_identity(),
+                frame_width as u32,
+                frame_height as u32,
+            ) {
+                "PERFIL DESTE JOGO"
+            } else {
+                "PADRÃO GLOBAL"
+            };
             let rendered = match pending_confirmation {
                 Some(action) => quick_menu::render_confirmation_overlay(
                     &mut frame,
@@ -979,12 +988,13 @@ fn emulate(
                     action,
                     confirmation_selected,
                 ),
-                None => quick_menu::render_overlay(
+                None => quick_menu::render_overlay_with_profile(
                     &mut frame,
                     frame_width as u32,
                     frame_height as u32,
                     MenuPixelFormat::Bgrx8,
                     menu_selected,
+                    profile_label,
                 ),
             };
             if !rendered {
