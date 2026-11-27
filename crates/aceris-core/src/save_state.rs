@@ -170,10 +170,241 @@ impl SaveStateFile {
     }
 }
 
+
+/// Signature for the section table inside a save-state payload.
+const SECTIONED_PAYLOAD_MAGIC: &[u8; 8] = b"ACRPAYLD";
+/// Payload table header: magic, section count and reserved flags.
+pub const SAVE_STATE_PAYLOAD_HEADER_SIZE: usize = 16;
+/// Each section header stores ID, version, flags, length, CRC-32 and reserved data.
+pub const SAVE_STATE_SECTION_HEADER_SIZE: usize = 24;
+/// Maximum independently versioned machine components in one state.
+pub const MAX_SAVE_STATE_SECTIONS: usize = 32;
+
+/// One independently versioned component of a machine snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SaveStateSection {
+    id: u32,
+    version: u16,
+    payload: Vec<u8>,
+}
+
+impl SaveStateSection {
+    /// Creates a section. IDs and versions are non-zero and payloads are bounded.
+    pub fn new(id: u32, version: u16, payload: Vec<u8>) -> Result<Self, SaveStateError> {
+        validate_section_fields(id, version, payload.len() as u64)?;
+        Ok(Self { id, version, payload })
+    }
+
+    pub const fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub const fn version(&self) -> u16 {
+        self.version
+    }
+
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+/// Deterministic section table for a machine snapshot.
+///
+/// The outer SaveStateFile protects the entire payload. This inner table
+/// additionally protects each subsystem independently and permits serializers
+/// to evolve on their own version numbers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SaveStatePayload {
+    sections: Vec<SaveStateSection>,
+}
+
+impl SaveStatePayload {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn sections(&self) -> &[SaveStateSection] {
+        &self.sections
+    }
+
+    pub fn section(&self, id: u32) -> Option<&SaveStateSection> {
+        self.sections.iter().find(|section| section.id == id)
+    }
+
+    /// Inserts a section while rejecting duplicate IDs and aggregate overflow.
+    pub fn insert(&mut self, section: SaveStateSection) -> Result<(), SaveStateError> {
+        validate_section_fields(section.id, section.version, section.payload.len() as u64)?;
+        if self.sections.iter().any(|existing| existing.id == section.id) {
+            return Err(SaveStateError::DuplicateSectionId(section.id));
+        }
+        if self.sections.len() >= MAX_SAVE_STATE_SECTIONS {
+            return Err(SaveStateError::TooManySections(
+                (self.sections.len() + 1) as u32,
+            ));
+        }
+        let added_size = SAVE_STATE_SECTION_HEADER_SIZE
+            .checked_add(section.payload.len())
+            .ok_or(SaveStateError::InvalidLength)?;
+        let total_size = self
+            .encoded_len()?
+            .checked_add(added_size)
+            .ok_or(SaveStateError::InvalidLength)?;
+        validate_payload_size(total_size as u64)?;
+        self.sections
+            .try_reserve(1)
+            .map_err(|_| SaveStateError::AllocationFailed)?;
+        self.sections.push(section);
+        Ok(())
+    }
+
+    /// Encodes sections in insertion order for reproducible save-state files.
+    pub fn encode(&self) -> Result<Vec<u8>, SaveStateError> {
+        let total_size = self.encoded_len()?;
+        let mut encoded = Vec::new();
+        encoded
+            .try_reserve_exact(total_size)
+            .map_err(|_| SaveStateError::AllocationFailed)?;
+        encoded.extend_from_slice(SECTIONED_PAYLOAD_MAGIC);
+        encoded.extend_from_slice(&(self.sections.len() as u32).to_le_bytes());
+        encoded.extend_from_slice(&0u32.to_le_bytes());
+
+        for section in &self.sections {
+            encoded.extend_from_slice(&section.id.to_le_bytes());
+            encoded.extend_from_slice(&section.version.to_le_bytes());
+            encoded.extend_from_slice(&0u16.to_le_bytes());
+            encoded.extend_from_slice(&(section.payload.len() as u64).to_le_bytes());
+            encoded.extend_from_slice(&crc32(&section.payload).to_le_bytes());
+            encoded.extend_from_slice(&0u32.to_le_bytes());
+            encoded.extend_from_slice(&section.payload);
+        }
+        debug_assert_eq!(encoded.len(), total_size);
+        Ok(encoded)
+    }
+
+    /// Validates and decodes the entire section table before returning any section.
+    pub fn decode(encoded: &[u8]) -> Result<Self, SaveStateError> {
+        validate_payload_size(encoded.len() as u64)?;
+        if encoded.len() < SAVE_STATE_PAYLOAD_HEADER_SIZE {
+            return Err(SaveStateError::TruncatedPayloadHeader);
+        }
+        if &encoded[..8] != SECTIONED_PAYLOAD_MAGIC {
+            return Err(SaveStateError::InvalidPayloadMagic);
+        }
+        let section_count = read_u32(encoded, 8);
+        if section_count as usize > MAX_SAVE_STATE_SECTIONS {
+            return Err(SaveStateError::TooManySections(section_count));
+        }
+        let flags = read_u32(encoded, 12);
+        if flags != 0 {
+            return Err(SaveStateError::UnsupportedFlags(flags));
+        }
+
+        let mut sections = Vec::new();
+        sections
+            .try_reserve_exact(section_count as usize)
+            .map_err(|_| SaveStateError::AllocationFailed)?;
+        let mut cursor = SAVE_STATE_PAYLOAD_HEADER_SIZE;
+
+        for _ in 0..section_count {
+            let header_end = cursor
+                .checked_add(SAVE_STATE_SECTION_HEADER_SIZE)
+                .ok_or(SaveStateError::InvalidLength)?;
+            if encoded.get(cursor..header_end).is_none() {
+                return Err(SaveStateError::TruncatedSectionHeader);
+            }
+
+            let id = read_u32(encoded, cursor);
+            let version = read_u16(encoded, cursor + 4);
+            let section_flags = read_u16(encoded, cursor + 6);
+            let section_length = read_u64(encoded, cursor + 8);
+            let expected_crc = read_u32(encoded, cursor + 16);
+            let reserved = read_u32(encoded, cursor + 20);
+            validate_section_fields(id, version, section_length)?;
+            if section_flags != 0 {
+                return Err(SaveStateError::UnsupportedSectionFlags(section_flags));
+            }
+            if reserved != 0 {
+                return Err(SaveStateError::UnsupportedFlags(reserved));
+            }
+            if sections.iter().any(|existing: &SaveStateSection| existing.id == id) {
+                return Err(SaveStateError::DuplicateSectionId(id));
+            }
+
+            let payload_length = usize::try_from(section_length)
+                .map_err(|_| SaveStateError::SectionTooLarge(section_length))?;
+            let payload_end = header_end
+                .checked_add(payload_length)
+                .ok_or(SaveStateError::InvalidLength)?;
+            let payload_bytes = encoded
+                .get(header_end..payload_end)
+                .ok_or(SaveStateError::InvalidLength)?;
+            if crc32(payload_bytes) != expected_crc {
+                return Err(SaveStateError::SectionChecksumMismatch(id));
+            }
+
+            let mut payload = Vec::new();
+            payload
+                .try_reserve_exact(payload_length)
+                .map_err(|_| SaveStateError::AllocationFailed)?;
+            payload.extend_from_slice(payload_bytes);
+            sections.push(SaveStateSection {
+                id,
+                version,
+                payload,
+            });
+            cursor = payload_end;
+        }
+
+        if cursor != encoded.len() {
+            return Err(SaveStateError::InvalidLength);
+        }
+        Ok(Self { sections })
+    }
+
+    fn encoded_len(&self) -> Result<usize, SaveStateError> {
+        if self.sections.len() > MAX_SAVE_STATE_SECTIONS {
+            return Err(SaveStateError::TooManySections(self.sections.len() as u32));
+        }
+        let mut size = SAVE_STATE_PAYLOAD_HEADER_SIZE;
+        for section in &self.sections {
+            validate_section_fields(section.id, section.version, section.payload.len() as u64)?;
+            size = size
+                .checked_add(SAVE_STATE_SECTION_HEADER_SIZE)
+                .and_then(|size| size.checked_add(section.payload.len()))
+                .ok_or(SaveStateError::InvalidLength)?;
+            validate_payload_size(size as u64)?;
+        }
+        Ok(size)
+    }
+}
+
+fn validate_section_fields(id: u32, version: u16, payload_size: u64) -> Result<(), SaveStateError> {
+    if id == 0 {
+        return Err(SaveStateError::InvalidSectionId);
+    }
+    if version == 0 {
+        return Err(SaveStateError::InvalidSectionVersion);
+    }
+    if payload_size > MAX_SAVE_STATE_PAYLOAD_BYTES as u64 {
+        return Err(SaveStateError::SectionTooLarge(payload_size));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveStateError {
     TruncatedHeader,
     InvalidMagic,
+    TruncatedPayloadHeader,
+    InvalidPayloadMagic,
+    TruncatedSectionHeader,
+    InvalidSectionId,
+    InvalidSectionVersion,
+    TooManySections(u32),
+    DuplicateSectionId(u32),
+    SectionTooLarge(u64),
+    UnsupportedSectionFlags(u16),
+    SectionChecksumMismatch(u32),
     UnsupportedVersion(u16),
     InvalidHeaderLength(u16),
     UnsupportedFlags(u32),
@@ -190,6 +421,23 @@ impl fmt::Display for SaveStateError {
         match self {
             Self::TruncatedHeader => f.write_str("save-state header is truncated"),
             Self::InvalidMagic => f.write_str("save-state file signature is invalid"),
+            Self::TruncatedPayloadHeader => f.write_str("save-state payload header is truncated"),
+            Self::InvalidPayloadMagic => f.write_str("save-state payload signature is invalid"),
+            Self::TruncatedSectionHeader => f.write_str("save-state section header is truncated"),
+            Self::InvalidSectionId => f.write_str("save-state section ID must be non-zero"),
+            Self::InvalidSectionVersion => f.write_str("save-state section version must be non-zero"),
+            Self::TooManySections(count) => write!(
+                f,
+                "save-state contains {count} sections; maximum is {MAX_SAVE_STATE_SECTIONS}"
+            ),
+            Self::DuplicateSectionId(id) => write!(f, "save-state section ID {id} is duplicated"),
+            Self::SectionTooLarge(size) => write!(f, "save-state section size {size} exceeds the limit"),
+            Self::UnsupportedSectionFlags(flags) => {
+                write!(f, "save-state section contains unsupported flags {flags:#06X}")
+            }
+            Self::SectionChecksumMismatch(id) => {
+                write!(f, "save-state section {id} checksum does not match")
+            },
             Self::UnsupportedVersion(version) => {
                 write!(f, "save-state version {version} is not supported")
             }
@@ -280,8 +528,10 @@ fn crc32(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_SAVE_STATE_PAYLOAD_BYTES, SAVE_STATE_HEADER_SIZE, SaveStateError, SaveStateFile,
-        SaveStateIdentity, SaveStateMetadata, crc32,
+        MAX_SAVE_STATE_PAYLOAD_BYTES, MAX_SAVE_STATE_SECTIONS, SAVE_STATE_HEADER_SIZE,
+        SAVE_STATE_PAYLOAD_HEADER_SIZE, SAVE_STATE_SECTION_HEADER_SIZE, SaveStateError,
+        SaveStateFile, SaveStateIdentity, SaveStateMetadata, SaveStatePayload, SaveStateSection,
+        crc32,
     };
 
     fn identity() -> SaveStateIdentity {
@@ -301,6 +551,99 @@ mod tests {
             b"synthetic machine state payload".to_vec(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn sectioned_payload_round_trips_independent_versions_and_bytes() {
+        let mut payload = SaveStatePayload::new();
+        payload.insert(SaveStateSection::new(1, 1, b"cpu-state".to_vec()).unwrap()).unwrap();
+        payload.insert(SaveStateSection::new(4, 3, b"gpu-state".to_vec()).unwrap()).unwrap();
+
+        let encoded = payload.encode().unwrap();
+        let decoded = SaveStatePayload::decode(&encoded).unwrap();
+        assert_eq!(decoded, payload);
+        assert_eq!(decoded.section(1).unwrap().version(), 1);
+        assert_eq!(decoded.section(4).unwrap().payload(), b"gpu-state");
+    }
+
+    #[test]
+    fn sectioned_payload_rejects_duplicate_ids_and_zero_metadata() {
+        let mut payload = SaveStatePayload::new();
+        payload.insert(SaveStateSection::new(7, 1, Vec::new()).unwrap()).unwrap();
+        assert_eq!(
+            payload.insert(SaveStateSection::new(7, 2, Vec::new()).unwrap()),
+            Err(SaveStateError::DuplicateSectionId(7))
+        );
+        assert_eq!(
+            SaveStateSection::new(0, 1, Vec::new()),
+            Err(SaveStateError::InvalidSectionId)
+        );
+        assert_eq!(
+            SaveStateSection::new(1, 0, Vec::new()),
+            Err(SaveStateError::InvalidSectionVersion)
+        );
+    }
+
+    #[test]
+    fn sectioned_payload_rejects_corruption_truncation_and_trailing_bytes() {
+        let mut payload = SaveStatePayload::new();
+        payload.insert(SaveStateSection::new(3, 1, b"memory".to_vec()).unwrap()).unwrap();
+        let encoded = payload.encode().unwrap();
+
+        let mut corrupt = encoded.clone();
+        corrupt[SAVE_STATE_PAYLOAD_HEADER_SIZE + SAVE_STATE_SECTION_HEADER_SIZE] ^= 1;
+        assert_eq!(
+            SaveStatePayload::decode(&corrupt),
+            Err(SaveStateError::SectionChecksumMismatch(3))
+        );
+        assert_eq!(
+            SaveStatePayload::decode(&encoded[..SAVE_STATE_PAYLOAD_HEADER_SIZE - 1]),
+            Err(SaveStateError::TruncatedPayloadHeader)
+        );
+        assert_eq!(
+            SaveStatePayload::decode(&encoded[..encoded.len() - 1]),
+            Err(SaveStateError::InvalidLength)
+        );
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert_eq!(
+            SaveStatePayload::decode(&trailing),
+            Err(SaveStateError::InvalidLength)
+        );
+    }
+
+    #[test]
+    fn sectioned_payload_rejects_duplicate_ids_in_untrusted_files() {
+        let mut payload = SaveStatePayload::new();
+        payload.insert(SaveStateSection::new(2, 1, vec![9]).unwrap()).unwrap();
+        let mut encoded = payload.encode().unwrap();
+        let first_section = SAVE_STATE_PAYLOAD_HEADER_SIZE;
+        let duplicate = encoded[first_section..].to_vec();
+        encoded.extend_from_slice(&duplicate);
+        encoded[8..12].copy_from_slice(&2u32.to_le_bytes());
+        assert_eq!(
+            SaveStatePayload::decode(&encoded),
+            Err(SaveStateError::DuplicateSectionId(2))
+        );
+    }
+
+    #[test]
+    fn sectioned_payload_enforces_count_limit_and_reserved_flags() {
+        let mut payload = SaveStatePayload::new();
+        for id in 1..=MAX_SAVE_STATE_SECTIONS as u32 {
+            payload.insert(SaveStateSection::new(id, 1, Vec::new()).unwrap()).unwrap();
+        }
+        assert_eq!(
+            payload.insert(SaveStateSection::new(100, 1, Vec::new()).unwrap()),
+            Err(SaveStateError::TooManySections((MAX_SAVE_STATE_SECTIONS + 1) as u32))
+        );
+
+        let mut encoded = payload.encode().unwrap();
+        encoded[12..16].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(
+            SaveStatePayload::decode(&encoded),
+            Err(SaveStateError::UnsupportedFlags(1))
+        );
     }
 
     #[test]
