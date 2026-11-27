@@ -30,7 +30,6 @@ pub(crate) struct FramePerformanceMonitor {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct FramePerformanceReport {
-    interval_seconds: f64,
     presented_fps: f64,
     sample_count: usize,
     frame_average_ms: f64,
@@ -138,7 +137,6 @@ fn summarize(
     let count = sample_count.min(SAMPLE_CAPACITY);
     if count == 0 {
         return FramePerformanceReport {
-            interval_seconds: interval.as_secs_f64(),
             presented_fps: frames_presented as f64 / interval.as_secs_f64().max(f64::EPSILON),
             presentation_failures: frame_attempts.saturating_sub(frames_presented),
             ..FramePerformanceReport::default()
