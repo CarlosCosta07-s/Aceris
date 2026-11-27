@@ -2,7 +2,7 @@
 
 use super::font;
 
-pub const ACTION_COUNT: usize = 6;
+pub const ACTION_COUNT: usize = 7;
 
 /// A destructive action that must be confirmed before leaving the game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,6 +169,56 @@ pub fn hit_test(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
         let y = y as usize;
         x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height
     })
+}
+
+/// Draws concise controls-editor instructions over the paused game frame.
+pub fn render_control_editor_hint(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+) -> bool {
+    if width < 160 || height < 100 || width > 4096 || height > 4096 {
+        return false;
+    }
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+    let scale = (width.min(height) / 240).clamp(1, 4) as usize;
+    let panel = Rect {
+        x: 8 * scale,
+        y: height as usize - 42 * scale,
+        width: width as usize - 16 * scale,
+        height: 34 * scale,
+    };
+    blend_rect(frame, width as usize, panel, [31, 19, 48], 232, format);
+    draw_border(frame, width as usize, panel, scale, format);
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        panel.x + 10 * scale,
+        panel.y + 6 * scale,
+        scale,
+        "ARRASTE PARA MOVER",
+        [245, 238, 248],
+        format,
+    );
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        panel.x + 10 * scale,
+        panel.y + 18 * scale,
+        scale,
+        "VOLTAR: SALVAR POSICOES",
+        [190, 225, 203],
+        format,
+    );
+    true
 }
 
 /// Returns the confirmation button under a surface-space point.
@@ -375,6 +425,7 @@ pub fn render_overlay_with_profile(
         "ALTERAR LAYOUT",
         "TROCAR TELAS",
         "PADRÃO GLOBAL",
+        "EDITAR CONTROLES",
     ];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(ACTION_COUNT - 1);
