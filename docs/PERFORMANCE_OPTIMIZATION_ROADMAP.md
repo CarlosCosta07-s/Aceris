@@ -14,22 +14,23 @@
 
 ### Cache de instruções A32
 
-O cache direto atual tem 4096 entradas e é indexado pela palavra de instrução. Ele reduz a repetição da extração de campos, mas ainda não armazena blocos por endereço nem traduz sequências inteiras.
+O cache direto atual tem 4096 entradas e é indexado pela palavra de instrução. Ele reduz a repetição da extração de campos; o cache de blocos abaixo já agrupa sequências A32 em endereços executáveis certificados.
 
 Formas A32 pré-decodificadas pelo caminho rápido:
 
 - Operações de dados com imediato rotacionado e registrador com shift imediato.
 - LDR/STR e LDRB/STRB com deslocamento imediato.
-- LDRH/STRH, LDRSB/LDRSH com deslocamento imediato.
+- LDRH/STRH, LDRSB/LDRSH com deslocamento imediato e offset por registrador.
 - LDM/STM com listas de registradores.
 - MUL/MLA.
 - UMULL/UMLAL/SMULL/SMLAL.
 - SMLAxy, SMLAWy, SMULWy, SMLALxy e SMULxy.
+- SMLAD/SMUAD, SMLSD/SMUSD, SMLALD/SMLSLD e SMMLA/SMMLS/SMMUL, incluindo os bits de troca/rounding.
 - B/BL.
 
-As variantes não cobertas continuam no interpretador genérico, incluindo formas halfword com offset por registrador, transferências de doubleword, instruções com combinações sensíveis de PC e demais instruções ainda não modeladas. Os helpers de execução compartilhados evitam que a rota rápida crie uma segunda implementação independente da semântica.
+As variantes ainda não cobertas continuam no interpretador genérico, incluindo LDRD/STRD, algumas combinações sensíveis de PC e instruções não modeladas. Os helpers de execução compartilhados evitam que a rota rápida crie uma segunda implementação independente da semântica.
 
-**Validação pendente:** existem testes diferenciais para LDM/STM, transferências halfword imediatas e famílias de multiplicação, além do teste diferencial amplo do cache. Esses testes precisam ser executados em CI e localmente antes de declarar a ampliação concluída.
+**Validação pendente:** existem testes diferenciais para LDM/STM, halfword imediato e por registrador e multiplicações ARM/DSP. A compilação especulativa de blocos usa uma chamada específica que não deixa faults futuros do MMU registrados antes de o PC alcançar a instrução; há regressão cobrindo fetch especulativo em região XN. Esses testes precisam ser executados em CI e localmente antes de declarar a ampliação concluída.
 
 ## CPU — próximas fases
 
@@ -37,13 +38,15 @@ As variantes não cobertas continuam no interpretador genérico, incluindo forma
 
 **Primeira versão implementada:** cache direto de 256 entradas por núcleo, com até 16 instruções A32 por bloco. A compilação só ocorre quando o bus confirma que o intervalo pertence a texto executável, contíguo e imutável. O cache usa identidade do backing, deslocamento inicial, PC e modo; no acerto, o bus revalida a faixa inteira. O adapter MMU valida permissões de execução, fronteiras de página e continuidade da tradução física.
 
-Os blocos terminam em branch ou transferência de registradores múltiplos. Encodings genéricos ou instruções que exigem o passo preciso ficam fora do bloco e usam o loop existente. Buses sem contrato explícito de texto imutável (por exemplo, RAM gravável) continuam no caminho por instrução. Assim, a primeira versão evita precisar invalidar blocos após escrita guest, DMA ou sincronização de código, porque não aceita esse tipo de backing.
+Os blocos terminam em branch ou transferência de registradores múltiplos. Encodings genéricos ou instruções que exigem o passo preciso ficam fora do bloco e usam o loop existente. Buses sem contrato explícito de texto imutável (por exemplo, RAM gravável) continuam no caminho por instrução. A compilação usa fetch especulativo sem propagar ao estado guest um fault de instrução futura, e o adapter MMU preserva esse comportamento. Assim, a primeira versão evita precisar invalidar blocos após escrita guest, DMA ou sincronização de código, porque não aceita esse tipo de backing.
 
 A API `Arm11Core::block_cache_stats()` expõe consultas, hits, misses, blocos/instruções compilados e fallbacks; `take_block_cache_stats()` permite medir intervalos sem reiniciar o núcleo. Testes verificam a contabilização básica. Ainda é necessário coletar benchmarks em jogos reais e medir o custo das consultas de faixa. Também faltam política de invalidação para futuras regiões dinâmicas e uma extensão de blocos para Thumb.
 
 ### 2. Interpretador intermediário (IR)
 
-Quando o cache de blocos estiver correto, traduzir cada bloco para um IR próprio e compacto.
+**Estado parcial:** o enum FastOp já contém operações A32 tipadas e operandos pré-extraídos, e cada bloco armazena essas operações decodificadas. Isso reduz trabalho repetido de decode, mas ainda não é um IR independente com passes de otimização; a execução despacha para helpers semânticos compartilhados com o interpretador.
+
+A próxima etapa deve transformar os blocos em um IR próprio e compacto, sem depender da codificação A32 original durante a execução.
 
 O IR deverá representar explicitamente:
 
@@ -56,7 +59,7 @@ O interpretador IR deve permitir reduzir o custo de despacho e aplicar otimizaç
 
 ### 3. JIT
 
-O JIT só começa após o IR e o cache de blocos terem estabilidade e cobertura de testes. A implementação deverá ser específica por arquitetura hospedeira, sem tornar o restante do núcleo dependente de código nativo.
+O PPSSPP documenta a progressão interpretador → IR Interpreter → JIT baseado em IR; a implementação do Aceris deve seguir a mesma separação conceitual, sem importar os backends ou código do PPSSPP. O JIT só começa após o IR e o cache de blocos terem estabilidade e cobertura de testes. A implementação deverá ser específica por arquitetura hospedeira, sem tornar o restante do núcleo dependente de código nativo.
 
 Requisitos mínimos:
 
@@ -87,7 +90,7 @@ O presenter agora tenta usar o pipeline cache de `wgpu` quando o adaptador forne
 - Os dados são gravados em arquivo temporário e renomeados quando o presenter é descartado.
 - A persistência via API atual do wgpu é suportada em Vulkan. OpenGL/OpenGL ES e Metal continuam com o pipeline normal, sem depender desse arquivo.
 
-Este arquivo contém dados de pipeline do host, não bytecode de shaders PICA. A criação de pipeline pode aproveitar resultados anteriores do driver, mas o efeito real precisa ser medido em cada dispositivo.
+Este arquivo contém dados de pipeline do host, não bytecode de shaders PICA nem um cache de programas gerados a partir dos comandos do jogo. A documentação do PPSSPP descreve uma cache por jogo que persiste identificadores de shaders, chaves de pipeline e SPIR-V; o Azahar documenta a cache de shaders em disco, JIT de shader e fator de resolução interno. No Aceris, uma cache PICA equivalente só fará sentido quando houver shaders/pipelines guest traduzidos para o backend GPU e uma identidade versionada que inclua estado de shader, versão do tradutor e perfil do driver. A criação de pipeline pode aproveitar resultados anteriores do driver, mas o efeito real precisa ser medido em cada dispositivo.
 
 ### Próxima etapa: rasterizador PICA acelerado
 
@@ -118,3 +121,14 @@ Cada fase precisa registrar, no mínimo:
 - Comparação de saída entre referência e caminho otimizado.
 
 Uma otimização só será considerada concluída quando os testes de correção forem executados, os resultados forem comparáveis e os benchmarks mostrarem o efeito no PC e no Android.
+
+## Referências de arquitetura consultadas
+
+Estas referências servem para comparação de comportamento, camadas e critérios de projeto; não autorizam copiar código, shaders, assets ou testes:
+
+- [PPSSPP — Developer tools / CPU Core](https://www.ppsspp.org/docs/development/developer-tools/): distinção entre interpretador por instrução, IR Interpreter, JIT e JIT baseado em IR.
+- [PPSSPP — Shader compilation](https://github.com/hrydgard/ppsspp/blob/master/docs/shader-compilation.md): cache de shaders/pipelines por jogo e medição de inicialização fria/quente.
+- [Azahar — core settings](https://github.com/azahar-emu/azahar/blob/master/src/citra_libretro/core_settings.cpp): separação de hardware shaders, shader JIT, cache em disco e resolução interna.
+- [Azahar — Android default settings](https://github.com/azahar-emu/azahar/blob/master/src/android/app/src/main/jni/default_ini.h): persistência da cache de shaders e fator de resolução por configuração.
+
+A implementação do Aceris permanece independente e em Rust. A cache `wgpu::PipelineCache` existente não será apresentada como se fosse a cache de shaders PICA do Azahar.
