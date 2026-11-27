@@ -974,3 +974,112 @@ fn read_optional_u8(reader: &mut StateReader<'_>) -> Result<Option<u8>, KernelSt
         Ok(None)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu::Arm11Core;
+    use crate::loader::ncsd::process::SharedMemoryBackingCatalog;
+    use crate::loader::ncsd::session::thread::{Arm11ThreadScheduler, MAIN_THREAD_ID};
+
+    fn worker_thread() -> ThreadId {
+        let mut scheduler =
+            Arm11ThreadScheduler::new(Arm11Core::new(), 0x30).expect("valid main scheduler");
+        scheduler
+            .create_thread(0x1000, 0, 0x2000, 0x30, 0)
+            .expect("valid worker thread")
+    }
+
+    #[test]
+    fn kernel_section_round_trips_handles_waiters_and_shared_memory_aliases() {
+        let worker = worker_thread();
+        let mut table = Arm11KernelObjectTable::default();
+
+        let event = table.insert_event(EventResetType::OneShot).unwrap();
+        let event_alias = table.duplicate_handle(event).unwrap();
+        table.enqueue_waiter(event_alias, worker).unwrap();
+
+        let mutex = table.insert_mutex(true, MAIN_THREAD_ID).unwrap();
+        let mutex_alias = table.duplicate_handle(mutex).unwrap();
+        table.enqueue_waiter(mutex_alias, worker).unwrap();
+
+        let memory = table.create_memory_block(0x2000, 3, 1).unwrap();
+        let backing = table.memory_block_backing(memory).unwrap();
+        assert!(backing.write_bytes(0x1010, &[0xA5, 0x5A, 0xC3, 0x3C]));
+
+        let mut catalog = SharedMemoryBackingCatalog::new();
+        table.collect_shared_backings(&mut catalog).unwrap();
+        let catalog_section = catalog.encode_section().unwrap();
+        let kernel_section = table.encode_save_state_section(&catalog).unwrap();
+
+        let restored_catalog = SharedMemoryBackingCatalog::decode_section(&catalog_section).unwrap();
+        let mut restored = Arm11KernelObjectTable::default();
+        restored
+            .restore_save_state_section(&kernel_section, &restored_catalog)
+            .unwrap();
+
+        assert_eq!(restored.handle_count(), table.handle_count());
+        assert_eq!(restored.handle_high_water_mark(), table.handle_high_water_mark());
+        assert_eq!(restored.event_reset_type(event_alias), Some(EventResetType::OneShot));
+        assert_eq!(restored.mutex_owner(mutex_alias), Some(MAIN_THREAD_ID));
+        assert_eq!(restored.handle_reference_count(event_alias), Ok(3));
+
+        let restored_backing = restored.memory_block_backing(memory).unwrap();
+        let mut bytes = [0u8; 4];
+        assert!(restored_backing.read_bytes(0x1010, &mut bytes));
+        assert_eq!(bytes, [0xA5, 0x5A, 0xC3, 0x3C]);
+        assert!(restored_backing.shares_backing_with(
+            &restored_catalog.view(
+                restored_catalog.slot_for(&restored_backing).unwrap(),
+                restored_backing.root_base_offset(),
+                restored_backing.len().unwrap(),
+            ).unwrap()
+        ));
+    }
+
+    #[test]
+    fn malformed_kernel_section_does_not_replace_the_live_table() {
+        let worker = worker_thread();
+        let mut table = Arm11KernelObjectTable::default();
+        let event = table.insert_event(EventResetType::Sticky).unwrap();
+        table.enqueue_waiter(event, worker).unwrap();
+
+        let catalog = SharedMemoryBackingCatalog::new();
+        let before = table.encode_save_state_section(&catalog).unwrap();
+        let malformed = SaveStateSection::new(
+            section_id::KERNEL,
+            Arm11KernelObjectTable::SAVE_STATE_VERSION,
+            b"not a kernel state".to_vec(),
+        )
+        .unwrap();
+
+        assert!(table.restore_save_state_section(&malformed, &catalog).is_err());
+        let after = table.encode_save_state_section(&catalog).unwrap();
+        assert_eq!(before, after);
+        assert_eq!(table.event_reset_type(event), Some(EventResetType::Sticky));
+    }
+
+    #[test]
+    fn kernel_section_rejects_dangling_handle_aliases() {
+        let catalog = SharedMemoryBackingCatalog::new();
+        let mut table = Arm11KernelObjectTable::default();
+        let event = table.insert_event(EventResetType::Sticky).unwrap();
+        let valid = table.encode_save_state_section(&catalog).unwrap();
+
+        let mut corrupt_payload = valid.payload().to_vec();
+        // The first object map follows the 10-byte signature/version header.
+        // Change its object tag to an unknown value; decoding must fail closed.
+        let object_tag_offset = 10 + 4 + 4;
+        corrupt_payload[object_tag_offset] = 0xFF;
+        let corrupt = SaveStateSection::new(
+            section_id::KERNEL,
+            Arm11KernelObjectTable::SAVE_STATE_VERSION,
+            corrupt_payload,
+        )
+        .unwrap();
+
+        assert!(table.restore_save_state_section(&corrupt, &catalog).is_err());
+        assert_eq!(table.event_reset_type(event), Some(EventResetType::Sticky));
+    }
+}
