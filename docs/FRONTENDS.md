@@ -14,7 +14,7 @@ Este documento descreve o estado atual dos hosts do Aceris. O núcleo de emulaç
 
 ## Android NativeActivity
 
-O aplicativo Android usa `frontends/android`, com NativeActivity e lógica do host em Rust. A interface compartilhada mostra a biblioteca, navegação, Favoritos, Recentes e Configurações. A atividade aceita rotação do sensor (`sensor`); o modo Auto escolhe disposição lado a lado em landscape e vertical em portrait, enquanto o menu de jogo permite selecionar outros layouts.
+O aplicativo Android usa `frontends/android`, com NativeActivity e lógica do host em Rust. A interface compartilhada mostra a biblioteca, navegação, Favoritos, Recentes e Configurações. A atividade aceita rotação do sensor (`sensor`); por padrão, usa perfil Vertical em portrait e Lado a lado em landscape, com preferências separadas. Quando o modo Auto é selecionado, a geometria escolhe lado a lado em landscape e vertical em portrait; o menu permite selecionar outros layouts.
 
 O workflow **Build Android APK** compila e empacota um APK debug ARM64. Isso confirma geração do artefato, não valida instalação, renderização, toque, áudio ou desempenho em um aparelho real. O estado de teste e os passos de instalação estão em [ANDROID_DEVICE_TRIAL.md](ANDROID_DEVICE_TRIAL.md).
 
