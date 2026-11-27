@@ -152,7 +152,7 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [x] Expor Continuar, Reiniciar e Voltar à biblioteca. Reiniciar recria a sessão do mesmo arquivo.
 - [x] Disponibilizar botão visível e tecla Voltar no Android e Esc no desktop. O mapeamento de teclas ainda não é configurável.
 - [x] Manter o menu compacto no celular e painel/overlay no PC.
-- [ ] Sincronizar/limpar explicitamente as filas de áudio do host, definir confirmação de perda de progresso e validar pausa/retomada em hardware físico. Por enquanto, a produção guest de áudio para e a saída pode terminar de consumir amostras já enfileiradas..
+- [ ] Sincronizar/limpar explicitamente as filas de áudio do host, definir confirmação de perda de progresso e validar pausa/retomada em hardware físico. Por enquanto, a produção guest de áudio para e a saída pode terminar de consumir amostras já enfileiradas.
 
 **M4.2 — Layout**
 - [ ] Implementar modos vertical, lado a lado, superior ampliada, inferior ampliada e tela única.
