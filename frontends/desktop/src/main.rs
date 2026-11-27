@@ -12,6 +12,7 @@ mod window;
 use aceris_common::{NAME, VERSION};
 use aceris_core::{
     DEFAULT_FRAME_INSTRUCTION_BUDGET, System,
+    loaded_image::{LoadedImageIdentity, load_executable_file_with_identity},
     video::{
         DualScreenDisplay,
         frontend::{ScreenLayoutMode, screen_layout_canvas_size},
@@ -111,7 +112,11 @@ fn env_fast_memory() -> bool {
     env::var("ACERIS_FAST_MEMORY").is_ok_and(|value| value == "1")
 }
 
-fn load_game(system: &mut System, game: &Path, fast_memory: bool) -> Result<(), String> {
+fn load_game(
+    system: &mut System,
+    game: &Path,
+    fast_memory: bool,
+) -> Result<LoadedImageIdentity, String> {
     system.set_storage_root(storage_dir_for(game));
     system
         .set_fast_memory(fast_memory)
@@ -119,16 +124,16 @@ fn load_game(system: &mut System, game: &Path, fast_memory: bool) -> Result<(), 
     if fast_memory {
         println!("Performance mode: fast memory enabled");
     }
-    let format = system
-        .load_executable_file(game)
+    let loaded = load_executable_file_with_identity(system, game)
         .map_err(|err| format!("could not prepare {}: {err}", game.display()))?;
 
     println!(
-        "Executable prepared: {format:?}; ARM11 entry PC={:#010X}, CPSR={:#010X}",
+        "Executable prepared: {:?}; ARM11 entry PC={:#010X}, CPSR={:#010X}",
+        loaded.format,
         system.cpu().pc(),
         system.cpu().cpsr.0
     );
-    Ok(())
+    Ok(loaded)
 }
 
 /// Instruction budget per frame; `ACERIS_FRAME_BUDGET` overrides the default.
@@ -449,20 +454,23 @@ fn run_windowed(
             )
             .map_err(|err| format!("could not resize the gameplay window: {err}"))?;
 
-        if let Err(message) = load_game(
+        let _active_image_identity = match load_game(
             system,
             &path,
             library.performance_mode() || env_fast_memory(),
         ) {
-            window
-                .resize(window::CANVAS_WIDTH * scale, window::CANVAS_HEIGHT * scale)
-                .map_err(|err| format!("could not restore the library window: {err}"))?;
-            if game == Some(path.as_path()) && library.entries().is_empty() {
-                return Err(message);
+            Ok(identity) => identity,
+            Err(message) => {
+                window
+                    .resize(window::CANVAS_WIDTH * scale, window::CANVAS_HEIGHT * scale)
+                    .map_err(|err| format!("could not restore the library window: {err}"))?;
+                if game == Some(path.as_path()) && library.entries().is_empty() {
+                    return Err(message);
+                }
+                library.set_status(message);
+                continue;
             }
-            library.set_status(message);
-            continue;
-        }
+        };
         library.mark_launched(&path);
         let outcome = emulate(
             system,
@@ -1067,10 +1075,13 @@ fn run(options: RunOptions) -> ExitCode {
             return ExitCode::FAILURE;
         }
     } else if let Some(game) = &options.game {
-        if let Err(message) = load_game(&mut system, game, env_fast_memory()) {
-            eprintln!("error: {message}");
-            return ExitCode::FAILURE;
-        }
+        let _loaded_image_identity = match load_game(&mut system, game, env_fast_memory()) {
+            Ok(identity) => identity,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return ExitCode::FAILURE;
+            }
+        };
         for frame in 0..=options.frames {
             apply_taps(&mut system, &options.taps, frame);
             if let Err(message) = run_frame_with_diagnostics(&mut system) {
