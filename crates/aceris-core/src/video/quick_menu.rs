@@ -380,15 +380,7 @@ pub fn render_confirmation_overlay(
         height: height as usize,
     };
     blend_rect(frame, width as usize, canvas, [7, 5, 16], 176, format);
-    blend_rect(
-        frame,
-        width as usize,
-        geometry.panel,
-        [31, 19, 48],
-        248,
-        format,
-    );
-    draw_border(frame, width as usize, geometry.panel, scale, format);
+    draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title = match action {
         ConfirmationAction::Restart => "REINICIAR JOGO?",
@@ -444,6 +436,21 @@ pub fn render_confirmation_overlay(
             if is_selected { 245 } else { 230 },
             format,
         );
+        if is_selected {
+            blend_rect(
+                frame,
+                width as usize,
+                Rect {
+                    x: row.x,
+                    y: row.y,
+                    width: (3 * scale).min(row.width),
+                    height: row.height,
+                },
+                [255, 107, 107],
+                255,
+                format,
+            );
+        }
         let label_width = font::text_width(labels[index].chars().count(), text_scale);
         let text_x = row.x + row.width.saturating_sub(label_width) / 2;
         let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
@@ -593,15 +600,7 @@ fn render_overlay_with_action_count(
         height: height as usize,
     };
     blend_rect(frame, width as usize, canvas, [7, 5, 16], 164, format);
-    blend_rect(
-        frame,
-        width as usize,
-        geometry.panel,
-        [31, 19, 48],
-        246,
-        format,
-    );
-    draw_border(frame, width as usize, geometry.panel, scale, format);
+    draw_panel_chrome(frame, width as usize, geometry.panel, scale, format);
 
     let title_x = geometry.panel.x + 18 * scale;
     let title_y = geometry.panel.y + 12 * scale;
@@ -641,6 +640,21 @@ fn render_overlay_with_action_count(
             if is_selected { 245 } else { 230 },
             format,
         );
+        if is_selected {
+            blend_rect(
+                frame,
+                width as usize,
+                Rect {
+                    x: row.x,
+                    y: row.y,
+                    width: (3 * scale).min(row.width),
+                    height: row.height,
+                },
+                [255, 107, 107],
+                255,
+                format,
+            );
+        }
         let text_y = row.y + (row.height.saturating_sub(7 * row_text_scale)) / 2;
         let label = match index {
             6 => control_reset_label,
@@ -694,8 +708,50 @@ fn menu_row_text_scale(
         .max(1)
 }
 
-fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, format: PixelFormat) {
-    let color = [211, 52, 85];
+fn draw_panel_chrome(
+    frame: &mut [u8],
+    width: usize,
+    panel: Rect,
+    scale: usize,
+    format: PixelFormat,
+) {
+    let shadow = Rect {
+        x: panel.x.saturating_add(3 * scale),
+        y: panel.y.saturating_add(4 * scale),
+        ..panel
+    };
+    blend_rect(frame, width, shadow, [0, 0, 0], 112, format);
+    let near_shadow = Rect {
+        x: panel.x.saturating_add(scale),
+        y: panel.y.saturating_add(2 * scale),
+        ..panel
+    };
+    blend_rect(frame, width, near_shadow, [7, 5, 16], 150, format);
+    blend_rect(frame, width, panel, [26, 11, 46], 250, format);
+    draw_colored_border(frame, width, panel, scale.max(1), [86, 59, 103], format);
+
+    let accent = Rect {
+        height: (3 * scale).min(panel.height),
+        ..panel
+    };
+    blend_rect(frame, width, accent, [229, 23, 63], 255, format);
+    let highlight = Rect {
+        x: panel.x.saturating_add(scale),
+        y: panel.y.saturating_add(scale),
+        width: panel.width.saturating_sub(2 * scale),
+        height: scale.min(panel.height.saturating_sub(scale)),
+    };
+    blend_rect(frame, width, highlight, [255, 107, 107], 130, format);
+}
+
+fn draw_colored_border(
+    frame: &mut [u8],
+    width: usize,
+    rect: Rect,
+    thickness: usize,
+    color: [u8; 3],
+    format: PixelFormat,
+) {
     blend_rect(
         frame,
         width,
@@ -742,6 +798,10 @@ fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, for
         255,
         format,
     );
+}
+
+fn draw_border(frame: &mut [u8], width: usize, rect: Rect, thickness: usize, format: PixelFormat) {
+    draw_colored_border(frame, width, rect, thickness, [211, 52, 85], format);
 }
 
 fn blend_rect(
@@ -1018,6 +1078,26 @@ mod tests {
                 assert!(frame.chunks_exact(4).all(|pixel| pixel[3] == 255));
             }
         }
+    }
+
+    #[test]
+    fn quick_menu_uses_aceris_panel_chrome_and_clear_selection_marker() {
+        let width = 400u32;
+        let height = 800u32;
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+        assert!(render_overlay(&mut frame, width, height, PixelFormat::Rgba8, 0));
+
+        let layout = geometry(width, height, ACTION_COUNT).unwrap();
+        let top_center =
+            ((layout.panel.y * width as usize) + layout.panel.x + layout.panel.width / 2) * 4;
+        assert_eq!(&frame[top_center..top_center + 3], &[229, 23, 63]);
+
+        let selected = layout.rows[0];
+        let marker = ((selected.y + selected.height / 2) * width as usize + selected.x) * 4;
+        assert_eq!(&frame[marker..marker + 3], &[255, 107, 107]);
+
+        let border = ((layout.panel.y + 12 * layout.scale) * width as usize + layout.panel.x) * 4;
+        assert_eq!(&frame[border..border + 3], &[86, 59, 103]);
     }
 
     #[test]
