@@ -711,14 +711,46 @@ mod tests {
             exchange_or_round: false,
         };
         let entries = [
-            Entry { word: 0xE590_1004, condition: 0xE, op: transfer },
-            Entry { word: 0xE1D0_10B4, condition: 0xE, op: halfword_immediate },
-            Entry { word: 0xE190_10B2, condition: 0xE, op: halfword_register },
-            Entry { word: 0xE8B0_0006, condition: 0xE, op: block },
-            Entry { word: 0xE000_0291, condition: 0xE, op: multiply },
-            Entry { word: 0xE081_2394, condition: 0xE, op: multiply_long },
-            Entry { word: 0xE100_3281, condition: 0xE, op: halfword_multiply },
-            Entry { word: 0xE704_5201, condition: 0xE, op: dsp_multiply },
+            Entry {
+                word: 0xE590_1004,
+                condition: 0xE,
+                op: transfer,
+            },
+            Entry {
+                word: 0xE1D0_10B4,
+                condition: 0xE,
+                op: halfword_immediate,
+            },
+            Entry {
+                word: 0xE190_10B2,
+                condition: 0xE,
+                op: halfword_register,
+            },
+            Entry {
+                word: 0xE8B0_0006,
+                condition: 0xE,
+                op: block,
+            },
+            Entry {
+                word: 0xE000_0291,
+                condition: 0xE,
+                op: multiply,
+            },
+            Entry {
+                word: 0xE081_2394,
+                condition: 0xE,
+                op: multiply_long,
+            },
+            Entry {
+                word: 0xE100_3281,
+                condition: 0xE,
+                op: halfword_multiply,
+            },
+            Entry {
+                word: 0xE704_5201,
+                condition: 0xE,
+                op: dsp_multiply,
+            },
         ];
         for entry in entries {
             assert!(!matches!(
