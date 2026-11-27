@@ -141,6 +141,30 @@ impl Arm11InterruptController {
             .copied()
             .flatten()
     }
+
+    /// Copies the small process-local interrupt binding table for save states.
+    pub(crate) fn save_state_bindings(&self) -> Vec<InterruptBinding> {
+        self.bindings.iter().flatten().copied().collect()
+    }
+
+    /// Rebuilds the entire binding table in a temporary controller before replacement.
+    pub(crate) fn restore_save_state_bindings(
+        &mut self,
+        bindings: &[InterruptBinding],
+    ) -> Result<(), InterruptBindingError> {
+        let mut restored = Self::default();
+        for binding in bindings {
+            restored.bind(
+                u32::from(binding.interrupt_id),
+                binding.handle,
+                i32::from(binding.priority),
+                binding.level_high_active,
+                binding.target,
+            )?;
+        }
+        *self = restored;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
