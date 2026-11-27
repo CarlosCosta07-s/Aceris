@@ -340,7 +340,13 @@ pub fn render_overlay(
         format,
     );
 
-    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR À BIBLIOTECA", "ALTERAR LAYOUT", "TROCAR TELAS"];
+    let labels = [
+        "CONTINUAR",
+        "REINICIAR",
+        "VOLTAR À BIBLIOTECA",
+        "ALTERAR LAYOUT",
+        "TROCAR TELAS",
+    ];
     for (index, row) in geometry.rows.iter().enumerate() {
         let is_selected = index == selected.min(ACTION_COUNT - 1);
         blend_rect(
@@ -487,7 +493,7 @@ mod tests {
 
     #[test]
     fn hit_testing_matches_the_drawn_action_rows_on_phone_and_desktop() {
-        for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800)] {
+        for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800), (320, 240)] {
             let geometry = geometry(width, height).unwrap();
             for (index, row) in geometry.rows.iter().enumerate() {
                 let x = (row.x + row.width / 2) as i32;
@@ -522,7 +528,7 @@ mod tests {
 
     #[test]
     fn confirmation_hit_testing_matches_cancel_and_confirm_rows() {
-        for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800)] {
+        for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800), (320, 240)] {
             let geometry = confirmation_geometry(width, height).unwrap();
             for (index, row) in geometry.rows.iter().enumerate() {
                 let x = (row.x + row.width / 2) as i32;
