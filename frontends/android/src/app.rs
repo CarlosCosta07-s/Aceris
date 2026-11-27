@@ -52,6 +52,8 @@ pub struct App {
     current_game_path: Option<PathBuf>,
     quick_menu_selected: usize,
     confirmation_selected: usize,
+    controls_editor: bool,
+    control_drag: Option<(i32, u32)>,
     layout_preferences: ScreenLayoutPreferences,
     menu_tap: Option<(i32, i32)>,
     menu_button_pointer: Option<i32>,
@@ -84,6 +86,8 @@ impl App {
             current_game_path: None,
             quick_menu_selected: 0,
             confirmation_selected: 0,
+            controls_editor: false,
+            control_drag: None,
             layout_preferences,
             menu_tap: None,
             menu_button_pointer: None,
@@ -174,6 +178,7 @@ impl App {
                     Screen::Library if self.library.search_is_focused() => {
                         self.library.cancel_text_entry();
                     }
+                    Screen::Game if self.controls_editor => self.finish_control_editor(),
                     Screen::Game => self.open_game_menu(),
                     Screen::GameMenu => self.resume_game(),
                     Screen::GameMenuConfirm { .. } => self.cancel_game_menu_confirmation(),
@@ -202,6 +207,9 @@ impl App {
             return false;
         };
         match self.screen {
+            Screen::Game if self.controls_editor && pressed && bit == pad::B => {
+                self.finish_control_editor();
+            }
             Screen::Game => {
                 if pressed {
                     self.key_mask |= bit;
@@ -397,6 +405,29 @@ impl App {
                 .render_responsive_into(self.width, self.height, output);
             return;
         };
+        if self.controls_editor {
+            let Some(system) = self.system.as_ref() else {
+                self.screen = Screen::Library;
+                let _ = self.library.render_responsive_into(self.width, self.height, output);
+                return;
+            };
+            if compose_game_into(
+                system.display(),
+                &self.game_layout(),
+                self.width,
+                self.height,
+                output,
+            ) {
+                self.render_virtual_controls_overlay(output, 0);
+                let _ = quick_menu::render_control_editor_hint(
+                    output,
+                    self.width,
+                    self.height,
+                    MenuPixelFormat::Rgba8,
+                );
+            }
+            return;
+        }
         if let Err(error) = system.run_frame() {
             let message = format!("Execução interrompida: {error}");
             let diagnostic = self.game_diagnostic();
@@ -438,7 +469,7 @@ impl App {
         if !self.library.virtual_controls_visible() {
             return 0;
         }
-        frontend::hit_test_virtual_control_with_size_and_preset(
+        frontend::hit_test_virtual_control_with_positions(
             self.width,
             self.height,
             x as i32,
@@ -446,12 +477,13 @@ impl App {
             ORIENTATION_AUTO,
             self.library.virtual_controls_size_percent(),
             self.library.virtual_controls_preset(),
+            self.library.virtual_control_positions(),
         )
     }
 
     fn render_virtual_controls_overlay(&self, frame: &mut [u8], pressed_mask: u32) {
         if self.library.virtual_controls_visible() {
-            frontend::blend_virtual_pad_overlay_into_with_opacity_size_and_preset(
+            frontend::blend_virtual_pad_overlay_into_with_positions(
                 frame,
                 self.width,
                 self.height,
@@ -460,6 +492,7 @@ impl App {
                 self.library.virtual_controls_opacity(),
                 self.library.virtual_controls_size_percent(),
                 self.library.virtual_controls_preset(),
+                self.library.virtual_control_positions(),
             );
         }
     }
@@ -538,6 +571,10 @@ impl App {
     }
 
     fn update_game_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
+        if self.controls_editor {
+            self.update_control_editor_touch(previous);
+            return;
+        }
         if self.menu_button_pointer.is_none() {
             for (&id, &(x, y)) in &self.pointers {
                 if !previous.contains_key(&id)
@@ -571,6 +608,87 @@ impl App {
             }
         }
         self.apply_game_input();
+    }
+
+    fn update_control_editor_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
+        if self.control_drag.is_none() {
+            for (&id, &(x, y)) in &self.pointers {
+                if previous.contains_key(&id) {
+                    continue;
+                }
+                let button = self.hit_virtual_button(x, y);
+                if button != 0 {
+                    self.control_drag = Some((id, button));
+                    break;
+                }
+            }
+        }
+
+        let Some((pointer_id, button)) = self.control_drag else {
+            return;
+        };
+        match (previous.get(&pointer_id), self.pointers.get(&pointer_id)) {
+            (Some(&(old_x, old_y)), Some(&(new_x, new_y))) => {
+                let delta_x = new_x - old_x;
+                let delta_y = new_y - old_y;
+                if delta_x != 0.0 || delta_y != 0.0 {
+                    let width = self.width.max(1) as f32;
+                    let height = self.height.max(1) as f32;
+                    let normalized_x = (delta_x * 10_000.0 / width).round() as i16;
+                    let normalized_y = (delta_y * 10_000.0 / height).round() as i16;
+                    let orientation = self.virtual_control_orientation();
+                    self.library.move_virtual_control(
+                        orientation,
+                        button,
+                        normalized_x,
+                        normalized_y,
+                    );
+                }
+            }
+            (Some(_), None) => {
+                self.control_drag = None;
+                if let Err(error) = self.library.save_virtual_control_positions() {
+                    self.library
+                        .set_status(format!("NÃO FOI POSSÍVEL SALVAR AS POSIÇÕES: {error}"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn virtual_control_orientation(&self) -> u32 {
+        if self.width >= self.height {
+            frontend::ORIENTATION_LANDSCAPE
+        } else {
+            frontend::ORIENTATION_PORTRAIT
+        }
+    }
+
+    fn begin_control_editor(&mut self) {
+        self.controls_editor = true;
+        self.control_drag = None;
+        self.pointers.clear();
+        self.menu_tap = None;
+        self.menu_button_pointer = None;
+        if let Some(system) = self.system.as_mut() {
+            system.input_mut().reset();
+        }
+        self.screen = Screen::Game;
+    }
+
+    fn finish_control_editor(&mut self) {
+        if self.control_drag.take().is_some() {
+            if let Err(error) = self.library.save_virtual_control_positions() {
+                self.library
+                    .set_status(format!("NÃO FOI POSSÍVEL SALVAR AS POSIÇÕES: {error}"));
+            }
+        }
+        self.controls_editor = false;
+        self.pointers.clear();
+        self.key_mask = 0;
+        if let Some(system) = self.system.as_mut() {
+            system.input_mut().reset();
+        }
     }
 
     fn update_game_menu_touch(&mut self, previous: &BTreeMap<i32, (f32, f32)>) {
@@ -630,6 +748,8 @@ impl App {
             return;
         }
         self.key_mask = 0;
+        self.controls_editor = false;
+        self.control_drag = None;
         self.pointers.clear();
         self.menu_tap = None;
         self.menu_button_pointer = None;
@@ -648,6 +768,8 @@ impl App {
             return;
         }
         self.key_mask = 0;
+        self.controls_editor = false;
+        self.control_drag = None;
         self.pointers.clear();
         self.menu_tap = None;
         self.menu_button_pointer = None;
@@ -668,7 +790,8 @@ impl App {
             ),
             3 => self.cycle_screen_layout(),
             4 => self.toggle_screen_swap(),
-            _ => self.reset_game_layout(),
+            5 => self.reset_game_layout(),
+            _ => self.begin_control_editor(),
         }
     }
 
