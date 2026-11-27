@@ -403,7 +403,12 @@ impl Arm11Core {
                     let value = if byte {
                         u32::from(bus.read8(address)?)
                     } else {
-                        self.read_armv6_single_word(bus, address, false, instruction.diagnostic_word)?
+                        self.read_armv6_single_word(
+                            bus,
+                            address,
+                            false,
+                            instruction.diagnostic_word,
+                        )?
                     };
                     if writeback {
                         self.regs[usize::from(rn)] = offset_address;
@@ -631,37 +636,89 @@ mod tests {
 
     #[test]
     fn lowers_all_remaining_cached_instruction_families_to_native_ir() {
+        let transfer = FastOp::TransferImm {
+            load: true,
+            byte: false,
+            pre_index: true,
+            writeback: false,
+            rn: 0,
+            rd: 1,
+            offset: 4,
+        };
+        let halfword_immediate = FastOp::HalfwordTransfer {
+            pre_index: true,
+            up: true,
+            writeback: false,
+            load: true,
+            rn: 0,
+            rd: 1,
+            offset: 4,
+            transfer_kind: 1,
+        };
+        let halfword_register = FastOp::HalfwordTransferReg {
+            pre_index: true,
+            up: true,
+            writeback: false,
+            load: true,
+            rn: 0,
+            rd: 1,
+            rm: 2,
+            transfer_kind: 1,
+        };
+        let block = FastOp::BlockTransfer {
+            pre_index: false,
+            up: true,
+            writeback: true,
+            load: true,
+            s_bit: false,
+            rn: 0,
+            list: 6,
+        };
+        let multiply = FastOp::Multiply {
+            rd: 0,
+            rn: 0,
+            rs: 2,
+            rm: 1,
+            accumulate: false,
+            set_flags: false,
+        };
+        let multiply_long = FastOp::MultiplyLong {
+            rd_hi: 2,
+            rd_lo: 3,
+            rs: 1,
+            rm: 4,
+            signed: false,
+            accumulate: false,
+            set_flags: false,
+        };
+        let halfword_multiply = FastOp::HalfwordMultiply {
+            class: 0x0100_0080,
+            rd: 3,
+            rn: 0,
+            rs: 2,
+            rm: 1,
+            x: false,
+            y: false,
+        };
+        let dsp_multiply = FastOp::DspMultiply {
+            class: 0x0700_0010,
+            rd: 4,
+            ra: 5,
+            rs: 2,
+            rm: 1,
+            bit7: false,
+            subtract: false,
+            exchange_or_round: false,
+        };
         let entries = [
-            Entry { word: 0xE590_1004, condition: 0xE, op: FastOp::TransferImm {
-                load: true, byte: false, pre_index: true, writeback: false,
-                rn: 0, rd: 1, offset: 4,
-            }},
-            Entry { word: 0xE1D0_10B4, condition: 0xE, op: FastOp::HalfwordTransfer {
-                pre_index: true, up: true, writeback: false, load: true,
-                rn: 0, rd: 1, offset: 4, transfer_kind: 1,
-            }},
-            Entry { word: 0xE190_10B2, condition: 0xE, op: FastOp::HalfwordTransferReg {
-                pre_index: true, up: true, writeback: false, load: true,
-                rn: 0, rd: 1, rm: 2, transfer_kind: 1,
-            }},
-            Entry { word: 0xE8B0_0006, condition: 0xE, op: FastOp::BlockTransfer {
-                pre_index: false, up: true, writeback: true, load: true,
-                s_bit: false, rn: 0, list: 6,
-            }},
-            Entry { word: 0xE000_0291, condition: 0xE, op: FastOp::Multiply {
-                rd: 0, rn: 0, rs: 2, rm: 1, accumulate: false, set_flags: false,
-            }},
-            Entry { word: 0xE081_2394, condition: 0xE, op: FastOp::MultiplyLong {
-                rd_hi: 2, rd_lo: 3, rs: 1, rm: 4, signed: false,
-                accumulate: false, set_flags: false,
-            }},
-            Entry { word: 0xE100_3281, condition: 0xE, op: FastOp::HalfwordMultiply {
-                class: 0x0100_0080, rd: 3, rn: 0, rs: 2, rm: 1, x: false, y: false,
-            }},
-            Entry { word: 0xE704_5201, condition: 0xE, op: FastOp::DspMultiply {
-                class: 0x0700_0010, rd: 4, ra: 5, rs: 2, rm: 1,
-                bit7: false, subtract: false, exchange_or_round: false,
-            }},
+            Entry { word: 0xE590_1004, condition: 0xE, op: transfer },
+            Entry { word: 0xE1D0_10B4, condition: 0xE, op: halfword_immediate },
+            Entry { word: 0xE190_10B2, condition: 0xE, op: halfword_register },
+            Entry { word: 0xE8B0_0006, condition: 0xE, op: block },
+            Entry { word: 0xE000_0291, condition: 0xE, op: multiply },
+            Entry { word: 0xE081_2394, condition: 0xE, op: multiply_long },
+            Entry { word: 0xE100_3281, condition: 0xE, op: halfword_multiply },
+            Entry { word: 0xE704_5201, condition: 0xE, op: dsp_multiply },
         ];
         for entry in entries {
             assert!(!matches!(
