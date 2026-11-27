@@ -40,7 +40,7 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 - Progresso, cancelamento, resumo e recuperação de erros do processo de importação/varredura.
 - Persistência ampliada de metadados da biblioteca e página detalhada de jogo.
 - Mapeamento completo de teclado/gamepad, detecção/reconexão, perfis e editor de controles virtuais.
-- Menu rápido básico implementado, incluindo limpeza explícita da fila host de áudio e confirmação preventiva antes de Reiniciar/Voltar à biblioteca; atalhos configuráveis, layouts avançados/troca de telas e perfis por orientação continuam pendentes. O host não detecta automaticamente progresso não salvo.
+- Menu rápido básico implementado, incluindo limpeza explícita da fila host de áudio, confirmação preventiva antes de Reiniciar/Voltar à biblioteca, seis layouts de tela e troca de LCDs. Atalhos configuráveis, espaçamento/posição personalizados e perfis globais/por jogo continuam pendentes. O host não detecta automaticamente progresso não salvo.
 - Configurações globais com overrides por jogo e migrações seguras.
 - Save states versionados, slots e recuperação — distintos dos saves gravados pelo próprio jogo.
 - Validação física do frontend Android e dos backends desktop; saída de áudio do sistema emulado ainda não foi confirmada como funcional.
@@ -157,14 +157,15 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [ ] Validar pausa, limpeza/retomada de áudio e confirmação de ações em hardware físico no Android e nos backends desktop.
 
 **M4.2 — Layout**
-- [ ] Implementar modos vertical, lado a lado, superior ampliada, inferior ampliada e tela única.
-- [ ] Adicionar ação para trocar tela principal/secundária.
-- [ ] Preservar proporções, margens e escala sem distorcer a imagem.
-- [ ] Mapear toque/stylus corretamente para a tela inferior em todos os layouts.
+- [x] Implementar modos vertical, lado a lado, superior ampliada, inferior ampliada e tela única (superior/inferior).
+- [x] Adicionar ação para trocar a posição física das telas principal/secundária.
+- [x] Preservar proporções dos LCDs e encaixar cada modo dentro da surface; o desktop redimensiona a janela para o canvas natural do modo.
+- [x] Mapear toque/stylus para o LCD inferior em todos os modos, inclusive após a troca física de posições.
 - [ ] Permitir ajustar espaçamento e posição dentro de limites seguros.
 - [ ] Criar modo personalizado com restaurar padrão.
 - [ ] Persistir perfil global e override por jogo; manter preferências retrato/paisagem separadas quando a plataforma suportar ambos.
 - [ ] Janela separada de telas no desktop fica para etapa posterior, após validar o gerenciamento de múltiplas janelas.
+- [ ] Validar rotação, redimensionamento, troca, hit-test do stylus e renderização em Android físico e Windows/macOS/Linux.
 
 **Critério de aceite:** o usuário pausa e retoma sem reiniciar a sessão, troca a disposição das telas durante o jogo e o toque continua atingindo a coordenada correta da tela inferior.
 
