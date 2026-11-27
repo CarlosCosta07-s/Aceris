@@ -7,7 +7,12 @@
 
 use std::fmt;
 
+use crate::cpu::state::{CpuStateError, StateReader, StateWriter};
 use crate::cpu::Arm11Core;
+
+const THREAD_STATE_MAGIC: &[u8; 8] = b"ACTHREAD";
+const MAX_SAVE_STATE_THREADS: usize = 512;
+const MAX_THREAD_CORE_STATE_BYTES: usize = 64 * 1024;
 
 /// Highest schedulable ARM11 thread priority.
 pub const HIGHEST_THREAD_PRIORITY: u8 = 0;
@@ -175,6 +180,251 @@ impl Arm11ThreadScheduler {
             next_ready_order: 0,
             virtual_time_ns: 0,
         })
+    }
+
+
+    /// Version of the multi-thread ARM11 scheduler snapshot.
+    pub const SAVE_STATE_VERSION: u16 = 1;
+
+    /// Serializes every retained thread context plus deterministic scheduler state.
+    ///
+    /// Process address-space bytes, kernel objects, service queues and GPU/audio
+    /// state live outside this component and must be stored in their own sections.
+    pub fn encode_save_state(&self) -> std::result::Result<Vec<u8>, CpuStateError> {
+        self.validate_save_state_metadata()?;
+        let slot_count = u32::try_from(self.threads.len())
+            .map_err(|_| CpuStateError::TooManyThreads(u32::MAX))?;
+        let mut writer = StateWriter::with_capacity(1024)?;
+        writer.write_bytes(THREAD_STATE_MAGIC)?;
+        writer.write_u16(Self::SAVE_STATE_VERSION)?;
+        writer.write_u32(slot_count)?;
+        writer.write_bool(self.current.is_some())?;
+        if let Some(current) = self.current {
+            writer.write_u32(current.raw())?;
+        }
+        writer.write_u32(self.next_thread_id)?;
+        writer.write_u64(self.next_ready_order)?;
+        writer.write_u64(self.virtual_time_ns)?;
+
+        for slot in &self.threads {
+            let Some(thread) = slot else {
+                writer.write_bool(false)?;
+                continue;
+            };
+            writer.write_bool(true)?;
+            writer.write_u32(thread.info.id.raw())?;
+            writer.write_u32(thread.info.entrypoint)?;
+            writer.write_u32(thread.info.argument)?;
+            writer.write_u32(thread.info.stack_top)?;
+            writer.write_u8(thread.info.priority)?;
+            writer.write_bytes(&thread.info.processor_id.to_le_bytes())?;
+            match thread.info.state {
+                ThreadState::Ready => writer.write_u8(0)?,
+                ThreadState::Running => writer.write_u8(1)?,
+                ThreadState::Sleeping { wake_deadline_ns } => {
+                    writer.write_u8(2)?;
+                    writer.write_u64(wake_deadline_ns)?;
+                }
+                ThreadState::Waiting => writer.write_u8(3)?,
+                ThreadState::Exited => writer.write_u8(4)?,
+            }
+            writer.write_bool(thread.ready_order.is_some())?;
+            if let Some(order) = thread.ready_order {
+                writer.write_u64(order)?;
+            }
+
+            let core_state = thread.core.encode_save_state()?;
+            if core_state.len() > MAX_THREAD_CORE_STATE_BYTES {
+                return Err(CpuStateError::InvalidThreadMetadata);
+            }
+            let core_state_len = u32::try_from(core_state.len())
+                .map_err(|_| CpuStateError::InvalidThreadMetadata)?;
+            writer.write_u32(core_state_len)?;
+            writer.write_bytes(&core_state)?;
+        }
+        Ok(writer.into_bytes())
+    }
+
+    /// Restores all threads and scheduler metadata atomically.
+    ///
+    /// Every ARM11 core is decoded into a temporary scheduler. This scheduler is
+    /// replaced only after all thread contexts and cross-thread invariants pass.
+    pub fn restore_save_state(
+        &mut self,
+        encoded: &[u8],
+    ) -> std::result::Result<(), CpuStateError> {
+        let mut reader = StateReader::new(encoded);
+        if reader.read_bytes(8)? != THREAD_STATE_MAGIC {
+            return Err(CpuStateError::InvalidMagic);
+        }
+        let version = reader.read_u16()?;
+        if version != Self::SAVE_STATE_VERSION {
+            return Err(CpuStateError::UnsupportedVersion(version));
+        }
+
+        let slot_count = reader.read_u32()?;
+        if slot_count < 2 {
+            return Err(CpuStateError::InvalidThreadMetadata);
+        }
+        if slot_count as usize > MAX_SAVE_STATE_THREADS + 1 {
+            return Err(CpuStateError::TooManyThreads(slot_count - 1));
+        }
+        let current = if reader.read_bool()? {
+            Some(ThreadId(reader.read_u32()?))
+        } else {
+            None
+        };
+        let next_thread_id = reader.read_u32()?;
+        let next_ready_order = reader.read_u64()?;
+        let virtual_time_ns = reader.read_u64()?;
+
+        let mut threads = Vec::new();
+        threads
+            .try_reserve_exact(slot_count as usize)
+            .map_err(|_| CpuStateError::AllocationFailed)?;
+        threads.resize_with(slot_count as usize, || None);
+
+        for (slot_index, slot) in threads.iter_mut().enumerate() {
+            if !reader.read_bool()? {
+                continue;
+            }
+            let id = ThreadId(reader.read_u32()?);
+            let entrypoint = reader.read_u32()?;
+            let argument = reader.read_u32()?;
+            let stack_top = reader.read_u32()?;
+            let priority = reader.read_u8()?;
+            let processor_bytes = reader.read_bytes(4)?;
+            let processor_id = i32::from_le_bytes([
+                processor_bytes[0],
+                processor_bytes[1],
+                processor_bytes[2],
+                processor_bytes[3],
+            ]);
+            let state_tag = reader.read_u8()?;
+            let state = match state_tag {
+                0 => ThreadState::Ready,
+                1 => ThreadState::Running,
+                2 => ThreadState::Sleeping {
+                    wake_deadline_ns: reader.read_u64()?,
+                },
+                3 => ThreadState::Waiting,
+                4 => ThreadState::Exited,
+                value => return Err(CpuStateError::InvalidThreadState(value)),
+            };
+            let ready_order = if reader.read_bool()? {
+                Some(reader.read_u64()?)
+            } else {
+                None
+            };
+
+            let core_state_len = reader.read_u32()? as usize;
+            if core_state_len > MAX_THREAD_CORE_STATE_BYTES {
+                return Err(CpuStateError::InvalidThreadMetadata);
+            }
+            let core_state = reader.read_bytes(core_state_len)?;
+            let mut core = Arm11Core::new();
+            core.restore_save_state(core_state)?;
+
+            *slot = Some(ThreadControlBlock {
+                info: ThreadInfo {
+                    id,
+                    entrypoint,
+                    argument,
+                    stack_top,
+                    priority,
+                    processor_id,
+                    state,
+                },
+                core,
+                ready_order,
+            });
+
+            if id.raw() as usize != slot_index {
+                return Err(CpuStateError::InvalidThreadMetadata);
+            }
+        }
+
+        reader.finish()?;
+        let restored = Self {
+            threads,
+            current,
+            next_thread_id,
+            next_ready_order,
+            virtual_time_ns,
+        };
+        restored.validate_save_state_metadata()?;
+        *self = restored;
+        Ok(())
+    }
+
+    fn validate_save_state_metadata(&self) -> std::result::Result<(), CpuStateError> {
+        if self.threads.len() < 2
+            || self.threads.len() > MAX_SAVE_STATE_THREADS + 1
+            || self.threads[0].is_some()
+            || self.threads[MAIN_THREAD_ID.raw() as usize].is_none()
+            || self.next_thread_id < self.threads.len() as u32
+            || self.next_thread_id <= MAIN_THREAD_ID.raw()
+        {
+            return Err(CpuStateError::InvalidThreadMetadata);
+        }
+
+        let mut running_count = 0usize;
+        let mut ready_count = 0usize;
+        for (slot_index, slot) in self.threads.iter().enumerate().skip(1) {
+            let Some(thread) = slot else {
+                continue;
+            };
+            let info = thread.info;
+            if info.id.raw() as usize != slot_index
+                || info.priority > LOWEST_THREAD_PRIORITY
+                || info.processor_id != APPLICATION_PROCESSOR_ID
+                || info.stack_top == 0
+                || info.stack_top & 7 != 0
+                || (!thread.core.cpsr.thumb() && info.entrypoint & 3 != 0)
+                || (thread.core.cpsr.thumb() && info.entrypoint & 1 != 0)
+            {
+                return Err(CpuStateError::InvalidThreadMetadata);
+            }
+
+            match (info.state, thread.ready_order) {
+                (ThreadState::Ready, Some(order)) => {
+                    ready_count += 1;
+                    if order > self.next_ready_order {
+                        return Err(CpuStateError::InvalidThreadMetadata);
+                    }
+                }
+                (ThreadState::Running, None) => {
+                    running_count += 1;
+                    if self.current != Some(info.id) {
+                        return Err(CpuStateError::InvalidThreadMetadata);
+                    }
+                }
+                (
+                    ThreadState::Sleeping { .. } | ThreadState::Waiting | ThreadState::Exited,
+                    None,
+                ) => {}
+                _ => return Err(CpuStateError::InvalidThreadMetadata),
+            }
+        }
+
+        match self.current {
+            Some(current) => {
+                if running_count != 1
+                    || self
+                        .threads
+                        .get(current.raw() as usize)
+                        .and_then(Option::as_ref)
+                        .is_none_or(|thread| thread.info.state != ThreadState::Running)
+                {
+                    return Err(CpuStateError::InvalidThreadMetadata);
+                }
+            }
+            None if running_count != 0 || ready_count != 0 => {
+                return Err(CpuStateError::InvalidThreadMetadata);
+            }
+            None => {}
+        }
+        Ok(())
     }
 
     /// Creates a separate ARM/Thumb CPU context in the Created state.
@@ -628,6 +878,66 @@ mod tests {
         scheduler
             .create_thread(entrypoint, 0x1234, 0x2000_1000, priority, 0)
             .unwrap()
+    }
+
+
+    #[test]
+    fn scheduler_save_state_round_trips_multiple_thread_contexts_and_wait_states() {
+        let mut original = scheduler_with_priority(0x10);
+        let ready_thread = create(&mut original, 0x0020_0000, 0x20);
+        let waiting_thread = create(&mut original, 0x0030_0000, 0x30);
+        original.core_mut(MAIN_THREAD_ID).unwrap().regs[4] = 0xAAAA_5555;
+        original.core_mut(ready_thread).unwrap().regs[5] = 0x1234_5678;
+        original.core_mut(waiting_thread).unwrap().regs[6] = 0x8765_4321;
+
+        original.sleep_current(500).unwrap();
+        assert_eq!(original.current_thread_id(), Some(ready_thread));
+        original.wait_current().unwrap();
+        assert_eq!(original.current_thread_id(), Some(waiting_thread));
+        original.wait_current().unwrap();
+        assert_eq!(original.current_thread_id(), None);
+        original.wake_thread(ready_thread).unwrap();
+        original.wake_thread(waiting_thread).unwrap();
+        original.advance_time(100);
+
+        let encoded = original.encode_save_state().unwrap();
+        let mut restored = scheduler();
+        restored.restore_save_state(&encoded).unwrap();
+
+        assert_eq!(restored.current_thread_id(), original.current_thread_id());
+        assert_eq!(restored.virtual_time_ns(), original.virtual_time_ns());
+        assert_eq!(restored.thread_count(), original.thread_count());
+        for id in original.thread_ids() {
+            assert_eq!(restored.thread_info(id), original.thread_info(id));
+            assert_eq!(
+                restored.core(id).unwrap().encode_save_state().unwrap(),
+                original.core(id).unwrap().encode_save_state().unwrap()
+            );
+        }
+        assert_eq!(restored.encode_save_state().unwrap(), encoded);
+    }
+
+    #[test]
+    fn malformed_scheduler_state_does_not_replace_the_active_scheduler() {
+        let mut scheduler = scheduler();
+        let extra = create(&mut scheduler, 0x0020_0000, 0x30);
+        scheduler.core_mut(extra).unwrap().regs[7] = 0xDEAD_BEEF;
+        let before = scheduler.encode_save_state().unwrap();
+
+        assert!(scheduler
+            .restore_save_state(&before[..before.len() - 1])
+            .is_err());
+        assert_eq!(scheduler.encode_save_state().unwrap(), before);
+
+        let mut bad_count = before.clone();
+        bad_count[10..14].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(scheduler.restore_save_state(&bad_count).is_err());
+        assert_eq!(scheduler.encode_save_state().unwrap(), before);
+
+        let mut trailing = before.clone();
+        trailing.push(0);
+        assert!(scheduler.restore_save_state(&trailing).is_err());
+        assert_eq!(scheduler.encode_save_state().unwrap(), before);
     }
 
     #[test]
