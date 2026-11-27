@@ -139,13 +139,7 @@ impl VirtualControlPositions {
         true
     }
 
-    pub fn adjust(
-        &mut self,
-        orientation: u32,
-        button: u32,
-        delta_x: i16,
-        delta_y: i16,
-    ) -> bool {
+    pub fn adjust(&mut self, orientation: u32, button: u32, delta_x: i16, delta_y: i16) -> bool {
         let current = self.offset(orientation, button);
         self.set_offset(
             orientation,
@@ -158,7 +152,8 @@ impl VirtualControlPositions {
     }
 
     pub fn reset_orientation(&mut self, orientation: u32) {
-        self.offsets_mut(orientation).fill(VirtualControlOffset::default());
+        self.offsets_mut(orientation)
+            .fill(VirtualControlOffset::default());
     }
 
     pub fn to_config_string(&self) -> String {
@@ -1468,11 +1463,17 @@ mod tests {
         assert!(positions.set_offset(
             ORIENTATION_PORTRAIT,
             buttons::A,
-            VirtualControlOffset { x: 30_000, y: -30_000 }
+            VirtualControlOffset {
+                x: 30_000,
+                y: -30_000,
+            }
         ));
         assert_eq!(
             positions.offset(ORIENTATION_PORTRAIT, buttons::A),
-            VirtualControlOffset { x: 2_000, y: -2_000 }
+            VirtualControlOffset {
+                x: 2_000,
+                y: -2_000,
+            }
         );
         assert_eq!(
             positions.offset(ORIENTATION_LANDSCAPE, buttons::A),
@@ -1491,12 +1492,23 @@ mod tests {
             100,
             VirtualControlPreset::Standard,
         );
-        let original_a = original.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        let original_a = original
+            .iter()
+            .find(|shape| shape.bit == buttons::A)
+            .unwrap();
         assert!(positions.adjust(ORIENTATION_PORTRAIT, buttons::A, -1_000, 500));
-        let customized =
-            button_shapes_with_positions(width, height, ORIENTATION_PORTRAIT, 100,
-                VirtualControlPreset::Standard, &positions);
-        let customized_a = customized.iter().find(|shape| shape.bit == buttons::A).unwrap();
+        let customized = button_shapes_with_positions(
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
+        );
+        let customized_a = customized
+            .iter()
+            .find(|shape| shape.bit == buttons::A)
+            .unwrap();
         assert_eq!(customized_a.x, original_a.x - 48.0);
         assert_eq!(customized_a.y, original_a.y + 40.0);
         assert_eq!(
@@ -1516,12 +1528,26 @@ mod tests {
         let mut standard_frame = base.clone();
         let mut customized_frame = base;
         assert!(blend_virtual_pad_overlay_into_with_positions(
-            &mut standard_frame, width, height, ORIENTATION_PORTRAIT, 0, 255, 100,
-            VirtualControlPreset::Standard, &VirtualControlPositions::default(),
+            &mut standard_frame,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            0,
+            255,
+            100,
+            VirtualControlPreset::Standard,
+            &VirtualControlPositions::default(),
         ));
         assert!(blend_virtual_pad_overlay_into_with_positions(
-            &mut customized_frame, width, height, ORIENTATION_PORTRAIT, 0, 255, 100,
-            VirtualControlPreset::Standard, &positions,
+            &mut customized_frame,
+            width,
+            height,
+            ORIENTATION_PORTRAIT,
+            0,
+            255,
+            100,
+            VirtualControlPreset::Standard,
+            &positions,
         ));
         assert_ne!(standard_frame, customized_frame);
     }
