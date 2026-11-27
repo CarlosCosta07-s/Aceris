@@ -3378,9 +3378,7 @@ mod tests {
 
         for (index, instruction) in program.into_iter().enumerate() {
             fast_mem.write32(index as u32 * 4, instruction).unwrap();
-            precise_mem
-                .write32(index as u32 * 4, instruction)
-                .unwrap();
+            precise_mem.write32(index as u32 * 4, instruction).unwrap();
         }
 
         assert_eq!(
@@ -3408,9 +3406,7 @@ mod tests {
         let (mut fast_cpu, mut fast_mem) = machine();
         set_l1(&mut fast_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
         for (index, instruction) in program.into_iter().enumerate() {
-            fast_mem
-                .write32(index as u32 * 4, instruction)
-                .unwrap();
+            fast_mem.write32(index as u32 * 4, instruction).unwrap();
         }
 
         let (executed, exit) = fast_cpu.run_fast(&mut fast_mem, 8).unwrap();
