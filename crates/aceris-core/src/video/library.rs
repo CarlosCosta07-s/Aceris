@@ -5238,6 +5238,75 @@ mod tests {
     }
 
     #[test]
+    fn legacy_virtual_control_positions_migrate_to_v2_on_save() {
+        let root = std::env::temp_dir().join(format!(
+            "aceris-virtual-control-migration-{}",
+            std::process::id()
+        ));
+        let games = root.join("games");
+        let settings = root.join("settings");
+        fs::create_dir_all(&games).unwrap();
+        fs::create_dir_all(&settings).unwrap();
+
+        let mut old_positions = VirtualControlPositions::default();
+        assert!(old_positions.adjust(
+            ORIENTATION_PORTRAIT,
+            frontend::buttons::A,
+            450,
+            -250
+        ));
+        let mut legacy = String::from("ACERIS_VIRTUAL_CONTROL_POSITIONS_V1\n");
+        for line in old_positions.to_config_string().lines().skip(1) {
+            let (key, values) = line.split_once('=').unwrap();
+            let (position, _size) = values.rsplit_once(',').unwrap();
+            legacy.push_str(&format!("{key}={position}\n"));
+        }
+        fs::write(settings.join(LEGACY_VIRTUAL_CONTROL_POSITIONS_FILE), legacy).unwrap();
+
+        let mut library = Library::from_scan_settings(&settings, &games);
+        assert_eq!(
+            library.virtual_control_positions().offset(
+                ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            VirtualControlOffset { x: 450, y: -250 }
+        );
+        assert_eq!(
+            library.virtual_control_positions().size_percent(
+                ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            100
+        );
+        assert!(library.resize_virtual_control(
+            ORIENTATION_PORTRAIT,
+            frontend::buttons::A,
+            135
+        ));
+        library.save_virtual_control_positions().unwrap();
+
+        let migrated = fs::read_to_string(settings.join(VIRTUAL_CONTROL_LAYOUT_FILE)).unwrap();
+        assert!(migrated.starts_with("ACERIS_VIRTUAL_CONTROL_LAYOUT_V2\n"));
+        let reopened = Library::from_scan_settings(&settings, &games);
+        assert_eq!(
+            reopened.virtual_control_positions().offset(
+                ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            VirtualControlOffset { x: 450, y: -250 }
+        );
+        assert_eq!(
+            reopened.virtual_control_positions().size_percent(
+                ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            135
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn library_model_loads_and_manages_persisted_scan_roots() {
         let root =
             std::env::temp_dir().join(format!("aceris-library-scan-model-{}", std::process::id()));
