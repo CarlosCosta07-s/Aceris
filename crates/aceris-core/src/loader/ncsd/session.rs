@@ -425,6 +425,32 @@ impl Arm11ProcessSession {
         self.scheduler.restore_save_state(section.payload())
     }
 
+    /// Encodes the process address-space mappings, D-cache and pending writeback state.
+    ///
+    /// Shared backings are referenced through the machine-wide catalog and are
+    /// serialized only once by SHARED_BACKINGS.
+    pub(crate) fn encode_process_memory_section(
+        &self,
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> std::result::Result<SaveStateSection, SharedMemoryStateError> {
+        self.address_space.encode_save_state_section(catalog)
+    }
+
+    /// Restores process memory into a staged address space after the backing
+    /// catalog and physical GPU memory have been reconstructed.
+    pub(crate) fn restore_process_memory_section(
+        &mut self,
+        section: &SaveStateSection,
+        catalog: &SharedMemoryBackingCatalog,
+    ) -> std::result::Result<(), SharedMemoryStateError> {
+        self.address_space.restore_save_state_section(section, catalog)
+    }
+
+    /// Current deterministic process virtual time, in nanoseconds.
+    pub fn virtual_time_ns(&self) -> u64 {
+        self.scheduler.virtual_time_ns()
+    }
+
     /// Encodes the process-local kernel objects, aliases and synchronization queues.
     ///
     /// The supplied catalog must already contain every shared-memory backing
