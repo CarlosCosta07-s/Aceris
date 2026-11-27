@@ -467,3 +467,10 @@ O plano detalhado está em [`docs/PERFORMANCE_LOW_END_PLAN.md`](PERFORMANCE_LOW_
 - [ ] Ensaios térmicos Android de 15+ minutos, com memória, bateria, temperatura/headroom e frametime, preservando o tempo guest.
 
 O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM. Isso é requisito daquele port, não o mínimo desejado do Aceris. Manter fallback OpenGL ES/CPU e avançar com evidências de dispositivos abaixo desse nível, sem prometer compatibilidade ainda não medida.
+### Telemetria de desempenho Android (27/11/2026)
+
+- [x] Criar coleta opt-in de FPS apresentado, intervalos de apresentação p50/p95, render host, `App::step_into`, tempo de apresentação e proporção GPU/CPU. Habilitação por `games/.aceris/android_performance_log_v1.txt` com conteúdo `1`; relatório a cada cinco segundos.
+- [x] Manter a coleta fora do caminho normal quando desativada; não altera clock, timers, orçamento guest, resolução das LCDs, áudio ou sincronização do 3DS.
+- [ ] Confirmar CI ARM64 e os testes do módulo de estatísticas.
+- [ ] Coletar em aparelho Android físico por 15+ minutos, registrar SoC/GPU/driver/temperatura/bateria e comparar Vulkan com OpenGL ES.
+- [ ] Com os dados do aparelho, decidir a implementação dos perfis `Baixo consumo` e `Desempenho`, sem copiar valores padrão do Black Android por suposição.
