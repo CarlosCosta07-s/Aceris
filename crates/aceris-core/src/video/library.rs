@@ -827,7 +827,9 @@ impl Library {
         library.virtual_controls_size_percent =
             load_virtual_controls_size_percent(settings_directory);
         library.virtual_controls_preset = load_virtual_controls_preset(settings_directory);
-        library.virtual_control_positions = load_virtual_control_positions(settings_directory);
+        let global_virtual_control_positions = load_virtual_control_positions(settings_directory);
+        library.global_virtual_control_positions = global_virtual_control_positions;
+        library.virtual_control_positions = global_virtual_control_positions;
         let preferences = load_library_preferences(settings_directory);
         library.sort_descending = preferences.sort_descending;
         library.view_mode = preferences.view_mode;
@@ -6037,7 +6039,8 @@ mod tests {
 #[cfg(test)]
 mod virtual_control_profile_tests {
     use super::super::frontend::{
-        ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT, VirtualControlOffset, buttons,
+        ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT, VirtualControlOffset,
+        VirtualControlPositions, buttons,
     };
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -6253,4 +6256,58 @@ mod virtual_control_profile_tests {
 
         fs::remove_dir_all(directory).ok();
     }
+    #[test]
+    fn configured_settings_directory_supplies_global_control_profile() {
+        let root = temporary_directory();
+        let fallback = root.join("fallback");
+        let settings = root.join("settings");
+        let fallback_settings = fallback.join(".aceris");
+        fs::create_dir_all(&fallback_settings).unwrap();
+        fs::create_dir_all(&settings).unwrap();
+
+        // Deliberately make the fallback and configured settings disagree. The
+        // editor and newly launched titles must both use the configured profile.
+        let mut fallback_layout = VirtualControlPositions::default();
+        fallback_layout.adjust(ORIENTATION_PORTRAIT, buttons::A, 900, 0);
+        fs::write(
+            fallback_settings.join(VIRTUAL_CONTROL_LAYOUT_FILE),
+            fallback_layout.to_config_string(),
+        )
+        .unwrap();
+
+        let mut configured_layout = VirtualControlPositions::default();
+        configured_layout.adjust(ORIENTATION_PORTRAIT, buttons::A, -250, 375);
+        fs::write(
+            settings.join(VIRTUAL_CONTROL_LAYOUT_FILE),
+            configured_layout.to_config_string(),
+        )
+        .unwrap();
+
+        let mut library = Library::from_scan_settings(&settings, &fallback);
+        let expected = VirtualControlOffset { x: -250, y: 375 };
+        assert_eq!(
+            library
+                .virtual_control_editor_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
+            expected
+        );
+
+        library.set_active_game_identity(Some(identity(0x0004_0000_1234_56ff)));
+        assert_eq!(
+            library
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
+            expected
+        );
+        assert!(library.toggle_virtual_control_edit_scope());
+        assert_eq!(
+            library
+                .virtual_control_editor_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
+            expected
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
 }
