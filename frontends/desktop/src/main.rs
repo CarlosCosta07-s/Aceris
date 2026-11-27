@@ -19,8 +19,7 @@ use aceris_core::{
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use performance::{
-    DesktopFrameKind, DesktopFrameTimings, DesktopPerformanceMonitor,
-    performance_logging_enabled,
+    DesktopFrameKind, DesktopFrameTimings, DesktopPerformanceMonitor, performance_logging_enabled,
 };
 use std::{
     env, fs, io,
