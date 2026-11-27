@@ -22,13 +22,17 @@ O workflow **Build Android APK** compila e empacota um APK debug ARM64. Isso con
 
 O core compartilha `System::load_executable_file` entre os hosts. O scanner da biblioteca lista:
 
-- `.3ds` e `.cci` para imagens NCSD;
-- `.cia` como contêiner de título, carregável somente nas condições já suportadas pelo núcleo (conteúdo de boot em claro e NCCH NoCrypto);
+- `.3ds` e `.cci` para imagens NCSD descriptografadas (NCCH NoCrypto);
+- `.cia` para contêineres com conteúdo de boot em claro e NCCH NoCrypto; o Aceris inicia diretamente esse conteúdo, mas ainda não instala títulos de forma persistente;
 - `.3dsx` para homebrew.
 
 A presença de um CIA na biblioteca **não significa instalação persistente, gerenciamento de atualizações ou suporte a conteúdo criptografado**. O carregador continua validando o arquivo ao iniciar e apresenta um diagnóstico quando o conteúdo não é compatível. Desktop e Android agora inicializam a biblioteca com `Library::from_scan_settings`, carregando as raízes e a opção de recursão gravadas em `.aceris/library_scan_v1.txt`, dentro da pasta de dados da biblioteca; se a configuração estiver ausente ou inválida, usam a pasta de jogos original sem recursão. A página Configurações permite adicionar uma pasta digitando seu caminho, remover raízes existentes e alternar a busca em subpastas. A pasta precisa existir e estar acessível ao processo antes de ser cadastrada. No Android, o teclado virtual inclui `/` e `.` para caminhos comuns; essa entrada por caminho não substitui a seleção SAF, que continua pendente para armazenamento compartilhado.
 
-Para carregar NCCH/CIA com criptografia, a C ABI permite que o host forneça material de chave temporário. O Aceris não descobre chaves, não as persiste no handle do emulador e não valida as assinaturas RSA/ECDSA do ticket/TMD. O host deve obter qualquer material por meio legítimo e seguro.
+### Política de criptografia
+
+O fluxo normal de lançamento, usado pela biblioteca tanto no desktop quanto no Android, aceita somente imagens descriptografadas. NCSD (`.3ds`/`.cci`) precisa apresentar NCCH NoCrypto; CIA precisa ter o conteúdo de boot sem criptografia externa e o NCCH com NoCrypto. Arquivos criptografados são recusados antes de iniciar o processo, com uma mensagem que informa a política. Isso segue o comportamento atual documentado pelo Azahar: o usuário prepara uma cópia descriptografada a partir do próprio console.
+
+O núcleo ainda mantém rotinas de baixo nível com chaves explícitas para testes e pesquisa de formatos; elas não fazem parte do fluxo de lançamento da biblioteca nem representam suporte de produto a jogos criptografados. O Aceris não descobre, incorpora ou persiste chaves. O carregamento direto de CIA também não equivale à instalação persistente de títulos do Azahar.
 
 ### Apresentação e gráficos
 
