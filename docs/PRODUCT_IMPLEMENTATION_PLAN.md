@@ -163,7 +163,8 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [x] Mapear toque/stylus para o LCD inferior em todos os modos, inclusive após a troca física de posições.
 - [ ] Permitir ajustar espaçamento e posição dentro de limites seguros.
 - [ ] Criar modo personalizado com restaurar padrão.
-- [ ] Persistir perfil global e override por jogo; manter preferências retrato/paisagem separadas quando a plataforma suportar ambos.
+- [x] Persistir o perfil global em `.aceris/screen_layout_preferences_v1.txt`, separado para retrato e paisagem e compartilhado entre Android/desktop.
+- [ ] Adicionar overrides por jogo com herança do perfil global; preservar seleção ao alternar títulos.
 - [ ] Janela separada de telas no desktop fica para etapa posterior, após validar o gerenciamento de múltiplas janelas.
 - [ ] Validar rotação, redimensionamento, troca, hit-test do stylus e renderização em Android físico e Windows/macOS/Linux.
 
