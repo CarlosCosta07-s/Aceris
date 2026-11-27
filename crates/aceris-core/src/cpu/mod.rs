@@ -371,7 +371,6 @@ impl Arm11Core {
         Ok(())
     }
 
-
     /// Returns a snapshot of immutable-text A32 block-cache counters.
     pub fn block_cache_stats(&self) -> BlockCacheStats {
         self.block_cache.stats()
@@ -1146,10 +1145,7 @@ mod tests {
         assert_eq!(cpu.encode_save_state().unwrap(), before);
 
         let mut invalid_mode = before.clone();
-        invalid_mode[10 + 16 * 4..10 + 17 * 4]
-            .copy_from_slice(&0x13u32.to_le_bytes());
-        invalid_mode[10 + 16 * 4..10 + 17 * 4]
-            .copy_from_slice(&0u32.to_le_bytes());
+        invalid_mode[10 + 16 * 4..10 + 17 * 4].copy_from_slice(&0u32.to_le_bytes());
         assert!(cpu.restore_save_state(&invalid_mode).is_err());
         assert_eq!(cpu.encode_save_state().unwrap(), before);
 
