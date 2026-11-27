@@ -419,3 +419,7 @@ A `App::set_pointers` ainda atualiza sua própria estrutura de estado, portanto 
 `GraphicsPresenter::present_pixels` tenta adquirir a imagem atual da swapchain antes de alocar/atualizar a textura do frame e chamar `queue.write_texture`. Quando a superfície retorna `Timeout` ou `Occluded`, a iteração encerra sem transferir o framebuffer inteiro; em `Outdated`/`Lost`, reconfigura e tenta novamente antes de fazer o upload. A regra aplica-se aos caminhos RGBA (Android) e BGRX (desktop).
 
 A alteração reduz trabalho de upload quando a janela está oculta/minimizada ou não há imagem de apresentação disponível, mas não reduz a emulação guest executada antes de chamar o presenter. Não há medição de bytes/tempo GPU nesta revisão. Validar em PC e Android alternando visibilidade/minimização, e comparar o custo de apresentação e atividade GPU antes/depois.
+
+### Cópia das linhas ampliadas desktop sem sobreposição (27/11/2026)
+
+Na expansão desktop 2×–4×, a cópia vertical da primeira linha ampliada usa slices disjuntas (`split_at_mut`/`copy_from_slice`) quando o destino começa após o fim da origem; se uma geometria futura permitir sobreposição, o código mantém o fallback `copy_within`. A saída continua comparada pixel a pixel pela sonda diferencial `row_major_scaled_composition_matches_reference_pixel_for_pixel`. Validar o possível ganho de cópia em Release; a mudança ainda não tem medição.
