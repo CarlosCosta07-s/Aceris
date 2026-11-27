@@ -414,6 +414,27 @@ impl App {
                 output,
             ) {
                 self.render_virtual_controls_overlay(output, 0);
+                if self.control_resize.is_none() {
+                    if let Some((_, button)) = self.control_drag {
+                        if let Some(center) = frontend::virtual_control_center_with_positions(
+                            self.width,
+                            self.height,
+                            ORIENTATION_AUTO,
+                            self.library.virtual_controls_size_percent(),
+                            self.library.virtual_controls_preset(),
+                            self.library.virtual_control_positions(),
+                            button,
+                        ) {
+                            let _ = quick_menu::render_control_editor_guides(
+                                output,
+                                self.width,
+                                self.height,
+                                MenuPixelFormat::Rgba8,
+                                center,
+                            );
+                        }
+                    }
+                }
                 let _ = quick_menu::render_control_editor_hint(
                     output,
                     self.width,
@@ -548,6 +569,21 @@ impl App {
         if let Some(identity) = self.system.as_ref().and_then(System::game_identity) {
             self.layout_preferences.reset_game_overrides(identity);
             self.save_layout_preferences();
+        }
+    }
+
+    fn reset_virtual_controls_layout(&mut self) {
+        let orientation = self.virtual_control_orientation();
+        match self.library.reset_virtual_control_positions(orientation) {
+            Ok(()) => self.library.set_status(match orientation {
+                frontend::ORIENTATION_LANDSCAPE => {
+                    "CONTROLES RESTAURADOS PARA PAISAGEM"
+                }
+                _ => "CONTROLES RESTAURADOS PARA RETRATO",
+            }),
+            Err(error) => self
+                .library
+                .set_status(format!("NÃO FOI POSSÍVEL RESTAURAR OS CONTROLES: {error}")),
         }
     }
 
@@ -861,6 +897,7 @@ impl App {
             3 => self.cycle_screen_layout(),
             4 => self.toggle_screen_swap(),
             5 => self.reset_game_layout(),
+            6 => self.reset_virtual_controls_layout(),
             _ => self.begin_control_editor(),
         }
     }
@@ -1930,6 +1967,96 @@ mod tests {
             frontend::VirtualControlOffset { x: -250, y: 500 }
         );
 
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn quick_menu_restores_only_the_active_orientation_control_layout() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+        app.library
+            .set_virtual_controls_preset(frontend::VirtualControlPreset::LeftHanded)
+            .unwrap();
+        app.library.set_virtual_controls_size_percent(120).unwrap();
+        app.library.move_virtual_control(
+            frontend::ORIENTATION_PORTRAIT,
+            frontend::buttons::A,
+            500,
+            -250,
+        );
+        app.library.resize_virtual_control(
+            frontend::ORIENTATION_PORTRAIT,
+            frontend::buttons::A,
+            140,
+        );
+        app.library.move_virtual_control(
+            frontend::ORIENTATION_LANDSCAPE,
+            frontend::buttons::A,
+            -300,
+            400,
+        );
+        app.library.resize_virtual_control(
+            frontend::ORIENTATION_LANDSCAPE,
+            frontend::buttons::A,
+            130,
+        );
+        app.library.save_virtual_control_positions().unwrap();
+
+        app.quick_menu_selected = 6;
+        app.activate_game_menu_action();
+        assert_eq!(
+            app.library.virtual_control_positions().offset(
+                frontend::ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            frontend::VirtualControlOffset::default()
+        );
+        assert_eq!(
+            app.library.virtual_control_positions().size_percent(
+                frontend::ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            100
+        );
+        assert_eq!(
+            app.library.virtual_control_positions().offset(
+                frontend::ORIENTATION_LANDSCAPE,
+                frontend::buttons::A
+            ),
+            frontend::VirtualControlOffset { x: -300, y: 400 }
+        );
+        assert_eq!(
+            app.library.virtual_control_positions().size_percent(
+                frontend::ORIENTATION_LANDSCAPE,
+                frontend::buttons::A
+            ),
+            130
+        );
+        assert_eq!(
+            app.library.virtual_controls_preset(),
+            frontend::VirtualControlPreset::LeftHanded
+        );
+        assert_eq!(app.library.virtual_controls_size_percent(), 120);
+        assert_eq!(
+            app.library.status_message(),
+            Some("CONTROLES RESTAURADOS PARA RETRATO")
+        );
+
+        let reopened = App::new(&dir);
+        assert_eq!(
+            reopened.library.virtual_control_positions().size_percent(
+                frontend::ORIENTATION_PORTRAIT,
+                frontend::buttons::A
+            ),
+            100
+        );
+        assert_eq!(
+            reopened.library.virtual_control_positions().size_percent(
+                frontend::ORIENTATION_LANDSCAPE,
+                frontend::buttons::A
+            ),
+            130
+        );
         fs::remove_dir_all(dir).ok();
     }
 
