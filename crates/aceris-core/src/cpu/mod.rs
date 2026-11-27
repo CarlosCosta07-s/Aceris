@@ -17,7 +17,7 @@ mod mpcore_scu;
 mod mpcore_timer;
 mod psr;
 mod shifter;
-mod state;
+pub(crate) mod state;
 mod thumb;
 mod vfp;
 
