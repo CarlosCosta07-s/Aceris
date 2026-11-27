@@ -22,9 +22,7 @@
 
 use super::arm::{bit, bits};
 use super::cp15::TlbMaintenance;
-use super::{
-    ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, StepEvent, THUMB_INSTRUCTION_SIZE,
-};
+use super::{ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, StepEvent, THUMB_INSTRUCTION_SIZE};
 use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result};
 
