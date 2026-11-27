@@ -10,7 +10,7 @@ A implementação do produto continua integralmente em Rust, compartilhando o me
 
 A pesquisa é qualitativa: documentação oficial, recursos publicados pelos projetos, discussões comunitárias e pedidos recorrentes. Não é uma pesquisa estatística representativa de todos os usuários.
 
-A ordem de execução, dependências, entregáveis e critérios de aceite estão em [`docs/PRODUCT_IMPLEMENTATION_PLAN.md`](PRODUCT_IMPLEMENTATION_PLAN.md). A especificação define o que o produto deve oferecer; o plano define em que ordem isso será implementado.
+A ordem de execução, dependências, entregáveis e critérios de aceite estão em [`docs/PRODUCT_IMPLEMENTATION_PLAN.md`](PRODUCT_IMPLEMENTATION_PLAN.md). A organização do menu rápido e das configurações está em [`docs/QUICK_MENU_SETTINGS_SPEC.md`](QUICK_MENU_SETTINGS_SPEC.md). A especificação define o que o produto deve oferecer; o plano define em que ordem isso será implementado.
 
 ## 2. O que as referências ensinam
 
@@ -43,7 +43,7 @@ No Android, os pedidos mais visíveis incluem controle virtual confortável, bot
 A inspeção de `crates/aceris-core/src/video/library.rs`, `crates/aceris-core/src/video/frontend.rs`, `frontends/android/src/app.rs`, `frontends/android/src/ui.rs` e `docs/FRONTENDS.md` identifica estes recursos existentes:
 
 - Tela inicial, início da biblioteca e páginas de Jogos, Favoritos, Recentes, Homebrew e Configurações.
-- Biblioteca com visualização de grade e lista selecionável no modo paisagem; o fallback em retrato continua usando lista adaptável.
+- Biblioteca com visualização de grade e lista selecionável no modo paisagem; o fallback em retrato continua usando lista adaptável. Grade/Lista e ordenação A–Z/Z–A agora são salvas em `.aceris/library_preferences_v1.txt` e recuperadas ao reabrir a biblioteca.
 - Pesquisa funcional por título, nome do arquivo e caminho, sem diferenciar maiúsculas/minúsculas ou acentos. Desktop usa texto do teclado do sistema; Android oferece teclado virtual desenhado em Rust e aceita caracteres Unicode de teclados físicos.
 - As páginas de coleção também permitem filtrar por extensão (.3DS, .CCI, .CIA ou .3DSX), com comparação sem diferenciar maiúsculas/minúsculas. O filtro é somente classificatório e não implica validação de conteúdo nem instalação de CIA.
 - Favoritos e Recentes persistidos localmente com identidade por caminho completo (inclui migração dos antigos registros por nome); ordenação A–Z/Z–A e atualização manual da biblioteca.
