@@ -2387,6 +2387,7 @@ impl Arm11CodeAddressSpace {
         encoded: &[u8],
         catalog: &SharedMemoryBackingCatalog,
     ) -> Result<(), SharedMemoryStateError> {
+        use crate::cpu::state::StateReader;
         if encoded.len() > ADDRESS_SPACE_STATE_MAX_BYTES {
             return Err(SharedMemoryStateError::AllocationFailed);
         }
@@ -2652,7 +2653,10 @@ impl Arm11CodeAddressSpace {
                 || !region.reservation_base.is_multiple_of(PAGE_SIZE as u32)
                 || !region.mapping_size.is_multiple_of(PAGE_SIZE as u32)
                 || region.reservation_size
-                    != region.mapping_size.checked_add(2 * PAGE_SIZE as u32).unwrap_or(0)
+                    != region
+                        .mapping_size
+                        .checked_add(2 * PAGE_SIZE as u32)
+                        .unwrap_or(0)
                 || region.alias_address < region.mapping_base
                 || u64::from(region.alias_address)
                     >= u64::from(region.mapping_base) + u64::from(region.mapping_size)
@@ -6245,8 +6249,7 @@ mod tests {
             count_offset += 4 + length;
         }
         count_offset += 4; // fast-memory, interrupt marker and two SMP options
-        bad_count[count_offset..count_offset + 4]
-            .copy_from_slice(&u32::MAX.to_le_bytes());
+        bad_count[count_offset..count_offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(original.restore_memory_state(&bad_count, &catalog).is_err());
         assert_eq!(original.encode_memory_state(&catalog).unwrap(), before);
 
