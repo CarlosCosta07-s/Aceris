@@ -6,6 +6,7 @@
 
 mod audio;
 mod background;
+mod performance;
 mod window;
 
 use aceris_common::{NAME, VERSION};
@@ -17,6 +18,7 @@ use aceris_core::{
     },
 };
 use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
+use performance::{DesktopFrameKind, DesktopPerformanceMonitor, performance_logging_enabled};
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
@@ -284,6 +286,7 @@ fn play_intro(
     window: &mut window::Window,
     presenter: &mut Option<GraphicsPresenter>,
     scale: usize,
+    performance: &mut Option<DesktopPerformanceMonitor>,
 ) -> Result<bool, String> {
     let frame_time = Duration::from_micros(1_000_000 / u64::from(intro::FPS));
     let mut rgba = Vec::new();
@@ -297,6 +300,7 @@ fn play_intro(
         }
         // Keep the procedural intro inexpensive at large desktop sizes.
         // A 2x nearest-neighbour presentation preserves the full window layout.
+        let composition_started = performance.as_ref().map(|_| Instant::now());
         let intro_width = window::CANVAS_WIDTH / 2;
         let intro_height = window::CANVAS_HEIGHT / 2;
         if !intro::render_frame_into(frame, intro_width, intro_height, &mut rgba)
@@ -309,6 +313,11 @@ fn play_intro(
         {
             return Err("could not allocate the startup animation frame".to_string());
         }
+        let composition_elapsed = composition_started
+            .map(|composition_started| composition_started.elapsed())
+            .unwrap_or_default();
+        let had_gpu_presenter = presenter.is_some();
+        let presentation_started = performance.as_ref().map(|_| Instant::now());
         present_desktop_frame(
             window,
             presenter,
@@ -316,6 +325,20 @@ fn play_intro(
             window::CANVAS_WIDTH * scale,
             window::CANVAS_HEIGHT * scale,
         )?;
+        let presentation_elapsed = presentation_started
+            .map(|presentation_started| presentation_started.elapsed())
+            .unwrap_or_default();
+        if let Some(performance) = performance.as_mut() {
+            performance.record(
+                DesktopFrameKind::Intro,
+                started.elapsed(),
+                Duration::ZERO,
+                composition_elapsed,
+                Duration::ZERO,
+                presentation_elapsed,
+                had_gpu_presenter && presenter.is_some(),
+            );
+        }
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);
         }
@@ -354,6 +377,12 @@ fn run_windowed(
     background_dir: Option<&Path>,
     background_fps: u32,
 ) -> Result<(), String> {
+    let settings_directory = games_dir.join(".aceris");
+    let mut performance = performance_logging_enabled(&settings_directory)
+        .then(DesktopPerformanceMonitor::new);
+    if performance.is_some() {
+        eprintln!("Aceris desktop performance logging enabled (5-second reports)");
+    }
     let mut window = window::Window::open(
         &format!("{NAME} {VERSION}"),
         window::CANVAS_WIDTH * scale,
@@ -365,10 +394,9 @@ fn run_windowed(
         window::CANVAS_WIDTH * scale,
         window::CANVAS_HEIGHT * scale,
     );
-    if !skip_intro && !play_intro(&mut window, &mut presenter, scale)? {
+    if !skip_intro && !play_intro(&mut window, &mut presenter, scale, &mut performance)? {
         return Ok(());
     }
-    let settings_directory = games_dir.join(".aceris");
     let mut library = Library::from_scan_settings(&settings_directory, games_dir);
     let background = background_dir
         .map(|directory| background::Sequence::load(directory, background_fps))
@@ -383,6 +411,7 @@ fn run_windowed(
                 &mut library,
                 scale,
                 background.as_ref(),
+                &mut performance,
             )? {
                 Some(path) => path,
                 None => return Ok(()),
@@ -413,7 +442,7 @@ fn run_windowed(
             continue;
         }
         library.mark_launched(&path);
-        let outcome = emulate(system, &mut window, &mut presenter, scale);
+        let outcome = emulate(system, &mut window, &mut presenter, scale, &mut performance);
         report_unhandled(system);
         match outcome {
             Ok(Flow::Quit) => return Ok(()),
@@ -440,6 +469,7 @@ fn browse_library(
     library: &mut Library,
     scale: usize,
     background: Option<&background::Sequence>,
+    performance: &mut Option<DesktopPerformanceMonitor>,
 ) -> Result<Option<PathBuf>, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut animation_frame = 0u64;
@@ -534,6 +564,7 @@ fn browse_library(
             }
         }
         let started = Instant::now();
+        let composition_started = performance.as_ref().map(|_| Instant::now());
         let background_frame = background.and_then(|sequence| sequence.frame_at(animation_frame));
         if !library.render_responsive_into_with_background(
             window::CANVAS_WIDTH as u32,
@@ -544,6 +575,11 @@ fn browse_library(
         {
             return Err("could not allocate the launcher frame".to_string());
         }
+        let composition_elapsed = composition_started
+            .map(|composition_started| composition_started.elapsed())
+            .unwrap_or_default();
+        let had_gpu_presenter = presenter.is_some();
+        let presentation_started = performance.as_ref().map(|_| Instant::now());
         present_desktop_frame(
             window,
             presenter,
@@ -551,6 +587,20 @@ fn browse_library(
             window::CANVAS_WIDTH * scale,
             window::CANVAS_HEIGHT * scale,
         )?;
+        let presentation_elapsed = presentation_started
+            .map(|presentation_started| presentation_started.elapsed())
+            .unwrap_or_default();
+        if let Some(performance) = performance.as_mut() {
+            performance.record(
+                DesktopFrameKind::Library,
+                started.elapsed(),
+                Duration::ZERO,
+                composition_elapsed,
+                Duration::ZERO,
+                presentation_elapsed,
+                had_gpu_presenter && presenter.is_some(),
+            );
+        }
         animation_frame = animation_frame.wrapping_add(1);
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);
@@ -583,6 +633,7 @@ fn emulate(
     window: &mut window::Window,
     presenter: &mut Option<GraphicsPresenter>,
     scale: usize,
+    performance: &mut Option<DesktopPerformanceMonitor>,
 ) -> Result<Flow, String> {
     let frame_time = Duration::from_micros(16_667);
     let mut keyboard = window::KeyboardInput::default();
@@ -604,13 +655,30 @@ fn emulate(
                 _ => {}
             }
         }
+        let emulation_started = performance.as_ref().map(|_| Instant::now());
         run_frame_with_diagnostics(system)?;
+        let emulation_elapsed = emulation_started
+            .map(|emulation_started| emulation_started.elapsed())
+            .unwrap_or_default();
+
+        let audio_started = performance.as_ref().map(|_| Instant::now());
         if let Some(audio) = audio.as_mut() {
             audio.feed(system);
         }
+        let audio_elapsed = audio_started
+            .map(|audio_started| audio_started.elapsed())
+            .unwrap_or_default();
+
+        let composition_started = performance.as_ref().map(|_| Instant::now());
         if !window::compose_bgrx_into(system.display(), scale, &mut frame) {
             return Err("could not allocate the desktop presentation buffer".to_string());
         }
+        let composition_elapsed = composition_started
+            .map(|composition_started| composition_started.elapsed())
+            .unwrap_or_default();
+
+        let had_gpu_presenter = presenter.is_some();
+        let presentation_started = performance.as_ref().map(|_| Instant::now());
         present_desktop_frame(
             window,
             presenter,
@@ -618,6 +686,20 @@ fn emulate(
             window::GAME_CANVAS_WIDTH * scale,
             window::GAME_CANVAS_HEIGHT * scale,
         )?;
+        let presentation_elapsed = presentation_started
+            .map(|presentation_started| presentation_started.elapsed())
+            .unwrap_or_default();
+        if let Some(performance) = performance.as_mut() {
+            performance.record(
+                DesktopFrameKind::Game,
+                started.elapsed(),
+                emulation_elapsed,
+                composition_elapsed,
+                audio_elapsed,
+                presentation_elapsed,
+                had_gpu_presenter && presenter.is_some(),
+            );
+        }
         if let Some(rest) = frame_time.checked_sub(started.elapsed()) {
             thread::sleep(rest);
         }
