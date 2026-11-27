@@ -2086,7 +2086,7 @@ impl Arm11CodeAddressSpace {
         catalog: &SharedMemoryBackingCatalog,
         writer: &mut crate::cpu::state::StateWriter,
     ) -> Result<(), SharedMemoryStateError> {
-""        match target {
+        match target {
             DataCacheTarget::Static { kind, offset } => {
                 address_state_write(writer.write_u8(0))?;
                 address_state_write_segment_kind(writer, *kind)?;
@@ -2387,7 +2387,7 @@ impl Arm11CodeAddressSpace {
         encoded: &[u8],
         catalog: &SharedMemoryBackingCatalog,
     ) -> Result<(), SharedMemoryStateError> {
-""        if encoded.len() > ADDRESS_SPACE_STATE_MAX_BYTES {
+        if encoded.len() > ADDRESS_SPACE_STATE_MAX_BYTES {
             return Err(SharedMemoryStateError::AllocationFailed);
         }
         let mut reader = StateReader::new(encoded);
