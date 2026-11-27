@@ -1,6 +1,7 @@
 //! Top-level emulated system.
 
 use crate::cpu::{Arm11Core, MpcoreScu};
+use crate::game_identity::GameIdentity;
 use crate::gpu::{
     DisplayTransferRequest, GSP_GX_COMMAND_DISPLAY_TRANSFER, GSP_GX_COMMAND_FLUSH_CACHE_REGIONS,
     GSP_GX_COMMAND_MEMORY_FILL, GSP_GX_COMMAND_PROCESS_COMMAND_LIST, GSP_GX_COMMAND_QUEUE_SIZE,
@@ -56,6 +57,33 @@ struct PendingServiceLookup {
     thread_id: ThreadId,
     service_manager_handle: u32,
     service_name: [u8; 8],
+}
+
+/// Reads the primary NCCH title ID and restores the reader to offset zero.
+///
+/// The NCCH parser validates the declared container ranges. This metadata is
+/// used only as a stable per-title settings key, not as a claim of signature
+/// authenticity. A zero/missing title ID is represented as no identity.
+fn inspect_ncsd_game_identity<R: Read + Seek>(reader: &mut R) -> Result<Option<GameIdentity>> {
+    let ncch = NcsdImageReader::open(&mut *reader)
+        .and_then(|image| image.open_primary_ncch())
+        .map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not inspect NCSD title identity: {error}"),
+            ))
+        })?;
+    let identity = GameIdentity::from_title_id(ncch.header().program_id);
+    drop(ncch);
+
+    let position = reader.seek(SeekFrom::Start(0))?;
+    if position != 0 {
+        return Err(Error::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "reader did not rewind after NCSD identity inspection",
+        )));
+    }
+    Ok(identity)
 }
 
 const GSP_BUSY_MEMORY_FILL: u8 = 1 << 0;
@@ -191,6 +219,8 @@ pub struct System {
     /// Off by default (see `docs/PERFORMANCE_LOW_END_PLAN.md`).
     fast_memory: bool,
     image: Option<ImageFormat>,
+    /// Validated title-level identity for the active executable, when available.
+    game_identity: Option<GameIdentity>,
     ncsd_session: Option<Arm11ProcessSession>,
     gsp_service: GspServiceRegistry,
     /// Device-wide GX busy flags; completion interrupts release asynchronous kinds.
@@ -481,6 +511,7 @@ impl System {
         let format = loader::identify_file(path)?;
         self.reset_gpu_linear_memory();
         self.image = Some(format);
+        self.game_identity = None;
         self.ncsd_session = None;
         self.gsp_service = GspServiceRegistry::new();
         self.gsp_busy_state = GspBusyState::default();
@@ -513,6 +544,7 @@ impl System {
         session.attach_mpcore_scu(self.mpcore_scu.clone());
         self.cpu = session.core().clone();
         self.image = Some(ImageFormat::ThreeDsx);
+        self.game_identity = None;
         map_kernel_shared_pages(&mut session)?;
         self.ncsd_session = Some(session);
         self.apply_memory_mode()?;
@@ -558,6 +590,7 @@ impl System {
             ))
         })?;
         let title_id = archive.title_metadata().title_id;
+        let game_identity = GameIdentity::from_title_id(title_id);
         let boot_content_index = archive.title_metadata().boot_content_index;
 
         let ncch = archive
@@ -629,6 +662,7 @@ impl System {
                 self.romfs = Some(level3_romfs_region(region, size));
             }
         }
+        self.game_identity = game_identity;
         Ok(ImageFormat::Cia)
     }
 
@@ -655,6 +689,7 @@ impl System {
             ))
         })?;
         let title_id = archive.title_metadata().title_id;
+        let game_identity = GameIdentity::from_title_id(title_id);
         let boot_content_index = archive.title_metadata().boot_content_index;
         let location = archive
             .content_location(boot_content_index)
@@ -719,6 +754,7 @@ impl System {
         self.pending_gsp_acquires.clear();
         self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
+        self.game_identity = game_identity;
         Ok(ImageFormat::Cia)
     }
 
@@ -760,6 +796,7 @@ impl System {
             ))
         })?;
         let title_id = archive.title_metadata().title_id;
+        let game_identity = GameIdentity::from_title_id(title_id);
         let boot_content_index = archive.title_metadata().boot_content_index;
 
         let ticket = archive.ticket().ok_or_else(|| {
@@ -825,6 +862,7 @@ impl System {
         self.pending_gsp_acquires.clear();
         self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
+        self.game_identity = game_identity;
         Ok(ImageFormat::Cia)
     }
 
@@ -871,10 +909,11 @@ impl System {
     /// correct keys. Aceris does not discover, embed, or persist them.
     pub fn load_ncsd_with_keys<R: Read + Seek>(
         &mut self,
-        reader: R,
+        mut reader: R,
         menu_info_key: [u8; AES_BLOCK_SIZE],
         content_key: [u8; AES_BLOCK_SIZE],
     ) -> Result<ImageFormat> {
+        let game_identity = inspect_ncsd_game_identity(&mut reader)?;
         let mut session =
             Arm11ProcessSession::load_primary_ncsd(reader, menu_info_key, content_key).map_err(
                 |error| {
@@ -906,6 +945,7 @@ impl System {
         self.pending_gsp_acquires.clear();
         self.pending_service_lookups.clear();
         self.gsp_early_acquires.clear();
+        self.game_identity = game_identity;
         Ok(ImageFormat::Ncsd)
     }
 
@@ -1035,6 +1075,14 @@ impl System {
 
     pub fn image(&self) -> Option<ImageFormat> {
         self.image
+    }
+
+    /// Returns the validated title identity for the active executable, if known.
+    ///
+    /// Retail NCSD/CCI and CIA titles expose a title ID in their container
+    /// metadata. Homebrew without a validated title ID deliberately returns None.
+    pub const fn game_identity(&self) -> Option<GameIdentity> {
+        self.game_identity
     }
 
     /// Returns the active ARM11 core, or the empty core before a process loads.
