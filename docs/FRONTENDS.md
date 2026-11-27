@@ -47,14 +47,14 @@ A C ABI também oferece renderização e hit-test para uma camada de controles v
 - **Android:** a tela do jogo mostra um botão discreto **MENU** no canto superior direito; a tecla/gesto Voltar também abre o painel. Tocar no botão MENU é consumido pela interface e não é encaminhado como toque da caneta ao jogo.
 - **PC:** Esc abre e fecha o painel rápido. A escolha é navegável por setas/Enter e mouse. O atalho ainda é fixo; personalização de atalhos permanece pendente.
 - O painel apresenta Continuar, Reiniciar e Voltar à biblioteca. Reiniciar recria a sessão do mesmo arquivo; Voltar à biblioteca encerra a sessão atual. A confirmação de perda de progresso ainda não é apresentada.
-- Enquanto o painel está aberto, o frontend continua processando eventos e redesenhando o último scanout; não chama o próximo passo de emulação guest. A produção de novas amostras de áudio para. Áudio que já estava enfileirado no host pode terminar de tocar.
+- Enquanto o painel está aberto, o frontend continua processando eventos e redesenhando o último scanout; não chama o próximo passo de emulação guest. Ao abrir o painel, o Android solicita pausa, aguarda a transição e limpa a fila AAudio antes de retomá-la com `requestStart`; o fluxo também é pausado e limpo quando a NativeActivity vai para segundo plano. No PC, a fila host é descartada pelo backend (ALSA `drop`/`prepare`, WinMM `waveOutReset` e AudioQueue `Stop` imediato), e o resampler desktop reinicia seu histórico.
 - Layouts alternativos, troca de telas, save states, rewind, screenshot, cheats e editor de controles não são ações disponíveis neste menu.
 - Esta primeira implementação ainda precisa passar pela CI e por testes visuais/entrada/áudio em PC e aparelho Android físico.
 
 
 ### Áudio e ciclo de vida
 
-O host Android usa AAudio. Há lógica para classificar a saída do Aceris como áudio de jogo e reduzir a própria saída enquanto outra mídia externa está ativa, sem identificar o player ou ler metadados da faixa. A existência do sink não significa que o áudio do console esteja correto: a inicialização de áudio do homebrew de teste ainda apresenta falha e não há confirmação de saída audível.
+O host Android usa AAudio. Há lógica para classificar a saída do Aceris como áudio de jogo e reduzir a própria saída enquanto outra mídia externa está ativa, sem identificar o player ou ler metadados da faixa. O host também pausa e limpa explicitamente a fila ao abrir o menu rápido ou ao ir para segundo plano; ao retomar, inicia o stream sem as amostras antigas. A existência do sink não significa que o áudio do console esteja correto: a inicialização de áudio do homebrew de teste ainda apresenta falha e não há confirmação de saída audível.
 
 O ciclo de vida de NativeActivity, pause/resume, destruição e recriação de surface, rotação e monitoramento de mídia devem ser testados em aparelho físico. A CI não substitui esse teste.
 
