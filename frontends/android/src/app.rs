@@ -466,7 +466,7 @@ impl App {
     }
 
     fn hit_virtual_button(&self, x: f32, y: f32) -> u32 {
-        if !self.library.virtual_controls_visible() {
+        if !self.library.virtual_controls_visible() && !self.controls_editor {
             return 0;
         }
         frontend::hit_test_virtual_control_with_positions(
@@ -482,7 +482,7 @@ impl App {
     }
 
     fn render_virtual_controls_overlay(&self, frame: &mut [u8], pressed_mask: u32) {
-        if self.library.virtual_controls_visible() {
+        if self.library.virtual_controls_visible() || self.controls_editor {
             frontend::blend_virtual_pad_overlay_into_with_positions(
                 frame,
                 self.width,
