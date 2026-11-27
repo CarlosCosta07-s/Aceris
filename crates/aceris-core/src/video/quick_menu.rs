@@ -1017,5 +1017,4 @@ mod tests {
             Some(ACTION_COUNT - 1)
         );
     }
-
 }

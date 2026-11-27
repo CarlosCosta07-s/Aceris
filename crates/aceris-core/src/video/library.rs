@@ -270,10 +270,7 @@ fn load_virtual_control_positions(settings_directory: &Path) -> VirtualControlPo
 
 /// Per-title layouts use only a validated 64-bit Title ID. Hexadecimal filenames
 /// are line-safe and portable across Windows, Android, and desktop filesystems.
-fn game_virtual_control_layout_path(
-    settings_directory: &Path,
-    identity: GameIdentity,
-) -> PathBuf {
+fn game_virtual_control_layout_path(settings_directory: &Path, identity: GameIdentity) -> PathBuf {
     settings_directory
         .join("virtual_control_profiles")
         .join(format!("{:016x}.v2", identity.title_id()))
@@ -777,8 +774,7 @@ impl Library {
         let virtual_controls_opacity = load_virtual_controls_opacity(&settings_directory);
         let virtual_controls_size_percent = load_virtual_controls_size_percent(&settings_directory);
         let virtual_controls_preset = load_virtual_controls_preset(&settings_directory);
-        let global_virtual_control_positions =
-            load_virtual_control_positions(&settings_directory);
+        let global_virtual_control_positions = load_virtual_control_positions(&settings_directory);
         let virtual_control_positions = global_virtual_control_positions;
         let preferences = load_library_preferences(&settings_directory);
         Self {
@@ -1055,9 +1051,8 @@ impl Library {
     pub fn toggle_virtual_control_edit_scope(&mut self) -> bool {
         if self.active_game_identity.is_none() {
             self.virtual_control_edit_scope = VirtualControlEditScope::Global;
-            self.status = Some(
-                "ESTE JOGO NÃO TEM TITLE ID VALIDADO; PERFIL GLOBAL EM USO".to_string(),
-            );
+            self.status =
+                Some("ESTE JOGO NÃO TEM TITLE ID VALIDADO; PERFIL GLOBAL EM USO".to_string());
             return false;
         }
         self.virtual_control_edit_scope = match self.virtual_control_edit_scope {
@@ -1190,10 +1185,12 @@ impl Library {
                 if !self.active_game_control_override {
                     self.virtual_control_positions = self.global_virtual_control_positions;
                 }
-                self.virtual_control_positions.reset_orientation(orientation);
+                self.virtual_control_positions
+                    .reset_orientation(orientation);
             }
             _ => {
-                self.global_virtual_control_positions.reset_orientation(orientation);
+                self.global_virtual_control_positions
+                    .reset_orientation(orientation);
                 if !self.active_game_control_override {
                     self.virtual_control_positions = self.global_virtual_control_positions;
                 }
@@ -6037,13 +6034,12 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod virtual_control_profile_tests {
-    use super::*;
     use super::super::frontend::{
-        buttons, ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT, VirtualControlOffset,
+        ORIENTATION_LANDSCAPE, ORIENTATION_PORTRAIT, VirtualControlOffset, buttons,
     };
+    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_directory() -> std::path::PathBuf {
@@ -6065,17 +6061,8 @@ mod virtual_control_profile_tests {
     fn title_profiles_inherit_global_then_materialize_and_persist_independently() {
         let directory = temporary_directory();
         let mut library = Library::new(Vec::new(), directory.display().to_string());
-        assert!(library.move_virtual_control(
-            ORIENTATION_PORTRAIT,
-            buttons::A,
-            250,
-            -150
-        ));
-        assert!(library.resize_virtual_control(
-            ORIENTATION_LANDSCAPE,
-            buttons::A,
-            115
-        ));
+        assert!(library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 250, -150));
+        assert!(library.resize_virtual_control(ORIENTATION_LANDSCAPE, buttons::A, 115));
         library.save_virtual_control_positions().unwrap();
 
         let first = identity(0x0004_0000_1234_5600);
@@ -6083,46 +6070,44 @@ mod virtual_control_profile_tests {
         library.set_active_game_identity(Some(first));
         assert!(!library.game_has_control_override());
         assert_eq!(
-            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            library
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 250, y: -150 }
         );
         assert_eq!(
-            library.virtual_control_positions().size_percent(ORIENTATION_LANDSCAPE, buttons::A),
+            library
+                .virtual_control_positions()
+                .size_percent(ORIENTATION_LANDSCAPE, buttons::A),
             115
         );
 
-        assert!(library.move_virtual_control(
-            ORIENTATION_PORTRAIT,
-            buttons::A,
-            500,
-            300
-        ));
-        assert!(library.resize_virtual_control(
-            ORIENTATION_LANDSCAPE,
-            buttons::A,
-            135
-        ));
+        assert!(library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 500, 300));
+        assert!(library.resize_virtual_control(ORIENTATION_LANDSCAPE, buttons::A, 135));
         assert!(library.game_has_control_override());
         library.save_virtual_control_positions().unwrap();
 
-        let first_path = game_virtual_control_layout_path(
-            &directory.join(".aceris"),
-            first,
-        );
+        let first_path = game_virtual_control_layout_path(&directory.join(".aceris"), first);
         assert!(first_path.is_file());
         assert_eq!(
-            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            library
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 750, y: 150 }
         );
 
         library.set_active_game_identity(Some(second));
         assert!(!library.game_has_control_override());
         assert_eq!(
-            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            library
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 250, y: -150 }
         );
         assert_eq!(
-            library.virtual_control_positions().size_percent(ORIENTATION_LANDSCAPE, buttons::A),
+            library
+                .virtual_control_positions()
+                .size_percent(ORIENTATION_LANDSCAPE, buttons::A),
             115
         );
 
@@ -6130,17 +6115,23 @@ mod virtual_control_profile_tests {
         reopened.set_active_game_identity(Some(first));
         assert!(reopened.game_has_control_override());
         assert_eq!(
-            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            reopened
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 750, y: 150 }
         );
         assert_eq!(
-            reopened.virtual_control_positions().size_percent(ORIENTATION_LANDSCAPE, buttons::A),
+            reopened
+                .virtual_control_positions()
+                .size_percent(ORIENTATION_LANDSCAPE, buttons::A),
             135
         );
         reopened.set_active_game_identity(Some(second));
         assert!(!reopened.game_has_control_override());
         assert_eq!(
-            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            reopened
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 250, y: -150 }
         );
 
@@ -6158,25 +6149,34 @@ mod virtual_control_profile_tests {
         let game_layout = *library.virtual_control_positions();
 
         assert!(library.toggle_virtual_control_edit_scope());
-        assert_eq!(library.virtual_control_edit_scope(), VirtualControlEditScope::Global);
+        assert_eq!(
+            library.virtual_control_edit_scope(),
+            VirtualControlEditScope::Global
+        );
         library.move_virtual_control(ORIENTATION_PORTRAIT, buttons::A, 200, 100);
         library.save_virtual_control_positions().unwrap();
 
         assert_eq!(*library.virtual_control_positions(), game_layout);
         assert_eq!(
-            library.virtual_control_editor_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            library
+                .virtual_control_editor_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 200, y: 100 }
         );
 
         let mut reopened = Library::new(Vec::new(), directory.display().to_string());
         reopened.set_active_game_identity(Some(title));
         assert_eq!(
-            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            reopened
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 700, y: 0 }
         );
         reopened.set_active_game_identity(None);
         assert_eq!(
-            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            reopened
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 200, y: 100 }
         );
 
@@ -6203,7 +6203,9 @@ mod virtual_control_profile_tests {
         assert!(library.reset_game_virtual_control_profile().unwrap());
         assert!(!library.game_has_control_override());
         assert_eq!(
-            library.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            library
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 300, y: 0 }
         );
         assert!(!game_virtual_control_layout_path(&directory.join(".aceris"), first).exists());
@@ -6213,13 +6215,17 @@ mod virtual_control_profile_tests {
         reopened.set_active_game_identity(Some(first));
         assert!(!reopened.game_has_control_override());
         assert_eq!(
-            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            reopened
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 300, y: 0 }
         );
         reopened.set_active_game_identity(Some(second));
         assert!(reopened.game_has_control_override());
         assert_eq!(
-            reopened.virtual_control_positions().offset(ORIENTATION_PORTRAIT, buttons::A),
+            reopened
+                .virtual_control_positions()
+                .offset(ORIENTATION_PORTRAIT, buttons::A),
             VirtualControlOffset { x: 100, y: 0 }
         );
 
@@ -6231,17 +6237,17 @@ mod virtual_control_profile_tests {
         let directory = temporary_directory();
         let mut library = Library::new(Vec::new(), directory.display().to_string());
         assert!(!library.toggle_virtual_control_edit_scope());
-        assert_eq!(library.virtual_control_edit_scope(), VirtualControlEditScope::Global);
+        assert_eq!(
+            library.virtual_control_edit_scope(),
+            VirtualControlEditScope::Global
+        );
         library.set_active_game_identity(None);
-        assert!(library.move_virtual_control(
-            ORIENTATION_LANDSCAPE,
-            buttons::B,
-            -400,
-            250
-        ));
+        assert!(library.move_virtual_control(ORIENTATION_LANDSCAPE, buttons::B, -400, 250));
         library.save_virtual_control_positions().unwrap();
         assert_eq!(
-            library.virtual_control_positions().offset(ORIENTATION_LANDSCAPE, buttons::B),
+            library
+                .virtual_control_positions()
+                .offset(ORIENTATION_LANDSCAPE, buttons::B),
             VirtualControlOffset { x: -400, y: 250 }
         );
 

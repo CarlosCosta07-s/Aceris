@@ -14,9 +14,7 @@ use aceris_core::video::frontend::{
     compute_screen_layout_for_mode,
 };
 use aceris_core::video::layout_preferences::{ScreenLayoutPreferences, ScreenLayoutProfile};
-use aceris_core::video::library::{
-    self, ClickResult, Library, VirtualControlEditScope,
-};
+use aceris_core::video::library::{self, ClickResult, Library, VirtualControlEditScope};
 use aceris_core::video::{
     DualScreenDisplay, ScreenSurface, intro,
     quick_menu::{self, PixelFormat as MenuPixelFormat},
@@ -974,7 +972,8 @@ impl App {
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
             Ok(_) => {
-                self.library.set_active_game_identity(system.game_identity());
+                self.library
+                    .set_active_game_identity(system.game_identity());
                 self.system = Some(system);
                 self.key_mask = 0;
                 self.pointers.clear();
@@ -1056,7 +1055,8 @@ impl App {
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
             Ok(_) => {
-                self.library.set_active_game_identity(system.game_identity());
+                self.library
+                    .set_active_game_identity(system.game_identity());
                 self.library.mark_launched(&path);
                 self.system = Some(system);
                 self.current_game_path = Some(path);
