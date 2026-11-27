@@ -20,7 +20,7 @@
 | Pesquisa | Disponível | Pesquisa local pelo título derivado do nome e pelo caminho; não consulta Title ID nem catálogo externo. |
 | Favoritos | Disponível | Persistidos em .aceris/favorites.txt, identificados por caminho completo com prefixo versionado. |
 | Recentes | Disponível | Persistidos em .aceris/recent.txt; mantém até 24 identificadores e a ordem de execução. |
-| Grade e lista | Parcial | Alternância presente na biblioteca horizontal; retrato usa fallback responsivo. A escolha ainda não é salva entre reinicializações. |
+| Grade e lista | Parcial | Alternância presente na biblioteca horizontal; retrato usa fallback responsivo. Grade/Lista e ordenação A–Z/Z–A são persistidas em `.aceris/library_preferences_v1.txt`. |
 | Ordenação A–Z/Z–A | Disponível | Alterna a ordem alfabética da coleção atual. Recentes preserva a ordem de execução. Não há ordenação por tamanho, data de adição ou tempo de jogo. |
 | Filtro por extensão | Disponível | Filtra Todos, .3DS, .CCI, .CIA e .3DSX sem diferenciar caixa. É uma classificação pelo nome do arquivo, não valida conteúdo, instalação ou compatibilidade. |
 | Atualização manual | Disponível | Reexecuta a varredura da biblioteca em memória. |
@@ -65,7 +65,7 @@
 | Deadzone/sensibilidade/inversão | Não disponível | Não existem controles de ajuste expostos. |
 | Controles virtuais Android | Parcial | Há overlay/hit-test e envio de botões; posição, escala, opacidade, presets e perfis não são editáveis. |
 | Multi-touch | Parcial | NativeActivity coleta ponteiros e o app mantém estado multitoque; falta validar em aparelho e todas as combinações de stylus + botões. |
-| Menu de pausa | Não disponível | Back/Esc retornam à biblioteca no fluxo atual; não há menu integrado para continuar, reiniciar, trocar telas ou abrir opções. |
+| Menu rápido/pausa | Parcial | Android tem botão MENU e Voltar; PC usa Esc. Continuar, Reiniciar e Voltar à biblioteca estão conectados; a execução guest não avança enquanto o painel fica aberto. Atalho configurável, sincronização/flush explícito de áudio, confirmação de progresso, layouts e troca de telas ainda não estão disponíveis. CI e hardware físico pendentes. |
 | Atalhos configuráveis | Não disponível | Existem teclas/eventos específicos do host, mas não há editor de atalhos. |
 | Screenshot durante a partida | Não disponível | Existem saídas de diagnóstico/PNG e dump de LCD no desktop; não existe ação de captura pela interface durante o jogo. |
 
