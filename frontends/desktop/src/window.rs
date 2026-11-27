@@ -353,10 +353,17 @@ pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut
                     }
                 }
                 let expanded_row_end = expanded_row_start + row.len() * scale;
+                let expanded_row_bytes = expanded_row_end - expanded_row_start;
                 for row_offset in 1..scale {
                     let destination_start =
                         ((scaled_y + row_offset) * width + scaled_x) * 4;
-                    output.copy_within(expanded_row_start..expanded_row_end, destination_start);
+                    // The destination rows are disjoint from the first expanded
+                    // row, so use a non-overlapping slice copy instead of memmove.
+                    let (before_destination, destination_and_after) =
+                        output.split_at_mut(destination_start);
+                    destination_and_after[..expanded_row_bytes].copy_from_slice(
+                        &before_destination[expanded_row_start..expanded_row_end],
+                    );
                 }
             }
         };
