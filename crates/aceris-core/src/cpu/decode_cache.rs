@@ -25,7 +25,7 @@ const ENTRIES: usize = 4096;
 
 /// A decoded instruction body (the condition is stored beside it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FastOp {
+pub(super) enum FastOp {
     /// Not decoded: run through `execute_arm`.
     Generic,
     /// Data processing with a rotated immediate operand. `imm_carry` is the
@@ -114,10 +114,10 @@ enum FastOp {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Entry {
-    word: u32,
-    condition: u8,
-    op: FastOp,
+pub(super) struct Entry {
+    pub(super) word: u32,
+    pub(super) condition: u8,
+    pub(super) op: FastOp,
 }
 
 const EMPTY: Entry = Entry {
@@ -155,7 +155,7 @@ impl DecodeCache {
     }
 
     #[inline]
-    fn lookup(&mut self, word: u32) -> Entry {
+    pub(super) fn lookup(&mut self, word: u32) -> Entry {
         let slot = Self::slot(word);
         let entry = self.entries[slot];
         if entry.word == word {
@@ -354,6 +354,17 @@ fn decode(word: u32) -> FastOp {
     }
 }
 
+impl Entry {
+    /// Branches and block transfers may change the fetch address; all generic
+    /// encodings are also handled outside cached straight-line blocks.
+    pub(super) const fn ends_block(self) -> bool {
+        matches!(
+            self.op,
+            FastOp::Branch | FastOp::BlockTransfer { .. } | FastOp::Generic
+        )
+    }
+}
+
 impl Arm11Core {
     /// Executes one A32 instruction through the decode cache. Behaviour is
     /// identical to [`Self::execute_arm`].
@@ -364,6 +375,18 @@ impl Arm11Core {
         word: u32,
     ) -> Result<StepEvent> {
         let entry = self.decode_cache.lookup(word);
+        self.execute_arm_decoded(bus, word, entry)
+    }
+
+    /// Executes an instruction whose decode-cache entry has already been
+    /// obtained by the current block dispatcher.
+    #[inline]
+    pub(super) fn execute_arm_decoded<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        word: u32,
+        entry: Entry,
+    ) -> Result<StepEvent> {
         if entry.op == FastOp::Generic {
             return self.execute_arm(bus, word);
         }
