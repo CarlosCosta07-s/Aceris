@@ -600,8 +600,12 @@ fn button_shapes_with_positions(
     };
     for shape in &mut shapes {
         let offset = positions.offset(resolved_orientation, shape.bit);
-        shape.x += w * f32::from(offset.x) / 10_000.0;
-        shape.y += h * f32::from(offset.y) / 10_000.0;
+        let min_x = shape.radius;
+        let max_x = (w - shape.radius).max(min_x);
+        let min_y = shape.radius;
+        let max_y = (h - shape.radius).max(min_y);
+        shape.x = (shape.x + w * f32::from(offset.x) / 10_000.0).clamp(min_x, max_x);
+        shape.y = (shape.y + h * f32::from(offset.y) / 10_000.0).clamp(min_y, max_y);
     }
     shapes
 }
