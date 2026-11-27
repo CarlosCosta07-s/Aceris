@@ -1537,12 +1537,12 @@ impl Arm11Core {
                             }
                             self.branch_taken = false;
                             let mut event = match self.execute_ir(&mut mmu, cached.ir) {
-                                    Ok(event) => event,
-                                    Err(error) => {
-                                        execution_error = Some(error);
-                                        break;
-                                    }
-                                };
+                                Ok(event) => event,
+                                Err(error) => {
+                                    execution_error = Some(error);
+                                    break;
+                                }
+                            };
                             if !self.branch_taken {
                                 self.regs[PC] = instruction_pc.wrapping_add(ARM_INSTRUCTION_SIZE);
                             }
