@@ -737,7 +737,7 @@ fn emulate(
                     menu_selected = menu_selected.saturating_sub(1);
                 }
                 window::WindowEvent::Key(window::Key::Down) if menu_open => {
-                    menu_selected = (menu_selected + 1).min(quick_menu::ACTION_COUNT - 1);
+                    menu_selected = (menu_selected + 1).min(quick_menu::DESKTOP_ACTION_COUNT - 1);
                 }
                 window::WindowEvent::Key(window::Key::Enter) if menu_open => match menu_selected {
                     0 => {
@@ -786,7 +786,7 @@ fn emulate(
                             eprintln!("could not save screen layout preferences: {error}");
                         }
                     }
-                    _ => {
+                    5 => {
                         if let Some(identity) = system.game_identity() {
                             if layout_preferences.reset_game_overrides(identity) {
                                 layout_profile = layout_preferences.profile_for_surface(
@@ -805,6 +805,7 @@ fn emulate(
                             }
                         }
                     }
+                    _ => {}
                 },
                 window::WindowEvent::Click { x, y } if pending_confirmation.is_some() => {
                     let (canvas_width, canvas_height) =
@@ -829,7 +830,7 @@ fn emulate(
                 window::WindowEvent::Click { x, y } if menu_open => {
                     let (canvas_width, canvas_height) =
                         screen_layout_canvas_size(layout_profile.mode);
-                    if let Some(action) = quick_menu::hit_test(
+                    if let Some(action) = quick_menu::hit_test_desktop(
                         canvas_width * scale as u32,
                         canvas_height * scale as u32,
                         x,
@@ -884,7 +885,7 @@ fn emulate(
                                     eprintln!("could not save screen layout preferences: {error}");
                                 }
                             }
-                            _ => {
+                            5 => {
                                 if let Some(identity) = system.game_identity() {
                                     if layout_preferences.reset_game_overrides(identity) {
                                         layout_profile = layout_preferences.profile_for_surface(
@@ -903,6 +904,7 @@ fn emulate(
                                     }
                                 }
                             }
+                            _ => {}
                         }
                     }
                 }
@@ -988,7 +990,7 @@ fn emulate(
                     action,
                     confirmation_selected,
                 ),
-                None => quick_menu::render_overlay_with_profile(
+                None => quick_menu::render_desktop_overlay_with_profile(
                     &mut frame,
                     frame_width as u32,
                     frame_height as u32,
