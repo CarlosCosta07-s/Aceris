@@ -31,7 +31,7 @@ A primeira camada do menu está conectada aos dois frontends:
 - Quando aberto, o loop não executa um novo quadro guest e continua redesenhando o último scanout.
 - Ao abrir o menu, o Android pausa e limpa a fila AAudio após aguardar os estados assíncronos; no PC, o host limpa as filas ALSA, WinMM ou AudioQueue e reinicia o histórico do resampler. O Android também limpa a fila quando a NativeActivity vai para segundo plano.
 - Reiniciar e Voltar à biblioteca mostram uma confirmação com aviso de possível perda de progresso não salvo; o aviso é preventivo e não depende de uma detecção automática de estado sujo. O atalho PC ainda não é configurável, e a validação física dos fluxos permanece pendente.
-- As ações **Alterar layout** e **Trocar telas** estão conectadas nos dois hosts. Modos disponíveis: Lado a lado, Vertical, Superior ampliada, Inferior ampliada, Somente superior e Somente inferior. O desktop ajusta o tamanho da janela ao canvas do modo; Android usa rotação do sensor e encaixe proporcional. O toque continua mapeado à tela inferior física após a troca. As escolhas são persistidas globalmente em `.aceris/screen_layout_preferences_v1.txt`, com perfis separados para retrato e paisagem, compartilhados entre PC e Android. Overrides por jogo ainda não existem.
+- As ações **Alterar layout**, **Trocar telas** e **Padrão global** estão conectadas nos dois hosts. Modos disponíveis: Lado a lado, Vertical, Superior ampliada, Inferior ampliada, Somente superior e Somente inferior. O desktop ajusta o tamanho da janela ao canvas do modo; Android usa rotação do sensor e encaixe proporcional. O toque continua mapeado à tela inferior física após a troca. Perfis globais separados para retrato/paisagem e overrides por Title ID são persistidos em `.aceris/screen_layout_preferences_v2.txt`; o formato v1 é migrado ao carregar. 3DSX sem identidade validada herda o perfil global.
 
 ### Pausa real
 
@@ -157,18 +157,18 @@ Configurações experimentais começam desativadas e nunca são descritas como g
 | Modo Desempenho | Disponível como opção global; efeito aplicado no próximo jogo e com ressalvas de compatibilidade |
 | Fundo personalizado | Suporte de renderer; não confundir com seletor completo de tema |
 | Overlay de controles virtuais | Básico e fixo; ainda sem editor |
-| Menu rápido com pausa | Parcial | Continuar, Reiniciar e Voltar à biblioteca funcionam no PC e Android; pausa entre quadros, limpeza explícita das filas host de áudio, confirmação preventiva das ações destrutivas e botão Android MENU. Atalho editável, perfis, ajuste fino e ferramentas continuam planejados; os backends ainda precisam de teste físico. |
-| Layouts básicos/troca de telas | Parcial | Seis modos e troca física de LCD disponíveis nos dois hosts; perfil global persistido por orientação. Overrides por jogo e validação física pendentes. |
+| Menu rápido com pausa | Parcial | Continuar, Reiniciar, Voltar à biblioteca, Alterar layout, Trocar telas e Padrão global funcionam no PC e Android; pausa entre quadros, limpeza explícita das filas host de áudio, confirmação preventiva das ações destrutivas e botão Android MENU. Atalho editável e validação física pendentes. |
+| Layouts básicos/troca de telas | Parcial | Seis modos, troca física de LCD, perfis globais por orientação e overrides por Title ID com herança/reset disponíveis nos dois hosts. Ajuste fino, layouts personalizados e validação física pendentes. |
 | Perfis de controles | Planejados |
 | Temas alternativos e alto contraste | Planejados |
-| Configurações por jogo | Planejadas; dependem de identidade estável e schema |
+| Configurações por jogo | Parciais; somente layout por Title ID está disponível. Demais categorias dependem de schema e metadados adicionais. |
 
 ## 6. Sequência de implementação
 
 1. **Preferências da biblioteca:** concluída nesta revisão — persistir Grade/Lista e ordenação com formato versionado e testes.
 2. **Pausa e menu mínimo:** primeira versão implementada no desktop e Android — estado pausado no limite de quadro, janela responsiva, scanout mantido, ações Continuar/Reiniciar/Voltar à biblioteca, limpeza explícita das filas host de áudio e confirmação preventiva das ações destrutivas. Próximo: atalho PC configurável e validação física dos backends; a detecção automática de progresso não salvo ainda não existe.
 3. **Atalhos e navegação:** unificar ações de teclado, controle e toque, com detecção de conflitos e acessibilidade.
-4. **Layouts de telas:** geometria compartilhada, seis modos básicos, troca física, mapeamento do stylus e perfis globais persistidos por orientação implementados; próximo: herança/override por jogo, ajuste fino de posição/espaçamento e validação física.
+4. **Layouts de telas:** geometria compartilhada, seis modos básicos, troca física, mapeamento do stylus, perfis globais e overrides por Title ID com restauração do padrão global implementados; próximo: indicador visual de herança/override, ajuste fino de posição/espaçamento e validação física.
 5. **Editor de controles:** separar dispositivo físico, mapeamento lógico e perfil por jogo.
 6. **Configurações versionadas:** categorias globais, overrides por jogo, migrações e restauração seletiva.
 7. **Aparência e acessibilidade:** temas, contraste, tamanho de UI e fundos selecionáveis, sempre com fallback seguro.
