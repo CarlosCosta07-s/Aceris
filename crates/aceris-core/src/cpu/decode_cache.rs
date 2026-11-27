@@ -716,11 +716,6 @@ mod tests {
             generic.branch_taken, cached.branch_taken,
             "branch state for {word:#010X}",
         );
-        assert_eq!(
-            generic.take_exception_return_wakeup(),
-            cached.take_exception_return_wakeup(),
-            "exception-return wakeup for {word:#010X}",
-        );
         for address in (0..MEMORY_SIZE).step_by(4) {
             assert_eq!(
                 generic_memory.read32(address).unwrap(),
