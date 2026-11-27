@@ -295,3 +295,58 @@ A memória rápida pode ser ativada pelo usuário, nunca por padrão. No desktop
 no Android há um botão em Configurações (`performance_mode.txt`). No desktop
 também funciona `ACERIS_FAST_MEMORY=1`. No benchmark, use
 `cargo run --release -p aceris-core --example benchmark -- <JOGO> --fast-memory`.
+
+## Telemetria de desempenho da versão desktop (opt-in)
+
+O frontend desktop pode registrar métricas do loop de janela em Windows, Linux e macOS. A coleta fica desativada por padrão e pode ser habilitada por variável de ambiente ou arquivo de configuração.
+
+### Habilitar
+
+Use uma destas opções antes de iniciar a janela:
+
+Linux/macOS:
+```sh
+ACERIS_PERFORMANCE_LOG=1 ./aceris --window
+```
+
+Windows PowerShell:
+```powershell
+$env:ACERIS_PERFORMANCE_LOG = "1"
+.\aceris.exe --window
+```
+
+Ou crie `desktop_performance_log_v1.txt` dentro da pasta `.aceris` do diretório de jogos. No diretório padrão:
+
+Linux/macOS:
+```sh
+mkdir -p "$HOME/Aceris/Games/.aceris"
+printf '1\n' > "$HOME/Aceris/Games/.aceris/desktop_performance_log_v1.txt"
+```
+
+Windows PowerShell:
+```powershell
+$settings = Join-Path $env:USERPROFILE "Aceris\Games\.aceris"
+New-Item -ItemType Directory -Force $settings | Out-Null
+Set-Content -NoNewline -Path (Join-Path $settings "desktop_performance_log_v1.txt") -Value "1"
+```
+
+Remova a variável de ambiente ou o arquivo para desativar. O arquivo fica na pasta da biblioteca indicada por `--games`/`ACERIS_GAMES`, não na pasta de instalação do executável.
+
+### Métricas
+
+Um resumo é escrito no terminal a cada cinco segundos, com até 300 amostras recentes. Os modos `intro`, `library` e `game` são relatados separadamente; a troca de modo zera a janela para não misturar cargas diferentes.
+
+- `presented_fps`: chamadas de apresentação concluídas por segundo. Não representa a velocidade do clock guest nem instruções guest por segundo.
+- `frame_ms_avg/p50/p95`: tempo do loop host até terminar a apresentação, sem incluir o sono de pacing que vem depois.
+- `emulation_ms_p95`: tempo de `run_frame_with_diagnostics`, que executa um frame do sistema guest no host.
+- `composition_ms_p95`: renderização/escala da biblioteca ou composição CPU dos LCDs do jogo.
+- `audio_ms_p95`: coleta, reamostragem e enfileiramento de áudio no host.
+- `presentation_ms_p95`: tempo de apresentação pela `wgpu` ou pela janela CPU nativa.
+- `presentation_interval_ms_p50/p95`: intervalo medido entre apresentações concluídas; pausas maiores que dois segundos são descartadas.
+- `gpu_present`: porcentagem de apresentações concluídas pelo presenter GPU. O restante foi apresentado pelo caminho CPU.
+
+### Comparação PC
+
+Para comparar Vulkan com OpenGL (ou CPU fallback), use o mesmo PC, build release, arquivo de jogo, escala de janela, sequência de entrada e modo de energia. Defina o backend pela configuração já suportada em `GraphicsBackend::from_env`; não altere ao mesmo tempo `ACERIS_FAST_MEMORY`, `ACERIS_FRAME_BUDGET` ou a escala. Faça uma execução de aquecimento e pelo menos três janelas medidas de 60 segundos por configuração. Guarde o modelo de CPU, GPU, driver, sistema operacional, resolução da janela e os relatórios.
+
+Os tempos são métricas do host. `emulation_ms_p95` não isola o custo de cada instrução guest; `composition_ms_p95` é a composição final da tela, não o rasterizador PICA200; `presentation_ms_p95` pode incluir espera por V-Sync/FIFO. A telemetria não muda relógio guest, timers, orçamento de instruções, áudio ou frame pacing.
