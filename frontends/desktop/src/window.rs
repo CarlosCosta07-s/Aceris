@@ -273,25 +273,41 @@ pub fn compose_bgrx_into(display: &DualScreenDisplay, scale: usize, output: &mut
         GAME_CANVAS_HEIGHT as u32,
         ORIENTATION_LANDSCAPE,
     );
-    if scale == 1 {
-        // The two LCDs cover the entire canvas except for the central gutter.
-        // Initialize only that gap; the native-scale blits overwrite every
-        // other pixel and force alpha to opaque.
-        let gap_start_x = layout.top.x as usize + display.top_left().width();
-        let gap_end_x = layout.bottom.x as usize;
-        if gap_start_x <= gap_end_x && gap_end_x <= width {
-            let opaque_black = [0, 0, 0, 0xFF];
-            for y in 0..height {
-                let row_start = (y * width + gap_start_x) * 4;
-                let row_end = (y * width + gap_end_x) * 4;
-                for pixel in output[row_start..row_end].chunks_exact_mut(4) {
-                    pixel.copy_from_slice(&opaque_black);
-                }
-            }
-        } else {
-            output.fill(0);
-            for pixel in output.chunks_exact_mut(4) {
-                pixel[3] = 0xFF;
+    let top = display.top_left();
+    let bottom = display.bottom();
+    let gap_start_x = layout.top.x as usize + top.width();
+    let gap_end_x = layout.bottom.x as usize;
+    let covers_canvas_except_gutter = layout.top.x == 0
+        && layout.top.y == 0
+        && layout.bottom.y == 0
+        && layout.top.width as usize == top.width()
+        && layout.top.height as usize == top.height()
+        && layout.bottom.width as usize == bottom.width()
+        && layout.bottom.height as usize == bottom.height()
+        && top.height() == GAME_CANVAS_HEIGHT
+        && bottom.height() == GAME_CANVAS_HEIGHT
+        && top.stride_bytes() == top.width() * 4
+        && bottom.stride_bytes() == bottom.width() * 4
+        && gap_start_x <= gap_end_x
+        && layout
+            .bottom
+            .x
+            .try_into()
+            .ok()
+            .and_then(|x: usize| x.checked_add(bottom.width()))
+            == Some(GAME_CANVAS_WIDTH);
+    if covers_canvas_except_gutter && gap_end_x <= GAME_CANVAS_WIDTH {
+        // Both LCDs cover the full canvas height and all columns except this
+        // gutter at every integer output scale. The blits overwrite the LCD
+        // pixels, so only the gap needs to be initialized.
+        let gap_start_x = gap_start_x * scale;
+        let gap_end_x = gap_end_x * scale;
+        let opaque_black = [0, 0, 0, 0xFF];
+        for y in 0..height {
+            let row_start = (y * width + gap_start_x) * 4;
+            let row_end = (y * width + gap_end_x) * 4;
+            for pixel in output[row_start..row_end].chunks_exact_mut(4) {
+                pixel.copy_from_slice(&opaque_black);
             }
         }
     } else {
@@ -398,6 +414,45 @@ mod tests {
         assert_eq!(pixel(&output, 1, 400, 120), [0, 0, 0, 0xFF]);
         assert_eq!(pixel(&output, 1, 415, 120), [0, 0, 0, 0xFF]);
         assert_eq!(pixel(&output, 1, 416, 0), [6, 5, 4, 0xFF]);
+    }
+
+    #[test]
+    fn scaled_composition_overwrites_reused_buffer_and_keeps_the_gutter_opaque() {
+        let mut display = DualScreenDisplay::new().unwrap();
+        display
+            .surface_mut(ScreenTarget::TopLeft)
+            .clear([1, 2, 3, 0]);
+        display
+            .surface_mut(ScreenTarget::Bottom)
+            .clear([4, 5, 6, 0]);
+
+        let mut output = Vec::new();
+        for scale in [2, 3, 4] {
+            let width = GAME_CANVAS_WIDTH * scale;
+            let height = GAME_CANVAS_HEIGHT * scale;
+            let byte_len = width * height * 4;
+            output.resize(byte_len, 0xA5);
+            output.fill(0xA5);
+
+            assert!(compose_bgrx_into(&display, scale, &mut output));
+            assert!(
+                output.chunks_exact(4).all(|pixel| pixel[3] == 0xFF),
+                "non-opaque pixel at scale {scale}"
+            );
+            assert_eq!(pixel(&output, scale, 0, 0), [3, 2, 1, 0xFF]);
+            assert_eq!(
+                pixel(&output, scale, 416 * scale, 0),
+                [6, 5, 4, 0xFF]
+            );
+            for row in output.chunks_exact(width * 4) {
+                assert!(
+                    row[400 * scale * 4..416 * scale * 4]
+                        .chunks_exact(4)
+                        .all(|pixel| pixel == [0, 0, 0, 0xFF]),
+                    "non-black gutter pixel at scale {scale}"
+                );
+            }
+        }
     }
 
     #[test]
