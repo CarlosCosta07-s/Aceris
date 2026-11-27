@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::cpu::state::{CpuStateError, StateReader, StateWriter};
+use crate::cpu::state::{StateReader, StateWriter};
 use crate::loader::ncsd::session::kernel::save_state::KernelStateError;
 use crate::save_state::{section_id, SaveStateSection};
 
@@ -328,8 +328,3 @@ fn read_count(
     Ok(count)
 }
 
-impl From<CpuStateError> for KernelStateError {
-    fn from(error: CpuStateError) -> Self {
-        Self::Codec(error)
-    }
-}
