@@ -383,3 +383,15 @@ Essa contagem é uma amostragem no limite entre quadros, não prova que a MMU pe
 Na escala nativa, as duas LCDs cobrem o canvas inteiro exceto o vão central. O compositor agora inicializa somente esse gutter em preto opaco e deixa os blits RGBA→BGRX preencherem os pixels das telas; as escalas maiores continuam limpando o canvas inteiro antes da composição. Um teste inicializa o buffer reutilizado com bytes sentinela e verifica que todas as posições são sobrescritas e todos os pixels mantêm alpha opaco.
 
 Essa alteração evita uma passagem de inicialização sobre quase todo o buffer em 1×. O tempo economizado ainda precisa ser medido em build release no PC.
+
+## Composição host — evitar limpar pixels que serão sobrescritos pelas LCDs (27/11/2026)
+
+O compositor Android agora prepara o tamanho do buffer e inicializa apenas as regiões fora dos dois retângulos LCD. A cada linha, os intervalos das telas são ordenados/mesclados; somente margens e o vão entre as telas recebem preto opaco. `Screen::Intro` continua usando o reset integral, e a composição de jogo mantém os mesmos blits e a mesma saída RGBA.
+
+No desktop, quando as dimensões, posições e strides das LCDs confirmam cobertura integral do canvas fora do gutter, `compose_bgrx_into` inicializa somente esse gutter em todas as escalas inteiras 1×–4×. Se a geometria não satisfizer as condições, o compositor utiliza o caminho anterior de limpeza total.
+
+Os testes diferenciais do Android comparam a saída com a referência de limpeza integral + blits para vários formatos de tela e buffer reutilizado. O teste desktop parte de bytes sentinela e verifica alpha opaco, pixels das telas e gutter nas escalas ampliadas.
+
+Essas mudanças eliminam escrita host redundante sobre pixels que seriam imediatamente sobrescritos pelas LCDs, mas o ganho real ainda precisa ser medido. Não alteram a resolução/frequência guest, o relógio ARM11, timers, áudio ou sincronização. Para uma comparação física, use builds Release, a mesma cena/título, tamanho de janela/orientação/escala e backend; compare telemetria desligada e ligada e registre frametime p50/p95/p99. Não use apenas FPS apresentado como prova de velocidade de emulação.
+
+Validação CI do commit `fa0db091`: Rustfmt, build e testes completos passaram em Windows, Ubuntu e macOS; os builds ARM64 e APK de desenvolvimento passaram. Clippy permanece bloqueado por `needless_range_loop` em `crates/aceris-core/src/cpu/decode_cache.rs:386`, pertencente a outro agente.

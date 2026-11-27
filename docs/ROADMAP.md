@@ -500,4 +500,9 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [ ] Só classificar a comparação como sessão MMU-ativa quando as amostras por quadro confirmarem `SCTLR.M` habilitado; documentar a limitação de que a observação ocorre na fronteira de quadro.
 
 - [x] Desktop 1×: evitar zerar e escrever alpha em todo o canvas; inicializar apenas o gutter opaco, deixando o blit das LCDs sobrescrever o restante. Teste cobre reutilização do buffer e alpha em todos os pixels.
-- [ ] Medir essa redução de escrita redundante em PC release, com telemetria desligada e ligada para isolar o custo da instrumentação.
+- [x] Desktop: estender o caminho de limpeza somente do gutter às escalas inteiras 1×–4× quando as duas LCDs forem comprovadamente responsáveis por todos os demais pixels do canvas; qualquer geometria divergente mantém a limpeza completa como fallback.
+- [x] Android: substituir a limpeza integral do framebuffer de jogo pela limpeza das regiões fora dos retângulos das duas LCDs, mesclando os intervalos cobertos por linha. A introdução continua usando o reset integral.
+- [x] Testes diferenciais: Android compara a composição otimizada com o caminho de reset integral + blit de referência em retrato, paisagem, tamanhos não inteiros e dimensões zero; desktop testa buffers sentinela, alpha opaco e gutter nas escalas 2×, 3× e 4×, além do teste nativo 1×.
+- [x] Validação CI no commit `fa0db091`: Rustfmt, builds e `cargo test --workspace` passaram em Windows, Ubuntu e macOS; Android ARM64 compilou frontend, benchmark e perfil de memória; o APK de desenvolvimento ARM64 foi empacotado.
+- [ ] Clippy completo permanece bloqueado por `clippy::needless_range_loop` em `crates/aceris-core/src/cpu/decode_cache.rs:386`, arquivo de outro agente. Não modificar sem autorização explícita.
+- [ ] Medir os caminhos em PCs e aparelhos Android físicos, Release, com a mesma cena/título e resolução; registrar backend, stride, p50/p95/p99 e relatórios de telemetria. Nenhum ganho de FPS foi medido ainda.
