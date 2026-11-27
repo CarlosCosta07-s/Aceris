@@ -444,7 +444,8 @@ impl Arm11ProcessSession {
         section: &SaveStateSection,
         catalog: &SharedMemoryBackingCatalog,
     ) -> std::result::Result<(), kernel::save_state::KernelStateError> {
-        self.kernel_objects.restore_save_state_section(section, catalog)
+        self.kernel_objects
+            .restore_save_state_section(section, catalog)
     }
 
     /// Returns the current core context when a thread is runnable.
