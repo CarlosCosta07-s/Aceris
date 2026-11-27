@@ -20,6 +20,8 @@ use crate::hid::{
 use crate::input::InputState;
 use crate::loader::cia::{CiaArchiveReader, TicketCommonKeyStore, tmd::CONTENT_TYPE_ENCRYPTED};
 use crate::loader::ncsd::ncch::{self, crypto::AES_BLOCK_SIZE};
+use crate::loader::ncsd::process::{SharedMemoryBackingCatalog, SharedMemoryStateError};
+use crate::save_state::SaveStateSection;
 use crate::loader::ncsd::session::gsp_service::{
     GSP_SHARED_MEMORY_BASE, GSP_SHARED_MEMORY_SIZE, GspClientUnregistration,
     GspInterruptDispatchReport, GspIpcRequest, GspIpcResultResponse,
@@ -500,6 +502,31 @@ impl System {
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Collects every shared-memory root reachable from the active process and
+    /// HLE services. The catalog deduplicates views/clones by their shared ID.
+    pub(crate) fn collect_shared_backing_catalog(
+        &self,
+    ) -> std::result::Result<SharedMemoryBackingCatalog, SharedMemoryStateError> {
+        let mut catalog = SharedMemoryBackingCatalog::new();
+        if let Some(session) = &self.ncsd_session {
+            session.collect_shared_backings(&mut catalog)?;
+        }
+        if let Some(hid) = &self.hid {
+            catalog.register(&hid.backing)?;
+        }
+        if let Some(backing) = &self.csnd.backing {
+            catalog.register(backing)?;
+        }
+        Ok(catalog)
+    }
+
+    /// Creates the shared-backing ACRPAYLD section for the active machine.
+    pub(crate) fn encode_shared_backings_section(
+        &self,
+    ) -> std::result::Result<SaveStateSection, SharedMemoryStateError> {
+        self.collect_shared_backing_catalog()?.encode_section()
     }
 
     /// Identifies a game image at `path` and records its validated container format.
