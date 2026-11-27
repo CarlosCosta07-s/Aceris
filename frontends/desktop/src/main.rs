@@ -1,8 +1,8 @@
 //! Aceris desktop front-end.
 //!
-//! Provides command-line diagnostics and an experimental X11 window frontend.
-//! The library uses a dedicated home canvas; gameplay always places the two
-//! LCDs side by side and resizes the window when entering or leaving a game.
+//! Provides command-line diagnostics and an experimental native window frontend.
+//! The library uses a dedicated home canvas; gameplay supports side-by-side,
+//! vertical, enlarged and single-screen LCD layouts.
 
 mod audio;
 mod background;
