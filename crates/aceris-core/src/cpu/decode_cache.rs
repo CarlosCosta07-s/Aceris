@@ -914,12 +914,12 @@ mod tests {
             0xE125_02E1, // SMULWy r5, r1, r2
             0xE145_62C1, // SMLALxy r5, r6, r1, r2
             0xE165_02E1, // SMULxy r5, r1, r2
-            0xE704_5201, // SMLAD r4, r1, r2, r5
-            0xE704_F201, // SMUAD r4, r1, r2
-            0xE704_5261, // SMLSDX r4, r1, r2, r5
-            0xE744_5201, // SMLALD r4, r5, r1, r2
-            0xE754_5201, // SMMLA r4, r1, r2, r5
-            0xE754_F221, // SMMULR r4, r1, r2
+            0xE704_5211, // SMLAD r4, r1, r2, r5
+            0xE704_F211, // SMUAD r4, r1, r2
+            0xE704_5271, // SMLSDX r4, r1, r2, r5
+            0xE744_5211, // SMLALD r4, r5, r1, r2
+            0xE754_5211, // SMMLA r4, r1, r2, r5
+            0xE754_F231, // SMMULR r4, r1, r2
             0xE754_52D1, // SMMLS r4, r1, r2, r5
         ] {
             assert_cached_matches_generic(word, core.clone(), &memory);
