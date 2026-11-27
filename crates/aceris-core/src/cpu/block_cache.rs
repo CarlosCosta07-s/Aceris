@@ -162,9 +162,8 @@ impl BlockCache {
                 break;
             }
 
-            let word = match bus.fetch32(address) {
-                Ok(word) => word,
-                Err(_) => break,
+            let Some(word) = bus.fetch32_speculative(address) else {
+                break;
             };
             if Arm11Core::needs_precise_step(word, false) {
                 break;
