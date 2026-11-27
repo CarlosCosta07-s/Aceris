@@ -549,7 +549,10 @@ fn button_shapes_with_positions(
         1.0
     };
     let size_scale = f32::from(size_percent.clamp(80, 120)) / 100.0 * preset_scale;
-    let radius = (unit * 0.048).clamp(15.0, 38.0) * size_scale;
+    // Keep button centers fixed as users change pad size; only the hit/render
+    // radius scales. This also keeps face-button spacing consistent.
+    let base_radius = (unit * 0.048).clamp(15.0, 38.0);
+    let radius = base_radius * size_scale;
     let is_landscape = orientation == ORIENTATION_LANDSCAPE
         || (orientation == ORIENTATION_AUTO && width >= height);
     let (base_left_x, base_right_x, control_y) = if is_landscape {
@@ -567,10 +570,10 @@ fn button_shapes_with_positions(
             (base_left_x, base_right_x)
         }
     };
-    let d = radius * 1.65;
-    let face_d = radius * 1.5;
-    let shoulder_y = (h * 0.13).max(radius + 4.0);
-    let small = (radius * 0.78).max(12.0 * size_scale);
+    let d = base_radius * 1.65;
+    let face_d = base_radius * 1.5;
+    let shoulder_y = (h * 0.13).max(base_radius + 4.0);
+    let small = (base_radius * 0.78).max(12.0) * size_scale;
     let mut shapes = [
         ButtonShape {
             bit: buttons::UP,
@@ -1773,8 +1776,10 @@ mod tests {
         );
         let a = shapes.iter().find(|shape| shape.bit == buttons::A).unwrap();
         let b = shapes.iter().find(|shape| shape.bit == buttons::B).unwrap();
-        let overlap_x = ((a.x + b.x) * 0.5).round() as i32;
-        let overlap_y = ((a.y + b.y) * 0.5).round() as i32;
+        // Pick a point in the intersection, closer to the smaller B circle
+        // than the midpoint; the midpoint is not guaranteed to lie in both.
+        let overlap_x = (a.x + (b.x - a.x) * 0.6).round() as i32;
+        let overlap_y = (a.y + (b.y - a.y) * 0.6).round() as i32;
 
         let a_dx = overlap_x as f32 - a.x;
         let a_dy = overlap_y as f32 - a.y;
@@ -1812,7 +1817,7 @@ mod tests {
             .iter()
             .find(|shape| shape.bit == buttons::A)
             .unwrap();
-        assert!(positions.adjust(ORIENTATION_PORTRAIT, buttons::A, -1_000, 500));
+        assert!(positions.adjust(ORIENTATION_PORTRAIT, buttons::A, 500, 500));
         let customized = button_shapes_with_positions(
             width,
             height,
@@ -1825,7 +1830,7 @@ mod tests {
             .iter()
             .find(|shape| shape.bit == buttons::A)
             .unwrap();
-        assert_eq!(customized_a.x, original_a.x - 48.0);
+        assert_eq!(customized_a.x, original_a.x + 24.0);
         assert_eq!(customized_a.y, original_a.y + 40.0);
         assert_eq!(
             hit_test_virtual_control_with_positions(
