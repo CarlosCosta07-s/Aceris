@@ -118,6 +118,15 @@ pub trait Bus {
         self.read32(addr)
     }
 
+    /// Fetches a word speculatively while compiling immutable instruction blocks.
+    ///
+    /// The default assumes instruction reads do not latch guest-visible state.
+    /// Buses that record faults or other architectural side effects must override
+    /// this method and restore that state before returning.
+    fn fetch32_speculative(&mut self, addr: u32) -> Option<u32> {
+        self.fetch32(addr).ok()
+    }
+
     /// Completes all writes accepted by this bus before the barrier instruction.
     ///
     /// Synchronous buses may keep the default implementation because each store
