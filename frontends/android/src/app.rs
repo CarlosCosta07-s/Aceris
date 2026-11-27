@@ -435,8 +435,9 @@ impl App {
     }
 
     fn active_layout_profile(&self) -> ScreenLayoutProfile {
+        let identity = self.system.as_ref().and_then(System::game_identity);
         self.layout_preferences
-            .profile_for_surface(self.width, self.height)
+            .profile_for_game(identity, self.width, self.height)
     }
 
     fn game_layout(&self) -> ScreenLayout {
@@ -463,17 +464,26 @@ impl App {
             ScreenLayoutMode::Auto => ScreenLayoutMode::SideBySide,
             mode => mode.next(),
         };
+        let identity = self.system.as_ref().and_then(System::game_identity);
         self.layout_preferences
-            .set_profile_for_surface(self.width, self.height, profile);
+            .set_profile_for_game(identity, self.width, self.height, profile);
         self.save_layout_preferences();
     }
 
     fn toggle_screen_swap(&mut self) {
         let mut profile = self.active_layout_profile();
         profile.swap_screens = !profile.swap_screens;
+        let identity = self.system.as_ref().and_then(System::game_identity);
         self.layout_preferences
-            .set_profile_for_surface(self.width, self.height, profile);
+            .set_profile_for_game(identity, self.width, self.height, profile);
         self.save_layout_preferences();
+    }
+
+    fn reset_game_layout(&mut self) {
+        if let Some(identity) = self.system.as_ref().and_then(System::game_identity) {
+            self.layout_preferences.reset_game_overrides(identity);
+            self.save_layout_preferences();
+        }
     }
 
     fn apply_game_input(&mut self) {
@@ -627,7 +637,8 @@ impl App {
                 quick_menu::ConfirmationAction::BackToLibrary,
             ),
             3 => self.cycle_screen_layout(),
-            _ => self.toggle_screen_swap(),
+            4 => self.toggle_screen_swap(),
+            _ => self.reset_game_layout(),
         }
     }
 
