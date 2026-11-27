@@ -110,21 +110,13 @@ impl BlockCache {
         if let Some(block) = self.entries[slot]
             && block.matches(pc, mode, first_location)
         {
-            let mut valid = true;
-            for index in 0..block.len() {
-                let byte_offset = u32::try_from(index.checked_mul(4)?).ok()?;
-                let address = pc.checked_add(byte_offset)?;
-                let Some(location) = bus.immutable_instruction_location(address, 4) else {
-                    valid = false;
-                    break;
-                };
-                if location.backing_id != block.backing_id
-                    || location.offset != block.backing_offset.checked_add(u64::from(byte_offset))?
-                {
-                    valid = false;
-                    break;
-                }
-            }
+            let cached_size = u32::from(block.len) * 4;
+            let valid = bus
+                .immutable_instruction_location(pc, cached_size)
+                .is_some_and(|location| {
+                    location.backing_id == block.backing_id
+                        && location.offset == block.backing_offset
+                });
             if valid {
                 return Some(block);
             }
