@@ -71,7 +71,7 @@ fn write_frame(rgba: &[u8], output: *mut u8, capacity: usize) -> i32 {
     ACERIS_STATUS_OK
 }
 
-/// Scans `directory` (UTF-8, NUL-terminated) for `.3ds`/`.cci` games.
+/// Scans `directory` (UTF-8, NUL-terminated) for `.3ds`, `.cci`, `.cia` and `.3dsx` images.
 /// Returns null if the argument is invalid.
 ///
 /// # Safety
@@ -476,7 +476,7 @@ mod tests {
     fn library_scans_selects_taps_and_renders() {
         let dir = std::env::temp_dir().join(format!("aceris-android-lib-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        for name in ["one.3ds", "two.cci", "skip.txt"] {
+        for name in ["01.3ds", "02.cci", "03.cia", "04.3dsx", "skip.txt"] {
             fs::write(dir.join(name), b"x").unwrap();
         }
         let c_dir = CString::new(dir.to_str().unwrap()).unwrap();
@@ -485,7 +485,7 @@ mod tests {
         unsafe {
             let handle = aceris_library_create(c_dir.as_ptr());
             assert!(!handle.is_null());
-            assert_eq!(aceris_library_count(handle), 2);
+            assert_eq!(aceris_library_count(handle), 4);
             assert_eq!(aceris_library_selected_index(handle), 0);
             assert_eq!(aceris_library_move_selection(handle, 1), 0);
             assert_eq!(aceris_library_selected_index(handle), 1);
@@ -494,7 +494,7 @@ mod tests {
             let mut path = vec![0 as c_char; needed as usize + 1];
             aceris_library_copy_selected_path(handle, path.as_mut_ptr(), path.len());
             let path = CStr::from_ptr(path.as_ptr()).to_str().unwrap().to_string();
-            assert!(path.ends_with("two.cci"), "{path}");
+            assert!(path.ends_with("02.cci"), "{path}");
 
             // Row 0 is at y ~ 64..92 on the canvas: select it, then tap again.
             assert_eq!(aceris_library_tap(handle, 100, 70), 1);
