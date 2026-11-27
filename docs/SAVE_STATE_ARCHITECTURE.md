@@ -67,6 +67,10 @@ Os IDs devem ser não-zero, versões devem ser não-zero e IDs duplicados são r
 
 O contêiner não define ainda serializers para CPU, memória ou serviços; ele fornece a estrutura de enquadramento e validação para que esses serializers sejam adicionados individualmente.
 
+Os IDs estáveis reservados em código são: 1 metadados do sistema, 2 CPU ARM11, 3 memória do processo, 4 kernel, 5 PICA200, 6 GSP/LCD, 7 DSP, 8 CSND, 9 HID/entrada/APT e 10 filesystem. Reservar um ID não significa que seu serializer já esteja implementado.
+
+O caminho de API também está conectado: SaveStateFile::from_sections cria o envelope externo a partir de uma tabela validada, e decode_sections recupera a tabela interna depois que o arquivo externo foi validado para a identidade do jogo.
+
 ## Próximas etapas obrigatórias
 
 1. Calcular e persistir a identidade canônica do conteúdo de boot em todos os loaders suportados, inclusive 3DSX. Recusar estados quando a identidade não puder ser confirmada.
