@@ -1287,8 +1287,9 @@ mod tests {
         ));
         assert!(app.system.is_some());
 
-        app.confirmation_selected = 1;
-        app.activate_game_menu_confirmation(quick_menu::ConfirmationAction::BackToLibrary);
+        assert!(app.key(20, true), "Android D-pad Down is consumed");
+        assert_eq!(app.confirmation_selected, 1);
+        assert!(app.key(96, true), "Android A confirms the selected action");
         assert!(matches!(app.screen(), Screen::Library));
         assert!(app.system.is_none());
         assert!(!app.is_game_menu_open());
