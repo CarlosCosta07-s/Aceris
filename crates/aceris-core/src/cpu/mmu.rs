@@ -22,7 +22,7 @@
 
 use super::arm::{bit, bits};
 use super::cp15::TlbMaintenance;
-use super::{ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, StepEvent, THUMB_INSTRUCTION_SIZE};
+use super::{ARM_INSTRUCTION_SIZE, Arm11Core, FastRunExit, PC, SP, StepEvent, THUMB_INSTRUCTION_SIZE};
 use crate::memory::{Bus, CachePolicy};
 use aceris_common::{Error, Result};
 
@@ -3463,4 +3463,93 @@ mod tests {
         assert_eq!(fast_cpu.step(&mut fast_mem).unwrap(), StepEvent::Executed);
         assert!(fast_cpu.cp15.smp_mode_enabled());
     }
+
+    /// Compares precise single-step execution with the translated batch loop.
+    /// Run with:
+    /// cargo test --release -p aceris-core --lib translated_fast_dispatch_throughput -- --ignored --nocapture
+    /// ACERIS_MMU_PROBE_INSTRUCTIONS and ACERIS_MMU_PROBE_ROUNDS tune the run.
+    #[test]
+    #[ignore = "host MMU dispatch performance probe"]
+    fn translated_fast_dispatch_throughput() {
+        const PROGRAM: [u32; 7] = [
+            0xE3A0_0000, // mov r0, #0
+            0xE280_0001, // loop: add r0, r0, #1
+            0xE50D_0004, // str r0, [sp, #-4]
+            0xE51D_2004, // ldr r2, [sp, #-4]
+            0xE082_3000, // add r3, r2, r0
+            0xE350_0000, // cmp r0, #0
+            0xEAFF_FFF9, // b loop
+        ];
+
+        let instruction_count = std::env::var("ACERIS_MMU_PROBE_INSTRUCTIONS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1_000_000)
+            .max(1);
+        let rounds = std::env::var("ACERIS_MMU_PROBE_ROUNDS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(3)
+            .max(1);
+
+        fn prepared_machine(program: &[u32]) -> (Arm11Core, FlatMemory) {
+            let (mut cpu, mut memory) = machine();
+            set_l1(
+                &mut memory,
+                0,
+                SECTION | SECTION_AP_RW_ALL | (1 << 12),
+            );
+            cpu.regs[SP] = 0x2000;
+            for (index, instruction) in program.iter().copied().enumerate() {
+                memory
+                    .write32(index as u32 * ARM_INSTRUCTION_SIZE, instruction)
+                    .unwrap();
+            }
+            assert!(cpu.cp15.mmu_enabled());
+            (cpu, memory)
+        }
+
+        for round in 0..rounds {
+            let (mut precise_cpu, mut precise_memory) = prepared_machine(&PROGRAM);
+            let precise_start = std::time::Instant::now();
+            for _ in 0..instruction_count {
+                assert_eq!(
+                    precise_cpu.step(&mut precise_memory).unwrap(),
+                    StepEvent::Executed
+                );
+            }
+            let precise_seconds = precise_start.elapsed().as_secs_f64();
+
+            let (mut fast_cpu, mut fast_memory) = prepared_machine(&PROGRAM);
+            let fast_start = std::time::Instant::now();
+            let (executed, exit) = fast_cpu
+                .run_fast(&mut fast_memory, instruction_count)
+                .unwrap();
+            let fast_seconds = fast_start.elapsed().as_secs_f64();
+
+            assert_eq!(executed, instruction_count);
+            assert_eq!(exit, FastRunExit::Budget);
+            assert_eq!(fast_cpu.regs, precise_cpu.regs);
+            assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+            assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+            assert_eq!(
+                fast_memory.read32(0x1FFC).unwrap(),
+                precise_memory.read32(0x1FFC).unwrap()
+            );
+
+            let precise_rate = instruction_count as f64 / precise_seconds / 1e6;
+            let fast_rate = instruction_count as f64 / fast_seconds / 1e6;
+            println!(
+                "MMU batch round {}/{}: precise {:.2} M guest instr/s ({:.3}s), batched {:.2} M guest instr/s ({:.3}s), speedup {:.2}x",
+                round + 1,
+                rounds,
+                precise_rate,
+                precise_seconds,
+                fast_rate,
+                fast_seconds,
+                precise_seconds / fast_seconds
+            );
+        }
+    }
+
 }
