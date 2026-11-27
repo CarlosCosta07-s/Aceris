@@ -449,11 +449,11 @@ impl App {
         };
         let mut system = System::new();
         system.enable_guest_gpu_rendering();
-        if self.library.performance_mode()
-            && let Err(error) = system.set_fast_memory(true)
-        {
-            self.library
-                .set_status(format!("Modo desempenho indisponível: {error}"));
+        if self.library.performance_mode() {
+            if let Err(error) = system.set_fast_memory(true) {
+                self.library
+                    .set_status(format!("Modo desempenho indisponível: {error}"));
+            }
         }
         let save_name = path.file_name().unwrap_or_default().to_os_string();
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
