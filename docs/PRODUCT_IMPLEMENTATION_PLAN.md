@@ -40,7 +40,7 @@ O estado abaixo foi consolidado a partir de `docs/USER_EXPERIENCE.md`, `docs/FRO
 - Progresso, cancelamento, resumo e recuperação de erros do processo de importação/varredura.
 - Persistência ampliada de metadados da biblioteca e página detalhada de jogo.
 - Mapeamento completo de teclado/gamepad, detecção/reconexão, perfis e editor de controles virtuais.
-- Menu rápido básico implementado, incluindo limpeza explícita da fila host de áudio; atalhos configuráveis, confirmação de progresso, layouts avançados/troca de telas e perfis por orientação continuam pendentes.
+- Menu rápido básico implementado, incluindo limpeza explícita da fila host de áudio e confirmação preventiva antes de Reiniciar/Voltar à biblioteca; atalhos configuráveis, layouts avançados/troca de telas e perfis por orientação continuam pendentes. O host não detecta automaticamente progresso não salvo.
 - Configurações globais com overrides por jogo e migrações seguras.
 - Save states versionados, slots e recuperação — distintos dos saves gravados pelo próprio jogo.
 - Validação física do frontend Android e dos backends desktop; saída de áudio do sistema emulado ainda não foi confirmada como funcional.
@@ -153,6 +153,8 @@ Projeto da fronteira de leitura e seleção de pastas: [FILE_SOURCE_ARCHITECTURE
 - [x] Disponibilizar botão visível e tecla Voltar no Android e Esc no desktop. O mapeamento de teclas ainda não é configurável.
 - [x] Manter o menu compacto no celular e painel/overlay no PC.
 - [x] Limpar explicitamente as filas host ao abrir o menu: Android pausa, aguarda e limpa AAudio, retomando com `requestStart`; ALSA usa `snd_pcm_drop`/`snd_pcm_prepare`, WinMM usa `waveOutReset` e AudioQueue usa parada imediata seguida de reinício. O resampler desktop é reiniciado para descartar seu histórico.
+- [x] Pedir confirmação antes de Reiniciar ou Voltar à biblioteca, com aviso de que progresso não salvo pelo próprio jogo pode ser perdido. A confirmação é preventiva; não há detecção automática de estado sujo.
+- [ ] Validar pausa, limpeza/retomada de áudio e confirmação de ações em hardware físico no Android e nos backends desktop.
 
 **M4.2 — Layout**
 - [ ] Implementar modos vertical, lado a lado, superior ampliada, inferior ampliada e tela única.
