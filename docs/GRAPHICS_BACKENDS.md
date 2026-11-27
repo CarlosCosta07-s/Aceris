@@ -134,3 +134,18 @@ A alteração não cria nem declara prontos os backends OpenGL/Vulkan e ainda pr
 - **Base da API:** a documentação de `wgpu::TextureFormat` descreve os formatos BGRA8 e sua conversão sRGB para valores float no shader: https://docs.rs/wgpu/latest/wgpu/enum.TextureFormat.html
 - **Testes adicionados:** seleção dos quatro formatos RGBA/BGRA nos modos linear/sRGB e verificação de que o shader BGRX força alpha opaco. A CI também executa Clippy isolado de `aceris-graphics`, antes do Clippy do workspace.
 - **Limite preservado:** essa é uma otimização do presenter host. Não altera draw calls, shader PICA, render targets guest, memória física ou temporização da PICA200.
+
+## Referência complementar: Black for Android (27/11/2026)
+
+O [Black for Android v1.8.1](https://github.com/RanggaCasper/Black-Android/releases) é uma referência prática para o frontend Android: opção de escala de saída, V-Sync/limite de FPS, contador, opções gráficas, configurações persistidas e shader cache em armazenamento privado. O README informa que o código x86 do jogo específico é recompilado antecipadamente para C++/ARM64, que o desenho usa Vulkan e que janela/entrada/áudio usam SDL3.
+
+**Adaptação ao Aceris:**
+
+- A escala futura deve atuar na composição host das duas LCDs, não na resolução, stride, layout, endereço ou semântica dos framebuffers guest. O 67% padrão do Black não é uma configuração padrão apropriada automaticamente para a apresentação do 3DS.
+- O presenter atual usa `wgpu`, aceita Vulkan e GL/OpenGL ES, cria os pipelines básicos de composição de LCD uma vez e conserva a textura de frame/bind group enquanto dimensão e formato não mudarem. O adapter é solicitado com `PowerPreference::HighPerformance`; a superfície usa `FIFO` quando suportado e `desired_maximum_frame_latency = 2`.
+- A escolha de `HighPerformance`, FIFO, backend e qualquer futura escala deverá ser testada em Android físico. Não trocar para `LowPower`, V-Sync desligado ou FPS ilimitado só porque o port de BLACK escolheu opções diferentes para um único jogo.
+- Cache de shader/pipeline persistente só traz benefício maior quando os draws e shaders PICA200 forem executados na GPU host. O presenter atual tem somente shaders triviais para compor pixels LCD prontos; não é o renderer PICA.
+- O cache futuro deve ter versão e chave por GPU/driver/backend/estado PICA, limite de armazenamento, limpeza e separação cold/warm. A temporização guest e o rasterizador CPU de referência continuam inalterados.
+- O port Black lista Vulkan 1.1 e 4 GB de RAM como requisitos Android. Manter OpenGL ES e CPU fallback no Aceris e medir abaixo desse patamar; o requisito do Black não será copiado como mínimo do emulador.
+
+Nenhum código, shader, asset, recompiler, dependência ou estrutura interna de Black-Android foi copiado. A referência é limitada aos comportamentos e opções públicas documentadas.
