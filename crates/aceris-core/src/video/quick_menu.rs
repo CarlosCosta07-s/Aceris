@@ -697,9 +697,7 @@ fn menu_row_text_scale(
 
     let row_height = geometry.rows[0].height;
     let vertical_scale = (row_height / 7).max(1);
-    let available_width = geometry.rows[0]
-        .width
-        .saturating_sub(24 * base_scale);
+    let available_width = geometry.rows[0].width.saturating_sub(24 * base_scale);
     let glyph_width = font::text_width(longest_label_chars, 1).max(1);
     let horizontal_scale = (available_width / glyph_width).max(1);
     (base_scale * 2)
@@ -1085,7 +1083,13 @@ mod tests {
         let width = 400u32;
         let height = 800u32;
         let mut frame = vec![0u8; width as usize * height as usize * 4];
-        assert!(render_overlay(&mut frame, width, height, PixelFormat::Rgba8, 0));
+        assert!(render_overlay(
+            &mut frame,
+            width,
+            height,
+            PixelFormat::Rgba8,
+            0
+        ));
 
         let layout = geometry(width, height, ACTION_COUNT).unwrap();
         let top_center =

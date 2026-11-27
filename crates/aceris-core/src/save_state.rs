@@ -49,10 +49,7 @@ pub struct SaveStateFile {
 
 impl SaveStateFile {
     /// Creates an envelope after validating identity and payload bounds.
-    pub fn new(
-        metadata: SaveStateMetadata,
-        payload: Vec<u8>,
-    ) -> Result<Self, SaveStateError> {
+    pub fn new(metadata: SaveStateMetadata, payload: Vec<u8>) -> Result<Self, SaveStateError> {
         validate_identity(metadata.identity)?;
         validate_payload_size(payload.len() as u64)?;
         Ok(Self { metadata, payload })
@@ -137,10 +134,8 @@ impl SaveStateFile {
         let virtual_time_ns = read_u64(encoded, 64);
         let payload_len = read_u64(encoded, 72);
         validate_payload_size(payload_len)?;
-        let payload_len =
-            usize::try_from(payload_len).map_err(|_| SaveStateError::PayloadTooLarge(
-                payload_len,
-            ))?;
+        let payload_len = usize::try_from(payload_len)
+            .map_err(|_| SaveStateError::PayloadTooLarge(payload_len))?;
         let expected_len = SAVE_STATE_HEADER_SIZE
             .checked_add(payload_len)
             .ok_or(SaveStateError::InvalidLength)?;
@@ -204,14 +199,15 @@ impl fmt::Display for SaveStateError {
             Self::UnsupportedFlags(flags) => {
                 write!(f, "save-state contains unsupported flags {flags:#010X}")
             }
-            Self::InvalidIdentity => {
-                f.write_str("save-state identity needs a non-zero SHA-256 and a valid optional Title ID")
-            }
-            Self::GameMismatch => {
-                f.write_str("save-state belongs to a different game image")
-            }
+            Self::InvalidIdentity => f.write_str(
+                "save-state identity needs a non-zero SHA-256 and a valid optional Title ID",
+            ),
+            Self::GameMismatch => f.write_str("save-state belongs to a different game image"),
             Self::PayloadTooLarge(size) => {
-                write!(f, "save-state payload of {size} bytes exceeds the supported limit")
+                write!(
+                    f,
+                    "save-state payload of {size} bytes exceeds the supported limit"
+                )
             }
             Self::InvalidLength => f.write_str("save-state file length does not match its header"),
             Self::ChecksumMismatch => f.write_str("save-state payload checksum does not match"),
@@ -245,15 +241,27 @@ fn read_array_32(bytes: &[u8], offset: usize) -> [u8; 32] {
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(bytes[offset..offset + 2].try_into().expect("validated header range"))
+    u16::from_le_bytes(
+        bytes[offset..offset + 2]
+            .try_into()
+            .expect("validated header range"),
+    )
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("validated header range"))
+    u32::from_le_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("validated header range"),
+    )
 }
 
 fn read_u64(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("validated header range"))
+    u64::from_le_bytes(
+        bytes[offset..offset + 8]
+            .try_into()
+            .expect("validated header range"),
+    )
 }
 
 /// IEEE CRC-32. Used for accidental-corruption detection, not authentication.
