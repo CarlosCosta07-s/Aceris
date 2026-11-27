@@ -491,3 +491,10 @@ O Black for Android v1.8.1 declara Android 10+, ARM64, Vulkan 1.1 e 4 GB de RAM.
 - [ ] Validar o HEAD resultante com Rustfmt, testes da composição, builds desktop e APK ARM64. O último Clippy conhecido ainda apontava também um aviso em `crates/aceris-core/src/cpu/decode_cache.rs`, arquivo de outro agente; não modificar sem autorização.
 - [ ] Comparar em PC e Android físicos, builds release, com telemetria e backend identificados. Não há ganho de FPS confirmado por estas especializações.
 - [ ] Manter como prioridade seguinte a sonda release da sessão completa com MMU ativa; só depois decidir sobre cache de blocos ARM/Thumb e invalidação de código.
+
+### Benchmark de sessão ARM11 com comparação precisa/rápida (27/11/2026)
+
+- [x] Adicionar `--precise-dispatch` ao benchmark de título local, desligando apenas o laço rápido ARM11 para obter uma base de comparação precisa.
+- [x] Reportar `CP15.SCTLR.M` após aquecimento e o número de limites de quadro que observaram a MMU ligada durante a janela medida.
+- [ ] Executar três ou mais rodadas release por modo em PC x86-64 e Android ARM64 físico, com o mesmo título, entrada, orçamento e aquecimento; manter `--fast-memory` desligado.
+- [ ] Só classificar a comparação como sessão MMU-ativa quando as amostras por quadro confirmarem `SCTLR.M` habilitado; documentar a limitação de que a observação ocorre na fronteira de quadro.
