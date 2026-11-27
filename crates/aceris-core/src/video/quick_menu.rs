@@ -1,0 +1,310 @@
+//! Shared, host-independent rendering and hit testing for the in-game quick menu.
+
+use super::font;
+
+pub const ACTION_COUNT: usize = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PixelFormat {
+    Rgba8,
+    Bgrx8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Rect {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+}
+
+#[derive(Clone, Copy)]
+struct Geometry {
+    panel: Rect,
+    rows: [Rect; ACTION_COUNT],
+    scale: usize,
+}
+
+fn geometry(width: u32, height: u32) -> Option<Geometry> {
+    if width < 120 || height < 100 || width > 4096 || height > 4096 {
+        return None;
+    }
+    let width = width as usize;
+    let height = height as usize;
+    let scale = (width.min(height) / 240).clamp(1, 8);
+    let margin = 8 * scale;
+    let panel_width = (420 * scale).min(width.saturating_sub(margin * 2));
+    let panel_height = (190 * scale).min(height.saturating_sub(margin * 2));
+    if panel_width < 180 * scale || panel_height < 150 * scale {
+        return None;
+    }
+
+    let panel = Rect {
+        x: (width - panel_width) / 2,
+        y: (height - panel_height) / 2,
+        width: panel_width,
+        height: panel_height,
+    };
+    let horizontal_padding = 12 * scale;
+    let row_top = panel.y + 42 * scale;
+    let row_height = 36 * scale;
+    let row_gap = 4 * scale;
+    let row_width = panel.width.saturating_sub(horizontal_padding * 2);
+    let rows = std::array::from_fn(|index| Rect {
+        x: panel.x + horizontal_padding,
+        y: row_top + index * (row_height + row_gap),
+        width: row_width,
+        height: row_height,
+    });
+    Some(Geometry { panel, rows, scale })
+}
+
+/// Returns the action row under a surface-space point.
+pub fn hit_test(width: u32, height: u32, x: i32, y: i32) -> Option<usize> {
+    let geometry = geometry(width, height)?;
+    if x < 0 || y < 0 {
+        return None;
+    }
+    geometry.rows.iter().position(|row| {
+        let x = x as usize;
+        let y = y as usize;
+        x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height
+    })
+}
+
+/// Draws a dimmed, three-action quick menu over an existing RGBA8 or BGRX8 frame.
+///
+/// The function does not allocate and leaves the frame unchanged when its
+/// dimensions or byte length are invalid.
+pub fn render_overlay(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    selected: usize,
+) -> bool {
+    let Some(geometry) = geometry(width, height) else {
+        return false;
+    };
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(frame.len()) {
+        return false;
+    }
+
+    let scale = geometry.scale;
+    let canvas = Rect {
+        x: 0,
+        y: 0,
+        width: width as usize,
+        height: height as usize,
+    };
+    blend_rect(frame, width as usize, canvas, [7, 5, 16], 164, format);
+    blend_rect(
+        frame,
+        width as usize,
+        geometry.panel,
+        [31, 19, 48],
+        246,
+        format,
+    );
+    draw_border(frame, width as usize, geometry.panel, scale, format);
+
+    let title_x = geometry.panel.x + 18 * scale;
+    let title_y = geometry.panel.y + 15 * scale;
+    draw_text_for_format(
+        frame,
+        width as usize,
+        height as usize,
+        title_x,
+        title_y,
+        scale,
+        "MENU DO JOGO",
+        [245, 238, 248],
+        format,
+    );
+
+    let labels = ["CONTINUAR", "REINICIAR", "VOLTAR A BIBLIOTECA"];
+    for (index, row) in geometry.rows.iter().enumerate() {
+        let is_selected = index == selected.min(ACTION_COUNT - 1);
+        blend_rect(
+            frame,
+            width as usize,
+            *row,
+            if is_selected { [166, 29, 61] } else { [54, 36, 70] },
+            if is_selected { 245 } else { 230 },
+            format,
+        );
+        let text_y = row.y + (row.height.saturating_sub(7 * scale)) / 2;
+        draw_text_for_format(
+            frame,
+            width as usize,
+            height as usize,
+            row.x + 12 * scale,
+            text_y,
+            scale,
+            labels[index],
+            [255, 255, 255],
+            format,
+        );
+    }
+    true
+}
+
+fn draw_border(
+    frame: &mut [u8],
+    width: usize,
+    rect: Rect,
+    thickness: usize,
+    format: PixelFormat,
+) {
+    let color = [211, 52, 85];
+    blend_rect(
+        frame,
+        width,
+        Rect { height: thickness, ..rect },
+        color,
+        255,
+        format,
+    );
+    blend_rect(
+        frame,
+        width,
+        Rect {
+            y: rect.y + rect.height.saturating_sub(thickness),
+            height: thickness,
+            ..rect
+        },
+        color,
+        255,
+        format,
+    );
+    blend_rect(
+        frame,
+        width,
+        Rect { width: thickness, ..rect },
+        color,
+        255,
+        format,
+    );
+    blend_rect(
+        frame,
+        width,
+        Rect {
+            x: rect.x + rect.width.saturating_sub(thickness),
+            width: thickness,
+            ..rect
+        },
+        color,
+        255,
+        format,
+    );
+}
+
+fn blend_rect(
+    frame: &mut [u8],
+    width: usize,
+    rect: Rect,
+    color: [u8; 3],
+    alpha: u8,
+    format: PixelFormat,
+) {
+    let height = frame.len() / 4 / width;
+    let left = rect.x.min(width);
+    let right = rect.x.saturating_add(rect.width).min(width);
+    let top = rect.y.min(height);
+    let bottom = rect.y.saturating_add(rect.height).min(height);
+    let inverse = 255u32 - u32::from(alpha);
+    let source = channel_order(color, format);
+    for y in top..bottom {
+        for x in left..right {
+            let at = (y * width + x) * 4;
+            for channel in 0..3 {
+                let destination = u32::from(frame[at + channel]);
+                frame[at + channel] =
+                    ((u32::from(source[channel]) * u32::from(alpha)
+                        + destination * inverse
+                        + 127)
+                        / 255) as u8;
+            }
+            if format == PixelFormat::Rgba8 {
+                frame[at + 3] = 255;
+            }
+        }
+    }
+}
+
+fn channel_order(color: [u8; 3], format: PixelFormat) -> [u8; 3] {
+    match format {
+        PixelFormat::Rgba8 => color,
+        PixelFormat::Bgrx8 => [color[2], color[1], color[0]],
+    }
+}
+
+fn draw_text_for_format(
+    frame: &mut [u8],
+    width: usize,
+    height: usize,
+    x: usize,
+    y: usize,
+    scale: usize,
+    value: &str,
+    color: [u8; 3],
+    format: PixelFormat,
+) {
+    let color = channel_order(color, format);
+    font::draw_text(
+        frame,
+        width,
+        height,
+        x as i32,
+        y as i32,
+        scale,
+        value,
+        color,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hit_testing_matches_the_drawn_action_rows_on_phone_and_desktop() {
+        for (width, height) in [(736, 240), (2400, 1080), (800, 960), (400, 800)] {
+            let geometry = geometry(width, height).unwrap();
+            for (index, row) in geometry.rows.iter().enumerate() {
+                let x = (row.x + row.width / 2) as i32;
+                let y = (row.y + row.height / 2) as i32;
+                assert_eq!(hit_test(width, height, x, y), Some(index));
+            }
+            assert_eq!(hit_test(width, height, 0, 0), None);
+        }
+    }
+
+    #[test]
+    fn overlay_supports_rgba_and_bgrx_without_allocating_or_changing_frame_size() {
+        for format in [PixelFormat::Rgba8, PixelFormat::Bgrx8] {
+            let (width, height) = (736u32, 240u32);
+            let mut frame = vec![40u8; width as usize * height as usize * 4];
+            let length = frame.len();
+            assert!(render_overlay(&mut frame, width, height, format, 1));
+            assert_eq!(frame.len(), length);
+            assert_ne!(frame, vec![40u8; length]);
+            if format == PixelFormat::Rgba8 {
+                assert!(frame.chunks_exact(4).all(|pixel| pixel[3] == 255));
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_dimensions_or_buffer_lengths_leave_the_frame_unchanged() {
+        let mut frame = vec![17u8; 16];
+        let before = frame.clone();
+        assert!(!render_overlay(&mut frame, 0, 0, PixelFormat::Rgba8, 0));
+        assert!(!render_overlay(&mut frame, 736, 240, PixelFormat::Rgba8, 0));
+        assert_eq!(frame, before);
+        assert_eq!(hit_test(0, 0, 2, 2), None);
+    }
+}
