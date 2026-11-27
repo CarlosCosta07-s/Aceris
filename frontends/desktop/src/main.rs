@@ -15,7 +15,7 @@ use aceris_core::{
     video::{
         DualScreenDisplay, intro,
         frontend::{ScreenLayoutMode, screen_layout_canvas_size},
-        layout_preferences::{ScreenLayoutPreferences, ScreenLayoutProfile},
+        layout_preferences::ScreenLayoutPreferences,
         library::{ClickResult, Library, VISIBLE_ROWS},
         quick_menu::{self, PixelFormat as MenuPixelFormat},
     },
@@ -427,8 +427,8 @@ fn run_windowed(
             },
         };
 
-        // Desktop gameplay always presents the two LCDs horizontally:
-        // top LCD on the left, bottom LCD on the right.
+        // Start from the natural landscape canvas; gameplay may resize this
+        // window to the persisted layout profile before the first frame.
         window
             .resize(
                 window::GAME_CANVAS_WIDTH * scale,
@@ -637,9 +637,9 @@ fn touch_at(
     y: i32,
     scale: usize,
     mode: ScreenLayoutMode,
-    layout_profile.swap_screens: bool,
+    swap_screens: bool,
 ) {
-    match window::touch_from_window_point_with_layout(x, y, scale, mode, layout_profile.swap_screens) {
+    match window::touch_from_window_point_with_layout(x, y, scale, mode, swap_screens) {
         Some((tx, ty)) => system.input_mut().touch(i32::from(tx), i32::from(ty)),
         None => system.input_mut().touch_end(),
     }
