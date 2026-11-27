@@ -13,6 +13,9 @@ use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect,
     compute_screen_layout, compute_screen_layout_for_mode,
 };
+use aceris_core::video::layout_preferences::{
+    ScreenLayoutPreferences, ScreenLayoutProfile,
+};
 use aceris_core::video::library::{self, ClickResult, Library};
 use aceris_core::video::{
     DualScreenDisplay, ScreenSurface, intro,
@@ -49,8 +52,7 @@ pub struct App {
     current_game_path: Option<PathBuf>,
     quick_menu_selected: usize,
     confirmation_selected: usize,
-    screen_layout_mode: ScreenLayoutMode,
-    swap_screens: bool,
+    layout_preferences: ScreenLayoutPreferences,
     menu_tap: Option<(i32, i32)>,
     menu_button_pointer: Option<i32>,
     width: u32,
@@ -71,6 +73,7 @@ impl App {
     pub fn new(games_dir: &Path) -> Self {
         let games_dir_owned = games_dir.to_path_buf();
         let settings_directory = games_dir.join(".aceris");
+        let layout_preferences = ScreenLayoutPreferences::load(&settings_directory);
         let mut library = Library::from_scan_settings(&settings_directory, games_dir);
         library.set_touch_keyboard_enabled(true);
         Self {
@@ -81,8 +84,7 @@ impl App {
             current_game_path: None,
             quick_menu_selected: 0,
             confirmation_selected: 0,
-            screen_layout_mode: ScreenLayoutMode::Auto,
-            swap_screens: false,
+            layout_preferences,
             menu_tap: None,
             menu_button_pointer: None,
             width: 0,
@@ -432,21 +434,46 @@ impl App {
         )
     }
 
+    fn active_layout_profile(&self) -> ScreenLayoutProfile {
+        self.layout_preferences
+            .profile_for_surface(self.width, self.height)
+    }
+
     fn game_layout(&self) -> ScreenLayout {
+        let profile = self.active_layout_profile();
         compute_screen_layout_for_mode(
             self.width,
             self.height,
-            self.screen_layout_mode,
-            self.swap_screens,
+            profile.mode,
+            profile.swap_screens,
         )
     }
 
+    fn save_layout_preferences(&self) {
+        let settings_directory = self.games_dir.join(".aceris");
+        if let Err(error) = self.layout_preferences.save(&settings_directory) {
+            eprintln!("could not save screen layout preferences: {error}");
+        }
+    }
+
     fn cycle_screen_layout(&mut self) {
-        self.screen_layout_mode = match self.screen_layout_mode {
+        let mut profile = self.active_layout_profile();
+        profile.mode = match profile.mode {
             ScreenLayoutMode::Auto if self.width >= self.height => ScreenLayoutMode::Vertical,
             ScreenLayoutMode::Auto => ScreenLayoutMode::SideBySide,
             mode => mode.next(),
         };
+        self.layout_preferences
+            .set_profile_for_surface(self.width, self.height, profile);
+        self.save_layout_preferences();
+    }
+
+    fn toggle_screen_swap(&mut self) {
+        let mut profile = self.active_layout_profile();
+        profile.swap_screens = !profile.swap_screens;
+        self.layout_preferences
+            .set_profile_for_surface(self.width, self.height, profile);
+        self.save_layout_preferences();
     }
 
     fn apply_game_input(&mut self) {
@@ -600,7 +627,7 @@ impl App {
                 quick_menu::ConfirmationAction::BackToLibrary,
             ),
             3 => self.cycle_screen_layout(),
-            _ => self.swap_screens = !self.swap_screens,
+            _ => self.toggle_screen_swap(),
         }
     }
 
@@ -1280,19 +1307,22 @@ mod tests {
         app.quick_menu_selected = 3;
 
         app.activate_game_menu_action();
-        assert_eq!(app.screen_layout_mode, ScreenLayoutMode::Vertical);
+        assert_eq!(
+            app.active_layout_profile().mode,
+            ScreenLayoutMode::Vertical
+        );
         assert!(matches!(app.screen(), Screen::GameMenu));
 
         app.quick_menu_selected = 4;
         app.activate_game_menu_action();
-        assert!(app.swap_screens);
+        assert!(app.active_layout_profile().swap_screens);
         assert!(matches!(app.screen(), Screen::GameMenu));
 
         let layout = app.game_layout();
         let normal = compute_screen_layout_for_mode(
             app.width,
             app.height,
-            app.screen_layout_mode,
+            app.active_layout_profile().mode,
             false,
         );
         assert_eq!(layout.top, normal.bottom);
