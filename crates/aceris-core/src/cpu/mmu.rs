@@ -1262,7 +1262,6 @@ impl Arm11Core {
                 let instruction = match fetched {
                     Ok(instruction) => instruction,
                     Err(error) => {
-                        self.prefetch_fault = true;
                         execution_error = Some(error);
                         break;
                     }
@@ -3337,12 +3336,20 @@ mod tests {
 
     #[test]
     fn translated_fast_dispatch_matches_precise_steps_for_an_arm_block() {
-        let program = [0xE3A0_0001, 0xE280_1002, 0xE281_2003];
+        let program = [
+            0xE3A0_0001, // MOV r0,#1
+            0xE280_1002, // ADD r1,r0,#2
+            0xE583_1000, // STR r1,[r3]
+            0xE593_2000, // LDR r2,[r3]
+            0xE282_2003, // ADD r2,r2,#3
+        ];
 
         let (mut fast_cpu, mut fast_mem) = machine();
         set_l1(&mut fast_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
         let (mut precise_cpu, mut precise_mem) = machine();
         set_l1(&mut precise_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        fast_cpu.regs[3] = 0x100;
+        precise_cpu.regs[3] = 0x100;
 
         for (index, instruction) in program.into_iter().enumerate() {
             fast_mem.write32(index as u32 * 4, instruction).unwrap();
@@ -3365,6 +3372,43 @@ mod tests {
         assert_eq!(fast_cpu.regs, precise_cpu.regs);
         assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
         assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+        assert_eq!(fast_mem.read32(0x100).unwrap(), 3);
+        assert_eq!(precise_mem.read32(0x100).unwrap(), 3);
+    }
+
+    #[test]
+    fn translated_fast_dispatch_matches_precise_steps_for_a_thumb_block() {
+        let program = [0x2007, 0x2105, 0x3002];
+
+        let (mut fast_cpu, mut fast_mem) = machine();
+        set_l1(&mut fast_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        fast_cpu.cpsr.set_thumb(true);
+        let (mut precise_cpu, mut precise_mem) = machine();
+        set_l1(&mut precise_mem, 0, SECTION | SECTION_AP_RW_ALL | (1 << 12));
+        precise_cpu.cpsr.set_thumb(true);
+
+        for (index, instruction) in program.into_iter().enumerate() {
+            fast_mem.write16(index as u32 * 2, instruction).unwrap();
+            precise_mem.write16(index as u32 * 2, instruction).unwrap();
+        }
+
+        for _ in 0..program.len() {
+            assert_eq!(
+                precise_cpu.step(&mut precise_mem).unwrap(),
+                StepEvent::Executed
+            );
+        }
+
+        let (executed, exit) = fast_cpu
+            .run_fast(&mut fast_mem, program.len() as u64)
+            .unwrap();
+
+        assert_eq!(executed, program.len() as u64);
+        assert_eq!(exit, FastRunExit::Budget);
+        assert_eq!(fast_cpu.regs, precise_cpu.regs);
+        assert_eq!(fast_cpu.cpsr, precise_cpu.cpsr);
+        assert_eq!(fast_cpu.pc(), precise_cpu.pc());
+        assert_eq!((fast_cpu.regs[0], fast_cpu.regs[1]), (9, 5));
     }
 
     #[test]
@@ -3408,6 +3452,7 @@ mod tests {
         for (index, instruction) in program.into_iter().enumerate() {
             fast_mem.write32(index as u32 * 4, instruction).unwrap();
         }
+        fast_cpu.regs[1] = 1 << 5;
 
         let (executed, exit) = fast_cpu.run_fast(&mut fast_mem, 8).unwrap();
 
