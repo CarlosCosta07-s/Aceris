@@ -134,6 +134,7 @@ pub struct Library {
     touch_keyboard_enabled: bool,
     touch_keyboard_open: bool,
     virtual_controls_visible: bool,
+    virtual_controls_opacity: u8,
     external_media_playing: bool,
     external_media_detection_available: bool,
     performance_mode: bool,
@@ -143,6 +144,9 @@ pub struct Library {
 const PERFORMANCE_MODE_FILE: &str = "performance_mode.txt";
 const VIRTUAL_CONTROLS_FILE: &str = "virtual_controls_v1.txt";
 const VIRTUAL_CONTROLS_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_V1";
+const VIRTUAL_CONTROLS_OPACITY_FILE: &str = "virtual_controls_opacity_v1.txt";
+const VIRTUAL_CONTROLS_OPACITY_MAGIC: &str = "ACERIS_VIRTUAL_CONTROLS_OPACITY_V1";
+const VIRTUAL_CONTROLS_OPACITY_STEPS: [u8; 4] = [255, 204, 153, 102];
 
 /// Missing or malformed settings preserve the default visible-controls state.
 fn load_virtual_controls_visible(settings_directory: &Path) -> bool {
@@ -158,6 +162,24 @@ fn load_virtual_controls_visible(settings_directory: &Path) -> bool {
         (Some("visible=0"), None) => false,
         _ => true,
     }
+}
+
+fn load_virtual_controls_opacity(settings_directory: &Path) -> u8 {
+    let Ok(contents) = fs::read_to_string(settings_directory.join(VIRTUAL_CONTROLS_OPACITY_FILE))
+    else {
+        return 255;
+    };
+    let mut lines = contents.lines();
+    if lines.next() != Some(VIRTUAL_CONTROLS_OPACITY_MAGIC) {
+        return 255;
+    }
+    let Some(value) = lines.next().and_then(|line| line.strip_prefix("opacity=")) else {
+        return 255;
+    };
+    if lines.next().is_some() {
+        return 255;
+    }
+    value.parse::<u8>().unwrap_or(255)
 }
 
 fn load_performance_mode(settings_directory: &Path) -> bool {
@@ -641,6 +663,7 @@ impl Library {
         let favorites = favorite_ids.into_iter().collect();
         let performance_mode = load_performance_mode(&settings_directory);
         let virtual_controls_visible = load_virtual_controls_visible(&settings_directory);
+        let virtual_controls_opacity = load_virtual_controls_opacity(&settings_directory);
         let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
@@ -662,6 +685,7 @@ impl Library {
             touch_keyboard_enabled: false,
             touch_keyboard_open: false,
             virtual_controls_visible,
+            virtual_controls_opacity,
             external_media_playing: false,
             external_media_detection_available: false,
             performance_mode,
@@ -680,6 +704,7 @@ impl Library {
         library.scan_settings_directory = settings_directory.to_path_buf();
         library.performance_mode = load_performance_mode(settings_directory);
         library.virtual_controls_visible = load_virtual_controls_visible(settings_directory);
+        library.virtual_controls_opacity = load_virtual_controls_opacity(settings_directory);
         let preferences = load_library_preferences(settings_directory);
         library.sort_descending = preferences.sort_descending;
         library.view_mode = preferences.view_mode;
@@ -738,6 +763,44 @@ impl Library {
 
     fn toggle_virtual_controls_from_settings(&mut self) {
         if let Err(error) = self.set_virtual_controls_visible(!self.virtual_controls_visible) {
+            self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
+        }
+    }
+
+    /// Current overall opacity of the Android virtual gamepad.
+    pub fn virtual_controls_opacity(&self) -> u8 {
+        self.virtual_controls_opacity
+    }
+
+    /// Opacity formatted as an integer percentage for the settings UI.
+    pub fn virtual_controls_opacity_percent(&self) -> u8 {
+        ((u32::from(self.virtual_controls_opacity) * 100 + 127) / 255) as u8
+    }
+
+    /// Persists the overall virtual-control opacity without changing hit geometry.
+    pub fn set_virtual_controls_opacity(&mut self, opacity: u8) -> std::io::Result<()> {
+        fs::create_dir_all(&self.scan_settings_directory)?;
+        fs::write(
+            self.scan_settings_directory.join(VIRTUAL_CONTROLS_OPACITY_FILE),
+            format!("{VIRTUAL_CONTROLS_OPACITY_MAGIC}\nopacity={opacity}\n"),
+        )?;
+        self.virtual_controls_opacity = opacity;
+        self.status = Some(format!(
+            "OPACIDADE DOS CONTROLES: {}%",
+            self.virtual_controls_opacity_percent()
+        ));
+        Ok(())
+    }
+
+    fn cycle_virtual_controls_opacity_from_settings(&mut self) {
+        let current = self.virtual_controls_opacity;
+        let index = VIRTUAL_CONTROLS_OPACITY_STEPS
+            .iter()
+            .position(|value| *value == current)
+            .unwrap_or(0);
+        let next = VIRTUAL_CONTROLS_OPACITY_STEPS
+            [(index + 1) % VIRTUAL_CONTROLS_OPACITY_STEPS.len()];
+        if let Err(error) = self.set_virtual_controls_opacity(next) {
             self.status = Some(format!("NÃO FOI POSSÍVEL SALVAR A CONFIGURAÇÃO: {error}"));
         }
     }
@@ -1369,6 +1432,7 @@ impl Library {
                 return ClickResult::Ignored;
             }
             if self.page == LibraryPage::Settings {
+                let settings_offset = if self.touch_keyboard_enabled { 48.0 } else { 0.0 };
                 for index in 0..self.scan_config.directories.len().min(3) {
                     let row_top = 300.0 + index as f32 * 32.0;
                     if (row_top..row_top + 28.0).contains(&y) && (334.0..374.0).contains(&x) {
@@ -1386,15 +1450,23 @@ impl Library {
                     } else {
                         self.reload();
                     }
-                } else if (594.0..638.0).contains(&y) && (38.0..362.0).contains(&x) {
+                } else if self.touch_keyboard_enabled
+                    && (594.0..638.0).contains(&y)
+                    && (38.0..362.0).contains(&x)
+                {
+                    self.cycle_virtual_controls_opacity_from_settings();
+                } else if (594.0 + settings_offset..638.0 + settings_offset)
+                    .contains(&y)
+                    && (38.0..362.0).contains(&x)
+                {
                     self.toggle_performance_mode_from_settings();
-                } else if logical_height >= 740.0
-                    && (648.0..690.0).contains(&y)
+                } else if logical_height >= 740.0 + settings_offset
+                    && (648.0 + settings_offset..690.0 + settings_offset).contains(&y)
                     && (38.0..362.0).contains(&x)
                 {
                     self.toggle_view_mode();
-                } else if logical_height >= 740.0
-                    && (692.0..734.0).contains(&y)
+                } else if logical_height >= 740.0 + settings_offset
+                    && (692.0 + settings_offset..734.0 + settings_offset).contains(&y)
                     && (38.0..362.0).contains(&x)
                 {
                     self.toggle_sort_order();
@@ -1513,6 +1585,11 @@ impl Library {
                     && (590.0..970.0).contains(&x)
                 {
                     self.toggle_virtual_controls_from_settings();
+                } else if self.touch_keyboard_enabled
+                    && (474.0..518.0).contains(&y)
+                    && (590.0..970.0).contains(&x)
+                {
+                    self.cycle_virtual_controls_opacity_from_settings();
                 } else if (382.0..422.0).contains(&y) && (590.0..775.0).contains(&x) {
                     self.toggle_view_mode();
                 } else if (382.0..422.0).contains(&y) && (785.0..970.0).contains(&x) {
@@ -1955,13 +2032,14 @@ impl Library {
                 },
                 brand::TEXT,
             );
-            if logical_height >= 640.0 {
+            let settings_offset = if self.touch_keyboard_enabled { 48.0 } else { 0.0 };
+            if logical_height >= 640.0 + settings_offset {
                 responsive_panel(
                     frame,
                     width,
                     height,
                     38.0,
-                    594.0,
+                    594.0 + settings_offset,
                     324.0,
                     44.0,
                     scale,
@@ -1976,7 +2054,7 @@ impl Library {
                     width,
                     height,
                     200.0,
-                    608.0,
+                    608.0 + settings_offset,
                     small_scale,
                     if self.performance_mode {
                         "MODO DESEMPENHO: ATIVADO"
@@ -1986,26 +2064,34 @@ impl Library {
                     brand::TEXT,
                 );
             }
-            if logical_height >= 740.0 {
+            if logical_height >= 740.0 + settings_offset {
                 responsive_text(
                     frame,
                     width,
                     height,
                     38.0,
-                    642.0,
+                    642.0 + settings_offset,
                     small_scale,
                     "PREFERÊNCIAS DA BIBLIOTECA",
                     brand::ACCENT_GREEN_LIGHT,
                 );
                 responsive_panel(
-                    frame, width, height, 38.0, 650.0, 324.0, 38.0, scale, 0x2D1A3B,
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    650.0 + settings_offset,
+                    324.0,
+                    38.0,
+                    scale,
+                    0x2D1A3B,
                 );
                 responsive_text_centered(
                     frame,
                     width,
                     height,
                     200.0,
-                    663.0,
+                    663.0 + settings_offset,
                     small_scale,
                     if self.view_mode == LibraryViewMode::Grid {
                         "GRADE (PAISAGEM)"
@@ -2015,20 +2101,54 @@ impl Library {
                     brand::TEXT,
                 );
                 responsive_panel(
-                    frame, width, height, 38.0, 694.0, 324.0, 38.0, scale, 0x2D1A3B,
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    694.0 + settings_offset,
+                    324.0,
+                    38.0,
+                    scale,
+                    0x2D1A3B,
                 );
                 responsive_text_centered(
                     frame,
                     width,
                     height,
                     200.0,
-                    707.0,
+                    707.0 + settings_offset,
                     small_scale,
                     if self.sort_descending {
                         "ORDEM: Z–A"
                     } else {
                         "ORDEM: A–Z"
                     },
+                    brand::TEXT,
+                );
+            }
+            if self.touch_keyboard_enabled {
+                responsive_panel(
+                    frame,
+                    width,
+                    height,
+                    38.0,
+                    594.0,
+                    324.0,
+                    40.0,
+                    scale,
+                    0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame,
+                    width,
+                    height,
+                    200.0,
+                    607.0,
+                    small_scale,
+                    &format!(
+                        "OPACIDADE DOS CONTROLES: {}%",
+                        self.virtual_controls_opacity_percent()
+                    ),
                     brand::TEXT,
                 );
             }
@@ -3051,7 +3171,7 @@ impl Library {
                     112.0,
                     842.0,
                     if self.touch_keyboard_enabled {
-                        362.0
+                        410.0
                     } else {
                         318.0
                     },
@@ -3378,6 +3498,30 @@ impl Library {
                         } else {
                             "CONTROLES DE TOQUE: OCULTOS"
                         },
+                        brand::TEXT,
+                    );
+                    responsive_panel(
+                        frame,
+                        width,
+                        height,
+                        590.0,
+                        474.0,
+                        380.0,
+                        40.0,
+                        scale,
+                        0x2D1A3B,
+                    );
+                    responsive_text_centered(
+                        frame,
+                        width,
+                        height,
+                        780.0,
+                        487.0,
+                        text_scale,
+                        &format!(
+                            "OPACIDADE DOS CONTROLES: {}%",
+                            self.virtual_controls_opacity_percent()
+                        ),
                         brand::TEXT,
                     );
                 }
