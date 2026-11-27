@@ -921,6 +921,173 @@ fn decode_shared_memory_root(
     Ok((root_length, store, versions))
 }
 
+/// Per-machine catalog that serializes each shared root exactly once.
+///
+/// Address-space mappings, kernel memory-block objects and HLE services retain
+/// a stable slot plus a root-relative view range. Clones/views of the same root
+/// resolve to the same slot, preserving guest-visible aliasing after restore.
+#[derive(Debug, Default)]
+pub(crate) struct SharedMemoryBackingCatalog {
+    slots_by_backing_id: BTreeMap<u64, u32>,
+    roots: Vec<SharedMemoryBacking>,
+}
+
+impl SharedMemoryBackingCatalog {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers a view's root, deduplicating by the shared backing identity.
+    pub(crate) fn register(
+        &mut self,
+        view: &SharedMemoryBacking,
+    ) -> Result<u32, SharedMemoryStateError> {
+        if let Some(slot) = self.slots_by_backing_id.get(&view.backing_id()) {
+            return Ok(*slot);
+        }
+        if self.roots.len() >= MAX_SHARED_BACKING_CATALOG_ENTRIES {
+            return Err(SharedMemoryStateError::TooManyBackings(
+                u32::try_from(self.roots.len() + 1).unwrap_or(u32::MAX),
+            ));
+        }
+        let slot = u32::try_from(self.roots.len())
+            .map_err(|_| SharedMemoryStateError::TooManyBackings(u32::MAX))?;
+        self.roots
+            .try_reserve(1)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        self.roots.push(view.root_view());
+        self.slots_by_backing_id.insert(view.backing_id(), slot);
+        Ok(slot)
+    }
+
+    /// Recreates a bounded view over a catalog root.
+    pub(crate) fn view(
+        &self,
+        slot: u32,
+        offset: usize,
+        length: usize,
+    ) -> Result<SharedMemoryBacking, SharedMemoryStateError> {
+        let root = self
+            .roots
+            .get(slot as usize)
+            .ok_or(SharedMemoryStateError::InvalidBackingSlot(slot))?;
+        root.view_from_root(offset, length)
+            .ok_or(SharedMemoryStateError::InvalidViewRange {
+                slot,
+                offset: offset as u64,
+                length: length as u64,
+            })
+    }
+
+    pub(crate) fn root_count(&self) -> usize {
+        self.roots.len()
+    }
+
+    /// Encodes roots in slot order. Each sparse root is emitted only once.
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, SharedMemoryStateError> {
+        if self.roots.len() > MAX_SHARED_BACKING_CATALOG_ENTRIES {
+            return Err(SharedMemoryStateError::TooManyBackings(
+                self.roots.len() as u32,
+            ));
+        }
+
+        let mut roots = Vec::new();
+        roots
+            .try_reserve_exact(self.roots.len())
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        let mut total_size = SHARED_BACKING_CATALOG_HEADER_SIZE;
+        for root in &self.roots {
+            let snapshot = root.encode_root_save_state()?;
+            total_size = total_size
+                .checked_add(8)
+                .and_then(|size| size.checked_add(snapshot.len()))
+                .ok_or(SharedMemoryStateError::AllocationFailed)?;
+            if total_size > MAX_SHARED_MEMORY_CATALOG_BYTES {
+                return Err(SharedMemoryStateError::AllocationFailed);
+            }
+            roots.push(snapshot);
+        }
+
+        let mut encoded = Vec::new();
+        encoded
+            .try_reserve_exact(total_size)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        encoded.extend_from_slice(SHARED_BACKING_CATALOG_MAGIC);
+        encoded.extend_from_slice(&SHARED_BACKING_CATALOG_VERSION.to_le_bytes());
+        encoded.extend_from_slice(&0u16.to_le_bytes());
+        encoded.extend_from_slice(&(self.roots.len() as u32).to_le_bytes());
+        for root in roots {
+            encoded.extend_from_slice(&(root.len() as u64).to_le_bytes());
+            encoded.extend_from_slice(&root);
+        }
+        debug_assert_eq!(encoded.len(), total_size);
+        Ok(encoded)
+    }
+
+    /// Decodes every root before exposing any slot.
+    pub(crate) fn decode(encoded: &[u8]) -> Result<Self, SharedMemoryStateError> {
+        if encoded.len() > MAX_SHARED_MEMORY_CATALOG_BYTES {
+            return Err(SharedMemoryStateError::AllocationFailed);
+        }
+        if encoded.len() < SHARED_BACKING_CATALOG_HEADER_SIZE {
+            return Err(SharedMemoryStateError::Truncated);
+        }
+        if encoded.get(..8) != Some(SHARED_BACKING_CATALOG_MAGIC.as_slice()) {
+            return Err(SharedMemoryStateError::InvalidMagic);
+        }
+        let version = read_state_u16(encoded, 8)?;
+        if version != SHARED_BACKING_CATALOG_VERSION {
+            return Err(SharedMemoryStateError::UnsupportedVersion(version));
+        }
+        let flags = read_state_u16(encoded, 10)?;
+        if flags != 0 {
+            return Err(SharedMemoryStateError::UnsupportedFlags(flags));
+        }
+        let root_count = read_state_u32(encoded, 12)?;
+        if root_count as usize > MAX_SHARED_BACKING_CATALOG_ENTRIES {
+            return Err(SharedMemoryStateError::TooManyBackings(root_count));
+        }
+
+        let mut roots = Vec::new();
+        roots
+            .try_reserve_exact(root_count as usize)
+            .map_err(|_| SharedMemoryStateError::AllocationFailed)?;
+        let mut slots_by_backing_id = BTreeMap::new();
+        let mut cursor = SHARED_BACKING_CATALOG_HEADER_SIZE;
+        for slot in 0..root_count {
+            let length = read_state_u64(encoded, cursor)?;
+            cursor += 8;
+            let length = usize::try_from(length)
+                .map_err(|_| SharedMemoryStateError::InvalidCatalogEntry)?;
+            let end = cursor
+                .checked_add(length)
+                .ok_or(SharedMemoryStateError::Truncated)?;
+            let root_bytes = encoded
+                .get(cursor..end)
+                .ok_or(SharedMemoryStateError::Truncated)?;
+            let root = SharedMemoryBacking::from_root_save_state(root_bytes)?;
+            if slots_by_backing_id.insert(root.backing_id(), slot).is_some() {
+                return Err(SharedMemoryStateError::InvalidCatalogEntry);
+            }
+            roots.push(root);
+            cursor = end;
+        }
+        if cursor != encoded.len() {
+            return Err(SharedMemoryStateError::TrailingData);
+        }
+        Ok(Self {
+            slots_by_backing_id,
+            roots,
+        })
+    }
+}
+
+const SHARED_BACKING_CATALOG_MAGIC: &[u8; 8] = b"ACSHCATL";
+const SHARED_BACKING_CATALOG_VERSION: u16 = 1;
+const SHARED_BACKING_CATALOG_HEADER_SIZE: usize = 16;
+const MAX_SHARED_BACKING_CATALOG_ENTRIES: usize = 4096;
+const MAX_SHARED_MEMORY_CATALOG_BYTES: usize = 512 * 1024 * 1024;
+
 fn read_state_u16(bytes: &[u8], offset: usize) -> Result<u16, SharedMemoryStateError> {
     let value = bytes
         .get(offset..offset + 2)
@@ -947,6 +1114,60 @@ fn read_state_u64(bytes: &[u8], offset: usize) -> Result<u64, SharedMemoryStateE
 #[cfg(test)]
 mod shared_memory_state_tests {
     use super::*;
+
+    #[test]
+    fn shared_backing_catalog_deduplicates_aliases_and_restores_slots() {
+        let root = SharedMemoryBacking::zeroed(0x8000).unwrap();
+        let first_view = root.view_from_root(0x1000, 0x1000).unwrap();
+        let second_view = root.view_from_root(0x3000, 0x0800).unwrap();
+        root.write_bytes(0x1010, &[1, 2, 3]);
+        root.write_bytes(0x3010, &[4, 5, 6]);
+
+        let mut catalog = SharedMemoryBackingCatalog::new();
+        let root_slot = catalog.register(&root).unwrap();
+        let first_slot = catalog.register(&first_view).unwrap();
+        let second_slot = catalog.register(&second_view).unwrap();
+        assert_eq!(root_slot, first_slot);
+        assert_eq!(root_slot, second_slot);
+        assert_eq!(catalog.root_count(), 1);
+
+        let encoded = catalog.encode().unwrap();
+        let restored = SharedMemoryBackingCatalog::decode(&encoded).unwrap();
+        assert_eq!(restored.root_count(), 1);
+        let restored_first = restored.view(first_slot, 0x1000, 0x1000).unwrap();
+        let restored_second = restored.view(second_slot, 0x3000, 0x0800).unwrap();
+        let mut first_bytes = [0u8; 3];
+        let mut second_bytes = [0u8; 3];
+        restored_first.read_bytes(0x10, &mut first_bytes);
+        restored_second.read_bytes(0x10, &mut second_bytes);
+        assert_eq!(first_bytes, [1, 2, 3]);
+        assert_eq!(second_bytes, [4, 5, 6]);
+        assert!(restored_first.shares_backing_with(&restored_second));
+    }
+
+    #[test]
+    fn shared_backing_catalog_rejects_trailing_data_and_invalid_view_ranges() {
+        let root = SharedMemoryBacking::zeroed(0x2000).unwrap();
+        let mut catalog = SharedMemoryBackingCatalog::new();
+        let slot = catalog.register(&root).unwrap();
+        let encoded = catalog.encode().unwrap();
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert!(matches!(
+            SharedMemoryBackingCatalog::decode(&trailing),
+            Err(SharedMemoryStateError::TrailingData)
+        ));
+
+        let restored = SharedMemoryBackingCatalog::decode(&encoded).unwrap();
+        assert!(matches!(
+            restored.view(slot, 0x1000, 0x2000),
+            Err(SharedMemoryStateError::InvalidViewRange { .. })
+        ));
+        assert!(matches!(
+            restored.view(1, 0, 1),
+            Err(SharedMemoryStateError::InvalidBackingSlot(1))
+        ));
+    }
 
     #[test]
     fn shared_backing_snapshot_restores_sparse_bytes_and_view_aliases() {
