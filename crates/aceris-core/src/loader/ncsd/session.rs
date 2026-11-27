@@ -2825,7 +2825,7 @@ impl Arm11ProcessSession {
                 MEMOP_MAP,
                 source_address,
                 permissions @ (MEMPERM_READ_ONLY | MEMPERM_READ_WRITE),
-            ) => {
+            ) => (|| {
                 // ControlMemory maps an alias of an existing regular-heap range.
                 // Publish source writes before exposing the second virtual view.
                 let backing = self
@@ -2840,29 +2840,28 @@ impl Arm11ProcessSession {
                     .map_shared_memory_region(address, backing, permissions)
                     .map(|()| address)
                     .map_err(dynamic_memory_result_code)
-            }
-            (MEMOP_UNMAP, source_address, MEMPERM_NONE) => {
+            })(),
+            (MEMOP_UNMAP, source_address, MEMPERM_NONE) => (|| {
                 // Require the exact source/destination pair created by MAP.
                 let backing = self
                     .address_space
                     .shared_memory_backing_for_heap_range(source_address, size)
                     .map_err(dynamic_memory_result_code)?;
                 if !self.address_space.shared_mapping_matches(address, &backing) {
-                    Err(RESULT_INVALID_ADDRESS)
-                } else {
-                    // Commit both views and invalidate the source's possibly stale lines.
-                    self.flush_process_data_cache(source_address, size)
-                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
-                    self.drain_write_buffer()
-                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
-                    self.address_space
-                        .unmap_shared_memory_region(address, size)
-                        .map_err(dynamic_memory_result_code)?;
-                    self.invalidate_process_data_cache(source_address, size)
-                        .map_err(|_| RESULT_INVALID_ADDRESS)?;
-                    Ok(address)
+                    return Err(RESULT_INVALID_ADDRESS);
                 }
-            }
+                // Commit both views and invalidate the source's possibly stale lines.
+                self.flush_process_data_cache(source_address, size)
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                self.drain_write_buffer()
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                self.address_space
+                    .unmap_shared_memory_region(address, size)
+                    .map_err(dynamic_memory_result_code)?;
+                self.invalidate_process_data_cache(source_address, size)
+                    .map_err(|_| RESULT_INVALID_ADDRESS)?;
+                Ok(address)
+            })()
             _ => Err(RESULT_INVALID_ENUM),
         };
 
