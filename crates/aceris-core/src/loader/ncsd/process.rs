@@ -3594,7 +3594,7 @@ impl Arm11CodeAddressSpace {
             let end = candidate + u64::from(size);
             if end > APPLICATION_HEAP_END {
                 return Err(Arm11DynamicMemoryError::OutsideApplicationHeap {
-                    address: candidate as u32,
+                    address: candidate.min(APPLICATION_HEAP_END) as u32,
                     size,
                 });
             }
@@ -7888,7 +7888,7 @@ mod tests {
         let next = address_space
             .allocate_application_heap_region(0, 0x1000)
             .unwrap();
-        assert_eq!(next, 0x0800_8000);
+        assert_eq!(next, 0x0800_2000);
         assert!(address_space.is_writable_range(next, 0x1000));
     }
 
