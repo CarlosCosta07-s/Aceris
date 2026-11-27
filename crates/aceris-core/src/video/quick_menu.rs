@@ -268,7 +268,7 @@ pub fn render_confirmation_overlay(
             if is_selected { 245 } else { 230 },
             format,
         );
-        let label_width = labels[index].len() * 4 * text_scale;
+        let label_width = font::text_width(labels[index].chars().count(), text_scale);
         let text_x = row.x + row.width.saturating_sub(label_width) / 2;
         let text_y = row.y + (row.height.saturating_sub(7 * text_scale)) / 2;
         draw_text_for_format(
