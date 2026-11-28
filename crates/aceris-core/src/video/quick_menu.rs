@@ -575,6 +575,7 @@ pub enum GamepadMappingEditorHit {
     Control(usize),
     Target(usize),
     Reset,
+    Capture,
     Close,
 }
 
@@ -584,6 +585,7 @@ struct GamepadMappingEditorGeometry {
     rows: [Rect; GamepadControl::COUNT],
     scope: Rect,
     reset: Rect,
+    capture: Rect,
     close: Rect,
     scale: usize,
 }
@@ -634,10 +636,20 @@ fn gamepad_mapping_editor_geometry(
         width: header_button_width,
         height: 20 * scale,
     };
-    let footer_button_width = (112 * scale).min(panel.width.saturating_sub(24 * scale) / 2);
+    let footer_gap = 3 * scale;
+    let footer_available = panel
+        .width
+        .saturating_sub(horizontal_padding * 2 + footer_gap * 2);
+    let footer_button_width = (88 * scale).min(footer_available / 3);
     let footer_button_height = (18 * scale).min(panel.height.saturating_sub(2 * scale));
     let reset = Rect {
         x: panel.x + horizontal_padding,
+        y: footer_y + 2 * scale,
+        width: footer_button_width,
+        height: footer_button_height,
+    };
+    let capture = Rect {
+        x: reset.x + footer_button_width + footer_gap,
         y: footer_y + 2 * scale,
         width: footer_button_width,
         height: footer_button_height,
@@ -656,6 +668,7 @@ fn gamepad_mapping_editor_geometry(
         rows,
         scope,
         reset,
+        capture,
         close,
         scale,
     })
@@ -683,6 +696,9 @@ pub fn hit_test_gamepad_mapping_editor(
     if inside(geometry.reset) {
         return Some(GamepadMappingEditorHit::Reset);
     }
+    if inside(geometry.capture) {
+        return Some(GamepadMappingEditorHit::Capture);
+    }
     if inside(geometry.close) {
         return Some(GamepadMappingEditorHit::Close);
     }
@@ -708,6 +724,7 @@ pub fn render_gamepad_mapping_editor(
     mapping: &GamepadMapping,
     selected: usize,
     scope_label: &str,
+    capturing: bool,
 ) -> bool {
     let Some(geometry) = gamepad_mapping_editor_geometry(width, height) else {
         return false;
@@ -736,7 +753,11 @@ pub fn render_gamepad_mapping_editor(
         geometry.panel.x + 12 * scale,
         geometry.panel.y + 10 * scale,
         text_scale,
-        "MAPEAMENTO FISICO",
+        if capturing {
+            "AGUARDANDO BOTAO"
+        } else {
+            "MAPEAMENTO FISICO"
+        },
         [245, 238, 248],
         format,
     );
@@ -832,7 +853,14 @@ pub fn render_gamepad_mapping_editor(
         );
     }
 
-    for (rect, label) in [(geometry.reset, "PADRAO"), (geometry.close, "VOLTAR")] {
+    for (rect, label) in [
+        (geometry.reset, "PADRAO"),
+        (
+            geometry.capture,
+            if capturing { "CANCELAR" } else { "CAPTURAR" },
+        ),
+        (geometry.close, "VOLTAR"),
+    ] {
         blend_rect(frame, width as usize, rect, [54, 36, 70], 245, format);
         let label_width = font::text_width(label.chars().count(), scale);
         draw_text_for_format(
@@ -1275,6 +1303,7 @@ mod tests {
                 &GamepadMapping::default(),
                 0,
                 "ESCOPO: GLOBAL",
+                false,
             ));
             let first = geometry.rows[0];
             assert_eq!(
@@ -1312,6 +1341,15 @@ mod tests {
                     (geometry.reset.y + 1) as i32,
                 ),
                 Some(GamepadMappingEditorHit::Reset)
+            );
+            assert_eq!(
+                hit_test_gamepad_mapping_editor(
+                    width,
+                    height,
+                    (geometry.capture.x + 1) as i32,
+                    (geometry.capture.y + 1) as i32,
+                ),
+                Some(GamepadMappingEditorHit::Capture)
             );
             assert_eq!(
                 hit_test_gamepad_mapping_editor(

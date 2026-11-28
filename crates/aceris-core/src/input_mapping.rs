@@ -249,6 +249,19 @@ impl GamepadMapping {
         self.targets[control as usize] = target;
     }
 
+    /// Assigns a destination to a captured physical control and frees that
+    /// destination from any other source to keep mappings one-to-one.
+    pub fn assign_target_uniquely(&mut self, control: GamepadControl, target: Option<PadButton>) {
+        if let Some(target) = target {
+            for other in GamepadControl::ALL {
+                if other != control && self.target(other) == Some(target) {
+                    self.set_target(other, None);
+                }
+            }
+        }
+        self.set_target(control, target);
+    }
+
     /// Cycles a control's destination through disabled and all supported 3DS buttons.
     pub fn cycle_target(&mut self, control: GamepadControl, direction: i8) {
         if direction == 0 {
@@ -459,6 +472,17 @@ mod tests {
             GamepadMapping::from_config_str(&mapping.to_config_string()),
             Some(mapping)
         );
+    }
+
+    #[test]
+    fn assigning_captured_control_moves_the_selected_destination_uniquely() {
+        let mut mapping = GamepadMapping::default();
+        mapping.assign_target_uniquely(GamepadControl::East, Some(PadButton::A));
+        assert_eq!(mapping.target(GamepadControl::South), None);
+        assert_eq!(mapping.target(GamepadControl::East), Some(PadButton::A));
+        mapping.assign_target_uniquely(GamepadControl::North, None);
+        assert_eq!(mapping.target(GamepadControl::East), Some(PadButton::A));
+        assert_eq!(mapping.target(GamepadControl::North), None);
     }
 
     #[test]

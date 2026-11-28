@@ -803,8 +803,12 @@ fn emulate(
                 window::WindowEvent::CloseRequested => return Ok(Flow::Quit),
                 window::WindowEvent::Key(window::Key::Escape) => {
                     if gamepad_mapping_editor_open {
-                        gamepad_mapping_editor_open = false;
-                        gamepad.reload_effective_mapping();
+                        if gamepad.mapping_capture_active() {
+                            gamepad.cancel_mapping_capture();
+                        } else {
+                            gamepad_mapping_editor_open = false;
+                            gamepad.reload_effective_mapping();
+                        }
                     } else if pending_confirmation.take().is_some() {
                         confirmation_selected = 0;
                     } else if menu_open {
@@ -825,14 +829,17 @@ fn emulate(
                         performance.reset_after_pause();
                     }
                 }
-                window::WindowEvent::Key(window::Key::Up) if gamepad_mapping_editor_open => {
+                window::WindowEvent::Key(window::Key::Up)
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
                     gamepad_mapping_selected = gamepad_mapping_selected.saturating_sub(1);
                 }
-                window::WindowEvent::Key(window::Key::Down) if gamepad_mapping_editor_open => {
+                window::WindowEvent::Key(window::Key::Down)
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
                     gamepad_mapping_selected = (gamepad_mapping_selected + 1)
                         .min(aceris_core::input_mapping::GamepadControl::COUNT - 1);
                 }
-                window::WindowEvent::Key(window::Key::Left) if gamepad_mapping_editor_open => {
+                window::WindowEvent::Key(window::Key::Left)
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
                     let mut mapping = *gamepad.mapping();
                     let control =
                         aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
@@ -843,7 +850,8 @@ fn emulate(
                         eprintln!("could not save gamepad mapping: {error}");
                     }
                 }
-                window::WindowEvent::Key(window::Key::Right) if gamepad_mapping_editor_open => {
+                window::WindowEvent::Key(window::Key::Right)
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
                     let mut mapping = *gamepad.mapping();
                     let control =
                         aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
@@ -854,7 +862,8 @@ fn emulate(
                         eprintln!("could not save gamepad mapping: {error}");
                     }
                 }
-                window::WindowEvent::Key(window::Key::Enter) if gamepad_mapping_editor_open => {
+                window::WindowEvent::Key(window::Key::Enter)
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
                     gamepad_mapping_game_scope =
                         !gamepad_mapping_game_scope && system.game_identity().is_some();
                     let mapping = if gamepad_mapping_game_scope {
@@ -864,7 +873,8 @@ fn emulate(
                     };
                     gamepad.set_mapping_for_editor(mapping);
                 }
-                window::WindowEvent::Key(window::Key::Backspace) if gamepad_mapping_editor_open => {
+                window::WindowEvent::Key(window::Key::Backspace)
+                    if gamepad_mapping_editor_open && !gamepad.mapping_capture_active() => {
                     if let Err(error) = gamepad.save_mapping_for_editor(
                         aceris_core::input_mapping::GamepadMapping::default(),
                         gamepad_mapping_game_scope,
@@ -980,6 +990,7 @@ fn emulate(
                         }
                         8 => {
                             gamepad_mapping_editor_open = true;
+                            gamepad.cancel_mapping_capture();
                             gamepad_mapping_selected = 0;
                             gamepad_mapping_game_scope = system.game_identity().is_some();
                             let mapping = if gamepad_mapping_game_scope {
@@ -1024,6 +1035,7 @@ fn emulate(
                         y,
                     ) {
                         Some(quick_menu::GamepadMappingEditorHit::Scope) => {
+                            gamepad.cancel_mapping_capture();
                             gamepad_mapping_game_scope =
                                 !gamepad_mapping_game_scope && system.game_identity().is_some();
                             let mapping = if gamepad_mapping_game_scope {
@@ -1047,7 +1059,22 @@ fn emulate(
                                 eprintln!("could not save gamepad mapping: {error}");
                             }
                         }
+                        Some(quick_menu::GamepadMappingEditorHit::Capture) => {
+                            if gamepad.mapping_capture_active() {
+                                gamepad.cancel_mapping_capture();
+                            } else {
+                                let selected_control =
+                                    aceris_core::input_mapping::GamepadControl::ALL
+                                        [gamepad_mapping_selected];
+                                if gamepad.mapping().target(selected_control).is_some() {
+                                    gamepad.start_mapping_capture();
+                                } else {
+                                    quick_menu_notice = Some("SELECIONE UM BOTAO 3DS");
+                                }
+                            }
+                        }
                         Some(quick_menu::GamepadMappingEditorHit::Reset) => {
+                            gamepad.cancel_mapping_capture();
                             if let Err(error) = gamepad.save_mapping_for_editor(
                                 aceris_core::input_mapping::GamepadMapping::default(),
                                 gamepad_mapping_game_scope,
@@ -1056,6 +1083,7 @@ fn emulate(
                             }
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Close) => {
+                            gamepad.cancel_mapping_capture();
                             gamepad_mapping_editor_open = false;
                             gamepad.reload_effective_mapping();
                         }
@@ -1186,6 +1214,27 @@ fn emulate(
                 _ => {}
             }
         }
+        if gamepad_mapping_editor_open {
+            if let Some(captured_control) = gamepad.poll_mapping_capture() {
+                let selected_control =
+                    aceris_core::input_mapping::GamepadControl::ALL[gamepad_mapping_selected];
+                if let Some(target) = gamepad.mapping().target(selected_control) {
+                    let mut mapping = *gamepad.mapping();
+                    mapping.assign_target_uniquely(captured_control, Some(target));
+                    match gamepad.save_mapping_for_editor(mapping, gamepad_mapping_game_scope) {
+                        Ok(()) => {
+                            gamepad_mapping_selected = captured_control as usize;
+                            quick_menu_notice = Some("BOTAO CAPTURADO");
+                        }
+                        Err(error) => eprintln!("could not save captured gamepad mapping: {error}"),
+                    }
+                } else {
+                    quick_menu_notice = Some("SELECIONE UM BOTAO 3DS");
+                }
+            }
+        } else {
+            let _ = gamepad.poll_mapping_capture();
+        }
         let mut emulation_elapsed = Duration::ZERO;
         let mut audio_elapsed = Duration::ZERO;
         if !menu_open {
@@ -1285,6 +1334,7 @@ fn emulate(
                     } else {
                         "ESCOPO: GLOBAL"
                     },
+                    gamepad.mapping_capture_active(),
                 ),
                 None => quick_menu::render_desktop_overlay_with_profile(
                     &mut frame,

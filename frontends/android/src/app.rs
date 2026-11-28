@@ -63,6 +63,7 @@ pub struct App {
     confirmation_selected: usize,
     controls_editor: bool,
     gamepad_mapping_editor: bool,
+    gamepad_mapping_capture: bool,
     gamepad_mapping_selected: usize,
     gamepad_mapping_game_scope: bool,
     diagnostics_visible: bool,
@@ -111,6 +112,7 @@ impl App {
             confirmation_selected: 0,
             controls_editor: false,
             gamepad_mapping_editor: false,
+            gamepad_mapping_capture: false,
             gamepad_mapping_selected: 0,
             gamepad_mapping_game_scope: false,
             diagnostics_visible: false,
@@ -220,6 +222,24 @@ impl App {
 
     /// Applies analog triggers through the currently selected physical-button mapping.
     pub fn set_gamepad_triggers(&mut self, left: f32, right: f32) -> bool {
+        if matches!(self.screen, Screen::Game)
+            && self.gamepad_mapping_editor
+            && self.gamepad_mapping_capture
+        {
+            let left_pressed = gamepad_trigger_control_mask(left, 0.0) != 0;
+            let right_pressed = gamepad_trigger_control_mask(0.0, right) != 0;
+            if left_pressed || right_pressed {
+                let control = if left_pressed && right_pressed && right > left {
+                    GamepadControl::RightTrigger
+                } else if left_pressed {
+                    GamepadControl::LeftTrigger
+                } else {
+                    GamepadControl::RightTrigger
+                };
+                self.capture_gamepad_mapping_control(control);
+            }
+            return true;
+        }
         if !matches!(self.screen, Screen::Game)
             || self.controls_editor
             || self.gamepad_mapping_editor
@@ -234,6 +254,17 @@ impl App {
     /// Handles a key event whose Android input source is a physical gamepad.
     /// Menu navigation retains standard Android button meanings; gameplay uses profiles.
     pub fn gamepad_key(&mut self, android_keycode: i32, pressed: bool) -> bool {
+        if matches!(self.screen, Screen::Game)
+            && self.gamepad_mapping_editor
+            && self.gamepad_mapping_capture
+        {
+            if pressed {
+                if let Some(control) = gamepad_control_from_android_keycode(android_keycode) {
+                    self.capture_gamepad_mapping_control(control);
+                }
+            }
+            return true;
+        }
         if !matches!(self.screen, Screen::Game)
             || self.controls_editor
             || self.gamepad_mapping_editor
@@ -279,6 +310,9 @@ impl App {
                 match self.screen {
                     Screen::Library if self.library.search_is_focused() => {
                         self.library.cancel_text_entry();
+                    }
+                    Screen::Game if self.gamepad_mapping_editor && self.gamepad_mapping_capture => {
+                        self.cancel_gamepad_mapping_capture();
                     }
                     Screen::Game if self.gamepad_mapping_editor => {
                         self.finish_gamepad_mapping_editor()
@@ -327,6 +361,7 @@ impl App {
                 pad::LEFT => self.cycle_gamepad_mapping_target(-1),
                 pad::RIGHT | pad::A | pad::START => self.cycle_gamepad_mapping_target(1),
                 pad::X => self.toggle_gamepad_mapping_scope(),
+                pad::Y => self.start_gamepad_mapping_capture(),
                 pad::B => self.finish_gamepad_mapping_editor(),
                 _ => {}
             },
@@ -573,6 +608,7 @@ impl App {
                     &self.gamepad_mapping,
                     self.gamepad_mapping_selected,
                     scope_label,
+                    self.gamepad_mapping_capture,
                 );
             }
             return;
@@ -1010,6 +1046,7 @@ impl App {
         self.controls_editor = false;
         self.control_drag = None;
         self.control_resize = None;
+        self.gamepad_mapping_capture = false;
         self.gamepad_mapping_selected = 0;
         self.gamepad_mapping_game_scope = self
             .system
@@ -1028,6 +1065,37 @@ impl App {
             system.input_mut().reset();
         }
         self.screen = Screen::Game;
+    }
+
+    fn start_gamepad_mapping_capture(&mut self) {
+        let selected_control = GamepadControl::ALL[self.gamepad_mapping_selected];
+        if self.gamepad_mapping.target(selected_control).is_none() {
+            self.library
+                .set_status("SELECIONE UM DESTINO 3DS ANTES DE CAPTURAR");
+            return;
+        }
+        self.gamepad_mapping_capture = true;
+        self.library.set_status("PRESSIONE UM BOTAO NO CONTROLE");
+    }
+
+    fn cancel_gamepad_mapping_capture(&mut self) {
+        self.gamepad_mapping_capture = false;
+        self.library.set_status("CAPTURA CANCELADA");
+    }
+
+    fn capture_gamepad_mapping_control(&mut self, captured_control: GamepadControl) {
+        let selected_control = GamepadControl::ALL[self.gamepad_mapping_selected];
+        let Some(target) = self.gamepad_mapping.target(selected_control) else {
+            self.cancel_gamepad_mapping_capture();
+            self.library
+                .set_status("SELECIONE UM DESTINO 3DS ANTES DE CAPTURAR");
+            return;
+        };
+        self.gamepad_mapping
+            .assign_target_uniquely(captured_control, Some(target));
+        self.gamepad_mapping_selected = captured_control as usize;
+        self.gamepad_mapping_capture = false;
+        self.save_gamepad_mapping_editor();
     }
 
     fn load_gamepad_mapping_editor_scope(&mut self) {
@@ -1104,6 +1172,7 @@ impl App {
 
     fn finish_gamepad_mapping_editor(&mut self) {
         self.gamepad_mapping_editor = false;
+        self.gamepad_mapping_capture = false;
         self.gamepad_mapping = GamepadMapping::load_for_context(
             &self.games_dir.join(".aceris"),
             None,
@@ -1143,6 +1212,7 @@ impl App {
             y.round() as i32,
         ) {
             Some(quick_menu::GamepadMappingEditorHit::Scope) => {
+                self.cancel_gamepad_mapping_capture();
                 self.toggle_gamepad_mapping_scope();
             }
             Some(quick_menu::GamepadMappingEditorHit::Control(index)) => {
@@ -1153,7 +1223,15 @@ impl App {
                 self.cycle_gamepad_mapping_target(1);
             }
             Some(quick_menu::GamepadMappingEditorHit::Reset) => {
+                self.cancel_gamepad_mapping_capture();
                 self.reset_gamepad_mapping_editor();
+            }
+            Some(quick_menu::GamepadMappingEditorHit::Capture) => {
+                if self.gamepad_mapping_capture {
+                    self.cancel_gamepad_mapping_capture();
+                } else {
+                    self.start_gamepad_mapping_capture();
+                }
             }
             Some(quick_menu::GamepadMappingEditorHit::Close) => {
                 self.finish_gamepad_mapping_editor();
@@ -1527,6 +1605,32 @@ fn write_screenshot_rgba8(
 #[cfg(test)]
 mod screenshot_tests {
     use super::*;
+
+    #[test]
+    fn physical_gamepad_capture_moves_selected_destination_to_pressed_button() {
+        let directory =
+            std::env::temp_dir().join(format!("aceris-gamepad-capture-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let mut app = App::new(&directory);
+        app.system = Some(System::new());
+        app.begin_gamepad_mapping_editor();
+        app.start_gamepad_mapping_capture();
+        assert!(app.gamepad_mapping_capture);
+        assert!(app.gamepad_key(97, true));
+        assert!(!app.gamepad_mapping_capture);
+        assert_eq!(app.gamepad_mapping_selected, GamepadControl::East as usize);
+        assert_eq!(app.gamepad_mapping.target(GamepadControl::South), None);
+        assert_eq!(
+            app.gamepad_mapping.target(GamepadControl::East),
+            Some(aceris_core::input_mapping::PadButton::A)
+        );
+        let saved = GamepadMapping::load_global(&directory.join(".aceris"));
+        assert_eq!(
+            saved.target(GamepadControl::East),
+            Some(aceris_core::input_mapping::PadButton::A)
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn physical_gamepad_editor_saves_global_mapping_and_restores_effective_mapping() {

@@ -8,7 +8,7 @@ use aceris_core::{
     input::{CIRCLE_PAD_LIMIT, InputState},
     input_mapping::{GamepadControl, GamepadMapping},
 };
-use gilrs::{Axis, Button, GamepadId, Gilrs};
+use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
 use std::path::{Path, PathBuf};
 
 use crate::window::KeyboardInput;
@@ -20,6 +20,7 @@ pub(crate) struct GamepadManager {
     settings_directory: PathBuf,
     game_identity: Option<GameIdentity>,
     mapping: GamepadMapping,
+    mapping_capture_active: bool,
 }
 
 impl GamepadManager {
@@ -38,6 +39,7 @@ impl GamepadManager {
             settings_directory: settings_directory.to_path_buf(),
             game_identity,
             mapping: GamepadMapping::load_for_context(settings_directory, None, game_identity),
+            mapping_capture_active: false,
         }
     }
 
@@ -49,6 +51,7 @@ impl GamepadManager {
         input: &mut InputState,
         deadzone_percent: u8,
     ) {
+        let _ = self.poll_mapping_capture();
         let (gamepad_buttons, gamepad_axes) = self.read_active_gamepad(deadzone_percent);
         input.set_buttons(keyboard.button_mask() | gamepad_buttons);
 
@@ -68,6 +71,43 @@ impl GamepadManager {
 
     pub(crate) fn mapping(&self) -> &GamepadMapping {
         &self.mapping
+    }
+
+    pub(crate) fn start_mapping_capture(&mut self) {
+        self.mapping_capture_active = true;
+    }
+
+    pub(crate) fn cancel_mapping_capture(&mut self) {
+        self.mapping_capture_active = false;
+    }
+
+    pub(crate) fn mapping_capture_active(&self) -> bool {
+        self.mapping_capture_active
+    }
+
+    /// Drains GilRs events and returns the first supported button pressed while capture is armed.
+    pub(crate) fn poll_mapping_capture(&mut self) -> Option<GamepadControl> {
+        let capture_active = self.mapping_capture_active;
+        let active_gamepad = self.active_gamepad;
+        let gilrs = self.gilrs.as_mut()?;
+        let mut captured = None;
+        while let Some(event) = gilrs.next_event() {
+            if !capture_active
+                || active_gamepad.is_some_and(|active| event.id != active)
+            {
+                continue;
+            }
+            if let EventType::ButtonPressed(button, _) = event.event {
+                if let Some(control) = gamepad_control_from_gilrs_button(button) {
+                    captured = Some(control);
+                    break;
+                }
+            }
+        }
+        if captured.is_some() {
+            self.mapping_capture_active = false;
+        }
+        captured
     }
 
     pub(crate) fn set_mapping_for_editor(&mut self, mapping: GamepadMapping) {
@@ -117,9 +157,6 @@ impl GamepadManager {
             self.active_gamepad = None;
             return (0, (0, 0));
         };
-
-        // Drain the OS event queue so GilRs updates its cached button/axis state.
-        while gilrs.next_event().is_some() {}
 
         let active = self
             .active_gamepad
@@ -178,6 +215,26 @@ fn gilrs_button(control: GamepadControl) -> Button {
         GamepadControl::Start => Button::Start,
         GamepadControl::Select => Button::Select,
     }
+}
+
+fn gamepad_control_from_gilrs_button(button: Button) -> Option<GamepadControl> {
+    Some(match button {
+        Button::South => GamepadControl::South,
+        Button::East => GamepadControl::East,
+        Button::North => GamepadControl::North,
+        Button::West => GamepadControl::West,
+        Button::DPadUp => GamepadControl::DPadUp,
+        Button::DPadDown => GamepadControl::DPadDown,
+        Button::DPadLeft => GamepadControl::DPadLeft,
+        Button::DPadRight => GamepadControl::DPadRight,
+        Button::LeftTrigger => GamepadControl::LeftShoulder,
+        Button::RightTrigger => GamepadControl::RightShoulder,
+        Button::LeftTrigger2 => GamepadControl::LeftTrigger,
+        Button::RightTrigger2 => GamepadControl::RightTrigger,
+        Button::Start => GamepadControl::Start,
+        Button::Select => GamepadControl::Select,
+        _ => return None,
+    })
 }
 
 fn button_mask(gamepad: &gilrs::Gamepad<'_>, mapping: &GamepadMapping) -> u32 {
