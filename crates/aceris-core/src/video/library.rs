@@ -11784,6 +11784,56 @@ mod tests {
     }
 
     #[test]
+    fn console_settings_uses_shared_sidebar_and_keeps_categories_interactive() {
+        let root = std::env::temp_dir().join(format!(
+            "aceris-console-settings-shell-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let mut library = Library::new(Vec::new(), root.display().to_string());
+        library.select_page(LibraryPage::Settings);
+
+        let frame = library.render_responsive(1000, 600);
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * 1000 + x) * 4;
+            &frame[offset..offset + 3]
+        };
+        let settings_y = ui::home::sidebar_item_center_y(4, 600.0) as usize;
+        assert_eq!(pixel(8, 8), &brand::rgb(brand::SURFACE_HEADER));
+        assert_ne!(pixel(90, 8), &brand::rgb(brand::SURFACE_BASE));
+        assert_eq!(pixel(38, settings_y), &brand::rgb(brand::ACCENT_RED));
+
+        // The console rail routes to the Games section and back to Settings.
+        let games_y = ui::home::sidebar_item_center_y(1, 600.0) as i32;
+        assert_eq!(
+            library.click_responsive(38, games_y, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Games);
+        assert_eq!(
+            library.click_responsive(38, settings_y as i32, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Settings);
+
+        // The relocated section tabs and controls still activate the original actions.
+        assert_eq!(
+            library.click_responsive(420, 150, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.settings_section, SettingsSection::Performance);
+        let previous_mode = library.performance_mode();
+        assert_eq!(
+            library.click_responsive(200, 280, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_ne!(library.performance_mode(), previous_mode);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn settings_categories_switch_by_touch_and_horizontal_navigation() {
         let root =
             std::env::temp_dir().join(format!("aceris-settings-sections-{}", std::process::id()));
