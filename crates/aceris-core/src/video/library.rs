@@ -6229,7 +6229,10 @@ mod tests {
 
     #[test]
     fn landscape_home_dock_navigates_to_console_pages() {
-        let dir = std::env::temp_dir().join(format!("aceris-landscape-dock-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-landscape-dock-{}",
+            std::process::id()
+        ));
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
 
