@@ -450,12 +450,7 @@ impl GamepadAxisSettings {
     }
 
     /// Applies axis inversion and sensitivity before converting to guest input.
-    pub fn apply_to_circle_pad(
-        &self,
-        x: f32,
-        y: f32,
-        deadzone_percent: u8,
-    ) -> (i16, i16) {
+    pub fn apply_to_circle_pad(&self, x: f32, y: f32, deadzone_percent: u8) -> (i16, i16) {
         let x = if self.invert_x { -x } else { x };
         let y = if self.invert_y { -y } else { y };
         crate::input::gamepad_axes_to_circle_pad_with_sensitivity(
@@ -513,13 +508,16 @@ impl GamepadAxisSettings {
         device_uuid: Option<[u8; 16]>,
         game_identity: Option<GameIdentity>,
     ) -> Self {
-        let global = load_axis_profile(&settings_directory.join(AXIS_GLOBAL_FILE))
-            .unwrap_or_default();
+        let global =
+            load_axis_profile(&settings_directory.join(AXIS_GLOBAL_FILE)).unwrap_or_default();
         let device = device_uuid
             .filter(|uuid| !is_zero_uuid(uuid))
-            .and_then(|uuid| load_axis_profile(&axis_device_profile_path(settings_directory, uuid)));
-        let game = game_identity
-            .and_then(|identity| load_axis_profile(&axis_game_profile_path(settings_directory, identity)));
+            .and_then(|uuid| {
+                load_axis_profile(&axis_device_profile_path(settings_directory, uuid))
+            });
+        let game = game_identity.and_then(|identity| {
+            load_axis_profile(&axis_game_profile_path(settings_directory, identity))
+        });
         game.or(device).unwrap_or(global)
     }
 
@@ -527,10 +525,7 @@ impl GamepadAxisSettings {
         load_axis_profile(&settings_directory.join(AXIS_GLOBAL_FILE)).unwrap_or_default()
     }
 
-    pub fn load_for_game_or_global(
-        settings_directory: &Path,
-        identity: GameIdentity,
-    ) -> Self {
+    pub fn load_for_game_or_global(settings_directory: &Path, identity: GameIdentity) -> Self {
         load_axis_profile(&axis_game_profile_path(settings_directory, identity))
             .unwrap_or_else(|| Self::load_global(settings_directory))
     }
@@ -550,7 +545,10 @@ impl GamepadAxisSettings {
                 "a zero controller UUID cannot identify an axis profile",
             ));
         }
-        save_axis_profile(&axis_device_profile_path(settings_directory, device_uuid), self)
+        save_axis_profile(
+            &axis_device_profile_path(settings_directory, device_uuid),
+            self,
+        )
     }
 
     pub fn save_for_game(
@@ -771,10 +769,7 @@ mod tests {
         assert!(baseline.0 > 0);
 
         normal.set_invert_x(true);
-        assert_eq!(
-            normal.apply_to_circle_pad(0.5, 0.0, 16).0,
-            -baseline.0
-        );
+        assert_eq!(normal.apply_to_circle_pad(0.5, 0.0, 16).0, -baseline.0);
 
         normal.set_invert_x(false);
         normal.set_sensitivity_percent(50);
@@ -806,7 +801,8 @@ mod tests {
 
         assert!(GamepadAxisSettings::load_for_context(&root, None, None).invert_x());
         assert!(GamepadAxisSettings::load_for_context(&root, Some(device_uuid), None).invert_y());
-        let active = GamepadAxisSettings::load_for_context(&root, Some(device_uuid), Some(identity));
+        let active =
+            GamepadAxisSettings::load_for_context(&root, Some(device_uuid), Some(identity));
         assert_eq!(active.sensitivity_percent(), 150);
         assert!(!active.invert_x());
         assert!(!active.invert_y());

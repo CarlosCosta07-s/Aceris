@@ -217,7 +217,8 @@ impl App {
             return false;
         };
         let (circle_x, circle_y) =
-            self.gamepad_axis_settings.apply_to_circle_pad(x, -y, deadzone_percent);
+            self.gamepad_axis_settings
+                .apply_to_circle_pad(x, -y, deadzone_percent);
         system
             .input_mut()
             .set_circle_pad(i32::from(circle_x), i32::from(circle_y));
@@ -1442,11 +1443,8 @@ impl App {
             Ok(_) => {
                 let game_identity = system.game_identity();
                 let settings_directory = self.games_dir.join(".aceris");
-                self.gamepad_mapping = GamepadMapping::load_for_context(
-                    &settings_directory,
-                    None,
-                    game_identity,
-                );
+                self.gamepad_mapping =
+                    GamepadMapping::load_for_context(&settings_directory, None, game_identity);
                 self.gamepad_axis_settings =
                     GamepadAxisSettings::load_for_context(&settings_directory, None, game_identity);
                 self.library.set_active_game_identity(game_identity);
