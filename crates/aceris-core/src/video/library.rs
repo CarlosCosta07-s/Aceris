@@ -2688,6 +2688,7 @@ impl Library {
                             return ClickResult::Selected;
                         }
                     }
+                }
                 ClickResult::Ignored
             }
             LibraryPage::Settings => {
