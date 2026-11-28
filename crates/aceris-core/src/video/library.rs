@@ -7283,7 +7283,8 @@ mod tests {
             let offset = (y * width + x) * 4;
             [frame[offset], frame[offset + 1], frame[offset + 2]]
         };
-        assert_eq!(pixel(51, 20), brand::rgb(brand::SURFACE_SHADOW));
+        assert_eq!(pixel(50, 20), brand::rgb(brand::SURFACE_SHADOW));
+        assert_eq!(pixel(51, 20), [0, 0, 0]);
         assert_eq!(pixel(10, 10), [0, 0, 0]);
         assert_eq!(pixel(10, 20), brand::rgb(brand::BORDER));
         assert_eq!(pixel(15, 15), brand::rgb(brand::SURFACE_PANEL));
