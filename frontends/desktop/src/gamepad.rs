@@ -140,7 +140,11 @@ fn axis_to_circle_pad(value: f32) -> i16 {
         return 0;
     }
     let normalized = (magnitude - STICK_DEADZONE) / (1.0 - STICK_DEADZONE);
-    let sign = if clamped.is_sign_negative() { -1.0 } else { 1.0 };
+    let sign = if clamped.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
+    };
     (normalized * sign * f32::from(CIRCLE_PAD_LIMIT)).round() as i16
 }
 
