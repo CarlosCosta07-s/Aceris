@@ -6565,10 +6565,13 @@ mod tests {
         let mut frame = vec![0u8; width as usize * height as usize * 4];
         responsive_text(&mut frame, width, height, 10.0, 10.0, 2, "A", 0xE5173F);
 
-        // Portrait UI scale is 2: the first lit pixel in the 5x7 A glyph
-        // must appear at logical (11, 10) transformed to physical (22, 20).
+        // Portrait UI scale is 2: the exposed top-left corner at logical
+        // (11, 10) is antialiased at physical (22, 20), while its inner stroke
+        // at physical (24, 20) retains the requested text color.
         let scaled = (20usize * width as usize + 22) * 4;
-        assert_eq!(&frame[scaled..scaled + 3], &[0xE5, 0x17, 0x3F]);
+        assert!(frame[scaled] > 0 && frame[scaled] < 0xE5);
+        let solid = (20usize * width as usize + 24) * 4;
+        assert_eq!(&frame[solid..solid + 3], &[0xE5, 0x17, 0x3F]);
 
         let unscaled = (10usize * width as usize + 11) * 4;
         assert_eq!(&frame[unscaled..unscaled + 3], &[0, 0, 0]);
