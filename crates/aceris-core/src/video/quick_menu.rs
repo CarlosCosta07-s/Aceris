@@ -4,7 +4,7 @@ use super::font;
 use crate::input_mapping::{GamepadAxisSettings, GamepadControl, GamepadMapping, PadButton};
 use aceris_common::brand;
 
-pub const ACTION_COUNT: usize = 12;
+pub const ACTION_COUNT: usize = 13;
 /// Stable index for the Android-only virtual control editor action.
 pub const ACTION_EDIT_CONTROLS: usize = 8;
 /// Stable index for the screenshot action shared by desktop and Android.
@@ -13,6 +13,8 @@ pub const ACTION_CAPTURE_SCREENSHOT: usize = 9;
 pub const ACTION_DIAGNOSTICS: usize = 10;
 /// Opens the physical gamepad mapping editor on desktop and Android.
 pub const ACTION_EDIT_GAMEPAD_MAPPING: usize = 11;
+/// Android turbo (alternate speed) action; its label shows the current speed.
+pub const ACTION_TURBO: usize = 12;
 /// Number of actions exposed by the desktop quick menu.
 pub const DESKTOP_ACTION_COUNT: usize = 9;
 
@@ -1357,6 +1359,7 @@ pub fn render_desktop_overlay_with_profile(
         DESKTOP_ACTION_COUNT,
         "CAPTURAR TELA",
         "DIAGNÓSTICO",
+        "TURBO",
     )
 }
 
@@ -1393,6 +1396,33 @@ pub fn render_overlay_with_control_profiles(
     control_reset_label: &str,
     control_scope_label: &str,
 ) -> bool {
+    render_overlay_with_control_profiles_and_turbo(
+        frame,
+        width,
+        height,
+        format,
+        selected,
+        profile_label,
+        control_reset_label,
+        control_scope_label,
+        "TURBO",
+    )
+}
+
+/// Android menu including the turbo row, whose label shows the current speed
+/// (for example `TURBO: 200%`).
+#[allow(clippy::too_many_arguments)]
+pub fn render_overlay_with_control_profiles_and_turbo(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    selected: usize,
+    profile_label: &str,
+    control_reset_label: &str,
+    control_scope_label: &str,
+    turbo_label: &str,
+) -> bool {
     render_overlay_with_action_count(
         frame,
         width,
@@ -1403,6 +1433,7 @@ pub fn render_overlay_with_control_profiles(
         ACTION_COUNT,
         control_reset_label,
         control_scope_label,
+        turbo_label,
     )
 }
 
@@ -1416,6 +1447,7 @@ fn render_overlay_with_action_count(
     action_count: usize,
     control_reset_label: &str,
     control_scope_label: &str,
+    turbo_label: &str,
 ) -> bool {
     let Some(geometry) = geometry(width, height, action_count) else {
         return false;
@@ -1442,6 +1474,7 @@ fn render_overlay_with_action_count(
         "CAPTURAR TELA",
         "DIAGNÓSTICO",
         "MAPEAR CONTROLE",
+        turbo_label,
     ];
     let row_text_scale = menu_row_text_scale(
         &geometry,
@@ -2362,6 +2395,7 @@ mod tests {
                 "CAPTURAR TELA",
                 "DIAGNÓSTICO",
                 "MAPEAR CONTROLE",
+                "TURBO: DESLIGADO",
             ];
             assert_eq!(
                 menu_row_text_scale(

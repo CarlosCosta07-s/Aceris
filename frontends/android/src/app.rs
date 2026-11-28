@@ -98,6 +98,10 @@ pub enum StorageAccess {
 
 /// Persisted answers for the storage prompt (`key=1` lines).
 const STORAGE_ACCESS_FILE: &str = "android_storage_access_v1.txt";
+/// Turbo speeds offered by the in-game menu, cycled in order (0 = off).
+const TURBO_STEPS: [u16; 4] = [0, 200, 300, 400];
+/// Time a tick may spend on extra turbo frames before presenting.
+const TURBO_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(12);
 const STORAGE_PROMPT_DISMISSED_KEY: &str = "prompt_dismissed";
 const SHARED_GAMES_FOLDER_ADDED_KEY: &str = "shared_folder_added";
 
@@ -168,6 +172,8 @@ pub struct App {
     /// Open the folder entry once access is granted (the user asked to import).
     storage_then_add_folder: bool,
     storage_prompt_selected: usize,
+    /// Fast-forward speed in percent; 0 means off. Reset on every launch.
+    turbo_percent: u16,
 }
 
 impl App {
@@ -222,6 +228,7 @@ impl App {
             storage_prompt_dismissed: storage_flag(games_dir, STORAGE_PROMPT_DISMISSED_KEY),
             storage_then_add_folder: false,
             storage_prompt_selected: 1,
+            turbo_percent: 0,
         }
     }
 
@@ -725,7 +732,8 @@ impl App {
             (true, VirtualControlEditScope::Game) => "PADRÃO GLOBAL",
             (false, _) => "GLOBAL (SEM ID)",
         };
-        let _ = quick_menu::render_overlay_with_control_profiles(
+        let turbo_label = self.turbo_label();
+        let _ = quick_menu::render_overlay_with_control_profiles_and_turbo(
             output,
             self.width,
             self.height,
@@ -734,6 +742,7 @@ impl App {
             profile_label,
             restore_label,
             scope_label,
+            &turbo_label,
         );
     }
 
@@ -862,7 +871,28 @@ impl App {
                 .render_responsive_into(self.width, self.height, output);
             return;
         };
-        if let Err(error) = system.run_frame() {
+        let tick_started = Instant::now();
+        let frames = turbo_frame_count(self.turbo_percent);
+        let mut failure = None;
+        for frame in 0..frames {
+            // Extra turbo frames only run while the tick still has budget, so
+            // a core slower than real time never makes the UI less responsive.
+            if frame > 0 && tick_started.elapsed() >= TURBO_FRAME_BUDGET {
+                break;
+            }
+            if let Err(error) = system.run_frame() {
+                failure = Some(error.to_string());
+                break;
+            }
+            let keep = self.audio.len();
+            system.take_audio_samples(&mut self.audio);
+            if frame > 0 {
+                // Audio from fast-forwarded frames is dropped so latency
+                // does not build up while turbo is on.
+                self.audio.truncate(keep);
+            }
+        }
+        if let Some(error) = failure {
             let message = format!("Execução interrompida: {error}");
             let diagnostic = self.game_diagnostic();
             self.leave_game();
@@ -875,7 +905,6 @@ impl App {
                 .render_responsive_into(self.width, self.height, output);
             return;
         }
-        system.take_audio_samples(&mut self.audio);
         let system = self.system.as_ref().expect("system exists while in game");
         let layout = self.game_layout();
         if !compose_game_into(system.display(), &layout, self.width, self.height, output) {
@@ -898,8 +927,43 @@ impl App {
                 );
             }
         }
+        if self.turbo_percent > 0 {
+            self.render_turbo_indicator(output);
+        }
         let _ =
             quick_menu::render_menu_button(output, self.width, self.height, MenuPixelFormat::Rgba8);
+    }
+
+    fn render_turbo_indicator(&self, output: &mut [u8]) {
+        let (width, height) = (self.width as usize, self.height as usize);
+        if output.len() != width * height * 4 {
+            return;
+        }
+        let scale = (width.min(height) / 360).max(1);
+        let text = format!("TURBO {}%", self.turbo_percent);
+        aceris_core::video::font::draw_text(
+            output,
+            width,
+            height,
+            (10 * scale) as i32,
+            (10 * scale) as i32,
+            scale,
+            &text,
+            [255, 214, 92],
+        );
+    }
+
+    fn cycle_turbo(&mut self) {
+        self.turbo_percent = next_turbo_percent(self.turbo_percent);
+        self.resume_game();
+    }
+
+    fn turbo_label(&self) -> String {
+        if self.turbo_percent == 0 {
+            "TURBO: DESLIGADO".to_owned()
+        } else {
+            format!("TURBO: {}%", self.turbo_percent)
+        }
     }
 
     fn held_mask(&self) -> u32 {
@@ -1680,6 +1744,7 @@ impl App {
             quick_menu::ACTION_EDIT_CONTROLS => self.begin_control_editor(),
             quick_menu::ACTION_CAPTURE_SCREENSHOT => self.capture_screenshot(),
             quick_menu::ACTION_EDIT_GAMEPAD_MAPPING => self.begin_gamepad_mapping_editor(),
+            quick_menu::ACTION_TURBO => self.cycle_turbo(),
             quick_menu::ACTION_DIAGNOSTICS => {
                 self.diagnostics_visible = !self.diagnostics_visible;
                 self.resume_game();
@@ -2014,6 +2079,7 @@ impl App {
                 self.gamepad_button_mask = 0;
                 self.gamepad_trigger_axis_mask = 0;
                 self.quick_menu_selected = 0;
+                self.turbo_percent = 0;
                 self.screen = Screen::Game;
                 self.apply_game_input();
             }
@@ -2352,6 +2418,18 @@ mod gamepad_axis_tests {
         );
         assert_ne!(gamepad_axes_to_circle_pad(0.12, 0.12, 16), (0, 0));
     }
+}
+
+fn next_turbo_percent(current: u16) -> u16 {
+    let index = TURBO_STEPS
+        .iter()
+        .position(|&step| step == current)
+        .unwrap_or(0);
+    TURBO_STEPS[(index + 1) % TURBO_STEPS.len()]
+}
+
+fn turbo_frame_count(percent: u16) -> usize {
+    usize::from(percent / 100).max(1)
 }
 
 fn storage_flag(games_dir: &Path, key: &str) -> bool {
@@ -2702,6 +2780,36 @@ mod tests {
         app.set_storage_access(true, None);
         assert_eq!(*app.screen(), Screen::Library);
         assert!(app.library.search_is_focused(), "path entry is open");
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn turbo_cycles_through_speeds_and_back_to_off() {
+        assert_eq!(next_turbo_percent(0), 200);
+        assert_eq!(next_turbo_percent(200), 300);
+        assert_eq!(next_turbo_percent(300), 400);
+        assert_eq!(next_turbo_percent(400), 0);
+        assert_eq!(next_turbo_percent(150), 200);
+        assert_eq!(turbo_frame_count(0), 1);
+        assert_eq!(turbo_frame_count(200), 2);
+        assert_eq!(turbo_frame_count(400), 4);
+    }
+
+    #[test]
+    fn turbo_menu_item_updates_label_and_indicator() {
+        let (mut app, dir) = app_with_games(0);
+        app.resize(400, 800);
+        assert_eq!(app.turbo_label(), "TURBO: DESLIGADO");
+        app.quick_menu_selected = quick_menu::ACTION_TURBO;
+        app.activate_game_menu_action();
+        assert_eq!(app.turbo_percent, 200);
+        assert_eq!(app.turbo_label(), "TURBO: 200%");
+
+        let original = [0u8, 0, 0, 255].repeat(400 * 800);
+        let mut frame = original.clone();
+        app.render_turbo_indicator(&mut frame);
+        assert_ne!(frame, original);
+
         fs::remove_dir_all(dir).ok();
     }
 
