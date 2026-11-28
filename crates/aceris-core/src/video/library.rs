@@ -5618,16 +5618,28 @@ mod tests {
         assert!(!library.performance_mode());
         library.select_page(LibraryPage::Settings);
 
-        // Landscape 1000x600 logical surface: the toggle sits in the right column.
-        library.click_responsive(780, 318, 1000, 600);
+        // Landscape 1000x600: performance and deadzone have separate hit targets.
+        library.click_responsive(682, 318, 1000, 600);
         assert!(library.performance_mode());
         assert!(Library::from_scan_settings(&settings, &root).performance_mode());
+        library.click_responsive(877, 318, 1000, 600);
+        assert_eq!(library.gamepad_deadzone_percent(), 20);
+        assert_eq!(
+            Library::from_scan_settings(&settings, &root).gamepad_deadzone_percent(),
+            20
+        );
         assert_eq!(library.render_responsive(1000, 600).len(), 1000 * 600 * 4);
 
-        // Portrait 400x800: the toggle sits below "ATUALIZAR BIBLIOTECA".
-        library.click_responsive(200, 616, 400, 800);
+        // Portrait 400x800: both controls move below "ATUALIZAR BIBLIOTECA".
+        library.click_responsive(117, 616, 400, 800);
         assert!(!library.performance_mode());
         assert!(!Library::from_scan_settings(&settings, &root).performance_mode());
+        library.click_responsive(283, 616, 400, 800);
+        assert_eq!(library.gamepad_deadzone_percent(), 24);
+        assert_eq!(
+            Library::from_scan_settings(&settings, &root).gamepad_deadzone_percent(),
+            24
+        );
         assert_eq!(library.render_responsive(400, 800).len(), 400 * 800 * 4);
         let _ = fs::remove_dir_all(&root);
     }
