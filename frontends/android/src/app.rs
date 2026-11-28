@@ -63,6 +63,7 @@ pub struct App {
     controls_editor: bool,
     diagnostics_visible: bool,
     performance_summary: Option<String>,
+    quick_menu_notice: Option<&'static str>,
     control_drag: Option<(i32, u32)>,
     control_resize: Option<(i32, i32, u32, f32, u8, u32)>,
     layout_preferences: ScreenLayoutPreferences,
@@ -101,6 +102,7 @@ impl App {
             controls_editor: false,
             diagnostics_visible: false,
             performance_summary: None,
+            quick_menu_notice: None,
             control_drag: None,
             control_resize: None,
             layout_preferences,
@@ -411,12 +413,15 @@ impl App {
             self.height,
         );
         let control_override = self.library.game_has_control_override();
-        let profile_label = match (screen_override, control_override) {
+        let inherited_profile_label = match (screen_override, control_override) {
             (true, true) => "TELAS: JOGO | CONTROLES: JOGO",
             (true, false) => "TELAS: JOGO | CONTROLES: GLOBAL",
             (false, true) => "TELAS: GLOBAL | CONTROLES: JOGO",
             (false, false) => "TELAS: GLOBAL | CONTROLES: GLOBAL",
         };
+        let profile_label = self
+            .quick_menu_notice
+            .unwrap_or(inherited_profile_label);
         let restore_label =
             if self.library.virtual_control_edit_scope() == VirtualControlEditScope::Game {
                 "RESTAURAR PERFIL"
@@ -958,6 +963,7 @@ impl App {
         }
         self.quick_menu_selected = 0;
         self.confirmation_selected = 0;
+        self.quick_menu_notice = None;
         self.screen = Screen::GameMenu;
     }
 
@@ -1023,12 +1029,16 @@ impl App {
 
         let directory = self.games_dir.join(".aceris").join("screenshots");
         match write_screenshot_rgba8(&directory, self.width, self.height, &frame) {
-            Ok(path) => self
-                .library
-                .set_status(format!("CAPTURA SALVA: {}", path.display())),
-            Err(error) => self
-                .library
-                .set_status(format!("NÃO FOI POSSÍVEL SALVAR A CAPTURA: {error}")),
+            Ok(path) => {
+                self.quick_menu_notice = Some("CAPTURA SALVA");
+                self.library
+                    .set_status(format!("CAPTURA SALVA: {}", path.display()));
+            }
+            Err(error) => {
+                self.quick_menu_notice = Some("ERRO AO CAPTURAR");
+                self.library
+                    .set_status(format!("NÃO FOI POSSÍVEL SALVAR A CAPTURA: {error}"));
+            }
         }
     }
 
