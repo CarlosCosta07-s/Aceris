@@ -1262,6 +1262,7 @@ fn emulate(
                             }
                         }
                         Some(quick_menu::GamepadMappingEditorHit::Axes) => {
+                            gamepad.cancel_mapping_capture();
                             gamepad_axis_editor_open = true;
                             let settings = if gamepad_mapping_game_scope {
                                 gamepad.load_game_axis_settings_for_editor()

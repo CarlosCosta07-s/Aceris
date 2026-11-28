@@ -871,7 +871,7 @@ pub fn render_gamepad_mapping_editor(
             geometry.capture,
             if capturing { "CANCELAR" } else { "CAPTURAR" },
         ),
-        (geometry.axes, "ANALOGICO"),
+        (geometry.axes, "EIXOS"),
         (geometry.close, "VOLTAR"),
     ] {
         blend_rect(frame, width as usize, rect, [54, 36, 70], 245, format);
@@ -1061,7 +1061,7 @@ pub fn render_gamepad_axis_editor(
         geometry.panel.x + 12 * scale,
         geometry.panel.y + 10 * scale,
         text_scale,
-        "AJUSTES DO ANALOGICO",
+        "ANALOGICO",
         [245, 238, 248],
         format,
     );

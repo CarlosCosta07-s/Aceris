@@ -1372,6 +1372,7 @@ impl App {
                 self.reset_gamepad_mapping_editor();
             }
             Some(quick_menu::GamepadMappingEditorHit::Axes) => {
+                self.cancel_gamepad_mapping_capture();
                 self.gamepad_axis_editor = true;
                 self.load_gamepad_axis_settings_editor_scope();
             }
@@ -1808,6 +1809,28 @@ mod screenshot_tests {
             saved.target(GamepadControl::South),
             Some(aceris_core::input_mapping::PadButton::B)
         );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn physical_gamepad_axis_editor_persists_global_inversion_and_sensitivity() {
+        let directory =
+            std::env::temp_dir().join(format!("aceris-axis-editor-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        let mut app = App::new(&directory);
+        app.system = Some(System::new());
+        app.begin_gamepad_mapping_editor();
+        app.gamepad_axis_editor = true;
+        app.toggle_gamepad_axis_invert_x();
+        app.toggle_gamepad_axis_invert_y();
+        app.adjust_gamepad_axis_sensitivity(20);
+
+        let saved = GamepadAxisSettings::load_global(&directory.join(".aceris"));
+        assert!(saved.invert_x());
+        assert!(saved.invert_y());
+        assert_eq!(saved.sensitivity_percent(), 120);
+
+        app.finish_gamepad_mapping_editor();
         let _ = fs::remove_dir_all(directory);
     }
 
