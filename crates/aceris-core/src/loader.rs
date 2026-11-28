@@ -9,6 +9,8 @@ use std::{fs::File, io::Read, path::Path};
 
 pub mod cia;
 pub mod ncsd;
+/// Parser and RGB565 icon decoder for 3DS SMDH title metadata.
+pub mod smdh;
 /// Structural parser for 3DSX homebrew executables.
 pub mod threedsx;
 

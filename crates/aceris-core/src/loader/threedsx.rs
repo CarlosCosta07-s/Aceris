@@ -5,6 +5,7 @@
 //! process-memory layout. It does not create an ARM11 session or claim that a
 //! homebrew executable can yet be launched by the emulator.
 
+use crate::loader::smdh::{Smdh, SMDH_FILE_SIZE};
 use std::io::{self, Read, Seek, SeekFrom};
 
 /// 3DSX-specific process layout and initial memory materialization.
@@ -299,6 +300,39 @@ impl ThreeDsxImage {
             relocations,
             trailing_data_offset_bytes: relocation_cursor,
         })
+    }
+
+    /// Reads and parses the optional SMDH block declared by the extended header.
+    ///
+    /// The 3DSX parser has already validated that the declared metadata range
+    /// is inside the file and does not overlap executable or relocation data.
+    /// SMDH blocks smaller than the standard fixed structure are rejected.
+    pub fn read_smdh<R: Read + Seek>(&self, reader: &mut R) -> io::Result<Option<Smdh>> {
+        let Some(extended) = self.extended_header else {
+            return Ok(None);
+        };
+        if extended.smdh_size_bytes == 0 {
+            return Ok(None);
+        }
+        if u64::from(extended.smdh_size_bytes) < SMDH_FILE_SIZE as u64 {
+            return Err(invalid_data(
+                "3DSX SMDH section is smaller than the standard SMDH structure",
+            ));
+        }
+
+        let offset = u64::from(extended.smdh_offset_bytes);
+        let actual = reader.seek(SeekFrom::Start(offset))?;
+        if actual != offset {
+            return Err(invalid_data(
+                "reader did not seek to the declared 3DSX SMDH offset",
+            ));
+        }
+
+        let mut bytes = vec![0; SMDH_FILE_SIZE];
+        reader.read_exact(&mut bytes)?;
+        Smdh::parse(&bytes)
+            .map(Some)
+            .map_err(|error| invalid_data(format!("invalid 3DSX SMDH metadata: {error}")))
     }
 
     /// Expands relocation skip/patch runs into word indices for all three segments.
@@ -976,6 +1010,78 @@ mod tests {
                 smdh_size_bytes: 4,
                 romfs_offset_bytes: 92,
             })
+        );
+    }
+
+    #[test]
+    fn reads_embedded_smdh_metadata_and_icon_from_extended_3dsx() {
+        let smdh_offset = 88u32;
+        let mut image = minimal_image(
+            EXTENDED_HEADER_SIZE as u16,
+            Some((smdh_offset, SMDH_FILE_SIZE as u32, 0)),
+        );
+        let mut smdh = vec![0u8; SMDH_FILE_SIZE];
+        smdh[..4].copy_from_slice(b"SMDH");
+        smdh[0x04..0x06].copy_from_slice(&1u16.to_le_bytes());
+        let title_offset = 0x08 + 0x200;
+        for (index, unit) in "Aceris homebrew".encode_utf16().enumerate() {
+            smdh[title_offset + index * 2..title_offset + index * 2 + 2]
+                .copy_from_slice(&unit.to_le_bytes());
+        }
+        image.extend_from_slice(&smdh);
+
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+        let metadata = parsed
+            .read_smdh(&mut Cursor::new(&image))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(metadata.version, 1);
+        assert_eq!(
+            metadata.first_available_title().unwrap().short_description,
+            "Aceris homebrew"
+        );
+        assert_eq!((metadata.large_icon.width, metadata.large_icon.height), (48, 48));
+        assert_eq!(metadata.large_icon.pixels_rgba8.len(), 48 * 48 * 4);
+    }
+
+    #[test]
+    fn returns_none_when_3dsx_has_no_smdh_section() {
+        let image = minimal_image(HEADER_SIZE as u16, None);
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&image)).unwrap();
+
+        assert!(parsed
+            .read_smdh(&mut Cursor::new(&image))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn rejects_short_or_malformed_embedded_smdh_data() {
+        let mut short_image =
+            minimal_image(EXTENDED_HEADER_SIZE as u16, Some((88, 4, 0)));
+        short_image.extend_from_slice(&[0; 4]);
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&short_image)).unwrap();
+        assert_eq!(
+            parsed
+                .read_smdh(&mut Cursor::new(&short_image))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let mut invalid_image = minimal_image(
+            EXTENDED_HEADER_SIZE as u16,
+            Some((88, SMDH_FILE_SIZE as u32, 0)),
+        );
+        invalid_image.resize(88 + SMDH_FILE_SIZE, 0);
+        let parsed = ThreeDsxImage::parse_reader(&mut Cursor::new(&invalid_image)).unwrap();
+        assert_eq!(
+            parsed
+                .read_smdh(&mut Cursor::new(&invalid_image))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
         );
     }
 

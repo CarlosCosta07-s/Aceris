@@ -77,6 +77,14 @@ Referências:
 
 ### 6.2 3DSX e imagens de título
 
+O parser SMDH do Aceris foi implementado de forma independente em Rust. Ele valida o magic e o tamanho fixo, lê os 16 registros UTF-16, expõe os campos de região/flags e converte os ícones RGB565 24×24 e 48×48 em RGBA8, desfazendo o tiling 8×8 em ordem Morton. O leitor 3DSX usa os offsets já validados do cabeçalho estendido para recuperar esse bloco opcional. Nesta etapa, a extração ainda não foi conectada ao cache visual da biblioteca; o parser não prova que todos os títulos usam RGB565 e não tenta adivinhar formatos de ícone não suportados.
+
+A especificação pública consultada descreve SMDH como um bloco de 0x36C0 bytes, com 16 registros de título de 0x200 bytes, configuração em 0x2008 e ícones a partir de 0x2040. Os ícones padrão RGB565 são organizados em tiles 8×8, com pixels em ordem Morton e tiles em ordem de linha. O Aceris implementa somente esse formato observado e mantém os textos no índice original de idioma, sem presumir que um índice não confirmado corresponda ao idioma do sistema operacional.
+
+- [SMDH — 3dbrew](https://www.3dbrew.org/wiki/SMDH) — formato, estrutura dos registros e ícones, consultado em 28/11/2026.
+- [Format:SMDH — ReverseEngineering.wiki](https://reverseengineering.wiki/index.php/Format%3ASMDH) — tamanho e distribuição dos registros e campos de configuração, consultado em 28/11/2026.
+- [Format:ExeFS (3DS) — ReverseEngineering.wiki](https://reverseengineering.wiki/index.php/Format%3AExeFS_%283DS%29) — contexto do arquivo icon dentro do ExeFS, consultado em 28/11/2026.
+
 O 3DSX tem cabeçalho, segmentos Code/ROData/Data, tabelas de relocation e, opcionalmente, metadados SMDH/RomFS. O carregador precisa validar limites e relocations antes de instalar mapeamentos. Para títulos comerciais, NCCH/CXI descreve o contêiner executável, enquanto CIA e NCSD/CCI são camadas de empacotamento distintas. Hashes, flags de criptografia, extended header, ExeFS e descompressão precisam ser tratados como etapas separadas e verificáveis.
 
 Referências:
