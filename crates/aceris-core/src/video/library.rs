@@ -4798,10 +4798,10 @@ impl Library {
                     brand::TEXT,
                 );
             }
-            responsive_fill(
+            responsive_panel(
                 frame,
-                width as usize,
-                height as usize,
+                width,
+                height,
                 20.0,
                 436.0,
                 924.0,
@@ -4810,13 +4810,13 @@ impl Library {
                 brand::SURFACE_HEADER,
             );
             let dock_items = [
-                (LibraryPage::Recent, "R", "RECENTES"),
-                (LibraryPage::Games, "J", "JOGOS"),
-                (LibraryPage::Favorites, "F", "FAVORITOS"),
-                (LibraryPage::Homebrew, "H", "HOMEBREW"),
-                (LibraryPage::Settings, "A", "AJUSTES"),
+                (LibraryPage::Recent, "RECENTES"),
+                (LibraryPage::Games, "JOGOS"),
+                (LibraryPage::Favorites, "FAVORITOS"),
+                (LibraryPage::Homebrew, "HOMEBREW"),
+                (LibraryPage::Settings, "AJUSTES"),
             ];
-            for (slot, (page, symbol, label)) in dock_items.into_iter().enumerate() {
+            for (slot, (page, label)) in dock_items.into_iter().enumerate() {
                 let x = 28.0 + slot as f32 * 184.0;
                 let selected = self.page == page;
                 let focused = self.home_focus == HomeFocus::Navigation
@@ -4849,37 +4849,12 @@ impl Library {
                         brand::SURFACE_CARD
                     },
                 );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    x + 12.0,
-                    453.0,
-                    30.0,
-                    30.0,
-                    scale,
-                    if selected {
-                        brand::ACCENT_RED
-                    } else {
-                        brand::SURFACE_BUTTON
-                    },
-                );
                 responsive_text_centered(
                     frame,
                     width,
                     height,
-                    x + 27.0,
+                    x + 88.0,
                     462.0,
-                    small_scale,
-                    symbol,
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    x + 54.0,
-                    464.0,
                     small_scale,
                     label,
                     if selected {
@@ -4888,7 +4863,7 @@ impl Library {
                         brand::TEXT_MUTED
                     },
                 );
-                if focused {
+                if selected || focused {
                     responsive_fill(
                         frame,
                         width as usize,
@@ -4898,7 +4873,11 @@ impl Library {
                         80.0,
                         2.0,
                         scale,
-                        brand::ACCENT_RED_LIGHT,
+                        if focused {
+                            brand::ACCENT_RED_LIGHT
+                        } else {
+                            brand::ACCENT_RED
+                        },
                     );
                 }
             }
