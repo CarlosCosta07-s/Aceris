@@ -139,6 +139,8 @@ const MOTION_ACTION_CANCEL: i32 = 3;
 const MOTION_ACTION_POINTER_UP: i32 = 6;
 const INPUT_SOURCE_CLASS_MASK: u32 = 0x0000_00FF;
 const INPUT_SOURCE_CLASS_JOYSTICK: u32 = 0x0000_0010;
+const INPUT_SOURCE_GAMEPAD: u32 = 0x0000_0401;
+const INPUT_SOURCE_DPAD: u32 = 0x0000_0201;
 const MOTION_AXIS_X: i32 = 0;
 const MOTION_AXIS_Y: i32 = 1;
 const MOTION_AXIS_LTRIGGER: i32 = 17;
@@ -969,16 +971,22 @@ fn drain_input(queue: Raw, app: &mut App, pointer_scratch: &mut Vec<Pointer>) {
 /// `event` must be a live key event.
 unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
     // SAFETY: caller guarantees a key event.
-    let (action, code, unicode) = unsafe {
+    let (source, action, code, unicode) = unsafe {
         (
+            AInputEvent_getSource(event as *const c_void) as u32,
             AKeyEvent_getAction(event),
             AKeyEvent_getKeyCode(event),
             AKeyEvent_getUnicodeChar(event),
         )
     };
+    let gamepad_source = is_gamepad_key_source(source);
     match action {
         KEY_ACTION_DOWN => {
-            let mut handled = app.key(code, true);
+            let mut handled = if gamepad_source {
+                app.gamepad_key(code, true)
+            } else {
+                app.key(code, true)
+            };
             if unicode > 0
                 && let Some(character) = char::from_u32(unicode as u32)
                 && !character.is_control()
@@ -987,9 +995,16 @@ unsafe fn handle_key(event: *mut c_void, app: &mut App) -> bool {
             }
             handled
         }
-        KEY_ACTION_UP => app.key(code, false),
+        KEY_ACTION_UP => {
+            if gamepad_source { app.gamepad_key(code, false) } else { app.key(code, false) }
+        },
         _ => false,
     }
+}
+
+fn is_gamepad_key_source(source: u32) -> bool {
+    source & INPUT_SOURCE_GAMEPAD == INPUT_SOURCE_GAMEPAD
+        || source & INPUT_SOURCE_DPAD == INPUT_SOURCE_DPAD
 }
 
 fn is_joystick_source(source: u32) -> bool {

@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aceris_core::input::{
     CIRCLE_PAD_LIMIT, pad, pad_from_frontend_buttons, touch_from_surface_point,
 };
+use aceris_core::input_mapping::{GamepadControl, GamepadMapping};
 use aceris_core::video::frontend::{
     self, ORIENTATION_AUTO, ScreenLayout, ScreenLayoutMode, ScreenRect, compute_screen_layout,
     compute_screen_layout_for_mode,
@@ -72,12 +73,14 @@ pub struct App {
     width: u32,
     height: u32,
     pointers: BTreeMap<i32, (f32, f32)>,
-    /// Buttons held through hardware keys (gamepad, D-pad, volume keys).
+    /// Buttons held through keyboard keys and the virtual touchscreen overlay.
     key_mask: u32,
-    /// Digital ZL/ZR buttons reported as Android L2/R2 key events.
-    gamepad_extra_key_mask: u32,
-    /// ZL/ZR state derived from Android's analog trigger axes.
-    gamepad_trigger_axis_mask: u32,
+    /// Digital physical gamepad controls currently held.
+    gamepad_button_mask: u16,
+    /// L2/R2 state derived from Android's analog trigger axes.
+    gamepad_trigger_axis_mask: u16,
+    /// Effective global/per-title physical gamepad mapping.
+    gamepad_mapping: GamepadMapping,
     /// Library tap that was pressed and awaits release (taps act on release).
     library_tap: Option<(i32, i32)>,
     /// Interleaved stereo samples (32728 Hz) mixed since the last [`App::take_audio`].
@@ -116,8 +119,9 @@ impl App {
             height: 0,
             pointers: BTreeMap::new(),
             key_mask: 0,
-            gamepad_extra_key_mask: 0,
+            gamepad_button_mask: 0,
             gamepad_trigger_axis_mask: 0,
+            gamepad_mapping: GamepadMapping::default(),
             library_tap: None,
             audio: Vec::new(),
             intro_buffer: Vec::new(),
@@ -204,12 +208,30 @@ impl App {
         true
     }
 
-    /// Applies the left and right analog trigger axes as digital 3DS ZL/ZR buttons.
+    /// Applies analog triggers through the currently selected physical-button mapping.
     pub fn set_gamepad_triggers(&mut self, left: f32, right: f32) -> bool {
         if !matches!(self.screen, Screen::Game) || self.controls_editor {
             return false;
         }
-        self.gamepad_trigger_axis_mask = gamepad_trigger_mask(left, right);
+        self.gamepad_trigger_axis_mask = gamepad_trigger_control_mask(left, right);
+        self.apply_game_input();
+        true
+    }
+
+    /// Handles a key event whose Android input source is a physical gamepad.
+    /// Menu navigation retains standard Android button meanings; gameplay uses profiles.
+    pub fn gamepad_key(&mut self, android_keycode: i32, pressed: bool) -> bool {
+        if !matches!(self.screen, Screen::Game) || self.controls_editor {
+            return self.key(android_keycode, pressed);
+        }
+        let Some(control) = gamepad_control_from_android_keycode(android_keycode) else {
+            return false;
+        };
+        if pressed {
+            self.gamepad_button_mask |= control.bit();
+        } else {
+            self.gamepad_button_mask &= !control.bit();
+        }
         self.apply_game_input();
         true
     }
@@ -266,17 +288,6 @@ impl App {
                 }
                 _ => {}
             }
-        }
-        if let Some(bit) = extra_pad_from_android_keycode(android_keycode) {
-            if matches!(self.screen, Screen::Game) && !self.controls_editor {
-                if pressed {
-                    self.gamepad_extra_key_mask |= bit;
-                } else {
-                    self.gamepad_extra_key_mask &= !bit;
-                }
-                self.apply_game_input();
-            }
-            return true;
         }
         let Some(bit) = pad_from_android_keycode(android_keycode) else {
             return false;
@@ -729,12 +740,11 @@ impl App {
         let Some(system) = self.system.as_mut() else {
             return;
         };
-        let input = system.input_mut();
-        input.set_buttons(
-            aceris_core::input::pad_from_frontend_buttons(mask)
-                | self.gamepad_extra_key_mask
-                | self.gamepad_trigger_axis_mask,
+        let physical_mask = self.gamepad_mapping.mask_for_held_controls(
+            self.gamepad_button_mask | self.gamepad_trigger_axis_mask,
         );
+        let input = system.input_mut();
+        input.set_buttons(aceris_core::input::pad_from_frontend_buttons(mask) | physical_mask);
         match touch {
             Some((x, y)) => input.touch(i32::from(x), i32::from(y)),
             None => input.touch_end(),
@@ -919,7 +929,9 @@ impl App {
         self.controls_editor = false;
         self.pointers.clear();
         self.key_mask = 0;
-        self.gamepad_extra_key_mask = 0;
+        self.gamepad_button_mask = 0;
+        self.gamepad_trigger_axis_mask = 0;
+        self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
         if let Some(system) = self.system.as_mut() {
             system.input_mut().reset();
@@ -983,7 +995,9 @@ impl App {
             return;
         }
         self.key_mask = 0;
-        self.gamepad_extra_key_mask = 0;
+        self.gamepad_button_mask = 0;
+        self.gamepad_trigger_axis_mask = 0;
+        self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
         self.controls_editor = false;
         self.control_drag = None;
@@ -1007,7 +1021,9 @@ impl App {
             return;
         }
         self.key_mask = 0;
-        self.gamepad_extra_key_mask = 0;
+        self.gamepad_button_mask = 0;
+        self.gamepad_trigger_axis_mask = 0;
+        self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
         self.controls_editor = false;
         self.control_drag = None;
@@ -1119,11 +1135,18 @@ impl App {
         system.set_storage_root(self.games_dir.join("saves").join(save_name));
         match system.load_executable_file(&path) {
             Ok(_) => {
-                self.library
-                    .set_active_game_identity(system.game_identity());
+                let game_identity = system.game_identity();
+                self.gamepad_mapping = GamepadMapping::load_for_context(
+                    &self.games_dir.join(".aceris"),
+                    None,
+                    game_identity,
+                );
+                self.library.set_active_game_identity(game_identity);
                 self.system = Some(system);
                 self.key_mask = 0;
-                self.gamepad_extra_key_mask = 0;
+                self.gamepad_button_mask = 0;
+                self.gamepad_trigger_axis_mask = 0;
+                self.gamepad_button_mask = 0;
                 self.gamepad_trigger_axis_mask = 0;
                 self.pointers.clear();
                 self.menu_tap = None;
@@ -1205,13 +1228,20 @@ impl App {
         self.active_image_identity = None;
         match load_executable_file_with_identity(&mut system, &path) {
             Ok(loaded) => {
+                self.gamepad_mapping = GamepadMapping::load_for_context(
+                    &self.games_dir.join(".aceris"),
+                    None,
+                    loaded.game_identity,
+                );
                 self.library.set_active_game_identity(loaded.game_identity);
                 self.library.mark_launched(&path);
                 self.active_image_identity = Some(loaded);
                 self.system = Some(system);
                 self.current_game_path = Some(path);
                 self.key_mask = 0;
-                self.gamepad_extra_key_mask = 0;
+                self.gamepad_button_mask = 0;
+                self.gamepad_trigger_axis_mask = 0;
+                self.gamepad_button_mask = 0;
                 self.gamepad_trigger_axis_mask = 0;
                 self.quick_menu_selected = 0;
                 self.screen = Screen::Game;
@@ -1242,7 +1272,9 @@ impl App {
         self.current_game_path = None;
         self.audio.clear();
         self.key_mask = 0;
-        self.gamepad_extra_key_mask = 0;
+        self.gamepad_button_mask = 0;
+        self.gamepad_trigger_axis_mask = 0;
+        self.gamepad_button_mask = 0;
         self.gamepad_trigger_axis_mask = 0;
         self.pointers.clear();
         self.menu_tap = None;
@@ -1302,13 +1334,24 @@ const AKEYCODE_DEL: i32 = 67;
 const AKEYCODE_BUTTON_L2: i32 = 104;
 const AKEYCODE_BUTTON_R2: i32 = 105;
 
-/// Maps Android's separate L2/R2 key events to the 3DS ZL/ZR hardware bits.
-fn extra_pad_from_android_keycode(code: i32) -> Option<u32> {
-    match code {
-        AKEYCODE_BUTTON_L2 => Some(pad::ZL),
-        AKEYCODE_BUTTON_R2 => Some(pad::ZR),
-        _ => None,
-    }
+fn gamepad_control_from_android_keycode(code: i32) -> Option<GamepadControl> {
+    Some(match code {
+        19 => GamepadControl::DPadUp,
+        20 => GamepadControl::DPadDown,
+        21 => GamepadControl::DPadLeft,
+        22 => GamepadControl::DPadRight,
+        96 => GamepadControl::South,
+        97 => GamepadControl::East,
+        99 => GamepadControl::North,
+        100 => GamepadControl::West,
+        102 => GamepadControl::LeftShoulder,
+        103 => GamepadControl::RightShoulder,
+        AKEYCODE_BUTTON_L2 => GamepadControl::LeftTrigger,
+        AKEYCODE_BUTTON_R2 => GamepadControl::RightTrigger,
+        108 => GamepadControl::Start,
+        109 => GamepadControl::Select,
+        _ => return None,
+    })
 }
 
 /// Maps an Android key code to a front-end button bit (`frontend::buttons`).
@@ -1352,9 +1395,10 @@ fn gamepad_axis_to_circle_pad(value: f32, deadzone_percent: u8) -> i32 {
     (scaled * sign * f32::from(CIRCLE_PAD_LIMIT)).round() as i32
 }
 
-fn gamepad_trigger_mask(left: f32, right: f32) -> u32 {
+fn gamepad_trigger_control_mask(left: f32, right: f32) -> u16 {
     let is_pressed = |value: f32| value.is_finite() && value.clamp(0.0, 1.0) >= 0.5;
-    (if is_pressed(left) { pad::ZL } else { 0 }) | (if is_pressed(right) { pad::ZR } else { 0 })
+    (if is_pressed(left) { GamepadControl::LeftTrigger.bit() } else { 0 })
+        | (if is_pressed(right) { GamepadControl::RightTrigger.bit() } else { 0 })
 }
 
 #[cfg(test)]
@@ -1362,27 +1406,24 @@ mod gamepad_axis_tests {
     use super::*;
 
     #[test]
-    fn android_l2_and_r2_keycodes_map_to_zl_and_zr() {
-        assert_eq!(
-            extra_pad_from_android_keycode(AKEYCODE_BUTTON_L2),
-            Some(pad::ZL)
-        );
-        assert_eq!(
-            extra_pad_from_android_keycode(AKEYCODE_BUTTON_R2),
-            Some(pad::ZR)
-        );
-        assert_eq!(extra_pad_from_android_keycode(AKEYCODE_BUTTON_R2 + 1), None);
+    fn android_gamepad_keycodes_map_to_standardized_controls() {
+        assert_eq!(gamepad_control_from_android_keycode(96), Some(GamepadControl::South));
+        assert_eq!(gamepad_control_from_android_keycode(19), Some(GamepadControl::DPadUp));
+        assert_eq!(gamepad_control_from_android_keycode(102), Some(GamepadControl::LeftShoulder));
+        assert_eq!(gamepad_control_from_android_keycode(AKEYCODE_BUTTON_L2), Some(GamepadControl::LeftTrigger));
+        assert_eq!(gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2), Some(GamepadControl::RightTrigger));
+        assert_eq!(gamepad_control_from_android_keycode(AKEYCODE_BUTTON_R2 + 1), None);
     }
 
     #[test]
     fn analog_trigger_axes_use_a_safe_digital_threshold() {
-        assert_eq!(gamepad_trigger_mask(0.0, 0.0), 0);
-        assert_eq!(gamepad_trigger_mask(0.49, 0.49), 0);
-        assert_eq!(gamepad_trigger_mask(0.5, 0.0), pad::ZL);
-        assert_eq!(gamepad_trigger_mask(0.0, 0.5), pad::ZR);
-        assert_eq!(gamepad_trigger_mask(1.0, 1.0), pad::ZL | pad::ZR);
-        assert_eq!(gamepad_trigger_mask(f32::NAN, f32::INFINITY), 0);
-        assert_eq!(gamepad_trigger_mask(-1.0, -0.5), 0);
+        assert_eq!(gamepad_trigger_control_mask(0.0, 0.0), 0);
+        assert_eq!(gamepad_trigger_control_mask(0.49, 0.49), 0);
+        assert_eq!(gamepad_trigger_control_mask(0.5, 0.0), GamepadControl::LeftTrigger.bit());
+        assert_eq!(gamepad_trigger_control_mask(0.0, 0.5), GamepadControl::RightTrigger.bit());
+        assert_eq!(gamepad_trigger_control_mask(1.0, 1.0), GamepadControl::LeftTrigger.bit() | GamepadControl::RightTrigger.bit());
+        assert_eq!(gamepad_trigger_control_mask(f32::NAN, f32::INFINITY), 0);
+        assert_eq!(gamepad_trigger_control_mask(-1.0, -0.5), 0);
     }
 
     #[test]
