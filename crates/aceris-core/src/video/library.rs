@@ -6993,28 +6993,7 @@ fn responsive_panel(
         ui::shape::PANEL_CONTENT_RADIUS,
         color,
     );
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + ui::shape::PANEL_HIGHLIGHT_INSET_X,
-        y + ui::shape::PANEL_HIGHLIGHT_Y,
-        rect_width - ui::shape::PANEL_HIGHLIGHT_INSET_X * 2.0,
-        ui::shape::PANEL_HIGHLIGHT_HEIGHT,
-        scale,
-        brand::TEXT_SUBTLE,
-    );
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + ui::shape::PANEL_HIGHLIGHT_INSET_X,
-        y + rect_height - ui::shape::PANEL_BOTTOM_INSET,
-        rect_width - ui::shape::PANEL_HIGHLIGHT_INSET_X * 2.0,
-        ui::shape::PANEL_HIGHLIGHT_HEIGHT,
-        scale,
-        brand::SURFACE_BASE,
-    );
+
 }
 
 // Text coordinates and scale are explicit so all frontend layouts use the same renderer.
