@@ -110,6 +110,28 @@ A implementação deve continuar em Rust e evitar adicionar dependências de int
 
 A implementação pode chamar APIs Android por JNI/NDK a partir do frontend Rust, mantendo todo o comportamento e estado da aplicação em Rust. A camada Java do sistema é uma ponte de plataforma, não uma segunda implementação da UI ou do emulador.
 
+#### Limite do host NativeActivity atual
+
+O app declara `android.app.NativeActivity` no manifesto e implementa diretamente
+`ANativeActivityCallbacks` em Rust. O contrato nativo disponibiliza callbacks de
+ciclo de vida, janela, foco, memória e fila de entrada, mas não oferece um
+callback `onActivityResult`. Portanto, iniciar `ACTION_OPEN_DOCUMENT_TREE`
+por JNI não basta: o host ainda precisa receber o resultado da Activity para
+obter a URI selecionada e os flags de permissão.
+
+A estrutura `ANativeActivity` expõe a referência Java da Activity e o JNI para
+chamar APIs do framework; isso não adiciona o callback de retorno ausente. Uma
+solução comum exigiria uma Activity derivada que encaminhasse o resultado a
+Rust por JNI, ou outro host Android que fornecesse esse canal. Como o host
+atual e a regra de implementação do Aceris são Rust-only, não introduzir uma
+classe Java/Kotlin silenciosamente para contornar o limite. Até existir uma
+solução compatível e autorizada, manter a entrada de caminho como fallback e
+não persistir uma URI que a biblioteca ainda não consegue enumerar nem abrir.
+
+Esse limite é somente sobre o retorno do seletor. A futura integração SAF
+continua dependendo também do provedor de documentos, da persistência da
+permissão e da preparação de uma origem seekable descrita nesta arquitetura.
+
 ## 4. Persistência e migração
 
 O formato atual library_scan_v1.txt guarda caminhos absolutos. O novo formato deve ter versão explícita, tipos de origem e dados mínimos necessários para reabrir a raiz. A migração deve ser conservadora:
