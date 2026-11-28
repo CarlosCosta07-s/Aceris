@@ -1579,6 +1579,16 @@ impl Library {
         self.status = Some("DIGITE O CAMINHO DA PASTA E CONFIRME".to_string());
     }
 
+    /// Opens the folder settings and focuses the existing Rust path-entry flow.
+    ///
+    /// This is not the Android SAF picker: the current NativeActivity callback
+    /// table cannot receive an activity result. The picker is deliberately not
+    /// launched until a result bridge exists, so a selection is never discarded.
+    pub fn begin_add_folder_path(&mut self) {
+        self.select_page(LibraryPage::Settings);
+        self.focus_scan_path();
+    }
+
     /// Appends printable text from a physical/system keyboard or folder-path field.
     pub fn input_search_char(&mut self, character: char) -> bool {
         let limit = if self.scan_path_input_focused {
@@ -1838,9 +1848,9 @@ impl Library {
             let visible_rows = ((logical_height - 174.0) / 54.0).floor().max(1.0) as usize;
             self.move_selection_with_visible(delta, visible_rows);
         } else {
-            let visible_rows = ((logical_height - 166.0) / 94.0).floor().max(1.0) as usize;
-            let visible_items = visible_rows * 3;
-            let delta = if delta.abs() == 1 { delta * 3 } else { delta };
+            let visible_rows = landscape_grid_visible_rows(logical_height);
+            let visible_items = visible_rows * 4;
+            let delta = if delta.abs() == 1 { delta * 4 } else { delta };
             self.move_grid_selection(delta, visible_items);
         }
     }
@@ -1853,12 +1863,12 @@ impl Library {
         self.selected =
             (self.selected as i64 + i64::from(delta)).clamp(0, count as i64 - 1) as usize;
         self.status = None;
-        let visible_items = visible_items.max(3);
+        let visible_items = visible_items.max(4);
         if self.selected < self.first_visible {
-            self.first_visible = (self.selected / 3) * 3;
+            self.first_visible = (self.selected / 4) * 4;
         } else if self.selected >= self.first_visible + visible_items {
             let needed = self.selected + 1 - visible_items;
-            self.first_visible = needed.div_ceil(3) * 3;
+            self.first_visible = needed.div_ceil(4) * 4;
         }
     }
 
@@ -1887,8 +1897,8 @@ impl Library {
             let visible = ((logical_height - 350.0).max(58.0) / 58.0).floor().max(1.0) as usize;
             self.move_selection_with_visible(delta, visible);
         } else if self.view_mode == LibraryViewMode::Grid {
-            let visible_rows = ((logical_height - 166.0) / 94.0).floor().max(1.0) as usize;
-            self.move_grid_selection(delta, visible_rows * 3);
+            let visible_rows = landscape_grid_visible_rows(logical_height);
+            self.move_grid_selection(delta, visible_rows * 4);
         }
     }
 
@@ -2040,17 +2050,22 @@ impl Library {
             return self.select_or_activate(index);
         }
 
-        // Permanent horizontal launcher: the rail remains in the same place
-        // and every target is a generous, predictable touch area.
-        if x < 104.0 {
-            let page = match y as i32 {
-                96..=151 => Some(LibraryPage::Home),
-                152..=207 => Some(LibraryPage::Games),
-                208..=263 => Some(LibraryPage::Favorites),
-                264..=319 => Some(LibraryPage::Recent),
-                320..=375 => Some(LibraryPage::Homebrew),
-                376..=432 => Some(LibraryPage::Settings),
-                _ => None,
+        // Console-style horizontal navigation shared by desktop and landscape Android.
+        if (y < 68.0) {
+            let page = if (18.0..112.0).contains(&x) || (120.0..204.0).contains(&x) {
+                Some(LibraryPage::Home)
+            } else if (210.0..310.0).contains(&x) {
+                Some(LibraryPage::Recent)
+            } else if (316.0..410.0).contains(&x) {
+                Some(LibraryPage::Games)
+            } else if (416.0..566.0).contains(&x) {
+                Some(LibraryPage::Homebrew)
+            } else if (572.0..692.0).contains(&x) {
+                Some(LibraryPage::Favorites)
+            } else if (875.0..982.0).contains(&x) {
+                Some(LibraryPage::Settings)
+            } else {
+                None
             };
             if let Some(page) = page {
                 self.select_page(page);
@@ -2058,88 +2073,86 @@ impl Library {
             return ClickResult::Ignored;
         }
 
-        if (18.0..68.0).contains(&y)
-            && (540.0..680.0).contains(&x)
-            && matches!(
-                self.page,
-                LibraryPage::Games
-                    | LibraryPage::Favorites
-                    | LibraryPage::Recent
-                    | LibraryPage::Homebrew
-            )
-        {
-            self.toggle_view_mode();
-            return ClickResult::Ignored;
-        }
-        if (18.0..68.0).contains(&y) && (700.0..830.0).contains(&x) {
-            self.toggle_sort_order();
-            return ClickResult::Ignored;
-        }
-        if (18.0..68.0).contains(&y) && x >= 842.0 {
-            self.reload();
-            return ClickResult::Ignored;
+        // The selected-game actions remain available regardless of the current tab.
+        if (760.0..980.0).contains(&x) {
+            if (238.0..282.0).contains(&y) {
+                if self.selected_entry().is_some() {
+                    return ClickResult::Activated;
+                }
+            } else if (286.0..328.0).contains(&y) {
+                if self.selected_entry().is_some() {
+                    self.toggle_selected_favorite();
+                }
+                return ClickResult::Ignored;
+            } else if (336.0..378.0).contains(&y) {
+                self.begin_add_folder_path();
+                return ClickResult::Ignored;
+            } else if (384.0..426.0).contains(&y) {
+                self.reload();
+                return ClickResult::Ignored;
+            }
         }
 
         match self.page {
             LibraryPage::Home => {
-                if (112.0..340.0).contains(&y) && (126.0..650.0).contains(&x) {
+                if (132.0..298.0).contains(&y) && (28.0..730.0).contains(&x) {
                     if self.recent_count() > 0 {
                         self.selected = 0;
                         return ClickResult::Activated;
                     }
-                    self.select_page(LibraryPage::Games);
-                } else if (110.0..225.0).contains(&y) && x >= 664.0 {
-                    self.select_page(LibraryPage::Favorites);
-                } else if (232.0..348.0).contains(&y) && x >= 664.0 {
-                    self.select_page(LibraryPage::Homebrew);
-                } else if (350.0..logical_height - 24.0).contains(&y) && x < 650.0 {
-                    self.select_page(LibraryPage::Games);
+                    if self.entries.is_empty() {
+                        self.begin_add_folder_path();
+                    } else {
+                        self.select_page(LibraryPage::Games);
+                    }
+                } else if (340.0..430.0).contains(&y) {
+                    if (28.0..248.0).contains(&x) {
+                        self.select_page(LibraryPage::Games);
+                    } else if (258.0..478.0).contains(&x) {
+                        self.select_page(LibraryPage::Favorites);
+                    } else if (488.0..730.0).contains(&x) {
+                        self.select_page(LibraryPage::Homebrew);
+                    }
                 }
                 ClickResult::Ignored
             }
             LibraryPage::Settings => {
-                for index in 0..self.scan_config.directories.len().min(3) {
-                    let row_top = 164.0 + index as f32 * 28.0;
-                    if (row_top..row_top + 26.0).contains(&y) && (520.0..566.0).contains(&x) {
+                for index in 0..self.scan_config.directories.len().min(4) {
+                    let row_top = 178.0 + index as f32 * 28.0;
+                    if (row_top..row_top + 25.0).contains(&y)
+                        && (670.0..724.0).contains(&x)
+                    {
                         self.remove_scan_directory_from_settings(index);
                         return ClickResult::Ignored;
                     }
                 }
-                if (298.0..350.0).contains(&y) {
-                    if (158.0..348.0).contains(&x) {
+
+                if (280.0..322.0).contains(&y) {
+                    if (28.0..245.0).contains(&x) {
                         self.focus_scan_path();
-                    } else if (360.0..570.0).contains(&x) {
+                    } else if (255.0..475.0).contains(&x) {
                         self.toggle_recursive_from_settings();
+                    } else if (485.0..595.0).contains(&x) {
+                        self.toggle_performance_mode_from_settings();
+                    } else if (605.0..730.0).contains(&x) {
+                        self.cycle_gamepad_deadzone_from_settings();
                     }
-                }
-                if (296.0..340.0).contains(&y) && (590.0..775.0).contains(&x) {
-                    self.toggle_performance_mode_from_settings();
-                } else if (296.0..340.0).contains(&y) && (785.0..970.0).contains(&x) {
-                    self.cycle_gamepad_deadzone_from_settings();
-                } else if self.touch_keyboard_enabled
-                    && (426.0..470.0).contains(&y)
-                    && (590.0..970.0).contains(&x)
-                {
-                    self.toggle_virtual_controls_from_settings();
-                } else if self.touch_keyboard_enabled
-                    && (474.0..518.0).contains(&y)
-                    && (590.0..710.0).contains(&x)
-                {
-                    self.cycle_virtual_controls_opacity_from_settings();
-                } else if self.touch_keyboard_enabled
-                    && (474.0..518.0).contains(&y)
-                    && (720.0..840.0).contains(&x)
-                {
-                    self.cycle_virtual_controls_size_from_settings();
-                } else if self.touch_keyboard_enabled
-                    && (474.0..518.0).contains(&y)
-                    && (850.0..970.0).contains(&x)
-                {
-                    self.cycle_virtual_controls_preset_from_settings();
-                } else if (382.0..422.0).contains(&y) && (590.0..775.0).contains(&x) {
-                    self.toggle_view_mode();
-                } else if (382.0..422.0).contains(&y) && (785.0..970.0).contains(&x) {
-                    self.toggle_sort_order();
+                } else if (396.0..428.0).contains(&y) {
+                    if (28.0..245.0).contains(&x) {
+                        self.toggle_view_mode();
+                    } else if (255.0..475.0).contains(&x) {
+                        self.toggle_sort_order();
+                    } else if self.touch_keyboard_enabled && (485.0..730.0).contains(&x) {
+                        self.toggle_virtual_controls_from_settings();
+                    }
+                } else if self.touch_keyboard_enabled && (438.0..480.0).contains(&y) {
+                    if (485.0..564.0).contains(&x) {
+                        self.cycle_virtual_controls_opacity_from_settings();
+                    } else if (568.0..647.0).contains(&x) {
+                        self.cycle_virtual_controls_size_from_settings();
+                    } else if (651.0..730.0).contains(&x) {
+                        self.cycle_virtual_controls_preset_from_settings();
+                    }
                 }
                 ClickResult::Ignored
             }
@@ -2147,13 +2160,30 @@ impl Library {
             | LibraryPage::Favorites
             | LibraryPage::Recent
             | LibraryPage::Homebrew => {
+                if (126.0..158.0).contains(&y) {
+                    if (36.0..365.0).contains(&x) {
+                        self.focus_search();
+                    } else if (368.0..402.0).contains(&x) {
+                        self.clear_search();
+                    } else if (410.0..518.0).contains(&x) {
+                        self.cycle_format_filter();
+                    } else if (526.0..622.0).contains(&x) {
+                        self.toggle_view_mode();
+                    } else if (630.0..722.0).contains(&x) {
+                        self.toggle_sort_order();
+                    }
+                    return ClickResult::Ignored;
+                }
+
                 if self.view_mode == LibraryViewMode::List {
-                    let list_top = 150.0;
+                    let list_top = 170.0;
                     let row_step = 54.0;
                     let row_height = 48.0;
                     let visible_rows =
-                        ((logical_height - 174.0) / row_step).floor().max(1.0) as usize;
-                    if !(128.0..970.0).contains(&x) || y < list_top {
+                        ((logical_height - 18.0 - list_top - row_height) / row_step)
+                            .floor()
+                            .max(0.0) as usize + 1;
+                    if !(28.0..730.0).contains(&x) || y < list_top {
                         return ClickResult::Ignored;
                     }
                     let row = ((y - list_top) / row_step).floor().max(0.0) as usize;
@@ -2165,42 +2195,40 @@ impl Library {
                     {
                         return ClickResult::Ignored;
                     }
-                    if (910.0..958.0).contains(&x) && (row_y + 8.0..row_y + 40.0).contains(&y) {
+                    if (680.0..722.0).contains(&x) && (row_y + 8.0..row_y + 40.0).contains(&y) {
                         self.selected = index;
                         self.toggle_selected_favorite();
                         return ClickResult::Ignored;
                     }
                     return self.select_or_activate(index);
                 }
-                let columns = 3usize;
-                let card_top = 124.0;
-                let card_height = 82.0;
-                let row_step = 94.0;
-                let card_width = 270.0;
-                let card_gap = 14.0;
-                if y < card_top {
+
+                const COLUMNS: usize = 4;
+                let card_top = 170.0;
+                let card_height = 122.0;
+                let row_step = 132.0;
+                let card_width = 168.0;
+                let card_gap = 10.0;
+                if y < card_top || !(28.0..730.0).contains(&x) {
                     return ClickResult::Ignored;
                 }
                 let row = ((y - card_top) / row_step).floor().max(0.0) as usize;
-                let column = ((x - 128.0) / (card_width + card_gap)).floor().max(0.0) as usize;
-                if column >= columns {
+                let column = ((x - 28.0) / (card_width + card_gap)).floor().max(0.0) as usize;
+                if column >= COLUMNS {
                     return ClickResult::Ignored;
                 }
-                let card_x = 128.0 + column as f32 * (card_width + card_gap);
+                let card_x = 28.0 + column as f32 * (card_width + card_gap);
                 let card_y = card_top + row as f32 * row_step;
                 if x < card_x || x >= card_x + card_width || y >= card_y + card_height {
                     return ClickResult::Ignored;
                 }
-                let visible_rows = ((logical_height - card_top - 42.0) / row_step)
-                    .floor()
-                    .max(1.0) as usize;
-                let index = self.first_visible + row * columns + column;
+                let visible_rows = landscape_grid_visible_rows(logical_height);
+                let index = self.first_visible + row * COLUMNS + column;
                 if row >= visible_rows || index >= self.visible_entry_count() {
                     return ClickResult::Ignored;
                 }
                 self.selected = index;
-                // The small favorite control is independent of the card's launch action.
-                if x >= card_x + card_width - 58.0 && y <= card_y + 40.0 {
+                if x >= card_x + card_width - 30.0 && y <= card_y + 28.0 {
                     self.toggle_selected_favorite();
                     return ClickResult::Ignored;
                 }
@@ -3219,1464 +3247,660 @@ impl Library {
     ) {
         let title_scale = (scale * 1.8).round().max(2.0) as usize;
         let text_scale = (scale * 1.12).round().max(1.0) as usize;
-        let bottom = (logical_height - 24.0).max(400.0);
-        let homebrew_count = self
-            .entries
-            .iter()
-            .filter(|entry| {
-                entry
-                    .path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|value| value.eq_ignore_ascii_case("3dsx"))
-            })
-            .count();
+        let small_scale = (scale * 0.92).round().max(1.0) as usize;
+        let bottom = (logical_height - 18.0).max(400.0);
+        let homebrew_count = self.entries.iter().filter(|entry| {
+            entry.path.extension().and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("3dsx"))
+        }).count();
         let game_count = self.entries.len().saturating_sub(homebrew_count);
+        let selected_entry = self.selected_entry();
 
-        // Fixed navigation rail, sized for a one-handed landscape launcher.
+        // Full-width top navigation inspired by modern console dashboards.
         responsive_fill(
-            frame,
-            width as usize,
-            height as usize,
-            0.0,
-            0.0,
-            104.0,
-            logical_height,
-            scale,
-            0x160D22,
+            frame, width as usize, height as usize,
+            0.0, 0.0, 1000.0, 70.0, scale, 0x160D22,
         );
         responsive_fill(
-            frame,
-            width as usize,
-            height as usize,
-            102.0,
-            0.0,
-            2.0,
-            logical_height,
-            scale,
-            0x563B67,
+            frame, width as usize, height as usize,
+            0.0, 68.0, 1000.0, 2.0, scale, 0x563B67,
         );
         responsive_panel(
-            frame,
-            width,
-            height,
-            17.0,
-            17.0,
-            68.0,
-            48.0,
-            scale,
-            brand::ACCENT_RED,
+            frame, width, height, 18.0, 10.0, 94.0, 46.0, scale, brand::ACCENT_RED,
         );
         responsive_text_centered(
-            frame,
-            width,
-            height,
-            51.0,
-            32.0,
-            title_scale,
-            "A",
-            brand::TEXT,
+            frame, width, height, 65.0, 25.0, title_scale, "ACERIS", brand::TEXT,
         );
 
-        let nav = [
-            (96.0, LibraryPage::Home, "INÍCIO", "H"),
-            (152.0, LibraryPage::Games, "JOGOS", "J"),
-            (208.0, LibraryPage::Favorites, "FAVORITOS", "F"),
-            (264.0, LibraryPage::Recent, "RECENTES", "R"),
-            (320.0, LibraryPage::Homebrew, "HOMEBREW", "D"),
-            (376.0, LibraryPage::Settings, "AJUSTES", "C"),
+        let tabs = [
+            (120.0, 84.0, LibraryPage::Home, "INÍCIO"),
+            (210.0, 100.0, LibraryPage::Recent, "RECENTES"),
+            (316.0, 94.0, LibraryPage::Games, "JOGOS"),
+            (416.0, 150.0, LibraryPage::Homebrew, "HOMEBREW"),
+            (572.0, 120.0, LibraryPage::Favorites, "FAVORITOS"),
         ];
-        for (y, page, label, mark) in nav {
-            if self.page == page {
+        for (x, tab_width, page, label) in tabs {
+            let selected = self.page == page;
+            responsive_panel(
+                frame, width, height, x, 12.0, tab_width, 42.0, scale,
+                if selected { 0x422038 } else { 0x21152F },
+            );
+            if selected {
                 responsive_fill(
-                    frame,
-                    width as usize,
-                    height as usize,
-                    0.0,
-                    y,
-                    4.0,
-                    48.0,
-                    scale,
-                    brand::ACCENT_RED,
+                    frame, width as usize, height as usize,
+                    x + 4.0, 52.0, tab_width - 8.0, 3.0, scale,
+                    brand::ACCENT_GREEN_LIGHT,
                 );
             }
-            responsive_panel(
-                frame,
-                width,
-                height,
-                13.0,
-                y + 3.0,
-                78.0,
-                42.0,
-                scale,
-                if self.page == page {
-                    0x422038
-                } else {
-                    0x21152F
-                },
-            );
             responsive_text_centered(
-                frame,
-                width,
-                height,
-                52.0,
-                y + 7.0,
-                text_scale + 1,
-                mark,
-                brand::ACCENT_GREEN_LIGHT,
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                52.0,
-                y + 29.0,
-                (text_scale as f32 * 0.72).round().max(1.0) as usize,
-                label,
-                brand::TEXT,
+                frame, width, height, x + tab_width * 0.5, 27.0,
+                text_scale, label,
+                if selected { brand::TEXT } else { 0xBBAFC7 },
             );
         }
+        responsive_panel(
+            frame, width, height, 875.0, 12.0, 107.0, 42.0, scale,
+            if self.page == LibraryPage::Settings { brand::ACCENT_RED } else { 0x2D1A3B },
+        );
         responsive_text_centered(
-            frame,
-            width,
-            height,
-            52.0,
-            (logical_height - 24.0).max(0.0),
-            text_scale,
-            "3DS",
-            0xBBAFC7,
+            frame, width, height, 928.0, 27.0, text_scale, "AJUSTES", brand::TEXT,
         );
 
-        // Consistent header and two useful toolbar actions on every page.
+        // A distinct right-side action panel leaves the main area for the collection.
         responsive_fill(
-            frame,
-            width as usize,
-            height as usize,
-            104.0,
-            0.0,
-            896.0,
-            84.0,
-            scale,
-            0x1D1029,
+            frame, width as usize, height as usize,
+            0.0, 70.0, 1000.0, logical_height - 70.0, scale, 0x1A1026,
         );
-        let (page_title, subtitle) = match self.page {
-            LibraryPage::Home => ("Seu espaço de jogos", "Tudo pronto para jogar"),
-            LibraryPage::Games => ("Biblioteca", "Seus jogos instalados"),
-            LibraryPage::Favorites => ("Favoritos", "Os jogos que você marcou"),
-            LibraryPage::Recent => ("Recentes", "Continue de onde parou"),
-            LibraryPage::Homebrew => ("Homebrew & demos", "Aplicativos e projetos caseiros"),
-            LibraryPage::Settings => ("Configurações", "Personalize sua experiência"),
-        };
-        responsive_text(
-            frame,
-            width,
-            height,
-            130.0,
-            17.0,
-            title_scale,
-            page_title,
-            brand::TEXT,
+        responsive_panel(
+            frame, width, height, 758.0, 82.0, 224.0,
+            (bottom - 82.0).max(280.0), scale, 0x21152F,
         );
         responsive_text(
-            frame, width, height, 132.0, 56.0, text_scale, subtitle, 0xBBAFC7,
+            frame, width, height, 780.0, 103.0, title_scale, "ACERIS", brand::TEXT,
         );
-        if matches!(
-            self.page,
-            LibraryPage::Games
-                | LibraryPage::Favorites
-                | LibraryPage::Recent
-                | LibraryPage::Homebrew
-        ) {
+        responsive_text(
+            frame, width, height, 782.0, 132.0, small_scale,
+            "BIBLIOTECA DE JOGOS", brand::ACCENT_GREEN_LIGHT,
+        );
+        responsive_fill(
+            frame, width as usize, height as usize,
+            780.0, 153.0, 180.0, 1.0, scale, 0x563B67,
+        );
+
+        if self.page == LibraryPage::Home {
+            responsive_text(
+                frame, width, height, 28.0, 84.0, title_scale,
+                "SEU ESPAÇO DE JOGOS", brand::TEXT,
+            );
+            responsive_text(
+                frame, width, height, 30.0, 109.0, text_scale,
+                "Continue de onde parou ou explore sua coleção", 0xBBAFC7,
+            );
             responsive_panel(
-                frame,
-                width,
-                height,
-                128.0,
-                90.0,
-                572.0,
-                32.0,
-                scale,
-                if self.search_focused {
-                    0x422038
-                } else {
-                    0x21152F
-                },
+                frame, width, height, 28.0, 132.0, 702.0, 166.0, scale, 0x251731,
+            );
+            responsive_text(
+                frame, width, height, 52.0, 151.0, text_scale,
+                "CONTINUAR JOGANDO", brand::ACCENT_GREEN_LIGHT,
+            );
+            if let Some(entry) = selected_entry {
+                render_cover_art(
+                    frame, width, height, scale, 58.0, 178.0, 112.0, 98.0,
+                    entry, title_scale,
+                );
+                responsive_text(
+                    frame, width, height, 194.0, 187.0, title_scale,
+                    &truncate(&entry.title, 42), brand::TEXT,
+                );
+                let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+                responsive_text(
+                    frame, width, height, 196.0, 219.0, text_scale,
+                    &format!("FORMATO .{}", extension.to_ascii_uppercase()),
+                    brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_text(
+                    frame, width, height, 196.0, 245.0, small_scale,
+                    "Seu último jogo aberto", 0xBBAFC7,
+                );
+                responsive_panel(
+                    frame, width, height, 520.0, 221.0, 180.0, 48.0, scale,
+                    brand::ACCENT_RED,
+                );
+                responsive_text_centered(
+                    frame, width, height, 610.0, 238.0, text_scale, "CONTINUAR", brand::TEXT,
+                );
+            } else {
+                responsive_folder_icon(frame, width, height, 116.0, 225.0, scale);
+                responsive_text(
+                    frame, width, height, 202.0, 190.0, title_scale,
+                    if self.entries.is_empty() { "Sua coleção começa aqui" } else { "Sua biblioteca está pronta" },
+                    brand::TEXT,
+                );
+                responsive_text(
+                    frame, width, height, 204.0, 223.0, text_scale,
+                    if self.entries.is_empty() {
+                        "Adicione uma pasta para encontrar seus jogos."
+                    } else {
+                        "Explore os jogos disponíveis na sua biblioteca."
+                    },
+                    0xBBAFC7,
+                );
+                responsive_panel(
+                    frame, width, height, 520.0, 221.0, 180.0, 48.0, scale,
+                    brand::ACCENT_RED,
+                );
+                responsive_text_centered(
+                    frame, width, height, 610.0, 238.0, text_scale,
+                    if self.entries.is_empty() { "ADICIONAR PASTA" } else { "VER JOGOS" },
+                    brand::TEXT,
+                );
+            }
+
+            responsive_text(
+                frame, width, height, 28.0, 318.0, text_scale,
+                "EXPLORE SUA BIBLIOTECA", brand::ACCENT_GREEN_LIGHT,
+            );
+            let cards = [
+                (28.0, 340.0, 220.0, "JOGOS", game_count),
+                (258.0, 340.0, 220.0, "FAVORITOS", self.favorite_count()),
+                (488.0, 340.0, 242.0, "HOMEBREW & DEMOS", homebrew_count),
+            ];
+            for (x, y, card_width, label, count) in cards {
+                responsive_panel(
+                    frame, width, height, x, y, card_width, 82.0, scale, 0x21152F,
+                );
+                responsive_text(
+                    frame, width, height, x + 16.0, y + 17.0, small_scale,
+                    label, brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_text(
+                    frame, width, height, x + 16.0, y + 43.0, title_scale,
+                    &count.to_string(), brand::TEXT,
+                );
+                responsive_text(
+                    frame, width, height, x + card_width - 74.0, y + 51.0, small_scale,
+                    "EXPLORAR", 0xBBAFC7,
+                );
+            }
+        } else if self.page == LibraryPage::Settings {
+            responsive_text(
+                frame, width, height, 28.0, 84.0, title_scale,
+                "CONFIGURAÇÕES", brand::TEXT,
+            );
+            responsive_text(
+                frame, width, height, 30.0, 109.0, text_scale,
+                "Pastas, desempenho e preferências da biblioteca", 0xBBAFC7,
+            );
+            responsive_panel(
+                frame, width, height, 28.0, 132.0, 702.0,
+                (bottom - 150.0).max(270.0), scale, 0x21152F,
+            );
+            responsive_text(
+                frame, width, height, 48.0, 151.0, text_scale,
+                &format!("PASTAS MONITORADAS ({})", self.scan_config.directories.len()),
+                brand::ACCENT_GREEN_LIGHT,
+            );
+            for (index, directory) in self.scan_config.directories.iter().take(4).enumerate() {
+                let row_y = 178.0 + index as f32 * 28.0;
+                responsive_panel(
+                    frame, width, height, 44.0, row_y, 620.0, 24.0, scale, 0x33223F,
+                );
+                responsive_text(
+                    frame, width, height, 54.0, row_y + 7.0, small_scale,
+                    &tail(&directory.to_string_lossy(), 76), brand::TEXT,
+                );
+                responsive_panel(
+                    frame, width, height, 670.0, row_y + 1.0, 48.0, 22.0, scale, 0x422038,
+                );
+                responsive_text_centered(
+                    frame, width, height, 694.0, row_y + 6.0, small_scale, "REM", brand::TEXT,
+                );
+            }
+            if self.scan_config.directories.len() > 4 {
+                responsive_text(
+                    frame, width, height, 54.0, 292.0, small_scale,
+                    &format!("+ {} outra(s) pasta(s)", self.scan_config.directories.len() - 4),
+                    0xBBAFC7,
+                );
+            }
+            let settings_actions = [
+                (28.0, 280.0, 217.0, "ADICIONAR PASTA",
+                    if self.scan_path_input_focused { brand::ACCENT_RED } else { 0x2D1A3B }),
+                (255.0, 280.0, 220.0,
+                    if self.scan_config.options.recursive { "SUBPASTAS: SIM" } else { "SUBPASTAS: NÃO" },
+                    if self.scan_config.options.recursive { 0x28543F } else { 0x2D1A3B }),
+                (485.0, 280.0, 110.0,
+                    if self.performance_mode { "RÁPIDO: SIM" } else { "RÁPIDO: NÃO" },
+                    if self.performance_mode { 0x28543F } else { 0x2D1A3B }),
+                (605.0, 280.0, 125.0,
+                    "ZONA MORTA", 0x2D1A3B),
+            ];
+            for (x, y, card_width, label, color) in settings_actions {
+                responsive_panel(
+                    frame, width, height, x, y, card_width, 42.0, scale, color,
+                );
+                responsive_text_centered(
+                    frame, width, height, x + card_width * 0.5, y + 14.0,
+                    small_scale, label, brand::TEXT,
+                );
+            }
+            responsive_text_centered(
+                frame, width, height, 667.0, 294.0, small_scale,
+                &format!("ZONA: {}%", self.gamepad_deadzone_percent), brand::TEXT,
+            );
+            if self.scan_path_input_focused {
+                responsive_text(
+                    frame, width, height, 48.0, 340.0, small_scale,
+                    &truncate(&self.search_query, 100), brand::ACCENT_GREEN_LIGHT,
+                );
+                responsive_text(
+                    frame, width, height, 48.0, 360.0, small_scale,
+                    "Digite o caminho completo da pasta e pressione Enter/OK.", 0xBBAFC7,
+                );
+            }
+            responsive_text(
+                frame, width, height, 48.0, 382.0, small_scale,
+                "PREFERÊNCIAS DA BIBLIOTECA", brand::ACCENT_GREEN_LIGHT,
+            );
+            let view_label = if self.view_mode == LibraryViewMode::Grid { "VISTA: GRADE" } else { "VISTA: LISTA" };
+            let sort_label = if self.sort_descending { "ORDEM: Z–A" } else { "ORDEM: A–Z" };
+            let settings_footer = [
+                (28.0, 396.0, 217.0, view_label),
+                (255.0, 396.0, 220.0, sort_label),
+            ];
+            for (x, y, card_width, label) in settings_footer {
+                responsive_panel(
+                    frame, width, height, x, y, card_width, 32.0, scale, 0x2D1A3B,
+                );
+                responsive_text_centered(
+                    frame, width, height, x + card_width * 0.5, y + 10.0,
+                    small_scale, label, brand::TEXT,
+                );
+            }
+            if self.touch_keyboard_enabled {
+                responsive_panel(
+                    frame, width, height, 485.0, 396.0, 245.0, 32.0, scale,
+                    if self.virtual_controls_visible { 0x28543F } else { 0x2D1A3B },
+                );
+                responsive_text_centered(
+                    frame, width, height, 607.0, 406.0, small_scale,
+                    if self.virtual_controls_visible { "CONTROLES: ATIVOS" } else { "CONTROLES: OCULTOS" },
+                    brand::TEXT,
+                );
+                if logical_height >= 540.0 {
+                    let control_options = [
+                        (485.0, "OPACIDADE"),
+                        (568.0, "TAMANHO"),
+                        (651.0, "LAYOUT"),
+                    ];
+                    for (x, label) in control_options {
+                        responsive_panel(
+                            frame, width, height, x, 438.0, 79.0, 38.0, scale, 0x2D1A3B,
+                        );
+                        responsive_text_centered(
+                            frame, width, height, x + 39.5, 451.0, small_scale, label, brand::TEXT,
+                        );
+                    }
+                }
+            }
+        } else {
+            let (page_title, subtitle) = match self.page {
+                LibraryPage::Games => ("JOGOS", "Sua coleção de jogos"),
+                LibraryPage::Favorites => ("FAVORITOS", "Seus jogos marcados"),
+                LibraryPage::Recent => ("RECENTES", "Continue de onde parou"),
+                LibraryPage::Homebrew => ("HOMEBREW & DEMOS", "Aplicativos e projetos caseiros"),
+                LibraryPage::Home | LibraryPage::Settings => ("BIBLIOTECA", "Seus jogos"),
+            };
+            responsive_text(
+                frame, width, height, 28.0, 84.0, title_scale, page_title, brand::TEXT,
+            );
+            responsive_text(
+                frame, width, height, 30.0, 109.0, text_scale,
+                &format!("{} item(ns) disponíveis", self.visible_entry_count()), 0xBBAFC7,
+            );
+            responsive_panel(
+                frame, width, height, 28.0, 126.0, 702.0, 32.0, scale, 0x21152F,
+            );
+            responsive_panel(
+                frame, width, height, 36.0, 130.0, 329.0, 24.0, scale,
+                if self.search_focused { 0x422038 } else { 0x33223F },
             );
             let search_label = if self.search_query.is_empty() {
                 "BUSCAR POR NOME OU CAMINHO".to_string()
             } else {
-                format!("BUSCAR: {}", truncate(&self.search_query, 48))
+                format!("BUSCAR: {}", truncate(&self.search_query, 42))
             };
             responsive_text(
-                frame,
-                width,
-                height,
-                145.0,
-                100.0,
-                text_scale,
+                frame, width, height, 46.0, 138.0, small_scale,
                 &search_label,
-                if self.search_focused {
-                    brand::ACCENT_GREEN_LIGHT
-                } else {
-                    0xBBAFC7
-                },
+                if self.search_focused { brand::ACCENT_GREEN_LIGHT } else { 0xBBAFC7 },
             );
             responsive_panel(
-                frame, width, height, 710.0, 93.0, 40.0, 26.0, scale, 0x33223F,
+                frame, width, height, 368.0, 130.0, 34.0, 24.0, scale, 0x422038,
             );
             responsive_text_centered(
-                frame,
-                width,
-                height,
-                730.0,
-                99.0,
-                text_scale,
-                "X",
+                frame, width, height, 385.0, 137.0, small_scale, "X", brand::TEXT,
+            );
+            responsive_panel(
+                frame, width, height, 410.0, 130.0, 108.0, 24.0, scale, 0x2D1A3B,
+            );
+            responsive_text_centered(
+                frame, width, height, 464.0, 137.0, small_scale,
+                self.format_filter.label(), brand::ACCENT_GREEN_LIGHT,
+            );
+            responsive_panel(
+                frame, width, height, 526.0, 130.0, 96.0, 24.0, scale,
+                if self.view_mode == LibraryViewMode::List { brand::ACCENT_RED } else { 0x2D1A3B },
+            );
+            responsive_text_centered(
+                frame, width, height, 574.0, 137.0, small_scale,
+                if self.view_mode == LibraryViewMode::List { "LISTA" } else { "GRADE" },
                 brand::TEXT,
             );
             responsive_panel(
-                frame, width, height, 760.0, 90.0, 210.0, 32.0, scale, 0x2D1A3B,
+                frame, width, height, 630.0, 130.0, 92.0, 24.0, scale, 0x2D1A3B,
             );
             responsive_text_centered(
-                frame,
-                width,
-                height,
-                865.0,
-                100.0,
-                text_scale,
-                &format!("FORMATO: {}", self.format_filter.label()),
-                brand::ACCENT_GREEN_LIGHT,
+                frame, width, height, 676.0, 137.0, small_scale,
+                if self.sort_descending { "Z–A" } else { "A–Z" }, brand::TEXT,
             );
-        }
-        if matches!(
-            self.page,
-            LibraryPage::Games
-                | LibraryPage::Favorites
-                | LibraryPage::Recent
-                | LibraryPage::Homebrew
-        ) {
-            responsive_panel(
-                frame,
-                width,
-                height,
-                540.0,
-                18.0,
-                140.0,
-                50.0,
-                scale,
-                if self.view_mode == LibraryViewMode::List {
-                    brand::ACCENT_RED
-                } else {
-                    0x2D1A3B
-                },
-            );
-            responsive_text_centered(
-                frame,
-                width,
-                height,
-                610.0,
-                35.0,
-                text_scale,
-                if self.view_mode == LibraryViewMode::List {
-                    "VISTA: LISTA"
-                } else {
-                    "VISTA: GRADE"
-                },
-                brand::TEXT,
-            );
-        }
-        responsive_panel(
-            frame, width, height, 700.0, 18.0, 130.0, 50.0, scale, 0x2D1A3B,
-        );
-        responsive_text_centered(
-            frame,
-            width,
-            height,
-            765.0,
-            35.0,
-            text_scale,
-            if self.sort_descending {
-                "ORDEM Z–A"
-            } else {
-                "ORDEM A–Z"
-            },
-            brand::ACCENT_GREEN_LIGHT,
-        );
-        responsive_panel(
-            frame,
-            width,
-            height,
-            842.0,
-            18.0,
-            140.0,
-            50.0,
-            scale,
-            brand::ACCENT_RED,
-        );
-        responsive_text_centered(
-            frame,
-            width,
-            height,
-            912.0,
-            35.0,
-            text_scale,
-            "ATUALIZAR",
-            brand::TEXT,
-        );
 
-        match self.page {
-            LibraryPage::Home => {
+            let entries = self.filtered_entries();
+            if entries.is_empty() {
                 responsive_panel(
-                    frame, width, height, 128.0, 112.0, 520.0, 228.0, scale, 0x21152F,
+                    frame, width, height, 28.0, 170.0, 702.0,
+                    (bottom - 190.0).max(190.0), scale, 0x21152F,
                 );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    154.0,
-                    137.0,
-                    text_scale,
-                    "CONTINUAR JOGANDO",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                if let Some(entry) = self.selected_entry() {
-                    responsive_panel(
-                        frame, width, height, 154.0, 166.0, 132.0, 150.0, scale, 0x2D1A3B,
-                    );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        220.0,
-                        202.0,
-                        title_scale + 1,
-                        "3DS",
-                        brand::TEXT,
-                    );
-                    let extension = entry
-                        .path
-                        .extension()
-                        .and_then(|v| v.to_str())
-                        .unwrap_or("3ds");
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        220.0,
-                        273.0,
-                        text_scale,
-                        &extension.to_ascii_uppercase(),
-                        brand::ACCENT_GREEN_LIGHT,
-                    );
-                    responsive_text(
-                        frame,
-                        width,
-                        height,
-                        312.0,
-                        189.0,
-                        title_scale,
-                        &truncate(&entry.title, 34),
-                        brand::TEXT,
-                    );
-                    responsive_text(
-                        frame,
-                        width,
-                        height,
-                        314.0,
-                        226.0,
-                        text_scale,
-                        "Seu último jogo",
-                        0xBBAFC7,
-                    );
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        312.0,
-                        263.0,
-                        270.0,
-                        48.0,
-                        scale,
-                        brand::ACCENT_RED,
-                    );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        447.0,
-                        279.0,
-                        text_scale,
-                        "CONTINUAR",
-                        brand::TEXT,
-                    );
+                responsive_folder_icon(frame, width, height, 140.0, 270.0, scale);
+                let (empty_title, first_line) = if self.page == LibraryPage::Homebrew {
+                    ("Nenhum homebrew encontrado", "Adicione arquivos .3dsx à biblioteca.")
+                } else if !self.search_query.is_empty() {
+                    ("Nenhum resultado encontrado", "Tente outro termo ou limpe a busca.")
                 } else {
-                    responsive_folder_icon(frame, width, height, 220.0, 235.0, scale);
-                    responsive_text(
-                        frame,
-                        width,
-                        height,
-                        312.0,
-                        190.0,
-                        title_scale,
-                        "Sua coleção começa aqui",
-                        brand::TEXT,
-                    );
-                    responsive_text(
-                        frame,
-                        width,
-                        height,
-                        314.0,
-                        231.0,
-                        text_scale,
-                        "Adicione jogos para criar sua biblioteca.",
-                        0xBBAFC7,
-                    );
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        312.0,
-                        268.0,
-                        270.0,
-                        44.0,
-                        scale,
-                        brand::ACCENT_RED,
-                    );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        447.0,
-                        282.0,
-                        text_scale,
-                        "VER JOGOS",
-                        brand::TEXT,
-                    );
-                }
-                responsive_panel(
-                    frame, width, height, 666.0, 112.0, 304.0, 104.0, scale, 0x21152F,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    137.0,
-                    text_scale,
-                    "FAVORITOS",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    169.0,
-                    title_scale,
-                    &self.favorite_count().to_string(),
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    788.0,
-                    176.0,
-                    text_scale,
-                    "VER COLEÇÃO",
-                    0xBBAFC7,
-                );
-                responsive_panel(
-                    frame, width, height, 666.0, 232.0, 304.0, 108.0, scale, 0x21152F,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    257.0,
-                    text_scale,
-                    "HOMEBREW & DEMOS",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    290.0,
-                    title_scale,
-                    &homebrew_count.to_string(),
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame, width, height, 788.0, 298.0, text_scale, "EXPLORAR", 0xBBAFC7,
-                );
-                responsive_panel(
-                    frame, width, height, 128.0, 352.0, 520.0, 72.0, scale, 0x21152F,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    154.0,
-                    373.0,
-                    text_scale,
-                    "SUA BIBLIOTECA",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    154.0,
-                    399.0,
-                    text_scale,
-                    &format!("{} jogo(s) disponíveis", game_count),
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame, width, height, 666.0, 352.0, 304.0, 72.0, scale, 0x21152F,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    373.0,
-                    text_scale,
-                    "MÚSICA EXTERNA",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    690.0,
-                    399.0,
-                    (text_scale as f32 * 0.82).round().max(1.0) as usize,
-                    if !self.external_media_detection_available {
-                        "Detecção indisponível nesta plataforma"
-                    } else if self.external_media_playing {
-                        "Tocando — áudio do jogo mudo"
-                    } else {
-                        "Nenhuma mídia detectada"
-                    },
-                    if self.external_media_playing {
-                        brand::ACCENT_RED_LIGHT
-                    } else {
-                        0xBBAFC7
-                    },
-                );
-            }
-            LibraryPage::Settings => {
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    128.0,
-                    112.0,
-                    842.0,
-                    if self.touch_keyboard_enabled {
-                        410.0
-                    } else {
-                        318.0
-                    },
-                    scale,
-                    0x21152F,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    158.0,
-                    143.0,
-                    text_scale,
-                    &format!(
-                        "PASTAS MONITORADAS ({})",
-                        self.scan_config.directories.len()
-                    ),
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                for (index, directory) in self.scan_config.directories.iter().take(3).enumerate() {
-                    let row_y = 164.0 + index as f32 * 28.0;
-                    responsive_panel(
-                        frame, width, height, 150.0, row_y, 412.0, 26.0, scale, 0x33223F,
-                    );
-                    responsive_text(
-                        frame,
-                        width,
-                        height,
-                        160.0,
-                        row_y + 7.0,
-                        text_scale,
-                        &tail(&directory.to_string_lossy(), 48),
-                        brand::TEXT,
-                    );
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        520.0,
-                        row_y + 1.0,
-                        42.0,
-                        24.0,
-                        scale,
-                        0x422038,
-                    );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        541.0,
-                        row_y + 6.0,
-                        text_scale,
-                        "X",
-                        brand::TEXT,
-                    );
-                }
-                if self.scan_config.directories.len() > 3 {
-                    responsive_text(
-                        frame,
-                        width,
-                        height,
-                        160.0,
-                        250.0,
-                        text_scale,
-                        &format!(
-                            "+ {} OUTRA(S) PASTA(S)",
-                            self.scan_config.directories.len() - 3
-                        ),
-                        0xBBAFC7,
-                    );
-                }
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    150.0,
-                    260.0,
-                    412.0,
-                    28.0,
-                    scale,
-                    if self.scan_path_input_focused {
-                        0x422038
-                    } else {
-                        0x2D1A3B
-                    },
-                );
-                let path_label = if self.scan_path_input_focused {
-                    truncate(&self.search_query, 54)
-                } else {
-                    "Caminho da nova pasta aparece aqui ao adicionar".to_string()
+                    ("Sua biblioteca está vazia", "Adicione uma pasta com seus jogos para começar.")
                 };
                 responsive_text(
-                    frame,
-                    width,
-                    height,
-                    160.0,
-                    268.0,
-                    text_scale,
-                    &path_label,
-                    if self.scan_path_input_focused {
-                        brand::ACCENT_GREEN_LIGHT
-                    } else {
-                        0xBBAFC7
-                    },
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    158.0,
-                    298.0,
-                    190.0,
-                    52.0,
-                    scale,
-                    if self.scan_path_input_focused {
-                        brand::ACCENT_RED
-                    } else {
-                        0x2D1A3B
-                    },
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    253.0,
-                    315.0,
-                    text_scale,
-                    "ADICIONAR PASTA",
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    360.0,
-                    298.0,
-                    212.0,
-                    52.0,
-                    scale,
-                    if self.scan_config.options.recursive {
-                        0x28543F
-                    } else {
-                        0x2D1A3B
-                    },
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    466.0,
-                    315.0,
-                    text_scale,
-                    if self.scan_config.options.recursive {
-                        "SUBPASTAS: SIM"
-                    } else {
-                        "SUBPASTAS: NÃO"
-                    },
-                    brand::TEXT,
+                    frame, width, height, 230.0, 235.0, title_scale, empty_title, brand::TEXT,
                 );
                 responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    143.0,
-                    text_scale,
-                    "ÁUDIO EM SEGUNDO PLANO",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    176.0,
-                    text_scale,
-                    if self.external_media_detection_available {
-                        "Detecção de mídia externa: automática"
-                    } else {
-                        "Detecção indisponível nesta plataforma"
-                    },
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    205.0,
-                    text_scale,
-                    if self.external_media_detection_available {
-                        "Jogos são silenciados durante música externa."
-                    } else {
-                        "Recurso disponível apenas em plataformas compatíveis."
-                    },
-                    0xBBAFC7,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    254.0,
-                    text_scale,
-                    if self.external_media_playing {
-                        "Status: mídia tocando"
-                    } else {
-                        "Status: sem mídia ativa"
-                    },
-                    if self.external_media_playing {
-                        brand::ACCENT_RED_LIGHT
-                    } else {
-                        0xBBAFC7
-                    },
+                    frame, width, height, 232.0, 270.0, text_scale, first_line, 0xBBAFC7,
                 );
                 responsive_panel(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    296.0,
-                    185.0,
-                    44.0,
-                    scale,
-                    if self.performance_mode {
-                        0x28543F
-                    } else {
-                        0x2D1A3B
-                    },
+                    frame, width, height, 500.0, 315.0, 192.0, 42.0, scale, brand::ACCENT_RED,
                 );
                 responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    682.0,
-                    311.0,
-                    text_scale,
-                    if self.performance_mode {
-                        "DESEMPENHO: SIM"
-                    } else {
-                        "DESEMPENHO: NÃO"
-                    },
-                    brand::TEXT,
+                    frame, width, height, 596.0, 329.0, small_scale,
+                    "ADICIONAR PASTA", brand::TEXT,
                 );
-                responsive_panel(
-                    frame, width, height, 785.0, 296.0, 185.0, 44.0, scale, 0x2D1A3B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    877.0,
-                    311.0,
-                    text_scale,
-                    &format!("ZONA MORTA: {}%", self.gamepad_deadzone_percent),
-                    brand::TEXT,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    350.0,
-                    text_scale,
-                    "Mais rápido; pode quebrar jogos sensíveis a cache.",
-                    0xBBAFC7,
-                );
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    590.0,
-                    368.0,
-                    text_scale,
-                    "PREFERÊNCIAS DA BIBLIOTECA",
-                    brand::ACCENT_GREEN_LIGHT,
-                );
-                responsive_panel(
-                    frame, width, height, 590.0, 382.0, 185.0, 40.0, scale, 0x2D1A3B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    682.0,
-                    395.0,
-                    text_scale,
-                    if self.view_mode == LibraryViewMode::Grid {
-                        "GRADE"
-                    } else {
-                        "LISTA"
-                    },
-                    brand::TEXT,
-                );
-                responsive_panel(
-                    frame, width, height, 785.0, 382.0, 185.0, 40.0, scale, 0x2D1A3B,
-                );
-                responsive_text_centered(
-                    frame,
-                    width,
-                    height,
-                    877.0,
-                    395.0,
-                    text_scale,
-                    if self.sort_descending {
-                        "ORDEM: Z–A"
-                    } else {
-                        "ORDEM: A–Z"
-                    },
-                    brand::TEXT,
-                );
-                if self.touch_keyboard_enabled {
+            } else if self.view_mode == LibraryViewMode::List {
+                let list_top = 170.0;
+                let row_step = 54.0;
+                let row_height = 48.0;
+                let visible_rows =
+                    ((bottom - list_top - row_height) / row_step).floor().max(0.0) as usize + 1;
+                for (row, entry) in entries.iter().enumerate()
+                    .skip(self.first_visible)
+                    .take(visible_rows)
+                {
+                    let y = list_top + (row - self.first_visible) as f32 * row_step;
                     responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        590.0,
-                        426.0,
-                        380.0,
-                        40.0,
-                        scale,
-                        if self.virtual_controls_visible {
-                            0x28543F
-                        } else {
-                            0x2D1A3B
-                        },
+                        frame, width, height, 28.0, y, 702.0, row_height, scale,
+                        if row == self.selected { 0x422038 } else { 0x21152F },
                     );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        780.0,
-                        439.0,
-                        text_scale,
-                        if self.virtual_controls_visible {
-                            "CONTROLES DE TOQUE: ATIVOS"
-                        } else {
-                            "CONTROLES DE TOQUE: OCULTOS"
-                        },
-                        brand::TEXT,
+                    render_cover_art(
+                        frame, width, height, scale, 38.0, y + 5.0, 54.0, 38.0,
+                        entry, small_scale,
                     );
-                    responsive_panel(
-                        frame, width, height, 590.0, 474.0, 120.0, 40.0, scale, 0x2D1A3B,
+                    responsive_text(
+                        frame, width, height, 108.0, y + 17.0, text_scale,
+                        &truncate(&entry.title, 64), brand::TEXT,
                     );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        650.0,
-                        487.0,
-                        text_scale,
-                        &format!("OP: {}%", self.virtual_controls_opacity_percent()),
-                        brand::TEXT,
+                    let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+                    responsive_text(
+                        frame, width, height, 650.0, y + 17.0, small_scale,
+                        &extension.to_ascii_uppercase(), brand::ACCENT_GREEN_LIGHT,
                     );
-                    responsive_panel(
-                        frame, width, height, 720.0, 474.0, 120.0, 40.0, scale, 0x2D1A3B,
-                    );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        780.0,
-                        487.0,
-                        text_scale,
-                        &format!("TAM: {}%", self.virtual_controls_size_percent()),
-                        brand::TEXT,
-                    );
-                    responsive_panel(
-                        frame, width, height, 850.0, 474.0, 120.0, 40.0, scale, 0x2D1A3B,
-                    );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        910.0,
-                        487.0,
-                        text_scale,
-                        self.virtual_controls_preset.label(),
-                        brand::TEXT,
-                    );
+                    if self.is_favorite(entry) {
+                        responsive_text(
+                            frame, width, height, 694.0, y + 17.0, small_scale,
+                            "F", brand::ACCENT_GREEN_LIGHT,
+                        );
+                    }
                 }
-            }
-            LibraryPage::Games
-            | LibraryPage::Favorites
-            | LibraryPage::Recent
-            | LibraryPage::Homebrew => {
-                let entries = self.filtered_entries();
-                if entries.is_empty() {
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        128.0,
-                        112.0,
-                        842.0,
-                        (bottom - 112.0).max(240.0),
-                        scale,
-                        0x21152F,
+            } else {
+                const COLUMNS: usize = 4;
+                let card_top = 170.0;
+                let card_width = 168.0;
+                let card_height = 122.0;
+                let card_gap = 10.0;
+                let row_step = 132.0;
+                let visible_rows = landscape_grid_visible_rows(logical_height);
+                for (index, entry) in entries.iter().enumerate()
+                    .skip(self.first_visible)
+                    .take(visible_rows * COLUMNS)
+                {
+                    let local = index - self.first_visible;
+                    let column = local % COLUMNS;
+                    let row = local / COLUMNS;
+                    let x = 28.0 + column as f32 * (card_width + card_gap);
+                    let y = card_top + row as f32 * row_step;
+                    render_library_tile(
+                        frame, width, height, scale, x, y, card_width, card_height,
+                        entry, index == self.selected, self.is_favorite(entry),
+                        text_scale, small_scale,
                     );
-                    responsive_folder_icon(frame, width, height, 550.0, 218.0, scale);
-                    let (empty, empty_hint) = if !self.search_query.is_empty() {
-                        (
-                            "Nenhum resultado encontrado",
-                            "Tente outro termo ou limpe a busca.",
-                        )
-                    } else if self.format_filter != LibraryFormatFilter::All {
-                        (
-                            "Nenhum arquivo neste formato",
-                            "Troque o filtro de formato para ver outros.",
-                        )
-                    } else {
-                        (
-                            match self.page {
-                                LibraryPage::Favorites => "Nenhum favorito ainda",
-                                LibraryPage::Recent => "Nenhum jogo recente",
-                                LibraryPage::Homebrew => "Nenhum homebrew encontrado",
-                                _ => "Sua biblioteca está vazia",
-                            },
-                            "Adicione jogos à pasta do Aceris e atualize.",
-                        )
-                    };
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        550.0,
-                        290.0,
-                        title_scale,
-                        empty,
-                        brand::TEXT,
-                    );
-                    responsive_text_centered(
-                        frame, width, height, 550.0, 326.0, text_scale, empty_hint, 0xBBAFC7,
-                    );
-                    responsive_panel(
-                        frame,
-                        width,
-                        height,
-                        438.0,
-                        366.0,
-                        224.0,
-                        46.0,
-                        scale,
-                        brand::ACCENT_RED,
-                    );
-                    responsive_text_centered(
-                        frame,
-                        width,
-                        height,
-                        550.0,
-                        381.0,
-                        text_scale,
-                        "ATUALIZAR",
-                        brand::TEXT,
-                    );
-                } else if self.view_mode == LibraryViewMode::List {
-                    let list_top = 150.0;
-                    let row_step = 54.0;
-                    let row_height = 48.0;
-                    let visible_rows = ((bottom - list_top) / row_step).floor().max(1.0) as usize;
-                    responsive_text(
-                        frame, width, height, 146.0, 128.0, text_scale, "TÍTULO", 0xBBAFC7,
-                    );
-                    responsive_text(
-                        frame, width, height, 790.0, 128.0, text_scale, "FORMATO", 0xBBAFC7,
-                    );
-                    for (index, entry) in entries
-                        .into_iter()
-                        .enumerate()
-                        .skip(self.first_visible)
-                        .take(visible_rows)
-                    {
-                        let row = index - self.first_visible;
-                        let y = list_top + row as f32 * row_step;
-                        responsive_panel(
-                            frame,
-                            width,
-                            height,
-                            128.0,
-                            y,
-                            842.0,
-                            row_height,
-                            scale,
-                            if index == self.selected {
-                                0x422038
-                            } else {
-                                0x21152F
-                            },
-                        );
-                        responsive_panel(
-                            frame,
-                            width,
-                            height,
-                            140.0,
-                            y + 7.0,
-                            48.0,
-                            34.0,
-                            scale,
-                            0x2D1A3B,
-                        );
-                        responsive_text_centered(
-                            frame,
-                            width,
-                            height,
-                            164.0,
-                            y + 19.0,
-                            text_scale,
-                            "3DS",
-                            brand::ACCENT_GREEN_LIGHT,
-                        );
-                        responsive_text(
-                            frame,
-                            width,
-                            height,
-                            202.0,
-                            y + 17.0,
-                            text_scale,
-                            &truncate(&entry.title, 58),
-                            brand::TEXT,
-                        );
-                        let extension = entry
-                            .path
-                            .extension()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("3ds");
-                        responsive_text(
-                            frame,
-                            width,
-                            height,
-                            790.0,
-                            y + 18.0,
-                            text_scale,
-                            &extension.to_ascii_uppercase(),
-                            brand::ACCENT_GREEN_LIGHT,
-                        );
-                        responsive_panel(
-                            frame,
-                            width,
-                            height,
-                            910.0,
-                            y + 8.0,
-                            48.0,
-                            32.0,
-                            scale,
-                            if self.is_favorite(entry) {
-                                brand::ACCENT_RED
-                            } else {
-                                0x33223F
-                            },
-                        );
-                        responsive_text_centered(
-                            frame,
-                            width,
-                            height,
-                            934.0,
-                            y + 17.0,
-                            text_scale,
-                            if self.is_favorite(entry) { "F" } else { "+" },
-                            brand::TEXT,
-                        );
-                    }
-                } else {
-                    let row_step = 94.0;
-                    let card_top = 124.0;
-                    let visible_rows = ((bottom - card_top) / row_step).floor().max(1.0) as usize;
-                    let visible_items = visible_rows * 3;
-                    for (index, entry) in entries
-                        .into_iter()
-                        .enumerate()
-                        .skip(self.first_visible)
-                        .take(visible_items)
-                    {
-                        let relative = index - self.first_visible;
-                        let row = relative / 3;
-                        let column = relative % 3;
-                        let x = 128.0 + column as f32 * 284.0;
-                        let y = card_top + row as f32 * row_step;
-                        responsive_panel(
-                            frame,
-                            width,
-                            height,
-                            x,
-                            y,
-                            270.0,
-                            82.0,
-                            scale,
-                            if index == self.selected {
-                                0x422038
-                            } else {
-                                0x21152F
-                            },
-                        );
-                        responsive_panel(
-                            frame,
-                            width,
-                            height,
-                            x + 8.0,
-                            y + 8.0,
-                            56.0,
-                            66.0,
-                            scale,
-                            0x2D1A3B,
-                        );
-                        responsive_text_centered(
-                            frame,
-                            width,
-                            height,
-                            x + 36.0,
-                            y + 24.0,
-                            text_scale + 1,
-                            "3DS",
-                            brand::ACCENT_GREEN_LIGHT,
-                        );
-                        responsive_text(
-                            frame,
-                            width,
-                            height,
-                            x + 74.0,
-                            y + 19.0,
-                            text_scale,
-                            &truncate(&entry.title, 20),
-                            brand::TEXT,
-                        );
-                        let extension = entry
-                            .path
-                            .extension()
-                            .and_then(|v| v.to_str())
-                            .unwrap_or("3ds");
-                        responsive_text(
-                            frame,
-                            width,
-                            height,
-                            x + 74.0,
-                            y + 49.0,
-                            (text_scale as f32 * 0.84).round().max(1.0) as usize,
-                            &extension.to_ascii_uppercase(),
-                            0xBBAFC7,
-                        );
-                        responsive_panel(
-                            frame,
-                            width,
-                            height,
-                            x + 218.0,
-                            y + 8.0,
-                            42.0,
-                            25.0,
-                            scale,
-                            if self.is_favorite(entry) {
-                                brand::ACCENT_RED
-                            } else {
-                                0x33223F
-                            },
-                        );
-                        responsive_text_centered(
-                            frame,
-                            width,
-                            height,
-                            x + 239.0,
-                            y + 14.0,
-                            text_scale,
-                            if self.is_favorite(entry) { "F" } else { "+" },
-                            brand::TEXT,
-                        );
-                    }
                 }
             }
         }
+
+        // Persistent right-hand actions mirror a console's selected-game panel.
+        responsive_text(
+            frame, width, height, 780.0, 174.0, small_scale,
+            if self.page == LibraryPage::Home { "ULTIMO JOGO" } else if self.page == LibraryPage::Settings { "BIBLIOTECA" } else { "SELECIONADO" },
+            brand::ACCENT_GREEN_LIGHT,
+        );
+        if let Some(entry) = selected_entry {
+            responsive_text(
+                frame, width, height, 780.0, 197.0, text_scale,
+                &truncate(&entry.title, 26), brand::TEXT,
+            );
+            let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+            responsive_text(
+                frame, width, height, 782.0, 220.0, small_scale,
+                &format!(".{}", extension.to_ascii_uppercase()), 0xBBAFC7,
+            );
+        } else {
+            responsive_text(
+                frame, width, height, 780.0, 199.0, small_scale,
+                &format!("{} jogo(s)", game_count), brand::TEXT,
+            );
+            responsive_text(
+                frame, width, height, 782.0, 220.0, small_scale,
+                &format!("{} homebrew(s)", homebrew_count), 0xBBAFC7,
+            );
+        }
+        responsive_panel(
+            frame, width, height, 776.0, 238.0, 188.0, 42.0, scale,
+            if selected_entry.is_some() { brand::ACCENT_RED } else { 0x2D1A3B },
+        );
+        responsive_text_centered(
+            frame, width, height, 870.0, 252.0, small_scale,
+            "ABRIR JOGO", brand::TEXT,
+        );
+        responsive_panel(
+            frame, width, height, 776.0, 286.0, 188.0, 42.0, scale, 0x2D1A3B,
+        );
+        responsive_text_centered(
+            frame, width, height, 870.0, 300.0, small_scale,
+            if selected_entry.is_some_and(|entry| self.is_favorite(entry)) {
+                "REMOVER FAVORITO"
+            } else {
+                "ADICIONAR FAVORITO"
+            },
+            brand::TEXT,
+        );
+        responsive_panel(
+            frame, width, height, 776.0, 336.0, 188.0, 42.0, scale, brand::ACCENT_RED,
+        );
+        responsive_text_centered(
+            frame, width, height, 870.0, 350.0, small_scale, "ADICIONAR PASTA", brand::TEXT,
+        );
+        responsive_panel(
+            frame, width, height, 776.0, 384.0, 188.0, 42.0, scale, 0x2D1A3B,
+        );
+        responsive_text_centered(
+            frame, width, height, 870.0, 398.0, small_scale, "ATUALIZAR", brand::TEXT,
+        );
+
+        responsive_text(
+            frame, width, height, 780.0, (bottom - 34.0).max(0.0), small_scale,
+            &format!("{} PASTA(S) MONITORADA(S)", self.scan_config.directories.len()),
+            0xBBAFC7,
+        );
+        if let Some(status) = &self.status {
+            responsive_text(
+                frame, width, height, 28.0, (bottom - 32.0).max(0.0),
+                small_scale, &truncate(status, 86), brand::ACCENT_RED_LIGHT,
+            );
+        }
+        responsive_fill(
+            frame, width as usize, height as usize,
+            0.0, (logical_height - 18.0).max(0.0), 1000.0, 18.0, scale, 0x160D22,
+        );
+        responsive_text(
+            frame, width, height, 22.0, (logical_height - 13.0).max(0.0),
+            small_scale, "ACERIS  |  RUST  |  SEUS ARQUIVOS, SUAS REGRAS", 0xBBAFC7,
+        );
         if self.touch_keyboard_open {
             self.render_touch_keyboard(frame, width, height, scale, logical_height, text_scale);
         }
-        if let Some(status) = &self.status {
-            responsive_text(
-                frame,
-                width,
-                height,
-                128.0,
-                (logical_height - 44.0).max(0.0),
-                text_scale,
-                &truncate(status, 96),
-                brand::ACCENT_RED_LIGHT,
-            );
-        }
-        responsive_text(
-            frame,
-            width,
-            height,
-            128.0,
-            (logical_height - 18.0).max(0.0),
-            1,
-            "ACERIS  •  RUST  •  SEUS ARQUIVOS, SUAS REGRAS",
-            0xBBAFC7,
-        );
     }
 
-    /// Draws the library as a 400x480 RGBA frame.
-    pub fn render(&self) -> Vec<u8> {
-        self.render_animated(0, None)
-    }
-
-    /// Draws the library with a deterministic animated brand backdrop.
-    /// A host may supply one tightly-packed 400x480 RGBA background frame;
-    /// invalid-sized frames are ignored rather than risking an out-of-bounds read.
-    pub fn render_animated(&self, frame_index: u64, background_frame: Option<&[u8]>) -> Vec<u8> {
-        let (w, h) = (WIDTH, HEIGHT);
-        let mut out = vec![255u8; w * h * 4];
-        let top = rgb(brand::PURPLE_LIGHT);
-        let bottom = rgb(brand::PURPLE_DARK);
-        for y in 0..h {
-            let t = y as f32 / h as f32;
-            let color = [0, 1, 2].map(|i| (top[i] as f32 * (1.0 - t) + bottom[i] as f32 * t) as u8);
-            for x in 0..w {
-                let at = (y * w + x) * 4;
-                out[at..at + 3].copy_from_slice(&color);
-            }
-        }
-        if let Some(background) = background_frame.filter(|frame| frame.len() == w * h * 4) {
-            for (destination, source) in out.chunks_exact_mut(4).zip(background.chunks_exact(4)) {
-                let alpha = (source[3] as f32 / 255.0 * 0.38).clamp(0.0, 0.38);
-                for channel in 0..3 {
-                    destination[channel] = (source[channel] as f32 * alpha
-                        + destination[channel] as f32 * (1.0 - alpha))
-                        as u8;
-                }
-            }
-        }
-
-        // Slow, low-contrast glints give the home screen movement without
-        // changing the Aceris palette or competing with selected game rows.
-        let animation = (frame_index % 1_000_000) as usize;
-        let sweep = animation as i32 % 520 - 80;
-        for y in (HEADER_HEIGHT + 4)..FOOTER_TOP {
-            let x = (sweep + y / 5).rem_euclid(w as i32);
-            blend_pixel(&mut out, x, y, rgb(brand::ACCENT_RED_LIGHT), 0.055);
-        }
-        let ambient_height = (FOOTER_TOP - HEADER_HEIGHT - 16) as usize;
-        for particle in 0..7usize {
-            let x = ((animation * (particle + 1) * 3 + particle * 47) % w) as i32;
-            let y = HEADER_HEIGHT
-                + 8
-                + ((particle * 53 + animation * (particle + 1) / 9) % ambient_height) as i32;
-            blend_pixel(&mut out, x, y, rgb(brand::ACCENT_GREEN_LIGHT), 0.11);
-            blend_pixel(&mut out, x + 1, y, rgb(brand::ACCENT_RED_LIGHT), 0.07);
-        }
-
-        let text = rgb(brand::TEXT);
-        let red = rgb(brand::ACCENT_RED);
-
-        fill(
-            &mut out,
-            0,
-            0,
-            w as i32,
-            HEADER_HEIGHT,
-            rgb(brand::PURPLE_DARK),
-        );
-        fill(&mut out, 0, HEADER_HEIGHT - 3, w as i32, 3, red);
-        draw_text(&mut out, w, h, MARGIN, 14, 4, "ACERIS", text);
-        let count = format!("{} JOGOS", self.entries.len());
-        let count_x = w as i32 - MARGIN - font::text_width(count.chars().count(), 1) as i32;
-        draw_text(
-            &mut out,
-            w,
-            h,
-            count_x,
-            22,
-            1,
-            &count,
-            rgb(brand::ACCENT_RED_LIGHT),
-        );
-
-        if self.entries.is_empty() {
-            self.draw_empty(&mut out);
-        }
-        let max_chars = (w as i32 - 2 * MARGIN - 16) as usize / (font::ADVANCE * TEXT_SCALE);
-        for (row, entry) in self
-            .entries
-            .iter()
-            .enumerate()
-            .skip(self.first_visible)
-            .take(VISIBLE_ROWS)
-        {
-            let y = LIST_TOP + (row - self.first_visible) as i32 * ROW_HEIGHT;
-            let selected = row == self.selected;
-            if selected {
-                fill(
-                    &mut out,
-                    MARGIN - 8,
-                    y,
-                    w as i32 - 2 * (MARGIN - 8),
-                    ROW_HEIGHT - 4,
-                    red,
-                );
-            }
-            let title = truncate(&entry.title, max_chars);
-            let color = if selected { [255, 255, 255] } else { text };
-            draw_text(&mut out, w, h, MARGIN, y + 5, TEXT_SCALE, &title, color);
-        }
-        if self.entries.len() > VISIBLE_ROWS {
-            let track = (FOOTER_TOP - 22 - LIST_TOP) as f32;
-            let thumb = (track * VISIBLE_ROWS as f32 / self.entries.len() as f32).max(12.0);
-            let offset = (track - thumb) * self.first_visible as f32
-                / (self.entries.len() - VISIBLE_ROWS) as f32;
-            fill(
-                &mut out,
-                w as i32 - 6,
-                LIST_TOP + offset as i32,
-                3,
-                thumb as i32,
-                rgb(brand::ACCENT_GREEN),
-            );
-        }
-
-        if let Some(status) = &self.status {
-            let message = truncate(status, (w - 2 * MARGIN as usize) / font::ADVANCE);
-            draw_text(
-                &mut out,
-                w,
-                h,
-                MARGIN,
-                FOOTER_TOP - 16,
-                1,
-                &message,
-                rgb(brand::ACCENT_RED_LIGHT),
-            );
-        }
-        fill(
-            &mut out,
-            0,
-            FOOTER_TOP,
-            w as i32,
-            h as i32 - FOOTER_TOP,
-            rgb(brand::PURPLE_DARK),
-        );
-        draw_text(
-            &mut out,
-            w,
-            h,
-            MARGIN,
-            FOOTER_TOP + 14,
-            1,
-            "SETAS: ESCOLHER   ENTER: JOGAR   ESC: SAIR",
-            text,
-        );
-        out
-    }
-
-    fn draw_empty(&self, out: &mut [u8]) {
-        let text = rgb(brand::TEXT);
-        let lines = [
-            "NENHUM JOGO ENCONTRADO".to_string(),
-            "COLOQUE .3DS, .CCI OU .3DSX EM:".to_string(),
-        ];
-        for (i, line) in lines.iter().enumerate() {
-            draw_text(
-                out,
-                WIDTH,
-                HEIGHT,
-                MARGIN,
-                LIST_TOP + 20 + i as i32 * 24,
-                1,
-                line,
-                text,
-            );
-        }
-        let path = tail(
-            &self.directory_label,
-            (WIDTH - 2 * MARGIN as usize) / font::ADVANCE,
-        );
-        draw_text(
-            out,
-            WIDTH,
-            HEIGHT,
-            MARGIN,
-            LIST_TOP + 68,
-            1,
-            &path,
-            rgb(brand::ACCENT_GREEN_LIGHT),
-        );
-    }
 }
 
-fn search_keyboard_top(logical_height: f32) -> f32 {
-    (logical_height - 210.0).max(150.0)
+fn landscape_grid_visible_rows(logical_height: f32) -> usize {
+    const TOP: f32 = 170.0;
+    const CARD_HEIGHT: f32 = 122.0;
+    const ROW_STEP: f32 = 132.0;
+    let last_content_y = (logical_height - 18.0).max(400.0);
+    (((last_content_y - TOP - CARD_HEIGHT) / ROW_STEP).floor() as i32 + 1).max(1) as usize
 }
 
-fn fold_search_text(text: &str) -> String {
-    text.chars()
-        .flat_map(char::to_lowercase)
-        .map(|character| match character {
-            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
-            'ç' => 'c',
-            'é' | 'è' | 'ê' | 'ë' => 'e',
-            'í' | 'ì' | 'î' | 'ï' => 'i',
-            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
-            'ú' | 'ù' | 'û' | 'ü' => 'u',
-            other => other,
-        })
-        .collect()
+fn cover_palette(title: &str) -> (u32, u32, u32) {
+    const PALETTES: [(u32, u32, u32); 6] = [
+        (0x51213A, 0xE5173F, 0xF4A6B7),
+        (0x183A54, 0x3E9AB5, 0xA7DDE8),
+        (0x31442C, 0x80D45A, 0xC8ECA9),
+        (0x4B2A68, 0x9A65C7, 0xD9B7F0),
+        (0x514020, 0xD39C39, 0xF0D59A),
+        (0x26334E, 0x667DCC, 0xB8C5F0),
+    ];
+    let mut hash = 2_166_136_261u32;
+    for byte in title.bytes() {
+        hash = (hash ^ u32::from(byte)).wrapping_mul(16_777_619);
+    }
+    PALETTES[(hash as usize) % PALETTES.len()]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_cover_art(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    x: f32,
+    y: f32,
+    cover_width: f32,
+    cover_height: f32,
+    entry: &Entry,
+    text_scale: usize,
+) {
+    let (base, accent, highlight) = cover_palette(&entry.title);
+    responsive_panel(
+        frame, width, height, x, y, cover_width, cover_height, scale, base,
+    );
+    responsive_fill(
+        frame, width as usize, height as usize,
+        x + 4.0, y + 4.0, cover_width - 8.0, cover_height - 8.0,
+        scale, base,
+    );
+    responsive_fill(
+        frame, width as usize, height as usize,
+        x + 10.0, y + cover_height * 0.24, cover_width - 20.0, 5.0,
+        scale, accent,
+    );
+    responsive_fill(
+        frame, width as usize, height as usize,
+        x + cover_width * 0.18, y + cover_height * 0.40,
+        cover_width * 0.64, 4.0, scale, highlight,
+    );
+    responsive_fill(
+        frame, width as usize, height as usize,
+        x + cover_width * 0.34, y + cover_height * 0.57,
+        cover_width * 0.32, 4.0, scale, accent,
+    );
+    responsive_text_centered(
+        frame, width, height, x + cover_width * 0.5, y + cover_height * 0.68,
+        text_scale, "3DS", brand::TEXT,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_library_tile(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    x: f32,
+    y: f32,
+    card_width: f32,
+    card_height: f32,
+    entry: &Entry,
+    selected: bool,
+    favorite: bool,
+    text_scale: usize,
+    small_scale: usize,
+) {
+    responsive_panel(
+        frame, width, height, x, y, card_width, card_height, scale,
+        if selected { 0x422038 } else { 0x21152F },
+    );
+    let (base, accent, highlight) = cover_palette(&entry.title);
+    responsive_fill(
+        frame, width as usize, height as usize,
+        x + 6.0, y + 6.0, card_width - 12.0, 70.0, scale, base,
+    );
+    responsive_fill(
+        frame, width as usize, height as usize,
+        x + 14.0, y + 20.0, card_width - 28.0, 4.0, scale, accent,
+    );
+    responsive_fill(
+        frame, width as usize, height as usize,
+        x + 28.0, y + 37.0, card_width - 56.0, 4.0, scale, highlight,
+    );
+    responsive_text_centered(
+        frame, width, height, x + card_width * 0.5, y + 53.0,
+        text_scale, "3DS", brand::TEXT,
+    );
+    if favorite {
+        responsive_panel(
+            frame, width, height, x + card_width - 28.0, y + 8.0,
+            20.0, 20.0, scale, 0x422038,
+        );
+        responsive_text_centered(
+            frame, width, height, x + card_width - 18.0, y + 13.0,
+            small_scale, "F", brand::ACCENT_GREEN_LIGHT,
+        );
+    }
+    responsive_text(
+        frame, width, height, x + 10.0, y + 87.0, small_scale,
+        &truncate(&entry.title, 25), brand::TEXT,
+    );
+    let extension = entry.path.extension().and_then(|value| value.to_str()).unwrap_or("3ds");
+    responsive_text(
+        frame, width, height, x + 10.0, y + 108.0, small_scale,
+        &extension.to_ascii_uppercase(), brand::ACCENT_GREEN_LIGHT,
+    );
 }
 
 fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> {
@@ -5330,7 +4554,7 @@ mod tests {
 
         // Landscape Settings uses the shared header refresh control at the top-right.
         assert_eq!(
-            library.click_responsive(912, 35, 1000, 600),
+            library.click_responsive(870, 405, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.entries().len(), 1);
@@ -5401,7 +4625,7 @@ mod tests {
         let mut library = library(12);
         library.set_touch_keyboard_enabled(true);
         assert_eq!(
-            library.click_responsive(200, 106, 1000, 600),
+            library.click_responsive(200, 142, 1000, 600),
             ClickResult::Ignored
         );
         assert!(library.search_is_focused());
@@ -5434,12 +4658,12 @@ mod tests {
         let mut library = library(12);
         assert!(!library.is_list_view());
         assert_eq!(
-            library.click_responsive(610, 40, 1000, 600),
+            library.click_responsive(574, 142, 1000, 600),
             ClickResult::Ignored
         );
         assert!(library.is_list_view());
         assert_eq!(
-            library.click_responsive(610, 40, 1000, 600),
+            library.click_responsive(574, 142, 1000, 600),
             ClickResult::Ignored
         );
         assert!(!library.is_list_view());
@@ -5472,21 +4696,21 @@ mod tests {
         library.toggle_view_mode();
 
         assert_eq!(
-            library.click_responsive(420, 204, 1000, 600),
+            library.click_responsive(420, 245, 1000, 600),
             ClickResult::Selected
         );
         assert_eq!(library.selected_entry().unwrap().title, "Game 1");
         assert_eq!(
-            library.click_responsive(420, 204, 1000, 600),
+            library.click_responsive(420, 245, 1000, 600),
             ClickResult::Activated
         );
 
         assert_eq!(
-            library.click_responsive(934, 169, 1000, 600),
+            library.click_responsive(870, 307, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.favorite_count(), 1);
-        assert_eq!(library.selected_entry().unwrap().title, "Game 0");
+        assert_eq!(library.selected_entry().unwrap().title, "Game 1");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -5494,9 +4718,9 @@ mod tests {
     fn horizontal_grid_navigation_moves_by_rows_and_columns() {
         let mut library = library(18);
         library.move_selection_responsive(1, 1000, 480);
-        assert_eq!(library.selected_index(), 3);
-        library.move_selection_horizontal_responsive(1, 1000, 480);
         assert_eq!(library.selected_index(), 4);
+        library.move_selection_horizontal_responsive(1, 1000, 480);
+        assert_eq!(library.selected_index(), 5);
         library.move_selection_responsive(-1, 1000, 480);
         assert_eq!(library.selected_index(), 1);
     }
@@ -5645,10 +4869,10 @@ mod tests {
         library.select_page(LibraryPage::Settings);
 
         // Landscape 1000x600: performance and deadzone have separate hit targets.
-        library.click_responsive(682, 318, 1000, 600);
+        library.click_responsive(540, 301, 1000, 600);
         assert!(library.performance_mode());
         assert!(Library::from_scan_settings(&settings, &root).performance_mode());
-        library.click_responsive(877, 318, 1000, 600);
+        library.click_responsive(667, 301, 1000, 600);
         assert_eq!(library.gamepad_deadzone_percent(), 20);
         assert_eq!(
             Library::from_scan_settings(&settings, &root).gamepad_deadzone_percent(),
@@ -5686,8 +4910,8 @@ mod tests {
         assert!(!library.sort_descending);
 
         // Desktop / landscape settings expose both choices in the library settings card.
-        library.click_responsive(680, 402, 1000, 600);
-        library.click_responsive(875, 402, 1000, 600);
+        library.click_responsive(136, 410, 1000, 600);
+        library.click_responsive(365, 410, 1000, 600);
         assert!(library.is_list_view());
         assert!(library.sort_descending);
 
@@ -6056,10 +5280,10 @@ mod tests {
         library.select_page(LibraryPage::Settings);
         assert_eq!(library.entries().len(), 1);
 
-        library.click_responsive(466, 324, 1000, 600);
+        library.click_responsive(365, 301, 1000, 600);
         assert!(library.scan_config().options.recursive);
 
-        library.click_responsive(253, 324, 1000, 600);
+        library.click_responsive(136, 301, 1000, 600);
         assert!(library.search_is_focused());
         for character in secondary.to_string_lossy().chars() {
             assert!(library.input_search_char(character));
@@ -6070,11 +5294,11 @@ mod tests {
         assert_eq!(library.entries().len(), 2);
         assert!(!library.search_is_focused());
 
-        library.click_responsive(541, 205, 1000, 600);
+        library.click_responsive(694, 218, 1000, 600);
         assert_eq!(library.scan_config().directories.len(), 1);
         assert_eq!(library.entries().len(), 1);
 
-        library.click_responsive(541, 177, 1000, 600);
+        library.click_responsive(694, 185, 1000, 600);
         assert_eq!(library.scan_config().directories.len(), 1);
         assert_eq!(
             library.status_message(),
@@ -6088,6 +5312,27 @@ mod tests {
     }
 
     #[test]
+    fn console_home_add_folder_action_opens_path_entry() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-console-add-folder-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut library = Library::new(Vec::new(), dir.display().to_string());
+        library.set_touch_keyboard_enabled(true);
+
+        assert_eq!(
+            library.click_responsive(870, 355, 1000, 600),
+            ClickResult::Ignored
+        );
+        assert_eq!(library.page(), LibraryPage::Settings);
+        assert!(library.search_is_focused());
+        assert!(library.touch_keyboard_is_open());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn cancelling_folder_path_input_does_not_add_a_root() {
         let dir = std::env::temp_dir().join(format!(
             "aceris-settings-cancel-path-{}",
@@ -6096,7 +5341,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
         library.select_page(LibraryPage::Settings);
-        library.click_responsive(253, 324, 1000, 600);
+        library.click_responsive(136, 301, 1000, 600);
         for character in "/path/that/does/not/exist".chars() {
             library.input_search_char(character);
         }
@@ -6119,7 +5364,7 @@ mod tests {
         library.select_page(LibraryPage::Settings);
         library.set_touch_keyboard_enabled(true);
 
-        library.click_responsive(253, 324, 1000, 600);
+        library.click_responsive(136, 301, 1000, 600);
         assert!(library.touch_keyboard_is_open());
 
         let keyboard_top = search_keyboard_top(600.0);
@@ -6198,7 +5443,7 @@ mod tests {
         assert_eq!(library.visible_entry_count(), 1);
 
         assert_eq!(
-            library.click_responsive(865, 100, 1000, 600),
+            library.click_responsive(464, 142, 1000, 600),
             ClickResult::Ignored
         );
         assert_eq!(library.format_filter(), LibraryFormatFilter::Cci);
@@ -6232,7 +5477,7 @@ mod tests {
         library.select_page(LibraryPage::Settings);
         library.set_touch_keyboard_enabled(true);
         library.set_virtual_controls_visible(true).unwrap();
-        library.click_responsive(780, 446, 1000, 600);
+        library.click_responsive(600, 410, 1000, 600);
         assert!(!library.virtual_controls_visible());
 
         // Opacity, size and preset occupy separate thirds of the landscape row.
@@ -6241,16 +5486,16 @@ mod tests {
             library.virtual_controls_preset(),
             VirtualControlPreset::Standard
         );
-        library.click_responsive(650, 495, 1000, 600);
+        library.click_responsive(525, 458, 1000, 600);
         assert_eq!(library.virtual_controls_opacity(), 204);
-        library.click_responsive(780, 495, 1000, 600);
+        library.click_responsive(607, 458, 1000, 600);
         assert_eq!(library.virtual_controls_size_percent(), 120);
-        library.click_responsive(910, 495, 1000, 600);
+        library.click_responsive(690, 458, 1000, 600);
         assert_eq!(
             library.virtual_controls_preset(),
             VirtualControlPreset::Compact
         );
-        library.click_responsive(910, 495, 1000, 600);
+        library.click_responsive(690, 458, 1000, 600);
         assert_eq!(
             library.virtual_controls_preset(),
             VirtualControlPreset::LeftHanded
