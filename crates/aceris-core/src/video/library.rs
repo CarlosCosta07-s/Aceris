@@ -2545,7 +2545,16 @@ impl Library {
                 .copied()
             {
                 render_cover_art(
-                    frame, width, height, scale, 36.0, 270.0, 100.0, 120.0, entry, small_scale,
+                    frame,
+                    width,
+                    height,
+                    scale,
+                    36.0,
+                    270.0,
+                    100.0,
+                    120.0,
+                    entry,
+                    small_scale,
                 );
                 responsive_text(
                     frame,
@@ -2583,7 +2592,15 @@ impl Library {
                     0xBBAFC7,
                 );
                 responsive_panel(
-                    frame, width, height, 36.0, 378.0, 328.0, 42.0, scale, brand::ACCENT_RED,
+                    frame,
+                    width,
+                    height,
+                    36.0,
+                    378.0,
+                    328.0,
+                    42.0,
+                    scale,
+                    brand::ACCENT_RED,
                 );
                 responsive_text_centered(
                     frame,
@@ -2626,7 +2643,15 @@ impl Library {
                     0xBBAFC7,
                 );
                 responsive_panel(
-                    frame, width, height, 36.0, 378.0, 328.0, 42.0, scale, brand::ACCENT_RED,
+                    frame,
+                    width,
+                    height,
+                    36.0,
+                    378.0,
+                    328.0,
+                    42.0,
+                    scale,
+                    brand::ACCENT_RED,
                 );
                 responsive_text_centered(
                     frame,
@@ -2680,10 +2705,23 @@ impl Library {
                         360.0,
                         52.0,
                         scale,
-                        if index == self.selected { 0x422038 } else { 0x21152F },
+                        if index == self.selected {
+                            0x422038
+                        } else {
+                            0x21152F
+                        },
                     );
                     render_cover_art(
-                        frame, width, height, scale, 28.0, y + 6.0, 46.0, 40.0, entry, small_scale,
+                        frame,
+                        width,
+                        height,
+                        scale,
+                        28.0,
+                        y + 6.0,
+                        46.0,
+                        40.0,
+                        entry,
+                        small_scale,
                     );
                     responsive_text(
                         frame,
@@ -2716,13 +2754,27 @@ impl Library {
                 frame, width, height, 20.0, 676.0, 174.0, 44.0, scale, 0x21152F,
             );
             responsive_text_centered(
-                frame, width, height, 107.0, 690.0, small_scale, "FAVORITOS", brand::TEXT,
+                frame,
+                width,
+                height,
+                107.0,
+                690.0,
+                small_scale,
+                "FAVORITOS",
+                brand::TEXT,
             );
             responsive_panel(
                 frame, width, height, 202.0, 676.0, 178.0, 44.0, scale, 0x21152F,
             );
             responsive_text_centered(
-                frame, width, height, 291.0, 690.0, small_scale, "VER BIBLIOTECA", brand::TEXT,
+                frame,
+                width,
+                height,
+                291.0,
+                690.0,
+                small_scale,
+                "VER BIBLIOTECA",
+                brand::TEXT,
             );
         } else if self.page == LibraryPage::Settings {
             responsive_text(
@@ -4007,7 +4059,11 @@ impl Library {
                         card_width,
                         88.0,
                         scale,
-                        if index == self.selected { 0x422038 } else { 0x21152F },
+                        if index == self.selected {
+                            0x422038
+                        } else {
+                            0x21152F
+                        },
                     );
                     render_cover_art(
                         frame,
@@ -5973,10 +6029,8 @@ mod tests {
 
     #[test]
     fn home_recent_cards_can_be_selected_and_activated() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-home-recent-cards-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-home-recent-cards-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let first = dir.join("first.3ds");
         let second = dir.join("second.cci");
@@ -5985,9 +6039,18 @@ mod tests {
             fs::write(path, b"fixture").unwrap();
         }
         let entries = vec![
-            Entry { title: "First".into(), path: first.clone() },
-            Entry { title: "Second".into(), path: second.clone() },
-            Entry { title: "Third".into(), path: third.clone() },
+            Entry {
+                title: "First".into(),
+                path: first.clone(),
+            },
+            Entry {
+                title: "Second".into(),
+                path: second.clone(),
+            },
+            Entry {
+                title: "Third".into(),
+                path: third.clone(),
+            },
         ];
         let mut library = Library::new(entries, dir.display().to_string());
         library.mark_launched(&first);
@@ -5995,9 +6058,15 @@ mod tests {
         library.mark_launched(&third);
         assert_eq!(library.selected_entry().unwrap().title, "Third");
 
-        assert_eq!(library.click_responsive(300, 480, 1000, 600), ClickResult::Selected);
+        assert_eq!(
+            library.click_responsive(300, 480, 1000, 600),
+            ClickResult::Selected
+        );
         assert_eq!(library.selected_entry().unwrap().title, "Second");
-        assert_eq!(library.click_responsive(300, 480, 1000, 600), ClickResult::Activated);
+        assert_eq!(
+            library.click_responsive(300, 480, 1000, 600),
+            ClickResult::Activated
+        );
         library.move_selection_horizontal_responsive(-1, 1000, 600);
         assert_eq!(library.selected_entry().unwrap().title, "Third");
 
@@ -6006,10 +6075,7 @@ mod tests {
 
     #[test]
     fn portrait_home_shows_recent_games_and_quick_access_routes() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-portrait-home-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("aceris-portrait-home-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("recent.3ds");
         fs::write(&path, b"fixture").unwrap();
@@ -6021,10 +6087,16 @@ mod tests {
         library.mark_launched(&path);
         library.select_page(LibraryPage::Games);
 
-        assert_eq!(library.click_responsive(50, 120, 400, 800), ClickResult::Ignored);
+        assert_eq!(
+            library.click_responsive(50, 120, 400, 800),
+            ClickResult::Ignored
+        );
         assert_eq!(library.page(), LibraryPage::Home);
         assert_eq!(library.selected_entry().unwrap().title, "Recent title");
-        assert_eq!(library.click_responsive(100, 500, 400, 800), ClickResult::Activated);
+        assert_eq!(
+            library.click_responsive(100, 500, 400, 800),
+            ClickResult::Activated
+        );
         library.click_responsive(100, 690, 400, 800);
         assert_eq!(library.page(), LibraryPage::Favorites);
         library.click_responsive(50, 120, 400, 800);

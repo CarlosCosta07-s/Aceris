@@ -769,7 +769,7 @@ fn run_directory_picker(program: &str, arguments: &[&str]) -> io::Result<Option<
     let mut selected = output.stdout;
     while selected
         .last()
-        .is_some_and(|byte| *byte == b'\\n' || *byte == b'\\r')
+        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
     {
         selected.pop();
     }
