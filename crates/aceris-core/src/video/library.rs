@@ -9,7 +9,7 @@ use crate::game_identity::GameIdentity;
 use crate::loader::ncsd::NcsdImageReader;
 use crate::loader::smdh::{SMDH_FILE_SIZE, Smdh, SmdhIcon};
 use crate::loader::threedsx::ThreeDsxImage;
-use aceris_common::brand;
+use aceris_common::{brand, ui};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
@@ -2929,8 +2929,8 @@ impl Library {
         scale: f32,
         logical_height: f32,
     ) {
-        let font_scale = (scale * 1.7).round().max(2.0) as usize;
-        let small_scale = (scale * 1.15).round().max(1.0) as usize;
+        let font_scale = ui::typography_scale(ui::TypographyRole::Display, scale);
+        let small_scale = ui::typography_scale(ui::TypographyRole::Body, scale);
         let home_entries = self.home_entries();
 
         // Brand header.
@@ -4379,9 +4379,9 @@ impl Library {
         scale: f32,
         logical_height: f32,
     ) {
-        let title_scale = (scale * 1.8).round().max(2.0) as usize;
-        let text_scale = (scale * 1.12).round().max(1.0) as usize;
-        let small_scale = (scale * 0.92).round().max(1.0) as usize;
+        let title_scale = ui::typography_scale(ui::TypographyRole::Display, scale);
+        let text_scale = ui::typography_scale(ui::TypographyRole::Body, scale);
+        let small_scale = ui::typography_scale(ui::TypographyRole::Caption, scale);
         let bottom = (logical_height - 18.0).max(400.0);
         let homebrew_count = self
             .entries
@@ -6743,18 +6743,12 @@ fn fold_search_text(text: &str) -> String {
 }
 
 fn responsive_metrics(width: u32, height: u32) -> Option<(bool, f32, f32, f32)> {
-    if width < 160 || height < 160 || width > 4096 || height > 4096 {
-        return None;
-    }
-    let portrait = height >= width;
-    let logical_width = if portrait { 400.0 } else { 1000.0 };
-    let scale = width as f32 / logical_width;
-    let logical_height = height as f32 / scale;
-    (scale.is_finite() && scale > 0.0 && logical_height.is_finite()).then_some((
-        portrait,
-        scale,
-        logical_width,
-        logical_height,
+    let viewport = ui::Viewport::from_size(width, height)?;
+    Some((
+        viewport.is_portrait,
+        viewport.scale,
+        viewport.logical_width,
+        viewport.logical_height,
     ))
 }
 
@@ -6994,18 +6988,18 @@ fn responsive_panel(
     scale: f32,
     color: u32,
 ) {
-    // Rounded shadows, borders and surfaces share one shape language across
-    // Home, library pages, settings and the touch-first portrait layout.
+    // Shared shape tokens keep cards, settings panels and controls visually
+    // consistent while allowing the design system to evolve in one place.
     responsive_rounded_fill(
         frame,
         width as usize,
         height as usize,
-        x + 3.0,
-        y + 4.0,
+        x + ui::shape::PANEL_SHADOW_X,
+        y + ui::shape::PANEL_SHADOW_Y,
         rect_width,
         rect_height,
         scale,
-        6.0,
+        ui::shape::PANEL_RADIUS,
         brand::SURFACE_SHADOW,
     );
     responsive_rounded_fill(
@@ -7017,29 +7011,29 @@ fn responsive_panel(
         rect_width,
         rect_height,
         scale,
-        6.0,
+        ui::shape::PANEL_BORDER_RADIUS,
         brand::BORDER,
     );
     responsive_rounded_fill(
         frame,
         width as usize,
         height as usize,
-        x + 1.0,
-        y + 1.0,
-        rect_width - 2.0,
-        rect_height - 2.0,
+        x + ui::shape::PANEL_CONTENT_INSET,
+        y + ui::shape::PANEL_CONTENT_INSET,
+        rect_width - ui::shape::PANEL_CONTENT_INSET * 2.0,
+        rect_height - ui::shape::PANEL_CONTENT_INSET * 2.0,
         scale,
-        5.0,
+        ui::shape::PANEL_CONTENT_RADIUS,
         color,
     );
     responsive_fill(
         frame,
         width as usize,
         height as usize,
-        x + 7.0,
-        y + 2.0,
-        rect_width - 14.0,
-        1.0,
+        x + ui::shape::PANEL_HIGHLIGHT_INSET_X,
+        y + ui::shape::PANEL_HIGHLIGHT_Y,
+        rect_width - ui::shape::PANEL_HIGHLIGHT_INSET_X * 2.0,
+        ui::shape::PANEL_HIGHLIGHT_HEIGHT,
         scale,
         brand::TEXT_SUBTLE,
     );
@@ -7047,10 +7041,10 @@ fn responsive_panel(
         frame,
         width as usize,
         height as usize,
-        x + 7.0,
-        y + rect_height - 2.0,
-        rect_width - 14.0,
-        1.0,
+        x + ui::shape::PANEL_HIGHLIGHT_INSET_X,
+        y + rect_height - ui::shape::PANEL_BOTTOM_INSET,
+        rect_width - ui::shape::PANEL_HIGHLIGHT_INSET_X * 2.0,
+        ui::shape::PANEL_HIGHLIGHT_HEIGHT,
         scale,
         brand::SURFACE_BASE,
     );
