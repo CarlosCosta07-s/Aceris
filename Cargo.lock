@@ -17,6 +17,10 @@ name = "aceris-android-smoke"
 version = "0.0.1"
 
 [[package]]
+name = "aceris-android-smoke"
+version = "0.0.1"
+
+[[package]]
 name = "aceris-common"
 version = "0.0.1"
 
