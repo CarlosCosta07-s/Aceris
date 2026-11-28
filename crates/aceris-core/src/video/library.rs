@@ -2120,8 +2120,12 @@ impl Library {
             self.move_selection_with_visible(delta, visible_rows);
         } else {
             let visible_rows = landscape_grid_visible_rows(logical_height);
-            let visible_items = visible_rows * 4;
-            let delta = if delta.abs() == 1 { delta * 4 } else { delta };
+            let visible_items = visible_rows * ui::library::GRID_COLUMNS;
+            let delta = if delta.abs() == 1 {
+                delta * ui::library::GRID_COLUMNS as i32
+            } else {
+                delta
+            };
             self.move_grid_selection(delta, visible_items);
         }
     }
@@ -2273,12 +2277,13 @@ impl Library {
         self.selected =
             (self.selected as i64 + i64::from(delta)).clamp(0, count as i64 - 1) as usize;
         self.status = None;
-        let visible_items = visible_items.max(4);
+        let columns = ui::library::GRID_COLUMNS;
+        let visible_items = visible_items.max(columns);
         if self.selected < self.first_visible {
-            self.first_visible = (self.selected / 4) * 4;
+            self.first_visible = (self.selected / columns) * columns;
         } else if self.selected >= self.first_visible + visible_items {
             let needed = self.selected + 1 - visible_items;
-            self.first_visible = needed.div_ceil(4) * 4;
+            self.first_visible = needed.div_ceil(columns) * columns;
         }
     }
 
@@ -2330,7 +2335,7 @@ impl Library {
             self.move_selection_with_visible(delta, visible);
         } else if self.view_mode == LibraryViewMode::Grid {
             let visible_rows = landscape_grid_visible_rows(logical_height);
-            self.move_grid_selection(delta, visible_rows * 4);
+            self.move_grid_selection(delta, visible_rows * ui::library::GRID_COLUMNS);
         }
     }
 
@@ -2808,27 +2813,32 @@ impl Library {
                     return self.select_or_activate(index);
                 }
 
-                const COLUMNS: usize = 4;
-                let card_top = 170.0;
-                let card_height = 148.0;
-                let row_step = 158.0;
-                let card_width = 168.0;
-                let card_gap = 10.0;
-                if y < card_top || !(28.0..730.0).contains(&x) {
+                let columns = ui::library::GRID_COLUMNS;
+                let card_top = ui::library::GRID_TOP;
+                let card_height = ui::library::GRID_CARD_HEIGHT;
+                let row_step = ui::library::GRID_STEP_Y;
+                let card_width = ui::library::GRID_CARD_WIDTH;
+                let column_step = ui::library::GRID_STEP_X;
+                let grid_right = ui::library::GRID_ORIGIN_X
+                    + columns as f32 * card_width
+                    + (columns - 1) as f32 * ui::library::GRID_GAP_X;
+                if y < card_top || !(ui::library::GRID_ORIGIN_X..grid_right).contains(&x) {
                     return ClickResult::Ignored;
                 }
                 let row = ((y - card_top) / row_step).floor().max(0.0) as usize;
-                let column = ((x - 28.0) / (card_width + card_gap)).floor().max(0.0) as usize;
-                if column >= COLUMNS {
+                let column = ((x - ui::library::GRID_ORIGIN_X) / column_step)
+                    .floor()
+                    .max(0.0) as usize;
+                if column >= columns {
                     return ClickResult::Ignored;
                 }
-                let card_x = 28.0 + column as f32 * (card_width + card_gap);
+                let card_x = ui::library::GRID_ORIGIN_X + column as f32 * column_step;
                 let card_y = card_top + row as f32 * row_step;
                 if x < card_x || x >= card_x + card_width || y >= card_y + card_height {
                     return ClickResult::Ignored;
                 }
                 let visible_rows = landscape_grid_visible_rows(logical_height);
-                let index = self.first_visible + row * COLUMNS + column;
+                let index = self.first_visible + row * columns + column;
                 if row >= visible_rows || index >= self.visible_entry_count() {
                     return ClickResult::Ignored;
                 }
@@ -5686,23 +5696,23 @@ impl Library {
                     }
                 }
             } else {
-                const COLUMNS: usize = 4;
-                let card_top = 170.0;
-                let card_width = 168.0;
-                let card_height = 148.0;
-                let card_gap = 10.0;
-                let row_step = 158.0;
+                let columns = ui::library::GRID_COLUMNS;
+                let card_top = ui::library::GRID_TOP;
+                let card_width = ui::library::GRID_CARD_WIDTH;
+                let card_height = ui::library::GRID_CARD_HEIGHT;
+                let column_step = ui::library::GRID_STEP_X;
+                let row_step = ui::library::GRID_STEP_Y;
                 let visible_rows = landscape_grid_visible_rows(logical_height);
                 for (index, entry) in entries
                     .iter()
                     .enumerate()
                     .skip(self.first_visible)
-                    .take(visible_rows * COLUMNS)
+                    .take(visible_rows * columns)
                 {
                     let local = index - self.first_visible;
-                    let column = local % COLUMNS;
-                    let row = local / COLUMNS;
-                    let x = 28.0 + column as f32 * (card_width + card_gap);
+                    let column = local % columns;
+                    let row = local / columns;
+                    let x = ui::library::GRID_ORIGIN_X + column as f32 * column_step;
                     let y = card_top + row as f32 * row_step;
                     render_library_tile(
                         frame,
@@ -6245,11 +6255,12 @@ impl Library {
 }
 
 fn landscape_grid_visible_rows(logical_height: f32) -> usize {
-    const TOP: f32 = 170.0;
-    const CARD_HEIGHT: f32 = 148.0;
-    const ROW_STEP: f32 = 158.0;
     let last_content_y = (logical_height - 18.0).max(400.0);
-    (((last_content_y - TOP - CARD_HEIGHT) / ROW_STEP).floor() as i32 + 1).max(1) as usize
+    (((last_content_y - ui::library::GRID_TOP - ui::library::GRID_CARD_HEIGHT)
+        / ui::library::GRID_STEP_Y)
+        .floor() as i32
+        + 1)
+        .max(1) as usize
 }
 
 fn cover_palette(title: &str) -> (u32, u32, u32) {
@@ -6695,8 +6706,8 @@ fn render_library_tile(
     );
 
     // A restrained red line communicates focus without making the whole card
-    // glow. Artwork gets most of the card; title and format stay in a stable
-    // footer region so the four-column grid remains easy to scan.
+    // glow. Square SMDH artwork is kept proportional and centered; title and
+    // format metadata share a consistent footer across the three-column grid.
     if selected {
         responsive_fill(
             frame,
@@ -6711,30 +6722,31 @@ fn render_library_tile(
         );
     }
 
-    const COVER_INSET: f32 = 6.0;
-    const COVER_HEIGHT: f32 = 88.0;
+    const COVER_SIZE: f32 = 108.0;
+    let cover_x = x + (card_width - COVER_SIZE) * 0.5;
+    let cover_y = y + 8.0;
     if let Some(icon) = smdh_icon {
         draw_smdh_icon(
             frame,
             width,
             height,
             scale,
-            x + COVER_INSET,
-            y + COVER_INSET,
-            card_width - COVER_INSET * 2.0,
-            COVER_HEIGHT,
+            cover_x,
+            cover_y,
+            COVER_SIZE,
+            COVER_SIZE,
             icon,
         );
     } else {
         let (base, accent, highlight) = cover_palette(&entry.title);
-        responsive_fill(
+        responsive_panel(
             frame,
-            width as usize,
-            height as usize,
-            x + COVER_INSET,
-            y + COVER_INSET,
-            card_width - COVER_INSET * 2.0,
-            COVER_HEIGHT,
+            width,
+            height,
+            cover_x,
+            cover_y,
+            COVER_SIZE,
+            COVER_SIZE,
             scale,
             base,
         );
@@ -6742,9 +6754,9 @@ fn render_library_tile(
             frame,
             width as usize,
             height as usize,
-            x + 14.0,
-            y + 21.0,
-            card_width - 28.0,
+            cover_x + 12.0,
+            cover_y + 23.0,
+            COVER_SIZE - 24.0,
             4.0,
             scale,
             accent,
@@ -6753,9 +6765,9 @@ fn render_library_tile(
             frame,
             width as usize,
             height as usize,
-            x + 28.0,
-            y + 43.0,
-            card_width - 56.0,
+            cover_x + 24.0,
+            cover_y + 50.0,
+            COVER_SIZE - 48.0,
             4.0,
             scale,
             highlight,
@@ -6764,13 +6776,25 @@ fn render_library_tile(
             frame,
             width,
             height,
-            x + card_width * 0.5,
-            y + 68.0,
+            cover_x + COVER_SIZE * 0.5,
+            cover_y + 80.0,
             text_scale,
             "3DS",
             brand::TEXT,
         );
     }
+
+    responsive_fill(
+        frame,
+        width as usize,
+        height as usize,
+        x + 12.0,
+        y + 119.0,
+        card_width - 24.0,
+        1.0,
+        scale,
+        brand::BORDER,
+    );
 
     if favorite {
         responsive_panel(
@@ -6800,8 +6824,8 @@ fn render_library_tile(
         frame,
         width,
         height,
-        x + 10.0,
-        y + 108.0,
+        x + 12.0,
+        y + 125.0,
         text_scale,
         &truncate(&entry.title, 25),
         brand::TEXT,
@@ -6815,8 +6839,8 @@ fn render_library_tile(
         frame,
         width,
         height,
-        x + 10.0,
-        y + 129.0,
+        x + 12.0,
+        y + 146.0,
         small_scale,
         &format!("NINTENDO 3DS  ·  .{}", extension.to_ascii_uppercase()),
         if selected {
@@ -8237,6 +8261,24 @@ mod tests {
     }
 
     #[test]
+    fn landscape_grid_hitboxes_follow_three_column_card_geometry() {
+        let mut library = library(9);
+        library.select_page(LibraryPage::Games);
+        let y = (ui::library::GRID_TOP + 6.0) as i32;
+        let second_x = (ui::library::GRID_ORIGIN_X + ui::library::GRID_STEP_X + 6.0) as i32;
+        let third_x = (ui::library::GRID_ORIGIN_X + 2.0 * ui::library::GRID_STEP_X + 6.0) as i32;
+
+        assert_eq!(library.click_responsive(second_x, y, 1000, 600), ClickResult::Selected);
+        assert_eq!(library.selected_index(), 1);
+        assert_eq!(library.click_responsive(third_x, y, 1000, 600), ClickResult::Selected);
+        assert_eq!(library.selected_index(), 2);
+        assert_eq!(library.click_responsive(third_x, y, 1000, 600), ClickResult::Activated);
+
+        // The detail rail remains outside the card hit area.
+        assert_eq!(library.click_responsive(750, y, 1000, 600), ClickResult::Ignored);
+    }
+
+    #[test]
     fn list_mode_uses_vertical_row_navigation_and_ignores_horizontal_steps() {
         let mut library = library(12);
         library.toggle_view_mode();
@@ -8285,9 +8327,9 @@ mod tests {
     fn horizontal_grid_navigation_moves_by_rows_and_columns() {
         let mut library = library(18);
         library.move_selection_responsive(1, 1000, 480);
-        assert_eq!(library.selected_index(), 4);
+        assert_eq!(library.selected_index(), 3);
         library.move_selection_horizontal_responsive(1, 1000, 480);
-        assert_eq!(library.selected_index(), 5);
+        assert_eq!(library.selected_index(), 4);
         library.move_selection_responsive(-1, 1000, 480);
         assert_eq!(library.selected_index(), 1);
     }

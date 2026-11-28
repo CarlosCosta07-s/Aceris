@@ -33,6 +33,21 @@ pub mod chrome {
     pub const SETTINGS_WIDTH: f32 = 112.0;
 }
 
+/// Shared geometry for the landscape game-library grid. These values are
+/// consumed by rendering, pointer hit-testing and controller navigation.
+pub mod library {
+    /// The console-style collection uses three wider cards per row.
+    pub const GRID_COLUMNS: usize = 3;
+    pub const GRID_ORIGIN_X: f32 = 28.0;
+    pub const GRID_TOP: f32 = 170.0;
+    pub const GRID_CARD_WIDTH: f32 = 222.0;
+    pub const GRID_CARD_HEIGHT: f32 = 166.0;
+    pub const GRID_GAP_X: f32 = 18.0;
+    pub const GRID_GAP_Y: f32 = 12.0;
+    pub const GRID_STEP_X: f32 = GRID_CARD_WIDTH + GRID_GAP_X;
+    pub const GRID_STEP_Y: f32 = GRID_CARD_HEIGHT + GRID_GAP_Y;
+}
+
 /// Consistent spacing steps in logical UI units (4-unit base grid).
 pub mod spacing {
     pub const XXS: f32 = 2.0;
@@ -154,6 +169,16 @@ mod tests {
         assert_eq!(portrait.logical_width, 400.0);
         assert_eq!(portrait.logical_height, 1920.0 / 2.7);
         assert_eq!(portrait.scale, 2.7);
+    }
+
+    #[test]
+    fn landscape_library_grid_uses_three_wide_console_cards() {
+        assert_eq!(library::GRID_COLUMNS, 3);
+        assert!(library::GRID_CARD_WIDTH > 168.0);
+        assert!(library::GRID_CARD_HEIGHT > 148.0);
+        let collection_width = library::GRID_COLUMNS as f32 * library::GRID_CARD_WIDTH
+            + (library::GRID_COLUMNS - 1) as f32 * library::GRID_GAP_X;
+        assert_eq!(collection_width, 702.0);
     }
 
     #[test]
