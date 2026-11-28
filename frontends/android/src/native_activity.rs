@@ -18,7 +18,7 @@ use aceris_graphics::{GraphicsBackend, GraphicsPresenter};
 use raw_window_handle::{
     AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -161,8 +161,8 @@ fn android_log(priority: i32, message: &str) {
     #[cfg(target_os = "android")]
     {
         let tag = c"Aceris";
-        let sanitized = message.replace('\\0', " ");
-        if let Ok(text) = CString::new(sanitized) {
+        let sanitized = message.replace('\0', " ");
+        if let Ok(text) = std::ffi::CString::new(sanitized) {
             // SAFETY: both C strings remain alive for the duration of the call.
             unsafe { __android_log_write(priority, tag.as_ptr(), text.as_ptr()) };
         }
