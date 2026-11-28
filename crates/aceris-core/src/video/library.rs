@@ -3803,15 +3803,7 @@ impl Library {
                 );
             }
             responsive_panel(
-                frame,
-                width,
-                height,
-                605.0,
-                280.0,
-                125.0,
-                42.0,
-                scale,
-                0x2D1A3B,
+                frame, width, height, 605.0, 280.0, 125.0, 42.0, scale, 0x2D1A3B,
             );
             responsive_text_centered(
                 frame,
