@@ -1294,7 +1294,11 @@ fn gamepad_axis_to_circle_pad(value: f32) -> i32 {
         return 0;
     }
     let scaled = (magnitude - GAMEPAD_STICK_DEADZONE) / (1.0 - GAMEPAD_STICK_DEADZONE);
-    let sign = if clamped.is_sign_negative() { -1.0 } else { 1.0 };
+    let sign = if clamped.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
+    };
     (scaled * sign * f32::from(CIRCLE_PAD_LIMIT)).round() as i32
 }
 
