@@ -102,7 +102,7 @@ O editor deve evoluir para permitir:
 - Ocultar controles virtuais ao conectar um controle físico, com opção para mantê-los visíveis.
 - Feedback tátil opcional, quando o host e o dispositivo oferecerem suporte.
 
-O remapeamento físico de botões já usa o schema compartilhado `ACERIS_GAMEPAD_MAPPING_V1` no desktop e Android. Perfis global e por jogo são aplicados nos dois hosts; perfil por modelo de controle está disponível no desktop via UUID de GilRs. Por enquanto a configuração é feita editando o arquivo de perfil manualmente. Ainda falta um editor visual com captura de entrada; eixos do analógico, inversão e sensibilidade continuam fixos/não configuráveis.
+O remapeamento físico de botões usa o schema compartilhado `ACERIS_GAMEPAD_MAPPING_V1` no desktop e Android. Perfis global e por jogo são aplicados nos dois hosts; perfil por modelo de controle está disponível no desktop via UUID de GilRs. O núcleo também possui o schema lateral `ACERIS_GAMEPAD_AXIS_SETTINGS_V1`, separado do arquivo de botões, com inversão X/Y e sensibilidade de 50% a 200%; os perfis seguem a precedência jogo > modelo de controle > global. A zona morta radial e a conversão vetorial são compartilhadas entre desktop e Android. O backend de perfis está integrado à entrada física, mas os controles visuais de inversão/sensibilidade ainda não foram adicionados ao editor. O remapeamento da origem dos eixos X/Y e a calibração de centro/deadzone por controle continuam pendentes.
 
 Não cobrir a tela inferior com botões nem capturar toques que deveriam chegar ao jogo.
 
