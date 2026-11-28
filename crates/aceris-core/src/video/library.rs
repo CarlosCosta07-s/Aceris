@@ -3134,7 +3134,6 @@ impl Library {
                         index == self.selected && self.home_focus == HomeFocus::Games,
                         self.is_favorite(entry),
                         self.is_recent(entry),
-                        self.is_recent(entry),
                         small_scale,
                         small_scale,
                     );
@@ -4437,6 +4436,7 @@ impl Library {
                         self.smdh_icons.get(&entry.path),
                         index == self.selected && self.home_focus == HomeFocus::Games,
                         self.is_favorite(entry),
+                        self.is_recent(entry),
                         text_scale,
                         small_scale,
                     );
