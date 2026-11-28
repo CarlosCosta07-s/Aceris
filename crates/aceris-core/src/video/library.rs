@@ -8180,6 +8180,59 @@ mod tests {
     }
 
     #[test]
+    fn legacy_library_text_uses_the_shared_weight_hierarchy() {
+        let mut prominent = vec![0u8; 96 * 16 * 4];
+        let mut expected_semibold = vec![0u8; 96 * 16 * 4];
+        draw_text(
+            &mut prominent,
+            96,
+            16,
+            0,
+            0,
+            2,
+            "Aceris",
+            [255, 255, 255],
+        );
+        font::draw_text_with_weight(
+            &mut expected_semibold,
+            96,
+            16,
+            0,
+            0,
+            2,
+            "Aceris",
+            [255, 255, 255],
+            font::TextWeight::Semibold,
+        );
+        assert_eq!(prominent, expected_semibold);
+
+        let mut compact = vec![0u8; 96 * 16 * 4];
+        let mut expected_regular = vec![0u8; 96 * 16 * 4];
+        draw_text(
+            &mut compact,
+            96,
+            16,
+            0,
+            0,
+            1,
+            "Aceris",
+            [255, 255, 255],
+        );
+        font::draw_text_with_weight(
+            &mut expected_regular,
+            96,
+            16,
+            0,
+            0,
+            1,
+            "Aceris",
+            [255, 255, 255],
+            font::TextWeight::Regular,
+        );
+        assert_eq!(compact, expected_regular);
+    }
+
+    #[test]
     fn render_has_the_canvas_size_and_marks_the_selected_row() {
         let mut lib = library(4);
         lib.move_selection(1);
