@@ -6,8 +6,12 @@
 use super::font::{self, draw_text};
 use super::frontend::{VirtualControlPositions, VirtualControlPreset};
 use crate::game_identity::GameIdentity;
+use crate::loader::smdh::{SMDH_FILE_SIZE, Smdh, SmdhIcon};
+use crate::loader::threedsx::ThreeDsxImage;
 use aceris_common::brand;
-use std::fs;
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Canvas size the layout is designed for.
@@ -128,6 +132,7 @@ pub enum VirtualControlEditScope {
 #[derive(Clone, Debug)]
 pub struct Library {
     entries: Vec<Entry>,
+    smdh_icons: HashMap<PathBuf, SmdhIcon>,
     selected: usize,
     first_visible: usize,
     directory_label: String,
@@ -777,6 +782,50 @@ fn scan_path_identity(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Loads SMDH icons only for 3DSX entries, once when the library is built/refreshed.
+/// A conventional sibling .smdh file takes priority; embedded 3DSX metadata is
+/// used as the fallback. No image file is opened from the per-frame renderer.
+fn load_smdh_icon_cache(entries: &[Entry]) -> HashMap<PathBuf, SmdhIcon> {
+    let mut icons = HashMap::new();
+    for entry in entries {
+        let is_3dsx = entry
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("3dsx"));
+        if !is_3dsx {
+            continue;
+        }
+        if let Some(icon) = load_3dsx_smdh_icon(&entry.path) {
+            icons.insert(entry.path.clone(), icon);
+        }
+    }
+    icons
+}
+
+fn load_3dsx_smdh_icon(path: &Path) -> Option<SmdhIcon> {
+    for extension in ["smdh", "SMDH"] {
+        let sidecar = path.with_extension(extension);
+        let Ok(mut file) = File::open(sidecar) else {
+            continue;
+        };
+        let mut bytes = vec![0; SMDH_FILE_SIZE];
+        if file.read_exact(&mut bytes).is_ok() {
+            if let Ok(metadata) = Smdh::parse(&bytes) {
+                return Some(metadata.large_icon);
+            }
+        }
+    }
+
+    let mut file = File::open(path).ok()?;
+    let image = ThreeDsxImage::parse_reader(&mut file).ok()?;
+    image
+        .read_smdh(&mut file)
+        .ok()
+        .flatten()
+        .map(|metadata| metadata.large_icon)
+}
+
 impl Library {
     pub fn new(entries: Vec<Entry>, directory_label: String) -> Self {
         let directory = PathBuf::from(&directory_label);
@@ -797,6 +846,7 @@ impl Library {
         }
 
         let favorites = favorite_ids.into_iter().collect();
+        let smdh_icons = load_smdh_icon_cache(&entries);
         let performance_mode = load_performance_mode(&settings_directory);
         let gamepad_deadzone_percent = load_gamepad_deadzone_percent(&settings_directory);
         let virtual_controls_visible = load_virtual_controls_visible(&settings_directory);
@@ -808,6 +858,7 @@ impl Library {
         let preferences = load_library_preferences(&settings_directory);
         Self {
             entries,
+            smdh_icons,
             selected: 0,
             first_visible: 0,
             directory_label,
@@ -1870,6 +1921,7 @@ impl Library {
     /// Re-scans every configured game folder without restarting the application.
     pub fn reload(&mut self) {
         self.entries = scan_games_from_config(&self.scan_config);
+        self.smdh_icons = load_smdh_icon_cache(&self.entries);
         self.selected = 0;
         self.first_visible = 0;
         self.status = Some(format!(
@@ -2633,6 +2685,7 @@ impl Library {
                     100.0,
                     120.0,
                     entry,
+                    self.smdh_icons.get(&entry.path),
                     small_scale,
                 );
                 responsive_text(
@@ -2799,6 +2852,7 @@ impl Library {
                         112.0,
                         164.0,
                         entry,
+                        self.smdh_icons.get(&entry.path),
                         index == self.selected,
                         small_scale,
                         small_scale,
@@ -3979,6 +4033,7 @@ impl Library {
                         220.0,
                         210.0,
                         entry,
+                        self.smdh_icons.get(&entry.path),
                         index == self.selected,
                         text_scale,
                         small_scale,
@@ -4648,6 +4703,7 @@ impl Library {
                         54.0,
                         38.0,
                         entry,
+                        self.smdh_icons.get(&entry.path),
                         small_scale,
                     );
                     responsive_text(
@@ -4717,6 +4773,7 @@ impl Library {
                         card_width,
                         card_height,
                         entry,
+                        self.smdh_icons.get(&entry.path),
                         index == self.selected,
                         self.is_favorite(entry),
                         text_scale,
@@ -5138,6 +5195,7 @@ fn render_cover_art(
     cover_width: f32,
     cover_height: f32,
     entry: &Entry,
+    smdh_icon: Option<&SmdhIcon>,
     text_scale: usize,
 ) {
     let (base, accent, highlight) = cover_palette(&entry.title);
@@ -5163,6 +5221,20 @@ fn render_cover_art(
         scale,
         base,
     );
+    if let Some(icon) = smdh_icon {
+        draw_smdh_icon(
+            frame,
+            width,
+            height,
+            scale,
+            x + 4.0,
+            y + 4.0,
+            cover_width - 8.0,
+            cover_height - 8.0,
+            icon,
+        );
+        return;
+    }
     responsive_fill(
         frame,
         width as usize,
@@ -5219,6 +5291,7 @@ fn render_home_game_tile(
     card_width: f32,
     card_height: f32,
     entry: &Entry,
+    smdh_icon: Option<&SmdhIcon>,
     selected: bool,
     title_scale: usize,
     small_scale: usize,
@@ -5269,6 +5342,7 @@ fn render_home_game_tile(
         card_width - 18.0,
         cover_height,
         entry,
+        smdh_icon,
         small_scale,
     );
     responsive_text(
@@ -5309,6 +5383,7 @@ fn render_library_tile(
     card_width: f32,
     card_height: f32,
     entry: &Entry,
+    smdh_icon: Option<&SmdhIcon>,
     selected: bool,
     favorite: bool,
     text_scale: usize,
@@ -5325,50 +5400,64 @@ fn render_library_tile(
         scale,
         if selected { 0x422038 } else { 0x21152F },
     );
-    let (base, accent, highlight) = cover_palette(&entry.title);
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + 6.0,
-        y + 6.0,
-        card_width - 12.0,
-        70.0,
-        scale,
-        base,
-    );
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + 14.0,
-        y + 20.0,
-        card_width - 28.0,
-        4.0,
-        scale,
-        accent,
-    );
-    responsive_fill(
-        frame,
-        width as usize,
-        height as usize,
-        x + 28.0,
-        y + 37.0,
-        card_width - 56.0,
-        4.0,
-        scale,
-        highlight,
-    );
-    responsive_text_centered(
-        frame,
-        width,
-        height,
-        x + card_width * 0.5,
-        y + 53.0,
-        text_scale,
-        "3DS",
-        brand::TEXT,
-    );
+    if let Some(icon) = smdh_icon {
+        draw_smdh_icon(
+            frame,
+            width,
+            height,
+            scale,
+            x + 6.0,
+            y + 6.0,
+            card_width - 12.0,
+            70.0,
+            icon,
+        );
+    } else {
+        let (base, accent, highlight) = cover_palette(&entry.title);
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x + 6.0,
+            y + 6.0,
+            card_width - 12.0,
+            70.0,
+            scale,
+            base,
+        );
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x + 14.0,
+            y + 20.0,
+            card_width - 28.0,
+            4.0,
+            scale,
+            accent,
+        );
+        responsive_fill(
+            frame,
+            width as usize,
+            height as usize,
+            x + 28.0,
+            y + 37.0,
+            card_width - 56.0,
+            4.0,
+            scale,
+            highlight,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + card_width * 0.5,
+            y + 53.0,
+            text_scale,
+            "3DS",
+            brand::TEXT,
+        );
+    }
     if favorite {
         responsive_panel(
             frame,
@@ -5490,6 +5579,97 @@ fn responsive_blend_background(frame: &mut [u8], width: u32, height: u32, backgr
                 frame[target_at + channel] = ((u32::from(background[source_at + channel]) * alpha
                     + u32::from(frame[target_at + channel]) * inverse)
                     / 255) as u8;
+            }
+        }
+    }
+}
+
+/// Draws a cached, square SMDH icon into a logical rectangle without stretching it.
+#[allow(clippy::too_many_arguments)]
+fn draw_smdh_icon(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    scale: f32,
+    x: f32,
+    y: f32,
+    target_width: f32,
+    target_height: f32,
+    icon: &SmdhIcon,
+) {
+    let source_width = usize::from(icon.width);
+    let source_height = usize::from(icon.height);
+    let Some(source_bytes) = source_width
+        .checked_mul(source_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return;
+    };
+    let Some(frame_bytes) = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return;
+    };
+    if source_width == 0
+        || source_height == 0
+        || icon.pixels_rgba8.len() < source_bytes
+        || frame.len() != frame_bytes
+        || !scale.is_finite()
+        || scale <= 0.0
+        || !target_width.is_finite()
+        || !target_height.is_finite()
+        || target_width <= 0.0
+        || target_height <= 0.0
+    {
+        return;
+    }
+
+    let fit = (target_width / source_width as f32).min(target_height / source_height as f32);
+    let draw_width = source_width as f32 * fit;
+    let draw_height = source_height as f32 * fit;
+    let draw_x = x + (target_width - draw_width) * 0.5;
+    let draw_y = y + (target_height - draw_height) * 0.5;
+
+    let left = (draw_x * scale).floor().max(0.0) as usize;
+    let top = (draw_y * scale).floor().max(0.0) as usize;
+    let right = ((draw_x + draw_width) * scale)
+        .ceil()
+        .min(width as f32) as usize;
+    let bottom = ((draw_y + draw_height) * scale)
+        .ceil()
+        .min(height as f32) as usize;
+    if left >= right || top >= bottom {
+        return;
+    }
+
+    for destination_y in top..bottom {
+        let logical_y = (destination_y as f32 + 0.5) / scale;
+        let source_y = (((logical_y - draw_y) / draw_height) * source_height as f32)
+            .floor()
+            .clamp(0.0, (source_height - 1) as f32) as usize;
+        for destination_x in left..right {
+            let logical_x = (destination_x as f32 + 0.5) / scale;
+            let source_x = (((logical_x - draw_x) / draw_width) * source_width as f32)
+                .floor()
+                .clamp(0.0, (source_width - 1) as f32) as usize;
+            let source_offset = (source_y * source_width + source_x) * 4;
+            let target_offset = (destination_y * width as usize + destination_x) * 4;
+            let alpha = u32::from(icon.pixels_rgba8[source_offset + 3]);
+            if alpha == 255 {
+                frame[target_offset..target_offset + 4]
+                    .copy_from_slice(&icon.pixels_rgba8[source_offset..source_offset + 4]);
+            } else if alpha > 0 {
+                let inverse = 255 - alpha;
+                for channel in 0..3 {
+                    frame[target_offset + channel] = ((u32::from(
+                        icon.pixels_rgba8[source_offset + channel],
+                    ) * alpha
+                        + u32::from(frame[target_offset + channel]) * inverse
+                        + 127)
+                        / 255) as u8;
+                }
+                frame[target_offset + 3] = 255;
             }
         }
     }
@@ -5755,6 +5935,71 @@ mod tests {
         let mut library = Library::new(entries, "/games".to_string());
         library.select_page(LibraryPage::Games);
         library
+    }
+
+    #[test]
+    fn smdh_icon_renderer_scales_rgba_pixels_without_distorting_aspect_ratio() {
+        let icon = SmdhIcon {
+            width: 2,
+            height: 2,
+            pixels_rgba8: vec![
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+            ],
+        };
+        let (width, height) = (4u32, 4u32);
+        let mut frame = vec![0u8; width as usize * height as usize * 4];
+
+        draw_smdh_icon(
+            &mut frame,
+            width,
+            height,
+            1.0,
+            0.0,
+            0.0,
+            4.0,
+            4.0,
+            &icon,
+        );
+
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * width as usize + x) * 4;
+            &frame[offset..offset + 4]
+        };
+        assert_eq!(pixel(0, 0), &[255, 0, 0, 255]);
+        assert_eq!(pixel(3, 0), &[0, 255, 0, 255]);
+        assert_eq!(pixel(0, 3), &[0, 0, 255, 255]);
+        assert_eq!(pixel(3, 3), &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn library_reload_caches_smdh_sidecar_for_3dsx_homebrew() {
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-smdh-sidecar-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let game_path = dir.join("homebrew.3dsx");
+        fs::write(&game_path, b"fixture").unwrap();
+        let mut library = Library::new(
+            vec![Entry {
+                title: "Homebrew".into(),
+                path: game_path.clone(),
+            }],
+            dir.display().to_string(),
+        );
+        assert!(!library.smdh_icons.contains_key(&game_path));
+
+        let mut smdh = vec![0u8; SMDH_FILE_SIZE];
+        smdh[..4].copy_from_slice(b"SMDH");
+        smdh[0x24C0..0x24C2].copy_from_slice(&0xF800u16.to_le_bytes());
+        fs::write(dir.join("homebrew.smdh"), smdh).unwrap();
+
+        library.reload();
+        let icon = library.smdh_icons.get(&game_path).unwrap();
+        assert_eq!((icon.width, icon.height), (48, 48));
+        assert_eq!(&icon.pixels_rgba8[..4], &[255, 0, 0, 255]);
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
