@@ -66,7 +66,11 @@ mod android {
     fn log(priority: c_int, message: &'static [u8]) {
         // SAFETY: both byte strings are static, NUL-terminated C strings.
         unsafe {
-            __android_log_write(priority, c"AcerisSmoke".as_ptr().cast(), message.as_ptr().cast());
+            __android_log_write(
+                priority,
+                c"AcerisSmoke".as_ptr().cast(),
+                message.as_ptr().cast(),
+            );
         }
     }
 
