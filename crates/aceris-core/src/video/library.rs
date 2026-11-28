@@ -9548,6 +9548,7 @@ mod tests {
         );
         assert_eq!(library.favorite_count(), 1);
 
+        library.select_page(LibraryPage::Games);
         library.select_page(LibraryPage::Home);
         library.move_selection_responsive(-1, 1000, 600);
         library.move_selection_responsive(1, 1000, 600);
