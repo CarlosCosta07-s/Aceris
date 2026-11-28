@@ -39,18 +39,19 @@ pub enum TypographyRole {
 impl TypographyRole {
     const fn factor(self) -> f32 {
         match self {
-            Self::Display => 1.8,
-            Self::Heading => 1.55,
-            Self::Body => 1.12,
+            Self::Display => 2.1,
+            Self::Heading => 1.7,
+            Self::Body => 1.25,
             Self::Label => 1.0,
-            Self::Caption => 0.92,
+            Self::Caption => 0.9,
         }
     }
 
     const fn minimum(self) -> f32 {
         match self {
-            Self::Display | Self::Heading => 2.0,
-            Self::Body | Self::Label | Self::Caption => 1.0,
+            Self::Display => 3.0,
+            Self::Heading | Self::Body => 2.0,
+            Self::Label | Self::Caption => 1.0,
         }
     }
 }
@@ -137,14 +138,15 @@ mod tests {
     #[test]
     fn typography_roles_keep_a_clear_hierarchy_at_small_and_large_sizes() {
         let scale = |role| typography_scale(role, 1.0);
-        assert!(scale(TypographyRole::Display) > scale(TypographyRole::Body));
-        assert_eq!(scale(TypographyRole::Body), scale(TypographyRole::Caption));
+        assert!(scale(TypographyRole::Display) > scale(TypographyRole::Heading));
+        assert_eq!(scale(TypographyRole::Heading), scale(TypographyRole::Body));
+        assert!(scale(TypographyRole::Body) > scale(TypographyRole::Caption));
 
         let large_body = typography_scale(TypographyRole::Body, 5.0);
         let large_caption = typography_scale(TypographyRole::Caption, 5.0);
         assert!(large_body > large_caption);
 
-        assert_eq!(typography_scale(TypographyRole::Display, 0.1), 2);
+        assert_eq!(typography_scale(TypographyRole::Display, 0.1), 3);
         assert_eq!(typography_scale(TypographyRole::Caption, f32::NAN), 1);
         assert!(typography_scale(TypographyRole::Display, 100.0) <= 12);
     }
