@@ -6011,6 +6011,20 @@ fn render_home_game_tile(
         scale,
         if selected { 0x55C8E8 } else { 0x344754 },
     );
+    let cover_height = (card_height - 52.0).max(70.0);
+    render_cover_art(
+        frame,
+        width,
+        height,
+        scale,
+        x + 9.0,
+        y + 8.0,
+        card_width - 18.0,
+        cover_height,
+        entry,
+        smdh_icon,
+        small_scale,
+    );
     let compact_badges = card_width < 150.0;
     if selected {
         let badge_width = if compact_badges { 38.0 } else { 58.0 };
@@ -6060,20 +6074,6 @@ fn render_home_game_tile(
             brand::TEXT,
         );
     }
-    let cover_height = (card_height - 52.0).max(70.0);
-    render_cover_art(
-        frame,
-        width,
-        height,
-        scale,
-        x + 9.0,
-        y + 8.0,
-        card_width - 18.0,
-        cover_height,
-        entry,
-        smdh_icon,
-        small_scale,
-    );
     responsive_text(
         frame,
         width,
@@ -7353,7 +7353,10 @@ mod tests {
 
     #[test]
     fn home_tiles_distinguish_favorite_and_focused_games() {
-        let dir = std::env::temp_dir().join(format!("aceris-home-tile-badges-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "aceris-home-tile-badges-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("badge-game.3ds");
