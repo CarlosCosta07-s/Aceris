@@ -5047,6 +5047,9 @@ impl Library {
                     entry,
                     self.smdh_icons.get(&entry.path),
                     index == self.selected && self.home_focus == HomeFocus::Games,
+                    self.is_favorite(entry),
+                    self.is_recent(entry),
+                    title_scale,
                     label_scale,
                 );
             }
@@ -9235,16 +9238,20 @@ fn render_console_hint(
             brand::SURFACE_SELECTED,
         );
     }
-    responsive_panel(
+    responsive_circle_outline(
         frame,
         width,
         height,
-        x,
-        y,
-        24.0,
-        24.0,
+        x + 12.0,
+        y + 12.0,
+        10.5,
+        1.8,
         scale,
-        brand::SURFACE_RAISED,
+        if focused {
+            brand::TEXT
+        } else {
+            brand::TEXT_MUTED
+        },
     );
     responsive_text_centered(
         frame,
@@ -9252,7 +9259,7 @@ fn render_console_hint(
         height,
         x + 12.0,
         y + 6.0,
-        text_scale,
+        text_scale.max(1),
         key,
         brand::TEXT,
     );
@@ -9260,7 +9267,7 @@ fn render_console_hint(
         frame,
         width,
         height,
-        x + 34.0,
+        x + 32.0,
         y + 7.0,
         text_scale,
         label,
@@ -9414,6 +9421,9 @@ fn render_console_game_card(
     entry: &Entry,
     smdh_icon: Option<&SmdhIcon>,
     selected: bool,
+    favorite: bool,
+    recent: bool,
+    title_scale: usize,
     small_scale: usize,
 ) {
     if selected {
@@ -9457,6 +9467,54 @@ fn render_console_game_card(
         smdh_icon,
         small_scale,
     );
+
+    if recent {
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x + 8.0,
+            y + 8.0,
+            36.0,
+            17.0,
+            scale,
+            brand::SUCCESS_SURFACE,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + 26.0,
+            y + 12.0,
+            small_scale,
+            "REC",
+            brand::TEXT,
+        );
+    }
+    if favorite {
+        responsive_panel(
+            frame,
+            width,
+            height,
+            x + card_width - 44.0,
+            y + 8.0,
+            36.0,
+            17.0,
+            scale,
+            brand::ACCENT_RED,
+        );
+        responsive_text_centered(
+            frame,
+            width,
+            height,
+            x + card_width - 26.0,
+            y + 12.0,
+            small_scale,
+            "FAV",
+            brand::TEXT,
+        );
+    }
+
     responsive_fill(
         frame,
         width as usize,
@@ -9474,7 +9532,7 @@ fn render_console_game_card(
         height,
         x + card_width * 0.5,
         y + card_height - 32.0,
-        small_scale.max(1),
+        title_scale.max(small_scale).min(3),
         &truncate(&entry.title, 22),
         brand::TEXT,
     );
