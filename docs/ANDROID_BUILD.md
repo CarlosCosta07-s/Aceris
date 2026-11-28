@@ -5,6 +5,7 @@
 ## Estado atual
 
 - O frontend Android é uma NativeActivity em Rust/FFI (`native_activity.rs`), com lógica em `app.rs`, UI em `ui.rs` e manifesto sem Java/Kotlin.
+- O aplicativo Android é **somente horizontal (landscape)**. O `AndroidManifest.xml` fixa `android:screenOrientation="landscape"`; não existe modo retrato no Android. A renderização retrato do núcleo pode continuar existindo para outros frontends ou janelas, mas não é uma orientação permitida para o app Android.
 - CI compila e linka `libaceris_android.so` para `arm64-v8a`; isso não comprova instalação, ciclo de vida, toque, áudio ou gameplay em aparelho físico.
 - Existe saída AAudio (API 26+), mas nenhum áudio foi confirmado em dispositivo.
 - O empacotamento APK abaixo é uma receita manual ainda não validada. O ID `org.aceris.emulator` é placeholder.
@@ -34,7 +35,7 @@ apksigner sign --ks <keystore> --out build/aceris.apk build/aligned.apk
 adb install -r build/aceris.apk
 ```
 
-Após instalar, validar ciclo de vida, recriação de superfície, pausa/retomada, rotação, toque multitoque, teclas, gamepad, áudio e homebrew. Registrar aparelho, Android, ABI, comandos e logs.
+Após instalar, validar ciclo de vida, recriação de superfície, pausa/retomada e confirmar que mudanças na posição física do aparelho não mudam o app para retrato. Validar também toque multitoque, teclas, gamepad, áudio e homebrew. Registrar aparelho, Android, ABI, comandos e logs.
 
 ## Dados e limitações
 
