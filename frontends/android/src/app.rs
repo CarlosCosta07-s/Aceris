@@ -59,6 +59,8 @@ pub struct App {
     quick_menu_selected: usize,
     confirmation_selected: usize,
     controls_editor: bool,
+    diagnostics_visible: bool,
+    performance_summary: Option<String>,
     control_drag: Option<(i32, u32)>,
     control_resize: Option<(i32, i32, u32, f32, u8, u32)>,
     layout_preferences: ScreenLayoutPreferences,
@@ -95,6 +97,8 @@ impl App {
             quick_menu_selected: 0,
             confirmation_selected: 0,
             controls_editor: false,
+            diagnostics_visible: false,
+            performance_summary: None,
             control_drag: None,
             control_resize: None,
             layout_preferences,
@@ -123,6 +127,13 @@ impl App {
     pub fn set_external_media_detection_available(&mut self, available: bool) {
         self.library
             .set_external_media_detection_available(available);
+    }
+
+    /// Updates the latest host-side timing summary displayed by the optional diagnostics overlay.
+    ///
+    /// This is not guest FPS or emulated-clock time.
+    pub fn set_performance_summary(&mut self, summary: String) {
+        self.performance_summary = Some(summary);
     }
 
     /// Takes the audio the DSP mixed since the previous call (interleaved stereo
@@ -516,6 +527,21 @@ impl App {
         }
         let pressed_mask = self.held_mask();
         self.render_virtual_controls_overlay(output, pressed_mask);
+        if self.diagnostics_visible {
+            if let Some(system) = self.system.as_ref() {
+                let unhandled = system.unhandled_requests();
+                let _ = quick_menu::render_diagnostics_overlay(
+                    output,
+                    self.width,
+                    self.height,
+                    MenuPixelFormat::Rgba8,
+                    system.cpu().pc(),
+                    unhandled.len(),
+                    unhandled.first().map(String::as_str),
+                    self.performance_summary.as_deref(),
+                );
+            }
+        }
         let _ =
             quick_menu::render_menu_button(output, self.width, self.height, MenuPixelFormat::Rgba8);
     }
@@ -948,6 +974,7 @@ impl App {
             7 => self.toggle_virtual_control_edit_scope(),
             8 => self.begin_control_editor(),
             9 => self.capture_screenshot(),
+            10 => self.diagnostics_visible = !self.diagnostics_visible,
             _ => {}
         }
     }
