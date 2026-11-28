@@ -447,11 +447,28 @@ impl App {
                     self.library
                         .move_selection_horizontal_responsive(1, self.width, self.height)
                 }
-                pad::A | pad::START => self.launch_selected(),
+                pad::A | pad::START => {
+                    if self.library.page() == library::LibraryPage::Home {
+                        if self
+                            .library
+                            .activate_home_selection(self.width, self.height)
+                            == ClickResult::Activated
+                        {
+                            self.launch_selected();
+                        }
+                    } else {
+                        self.launch_selected();
+                    }
+                }
                 _ => {}
             },
             Screen::Intro { .. } if pressed => self.screen = Screen::Library,
             _ => {}
+        }
+        if matches!(self.screen, Screen::Library) && self.library.take_folder_picker_request() {
+            // SAF does not have a result callback in this Rust-only NativeActivity,
+            // so keep the path-entry fallback available for the import action.
+            self.library.begin_add_folder_path();
         }
         true
     }
