@@ -47,6 +47,55 @@ struct Geometry {
     scale: usize,
 }
 
+fn columns_for_surface(width: u32, height: u32) -> usize {
+    if width >= 560 && width > height { 2 } else { 1 }
+}
+
+/// Moves the highlighted action through the same grid used by rendering and touch.
+///
+/// Vertical movement preserves the column; horizontal movement stays within the
+/// current row. Missing cells on the final row do not wrap into another column.
+pub fn move_selection(
+    width: u32,
+    height: u32,
+    selected: usize,
+    horizontal: i32,
+    vertical: i32,
+    action_count: usize,
+) -> usize {
+    if action_count == 0 {
+        return 0;
+    }
+    let selected = selected.min(action_count - 1);
+    let columns = columns_for_surface(width, height);
+    let row = selected / columns;
+    let column = selected % columns;
+
+    if vertical < 0 {
+        return if row == 0 {
+            selected
+        } else {
+            (row - 1) * columns + column
+        };
+    }
+    if vertical > 0 {
+        let next = (row + 1) * columns + column;
+        return if next < action_count { next } else { selected };
+    }
+    if horizontal < 0 {
+        return if column == 0 { selected } else { selected - 1 };
+    }
+    if horizontal > 0 {
+        let next = selected + 1;
+        return if column + 1 < columns && next < action_count {
+            next
+        } else {
+            selected
+        };
+    }
+    selected
+}
+
 fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
     if width < 120
         || height < 100
@@ -60,7 +109,7 @@ fn geometry(width: u32, height: u32, action_count: usize) -> Option<Geometry> {
     let width = width as usize;
     let height = height as usize;
     let scale = (width.min(height) / 240).clamp(1, 8);
-    let columns = if width >= 560 && width > height { 2 } else { 1 };
+    let columns = columns_for_surface(width, height);
     let row_count = action_count.div_ceil(columns);
     let margin = 8 * scale;
     let base_panel_width = if columns == 2 { 520 } else { 420 };
@@ -2307,6 +2356,26 @@ mod tests {
         let portrait = geometry(400, 800, ACTION_COUNT).unwrap();
         assert_eq!(portrait.rows[0].x, portrait.rows[1].x);
         assert!(portrait.rows[1].y > portrait.rows[0].y);
+    }
+
+    #[test]
+    fn quick_menu_directional_navigation_tracks_columns_without_wrapping() {
+        let (width, height) = (800u32, 480u32);
+        assert_eq!(move_selection(width, height, 0, 1, 0, ACTION_COUNT), 1);
+        assert_eq!(move_selection(width, height, 0, 0, 1, ACTION_COUNT), 2);
+        assert_eq!(move_selection(width, height, 2, 0, -1, ACTION_COUNT), 0);
+        assert_eq!(move_selection(width, height, 1, -1, 0, ACTION_COUNT), 0);
+        assert_eq!(move_selection(width, height, 1, 1, 0, ACTION_COUNT), 1);
+        assert_eq!(move_selection(width, height, 12, 1, 0, ACTION_COUNT), 12);
+        assert_eq!(move_selection(width, height, 12, 0, -1, ACTION_COUNT), 10);
+        assert_eq!(move_selection(width, height, 11, 0, 1, ACTION_COUNT), 11);
+        assert_eq!(move_selection(width, height, 7, 0, 1, 9), 7);
+
+        assert_eq!(move_selection(400, 800, 0, 0, 1, ACTION_COUNT), 1);
+        assert_eq!(move_selection(400, 800, 0, 1, 0, ACTION_COUNT), 0);
+        assert_eq!(move_selection(400, 800, 12, 0, -1, ACTION_COUNT), 11);
+        assert_eq!(move_selection(width, height, 99, 0, 0, ACTION_COUNT), 12);
+        assert_eq!(move_selection(width, height, 99, 0, 0, 0), 0);
     }
 
     #[test]

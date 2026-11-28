@@ -527,11 +527,44 @@ impl App {
             }
             Screen::GameMenu if pressed => match pad_bit {
                 pad::UP => {
-                    self.quick_menu_selected = self.quick_menu_selected.saturating_sub(1);
+                    self.quick_menu_selected = quick_menu::move_selection(
+                        self.width,
+                        self.height,
+                        self.quick_menu_selected,
+                        0,
+                        -1,
+                        quick_menu::ACTION_COUNT,
+                    );
                 }
                 pad::DOWN => {
-                    self.quick_menu_selected =
-                        (self.quick_menu_selected + 1).min(quick_menu::ACTION_COUNT - 1);
+                    self.quick_menu_selected = quick_menu::move_selection(
+                        self.width,
+                        self.height,
+                        self.quick_menu_selected,
+                        0,
+                        1,
+                        quick_menu::ACTION_COUNT,
+                    );
+                }
+                pad::LEFT => {
+                    self.quick_menu_selected = quick_menu::move_selection(
+                        self.width,
+                        self.height,
+                        self.quick_menu_selected,
+                        -1,
+                        0,
+                        quick_menu::ACTION_COUNT,
+                    );
+                }
+                pad::RIGHT => {
+                    self.quick_menu_selected = quick_menu::move_selection(
+                        self.width,
+                        self.height,
+                        self.quick_menu_selected,
+                        1,
+                        0,
+                        quick_menu::ACTION_COUNT,
+                    );
                 }
                 pad::A | pad::START => self.activate_game_menu_action(),
                 pad::B => self.resume_game(),

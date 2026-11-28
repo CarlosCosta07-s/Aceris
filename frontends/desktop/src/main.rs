@@ -1429,10 +1429,52 @@ fn emulate(
                     }
                 }
                 window::WindowEvent::Key(window::Key::Up) if menu_open => {
-                    menu_selected = menu_selected.saturating_sub(1);
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(layout_profile.mode);
+                    menu_selected = quick_menu::move_selection(
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
+                        menu_selected,
+                        0,
+                        -1,
+                        quick_menu::DESKTOP_ACTION_COUNT,
+                    );
                 }
                 window::WindowEvent::Key(window::Key::Down) if menu_open => {
-                    menu_selected = (menu_selected + 1).min(quick_menu::DESKTOP_ACTION_COUNT - 1);
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(layout_profile.mode);
+                    menu_selected = quick_menu::move_selection(
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
+                        menu_selected,
+                        0,
+                        1,
+                        quick_menu::DESKTOP_ACTION_COUNT,
+                    );
+                }
+                window::WindowEvent::Key(window::Key::Left) if menu_open => {
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(layout_profile.mode);
+                    menu_selected = quick_menu::move_selection(
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
+                        menu_selected,
+                        -1,
+                        0,
+                        quick_menu::DESKTOP_ACTION_COUNT,
+                    );
+                }
+                window::WindowEvent::Key(window::Key::Right) if menu_open => {
+                    let (canvas_width, canvas_height) =
+                        screen_layout_canvas_size(layout_profile.mode);
+                    menu_selected = quick_menu::move_selection(
+                        canvas_width * scale as u32,
+                        canvas_height * scale as u32,
+                        menu_selected,
+                        1,
+                        0,
+                        quick_menu::DESKTOP_ACTION_COUNT,
+                    );
                 }
                 window::WindowEvent::Key(window::Key::Enter)
                     if menu_open && !gamepad_mapping_editor_open =>
