@@ -603,7 +603,19 @@ pub unsafe extern "C" fn ANativeActivity_onCreate(
         let worker = host.clone();
         let handle = std::thread::Builder::new()
             .name("aceris-app".to_string())
-            .spawn(move || run_app_thread(&worker, games_dir));
+            .spawn(move || {
+                #[cfg(feature = "startup-probe-no-app")]
+                run_startup_probe_thread(&worker, games_dir);
+
+                #[cfg(feature = "startup-probe-app-frame")]
+                run_startup_probe_thread(&worker, games_dir);
+
+                #[cfg(not(any(
+                    feature = "startup-probe-no-app",
+                    feature = "startup-probe-app-frame"
+                )))]
+                run_app_thread(&worker, games_dir);
+            });
         match handle {
             Ok(handle) => {
                 android_log(ANDROID_LOG_INFO, "Application worker thread started");
@@ -869,6 +881,76 @@ fn create_android_gpu_presenter(
             None
         }
     }
+}
+
+#[cfg(all(
+    feature = "startup-probe-no-app",
+    feature = "startup-probe-app-frame"
+))]
+compile_error!("select only one Android startup probe feature");
+
+/// Diagnostic worker used by side-by-side APKs. The no-app variant verifies
+/// thread/looper startup only; the app-frame variant additionally constructs
+/// App and renders one CPU frame into memory without touching ANativeWindow.
+#[cfg(any(
+    feature = "startup-probe-no-app",
+    feature = "startup-probe-app-frame"
+))]
+fn run_startup_probe_thread(host: &Host, games_dir: PathBuf) {
+    android_log(ANDROID_LOG_INFO, "STARTUP_PROBE: worker thread entered");
+    // SAFETY: this worker prepares and owns its Android looper.
+    let looper = unsafe { ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS) };
+    if looper.is_null() {
+        android_log(ANDROID_LOG_ERROR, "STARTUP_PROBE_FAIL: ALooper_prepare returned null");
+        return;
+    }
+    lock(&host.shared).looper = Raw::new(looper);
+    android_log(ANDROID_LOG_INFO, "STARTUP_PROBE_OK: looper created");
+
+    #[cfg(feature = "startup-probe-no-app")]
+    android_log(
+        ANDROID_LOG_INFO,
+        "STARTUP_PROBE_OK: worker is idle without constructing App",
+    );
+
+    #[cfg(feature = "startup-probe-app-frame")]
+    {
+        android_log(ANDROID_LOG_INFO, "APP_FRAME_PROBE: calling App::new");
+        let mut app = App::new(&games_dir);
+        android_log(ANDROID_LOG_INFO, "APP_FRAME_PROBE_OK: App::new completed");
+        app.resize(320, 480);
+        let mut frame = Vec::new();
+        app.step_into(&mut frame);
+        if frame.len() == 320 * 480 * 4 {
+            android_log(
+                ANDROID_LOG_INFO,
+                "APP_FRAME_PROBE_OK: first 320x480 CPU frame rendered",
+            );
+        } else {
+            android_log(
+                ANDROID_LOG_ERROR,
+                &format!(
+                    "APP_FRAME_PROBE_FAIL: unexpected frame size {} bytes",
+                    frame.len()
+                ),
+            );
+        }
+    }
+
+    loop {
+        if lock(&host.shared).destroyed {
+            break;
+        }
+        let mut fd = 0;
+        let mut events = 0;
+        let mut data = ptr::null_mut();
+        // SAFETY: the looper is owned by this worker and all out-pointers are valid.
+        unsafe {
+            ALooper_pollOnce(250, &mut fd, &mut events, &mut data);
+        }
+    }
+
+    lock(&host.shared).looper = Raw::default();
 }
 
 /// The app thread: owns the emulator, input-queue attachment and rendering.
