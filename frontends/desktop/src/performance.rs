@@ -58,6 +58,7 @@ pub(crate) struct DesktopPerformanceMonitor {
     last_presentation: Option<Instant>,
     presented_frames: u64,
     gpu_presented_frames: u64,
+    latest_report: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -87,6 +88,7 @@ impl DesktopPerformanceMonitor {
             last_presentation: None,
             presented_frames: 0,
             gpu_presented_frames: 0,
+            latest_report: None,
         }
     }
 
@@ -96,6 +98,11 @@ impl DesktopPerformanceMonitor {
     pub(crate) fn reset_after_pause(&mut self) {
         let kind = self.kind.unwrap_or(DesktopFrameKind::Game);
         self.reset(kind);
+    }
+
+    /// Latest completed host timing window, retained for the in-game overlay.
+    pub(crate) fn latest_report(&self) -> Option<&str> {
+        self.latest_report.as_deref()
     }
 
     /// Records one successfully presented host frame. The render-loop mode is
@@ -140,7 +147,9 @@ impl DesktopPerformanceMonitor {
             self.presented_frames,
             self.gpu_presented_frames,
         );
-        eprintln!("Aceris desktop performance [{}]: {report}", kind.label());
+        let summary = report.to_string();
+        eprintln!("Aceris desktop performance [{}]: {summary}", kind.label());
+        self.latest_report = Some(summary);
         self.reset(kind);
     }
 
