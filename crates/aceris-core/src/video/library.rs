@@ -2045,8 +2045,8 @@ impl Library {
             SettingsSection::Library => {
                 let row_start = self.settings_control_selected / 2 * 2;
                 let column = self.settings_control_selected % 2;
-                self.settings_control_selected = row_start
-                    + (column as i32 + delta.signum()).clamp(0, 1) as usize;
+                self.settings_control_selected =
+                    row_start + (column as i32 + delta.signum()).clamp(0, 1) as usize;
             }
             SettingsSection::Performance => {
                 self.settings_control_selected =
@@ -3912,7 +3912,8 @@ impl Library {
                             324.0,
                             56.0,
                             scale,
-                            if self.settings_controls_focused && self.settings_control_selected == 0 {
+                            if self.settings_controls_focused && self.settings_control_selected == 0
+                            {
                                 brand::SURFACE_SELECTED
                             } else if self.virtual_controls_visible {
                                 brand::SUCCESS_SURFACE
@@ -5336,7 +5337,8 @@ impl Library {
                             322.0,
                             42.0,
                             scale,
-                            if self.settings_controls_focused && self.settings_control_selected == 2 {
+                            if self.settings_controls_focused && self.settings_control_selected == 2
+                            {
                                 brand::SURFACE_SELECTED
                             } else {
                                 brand::SURFACE_CARD
@@ -5375,7 +5377,8 @@ impl Library {
                             322.0,
                             42.0,
                             scale,
-                            if self.settings_controls_focused && self.settings_control_selected == 3 {
+                            if self.settings_controls_focused && self.settings_control_selected == 3
+                            {
                                 brand::SURFACE_SELECTED
                             } else {
                                 brand::SURFACE_CARD
@@ -5593,9 +5596,7 @@ impl Library {
                                 self.virtual_controls_preset.label().to_string(),
                             ),
                         ];
-                        for (slot, (x, label, value)) in
-                            control_options.into_iter().enumerate()
-                        {
+                        for (slot, (x, label, value)) in control_options.into_iter().enumerate() {
                             let control_index = slot + 1;
                             responsive_panel(
                                 frame,
@@ -8290,10 +8291,8 @@ mod tests {
 
     #[test]
     fn settings_controller_focus_navigates_and_activates_options() {
-        let dir = std::env::temp_dir().join(format!(
-            "aceris-settings-focus-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aceris-settings-focus-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let mut library = Library::new(Vec::new(), dir.display().to_string());
