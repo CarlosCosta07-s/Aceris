@@ -4730,12 +4730,12 @@ impl Library {
 
         // Detail and management actions stay on library pages. Home uses the full width.
         if self.page != LibraryPage::Home {
-                responsive_text(
-                    frame,
-                    width,
-                    height,
-                    780.0,
-                    174.0,
+            responsive_text(
+                frame,
+                width,
+                height,
+                780.0,
+                174.0,
                     small_scale,
                     if self.page == LibraryPage::Settings {
                         "BIBLIOTECA"
